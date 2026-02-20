@@ -111,6 +111,10 @@ struct AgentFlags {
     message: Option<String>,
     system_prompt: Option<String>,
     model_override: Option<String>,
+    /// Override max tool iterations (takes precedence over config).
+    max_iterations: Option<u32>,
+    /// Wall-clock timeout in seconds for the entire agent run.
+    max_time: Option<u64>,
 }
 
 /// Validate a session name: must be `-` (ephemeral) or only contain `[a-zA-Z0-9_-]`.
@@ -131,6 +135,8 @@ fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<AgentFlags>
     let mut message: Option<String> = None;
     let mut system_prompt: Option<String> = None;
     let mut model_override: Option<String> = None;
+    let mut max_iterations: Option<u32> = None;
+    let mut max_time: Option<u64> = None;
     let mut i = 0;
 
     while i < args.len() {
@@ -178,6 +184,37 @@ fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<AgentFlags>
                     return None;
                 }
             }
+            "--max-iterations" => {
+                if i + 1 < args.len() {
+                    match args[i + 1].parse::<u32>() {
+                        Ok(n) => max_iterations = Some(n),
+                        Err(_) => {
+                            stderr
+                                .push_str("agent: --max-iterations requires a positive integer\n");
+                            return None;
+                        }
+                    }
+                    i += 2;
+                } else {
+                    stderr.push_str("agent: --max-iterations requires a value\n");
+                    return None;
+                }
+            }
+            "--max-time" => {
+                if i + 1 < args.len() {
+                    match args[i + 1].parse::<u64>() {
+                        Ok(n) => max_time = Some(n),
+                        Err(_) => {
+                            stderr.push_str("agent: --max-time requires a positive integer\n");
+                            return None;
+                        }
+                    }
+                    i += 2;
+                } else {
+                    stderr.push_str("agent: --max-time requires a value\n");
+                    return None;
+                }
+            }
             _ => {
                 i += 1;
             }
@@ -189,6 +226,8 @@ fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<AgentFlags>
         message,
         system_prompt,
         model_override,
+        max_iterations,
+        max_time,
     })
 }
 
@@ -265,7 +304,11 @@ fn build_agent_from_config(
         max_tokens: config.agents.defaults.max_tokens,
         temperature: config.agents.defaults.temperature,
     })
-    .with_max_tool_iterations(config.agents.defaults.max_tool_iterations);
+    .with_max_tool_iterations(
+        flags
+            .max_iterations
+            .unwrap_or(config.agents.defaults.max_tool_iterations),
+    );
 
     Some(agent)
 }
@@ -341,10 +384,23 @@ fn run_agent_session(
         tool_call_id: None,
     });
 
-    match rt.block_on(agent.process(&mut messages)) {
+    let agent_result = if let Some(secs) = flags.max_time {
+        run_with_wall_clock_timeout(&rt, &agent, &mut messages, secs)
+    } else {
+        Ok(rt.block_on(agent.process(&mut messages)))
+    };
+
+    let agent_result = match agent_result {
+        Ok(inner) => inner,
+        Err(_) => {
+            out.stderr.push_str("max-time exceeded\n");
+            return 2;
+        }
+    };
+
+    match agent_result {
         Ok(result) => {
             if !ephemeral {
-                // Remove the injected system prompt by its tracked index, if any.
                 if let Some(idx) = system_prompt_idx {
                     if idx < messages.len() {
                         messages.remove(idx);
@@ -368,6 +424,32 @@ fn run_agent_session(
             1
         }
     }
+}
+
+/// Run the agent with a wall-clock timeout. Returns `Err(())` on timeout.
+fn run_with_wall_clock_timeout(
+    rt: &tokio::runtime::Runtime,
+    agent: &AgentLoopImpl,
+    messages: &mut Vec<Message>,
+    timeout_secs: u64,
+) -> Result<Result<crate::domain::agent::AgentResult, crate::domain::error::DomainError>, ()> {
+    let dur = std::time::Duration::from_secs(timeout_secs);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let deadline = std::time::Instant::now() + dur;
+
+    // Run the agent in a separate thread so we can enforce a wall-clock deadline.
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            let result = rt.block_on(agent.process(messages));
+            let _ = tx.send(result);
+        });
+
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        match rx.recv_timeout(remaining) {
+            Ok(result) => Ok(result),
+            Err(_) => Err(()),
+        }
+    })
 }
 
 /// Build a FallbackProvider from config + credential store, suitable for the agent CLI.
@@ -1591,5 +1673,71 @@ mod tests {
         let result = parse_agent_flags(&a, &mut stderr);
         assert!(result.is_none());
         assert!(stderr.contains("alphanumeric"));
+    }
+
+    #[test]
+    fn test_agent_parses_max_iterations_flag() {
+        let mut stderr = String::new();
+        let a: Vec<String> = vec![
+            "--max-iterations".into(),
+            "5".into(),
+            "-m".into(),
+            "Hi".into(),
+        ];
+        let flags = parse_agent_flags(&a, &mut stderr).unwrap();
+        assert_eq!(flags.max_iterations, Some(5));
+    }
+
+    #[test]
+    fn test_agent_parses_max_time_flag() {
+        let mut stderr = String::new();
+        let a: Vec<String> = vec!["--max-time".into(), "30".into(), "-m".into(), "Hi".into()];
+        let flags = parse_agent_flags(&a, &mut stderr).unwrap();
+        assert_eq!(flags.max_time, Some(30));
+    }
+
+    #[test]
+    fn test_agent_max_iterations_missing_value() {
+        let mut stderr = String::new();
+        let a: Vec<String> = vec!["--max-iterations".into()];
+        let result = parse_agent_flags(&a, &mut stderr);
+        assert!(result.is_none());
+        assert!(stderr.contains("--max-iterations requires a value"));
+    }
+
+    #[test]
+    fn test_agent_max_time_missing_value() {
+        let mut stderr = String::new();
+        let a: Vec<String> = vec!["--max-time".into()];
+        let result = parse_agent_flags(&a, &mut stderr);
+        assert!(result.is_none());
+        assert!(stderr.contains("--max-time requires a value"));
+    }
+
+    #[test]
+    fn test_agent_max_iterations_invalid_value() {
+        let mut stderr = String::new();
+        let a: Vec<String> = vec!["--max-iterations".into(), "abc".into()];
+        let result = parse_agent_flags(&a, &mut stderr);
+        assert!(result.is_none());
+        assert!(stderr.contains("positive integer"));
+    }
+
+    #[test]
+    fn test_agent_max_time_invalid_value() {
+        let mut stderr = String::new();
+        let a: Vec<String> = vec!["--max-time".into(), "xyz".into()];
+        let result = parse_agent_flags(&a, &mut stderr);
+        assert!(result.is_none());
+        assert!(stderr.contains("positive integer"));
+    }
+
+    #[test]
+    fn test_agent_max_iterations_absent_is_none() {
+        let mut stderr = String::new();
+        let a: Vec<String> = vec!["-m".into(), "Hi".into()];
+        let flags = parse_agent_flags(&a, &mut stderr).unwrap();
+        assert!(flags.max_iterations.is_none());
+        assert!(flags.max_time.is_none());
     }
 }
