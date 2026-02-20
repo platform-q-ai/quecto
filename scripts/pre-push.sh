@@ -23,6 +23,9 @@ step() {
 step "1/11" "Quality gate"
 "$ROOT/scripts/check-quality.sh"
 
+# Belt-and-suspenders: re-run BDD gate even though pre-commit also runs it,
+# because commits can be created with --no-verify or cherry-picked from
+# branches that never ran the pre-commit hook.
 step "2/11" "BDD quality gate (stubs, always-pass tests, reimplemented logic)"
 "$ROOT/scripts/check-bdd-quality.sh"
 

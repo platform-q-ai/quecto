@@ -10,6 +10,12 @@
 #   6. Steps that discard results silently (let _ = ...block_on)
 #   7. Steps that reimplement logic instead of calling production code
 #
+# Limitations:
+#   - Tautology detection (assert_eq!(x, x)) uses \w+ so only catches simple
+#     identifiers, not dotted paths or indexed expressions.
+#   - The When-assert-only check uses a simple regex to strip assert calls,
+#     which cannot handle nested parentheses in assert arguments.
+#
 # Exit 0 = pass, Exit 1 = one or more violations found.
 set -euo pipefail
 
@@ -18,7 +24,8 @@ YELLOW='\033[0;33m'
 GREEN='\033[0;32m'
 NC='\033[0m'
 
-BDD_FILE="tests/bdd.rs"
+# Allow override via env var for multi-file repos or testing.
+BDD_FILE="${BDD_FILE:-tests/bdd.rs}"
 
 if [ ! -f "$BDD_FILE" ]; then
     echo -e "${RED}FAIL${NC}: $BDD_FILE not found"
@@ -55,6 +62,7 @@ echo ""
 
 # ───────────────────────────────────────────────────────────────
 # 1. Tautological assertions — assert!(true), assert!(false == false), etc.
+#    Note: \w+ only catches simple identifiers, not foo.bar or v[0].
 # ───────────────────────────────────────────────────────────────
 matches=$(grep -nP 'assert!\(\s*true\s*\)' "$BDD_FILE" || true)
 fail "assert!(true) — tautological assertion (always passes)" "$matches"
@@ -82,7 +90,6 @@ fail 'panic!("not implemented...") in step definitions' "$matches"
 
 # ───────────────────────────────────────────────────────────────
 # 3. TODO/FIXME/HACK/STUB comments in test code.
-#    We exclude the check script itself if it shows up somehow.
 # ───────────────────────────────────────────────────────────────
 matches=$(grep -nP '//\s*(TODO|FIXME|HACK|STUB)\b' "$BDD_FILE" || true)
 fail "TODO/FIXME/HACK/STUB comments in step definitions (resolve before committing)" "$matches"
@@ -108,151 +115,80 @@ combined_discards=$(printf "%s\n%s" "$matches" "$matches2" | sed '/^$/d')
 fail "Discarded block_on result (errors swallowed silently, use .unwrap() or ?)" "$combined_discards"
 
 # ───────────────────────────────────────────────────────────────
-# 5. Then steps with no assertions.
-#    A Then step that contains zero assert!/assert_eq!/assert_ne!/panic!/.unwrap()/.expect(
-#    is a test that always passes regardless of outcome.
+# 5-7. Structural step-body analysis (single awk pass).
 #
-#    Strategy: extract each #[then(...)] function body and check for assertions.
-#    We use awk to extract function bodies between #[then and the next #[given/when/then/fn main
+# Extracts #[then] and #[when] function bodies using brace-depth
+# tracking, then checks:
+#   5. Then steps with no assertions (hard fail)
+#   6. Empty When steps / no-op stubs (hard fail)
+#   7. When steps that only assert (warning)
+#
+# Handles: multi-line fn signatures, async fn, pub fn.
+# Uses gsub-count for brace depth (no per-char split).
 # ───────────────────────────────────────────────────────────────
-then_no_assert=$(awk '
-    /^#\[then/ {
-        in_then = 1
-        header = $0
-        body = ""
-        fn_line = 0
-        brace_depth = 0
-        seen_open = 0
-        next
-    }
-    in_then && !fn_line && /^fn / {
-        fn_line = NR
-        fn_name = $0
-    }
-    in_then && fn_line > 0 {
-        body = body "\n" $0
-        # Count braces
-        n = split($0, chars, "")
-        for (i = 1; i <= n; i++) {
-            if (chars[i] == "{") { brace_depth++; seen_open = 1 }
-            if (chars[i] == "}") brace_depth--
-        }
-        # Only check for end when we have seen at least one { and depth returns to 0
-        if (seen_open && brace_depth <= 0) {
-            # Function body complete — check for assertions
-            has_assert = 0
-            if (body ~ /assert!/ || body ~ /assert_eq!/ || body ~ /assert_ne!/ || \
-                body ~ /\.unwrap\(/ || body ~ /\.expect\(/ || body ~ /panic!/) {
-                has_assert = 1
-            }
-            if (!has_assert) {
-                printf "%d: %s — Then step has no assertion\n", fn_line, fn_name
-            }
-            in_then = 0
-            fn_line = 0
-            body = ""
-            brace_depth = 0
-            seen_open = 0
-        }
-    }
-' "$BDD_FILE" || true)
-fail "Then steps with no assertions (tests that always pass)" "$then_no_assert"
+step_analysis=$(awk '
+    # Detect step attribute
+    /^#\[then/ { step_type = "then"; in_step = 1; fn_line = 0; body = ""; brace_depth = 0; seen_open = 0; next }
+    /^#\[when/ { step_type = "when"; in_step = 1; fn_line = 0; body = ""; brace_depth = 0; seen_open = 0; next }
 
-# ───────────────────────────────────────────────────────────────
-# 6. Empty When steps (no-op / stub).
-#    A When step whose body is only comments or whitespace is a stub.
-#    These indicate the step doesn't actually exercise any code.
-# ───────────────────────────────────────────────────────────────
-when_noop=$(awk '
-    /^#\[when/ {
-        in_when = 1
-        fn_line = 0
-        body = ""
-        brace_depth = 0
-        seen_open = 0
-        next
-    }
-    in_when && !fn_line && /^fn / {
+    # Detect fn line (handles: fn, pub fn, async fn, pub async fn, indented)
+    in_step && !fn_line && /^\s*(pub\s+)?(async\s+)?fn / {
         fn_line = NR
         fn_name = $0
     }
-    in_when && fn_line > 0 {
-        body = body "\n" $0
-        n = split($0, chars, "")
-        for (i = 1; i <= n; i++) {
-            if (chars[i] == "{") { brace_depth++; seen_open = 1 }
-            if (chars[i] == "}") brace_depth--
-        }
-        if (seen_open && brace_depth <= 0) {
-            # Strip everything up to and including the first {, then strip
-            # comments and whitespace from the remaining body.
-            clean = body
-            sub(/^[^{]*\{/, "", clean)   # remove fn signature through opening brace
-            sub(/\}[^}]*$/, "", clean)   # remove closing brace
-            gsub(/\/\/[^\n]*/, "", clean)
-            gsub(/[ \t\n]/, "", clean)
-            if (clean == "") {
-                printf "%d: %s — When step is a no-op (empty body)\n", fn_line, fn_name
-            }
-            in_when = 0
-            fn_line = 0
-            body = ""
-            brace_depth = 0
-            seen_open = 0
-        }
-    }
-' "$BDD_FILE" || true)
-fail "When steps that are no-ops (stub implementations that test nothing)" "$when_noop"
 
-# ───────────────────────────────────────────────────────────────
-# 7. When steps that only assert (no action).
-#    A When step should perform an action, not just check preconditions.
-#    If the only non-comment content is assert!(), it's misused.
-# ───────────────────────────────────────────────────────────────
-when_assert_only=$(awk '
-    /^#\[when/ {
-        in_when = 1
-        fn_line = 0
-        body = ""
-        brace_depth = 0
-        seen_open = 0
-        next
-    }
-    in_when && !fn_line && /^fn / {
-        fn_line = NR
-        fn_name = $0
-    }
-    in_when && fn_line > 0 {
+    in_step && fn_line > 0 {
         body = body "\n" $0
-        n = split($0, chars, "")
-        for (i = 1; i <= n; i++) {
-            if (chars[i] == "{") { brace_depth++; seen_open = 1 }
-            if (chars[i] == "}") brace_depth--
-        }
+        # Count braces via gsub (returns replacement count)
+        line = $0
+        brace_depth += gsub(/{/, "{", line)
+        brace_depth -= gsub(/}/, "}", line)
+        if (brace_depth > 0) seen_open = 1
+
+        # Function body complete when braces balance after seeing at least one {
         if (seen_open && brace_depth <= 0) {
-            # Strip fn signature through opening brace
-            clean = body
-            sub(/^[^{]*\{/, "", clean)
-            sub(/\}[^}]*$/, "", clean)
-            gsub(/\/\/[^\n]*/, "", clean)
-            gsub(/[ \t\n]/, "", clean)
-            # Check: non-empty but ONLY assert! calls
-            if (clean != "" && clean ~ /^assert/) {
-                no_assert = clean
-                gsub(/assert[a-z_]*!\([^)]*\)[;]*/, "", no_assert)
-                gsub(/[ \t\n]/, "", no_assert)
-                if (no_assert == "") {
-                    printf "%d: %s — When step only asserts (no action)\n", fn_line, fn_name
+            if (step_type == "then") {
+                # Check 5: Then steps with no assertions
+                has_assert = 0
+                if (body ~ /assert!/ || body ~ /assert_eq!/ || body ~ /assert_ne!/ || \
+                    body ~ /\.unwrap\(/ || body ~ /\.expect\(/ || body ~ /panic!/) {
+                    has_assert = 1
+                }
+                if (!has_assert) {
+                    printf "THEN_NO_ASSERT|%d: %s — Then step has no assertion\n", fn_line, fn_name
+                }
+            } else if (step_type == "when") {
+                # Extract body content (strip fn signature through opening brace, closing brace)
+                clean = body
+                sub(/^[^{]*\{/, "", clean)
+                sub(/\}[^}]*$/, "", clean)
+                gsub(/\/\/[^\n]*/, "", clean)
+                gsub(/[ \t\n]/, "", clean)
+
+                if (clean == "") {
+                    # Check 6: Empty When steps
+                    printf "WHEN_NOOP|%d: %s — When step is a no-op (empty body)\n", fn_line, fn_name
+                } else if (clean ~ /^assert/) {
+                    # Check 7: When steps that only assert (warning)
+                    no_assert = clean
+                    gsub(/assert[a-z_]*!\([^)]*\)[;]*/, "", no_assert)
+                    gsub(/[ \t\n]/, "", no_assert)
+                    if (no_assert == "") {
+                        printf "WHEN_ASSERT|%d: %s — When step only asserts (no action)\n", fn_line, fn_name
+                    }
                 }
             }
-            in_when = 0
-            fn_line = 0
-            body = ""
-            brace_depth = 0
-            seen_open = 0
+            in_step = 0; fn_line = 0; body = ""; brace_depth = 0; seen_open = 0
         }
     }
 ' "$BDD_FILE" || true)
+
+then_no_assert=$(echo "$step_analysis" | grep '^THEN_NO_ASSERT|' | sed 's/^THEN_NO_ASSERT|//' || true)
+when_noop=$(echo "$step_analysis" | grep '^WHEN_NOOP|' | sed 's/^WHEN_NOOP|//' || true)
+when_assert_only=$(echo "$step_analysis" | grep '^WHEN_ASSERT|' | sed 's/^WHEN_ASSERT|//' || true)
+
+fail "Then steps with no assertions (tests that always pass)" "$then_no_assert"
+fail "When steps that are no-ops (stub implementations that test nothing)" "$when_noop"
 warn "When steps that only assert preconditions instead of performing actions" "$when_assert_only"
 
 # ───────────────────────────────────────────────────────────────
