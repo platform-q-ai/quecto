@@ -113,6 +113,19 @@ struct AgentFlags {
     model_override: Option<String>,
 }
 
+/// Validate a session name: must be `-` (ephemeral) or only contain `[a-zA-Z0-9_-]`.
+/// Rejects path traversal characters like `/`, `..`, and other path-unsafe chars.
+fn is_valid_session_name(name: &str) -> bool {
+    if name == "-" {
+        return true;
+    }
+    if name.is_empty() {
+        return false;
+    }
+    name.chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
 fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<AgentFlags> {
     let mut session_name: Option<String> = None;
     let mut message: Option<String> = None;
@@ -124,7 +137,14 @@ fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<AgentFlags>
         match args[i].as_str() {
             "-s" | "--session" => {
                 if i + 1 < args.len() {
-                    session_name = Some(args[i + 1].clone());
+                    let name = &args[i + 1];
+                    if !is_valid_session_name(name) {
+                        stderr.push_str(
+                            "agent: session name must contain only alphanumeric, '-', or '_'\n",
+                        );
+                        return None;
+                    }
+                    session_name = Some(name.clone());
                     i += 2;
                 } else {
                     stderr.push_str("agent: -s requires a session name\n");
@@ -272,7 +292,10 @@ fn run_agent_session(
     };
 
     let session_store = FileSessionStore::new(base_dir);
-    let rt = match tokio::runtime::Runtime::new() {
+    let rt = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
         Ok(rt) => rt,
         Err(e) => {
             out.stderr
@@ -296,15 +319,19 @@ fn run_agent_session(
     };
 
     // System prompt is injected at call time but not persisted in session history.
-    let has_system_prompt = flags.system_prompt.is_some();
-    if let Some(system) = &flags.system_prompt {
+    // Track its index so we can remove exactly this message before saving.
+    let system_prompt_idx = if flags.system_prompt.is_some() {
+        let idx = messages.len();
         messages.push(Message {
             role: Role::System,
-            content: system.clone(),
+            content: flags.system_prompt.as_deref().unwrap_or("").to_string(),
             tool_calls: vec![],
             tool_call_id: None,
         });
-    }
+        Some(idx)
+    } else {
+        None
+    };
 
     let message = flags.message.as_deref().unwrap_or("");
     messages.push(Message {
@@ -317,18 +344,15 @@ fn run_agent_session(
     match rt.block_on(agent.process(&mut messages)) {
         Ok(result) => {
             if !ephemeral {
-                let persist: Vec<Message> = if has_system_prompt {
-                    messages
-                        .iter()
-                        .filter(|m| m.role != Role::System)
-                        .cloned()
-                        .collect()
-                } else {
-                    messages.clone()
-                };
+                // Remove the injected system prompt by its tracked index, if any.
+                if let Some(idx) = system_prompt_idx {
+                    if idx < messages.len() {
+                        messages.remove(idx);
+                    }
+                }
                 let session = Session {
                     key: session_key,
-                    messages: persist,
+                    messages: std::mem::take(&mut messages),
                 };
                 if let Err(e) = rt.block_on(session_store.save(&session)) {
                     out.stderr
@@ -1540,4 +1564,32 @@ mod tests {
     // QUECTO_BASE_DIR env-var override is tested via BDD:
     // agent_cli.feature "QUECTO_BASE_DIR environment variable overrides default base directory"
     // Env-var tests live in BDD (not here) because set_var requires an unsound block.
+
+    #[test]
+    fn test_session_name_validation() {
+        assert!(is_valid_session_name("my-chat"));
+        assert!(is_valid_session_name("chat_1"));
+        assert!(is_valid_session_name("ALLCAPS"));
+        assert!(is_valid_session_name("-")); // ephemeral
+        assert!(!is_valid_session_name("../../tmp/evil"));
+        assert!(!is_valid_session_name("foo/bar"));
+        assert!(!is_valid_session_name(".."));
+        assert!(!is_valid_session_name(""));
+        assert!(!is_valid_session_name("a b")); // spaces
+        assert!(!is_valid_session_name("a:b")); // colons
+    }
+
+    #[test]
+    fn test_agent_rejects_path_traversal_session_name() {
+        let mut stderr = String::new();
+        let a = vec![
+            "-s".into(),
+            "../../tmp/evil".into(),
+            "-m".into(),
+            "Hi".into(),
+        ];
+        let result = parse_agent_flags(&a, &mut stderr);
+        assert!(result.is_none());
+        assert!(stderr.contains("alphanumeric"));
+    }
 }

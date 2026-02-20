@@ -291,10 +291,21 @@ pub struct QuectoWorld {
     pub gateway_cred_snapshot: Option<std::collections::HashMap<String, Credential>>,
     /// Pending tool call from "the mock LLM first returns a tool call" (paired with "then returns text")
     pub pending_tool_call: Option<(String, String)>,
+    /// Whether QUECTO_BASE_DIR env var was set by this scenario (needs cleanup)
+    pub env_base_dir_set: bool,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
+/// Also cleans up QUECTO_BASE_DIR env var if a previous scenario set it.
 fn ensure_temp_dir(world: &mut QuectoWorld) {
+    // Clean up env var from a previous scenario (single-threaded BDD runner).
+    if world.env_base_dir_set {
+        // SAFETY: BDD runner is single-threaded (max_concurrent_scenarios(1)).
+        unsafe {
+            std::env::remove_var("QUECTO_BASE_DIR");
+        }
+        world.env_base_dir_set = false;
+    }
     if world._temp_dir.is_none() {
         let td = TempDir::new().expect("failed to create temp dir");
         world.cli_context.base_dir = Some(td.path().to_path_buf());
@@ -3883,6 +3894,8 @@ fn when_set_quecto_base_dir_env(world: &mut QuectoWorld) {
     unsafe {
         std::env::set_var("QUECTO_BASE_DIR", base.to_string_lossy().as_ref());
     }
+    // Track for cleanup in ensure_temp_dir (next scenario init).
+    world.env_base_dir_set = true;
     // Also clear cli_context.base_dir so the code must use the env var.
     world.cli_context.base_dir = None;
 }
@@ -4105,7 +4118,9 @@ fn given_mock_llm_tool_call_sequence(world: &mut QuectoWorld, step: &gherkin::St
             let mock = wiremock::Mock::given(wiremock::matchers::method("POST"))
                 .and(wiremock::matchers::path("/chat/completions"))
                 .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
-                .with_priority((i + 1) as u8);
+                .with_priority(
+                    u8::try_from(i + 1).expect("too many mock responses for u8 priority"),
+                );
             if i < last {
                 mock.up_to_n_times(1).mount(&server).await;
             } else {
