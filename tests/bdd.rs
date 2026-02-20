@@ -291,6 +291,8 @@ pub struct QuectoWorld {
     pub gateway_cred_snapshot: Option<std::collections::HashMap<String, Credential>>,
     /// Pending tool call from "the mock LLM first returns a tool call" (paired with "then returns text")
     pub pending_tool_call: Option<(String, String)>,
+    /// Pending parallel tool calls (name, args_json) for the parallel-then-text step
+    pub pending_parallel_calls: Option<Vec<(String, String)>>,
     /// Whether QUECTO_BASE_DIR env var was set by this scenario (needs cleanup)
     pub env_base_dir_set: bool,
     /// Wiremock URI for Anthropic mock (dual-provider scenarios)
@@ -4383,6 +4385,102 @@ fn load_session_from_disk(world: &QuectoWorld, key: &str) -> SessionOnDisk {
         })
         .collect();
     SessionOnDisk { messages }
+}
+
+// ===========================================================================
+// E2E Agentic Loop Steps (parallel tool calls)
+// ===========================================================================
+
+/// Build an OpenAI-format JSON response with multiple parallel tool calls.
+fn openai_parallel_tool_calls_json(calls: &[(String, String)]) -> serde_json::Value {
+    let tool_calls: Vec<serde_json::Value> = calls
+        .iter()
+        .enumerate()
+        .map(|(i, (name, args))| {
+            serde_json::json!({
+                "id": format!("call_{}_{}", name, i),
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "arguments": args
+                }
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "id": "chatcmpl-parallel",
+        "object": "chat.completion",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": tool_calls
+            },
+            "finish_reason": "tool_calls"
+        }],
+        "usage": {
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "total_tokens": 15
+        }
+    })
+}
+
+#[given("the mock LLM returns parallel tool calls then text:")]
+fn given_parallel_tool_calls(world: &mut QuectoWorld, step: &gherkin::Step) {
+    let table = step.table.as_ref().expect("step should have a table");
+    // Each row has pairs: tool_name, args_json, tool_name, args_json, ...
+    let mut calls = Vec::new();
+    for row in &table.rows {
+        let mut i = 0;
+        while i + 1 < row.len() {
+            let name = row[i].clone();
+            let args = row[i + 1].clone();
+            if !name.is_empty() {
+                calls.push((name, args));
+            }
+            i += 2;
+        }
+    }
+    world.pending_parallel_calls = Some(calls);
+}
+
+#[given(expr = "the final text is {string}")]
+fn given_final_text_for_parallel(world: &mut QuectoWorld, content: String) {
+    let calls = world
+        .pending_parallel_calls
+        .take()
+        .expect("no pending parallel calls");
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+
+        // First response: parallel tool calls (higher priority)
+        let body = openai_parallel_tool_calls_json(&calls);
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+
+        // Second response: final text (lower priority)
+        let text_body = openai_text_json(&content);
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(text_body))
+            .with_priority(2)
+            .mount(&server)
+            .await;
+
+        rewrite_config_to_uri(world, &new_uri);
+        std::mem::forget(server);
+    });
+    std::mem::forget(rt);
 }
 
 // ===========================================================================

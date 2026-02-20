@@ -144,9 +144,9 @@ Refactor
 @wip -> @done       Tag the feature
 ```
 
-The BDD runner (`tests/bdd.rs`) uses `.fail_on_skipped()` and runs features tagged `@wip` or `@done`. This means all completed features are regression-tested on every run. Scenarios tagged `@pending` are always excluded. All step definitions live in `tests/bdd.rs` (~4900 lines).
+The BDD runner (`tests/bdd.rs`) uses `.fail_on_skipped()` and runs features tagged `@wip` or `@done`. This means all completed features are regression-tested on every run. Scenarios tagged `@pending` are always excluded. All step definitions live in `tests/bdd.rs` (~5100 lines).
 
-Feature files live in `tests/features/`. There are 23 feature files covering: config, cli, onboard, security, sandbox_hardening, agent_tools, providers, agent_loop, session, auth, telegram, cron, subagent, heartbeat, skills, voice, observability, agent_cli, e2e_tool_use, e2e_session, e2e_subprocess, e2e_safety, e2e_providers.
+Feature files live in `tests/features/`. There are 24 feature files covering: config, cli, onboard, security, sandbox_hardening, agent_tools, providers, agent_loop, session, auth, telegram, cron, subagent, heartbeat, skills, voice, observability, agent_cli, e2e_tool_use, e2e_session, e2e_subprocess, e2e_safety, e2e_providers, e2e_agentic_loop.
 
 ## Quality gates
 
@@ -157,7 +157,7 @@ cargo fmt --check              Formatting
 cargo clippy -- -D warnings    Lints (zero warnings policy)
 cargo test --lib               319 unit tests
 cargo test --test architecture Clean Architecture boundary enforcement
-cargo test --test bdd          182 active BDD scenarios across 23 @done features
+cargo test --test bdd          190 active BDD scenarios across 24 @done features
 ```
 
 ### BDD quality gate (`scripts/check-bdd-quality.sh`)
