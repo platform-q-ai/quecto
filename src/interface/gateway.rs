@@ -8,6 +8,7 @@ use crate::domain::agent::AgentLoop;
 use crate::domain::message::{Message, Role};
 use crate::domain::provider::LlmProvider;
 use crate::domain::session::{Session, SessionStore};
+use crate::infrastructure::auth::credential_store::CredentialStore;
 use crate::infrastructure::bus::{InboundMessage, MessageBus, OutboundMessage};
 use crate::infrastructure::channels::telegram::{TelegramChannel, TelegramUpdate};
 use crate::infrastructure::config::Config;
@@ -234,6 +235,30 @@ impl Gateway {
         PathBuf::from(ws)
     }
 
+    /// Resolve an API key for a provider: credential store takes priority over config.
+    /// Expired credentials are ignored (falls back to config key).
+    pub fn resolve_api_key(config_key: &str, store: &CredentialStore, provider: &str) -> String {
+        if let Ok(Some(cred)) = store.get(provider) {
+            if !cred.is_expired() {
+                return cred.token;
+            }
+        }
+        config_key.to_string()
+    }
+
+    /// Check which providers have expired credentials and need re-authentication.
+    pub fn check_provider_readiness(store: &CredentialStore) -> Vec<String> {
+        let mut needs_reauth = Vec::new();
+        if let Ok(list) = store.list() {
+            for cred in &list {
+                if cred.is_expired() {
+                    needs_reauth.push(cred.provider.clone());
+                }
+            }
+        }
+        needs_reauth
+    }
+
     /// Telegram long-polling task.
     async fn run_telegram_polling(
         telegram: TelegramChannel,
@@ -435,5 +460,126 @@ mod tests {
             "expected NoProviders, got: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_resolve_api_key_from_credential_store() {
+        use crate::infrastructure::auth::credential_store::{
+            AuthMethod, Credential, CredentialStore,
+        };
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = CredentialStore::new(tmp.path());
+        store
+            .store(Credential {
+                provider: "openai".to_string(),
+                token: "sk-from-store".to_string(),
+                method: AuthMethod::Token,
+                expires_at: None,
+            })
+            .unwrap();
+
+        let config: Config = serde_json::from_str("{}").unwrap();
+        let resolved = Gateway::resolve_api_key(&config.providers.openai.api_key, &store, "openai");
+        assert_eq!(resolved, "sk-from-store");
+    }
+
+    #[test]
+    fn test_resolve_api_key_prefers_store_over_config() {
+        use crate::infrastructure::auth::credential_store::{
+            AuthMethod, Credential, CredentialStore,
+        };
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = CredentialStore::new(tmp.path());
+        store
+            .store(Credential {
+                provider: "openai".to_string(),
+                token: "sk-from-store".to_string(),
+                method: AuthMethod::Token,
+                expires_at: None,
+            })
+            .unwrap();
+
+        let config: Config =
+            serde_json::from_str(r#"{"providers": {"openai": {"api_key": "sk-from-config"}}}"#)
+                .unwrap();
+        let resolved = Gateway::resolve_api_key(&config.providers.openai.api_key, &store, "openai");
+        assert_eq!(resolved, "sk-from-store");
+    }
+
+    #[test]
+    fn test_resolve_api_key_falls_back_to_config() {
+        use crate::infrastructure::auth::credential_store::CredentialStore;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = CredentialStore::new(tmp.path());
+        // No credential stored
+
+        let config: Config =
+            serde_json::from_str(r#"{"providers": {"openai": {"api_key": "sk-from-config"}}}"#)
+                .unwrap();
+        let resolved = Gateway::resolve_api_key(&config.providers.openai.api_key, &store, "openai");
+        assert_eq!(resolved, "sk-from-config");
+    }
+
+    #[test]
+    fn test_resolve_api_key_ignores_expired_credential() {
+        use crate::infrastructure::auth::credential_store::{
+            AuthMethod, Credential, CredentialStore,
+        };
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = CredentialStore::new(tmp.path());
+        store
+            .store(Credential {
+                provider: "openai".to_string(),
+                token: "sk-expired".to_string(),
+                method: AuthMethod::Token,
+                expires_at: Some(0), // always expired
+            })
+            .unwrap();
+
+        let config: Config =
+            serde_json::from_str(r#"{"providers": {"openai": {"api_key": "sk-from-config"}}}"#)
+                .unwrap();
+        let resolved = Gateway::resolve_api_key(&config.providers.openai.api_key, &store, "openai");
+        assert_eq!(resolved, "sk-from-config");
+    }
+
+    #[test]
+    fn test_check_provider_readiness_reports_expired() {
+        use crate::infrastructure::auth::credential_store::{
+            AuthMethod, Credential, CredentialStore,
+        };
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = CredentialStore::new(tmp.path());
+        store
+            .store(Credential {
+                provider: "openai".to_string(),
+                token: "sk-expired".to_string(),
+                method: AuthMethod::Token,
+                expires_at: Some(0),
+            })
+            .unwrap();
+
+        let needs_reauth = Gateway::check_provider_readiness(&store);
+        assert!(needs_reauth.contains(&"openai".to_string()));
+    }
+
+    #[test]
+    fn test_check_provider_readiness_active_is_empty() {
+        use crate::infrastructure::auth::credential_store::{
+            AuthMethod, Credential, CredentialStore,
+        };
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = CredentialStore::new(tmp.path());
+        store
+            .store(Credential {
+                provider: "openai".to_string(),
+                token: "sk-active".to_string(),
+                method: AuthMethod::Token,
+                expires_at: None,
+            })
+            .unwrap();
+
+        let needs_reauth = Gateway::check_provider_readiness(&store);
+        assert!(needs_reauth.is_empty());
     }
 }

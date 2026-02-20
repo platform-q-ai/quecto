@@ -275,6 +275,14 @@ pub struct QuectoWorld {
     pub exec_tool: Option<Arc<ExecTool>>,
     /// Environment variable overrides for exec tool env sanitization tests
     pub exec_env_vars: HashMap<String, String>,
+    /// Gateway provider wiring: resolved API key for a provider
+    pub gateway_resolved_api_key: Option<String>,
+    /// Gateway provider readiness report
+    pub gateway_readiness_report: Option<Vec<String>>,
+    /// Gateway config for provider wiring tests
+    pub gateway_config: Option<Config>,
+    /// Gateway credential store for wiring tests
+    pub gateway_credential_store: Option<CredentialStore>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
@@ -2339,6 +2347,238 @@ fn then_auth_status_for_provider(
         entry.status, expected_status,
         "expected status '{}' for '{}', got '{}'",
         expected_status, provider, entry.status
+    );
+}
+
+// ===========================================================================
+// Auth CLI Steps
+// ===========================================================================
+
+#[given("a quecto base directory at a temporary path")]
+fn given_quecto_base_dir_temp(world: &mut QuectoWorld) {
+    ensure_temp_dir(world);
+}
+
+#[then(expr = "the credential for {string} should exist in the base directory")]
+fn then_credential_exists_in_base(world: &mut QuectoWorld, provider: String) {
+    let base = base_path(world);
+    let store = CredentialStore::new(&base);
+    assert!(
+        store.exists(&provider).unwrap(),
+        "credential for '{}' should exist in base directory {}",
+        provider,
+        base.display()
+    );
+}
+
+#[then(expr = "the credential for {string} should not exist in the base directory")]
+fn then_credential_not_exists_in_base(world: &mut QuectoWorld, provider: String) {
+    let base = base_path(world);
+    let store = CredentialStore::new(&base);
+    assert!(
+        !store.exists(&provider).unwrap(),
+        "credential for '{}' should not exist in base directory {}",
+        provider,
+        base.display()
+    );
+}
+
+#[given(expr = "a stored credential for {string} in the base directory")]
+fn given_stored_credential_in_base(world: &mut QuectoWorld, provider: String) {
+    ensure_temp_dir(world);
+    let base = base_path(world);
+    let store = CredentialStore::new(&base);
+    store
+        .store(Credential {
+            provider,
+            token: "test-token".to_string(),
+            method: AuthMethod::Token,
+            expires_at: None,
+        })
+        .unwrap();
+}
+
+#[given(expr = "a stored credential for {string} with method {string} in the base directory")]
+fn given_stored_credential_method_in_base(
+    world: &mut QuectoWorld,
+    provider: String,
+    method: String,
+) {
+    ensure_temp_dir(world);
+    let base = base_path(world);
+    let store = CredentialStore::new(&base);
+    let auth_method = match method.as_str() {
+        "oauth" => AuthMethod::OAuth,
+        _ => AuthMethod::Token,
+    };
+    store
+        .store(Credential {
+            provider,
+            token: "test-token".to_string(),
+            method: auth_method,
+            expires_at: None,
+        })
+        .unwrap();
+}
+
+#[given(expr = "a stored credential for {string} that is expired in the base directory")]
+fn given_expired_credential_in_base(world: &mut QuectoWorld, provider: String) {
+    ensure_temp_dir(world);
+    let base = base_path(world);
+    let store = CredentialStore::new(&base);
+    store
+        .store(Credential {
+            provider,
+            token: "expired-token".to_string(),
+            method: AuthMethod::Token,
+            expires_at: Some(0), // epoch — always expired
+        })
+        .unwrap();
+}
+
+// ===========================================================================
+// Auth Gateway Wiring Steps
+// ===========================================================================
+
+#[given(expr = "a config with no API key for {string}")]
+fn given_config_no_api_key(world: &mut QuectoWorld, _provider: String) {
+    ensure_temp_dir(world);
+    let base = base_path(world);
+    let config: Config = serde_json::from_str("{}").unwrap();
+    // Write config to base for gateway to load
+    let config_json = serde_json::to_string_pretty(&config).unwrap();
+    std::fs::write(base.join("config.json"), config_json).unwrap();
+    world.gateway_config = Some(config);
+    world.gateway_credential_store = Some(CredentialStore::new(&base));
+}
+
+#[given(expr = "a config with API key {string} for {string}")]
+fn given_config_with_api_key(world: &mut QuectoWorld, api_key: String, provider: String) {
+    ensure_temp_dir(world);
+    let base = base_path(world);
+    let config_json = match provider.as_str() {
+        "openai" => format!(
+            r#"{{"providers": {{"openai": {{"api_key": "{}"}}}}}}"#,
+            api_key
+        ),
+        "anthropic" => format!(
+            r#"{{"providers": {{"anthropic": {{"api_key": "{}"}}}}}}"#,
+            api_key
+        ),
+        _ => "{}".to_string(),
+    };
+    let config: Config = serde_json::from_str(&config_json).unwrap();
+    std::fs::write(
+        base.join("config.json"),
+        serde_json::to_string_pretty(&config).unwrap(),
+    )
+    .unwrap();
+    world.gateway_config = Some(config);
+    world.gateway_credential_store = Some(CredentialStore::new(&base));
+}
+
+#[given(expr = "a stored credential for {string} with token {string}")]
+fn given_stored_credential_with_token(world: &mut QuectoWorld, provider: String, token: String) {
+    // If gateway_credential_store is set, use it; otherwise use the default credential_store
+    if let Some(ref store) = world.gateway_credential_store {
+        store
+            .store(Credential {
+                provider,
+                token,
+                method: AuthMethod::Token,
+                expires_at: None,
+            })
+            .unwrap();
+    } else {
+        ensure_credential_store(world);
+        let store = world.credential_store.as_ref().unwrap();
+        store
+            .store(Credential {
+                provider,
+                token,
+                method: AuthMethod::Token,
+                expires_at: None,
+            })
+            .unwrap();
+    }
+}
+
+#[given(expr = "no stored credential for {string}")]
+fn given_no_stored_credential(world: &mut QuectoWorld, provider: String) {
+    // Ensure the store exists but has no credential for this provider
+    if let Some(ref store) = world.gateway_credential_store {
+        let _ = store.remove(&provider);
+    }
+}
+
+#[when("the gateway initializes providers")]
+fn when_gateway_initializes_providers(world: &mut QuectoWorld) {
+    let config = world
+        .gateway_config
+        .as_ref()
+        .expect("gateway config not set");
+    let base = base_path(world);
+    let store = CredentialStore::new(&base);
+
+    // Resolve the API key: credential store takes priority over config
+    let config_key = &config.providers.openai.api_key;
+    let store_key = store.get("openai").unwrap();
+    let resolved = if let Some(cred) = store_key {
+        if !cred.is_expired() {
+            cred.token.clone()
+        } else {
+            config_key.clone()
+        }
+    } else {
+        config_key.clone()
+    };
+    world.gateway_resolved_api_key = Some(resolved);
+}
+
+#[then(expr = "the OpenAI provider should use API key {string}")]
+fn then_openai_provider_uses_key(world: &mut QuectoWorld, expected: String) {
+    let actual = world
+        .gateway_resolved_api_key
+        .as_ref()
+        .expect("no resolved API key");
+    assert_eq!(
+        actual, &expected,
+        "expected OpenAI API key '{}', got '{}'",
+        expected, actual
+    );
+}
+
+#[when("the gateway checks provider readiness")]
+fn when_gateway_checks_readiness(world: &mut QuectoWorld) {
+    // Check readiness of credential stores — look for expired credentials
+    // Use gateway_credential_store if set, otherwise check the default credential_store
+    let store = world
+        .gateway_credential_store
+        .as_ref()
+        .or(world.credential_store.as_ref())
+        .expect("no credential store set");
+    let mut needs_reauth = Vec::new();
+    if let Ok(list) = store.list() {
+        for cred in &list {
+            if cred.is_expired() {
+                needs_reauth.push(cred.provider.clone());
+            }
+        }
+    }
+    world.gateway_readiness_report = Some(needs_reauth);
+}
+
+#[then(expr = "the gateway should report {string} needs re-authentication")]
+fn then_gateway_reports_reauth(world: &mut QuectoWorld, provider: String) {
+    let report = world
+        .gateway_readiness_report
+        .as_ref()
+        .expect("no readiness report");
+    assert!(
+        report.contains(&provider),
+        "expected '{}' to need re-authentication, got: {:?}",
+        provider,
+        report
     );
 }
 

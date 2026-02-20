@@ -5,8 +5,6 @@ agent: build
 
 Run the BDD development cycle for a feature. The feature to work on is specified in `$ARGUMENTS` (e.g. `sandbox_hardening`). If no argument is given, look for any `@pending` feature file in `tests/features/` and ask which one to work on.
 
-Consult `bdd-plan.md` in the repo root for the implementation order and per-feature details (step defs, unit tests, production files, dependencies).
-
 ## The Cycle
 
 Execute each step in order. Do not skip steps. Create a TodoList to track progress.

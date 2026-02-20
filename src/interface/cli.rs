@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use super::gateway::Gateway;
 use crate::application::onboard;
 use crate::domain::session::Session;
+use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
 use crate::infrastructure::config::Config;
 
 /// Result of a CLI invocation, capturing stdout, stderr, and exit code.
@@ -68,10 +69,7 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
                 0
             }
             "status" => cmd_status(ctx, &mut stdout, &mut stderr),
-            "auth" => {
-                stderr.push_str("auth: not yet implemented\n");
-                1
-            }
+            "auth" => cmd_auth(ctx, &args[2..], &mut stdout, &mut stderr),
             "cron" => {
                 stderr.push_str("cron: not yet implemented\n");
                 1
@@ -142,6 +140,165 @@ fn cmd_agent(args: &[String], stdout: &mut String, stderr: &mut String) -> i32 {
         // Interactive mode placeholder
         stderr.push_str("agent: interactive mode not yet implemented\n");
         1
+    }
+}
+
+fn cmd_auth(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &mut String) -> i32 {
+    let base = ctx.base_dir();
+
+    if args.is_empty() {
+        stderr.push_str("auth: missing subcommand (login, logout, status)\n");
+        return 1;
+    }
+
+    match args[0].as_str() {
+        "login" => cmd_auth_login(&base, &args[1..], stdout, stderr),
+        "logout" => cmd_auth_logout(&base, &args[1..], stdout, stderr),
+        "status" => cmd_auth_status(&base, stdout),
+        other => {
+            stderr.push_str(&format!("auth: unknown subcommand '{}'\n", other));
+            1
+        }
+    }
+}
+
+fn cmd_auth_login(
+    base: &std::path::Path,
+    args: &[String],
+    stdout: &mut String,
+    stderr: &mut String,
+) -> i32 {
+    let mut provider: Option<String> = None;
+    let mut token: Option<String> = None;
+    let mut i = 0;
+
+    while i < args.len() {
+        match args[i].as_str() {
+            "--provider" => {
+                if i + 1 < args.len() {
+                    provider = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    stderr.push_str("auth login: --provider requires a value\n");
+                    return 1;
+                }
+            }
+            "--token" => {
+                if i + 1 < args.len() {
+                    token = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    stderr.push_str("auth login: --token requires a value\n");
+                    return 1;
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    let Some(provider) = provider else {
+        stderr.push_str("auth login: --provider is required\n");
+        return 1;
+    };
+
+    let Some(token) = token else {
+        stderr.push_str("auth login: --token is required (interactive login not yet supported)\n");
+        return 1;
+    };
+
+    let store = CredentialStore::new(base);
+    match store.store(Credential {
+        provider: provider.clone(),
+        token,
+        method: AuthMethod::Token,
+        expires_at: None,
+    }) {
+        Ok(()) => {
+            stdout.push_str(&format!("Credential stored for {}\n", provider));
+            0
+        }
+        Err(e) => {
+            stderr.push_str(&format!("auth login: failed to store credential: {}\n", e));
+            1
+        }
+    }
+}
+
+fn cmd_auth_logout(
+    base: &std::path::Path,
+    args: &[String],
+    stdout: &mut String,
+    stderr: &mut String,
+) -> i32 {
+    let mut provider: Option<String> = None;
+    let mut i = 0;
+
+    while i < args.len() {
+        match args[i].as_str() {
+            "--provider" => {
+                if i + 1 < args.len() {
+                    provider = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    stderr.push_str("auth logout: --provider requires a value\n");
+                    return 1;
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    let Some(provider) = provider else {
+        stderr.push_str("auth logout: --provider is required\n");
+        return 1;
+    };
+
+    let store = CredentialStore::new(base);
+    match store.exists(&provider) {
+        Ok(true) => {
+            if let Err(e) = store.remove(&provider) {
+                stderr.push_str(&format!(
+                    "auth logout: failed to remove credential: {}\n",
+                    e
+                ));
+                return 1;
+            }
+            stdout.push_str(&format!("Credential removed for {}\n", provider));
+            0
+        }
+        Ok(false) => {
+            stdout.push_str(&format!("no credential found for {}\n", provider));
+            0
+        }
+        Err(e) => {
+            stderr.push_str(&format!("auth logout: failed to check credential: {}\n", e));
+            1
+        }
+    }
+}
+
+fn cmd_auth_status(base: &std::path::Path, stdout: &mut String) -> i32 {
+    let store = CredentialStore::new(base);
+    match store.status_summary() {
+        Ok(statuses) => {
+            if statuses.is_empty() {
+                stdout.push_str("no credentials stored\n");
+            } else {
+                stdout.push_str("Credentials:\n");
+                for s in &statuses {
+                    stdout.push_str(&format!("  {} ({}) — {}\n", s.provider, s.method, s.status));
+                }
+            }
+            0
+        }
+        Err(e) => {
+            stdout.push_str(&format!("failed to read credentials: {}\n", e));
+            1
+        }
     }
 }
 
@@ -509,10 +666,10 @@ mod tests {
     }
 
     #[test]
-    fn test_auth_not_implemented() {
+    fn test_auth_missing_subcommand() {
         let out = run_with_output(args("auth"), &default_ctx());
         assert_eq!(out.exit_code, 1);
-        assert!(out.stderr.contains("not yet implemented"));
+        assert!(out.stderr.contains("missing subcommand"));
     }
 
     #[test]
@@ -730,5 +887,173 @@ mod tests {
             base_dir: Some(PathBuf::from("/tmp/test-quecto")),
         };
         assert_eq!(ctx.base_dir(), PathBuf::from("/tmp/test-quecto"));
+    }
+
+    // --- Auth CLI tests ---
+
+    #[test]
+    fn test_auth_login_stores_token_openai() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(
+            args("auth login --provider openai --token sk-test-openai"),
+            &ctx,
+        );
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stdout.contains("stored"));
+
+        let store = crate::infrastructure::auth::credential_store::CredentialStore::new(tmp.path());
+        assert!(store.exists("openai").unwrap());
+        let cred = store.get("openai").unwrap().unwrap();
+        assert_eq!(cred.token, "sk-test-openai");
+    }
+
+    #[test]
+    fn test_auth_login_stores_token_anthropic() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(
+            args("auth login --provider anthropic --token sk-ant-test"),
+            &ctx,
+        );
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stdout.contains("stored"));
+    }
+
+    #[test]
+    fn test_auth_login_missing_provider() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("auth login --token sk-test"), &ctx);
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("--provider"));
+    }
+
+    #[test]
+    fn test_auth_login_missing_token() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("auth login --provider openai"), &ctx);
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("--token"));
+    }
+
+    #[test]
+    fn test_auth_logout_removes_credential() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        // First store a credential
+        let store = crate::infrastructure::auth::credential_store::CredentialStore::new(tmp.path());
+        store
+            .store(crate::infrastructure::auth::credential_store::Credential {
+                provider: "openai".to_string(),
+                token: "sk-test".to_string(),
+                method: crate::infrastructure::auth::credential_store::AuthMethod::Token,
+                expires_at: None,
+            })
+            .unwrap();
+
+        let out = run_with_output(args("auth logout --provider openai"), &ctx);
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stdout.contains("removed"));
+        assert!(!store.exists("openai").unwrap());
+    }
+
+    #[test]
+    fn test_auth_logout_nonexistent_is_noop() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("auth logout --provider openai"), &ctx);
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stdout.contains("no credential"));
+    }
+
+    #[test]
+    fn test_auth_status_shows_credentials() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = crate::infrastructure::auth::credential_store::CredentialStore::new(tmp.path());
+        store
+            .store(crate::infrastructure::auth::credential_store::Credential {
+                provider: "openai".to_string(),
+                token: "sk-test".to_string(),
+                method: crate::infrastructure::auth::credential_store::AuthMethod::Token,
+                expires_at: None,
+            })
+            .unwrap();
+
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("auth status"), &ctx);
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stdout.contains("openai"));
+        assert!(out.stdout.contains("active"));
+    }
+
+    #[test]
+    fn test_auth_status_empty() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("auth status"), &ctx);
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stdout.contains("no credentials"));
+    }
+
+    #[test]
+    fn test_auth_status_expired() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = crate::infrastructure::auth::credential_store::CredentialStore::new(tmp.path());
+        store
+            .store(crate::infrastructure::auth::credential_store::Credential {
+                provider: "anthropic".to_string(),
+                token: "expired-tok".to_string(),
+                method: crate::infrastructure::auth::credential_store::AuthMethod::Token,
+                expires_at: Some(0),
+            })
+            .unwrap();
+
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("auth status"), &ctx);
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stdout.contains("anthropic"));
+        assert!(out.stdout.contains("expired"));
+    }
+
+    #[test]
+    fn test_auth_no_subcommand() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("auth"), &ctx);
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("missing subcommand"));
+    }
+
+    #[test]
+    fn test_auth_unknown_subcommand() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("auth foobar"), &ctx);
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("unknown subcommand"));
     }
 }
