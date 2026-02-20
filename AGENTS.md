@@ -155,9 +155,9 @@ scripts/check-quality.sh       Work markers, lint bypasses, unsafe, ignored test
 scripts/check-bdd-quality.sh   BDD anti-pattern detection (tests/bdd.rs)
 cargo fmt --check              Formatting
 cargo clippy -- -D warnings    Lints (zero warnings policy)
-cargo test --lib               317 unit tests
+cargo test --lib               319 unit tests
 cargo test --test architecture Clean Architecture boundary enforcement
-cargo test --test bdd          167 active BDD scenarios across 22 @done features
+cargo test --test bdd          182 active BDD scenarios across 23 @done features
 ```
 
 ### BDD quality gate (`scripts/check-bdd-quality.sh`)
