@@ -294,7 +294,7 @@ pub struct QuectoWorld {
     /// Whether QUECTO_BASE_DIR env var was set by this scenario (needs cleanup)
     pub env_base_dir_set: bool,
     /// Wiremock URI for Anthropic mock (dual-provider scenarios)
-    pub _wiremock_anthropic_uri: Option<String>,
+    pub wiremock_anthropic_uri: Option<String>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
@@ -4560,7 +4560,7 @@ fn given_config_with_anthropic_mock(world: &mut QuectoWorld) {
     let server = rt.block_on(wiremock::MockServer::start());
     let uri = server.uri();
     // Store in anthropic-specific field, NOT _wiremock_server_uri (OpenAI)
-    world._wiremock_anthropic_uri = Some(uri.clone());
+    world.wiremock_anthropic_uri = Some(uri.clone());
 
     ensure_temp_dir(world);
     let openai_json = r#"{ "api_key": "", "api_base": "" }"#;
@@ -4586,7 +4586,7 @@ fn given_config_with_both_providers(world: &mut QuectoWorld) {
 
     ensure_temp_dir(world);
     world._wiremock_server_uri = Some(openai_uri.clone());
-    world._wiremock_anthropic_uri = Some(anthropic_uri.clone());
+    world.wiremock_anthropic_uri = Some(anthropic_uri.clone());
 
     let openai_json = format!(r#"{{ "api_key": "sk-test-key", "api_base": "{openai_uri}" }}"#);
     let anthropic_json =
@@ -4600,7 +4600,7 @@ fn given_config_with_both_providers(world: &mut QuectoWorld) {
 fn rewrite_openai_in_config(world: &mut QuectoWorld, new_uri: &str) {
     let base = base_path(world);
     let workspace = base.join("workspace");
-    let anthropic_uri = world._wiremock_anthropic_uri.as_deref().unwrap_or("");
+    let anthropic_uri = world.wiremock_anthropic_uri.as_deref().unwrap_or("");
     let anthropic_key = if anthropic_uri.is_empty() {
         ""
     } else {
@@ -4627,6 +4627,37 @@ fn rewrite_openai_in_config(world: &mut QuectoWorld, new_uri: &str) {
     world._wiremock_server_uri = Some(new_uri.to_string());
 }
 
+/// Helper: rewrite config with a new Anthropic URI, preserving OpenAI if present.
+fn rewrite_anthropic_in_config(world: &mut QuectoWorld, new_uri: &str) {
+    let base = base_path(world);
+    let workspace = base.join("workspace");
+    let openai_uri = world._wiremock_server_uri.as_deref().unwrap_or("");
+    let openai_key = if openai_uri.is_empty() {
+        ""
+    } else {
+        "sk-test-key"
+    };
+    let config_json = format!(
+        r#"{{
+  "providers": {{
+    "openai": {{ "api_key": "{openai_key}", "api_base": "{openai_uri}" }},
+    "anthropic": {{ "api_key": "sk-ant-test", "api_base": "{new_uri}" }}
+  }},
+  "agents": {{
+    "defaults": {{
+      "workspace": "{workspace}"
+    }}
+  }}
+}}"#,
+        openai_key = openai_key,
+        openai_uri = openai_uri,
+        new_uri = new_uri,
+        workspace = workspace.display()
+    );
+    std::fs::write(base.join("config.json"), config_json).expect("rewrite config");
+    world.wiremock_anthropic_uri = Some(new_uri.to_string());
+}
+
 #[given(expr = "the Anthropic mock returns an HTTP {int} error")]
 fn given_anthropic_mock_error(world: &mut QuectoWorld, status: u16) {
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -4639,34 +4670,7 @@ fn given_anthropic_mock_error(world: &mut QuectoWorld, status: u16) {
             .mount(&server)
             .await;
 
-        // Rewrite config, preserving OpenAI URI
-        let base = base_path(world);
-        let workspace = base.join("workspace");
-        let openai_uri = world._wiremock_server_uri.as_deref().unwrap_or("");
-        let openai_key = if openai_uri.is_empty() {
-            ""
-        } else {
-            "sk-test-key"
-        };
-        let config_json = format!(
-            r#"{{
-  "providers": {{
-    "openai": {{ "api_key": "{openai_key}", "api_base": "{openai_uri}" }},
-    "anthropic": {{ "api_key": "sk-ant-test", "api_base": "{new_uri}" }}
-  }},
-  "agents": {{
-    "defaults": {{
-      "workspace": "{workspace}"
-    }}
-  }}
-}}"#,
-            openai_key = openai_key,
-            openai_uri = openai_uri,
-            new_uri = new_uri,
-            workspace = workspace.display()
-        );
-        std::fs::write(base.join("config.json"), config_json).expect("rewrite config");
-        world._wiremock_anthropic_uri = Some(new_uri);
+        rewrite_anthropic_in_config(world, &new_uri);
         std::mem::forget(server);
     });
     std::mem::forget(rt);
@@ -4685,34 +4689,7 @@ fn given_anthropic_mock_text_response(world: &mut QuectoWorld, content: String) 
             .mount(&server)
             .await;
 
-        // Rewrite config, preserving OpenAI URI
-        let base = base_path(world);
-        let workspace = base.join("workspace");
-        let openai_uri = world._wiremock_server_uri.as_deref().unwrap_or("");
-        let openai_key = if openai_uri.is_empty() {
-            ""
-        } else {
-            "sk-test-key"
-        };
-        let config_json = format!(
-            r#"{{
-  "providers": {{
-    "openai": {{ "api_key": "{openai_key}", "api_base": "{openai_uri}" }},
-    "anthropic": {{ "api_key": "sk-ant-test", "api_base": "{new_uri}" }}
-  }},
-  "agents": {{
-    "defaults": {{
-      "workspace": "{workspace}"
-    }}
-  }}
-}}"#,
-            openai_key = openai_key,
-            openai_uri = openai_uri,
-            new_uri = new_uri,
-            workspace = workspace.display()
-        );
-        std::fs::write(base.join("config.json"), config_json).expect("rewrite config");
-        world._wiremock_anthropic_uri = Some(new_uri);
+        rewrite_anthropic_in_config(world, &new_uri);
         std::mem::forget(server);
     });
     std::mem::forget(rt);

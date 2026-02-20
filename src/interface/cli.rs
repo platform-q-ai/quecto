@@ -187,12 +187,12 @@ fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<AgentFlags>
             "--max-iterations" => {
                 if i + 1 < args.len() {
                     match args[i + 1].parse::<u32>() {
-                        Ok(n) => max_iterations = Some(n),
-                        Err(_) => {
+                        Ok(0) | Err(_) => {
                             stderr
                                 .push_str("agent: --max-iterations requires a positive integer\n");
                             return None;
                         }
+                        Ok(n) => max_iterations = Some(n),
                     }
                     i += 2;
                 } else {
@@ -203,11 +203,11 @@ fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<AgentFlags>
             "--max-time" => {
                 if i + 1 < args.len() {
                     match args[i + 1].parse::<u64>() {
-                        Ok(n) => max_time = Some(n),
-                        Err(_) => {
+                        Ok(0) | Err(_) => {
                             stderr.push_str("agent: --max-time requires a positive integer\n");
                             return None;
                         }
+                        Ok(n) => max_time = Some(n),
                     }
                     i += 2;
                 } else {
@@ -335,10 +335,7 @@ fn run_agent_session(
     };
 
     let session_store = FileSessionStore::new(base_dir);
-    let rt = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
+    let rt = match build_tokio_runtime() {
         Ok(rt) => rt,
         Err(e) => {
             out.stderr
@@ -385,17 +382,15 @@ fn run_agent_session(
     });
 
     let agent_result = if let Some(secs) = flags.max_time {
-        run_with_wall_clock_timeout(&rt, &agent, &mut messages, secs)
-    } else {
-        Ok(rt.block_on(agent.process(&mut messages)))
-    };
-
-    let agent_result = match agent_result {
-        Ok(inner) => inner,
-        Err(_) => {
-            out.stderr.push_str("max-time exceeded\n");
-            return 2;
+        match run_with_deadline(&rt, &agent, &mut messages, secs) {
+            DeadlineResult::Completed(inner) => inner,
+            DeadlineResult::TimedOut => {
+                out.stderr.push_str("max-time exceeded\n");
+                return 2;
+            }
         }
+    } else {
+        rt.block_on(agent.process(&mut messages))
     };
 
     match agent_result {
@@ -426,18 +421,38 @@ fn run_agent_session(
     }
 }
 
-/// Run the agent with a wall-clock timeout. Returns `Err(())` on timeout.
-fn run_with_wall_clock_timeout(
+/// Build a tokio runtime for CLI agent execution.
+fn build_tokio_runtime() -> Result<tokio::runtime::Runtime, std::io::Error> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+}
+
+/// Outcome of a deadline-bounded agent run.
+enum DeadlineResult {
+    /// Agent completed (successfully or with error) within the deadline.
+    Completed(Result<crate::domain::agent::AgentResult, crate::domain::error::DomainError>),
+    /// The deadline expired before the agent finished.
+    TimedOut,
+}
+
+/// Run the agent with a wall-clock deadline.
+///
+/// Uses `thread::scope` + `recv_timeout` so the deadline is enforced without
+/// requiring `tokio::time::timeout` (which needs an active reactor context
+/// that may conflict with test harness runtimes). After timeout, the scoped
+/// thread still runs until the in-flight LLM/tool call completes (bounded by
+/// per-tool and HTTP client timeouts), then the scope exits.
+fn run_with_deadline(
     rt: &tokio::runtime::Runtime,
     agent: &AgentLoopImpl,
     messages: &mut Vec<Message>,
     timeout_secs: u64,
-) -> Result<Result<crate::domain::agent::AgentResult, crate::domain::error::DomainError>, ()> {
+) -> DeadlineResult {
     let dur = std::time::Duration::from_secs(timeout_secs);
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
     let deadline = std::time::Instant::now() + dur;
 
-    // Run the agent in a separate thread so we can enforce a wall-clock deadline.
     std::thread::scope(|s| {
         s.spawn(|| {
             let result = rt.block_on(agent.process(messages));
@@ -446,8 +461,8 @@ fn run_with_wall_clock_timeout(
 
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         match rx.recv_timeout(remaining) {
-            Ok(result) => Ok(result),
-            Err(_) => Err(()),
+            Ok(result) => DeadlineResult::Completed(result),
+            Err(_) => DeadlineResult::TimedOut,
         }
     })
 }
@@ -1727,6 +1742,24 @@ mod tests {
     fn test_agent_max_time_invalid_value() {
         let mut stderr = String::new();
         let a: Vec<String> = vec!["--max-time".into(), "xyz".into()];
+        let result = parse_agent_flags(&a, &mut stderr);
+        assert!(result.is_none());
+        assert!(stderr.contains("positive integer"));
+    }
+
+    #[test]
+    fn test_agent_max_iterations_zero_rejected() {
+        let mut stderr = String::new();
+        let a: Vec<String> = vec!["--max-iterations".into(), "0".into()];
+        let result = parse_agent_flags(&a, &mut stderr);
+        assert!(result.is_none());
+        assert!(stderr.contains("positive integer"));
+    }
+
+    #[test]
+    fn test_agent_max_time_zero_rejected() {
+        let mut stderr = String::new();
+        let a: Vec<String> = vec!["--max-time".into(), "0".into()];
         let result = parse_agent_flags(&a, &mut stderr);
         assert!(result.is_none());
         assert!(stderr.contains("positive integer"));
