@@ -30,7 +30,6 @@ impl OpenAiProvider {
         let tools = request.tools;
         let model = request.model;
         let max_tokens = request.max_tokens;
-        let temperature = request.temperature;
         let msgs: Vec<serde_json::Value> = messages
             .iter()
             .map(|m| {
@@ -71,8 +70,7 @@ impl OpenAiProvider {
         let mut body = serde_json::json!({
             "model": model,
             "messages": msgs,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
+            "max_completion_tokens": max_tokens,
         });
 
         if !tools.is_empty() {

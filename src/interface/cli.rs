@@ -1033,7 +1033,7 @@ mod tests {
     fn test_status_shows_summary() {
         let tmp = tempfile::TempDir::new().unwrap();
         let config_json = r#"{
-            "agents": { "defaults": { "model": "gpt-4o" } },
+            "agents": { "defaults": { "model": "gpt-5-nano" } },
             "providers": {
                 "openai": { "api_key": "sk-test" },
                 "anthropic": { "api_key": "" }
@@ -1052,7 +1052,7 @@ mod tests {
                 "Config:",
                 "Workspace:",
                 "Model:",
-                "gpt-4o",
+                "gpt-5-nano",
                 "OpenAI API:",
                 "configured",
                 "Anthropic API:",
