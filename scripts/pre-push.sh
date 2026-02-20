@@ -20,33 +20,36 @@ step() {
 
 # --- Pre-commit checks ---
 
-step "1/10" "Quality gate"
+step "1/11" "Quality gate"
 "$ROOT/scripts/check-quality.sh"
 
-step "2/10" "cargo fmt --check"
+step "2/11" "BDD quality gate (stubs, always-pass tests, reimplemented logic)"
+"$ROOT/scripts/check-bdd-quality.sh"
+
+step "3/11" "cargo fmt --check"
 cargo fmt --all -- --check
 
-step "3/10" "cargo clippy (strict)"
+step "4/11" "cargo clippy (strict)"
 cargo clippy --all-targets -- -D warnings \
     -W clippy::cognitive_complexity \
     -W clippy::too_many_arguments \
     -W clippy::too_many_lines
 
-step "4/10" "cargo build --all-targets"
+step "5/11" "cargo build --all-targets"
 cargo build --all-targets
 
-step "5/10" "cargo test --lib (unit tests)"
+step "6/11" "cargo test --lib (unit tests)"
 cargo test --lib
 
-step "6/10" "cargo test --test architecture (boundary enforcement)"
+step "7/11" "cargo test --test architecture (boundary enforcement)"
 cargo test --test architecture
 
 # --- Additional pre-push checks ---
 
-step "7/10" "cargo test --test bdd (BDD integration tests)"
+step "8/11" "cargo test --test bdd (BDD integration tests)"
 cargo test --test bdd
 
-step "8/10" "cargo tarpaulin (code coverage)"
+step "9/11" "cargo tarpaulin (code coverage)"
 if command -v cargo-tarpaulin &>/dev/null; then
     cargo tarpaulin
 else
@@ -54,7 +57,7 @@ else
     echo "  Install with: cargo install cargo-tarpaulin --locked"
 fi
 
-step "9/10" "cargo machete (unused dependencies)"
+step "10/11" "cargo machete (unused dependencies)"
 if command -v cargo-machete &>/dev/null; then
     cargo machete
 else
@@ -62,7 +65,7 @@ else
     echo "  Install with: cargo install cargo-machete --locked"
 fi
 
-step "10/10" "cargo deny check (licenses, advisories, bans)"
+step "11/11" "cargo deny check (licenses, advisories, bans)"
 if command -v cargo-deny &>/dev/null; then
     cargo deny check
 else

@@ -24,6 +24,12 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Quality gate
+        run: ./scripts/check-quality.sh
+
+      - name: BDD quality gate
+        run: ./scripts/check-bdd-quality.sh
+
       - name: Format check
         run: cargo fmt --all -- --check
 

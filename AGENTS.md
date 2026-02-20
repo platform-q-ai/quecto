@@ -136,11 +136,38 @@ Feature files live in `tests/features/`. There are 17 feature files covering: co
 ## Quality gates
 
 ```
+scripts/check-quality.sh       Work markers, lint bypasses, unsafe, ignored tests (src/)
+scripts/check-bdd-quality.sh   BDD anti-pattern detection (tests/bdd.rs)
 cargo fmt --check              Formatting
 cargo clippy -- -D warnings    Lints (zero warnings policy)
 cargo test --lib               295 unit tests
+cargo test --test architecture Clean Architecture boundary enforcement
 cargo test --test bdd          134 active BDD scenarios across 17 @done features
 ```
+
+### BDD quality gate (`scripts/check-bdd-quality.sh`)
+
+Static analysis that blocks commits when step definitions violate BDD best practices. Steps should test application functions, not reimplement their own logic.
+
+**Hard failures (block commit):**
+
+| Check | What it catches |
+|---|---|
+| Tautological assertions | `assert!(true)`, `assert_eq!(x, x)` — tests that can never fail |
+| Placeholder macros | `todo!()`, `unimplemented!()`, `panic!("not implemented")` in test code |
+| TODO/FIXME/HACK/STUB comments | Unresolved work markers in step definitions |
+| Discarded async results | `let _ = ...block_on(...)` — silently swallowed errors |
+| Then steps with no assertions | Then steps whose body has no `assert!`/`unwrap()`/`expect()`/`panic!` |
+| No-op When steps | When steps with empty bodies (comment-only stubs) |
+| Silent error swallowing | `Err(_) => {}` — catch-all match arms that ignore errors |
+
+**Warnings (non-blocking):**
+
+| Check | What it catches |
+|---|---|
+| When steps that only assert | When steps that check preconditions instead of performing actions |
+| Hand-rolled char parsing | `for ch in s.chars()` loops (should delegate to production code) |
+| Manual JSON construction | `serde_json::Map::new()` (should use production serializers or helpers) |
 
 ## Tech stack
 

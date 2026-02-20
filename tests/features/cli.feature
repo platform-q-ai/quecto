@@ -38,16 +38,5 @@ Feature: CLI Interface
     And the stderr should contain "Unknown command: foobar"
     And the output should contain "Usage: quecto <command>"
 
-  @pending
-  Scenario: Agent one-shot mode
-    Given a valid config file with an API key
-    When I run quecto with arguments "agent -m \"Hello\""
-    Then the exit code should be 0
-    And the output should not be empty
-
-  @pending
-  Scenario: Agent interactive mode exits on quit
-    Given a valid config file with an API key
-    When I start quecto agent in interactive mode
-    And I type "quit"
-    Then the process should exit cleanly
+  # Agent one-shot mode is covered in agent_cli.feature
+  # Agent interactive mode is out of scope (headless-first design)
