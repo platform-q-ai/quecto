@@ -1,11 +1,20 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use super::gateway::Gateway;
+use super::gateway::{Gateway, resolve_api_key};
+use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::onboard;
-use crate::domain::session::Session;
+use crate::domain::agent::AgentLoop;
+use crate::domain::message::{Message, Role};
+use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
 use crate::infrastructure::config::Config;
+use crate::infrastructure::persistence::session_store::FileSessionStore;
+use crate::infrastructure::providers;
+use crate::infrastructure::providers::fallback::FallbackProvider;
+use crate::infrastructure::security::sandbox::Sandbox;
+use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
 /// Result of a CLI invocation, capturing stdout, stderr, and exit code.
 #[derive(Debug, Clone)]
@@ -23,10 +32,11 @@ pub struct CliContext {
 }
 
 impl CliContext {
-    /// Resolve the base directory: use override if set, otherwise default.
+    /// Resolve the base directory: explicit override > QUECTO_BASE_DIR env var > default.
     fn base_dir(&self) -> PathBuf {
         self.base_dir
             .clone()
+            .or_else(|| std::env::var("QUECTO_BASE_DIR").ok().map(PathBuf::from))
             .or_else(onboard::default_base_dir)
             .unwrap_or_else(|| PathBuf::from(".quecto"))
     }
@@ -63,7 +73,7 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
     } else {
         match args[1].as_str() {
             "onboard" => cmd_onboard(ctx, &mut stdout, &mut stderr),
-            "agent" => cmd_agent(&args[2..], &mut stdout, &mut stderr),
+            "agent" => cmd_agent(ctx, &args[2..], &mut stdout, &mut stderr),
             "gateway" => {
                 stdout.push_str("Use 'quecto gateway' to start the gateway service\n");
                 0
@@ -94,20 +104,51 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
     }
 }
 
-fn cmd_agent(args: &[String], stdout: &mut String, stderr: &mut String) -> i32 {
+/// Parsed flags for the `agent` subcommand.
+struct AgentFlags {
+    /// Session name for persistence. `None` = "default", `Some("-")` = ephemeral.
+    session_name: Option<String>,
+    message: Option<String>,
+    system_prompt: Option<String>,
+    model_override: Option<String>,
+}
+
+/// Validate a session name: must be `-` (ephemeral) or only contain `[a-zA-Z0-9_-]`.
+/// Rejects path traversal characters like `/`, `..`, and other path-unsafe chars.
+fn is_valid_session_name(name: &str) -> bool {
+    if name == "-" {
+        return true;
+    }
+    if name.is_empty() {
+        return false;
+    }
+    name.chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<AgentFlags> {
     let mut session_name: Option<String> = None;
     let mut message: Option<String> = None;
+    let mut system_prompt: Option<String> = None;
+    let mut model_override: Option<String> = None;
     let mut i = 0;
 
     while i < args.len() {
         match args[i].as_str() {
             "-s" | "--session" => {
                 if i + 1 < args.len() {
-                    session_name = Some(args[i + 1].clone());
+                    let name = &args[i + 1];
+                    if !is_valid_session_name(name) {
+                        stderr.push_str(
+                            "agent: session name must contain only alphanumeric, '-', or '_'\n",
+                        );
+                        return None;
+                    }
+                    session_name = Some(name.clone());
                     i += 2;
                 } else {
                     stderr.push_str("agent: -s requires a session name\n");
-                    return 1;
+                    return None;
                 }
             }
             "-m" | "--message" => {
@@ -116,7 +157,25 @@ fn cmd_agent(args: &[String], stdout: &mut String, stderr: &mut String) -> i32 {
                     i += 2;
                 } else {
                     stderr.push_str("agent: -m requires a message\n");
-                    return 1;
+                    return None;
+                }
+            }
+            "--system" => {
+                if i + 1 < args.len() {
+                    system_prompt = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    stderr.push_str("agent: --system requires a value\n");
+                    return None;
+                }
+            }
+            "--model" => {
+                if i + 1 < args.len() {
+                    model_override = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    stderr.push_str("agent: --model requires a value\n");
+                    return None;
                 }
             }
             _ => {
@@ -125,22 +184,235 @@ fn cmd_agent(args: &[String], stdout: &mut String, stderr: &mut String) -> i32 {
         }
     }
 
-    let session_id = session_name.as_deref().unwrap_or("default");
-    let session_key = Session::build_key("cli", session_id);
+    Some(AgentFlags {
+        session_name,
+        message,
+        system_prompt,
+        model_override,
+    })
+}
 
-    stdout.push_str(&format!("session: {}\n", session_key));
+fn cmd_agent(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &mut String) -> i32 {
+    let flags = match parse_agent_flags(args, stderr) {
+        Some(f) => f,
+        None => return 1,
+    };
 
-    if let Some(msg) = message {
-        // One-shot mode: would process the message through agent loop
-        // For now, report the session and message
-        stdout.push_str(&format!("message: {}\n", msg));
-        stderr.push_str("agent: LLM chat not yet implemented\n");
-        1
-    } else {
-        // Interactive mode placeholder
-        stderr.push_str("agent: interactive mode not yet implemented\n");
-        1
+    if flags.message.is_none() {
+        stderr.push_str("agent: -m is required for non-interactive mode\n");
+        return 1;
     }
+
+    let base_dir = ctx.base_dir();
+    let agent = match build_agent_from_config(&base_dir, &flags, stderr) {
+        Some(a) => a,
+        None => return 1,
+    };
+
+    let mut out = AgentOutput { stdout, stderr };
+    run_agent_session(&base_dir, agent, &flags, &mut out)
+}
+
+/// Load config, build provider, and construct the agent loop. Returns None on error.
+fn build_agent_from_config(
+    base_dir: &std::path::Path,
+    flags: &AgentFlags,
+    stderr: &mut String,
+) -> Option<AgentLoopImpl> {
+    let config_path = base_dir.join("config.json");
+    if !config_path.exists() {
+        stderr.push_str(&format!(
+            "config not found at {}\nrun 'quecto onboard' first\n",
+            config_path.display()
+        ));
+        return None;
+    }
+
+    let env_overrides: HashMap<String, String> = std::env::vars()
+        .filter(|(k, _)| k.starts_with("QUECTO_"))
+        .collect();
+
+    let config = match Config::load_with_env(config_path.to_str().unwrap_or(""), &env_overrides) {
+        Ok(c) => c,
+        Err(e) => {
+            stderr.push_str(&format!("failed to load config: {}\n", e));
+            return None;
+        }
+    };
+
+    let provider = match build_agent_provider(&config, base_dir) {
+        Ok(p) => p,
+        Err(msg) => {
+            stderr.push_str(&format!("{}\n", msg));
+            return None;
+        }
+    };
+
+    let workspace = PathBuf::from(config.workspace_path());
+    let model = flags
+        .model_override
+        .clone()
+        .unwrap_or(config.agents.defaults.model.clone());
+    let sandbox = Sandbox::new(
+        Some(workspace.clone()),
+        config.agents.defaults.restrict_to_workspace,
+    );
+    let registry = ToolRegistryImpl::with_core_tools(workspace, sandbox);
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider,
+        tool_registry: Box::new(registry),
+        model,
+        max_tokens: config.agents.defaults.max_tokens,
+        temperature: config.agents.defaults.temperature,
+    })
+    .with_max_tool_iterations(config.agents.defaults.max_tool_iterations);
+
+    Some(agent)
+}
+
+/// Bundles the stdout/stderr pair passed through the agent pipeline.
+struct AgentOutput<'a> {
+    stdout: &'a mut String,
+    stderr: &'a mut String,
+}
+
+/// Run the agent loop with session load/save. Returns the exit code.
+fn run_agent_session(
+    base_dir: &std::path::Path,
+    agent: AgentLoopImpl,
+    flags: &AgentFlags,
+    out: &mut AgentOutput<'_>,
+) -> i32 {
+    let ephemeral = flags.session_name.as_deref() == Some("-");
+    let session_key = if ephemeral {
+        String::new()
+    } else {
+        let name = flags.session_name.as_deref().unwrap_or("default");
+        Session::build_key("cli", name)
+    };
+
+    let session_store = FileSessionStore::new(base_dir);
+    let rt = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            out.stderr
+                .push_str(&format!("failed to create runtime: {}\n", e));
+            return 1;
+        }
+    };
+
+    let mut messages: Vec<Message> = if !ephemeral {
+        match rt.block_on(session_store.load(&session_key)) {
+            Ok(Some(session)) => session.messages,
+            Ok(None) => Vec::new(),
+            Err(e) => {
+                out.stderr
+                    .push_str(&format!("failed to load session: {}\n", e));
+                return 1;
+            }
+        }
+    } else {
+        Vec::new()
+    };
+
+    // System prompt is injected at call time but not persisted in session history.
+    // Track its index so we can remove exactly this message before saving.
+    let system_prompt_idx = if flags.system_prompt.is_some() {
+        let idx = messages.len();
+        messages.push(Message {
+            role: Role::System,
+            content: flags.system_prompt.as_deref().unwrap_or("").to_string(),
+            tool_calls: vec![],
+            tool_call_id: None,
+        });
+        Some(idx)
+    } else {
+        None
+    };
+
+    let message = flags.message.as_deref().unwrap_or("");
+    messages.push(Message {
+        role: Role::User,
+        content: message.to_string(),
+        tool_calls: vec![],
+        tool_call_id: None,
+    });
+
+    match rt.block_on(agent.process(&mut messages)) {
+        Ok(result) => {
+            if !ephemeral {
+                // Remove the injected system prompt by its tracked index, if any.
+                if let Some(idx) = system_prompt_idx {
+                    if idx < messages.len() {
+                        messages.remove(idx);
+                    }
+                }
+                let session = Session {
+                    key: session_key,
+                    messages: std::mem::take(&mut messages),
+                };
+                if let Err(e) = rt.block_on(session_store.save(&session)) {
+                    out.stderr
+                        .push_str(&format!("warning: failed to save session: {}\n", e));
+                }
+            }
+            out.stdout.push_str(&result.response);
+            out.stdout.push('\n');
+            0
+        }
+        Err(e) => {
+            out.stderr.push_str(&format!("Error: {}\n", e));
+            1
+        }
+    }
+}
+
+/// Build a FallbackProvider from config + credential store, suitable for the agent CLI.
+fn build_agent_provider(
+    config: &Config,
+    base_dir: &std::path::Path,
+) -> Result<Arc<FallbackProvider>, String> {
+    let store = CredentialStore::new(base_dir);
+    let creds = store.load_snapshot().unwrap_or_default();
+
+    let mut provider_list: Vec<Arc<dyn crate::domain::provider::LlmProvider>> = Vec::new();
+
+    // Try OpenAI
+    let openai_key = resolve_api_key(&config.providers.openai.api_key, &creds, "openai");
+    if !openai_key.is_empty() {
+        let base = if config.providers.openai.api_base.is_empty() {
+            None
+        } else {
+            Some(config.providers.openai.api_base.clone())
+        };
+        if let Some(p) = providers::create_provider("openai", openai_key, base) {
+            provider_list.push(p);
+        }
+    }
+
+    // Try Anthropic
+    let anthropic_key = resolve_api_key(&config.providers.anthropic.api_key, &creds, "anthropic");
+    if !anthropic_key.is_empty() {
+        let base = if config.providers.anthropic.api_base.is_empty() {
+            None
+        } else {
+            Some(config.providers.anthropic.api_base.clone())
+        };
+        if let Some(p) = providers::create_provider("anthropic", anthropic_key, base) {
+            provider_list.push(p);
+        }
+    }
+
+    if provider_list.is_empty() {
+        return Err(
+            "no LLM providers configured (set an API key or run 'quecto auth login')".to_string(),
+        );
+    }
+
+    Ok(Arc::new(FallbackProvider::new(provider_list)))
 }
 
 fn cmd_auth(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &mut String) -> i32 {
@@ -709,17 +981,11 @@ mod tests {
     }
 
     #[test]
-    fn test_agent_no_args() {
+    fn test_agent_no_message_requires_m_flag() {
+        // Without -m, agent should require non-interactive mode
         let out = run_with_output(args("agent"), &default_ctx());
-        assert!(out.stdout.contains("session: cli:default"));
-        assert!(out.stderr.contains("interactive mode not yet implemented"));
-    }
-
-    #[test]
-    fn test_agent_with_session_and_message() {
-        let out = run_with_output(args("agent -s test-session -m Hello"), &default_ctx());
-        assert!(out.stdout.contains("session: cli:test-session"));
-        assert!(out.stdout.contains("message: Hello"));
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("-m is required"));
     }
 
     #[test]
@@ -734,13 +1000,6 @@ mod tests {
         let out = run_with_output(args("agent -m"), &default_ctx());
         assert_eq!(out.exit_code, 1);
         assert!(out.stderr.contains("-m requires a message"));
-    }
-
-    #[test]
-    fn test_agent_long_flags() {
-        let out = run_with_output(args("agent --session my-sess --message Hi"), &default_ctx());
-        assert!(out.stdout.contains("session: cli:my-sess"));
-        assert!(out.stdout.contains("message: Hi"));
     }
 
     #[test]
@@ -1133,5 +1392,204 @@ mod tests {
         let out = run_with_output(args("auth logout --provder openai"), &ctx);
         assert_eq!(out.exit_code, 1);
         assert!(out.stderr.contains("unknown flag"));
+    }
+
+    // ===================================================================
+    // Agent headless one-shot mode tests
+    // ===================================================================
+
+    #[test]
+    fn test_agent_no_message_shows_usage_error() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        // Write a config so it doesn't fail on "config not found"
+        std::fs::write(
+            tmp.path().join("config.json"),
+            r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#,
+        )
+        .unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("agent"), &ctx);
+        assert_eq!(out.exit_code, 1);
+        assert!(
+            out.stderr
+                .contains("agent: -m is required for non-interactive mode"),
+            "expected usage error, got stderr: {}",
+            out.stderr
+        );
+    }
+
+    #[test]
+    fn test_agent_missing_config_shows_instructions() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        // No config file written
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("agent -m hello"), &ctx);
+        assert_eq!(out.exit_code, 1);
+        assert!(
+            out.stderr.contains("config not found"),
+            "expected 'config not found', got stderr: {}",
+            out.stderr
+        );
+        assert!(
+            out.stderr.contains("quecto onboard"),
+            "expected 'quecto onboard', got stderr: {}",
+            out.stderr
+        );
+    }
+
+    #[test]
+    fn test_agent_no_providers_shows_error() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("config.json"),
+            r#"{"providers":{"openai":{"api_key":""},"anthropic":{"api_key":""}}}"#,
+        )
+        .unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("agent -m hello"), &ctx);
+        assert_eq!(out.exit_code, 1);
+        assert!(
+            out.stderr.contains("no LLM providers"),
+            "expected 'no LLM providers', got stderr: {}",
+            out.stderr
+        );
+    }
+
+    #[test]
+    fn test_agent_parses_system_flag() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        // No config — we just test flag parsing, not execution
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        // With no config, it should fail on "config not found" regardless of flags
+        let out = run_with_output(
+            vec![
+                "quecto".into(),
+                "agent".into(),
+                "--system".into(),
+                "You are a pirate".into(),
+                "-m".into(),
+                "Hello".into(),
+            ],
+            &ctx,
+        );
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("config not found"));
+    }
+
+    #[test]
+    fn test_agent_parses_model_flag() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(
+            vec![
+                "quecto".into(),
+                "agent".into(),
+                "--model".into(),
+                "gpt-5-mini".into(),
+                "-m".into(),
+                "Hello".into(),
+            ],
+            &ctx,
+        );
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("config not found"));
+    }
+
+    #[test]
+    fn test_agent_system_flag_missing_value() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("config.json"), "{}").unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("agent --system"), &ctx);
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("--system requires a value"));
+    }
+
+    #[test]
+    fn test_agent_model_flag_missing_value() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("config.json"), "{}").unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("agent --model"), &ctx);
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("--model requires a value"));
+    }
+
+    #[test]
+    fn test_agent_session_flag_parses_name() {
+        let mut stderr = String::new();
+        let a = vec!["-s".into(), "my-chat".into(), "-m".into(), "Hi".into()];
+        let flags = parse_agent_flags(&a, &mut stderr).unwrap();
+        assert_eq!(flags.session_name.as_deref(), Some("my-chat"));
+    }
+
+    #[test]
+    fn test_agent_session_flag_ephemeral() {
+        let mut stderr = String::new();
+        let a = vec!["-s".into(), "-".into(), "-m".into(), "Hi".into()];
+        let flags = parse_agent_flags(&a, &mut stderr).unwrap();
+        assert_eq!(flags.session_name.as_deref(), Some("-"));
+    }
+
+    #[test]
+    fn test_agent_session_flag_default_when_absent() {
+        let mut stderr = String::new();
+        let a = vec!["-m".into(), "Hi".into()];
+        let flags = parse_agent_flags(&a, &mut stderr).unwrap();
+        assert!(flags.session_name.is_none());
+    }
+
+    #[test]
+    fn test_agent_session_key_derivation() {
+        // Default: no -s flag -> cli:default
+        assert_eq!(Session::build_key("cli", "default"), "cli:default");
+        // Named: -s foo -> cli:foo
+        assert_eq!(Session::build_key("cli", "my-chat"), "cli:my-chat");
+    }
+
+    // QUECTO_BASE_DIR env-var override is tested via BDD:
+    // agent_cli.feature "QUECTO_BASE_DIR environment variable overrides default base directory"
+    // Env-var tests live in BDD (not here) because set_var requires an unsound block.
+
+    #[test]
+    fn test_session_name_validation() {
+        assert!(is_valid_session_name("my-chat"));
+        assert!(is_valid_session_name("chat_1"));
+        assert!(is_valid_session_name("ALLCAPS"));
+        assert!(is_valid_session_name("-")); // ephemeral
+        assert!(!is_valid_session_name("../../tmp/evil"));
+        assert!(!is_valid_session_name("foo/bar"));
+        assert!(!is_valid_session_name(".."));
+        assert!(!is_valid_session_name(""));
+        assert!(!is_valid_session_name("a b")); // spaces
+        assert!(!is_valid_session_name("a:b")); // colons
+    }
+
+    #[test]
+    fn test_agent_rejects_path_traversal_session_name() {
+        let mut stderr = String::new();
+        let a = vec![
+            "-s".into(),
+            "../../tmp/evil".into(),
+            "-m".into(),
+            "Hi".into(),
+        ];
+        let result = parse_agent_flags(&a, &mut stderr);
+        assert!(result.is_none());
+        assert!(stderr.contains("alphanumeric"));
     }
 }

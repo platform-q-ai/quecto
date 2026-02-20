@@ -131,7 +131,7 @@ mod tests {
         run_onboard(tmp.path()).unwrap();
         let content = std::fs::read_to_string(tmp.path().join("config.json")).unwrap();
         let config: crate::infrastructure::config::Config = serde_json::from_str(&content).unwrap();
-        assert_eq!(config.agents.defaults.model, "gpt-4");
+        assert_eq!(config.agents.defaults.model, "gpt-5.2-codex");
         assert_eq!(config.agents.defaults.max_tokens, 8192);
         assert!((config.agents.defaults.temperature - 0.7).abs() < f32::EPSILON);
         assert!(config.agents.defaults.restrict_to_workspace);
