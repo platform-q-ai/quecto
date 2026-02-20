@@ -4840,6 +4840,10 @@ fn quecto_binary_path() -> PathBuf {
 
 /// Parse a shell-like argument string into individual args.
 /// Handles double-quoted strings (e.g. `"Do the subtask"`).
+///
+/// Limitations: only handles double quotes; no single quotes,
+/// backslash escapes, or nested quoting. Sufficient for the
+/// hardcoded Gherkin step strings used in BDD scenarios.
 fn shell_split(s: &str) -> Vec<String> {
     let mut args = Vec::new();
     let mut current = String::new();
@@ -4861,9 +4865,15 @@ fn shell_split(s: &str) -> Vec<String> {
     args
 }
 
+/// Maximum wall-clock time (seconds) a subprocess may run before
+/// the BDD test kills it. Prevents the suite from hanging forever.
+const SUBPROCESS_TIMEOUT_SECS: u64 = 30;
+
 /// Spawn quecto as a real subprocess, capturing output.
 /// Sets QUECTO_BASE_DIR to the temp dir if cli_context has one,
 /// otherwise inherits from the environment (for env-var tests).
+/// Kills the child after [`SUBPROCESS_TIMEOUT_SECS`] if it has
+/// not exited.
 fn spawn_quecto_subprocess(world: &mut QuectoWorld, raw_args: &str) {
     let binary = quecto_binary_path();
     assert!(
@@ -4874,6 +4884,8 @@ fn spawn_quecto_subprocess(world: &mut QuectoWorld, raw_args: &str) {
     let args = shell_split(raw_args);
     let mut cmd = std::process::Command::new(&binary);
     cmd.args(&args);
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
 
     // If cli_context.base_dir is set, pass it explicitly.
     // Otherwise the env var is already set (e.g. by the
@@ -4882,11 +4894,38 @@ fn spawn_quecto_subprocess(world: &mut QuectoWorld, raw_args: &str) {
         cmd.env("QUECTO_BASE_DIR", base.to_string_lossy().as_ref());
     }
 
-    let output = cmd.output().expect("spawn quecto subprocess");
+    let mut child = cmd.spawn().expect("spawn quecto subprocess");
+    let start = std::time::Instant::now();
+    let deadline = std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS);
+    let poll_interval = std::time::Duration::from_millis(50);
 
-    world.subprocess_exit_code = Some(output.status.code().unwrap_or(-1));
-    world.subprocess_stdout = Some(String::from_utf8_lossy(&output.stdout).to_string());
-    world.subprocess_stderr = Some(String::from_utf8_lossy(&output.stderr).to_string());
+    // Poll until the child exits or the deadline is reached.
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let out = child.wait_with_output().expect("collect subprocess output");
+                world.subprocess_exit_code = Some(status.code().unwrap_or(-1));
+                world.subprocess_stdout = Some(String::from_utf8_lossy(&out.stdout).into_owned());
+                world.subprocess_stderr = Some(String::from_utf8_lossy(&out.stderr).into_owned());
+                return;
+            }
+            Ok(None) => {
+                if start.elapsed() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!(
+                        "subprocess timed out after {}s \
+                         (args: {})",
+                        SUBPROCESS_TIMEOUT_SECS, raw_args
+                    );
+                }
+                std::thread::sleep(poll_interval);
+            }
+            Err(e) => {
+                panic!("failed to wait on subprocess: {e}");
+            }
+        }
+    }
 }
 
 #[when(regex = r"^I spawn quecto as a subprocess with args: (.+)$")]
