@@ -12,6 +12,8 @@ use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 pub struct WebSearchTool {
     api_key: Option<String>,
     client: reqwest::Client,
+    brave_base: String,
+    ddg_base: String,
 }
 
 impl WebSearchTool {
@@ -19,12 +21,26 @@ impl WebSearchTool {
         Self {
             api_key,
             client: reqwest::Client::new(),
+            brave_base: "https://api.search.brave.com".to_string(),
+            ddg_base: "https://api.duckduckgo.com".to_string(),
+        }
+    }
+
+    /// Create a tool with custom base URLs (for testing with wiremock).
+    #[cfg(test)]
+    fn with_base_urls(api_key: Option<String>, brave_base: &str, ddg_base: &str) -> Self {
+        Self {
+            api_key,
+            client: reqwest::Client::new(),
+            brave_base: brave_base.to_string(),
+            ddg_base: ddg_base.to_string(),
         }
     }
 
     async fn search_brave(&self, query: &str, api_key: &str) -> Result<String, DomainError> {
         let url = format!(
-            "https://api.search.brave.com/res/v1/web/search?q={}",
+            "{}/res/v1/web/search?q={}",
+            self.brave_base,
             urlencoding::encode(query)
         );
         let resp = self
@@ -75,7 +91,8 @@ impl WebSearchTool {
     async fn search_ddg(&self, query: &str) -> Result<String, DomainError> {
         // DuckDuckGo Instant Answer API (free, no key required)
         let url = format!(
-            "https://api.duckduckgo.com/?q={}&format=json&no_html=1",
+            "{}/?q={}&format=json&no_html=1",
+            self.ddg_base,
             urlencoding::encode(query)
         );
         let resp = self
@@ -209,5 +226,177 @@ mod tests {
         let tool = WebSearchTool::new(None);
         let result = tool.execute(r#"{"wrong":"field"}"#).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_invalid_json() {
+        let tool = WebSearchTool::new(None);
+        let result = tool.execute("not json").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_brave_search_success() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let response = serde_json::json!({
+            "web": {
+                "results": [
+                    {
+                        "title": "Rust Programming",
+                        "url": "https://rust-lang.org",
+                        "description": "A systems language"
+                    },
+                    {
+                        "title": "Rust Book",
+                        "url": "https://doc.rust-lang.org/book/",
+                        "description": "The Rust Programming Language"
+                    }
+                ]
+            }
+        });
+
+        Mock::given(method("GET"))
+            .and(path("/res/v1/web/search"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+            .mount(&server)
+            .await;
+
+        let tool = WebSearchTool::with_base_urls(
+            Some("test-key".to_string()),
+            &server.uri(),
+            "http://unused",
+        );
+        let result = tool.execute(r#"{"query":"rust"}"#).await.unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains("Rust Programming"));
+        assert!(result.content.contains("rust-lang.org"));
+        assert!(result.content.contains("Rust Book"));
+    }
+
+    #[tokio::test]
+    async fn test_brave_search_no_results() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let response = serde_json::json!({"web": {"results": []}});
+
+        Mock::given(method("GET"))
+            .and(path("/res/v1/web/search"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+            .mount(&server)
+            .await;
+
+        let tool = WebSearchTool::with_base_urls(
+            Some("test-key".to_string()),
+            &server.uri(),
+            "http://unused",
+        );
+        // Empty results array should produce empty string (no items to iterate)
+        let result = tool.execute(r#"{"query":"nothing"}"#).await.unwrap();
+        assert!(!result.is_error);
+    }
+
+    #[tokio::test]
+    async fn test_brave_search_server_error() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/res/v1/web/search"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let tool = WebSearchTool::with_base_urls(
+            Some("test-key".to_string()),
+            &server.uri(),
+            "http://unused",
+        );
+        let result = tool.execute(r#"{"query":"fail"}"#).await.unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("Search failed"));
+    }
+
+    #[tokio::test]
+    async fn test_ddg_search_abstract() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let response = serde_json::json!({
+            "AbstractText": "Rust is a systems programming language.",
+            "AbstractURL": "https://en.wikipedia.org/wiki/Rust",
+            "RelatedTopics": []
+        });
+
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+            .mount(&server)
+            .await;
+
+        let tool = WebSearchTool::with_base_urls(None, "http://unused", &server.uri());
+        let result = tool.execute(r#"{"query":"rust"}"#).await.unwrap();
+        assert!(!result.is_error);
+        assert!(
+            result
+                .content
+                .contains("Rust is a systems programming language")
+        );
+        assert!(result.content.contains("wikipedia.org"));
+    }
+
+    #[tokio::test]
+    async fn test_ddg_search_related_topics() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let response = serde_json::json!({
+            "AbstractText": "",
+            "AbstractURL": "",
+            "RelatedTopics": [
+                {"Text": "Rust (programming language)", "FirstURL": "https://example.com/rust"},
+                {"Text": "Iron oxide", "FirstURL": "https://example.com/iron"}
+            ]
+        });
+
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+            .mount(&server)
+            .await;
+
+        let tool = WebSearchTool::with_base_urls(None, "http://unused", &server.uri());
+        let result = tool.execute(r#"{"query":"rust"}"#).await.unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains("Rust (programming language)"));
+        assert!(result.content.contains("Iron oxide"));
+    }
+
+    #[tokio::test]
+    async fn test_ddg_search_no_results() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let response = serde_json::json!({
+            "AbstractText": "",
+            "RelatedTopics": []
+        });
+
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+            .mount(&server)
+            .await;
+
+        let tool = WebSearchTool::with_base_urls(None, "http://unused", &server.uri());
+        let result = tool.execute(r#"{"query":"xyzzy"}"#).await.unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains("No results found"));
     }
 }

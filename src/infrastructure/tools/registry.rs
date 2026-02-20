@@ -161,5 +161,41 @@ mod tests {
         let (reg, _tmp) = test_registry();
         let result = reg.execute("nonexistent", "{}").await;
         assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("unknown tool"));
+    }
+
+    #[test]
+    fn test_empty_registry() {
+        let reg = ToolRegistryImpl::new();
+        assert!(reg.names().is_empty());
+        assert!(reg.definitions().is_empty());
+        assert!(reg.get("anything").is_none());
+    }
+
+    #[test]
+    fn test_debug_format() {
+        let (reg, _tmp) = test_registry();
+        let debug = format!("{:?}", reg);
+        assert!(debug.contains("ToolRegistryImpl"));
+    }
+
+    #[test]
+    fn test_default_creates_empty() {
+        let reg = ToolRegistryImpl::default();
+        assert!(reg.names().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_trait_execute() {
+        let (reg, _tmp) = test_registry();
+        // Test through the ToolRegistry trait (dyn dispatch)
+        let trait_reg: &dyn ToolRegistry = &reg;
+        let defs = trait_reg.definitions();
+        assert!(!defs.is_empty());
+
+        // Execute through trait
+        let result = trait_reg.execute("nonexistent", "{}").await;
+        assert!(result.is_err());
     }
 }

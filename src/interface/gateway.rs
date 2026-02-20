@@ -92,6 +92,14 @@ impl Gateway {
 
     /// Build all components and run the gateway until shutdown.
     pub async fn run(&self) -> Result<(), GatewayError> {
+        // Initialize tracing subscriber so tracing::info!/warn!/error! produce output.
+        // Defaults to INFO level; override with RUST_LOG env var (e.g. RUST_LOG=debug).
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+            )
+            .init();
         let workspace = self.resolve_workspace();
         let provider = Arc::new(self.build_fallback_provider()?);
         let (agent, mut bus) = self.build_agent(workspace, provider);
