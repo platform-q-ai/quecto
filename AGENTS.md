@@ -144,7 +144,7 @@ Refactor
 @wip -> @done       Tag the feature
 ```
 
-The BDD runner (`tests/bdd/main.rs`) uses `.fail_on_skipped()` and runs features tagged `@wip` or `@done`. This means all completed features are regression-tested on every run. Scenarios tagged `@pending` are always excluded. Scenarios tagged `@real-llm` are excluded unless `QUECTO_REAL_LLM=1` is set (requires `OPENAI_API_KEY`). Step definitions live in `tests/bdd/` split across 16 module files (~5400 lines total).
+The BDD runner (`tests/bdd/main.rs`) uses `.fail_on_skipped()` and runs features tagged `@wip` or `@done`. This means all completed features are regression-tested on every run. Scenarios tagged `@pending` are always excluded. Scenarios tagged `@real-llm` are excluded unless `QUECTO_REAL_LLM=1` is set (requires `OPENAI_API_KEY` via env var or `.env` file). Set `QUECTO_TAG=<tag>` to run only scenarios matching a specific tag (e.g. `QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm cargo test --test bdd`). Step definitions live in `tests/bdd/` split across 16 module files (~5500 lines total).
 
 Feature files live in `tests/features/`. There are 27 feature files covering: config, cli, onboard, security, sandbox_hardening, agent_tools, providers, agent_loop, session, auth, telegram, cron, subagent, heartbeat, skills, voice, observability, agent_cli, e2e_tool_use, e2e_session, e2e_subprocess, e2e_safety, e2e_providers, e2e_agentic_loop, e2e_real_llm, e2e_session_tools, e2e_skills.
 
@@ -157,7 +157,7 @@ cargo fmt --check              Formatting
 cargo clippy -- -D warnings    Lints (zero warnings policy)
 cargo test --lib               325 unit tests
 cargo test --test architecture Clean Architecture boundary enforcement
-cargo test --test bdd          204 active BDD scenarios across 27 @done features (+4 @real-llm gated)
+cargo test --test bdd          204 active BDD scenarios across 27 @done features (+13 @real-llm gated)
 ```
 
 ### BDD quality gate (`scripts/check-bdd-quality.sh`)

@@ -355,6 +355,8 @@ mod voice_steps;
 
 fn main() {
     let real_llm_enabled = std::env::var("QUECTO_REAL_LLM").unwrap_or_default() == "1";
+    // Optional tag filter: QUECTO_TAG=real-llm runs only scenarios with that tag.
+    let tag_filter = std::env::var("QUECTO_TAG").ok();
 
     futures::executor::block_on(
         QuectoWorld::cucumber()
@@ -368,6 +370,10 @@ fn main() {
                 // Exclude @real-llm scenarios unless QUECTO_REAL_LLM=1
                 if sc.tags.iter().any(|t| t == "real-llm") && !real_llm_enabled {
                     return false;
+                }
+                // If a tag filter is set, only run matching scenarios
+                if let Some(ref tag) = tag_filter {
+                    return sc.tags.iter().any(|t| t == tag.as_str());
                 }
                 // Include if feature or scenario is tagged @wip or @done
                 feat.tags.iter().any(|t| t == "wip" || t == "done")

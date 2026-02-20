@@ -1487,8 +1487,28 @@ fn then_subprocess_stderr_contains(world: &mut QuectoWorld, expected: String) {
 // E2E Real LLM Steps
 // ===========================================================================
 
+/// Resolve OPENAI_API_KEY: check env var first, then fall back to `.env` file.
+fn resolve_openai_api_key() -> String {
+    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+        return key;
+    }
+    // Fall back to .env file at repo root
+    if let Ok(contents) = std::fs::read_to_string(".env") {
+        for line in contents.lines() {
+            let line = line.trim();
+            if let Some(value) = line.strip_prefix("OPENAI_API_KEY=") {
+                let value = value.trim();
+                if !value.is_empty() {
+                    return value.to_string();
+                }
+            }
+        }
+    }
+    panic!("OPENAI_API_KEY must be set (via env var or .env file)");
+}
+
 /// Set up a workspace configured to use a real OpenAI endpoint.
-/// Reads OPENAI_API_KEY from the environment (required).
+/// Reads OPENAI_API_KEY from the environment or from `.env` file at repo root.
 /// Uses serde_json to avoid JSON injection from special chars in the key.
 #[given("a real LLM workspace is configured")]
 fn given_real_llm_workspace(world: &mut QuectoWorld) {
@@ -1497,8 +1517,7 @@ fn given_real_llm_workspace(world: &mut QuectoWorld) {
     let workspace = base.join("workspace");
     std::fs::create_dir_all(&workspace).expect("create workspace");
 
-    let api_key =
-        std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set for real LLM tests");
+    let api_key = resolve_openai_api_key();
 
     let config = serde_json::json!({
         "providers": {
@@ -1522,13 +1541,61 @@ fn when_run_real_llm_agent(world: &mut QuectoWorld, message: String) {
         "quecto".to_string(),
         "agent".to_string(),
         "--model".to_string(),
-        "gpt-4o-mini".to_string(),
+        "gpt-5-nano".to_string(),
         "--max-iterations".to_string(),
         "5".to_string(),
         "--max-time".to_string(),
         "60".to_string(),
         "-s".to_string(),
         "-".to_string(), // ephemeral session
+        "-m".to_string(),
+        message,
+    ];
+    let output = cli::run_with_output(args, &world.cli_context);
+    world.exit_code = output.exit_code;
+    world.stdout = output.stdout;
+    world.stderr = output.stderr;
+}
+
+/// Run the real LLM agent with a named session (for persistence tests).
+#[when(expr = "I run the real LLM agent with session {word} and message {string}")]
+fn when_run_real_llm_agent_session(world: &mut QuectoWorld, session: String, message: String) {
+    let args = vec![
+        "quecto".to_string(),
+        "agent".to_string(),
+        "--model".to_string(),
+        "gpt-5-nano".to_string(),
+        "--max-iterations".to_string(),
+        "5".to_string(),
+        "--max-time".to_string(),
+        "60".to_string(),
+        "-s".to_string(),
+        session,
+        "-m".to_string(),
+        message,
+    ];
+    let output = cli::run_with_output(args, &world.cli_context);
+    world.exit_code = output.exit_code;
+    world.stdout = output.stdout;
+    world.stderr = output.stderr;
+}
+
+/// Run the real LLM agent with a system prompt.
+#[when(expr = "I run the real LLM agent with system {string} and message {string}")]
+fn when_run_real_llm_agent_system(world: &mut QuectoWorld, system: String, message: String) {
+    let args = vec![
+        "quecto".to_string(),
+        "agent".to_string(),
+        "--model".to_string(),
+        "gpt-5-nano".to_string(),
+        "--max-iterations".to_string(),
+        "5".to_string(),
+        "--max-time".to_string(),
+        "60".to_string(),
+        "--system".to_string(),
+        system,
+        "-s".to_string(),
+        "-".to_string(),
         "-m".to_string(),
         message,
     ];
