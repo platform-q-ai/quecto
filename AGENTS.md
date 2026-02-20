@@ -80,7 +80,7 @@ Manual argument parsing (no clap). The single entry point is `cli::run(args) -> 
 | Command | What it does |
 |---|---|
 | `quecto onboard` | Creates workspace and default config |
-| `quecto agent -m <message> [-s <session>] [--system <prompt>] [--model <model>]` | Runs a headless one-shot agent session (see below) |
+| `quecto agent -m <message> [-s <session>] [--system <prompt>] [--model <model>] [--max-iterations <n>] [--max-time <secs>]` | Runs a headless one-shot agent session (see below) |
 | `quecto skills list\|remove\|install` | Manages skill files |
 | `quecto status` | Shows config summary, provider availability, redacted API keys |
 | `quecto auth login --provider <name> --token <key>` | Stores an API token for a provider in the credential store |
@@ -101,6 +101,8 @@ Runs a full agent cycle (LLM call → tool execution → repeat) for a single me
 | `-s` / `--session` | No | Session name for persistence. Omit for `cli:default`. Use `-` for ephemeral (no persistence) |
 | `--system` | No | System prompt prepended to conversation (not persisted in session history) |
 | `--model` | No | Override the default model from config |
+| `--max-iterations` | No | Override max tool iterations (takes precedence over config `max_tool_iterations`) |
+| `--max-time` | No | Wall-clock timeout in seconds for the entire agent run. Exit code 2 on timeout |
 
 The agent loads config from `<base_dir>/config.json`, builds a `FallbackProvider` from configured credentials, constructs the tool registry with sandbox enforcement, and runs the `AgentLoopImpl`. Sessions are loaded from and saved to `<base_dir>/sessions/` via `FileSessionStore`.
 
@@ -142,7 +144,7 @@ Refactor
 @wip -> @done       Tag the feature
 ```
 
-The BDD runner (`tests/bdd.rs`) uses `.fail_on_skipped()` and runs features tagged `@wip` or `@done`. This means all completed features are regression-tested on every run. Scenarios tagged `@pending` are always excluded. All step definitions live in `tests/bdd.rs` (~4400 lines).
+The BDD runner (`tests/bdd.rs`) uses `.fail_on_skipped()` and runs features tagged `@wip` or `@done`. This means all completed features are regression-tested on every run. Scenarios tagged `@pending` are always excluded. All step definitions live in `tests/bdd.rs` (~4900 lines).
 
 Feature files live in `tests/features/`. There are 23 feature files covering: config, cli, onboard, security, sandbox_hardening, agent_tools, providers, agent_loop, session, auth, telegram, cron, subagent, heartbeat, skills, voice, observability, agent_cli, e2e_tool_use, e2e_session, e2e_subprocess, e2e_safety, e2e_providers.
 
@@ -153,9 +155,9 @@ scripts/check-quality.sh       Work markers, lint bypasses, unsafe, ignored test
 scripts/check-bdd-quality.sh   BDD anti-pattern detection (tests/bdd.rs)
 cargo fmt --check              Formatting
 cargo clippy -- -D warnings    Lints (zero warnings policy)
-cargo test --lib               308 unit tests
+cargo test --lib               317 unit tests
 cargo test --test architecture Clean Architecture boundary enforcement
-cargo test --test bdd          156 active BDD scenarios across 20 @done features
+cargo test --test bdd          167 active BDD scenarios across 22 @done features
 ```
 
 ### BDD quality gate (`scripts/check-bdd-quality.sh`)

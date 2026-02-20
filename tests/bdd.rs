@@ -293,6 +293,8 @@ pub struct QuectoWorld {
     pub pending_tool_call: Option<(String, String)>,
     /// Whether QUECTO_BASE_DIR env var was set by this scenario (needs cleanup)
     pub env_base_dir_set: bool,
+    /// Wiremock URI for Anthropic mock (dual-provider scenarios)
+    pub wiremock_anthropic_uri: Option<String>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
@@ -4375,6 +4377,445 @@ fn load_session_from_disk(world: &QuectoWorld, key: &str) -> SessionOnDisk {
         })
         .collect();
     SessionOnDisk { messages }
+}
+
+// ===========================================================================
+// E2E Safety and Limits Steps
+// ===========================================================================
+
+#[given("restrict_to_workspace is enabled in the config")]
+fn given_restrict_to_workspace_enabled(world: &mut QuectoWorld) {
+    let base = base_path(world);
+    let config_str = std::fs::read_to_string(base.join("config.json")).expect("read config");
+    let mut config: serde_json::Value = serde_json::from_str(&config_str).expect("parse config");
+    config["agents"]["defaults"]["restrict_to_workspace"] = serde_json::Value::Bool(true);
+    std::fs::write(
+        base.join("config.json"),
+        serde_json::to_string_pretty(&config).unwrap(),
+    )
+    .expect("rewrite config");
+}
+
+#[given(expr = "the config sets max_tool_iterations to {int}")]
+fn given_config_max_tool_iterations(world: &mut QuectoWorld, max_iterations: u32) {
+    let base = base_path(world);
+    let config_str = std::fs::read_to_string(base.join("config.json")).expect("read config");
+    let mut config: serde_json::Value = serde_json::from_str(&config_str).expect("parse config");
+    config["agents"]["defaults"]["max_tool_iterations"] = serde_json::json!(max_iterations);
+    std::fs::write(
+        base.join("config.json"),
+        serde_json::to_string_pretty(&config).unwrap(),
+    )
+    .expect("rewrite config");
+}
+
+#[given(expr = "the mock LLM always returns a tool call for {string} with args:")]
+fn given_mock_llm_always_tool_call(
+    world: &mut QuectoWorld,
+    step: &gherkin::Step,
+    tool_name: String,
+) {
+    let table = step.table.as_ref().expect("step should have a table");
+    let mut map = serde_json::Map::new();
+    for row in &table.rows {
+        if row.len() >= 2 {
+            map.insert(row[0].clone(), serde_json::Value::String(row[1].clone()));
+        }
+    }
+    let args_json = serde_json::to_string(&map).unwrap();
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+
+        let body = openai_tool_call_json(&tool_name, &args_json);
+        // Mount with no limit — every request gets a tool call
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+
+        rewrite_config_to_uri(world, &new_uri);
+        std::mem::forget(server);
+    });
+    std::mem::forget(rt);
+}
+
+#[given(expr = "the mock LLM takes {int} seconds to respond")]
+fn given_mock_llm_delayed_response(world: &mut QuectoWorld, delay_secs: u64) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+        let body = openai_text_json("Delayed response");
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(body)
+                    .set_delay(std::time::Duration::from_secs(delay_secs)),
+            )
+            .mount(&server)
+            .await;
+
+        rewrite_config_to_uri(world, &new_uri);
+        std::mem::forget(server);
+    });
+    std::mem::forget(rt);
+}
+
+// --- When steps for --max-iterations and --max-time ---
+
+#[when(expr = "I run quecto agent -s {word} --max-iterations {int} -m {string}")]
+fn when_run_agent_max_iterations(
+    world: &mut QuectoWorld,
+    session: String,
+    max_iterations: u32,
+    message: String,
+) {
+    let args = vec![
+        "quecto".to_string(),
+        "agent".to_string(),
+        "-s".to_string(),
+        session,
+        "--max-iterations".to_string(),
+        max_iterations.to_string(),
+        "-m".to_string(),
+        message,
+    ];
+    let output = cli::run_with_output(args, &world.cli_context);
+    world.exit_code = output.exit_code;
+    world.stdout = output.stdout;
+    world.stderr = output.stderr;
+}
+
+#[when(expr = "I run quecto agent -s {word} --max-time {int} -m {string}")]
+fn when_run_agent_max_time(
+    world: &mut QuectoWorld,
+    session: String,
+    max_time: u64,
+    message: String,
+) {
+    let args = vec![
+        "quecto".to_string(),
+        "agent".to_string(),
+        "-s".to_string(),
+        session,
+        "--max-time".to_string(),
+        max_time.to_string(),
+        "-m".to_string(),
+        message,
+    ];
+    let output = cli::run_with_output(args, &world.cli_context);
+    world.exit_code = output.exit_code;
+    world.stdout = output.stdout;
+    world.stderr = output.stderr;
+}
+
+// ===========================================================================
+// E2E Provider Wiring Steps
+// ===========================================================================
+
+/// Helper: build the Anthropic Messages API response JSON for a text response.
+fn anthropic_text_json(content: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": "msg_test",
+        "type": "message",
+        "role": "assistant",
+        "content": [{ "type": "text", "text": content }],
+        "stop_reason": "end_turn",
+        "usage": { "input_tokens": 10, "output_tokens": 5 }
+    })
+}
+
+/// Helper: write a config file with the given provider entries.
+fn write_provider_config(world: &mut QuectoWorld, openai_json: &str, anthropic_json: &str) {
+    let base = base_path(world);
+    let workspace = base.join("workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace");
+    let config_json = format!(
+        r#"{{
+  "providers": {{
+    "openai": {openai_json},
+    "anthropic": {anthropic_json}
+  }},
+  "agents": {{
+    "defaults": {{
+      "workspace": "{workspace}"
+    }}
+  }}
+}}"#,
+        openai_json = openai_json,
+        anthropic_json = anthropic_json,
+        workspace = workspace.display()
+    );
+    std::fs::write(base.join("config.json"), config_json).expect("write config");
+}
+
+#[given("a config file with an Anthropic provider pointing at a mock server")]
+fn given_config_with_anthropic_mock(world: &mut QuectoWorld) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let server = rt.block_on(wiremock::MockServer::start());
+    let uri = server.uri();
+    // Store in anthropic-specific field, NOT _wiremock_server_uri (OpenAI)
+    world.wiremock_anthropic_uri = Some(uri.clone());
+
+    ensure_temp_dir(world);
+    let openai_json = r#"{ "api_key": "", "api_base": "" }"#;
+    let anthropic_json = format!(r#"{{ "api_key": "sk-ant-test", "api_base": "{uri}" }}"#);
+    write_provider_config(world, openai_json, &anthropic_json);
+
+    std::mem::forget(server);
+    std::mem::forget(rt);
+}
+
+#[given("a config file with both OpenAI and Anthropic providers pointing at mock servers")]
+fn given_config_with_both_providers(world: &mut QuectoWorld) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (openai_uri, anthropic_uri) = rt.block_on(async {
+        let s1 = wiremock::MockServer::start().await;
+        let s2 = wiremock::MockServer::start().await;
+        let u1 = s1.uri();
+        let u2 = s2.uri();
+        std::mem::forget(s1);
+        std::mem::forget(s2);
+        (u1, u2)
+    });
+
+    ensure_temp_dir(world);
+    world._wiremock_server_uri = Some(openai_uri.clone());
+    world.wiremock_anthropic_uri = Some(anthropic_uri.clone());
+
+    let openai_json = format!(r#"{{ "api_key": "sk-test-key", "api_base": "{openai_uri}" }}"#);
+    let anthropic_json =
+        format!(r#"{{ "api_key": "sk-ant-test", "api_base": "{anthropic_uri}" }}"#);
+    write_provider_config(world, &openai_json, &anthropic_json);
+
+    std::mem::forget(rt);
+}
+
+/// Helper: rewrite config with a new OpenAI URI, preserving Anthropic if present.
+fn rewrite_openai_in_config(world: &mut QuectoWorld, new_uri: &str) {
+    let base = base_path(world);
+    let workspace = base.join("workspace");
+    let anthropic_uri = world.wiremock_anthropic_uri.as_deref().unwrap_or("");
+    let anthropic_key = if anthropic_uri.is_empty() {
+        ""
+    } else {
+        "sk-ant-test"
+    };
+    let config_json = format!(
+        r#"{{
+  "providers": {{
+    "openai": {{ "api_key": "sk-test-key", "api_base": "{new_uri}" }},
+    "anthropic": {{ "api_key": "{anthropic_key}", "api_base": "{anthropic_uri}" }}
+  }},
+  "agents": {{
+    "defaults": {{
+      "workspace": "{workspace}"
+    }}
+  }}
+}}"#,
+        new_uri = new_uri,
+        anthropic_key = anthropic_key,
+        anthropic_uri = anthropic_uri,
+        workspace = workspace.display()
+    );
+    std::fs::write(base.join("config.json"), config_json).expect("rewrite config");
+    world._wiremock_server_uri = Some(new_uri.to_string());
+}
+
+/// Helper: rewrite config with a new Anthropic URI, preserving OpenAI if present.
+fn rewrite_anthropic_in_config(world: &mut QuectoWorld, new_uri: &str) {
+    let base = base_path(world);
+    let workspace = base.join("workspace");
+    let openai_uri = world._wiremock_server_uri.as_deref().unwrap_or("");
+    let openai_key = if openai_uri.is_empty() {
+        ""
+    } else {
+        "sk-test-key"
+    };
+    let config_json = format!(
+        r#"{{
+  "providers": {{
+    "openai": {{ "api_key": "{openai_key}", "api_base": "{openai_uri}" }},
+    "anthropic": {{ "api_key": "sk-ant-test", "api_base": "{new_uri}" }}
+  }},
+  "agents": {{
+    "defaults": {{
+      "workspace": "{workspace}"
+    }}
+  }}
+}}"#,
+        openai_key = openai_key,
+        openai_uri = openai_uri,
+        new_uri = new_uri,
+        workspace = workspace.display()
+    );
+    std::fs::write(base.join("config.json"), config_json).expect("rewrite config");
+    world.wiremock_anthropic_uri = Some(new_uri.to_string());
+}
+
+#[given(expr = "the Anthropic mock returns an HTTP {int} error")]
+fn given_anthropic_mock_error(world: &mut QuectoWorld, status: u16) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/v1/messages"))
+            .respond_with(wiremock::ResponseTemplate::new(status).set_body_string("Error"))
+            .mount(&server)
+            .await;
+
+        rewrite_anthropic_in_config(world, &new_uri);
+        std::mem::forget(server);
+    });
+    std::mem::forget(rt);
+}
+
+#[given(expr = "the Anthropic mock returns a text response {string}")]
+fn given_anthropic_mock_text_response(world: &mut QuectoWorld, content: String) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+        let body = anthropic_text_json(&content);
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/v1/messages"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+
+        rewrite_anthropic_in_config(world, &new_uri);
+        std::mem::forget(server);
+    });
+    std::mem::forget(rt);
+}
+
+// --- Credential store integration steps ---
+
+#[given(expr = "a config file with OpenAI api_key {string} pointing at a mock server")]
+fn given_config_with_openai_custom_key(world: &mut QuectoWorld, api_key: String) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let server = rt.block_on(wiremock::MockServer::start());
+    let uri = server.uri();
+    world._wiremock_server_uri = Some(uri.clone());
+
+    ensure_temp_dir(world);
+    let base = base_path(world);
+    let workspace = base.join("workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace");
+    let config_json = format!(
+        r#"{{
+  "providers": {{
+    "openai": {{ "api_key": "{api_key}", "api_base": "{uri}" }}
+  }},
+  "agents": {{
+    "defaults": {{
+      "workspace": "{workspace}"
+    }}
+  }}
+}}"#,
+        api_key = api_key,
+        uri = uri,
+        workspace = workspace.display()
+    );
+    std::fs::write(base.join("config.json"), config_json).expect("write config");
+
+    std::mem::forget(server);
+    std::mem::forget(rt);
+}
+
+#[given(expr = "the credential store has a valid token {string} for provider {string}")]
+fn given_credential_store_valid_token(world: &mut QuectoWorld, token: String, provider: String) {
+    let base = base_path(world);
+    let store = CredentialStore::new(&base);
+    store
+        .store(Credential {
+            provider,
+            token,
+            method: AuthMethod::Token,
+            expires_at: None, // no expiry = always valid
+        })
+        .expect("store credential");
+}
+
+#[given(expr = "the credential store has an expired token {string} for provider {string}")]
+fn given_credential_store_expired_token(world: &mut QuectoWorld, token: String, provider: String) {
+    let base = base_path(world);
+    let store = CredentialStore::new(&base);
+    store
+        .store(Credential {
+            provider,
+            token,
+            method: AuthMethod::Token,
+            expires_at: Some(0), // epoch = always expired
+        })
+        .expect("store credential");
+}
+
+#[given(expr = "the mock expects Authorization header {string} and returns {string}")]
+fn given_mock_expects_auth_header(
+    world: &mut QuectoWorld,
+    expected_header: String,
+    response_content: String,
+) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+        let body = openai_text_json(&response_content);
+        // Mount mock that ONLY matches the expected Authorization header.
+        // If the wrong token is sent, wiremock returns 404, causing failure.
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .and(wiremock::matchers::header(
+                "Authorization",
+                expected_header.as_str(),
+            ))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+
+        // Read existing config to preserve api_key, only replace api_base
+        let base = base_path(world);
+        let config_str =
+            std::fs::read_to_string(base.join("config.json")).expect("read existing config");
+        let mut config: serde_json::Value =
+            serde_json::from_str(&config_str).expect("parse config");
+        config["providers"]["openai"]["api_base"] = serde_json::Value::String(new_uri.clone());
+        std::fs::write(
+            base.join("config.json"),
+            serde_json::to_string_pretty(&config).unwrap(),
+        )
+        .expect("rewrite config");
+        world._wiremock_server_uri = Some(new_uri);
+        std::mem::forget(server);
+    });
+    std::mem::forget(rt);
+}
+
+// --- Auth error steps ---
+
+#[given(expr = "the OpenAI mock returns an HTTP {int} error")]
+fn given_openai_mock_http_error(world: &mut QuectoWorld, status: u16) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(status).set_body_string("Error"))
+            .mount(&server)
+            .await;
+
+        rewrite_openai_in_config(world, &new_uri);
+        std::mem::forget(server);
+    });
+    std::mem::forget(rt);
 }
 
 // ===========================================================================
