@@ -4361,6 +4361,69 @@ fn then_session_no_system_messages(world: &mut QuectoWorld, key: String) {
     );
 }
 
+/// Assert that a session contains at least one message with role "tool".
+#[then(expr = "the session {string} should contain a tool role message")]
+fn then_session_has_tool_message(world: &mut QuectoWorld, key: String) {
+    let session = load_session_from_disk(world, &key);
+    let tool_count = session.messages.iter().filter(|m| m.role == "tool").count();
+    assert!(
+        tool_count > 0,
+        "expected session '{}' to contain a tool role message, found none",
+        key
+    );
+}
+
+/// Assert that a session's message contents include the given text.
+#[then(expr = "the session {string} should contain text {string}")]
+fn then_session_contains_text(world: &mut QuectoWorld, key: String, text: String) {
+    let session = load_session_from_disk(world, &key);
+    let all_content: String = session
+        .messages
+        .iter()
+        .map(|m| m.content.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        all_content.contains(&text),
+        "expected session '{}' to contain '{}', but it was not found in: {}",
+        key,
+        text,
+        all_content
+    );
+}
+
+/// Create a pre-existing session that includes a tool call and tool result.
+#[given(expr = "a pre-existing session {string} with tool call history for {string}")]
+fn given_session_with_tool_history(world: &mut QuectoWorld, key: String, tool_name: String) {
+    let base = base_path(world);
+    let sessions_dir = base.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("create sessions dir");
+
+    let session_file = serde_json::json!({
+        "key": key,
+        "messages": [
+            { "role": "user", "content": "Use the tool" },
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": format!("call_{}", tool_name),
+                    "name": tool_name,
+                    "arguments": "{\"path\":\"test.txt\"}"
+                }]
+            },
+            { "role": "tool", "content": "tool result data" },
+            { "role": "assistant", "content": "Done with tool" }
+        ]
+    });
+    let filename = key.replace(':', "_") + ".json";
+    std::fs::write(
+        sessions_dir.join(&filename),
+        serde_json::to_string_pretty(&session_file).unwrap(),
+    )
+    .expect("write session with tool history");
+}
+
 /// Helper: load a session file from disk and parse it into a simple struct.
 struct SessionOnDisk {
     messages: Vec<MessageOnDisk>,
