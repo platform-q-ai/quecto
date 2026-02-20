@@ -87,7 +87,12 @@ impl CredentialStore {
         Ok(file.credentials)
     }
 
-    /// Save all credentials to disk.
+    /// Get the path to the credentials file.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Save all credentials to disk with restricted file permissions (0600).
     fn save_all(&self, credentials: &HashMap<String, Credential>) -> Result<(), DomainError> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
@@ -101,6 +106,17 @@ impl CredentialStore {
             .map_err(|e| DomainError::Config(format!("failed to serialize credentials: {}", e)))?;
         std::fs::write(&self.path, json)
             .map_err(|e| DomainError::Config(format!("failed to write credentials: {}", e)))?;
+
+        // Enforce restricted permissions (owner read/write only)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let permissions = std::fs::Permissions::from_mode(0o600);
+            std::fs::set_permissions(&self.path, permissions).map_err(|e| {
+                DomainError::Config(format!("failed to set credentials file permissions: {}", e))
+            })?;
+        }
+
         Ok(())
     }
 
@@ -343,5 +359,64 @@ mod tests {
         let loaded = store.get("openai").unwrap().unwrap();
         assert_eq!(loaded.token, "new-token");
         assert_eq!(loaded.method, AuthMethod::OAuth);
+    }
+
+    #[test]
+    fn test_path_returns_credentials_file_path() {
+        let tmp = TempDir::new().unwrap();
+        let store = CredentialStore::new(tmp.path());
+        assert_eq!(store.path(), tmp.path().join("credentials.json"));
+    }
+
+    // --- Sandbox hardening: credential file permission tests ---
+
+    #[cfg(unix)]
+    #[test]
+    fn test_credentials_file_created_with_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new().unwrap();
+        let store = CredentialStore::new(tmp.path());
+
+        store
+            .store(make_credential("openai", "sk-test", AuthMethod::Token))
+            .unwrap();
+
+        let metadata = std::fs::metadata(store.path()).unwrap();
+        let mode = metadata.permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "expected permissions 0600, got {:04o}", mode);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_credentials_permissions_enforced_on_every_write() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new().unwrap();
+        let store = CredentialStore::new(tmp.path());
+
+        // Store a credential to create the file
+        store
+            .store(make_credential("openai", "sk-test", AuthMethod::Token))
+            .unwrap();
+
+        // Manually weaken the permissions
+        let permissions = std::fs::Permissions::from_mode(0o644);
+        std::fs::set_permissions(store.path(), permissions).unwrap();
+
+        // Verify they were weakened
+        let metadata = std::fs::metadata(store.path()).unwrap();
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o644);
+
+        // Store another credential — permissions should be re-enforced
+        store
+            .store(make_credential("anthropic", "sk-new", AuthMethod::Token))
+            .unwrap();
+
+        let metadata = std::fs::metadata(store.path()).unwrap();
+        let mode = metadata.permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "expected permissions 0600 after re-write, got {:04o}",
+            mode
+        );
     }
 }
