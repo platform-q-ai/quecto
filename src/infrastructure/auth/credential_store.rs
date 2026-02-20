@@ -24,13 +24,28 @@ impl AuthMethod {
 }
 
 /// A stored credential for a provider.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+///
+/// `Debug` is manually implemented to redact the token field, preventing
+/// accidental exposure of secrets in debug logs, panic backtraces, or
+/// `unwrap()` failure messages.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Credential {
     pub provider: String,
     pub token: String,
     pub method: AuthMethod,
     /// Unix timestamp (seconds) when this credential expires, or None if no expiry.
     pub expires_at: Option<i64>,
+}
+
+impl std::fmt::Debug for Credential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Credential")
+            .field("provider", &self.provider)
+            .field("token", &"[REDACTED]")
+            .field("method", &self.method)
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
 }
 
 impl Credential {
@@ -75,8 +90,12 @@ impl CredentialStore {
         }
     }
 
-    /// Load all credentials from disk.
-    fn load_all(&self) -> Result<HashMap<String, Credential>, DomainError> {
+    /// Load all credentials from disk as a snapshot.
+    ///
+    /// This is intentionally stateless: each call re-reads the file from disk.
+    /// Correct for CLI (no stale state); for the long-running gateway, call once
+    /// at startup and pass the snapshot to resolution functions.
+    pub fn load_snapshot(&self) -> Result<HashMap<String, Credential>, DomainError> {
         if !self.path.exists() {
             return Ok(HashMap::new());
         }
@@ -93,6 +112,9 @@ impl CredentialStore {
     }
 
     /// Save all credentials to disk with restricted file permissions (0600).
+    ///
+    /// On Unix, uses `OpenOptions` with mode 0o600 to create the file atomically
+    /// with restricted permissions, avoiding the TOCTOU race of write-then-chmod.
     fn save_all(&self, credentials: &HashMap<String, Credential>) -> Result<(), DomainError> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
@@ -104,17 +126,43 @@ impl CredentialStore {
         };
         let json = serde_json::to_string_pretty(&file)
             .map_err(|e| DomainError::Config(format!("failed to serialize credentials: {}", e)))?;
-        std::fs::write(&self.path, json)
-            .map_err(|e| DomainError::Config(format!("failed to write credentials: {}", e)))?;
 
-        // Enforce restricted permissions (owner read/write only)
+        // On Unix, open with mode 0o600 from the start to avoid the TOCTOU race
+        // where a new file is briefly world-readable between write() and chmod().
+        // Also re-enforce permissions on every write in case they were externally weakened.
         #[cfg(unix)]
         {
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
             use std::os::unix::fs::PermissionsExt;
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&self.path)
+                .map_err(|e| {
+                    DomainError::Config(format!("failed to open credentials file: {}", e))
+                })?;
+            f.write_all(json.as_bytes())
+                .map_err(|e| DomainError::Config(format!("failed to write credentials: {}", e)))?;
+            // Re-enforce permissions in case the file already existed with weaker perms.
             let permissions = std::fs::Permissions::from_mode(0o600);
             std::fs::set_permissions(&self.path, permissions).map_err(|e| {
                 DomainError::Config(format!("failed to set credentials file permissions: {}", e))
             })?;
+        }
+
+        #[cfg(not(unix))]
+        {
+            std::fs::write(&self.path, json)
+                .map_err(|e| DomainError::Config(format!("failed to write credentials: {}", e)))?;
+        }
+
+        #[cfg(not(unix))]
+        {
+            std::fs::write(&self.path, json)
+                .map_err(|e| DomainError::Config(format!("failed to write credentials: {}", e)))?;
         }
 
         Ok(())
@@ -122,28 +170,30 @@ impl CredentialStore {
 
     /// Store a credential for a provider.
     pub fn store(&self, credential: Credential) -> Result<(), DomainError> {
-        let mut all = self.load_all()?;
+        let mut all = self.load_snapshot()?;
         all.insert(credential.provider.clone(), credential);
         self.save_all(&all)
     }
 
     /// Get a credential for a provider. Returns None if not found.
     pub fn get(&self, provider: &str) -> Result<Option<Credential>, DomainError> {
-        let all = self.load_all()?;
+        let all = self.load_snapshot()?;
         Ok(all.get(provider).cloned())
     }
 
     /// Check if a credential exists for a provider.
     pub fn exists(&self, provider: &str) -> Result<bool, DomainError> {
-        let all = self.load_all()?;
+        let all = self.load_snapshot()?;
         Ok(all.contains_key(provider))
     }
 
     /// Remove a credential for a specific provider.
-    pub fn remove(&self, provider: &str) -> Result<(), DomainError> {
-        let mut all = self.load_all()?;
-        all.remove(provider);
-        self.save_all(&all)
+    /// Returns `true` if a credential was actually removed, `false` if none existed.
+    pub fn remove(&self, provider: &str) -> Result<bool, DomainError> {
+        let mut all = self.load_snapshot()?;
+        let removed = all.remove(provider).is_some();
+        self.save_all(&all)?;
+        Ok(removed)
     }
 
     /// Remove all credentials.
@@ -153,13 +203,13 @@ impl CredentialStore {
 
     /// List all stored credentials.
     pub fn list(&self) -> Result<Vec<Credential>, DomainError> {
-        let all = self.load_all()?;
+        let all = self.load_snapshot()?;
         Ok(all.into_values().collect())
     }
 
     /// Get a summary of all credentials for the auth status display.
     pub fn status_summary(&self) -> Result<Vec<CredentialStatus>, DomainError> {
-        let all = self.load_all()?;
+        let all = self.load_snapshot()?;
         if all.is_empty() {
             return Ok(vec![]);
         }
@@ -251,8 +301,13 @@ mod tests {
             .unwrap();
         assert!(store.exists("openai").unwrap());
 
-        store.remove("openai").unwrap();
+        let removed = store.remove("openai").unwrap();
+        assert!(removed);
         assert!(!store.exists("openai").unwrap());
+
+        // Removing again should return false
+        let removed_again = store.remove("openai").unwrap();
+        assert!(!removed_again);
     }
 
     #[test]

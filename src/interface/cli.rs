@@ -162,6 +162,9 @@ fn cmd_auth(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &mut
     }
 }
 
+/// Known provider names accepted by the auth commands.
+const KNOWN_PROVIDERS: &[&str] = &["openai", "anthropic"];
+
 fn cmd_auth_login(
     base: &std::path::Path,
     args: &[String],
@@ -192,6 +195,10 @@ fn cmd_auth_login(
                     return 1;
                 }
             }
+            other if other.starts_with("--") => {
+                stderr.push_str(&format!("auth login: unknown flag '{}'\n", other));
+                return 1;
+            }
             _ => {
                 i += 1;
             }
@@ -203,10 +210,25 @@ fn cmd_auth_login(
         return 1;
     };
 
+    if !KNOWN_PROVIDERS.contains(&provider.as_str()) {
+        stderr.push_str(&format!(
+            "auth login: unknown provider '{}'. Known: {}\n",
+            provider,
+            KNOWN_PROVIDERS.join(", ")
+        ));
+        return 1;
+    }
+
     let Some(token) = token else {
         stderr.push_str("auth login: --token is required (interactive login not yet supported)\n");
         return 1;
     };
+
+    let token = token.trim().to_string();
+    if token.is_empty() {
+        stderr.push_str("auth login: --token value must not be empty\n");
+        return 1;
+    }
 
     let store = CredentialStore::new(base);
     match store.store(Credential {
@@ -246,6 +268,10 @@ fn cmd_auth_logout(
                     return 1;
                 }
             }
+            other if other.starts_with("--") => {
+                stderr.push_str(&format!("auth logout: unknown flag '{}'\n", other));
+                return 1;
+            }
             _ => {
                 i += 1;
             }
@@ -258,15 +284,8 @@ fn cmd_auth_logout(
     };
 
     let store = CredentialStore::new(base);
-    match store.exists(&provider) {
+    match store.remove(&provider) {
         Ok(true) => {
-            if let Err(e) = store.remove(&provider) {
-                stderr.push_str(&format!(
-                    "auth logout: failed to remove credential: {}\n",
-                    e
-                ));
-                return 1;
-            }
             stdout.push_str(&format!("Credential removed for {}\n", provider));
             0
         }
@@ -275,7 +294,10 @@ fn cmd_auth_logout(
             0
         }
         Err(e) => {
-            stderr.push_str(&format!("auth logout: failed to check credential: {}\n", e));
+            stderr.push_str(&format!(
+                "auth logout: failed to remove credential: {}\n",
+                e
+            ));
             1
         }
     }
@@ -1055,5 +1077,61 @@ mod tests {
         let out = run_with_output(args("auth foobar"), &ctx);
         assert_eq!(out.exit_code, 1);
         assert!(out.stderr.contains("unknown subcommand"));
+    }
+
+    #[test]
+    fn test_auth_login_unknown_provider_rejected() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("auth login --provider groq --token sk-test"), &ctx);
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("unknown provider"));
+        assert!(out.stderr.contains("groq"));
+    }
+
+    #[test]
+    fn test_auth_login_empty_token_rejected() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        // We pass a token that's all whitespace
+        let v = vec![
+            "quecto".to_string(),
+            "auth".to_string(),
+            "login".to_string(),
+            "--provider".to_string(),
+            "openai".to_string(),
+            "--token".to_string(),
+            "   ".to_string(),
+        ];
+        let out = run_with_output(v, &ctx);
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("must not be empty"));
+    }
+
+    #[test]
+    fn test_auth_login_unknown_flag_rejected() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("auth login --provider openai --tokn sk-test"), &ctx);
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("unknown flag"));
+        assert!(out.stderr.contains("--tokn"));
+    }
+
+    #[test]
+    fn test_auth_logout_unknown_flag_rejected() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("auth logout --provder openai"), &ctx);
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("unknown flag"));
     }
 }

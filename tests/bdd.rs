@@ -283,6 +283,8 @@ pub struct QuectoWorld {
     pub gateway_config: Option<Config>,
     /// Gateway credential store for wiring tests
     pub gateway_credential_store: Option<CredentialStore>,
+    /// Gateway credential snapshot (loaded once, shared across resolution steps)
+    pub gateway_cred_snapshot: Option<std::collections::HashMap<String, Credential>>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
@@ -2513,26 +2515,19 @@ fn given_no_stored_credential(world: &mut QuectoWorld, provider: String) {
 
 #[when("the gateway initializes providers")]
 fn when_gateway_initializes_providers(world: &mut QuectoWorld) {
+    use quecto::interface::gateway::resolve_api_key;
+
     let config = world
         .gateway_config
         .as_ref()
         .expect("gateway config not set");
     let base = base_path(world);
     let store = CredentialStore::new(&base);
+    let creds = store.load_snapshot().unwrap_or_default();
 
-    // Resolve the API key: credential store takes priority over config
-    let config_key = &config.providers.openai.api_key;
-    let store_key = store.get("openai").unwrap();
-    let resolved = if let Some(cred) = store_key {
-        if !cred.is_expired() {
-            cred.token.clone()
-        } else {
-            config_key.clone()
-        }
-    } else {
-        config_key.clone()
-    };
+    let resolved = resolve_api_key(&config.providers.openai.api_key, &creds, "openai");
     world.gateway_resolved_api_key = Some(resolved);
+    world.gateway_cred_snapshot = Some(creds);
 }
 
 #[then(expr = "the OpenAI provider should use API key {string}")]
@@ -2550,21 +2545,15 @@ fn then_openai_provider_uses_key(world: &mut QuectoWorld, expected: String) {
 
 #[when("the gateway checks provider readiness")]
 fn when_gateway_checks_readiness(world: &mut QuectoWorld) {
-    // Check readiness of credential stores — look for expired credentials
-    // Use gateway_credential_store if set, otherwise check the default credential_store
+    use quecto::interface::gateway::check_provider_readiness;
+
     let store = world
         .gateway_credential_store
         .as_ref()
         .or(world.credential_store.as_ref())
         .expect("no credential store set");
-    let mut needs_reauth = Vec::new();
-    if let Ok(list) = store.list() {
-        for cred in &list {
-            if cred.is_expired() {
-                needs_reauth.push(cred.provider.clone());
-            }
-        }
-    }
+    let creds = store.load_snapshot().unwrap_or_default();
+    let needs_reauth = check_provider_readiness(&creds);
     world.gateway_readiness_report = Some(needs_reauth);
 }
 

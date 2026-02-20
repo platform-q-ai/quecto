@@ -8,7 +8,7 @@ use crate::domain::agent::AgentLoop;
 use crate::domain::message::{Message, Role};
 use crate::domain::provider::LlmProvider;
 use crate::domain::session::{Session, SessionStore};
-use crate::infrastructure::auth::credential_store::CredentialStore;
+use crate::infrastructure::auth::credential_store::{Credential, CredentialStore};
 use crate::infrastructure::bus::{InboundMessage, MessageBus, OutboundMessage};
 use crate::infrastructure::channels::telegram::{TelegramChannel, TelegramUpdate};
 use crate::infrastructure::config::Config;
@@ -104,6 +104,18 @@ impl Gateway {
             )
             .try_init();
         let workspace = self.resolve_workspace();
+
+        // Load credential snapshot once for both provider resolution and readiness check.
+        let store = CredentialStore::new(&self.base_dir);
+        let creds = store.load_snapshot().unwrap_or_default();
+        let needs_reauth = check_provider_readiness(&creds);
+        for provider_name in &needs_reauth {
+            tracing::warn!(
+                provider = provider_name.as_str(),
+                "credential expired — run `quecto auth login` to re-authenticate"
+            );
+        }
+
         let provider = Arc::new(self.build_fallback_provider()?);
         let (agent, mut bus) = self.build_agent(workspace, provider);
         let agent = Arc::new(agent);
@@ -149,10 +161,16 @@ impl Gateway {
     }
 
     /// Build the fallback provider from configured API keys.
+    ///
+    /// Loads the credential store snapshot once and uses it to resolve API keys
+    /// for all providers, avoiding redundant file reads.
     fn build_fallback_provider(&self) -> Result<FallbackProvider, GatewayError> {
+        let store = CredentialStore::new(&self.base_dir);
+        let creds = store.load_snapshot().unwrap_or_default();
+
         let mut provider_list = Vec::new();
-        self.maybe_add_provider(&mut provider_list, "openai");
-        self.maybe_add_provider(&mut provider_list, "anthropic");
+        self.maybe_add_provider(&mut provider_list, "openai", &creds);
+        self.maybe_add_provider(&mut provider_list, "anthropic", &creds);
         if provider_list.is_empty() {
             return Err(GatewayError::NoProviders);
         }
@@ -160,8 +178,16 @@ impl Gateway {
     }
 
     /// Try to create a provider and add it to the list.
-    fn maybe_add_provider(&self, list: &mut Vec<Arc<dyn LlmProvider>>, name: &str) {
-        let (api_key, api_base) = match name {
+    ///
+    /// Resolves the API key from the credential snapshot (takes priority over config),
+    /// falling back to the config file key if no valid credential is stored.
+    fn maybe_add_provider(
+        &self,
+        list: &mut Vec<Arc<dyn LlmProvider>>,
+        name: &str,
+        creds: &std::collections::HashMap<String, Credential>,
+    ) {
+        let (config_key, api_base) = match name {
             "openai" => (
                 &self.config.providers.openai.api_key,
                 &self.config.providers.openai.api_base,
@@ -172,6 +198,7 @@ impl Gateway {
             ),
             _ => return,
         };
+        let api_key = resolve_api_key(config_key, creds, name);
         if api_key.is_empty() {
             return;
         }
@@ -180,7 +207,7 @@ impl Gateway {
         } else {
             Some(api_base.clone())
         };
-        if let Some(p) = providers::create_provider(name, api_key.clone(), base) {
+        if let Some(p) = providers::create_provider(name, api_key, base) {
             list.push(p);
         }
     }
@@ -233,30 +260,6 @@ impl Gateway {
     fn resolve_workspace(&self) -> PathBuf {
         let ws = self.config.workspace_path();
         PathBuf::from(ws)
-    }
-
-    /// Resolve an API key for a provider: credential store takes priority over config.
-    /// Expired credentials are ignored (falls back to config key).
-    pub fn resolve_api_key(config_key: &str, store: &CredentialStore, provider: &str) -> String {
-        if let Ok(Some(cred)) = store.get(provider) {
-            if !cred.is_expired() {
-                return cred.token;
-            }
-        }
-        config_key.to_string()
-    }
-
-    /// Check which providers have expired credentials and need re-authentication.
-    pub fn check_provider_readiness(store: &CredentialStore) -> Vec<String> {
-        let mut needs_reauth = Vec::new();
-        if let Ok(list) = store.list() {
-            for cred in &list {
-                if cred.is_expired() {
-                    needs_reauth.push(cred.provider.clone());
-                }
-            }
-        }
-        needs_reauth
     }
 
     /// Telegram long-polling task.
@@ -423,6 +426,37 @@ impl Gateway {
     }
 }
 
+/// Resolve an API key for a provider from a credential snapshot.
+///
+/// The credential store snapshot takes priority over the config-file key.
+/// Expired credentials are ignored (falls back to config key).
+/// Operates on a pre-loaded snapshot to avoid redundant file I/O.
+pub fn resolve_api_key(
+    config_key: &str,
+    creds: &std::collections::HashMap<String, Credential>,
+    provider: &str,
+) -> String {
+    if let Some(cred) = creds.get(provider) {
+        if !cred.is_expired() {
+            return cred.token.clone();
+        }
+    }
+    config_key.to_string()
+}
+
+/// Check which providers have expired credentials and need re-authentication.
+///
+/// Operates on a pre-loaded snapshot to avoid redundant file I/O.
+pub fn check_provider_readiness(
+    creds: &std::collections::HashMap<String, Credential>,
+) -> Vec<String> {
+    creds
+        .values()
+        .filter(|c| c.is_expired())
+        .map(|c| c.provider.clone())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -478,8 +512,9 @@ mod tests {
             })
             .unwrap();
 
+        let creds = store.load_snapshot().unwrap();
         let config: Config = serde_json::from_str("{}").unwrap();
-        let resolved = Gateway::resolve_api_key(&config.providers.openai.api_key, &store, "openai");
+        let resolved = resolve_api_key(&config.providers.openai.api_key, &creds, "openai");
         assert_eq!(resolved, "sk-from-store");
     }
 
@@ -499,10 +534,11 @@ mod tests {
             })
             .unwrap();
 
+        let creds = store.load_snapshot().unwrap();
         let config: Config =
             serde_json::from_str(r#"{"providers": {"openai": {"api_key": "sk-from-config"}}}"#)
                 .unwrap();
-        let resolved = Gateway::resolve_api_key(&config.providers.openai.api_key, &store, "openai");
+        let resolved = resolve_api_key(&config.providers.openai.api_key, &creds, "openai");
         assert_eq!(resolved, "sk-from-store");
     }
 
@@ -513,10 +549,11 @@ mod tests {
         let store = CredentialStore::new(tmp.path());
         // No credential stored
 
+        let creds = store.load_snapshot().unwrap();
         let config: Config =
             serde_json::from_str(r#"{"providers": {"openai": {"api_key": "sk-from-config"}}}"#)
                 .unwrap();
-        let resolved = Gateway::resolve_api_key(&config.providers.openai.api_key, &store, "openai");
+        let resolved = resolve_api_key(&config.providers.openai.api_key, &creds, "openai");
         assert_eq!(resolved, "sk-from-config");
     }
 
@@ -536,10 +573,11 @@ mod tests {
             })
             .unwrap();
 
+        let creds = store.load_snapshot().unwrap();
         let config: Config =
             serde_json::from_str(r#"{"providers": {"openai": {"api_key": "sk-from-config"}}}"#)
                 .unwrap();
-        let resolved = Gateway::resolve_api_key(&config.providers.openai.api_key, &store, "openai");
+        let resolved = resolve_api_key(&config.providers.openai.api_key, &creds, "openai");
         assert_eq!(resolved, "sk-from-config");
     }
 
@@ -559,7 +597,8 @@ mod tests {
             })
             .unwrap();
 
-        let needs_reauth = Gateway::check_provider_readiness(&store);
+        let creds = store.load_snapshot().unwrap();
+        let needs_reauth = check_provider_readiness(&creds);
         assert!(needs_reauth.contains(&"openai".to_string()));
     }
 
@@ -579,7 +618,8 @@ mod tests {
             })
             .unwrap();
 
-        let needs_reauth = Gateway::check_provider_readiness(&store);
+        let creds = store.load_snapshot().unwrap();
+        let needs_reauth = check_provider_readiness(&creds);
         assert!(needs_reauth.is_empty());
     }
 }
