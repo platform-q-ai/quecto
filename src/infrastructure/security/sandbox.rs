@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 const SHELL_METACHARACTERS: &[&str] = &[";", "&&", "||", "|", "$(", "`", "<(", ">("];
 
 /// Dangerous command patterns that are always blocked regardless of workspace restriction.
+/// All patterns MUST be lowercase (compared against lowercased input).
 const DANGEROUS_PATTERNS: &[&str] = &[
     "rm -rf /",
     "rm -rf /*",
@@ -38,15 +39,25 @@ pub struct Sandbox {
     /// Optional command allowlist. When set, only commands whose first token
     /// is in this list are permitted. When `None`, falls back to the denylist.
     pub command_allowlist: Option<Vec<String>>,
+    /// Cached canonical workspace path (computed once at construction).
+    canonical_workspace: Option<PathBuf>,
 }
 
 impl Sandbox {
     /// Create a new sandbox with the given workspace and restriction setting.
     pub fn new(workspace: Option<PathBuf>, restrict_to_workspace: bool) -> Self {
+        let canonical_workspace = workspace.as_ref().and_then(|ws| {
+            if ws.exists() {
+                ws.canonicalize().ok()
+            } else {
+                Some(ws.clone())
+            }
+        });
         Self {
             workspace,
             restrict_to_workspace,
             command_allowlist: None,
+            canonical_workspace,
         }
     }
 
@@ -59,16 +70,10 @@ impl Sandbox {
             return Ok(path.to_path_buf());
         }
 
-        let workspace = self.workspace.as_ref().ok_or(SandboxError::NoWorkspace)?;
-
-        // Canonicalize the workspace (it must exist)
-        let canonical_workspace = if workspace.exists() {
-            workspace
-                .canonicalize()
-                .map_err(|e| SandboxError::Io(workspace.display().to_string(), e))?
-        } else {
-            workspace.to_path_buf()
-        };
+        let canonical_workspace = self
+            .canonical_workspace
+            .as_ref()
+            .ok_or(SandboxError::NoWorkspace)?;
 
         // Try to canonicalize the target path to resolve symlinks.
         // If the full path doesn't exist, try canonicalizing the parent
@@ -94,7 +99,7 @@ impl Sandbox {
             resolve_path(path)
         };
 
-        if resolved.starts_with(&canonical_workspace) {
+        if resolved.starts_with(canonical_workspace) {
             Ok(resolved)
         } else {
             Err(SandboxError::OutsideWorkspace(
@@ -106,20 +111,29 @@ impl Sandbox {
 
     /// Validate that a command is permitted.
     ///
-    /// If a command allowlist is configured, the command's first token must be in the list,
-    /// AND no shell metacharacters (`;`, `|`, `$()`, backticks, etc.) are allowed unless
-    /// all resulting commands are also in the allowlist.
+    /// The denylist is ALWAYS checked first, regardless of allowlist configuration.
+    /// If a command allowlist is configured, the command's first token must also be
+    /// in the list, and shell metacharacters are validated.
     ///
-    /// If no allowlist is configured, falls back to the denylist.
+    /// If no allowlist is configured, only the denylist is applied.
     pub fn validate_command(&self, command: &str) -> Result<(), SandboxError> {
+        // Always check denylist first — dangerous patterns are never permitted
+        self.check_denylist(command)?;
+
+        // If allowlist is configured, also validate against it
         if let Some(ref allowlist) = self.command_allowlist {
             return self.validate_command_allowlist(command, allowlist);
         }
 
-        // Denylist mode
+        Ok(())
+    }
+
+    /// Check command against the dangerous patterns denylist.
+    fn check_denylist(&self, command: &str) -> Result<(), SandboxError> {
         let lower = command.to_lowercase();
         for pattern in DANGEROUS_PATTERNS {
-            if lower.contains(&pattern.to_lowercase()) {
+            // Patterns are already lowercase, no need to convert them
+            if lower.contains(pattern) {
                 return Err(SandboxError::DangerousPattern(
                     command.to_string(),
                     pattern.to_string(),
@@ -491,6 +505,21 @@ mod tests {
         let sb = Sandbox::new(None, false);
         // No allowlist set — should fall back to denylist, allowing safe commands
         assert!(sb.validate_command("echo hello").is_ok());
+    }
+
+    #[test]
+    fn test_allowlist_still_blocks_dangerous_patterns() {
+        // Even with "rm" in the allowlist, dangerous patterns should be blocked
+        let mut sb = Sandbox::new(None, false);
+        sb.command_allowlist = Some(vec!["rm".to_string(), "echo".to_string()]);
+        let result = sb.validate_command("rm -rf /");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("dangerous pattern")
+        );
     }
 
     // --- extract_all_command_tokens tests ---

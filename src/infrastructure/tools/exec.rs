@@ -65,77 +65,135 @@ impl ExecTool {
         env_overrides: &HashMap<String, String>,
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
         let args_str = arguments.to_string();
-        let workspace = self.workspace.clone();
-        let sandbox = self.sandbox.clone();
-        let timeout = self.timeout;
         let env_overrides = env_overrides.clone();
 
-        Box::pin(async move {
-            let args: serde_json::Value =
-                serde_json::from_str(&args_str).map_err(|e| DomainError::Tool(e.to_string()))?;
+        Box::pin(async move { self.run_command(&args_str, Some(&env_overrides)).await })
+    }
 
-            let command = args["command"]
-                .as_str()
-                .ok_or_else(|| DomainError::Tool("missing 'command' argument".to_string()))?;
+    /// Core execution logic shared by both `Tool::execute` and `execute_with_env`.
+    ///
+    /// When `env_overrides` is `Some`, those variables are used as the child's environment
+    /// (after stripping `QUECTO_` prefixed keys). When `None`, the current process environment
+    /// is inherited (also with `QUECTO_` keys stripped).
+    ///
+    /// In both cases `env_clear()` is called first to ensure a clean slate, then allowed
+    /// variables are selectively re-added.
+    async fn run_command(
+        &self,
+        arguments: &str,
+        env_overrides: Option<&HashMap<String, String>>,
+    ) -> Result<ToolResult, DomainError> {
+        let args: serde_json::Value =
+            serde_json::from_str(arguments).map_err(|e| DomainError::Tool(e.to_string()))?;
 
-            // Validate command against sandbox
-            sandbox
-                .validate_command(command)
-                .map_err(|e| DomainError::Security(e.to_string()))?;
+        let command = args["command"]
+            .as_str()
+            .ok_or_else(|| DomainError::Tool("missing 'command' argument".to_string()))?;
 
-            // Build the environment: start with overrides, strip QUECTO_ vars
-            let filtered_env: HashMap<String, String> = env_overrides
-                .iter()
-                .filter(|(k, _)| !k.starts_with(SECRET_ENV_PREFIX))
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect();
+        // Validate command against sandbox
+        self.sandbox
+            .validate_command(command)
+            .map_err(|e| DomainError::Security(e.to_string()))?;
 
-            let mut cmd = tokio::process::Command::new("sh");
-            cmd.arg("-c")
-                .arg(command)
-                .current_dir(workspace.as_ref())
-                .env_clear();
+        // Build the command
+        let mut cmd = tokio::process::Command::new("sh");
+        cmd.arg("-c")
+            .arg(command)
+            .current_dir(self.workspace.as_ref())
+            .env_clear();
 
-            // Re-add filtered env vars
-            for (k, v) in &filtered_env {
+        // Build the environment: always strip QUECTO_ prefixed vars
+        let source_env: HashMap<String, String> = match env_overrides {
+            Some(overrides) => overrides.clone(),
+            None => std::env::vars().collect(),
+        };
+
+        for (k, v) in &source_env {
+            if !k.starts_with(SECRET_ENV_PREFIX) {
                 cmd.env(k, v);
             }
-            // Also add PATH so commands can be found
-            if !filtered_env.contains_key("PATH") {
-                if let Ok(path) = std::env::var("PATH") {
-                    cmd.env("PATH", path);
+        }
+
+        // Ensure PATH is always set so commands can be found
+        if !source_env.contains_key("PATH") {
+            if let Ok(path) = std::env::var("PATH") {
+                cmd.env("PATH", path);
+            }
+        }
+
+        // Spawn the child process so we can kill it on timeout.
+        // We use spawn + wait (not output) so we retain a handle to kill the process.
+        let mut child = cmd
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| DomainError::Tool(format!("exec failed: {}", e)))?;
+
+        // Take stdout/stderr handles before waiting, so we can read them after wait completes
+        // while still retaining the child handle for kill.
+        let mut stdout_pipe = child.stdout.take();
+        let mut stderr_pipe = child.stderr.take();
+
+        let timeout_dur = self.timeout;
+
+        match tokio::time::timeout(timeout_dur, child.wait()).await {
+            Ok(Ok(status)) => {
+                // Child exited — read captured output
+                let stdout = read_pipe(&mut stdout_pipe).await;
+                let stderr = read_stderr_pipe(&mut stderr_pipe).await;
+
+                if status.success() {
+                    Ok(ToolResult {
+                        content: stdout,
+                        is_error: false,
+                    })
+                } else {
+                    Ok(ToolResult {
+                        content: format!(
+                            "exit code {}\nstdout: {}\nstderr: {}",
+                            status, stdout, stderr
+                        ),
+                        is_error: true,
+                    })
                 }
             }
-
-            let output_future = cmd.output();
-
-            match tokio::time::timeout(timeout, output_future).await {
-                Ok(Ok(output)) => {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-
-                    if output.status.success() {
-                        Ok(ToolResult {
-                            content: stdout.to_string(),
-                            is_error: false,
-                        })
-                    } else {
-                        Ok(ToolResult {
-                            content: format!(
-                                "exit code {}\nstdout: {}\nstderr: {}",
-                                output.status, stdout, stderr
-                            ),
-                            is_error: true,
-                        })
-                    }
-                }
-                Ok(Err(e)) => Err(DomainError::Tool(format!("exec failed: {}", e))),
-                Err(_) => Ok(ToolResult {
-                    content: format!("command timed out after {}s", timeout.as_secs()),
+            Ok(Err(e)) => Err(DomainError::Tool(format!("exec failed: {}", e))),
+            Err(_) => {
+                // Timeout: kill the child process to prevent orphan leak
+                let _ = child.kill().await;
+                Ok(ToolResult {
+                    content: format!("command timed out after {}s", timeout_dur.as_secs()),
                     is_error: true,
-                }),
+                })
             }
-        })
+        }
+    }
+}
+
+/// Read all bytes from an optional pipe and return as a lossy UTF-8 string.
+async fn read_pipe(pipe: &mut Option<tokio::process::ChildStdout>) -> String {
+    // This helper is typed for ChildStdout; we use a separate one for stderr below.
+    use tokio::io::AsyncReadExt;
+    match pipe.take() {
+        Some(mut p) => {
+            let mut buf = Vec::new();
+            let _ = p.read_to_end(&mut buf).await;
+            String::from_utf8_lossy(&buf).to_string()
+        }
+        None => String::new(),
+    }
+}
+
+/// Read all bytes from an optional stderr pipe and return as a lossy UTF-8 string.
+async fn read_stderr_pipe(pipe: &mut Option<tokio::process::ChildStderr>) -> String {
+    use tokio::io::AsyncReadExt;
+    match pipe.take() {
+        Some(mut p) => {
+            let mut buf = Vec::new();
+            let _ = p.read_to_end(&mut buf).await;
+            String::from_utf8_lossy(&buf).to_string()
+        }
+        None => String::new(),
     }
 }
 
@@ -153,63 +211,8 @@ impl Tool for ExecTool {
         arguments: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
         let args_str = arguments.to_string();
-        let workspace = self.workspace.clone();
-        let sandbox = self.sandbox.clone();
-        let timeout = self.timeout;
 
-        Box::pin(async move {
-            let args: serde_json::Value =
-                serde_json::from_str(&args_str).map_err(|e| DomainError::Tool(e.to_string()))?;
-
-            let command = args["command"]
-                .as_str()
-                .ok_or_else(|| DomainError::Tool("missing 'command' argument".to_string()))?;
-
-            // Validate command against sandbox
-            sandbox
-                .validate_command(command)
-                .map_err(|e| DomainError::Security(e.to_string()))?;
-
-            // Build the environment: inherit current env but strip QUECTO_ vars
-            let mut cmd = tokio::process::Command::new("sh");
-            cmd.arg("-c").arg(command).current_dir(workspace.as_ref());
-
-            // Strip QUECTO_ prefixed env vars from the inherited environment
-            for (key, _) in std::env::vars() {
-                if key.starts_with(SECRET_ENV_PREFIX) {
-                    cmd.env_remove(&key);
-                }
-            }
-
-            let output_future = cmd.output();
-
-            match tokio::time::timeout(timeout, output_future).await {
-                Ok(Ok(output)) => {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-
-                    if output.status.success() {
-                        Ok(ToolResult {
-                            content: stdout.to_string(),
-                            is_error: false,
-                        })
-                    } else {
-                        Ok(ToolResult {
-                            content: format!(
-                                "exit code {}\nstdout: {}\nstderr: {}",
-                                output.status, stdout, stderr
-                            ),
-                            is_error: true,
-                        })
-                    }
-                }
-                Ok(Err(e)) => Err(DomainError::Tool(format!("exec failed: {}", e))),
-                Err(_) => Ok(ToolResult {
-                    content: format!("command timed out after {}s", timeout.as_secs()),
-                    is_error: true,
-                }),
-            }
-        })
+        Box::pin(async move { self.run_command(&args_str, None).await })
     }
 }
 
