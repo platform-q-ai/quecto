@@ -62,21 +62,18 @@ Feature: Authentication
 
   # --- CLI auth commands ---
 
-  @pending
   Scenario: CLI auth login stores a pasted token for OpenAI
     Given a quecto base directory at a temporary path
     When I run quecto with arguments "auth login --provider openai --token sk-test-openai-key"
     Then the output should contain "stored"
     And the credential for "openai" should exist in the base directory
 
-  @pending
   Scenario: CLI auth login stores a pasted token for Anthropic
     Given a quecto base directory at a temporary path
     When I run quecto with arguments "auth login --provider anthropic --token sk-ant-test-key"
     Then the output should contain "stored"
     And the credential for "anthropic" should exist in the base directory
 
-  @pending
   Scenario: CLI auth logout removes a stored credential
     Given a quecto base directory at a temporary path
     And a stored credential for "openai" in the base directory
@@ -84,13 +81,11 @@ Feature: Authentication
     Then the output should contain "removed"
     And the credential for "openai" should not exist in the base directory
 
-  @pending
   Scenario: CLI auth logout for nonexistent provider is a no-op
     Given a quecto base directory at a temporary path
     When I run quecto with arguments "auth logout --provider openai"
     Then the output should contain "no credential"
 
-  @pending
   Scenario: CLI auth status shows active credentials
     Given a quecto base directory at a temporary path
     And a stored credential for "openai" with method "token" in the base directory
@@ -100,13 +95,11 @@ Feature: Authentication
     And the output should contain "active"
     And the output should contain "anthropic"
 
-  @pending
   Scenario: CLI auth status shows no providers when empty
     Given a quecto base directory at a temporary path
     When I run quecto with arguments "auth status"
     Then the output should contain "no credentials"
 
-  @pending
   Scenario: CLI auth status flags expired credentials
     Given a quecto base directory at a temporary path
     And a stored credential for "anthropic" that is expired in the base directory
@@ -116,28 +109,24 @@ Feature: Authentication
 
   # --- Provider credential wiring ---
 
-  @pending
   Scenario: Gateway loads provider key from credential store
     Given a config with no API key for "openai"
     And a stored credential for "openai" with token "sk-from-store"
     When the gateway initializes providers
     Then the OpenAI provider should use API key "sk-from-store"
 
-  @pending
   Scenario: Gateway prefers credential store over config file
     Given a config with API key "sk-from-config" for "openai"
     And a stored credential for "openai" with token "sk-from-store"
     When the gateway initializes providers
     Then the OpenAI provider should use API key "sk-from-store"
 
-  @pending
   Scenario: Gateway falls back to config when credential store is empty
     Given a config with API key "sk-from-config" for "openai"
     And no stored credential for "openai"
     When the gateway initializes providers
     Then the OpenAI provider should use API key "sk-from-config"
 
-  @pending
   Scenario: Token expiry triggers re-auth notification
     Given a stored credential for "openai" that is expired
     When the gateway checks provider readiness

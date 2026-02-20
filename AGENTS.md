@@ -83,11 +83,20 @@ Manual argument parsing (no clap). The single entry point is `cli::run(args) -> 
 | `quecto agent [-s system] [-m model] <prompt>` | Runs a one-shot agent session |
 | `quecto skills list\|remove\|install` | Manages skill files |
 | `quecto status` | Shows config summary, provider availability, redacted API keys |
-| `quecto auth` | Login/logout/status for provider credentials (partially implemented) |
+| `quecto auth login --provider <name> --token <key>` | Stores an API token for a provider in the credential store |
+| `quecto auth logout --provider <name>` | Removes a stored credential (no-op if absent) |
+| `quecto auth status` | Lists all stored credentials with provider, method, and active/expired status |
 | `quecto gateway` | Runs the full async gateway (Telegram polling + agent loop) |
 | `quecto help` / `quecto version` | Self-explanatory |
 
 `CliContext` allows overriding `base_dir` for testability so commands write to temp directories in tests instead of `~/.config/quecto`.
+
+The gateway module (`gateway.rs`) also provides credential-store integration as free functions:
+
+- `resolve_api_key(config_key, creds, provider)` — given a pre-loaded credential snapshot, returns the store token if present and not expired, otherwise falls back to the config file key
+- `check_provider_readiness(creds)` — given a pre-loaded credential snapshot, returns a list of providers whose stored credentials have expired and need re-authentication
+
+Both functions operate on a `HashMap<String, Credential>` snapshot (from `CredentialStore::load_snapshot()`) to avoid redundant file I/O. The gateway calls `load_snapshot()` once at startup and passes the result to both functions.
 
 ## Dependency rule
 
@@ -106,7 +115,7 @@ The composition root is `main.rs` -> `cli::run()` -> `gateway.rs`. The gateway c
 
 ## Development workflow
 
-BDD-first using cucumber-rs with Gherkin feature files. See `bdd-plan.md` for the full plan.
+BDD-first using cucumber-rs with Gherkin feature files.
 
 ```
 @pending -> @wip    Tag the feature
@@ -120,7 +129,7 @@ Refactor
 @wip -> @done       Tag the feature
 ```
 
-The BDD runner (`tests/bdd.rs`) uses `.fail_on_skipped()` and runs features tagged `@wip` or `@done`. This means all completed features are regression-tested on every run. Scenarios tagged `@pending` are always excluded. All step definitions live in `tests/bdd.rs` (~3100 lines).
+The BDD runner (`tests/bdd.rs`) uses `.fail_on_skipped()` and runs features tagged `@wip` or `@done`. This means all completed features are regression-tested on every run. Scenarios tagged `@pending` are always excluded. All step definitions live in `tests/bdd.rs` (~3600 lines).
 
 Feature files live in `tests/features/`. There are 17 feature files covering: config, cli, onboard, security, sandbox_hardening, agent_tools, providers, agent_loop, session, auth, telegram, cron, subagent, heartbeat, skills, voice, observability.
 
@@ -129,8 +138,8 @@ Feature files live in `tests/features/`. There are 17 feature files covering: co
 ```
 cargo fmt --check              Formatting
 cargo clippy -- -D warnings    Lints (zero warnings policy)
-cargo test --lib               194 unit tests
-cargo test --test bdd          104 active BDD scenarios across 16 @done features
+cargo test --lib               295 unit tests
+cargo test --test bdd          134 active BDD scenarios across 17 @done features
 ```
 
 ## Tech stack
