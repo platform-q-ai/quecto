@@ -104,4 +104,27 @@ mod tests {
         assert_eq!(class, ErrorClass::Unknown);
         assert!(!class.is_retryable());
     }
+
+    #[test]
+    fn test_display() {
+        assert_eq!(format!("{}", ErrorClass::RateLimit), "rate_limit");
+        assert_eq!(format!("{}", ErrorClass::Auth), "auth");
+        assert_eq!(format!("{}", ErrorClass::Server), "server");
+        assert_eq!(format!("{}", ErrorClass::Client), "client");
+        assert_eq!(format!("{}", ErrorClass::Network), "network");
+        assert_eq!(format!("{}", ErrorClass::Unknown), "unknown");
+    }
+
+    #[test]
+    fn test_as_str_all_variants() {
+        assert_eq!(ErrorClass::Client.as_str(), "client");
+        assert_eq!(ErrorClass::Network.as_str(), "network");
+        assert_eq!(ErrorClass::Unknown.as_str(), "unknown");
+    }
+
+    #[test]
+    fn test_client_not_retryable() {
+        assert!(!ErrorClass::Client.is_retryable());
+        assert!(!ErrorClass::Unknown.is_retryable());
+    }
 }

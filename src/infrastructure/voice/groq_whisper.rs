@@ -256,5 +256,108 @@ mod tests {
 
         let err = TranscriptionError::Http("connection refused".to_string());
         assert_eq!(err.to_string(), "HTTP error: connection refused");
+
+        let err = TranscriptionError::FileError("not found".to_string());
+        assert_eq!(err.to_string(), "file error: not found");
+
+        let err = TranscriptionError::ParseError("invalid json".to_string());
+        assert_eq!(err.to_string(), "parse error: invalid json");
+    }
+
+    #[tokio::test]
+    async fn test_transcribe_file_success() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let response = serde_json::json!({"text": "Hello world from audio"});
+
+        Mock::given(method("POST"))
+            .and(path("/openai/v1/audio/transcriptions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+            .mount(&server)
+            .await;
+
+        // Create a temp audio file
+        let dir = tempfile::tempdir().unwrap();
+        let audio_path = dir.path().join("test.ogg");
+        std::fs::write(&audio_path, b"fake audio data").unwrap();
+
+        let client = GroqWhisperClient::with_base_url("gsk-test", &server.uri());
+        let result = client.transcribe(&audio_path).await.unwrap();
+        assert_eq!(result.text, "Hello world from audio");
+    }
+
+    #[tokio::test]
+    async fn test_transcribe_file_api_error() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/openai/v1/audio/transcriptions"))
+            .respond_with(ResponseTemplate::new(429).set_body_string("rate limited"))
+            .mount(&server)
+            .await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let audio_path = dir.path().join("test.ogg");
+        std::fs::write(&audio_path, b"fake audio data").unwrap();
+
+        let client = GroqWhisperClient::with_base_url("gsk-test", &server.uri());
+        let result = client.transcribe(&audio_path).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            TranscriptionError::ApiError(status, body) => {
+                assert_eq!(status, 429);
+                assert!(body.contains("rate limited"));
+            }
+            other => panic!("expected ApiError, got: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_transcribe_bytes_success() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let response = serde_json::json!({"text": "Transcribed from bytes"});
+
+        Mock::given(method("POST"))
+            .and(path("/openai/v1/audio/transcriptions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+            .mount(&server)
+            .await;
+
+        let client = GroqWhisperClient::with_base_url("gsk-test", &server.uri());
+        let result = client
+            .transcribe_bytes(vec![1, 2, 3, 4], "test.ogg")
+            .await
+            .unwrap();
+        assert_eq!(result.text, "Transcribed from bytes");
+    }
+
+    #[tokio::test]
+    async fn test_transcribe_bytes_api_error() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/openai/v1/audio/transcriptions"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
+            .mount(&server)
+            .await;
+
+        let client = GroqWhisperClient::with_base_url("gsk-test", &server.uri());
+        let result = client.transcribe_bytes(vec![1, 2, 3], "test.ogg").await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            TranscriptionError::ApiError(status, _) => assert_eq!(status, 500),
+            other => panic!("expected ApiError, got: {:?}", other),
+        }
     }
 }

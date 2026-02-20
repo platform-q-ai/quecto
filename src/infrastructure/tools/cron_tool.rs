@@ -253,4 +253,91 @@ mod tests {
         assert!(result.is_error);
         assert!(result.content.contains("action"));
     }
+
+    #[tokio::test]
+    async fn test_unknown_action() {
+        let (tool, _tmp) = test_tool();
+        let result = tool.execute(r#"{"action":"purge"}"#).await.unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("unknown action"));
+    }
+
+    #[tokio::test]
+    async fn test_add_missing_name() {
+        let (tool, _tmp) = test_tool();
+        let result = tool
+            .execute(r#"{"action":"add","message":"test","interval_seconds":60}"#)
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("name"));
+    }
+
+    #[tokio::test]
+    async fn test_add_missing_schedule() {
+        let (tool, _tmp) = test_tool();
+        let result = tool
+            .execute(r#"{"action":"add","name":"Job","message":"test"}"#)
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert!(
+            result
+                .content
+                .contains("cron_expression or interval_seconds")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_invalid_json() {
+        let (tool, _tmp) = test_tool();
+        let result = tool.execute("not json").await.unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("invalid JSON"));
+    }
+
+    #[tokio::test]
+    async fn test_enable_job() {
+        let (tool, _tmp) = test_tool();
+        tool.execute(r#"{"action":"add","name":"My Job","message":"test","interval_seconds":60}"#)
+            .await
+            .unwrap();
+        tool.execute(r#"{"action":"disable","name":"My Job"}"#)
+            .await
+            .unwrap();
+        let result = tool
+            .execute(r#"{"action":"enable","name":"My Job"}"#)
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains("enabled"));
+    }
+
+    #[tokio::test]
+    async fn test_add_with_deliver_to() {
+        let (tool, _tmp) = test_tool();
+        let result = tool
+            .execute(
+                r#"{"action":"add","name":"Notify","message":"check","interval_seconds":60,"deliver_to":"telegram:123"}"#,
+            )
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains("added"));
+    }
+
+    #[test]
+    fn test_definition() {
+        let (tool, _tmp) = test_tool();
+        let def = tool.definition();
+        assert_eq!(def.name, "cron");
+        assert!(def.description.contains("cron"));
+    }
+
+    #[test]
+    fn test_debug_format() {
+        let (tool, _tmp) = test_tool();
+        let debug = format!("{:?}", tool);
+        assert!(debug.contains("CronTool"));
+    }
 }

@@ -338,4 +338,53 @@ mod tests {
         let err = DomainError::Provider("HTTP 401 Unauthorized".to_string());
         assert_eq!(FallbackProvider::classify_error(&err), ErrorClass::Auth);
     }
+
+    #[test]
+    fn test_classify_network_error() {
+        let err = DomainError::Provider("connection timeout".to_string());
+        assert_eq!(FallbackProvider::classify_error(&err), ErrorClass::Network);
+
+        let err2 = DomainError::Provider("network unreachable".to_string());
+        assert_eq!(FallbackProvider::classify_error(&err2), ErrorClass::Network);
+
+        let err3 = DomainError::Provider("connect refused".to_string());
+        assert_eq!(FallbackProvider::classify_error(&err3), ErrorClass::Network);
+    }
+
+    #[test]
+    fn test_classify_unknown_error() {
+        let err = DomainError::Provider("something unexpected happened".to_string());
+        assert_eq!(FallbackProvider::classify_error(&err), ErrorClass::Unknown);
+    }
+
+    #[test]
+    fn test_classify_403_as_auth() {
+        let err = DomainError::Provider("HTTP 403 Forbidden".to_string());
+        assert_eq!(FallbackProvider::classify_error(&err), ErrorClass::Auth);
+    }
+
+    #[test]
+    fn test_classify_502_503_504() {
+        for code in ["502", "503", "504"] {
+            let err = DomainError::Provider(format!("HTTP {} Bad Gateway", code));
+            assert_eq!(
+                FallbackProvider::classify_error(&err),
+                ErrorClass::Server,
+                "expected Server for {}",
+                code
+            );
+        }
+    }
+
+    #[test]
+    fn test_fallback_provider_name() {
+        let provider = FallbackProvider::new(vec![]);
+        assert_eq!(provider.name(), "fallback");
+    }
+
+    #[test]
+    fn test_with_cooldown_secs() {
+        let provider = FallbackProvider::new(vec![]).with_cooldown_secs(120);
+        assert_eq!(provider.cooldown_secs, 120);
+    }
 }

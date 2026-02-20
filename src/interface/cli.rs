@@ -507,4 +507,228 @@ mod tests {
         assert!(!out.stdout.contains("sk-super-secret-12345"));
         assert!(out.stdout.contains("configured"));
     }
+
+    #[test]
+    fn test_auth_not_implemented() {
+        let out = run_with_output(args("auth"), &default_ctx());
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("not yet implemented"));
+    }
+
+    #[test]
+    fn test_cron_not_implemented() {
+        let out = run_with_output(args("cron"), &default_ctx());
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("not yet implemented"));
+    }
+
+    #[test]
+    fn test_gateway_subcommand_hint() {
+        let out = run_with_output(args("gateway"), &default_ctx());
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stdout.contains("gateway"));
+    }
+
+    #[test]
+    fn test_agent_no_args() {
+        let out = run_with_output(args("agent"), &default_ctx());
+        assert!(out.stdout.contains("session: cli:default"));
+        assert!(out.stderr.contains("interactive mode not yet implemented"));
+    }
+
+    #[test]
+    fn test_agent_with_session_and_message() {
+        let out = run_with_output(args("agent -s test-session -m Hello"), &default_ctx());
+        assert!(out.stdout.contains("session: cli:test-session"));
+        assert!(out.stdout.contains("message: Hello"));
+    }
+
+    #[test]
+    fn test_agent_session_flag_missing_value() {
+        let out = run_with_output(args("agent -s"), &default_ctx());
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("-s requires a session name"));
+    }
+
+    #[test]
+    fn test_agent_message_flag_missing_value() {
+        let out = run_with_output(args("agent -m"), &default_ctx());
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("-m requires a message"));
+    }
+
+    #[test]
+    fn test_agent_long_flags() {
+        let out = run_with_output(args("agent --session my-sess --message Hi"), &default_ctx());
+        assert!(out.stdout.contains("session: cli:my-sess"));
+        assert!(out.stdout.contains("message: Hi"));
+    }
+
+    #[test]
+    fn test_skills_no_subcommand() {
+        let out = run_with_output(args("skills"), &default_ctx());
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("missing subcommand"));
+    }
+
+    #[test]
+    fn test_skills_unknown_subcommand() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("skills foobar"), &ctx);
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("unknown subcommand"));
+    }
+
+    #[test]
+    fn test_skills_list_empty() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("skills list"), &ctx);
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stdout.contains("No skills installed"));
+    }
+
+    #[test]
+    fn test_skills_list_with_skills() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let skill_dir = tmp.path().join("workspace").join("skills").join("weather");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("skills list"), &ctx);
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stdout.contains("weather"));
+    }
+
+    #[test]
+    fn test_skills_remove_missing_name() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("skills remove"), &ctx);
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("missing skill name"));
+    }
+
+    #[test]
+    fn test_skills_remove_not_found() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("skills remove nonexistent"), &ctx);
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("not found"));
+    }
+
+    #[test]
+    fn test_skills_install_not_implemented() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("skills install"), &ctx);
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("not yet implemented"));
+    }
+
+    #[test]
+    fn test_status_shows_telegram_and_heartbeat() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config_json = r#"{
+            "providers": { "openai": { "api_key": "sk-test" } },
+            "channels": { "telegram": { "enabled": true, "token": "123:ABC" } },
+            "heartbeat": { "enabled": true, "interval": 300 }
+        }"#;
+        std::fs::write(tmp.path().join("config.json"), config_json).unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("status"), &ctx);
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stdout.contains("Telegram:"));
+        assert!(out.stdout.contains("enabled"));
+        assert!(out.stdout.contains("Heartbeat:"));
+        assert!(out.stdout.contains("300s"));
+    }
+
+    #[test]
+    fn test_status_disabled_telegram_and_heartbeat() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config_json = r#"{
+            "providers": { "openai": { "api_key": "sk-test" } },
+            "channels": { "telegram": { "enabled": false } },
+            "heartbeat": { "enabled": false }
+        }"#;
+        std::fs::write(tmp.path().join("config.json"), config_json).unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("status"), &ctx);
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stdout.contains("disabled"));
+    }
+
+    #[test]
+    fn test_gateway_no_config() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        // cmd_gateway_run uses eprintln directly, so we test through run_with_output
+        // (which routes "gateway" to a hint message since the real gateway path
+        // goes through run() -> cmd_gateway_run)
+        let out = run_with_output(args("gateway"), &ctx);
+        assert_eq!(out.exit_code, 0);
+    }
+
+    #[test]
+    fn test_help_text_includes_all_commands() {
+        let mut out = String::new();
+        help_text(&mut out);
+        assert_contains_all(
+            &out,
+            &[
+                "onboard", "agent", "auth", "gateway", "status", "cron", "skills", "version",
+            ],
+        );
+    }
+
+    #[test]
+    fn test_version_text_includes_semver() {
+        let mut out = String::new();
+        version_text(&mut out);
+        assert!(out.starts_with("quecto "));
+        // Should match semver pattern
+        let version_part = out.trim().strip_prefix("quecto ").unwrap();
+        let parts: Vec<&str> = version_part.split('.').collect();
+        assert_eq!(parts.len(), 3, "expected semver, got: {}", version_part);
+    }
+
+    #[test]
+    fn test_cli_context_default_base_dir() {
+        let ctx = CliContext::default();
+        let base = ctx.base_dir();
+        // Should end with .quecto (either from home dir or fallback)
+        assert!(
+            base.to_string_lossy().contains(".quecto") || base.to_string_lossy().contains("quecto"),
+            "base dir should contain 'quecto': {}",
+            base.display()
+        );
+    }
+
+    #[test]
+    fn test_cli_context_override_base_dir() {
+        let ctx = CliContext {
+            base_dir: Some(PathBuf::from("/tmp/test-quecto")),
+        };
+        assert_eq!(ctx.base_dir(), PathBuf::from("/tmp/test-quecto"));
+    }
 }

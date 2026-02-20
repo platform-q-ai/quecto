@@ -21,3 +21,38 @@ pub fn create_provider(
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create_openai_provider() {
+        let provider = create_provider("openai", "sk-test".to_string(), None);
+        assert!(provider.is_some());
+        assert_eq!(provider.unwrap().name(), "openai");
+    }
+
+    #[test]
+    fn test_create_anthropic_provider() {
+        let provider = create_provider("anthropic", "sk-ant-test".to_string(), None);
+        assert!(provider.is_some());
+        assert_eq!(provider.unwrap().name(), "anthropic");
+    }
+
+    #[test]
+    fn test_create_unknown_provider() {
+        let provider = create_provider("gemini", "key".to_string(), None);
+        assert!(provider.is_none());
+    }
+
+    #[test]
+    fn test_create_openai_with_custom_base() {
+        let provider = create_provider(
+            "openai",
+            "sk-test".to_string(),
+            Some("http://localhost:8080".to_string()),
+        );
+        assert!(provider.is_some());
+    }
+}
