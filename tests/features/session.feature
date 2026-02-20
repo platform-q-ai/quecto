@@ -29,13 +29,19 @@ Feature: Session Management
     Then the session should be found
     And the conversation history should contain 3 messages
 
-  Scenario: CLI agent uses default session key
-    When I run quecto with arguments "agent"
-    Then the output should contain "session: cli:default"
+  # NOTE: CLI session key scenarios moved to e2e_session.feature
+  # because they now require a mock LLM server (cmd_agent is no longer a stub).
 
-  Scenario: Custom session key via CLI flag
+  Scenario: CLI agent without message flag rejects with usage error
+    When I run quecto with arguments "agent"
+    Then the exit code should be 1
+    And the stderr should contain "agent: -m is required"
+
+  Scenario: CLI agent with session flag requires config and provider
+    Given a quecto base directory at a temporary path
     When I run quecto with arguments "agent -s my-session -m Hello"
-    Then the output should contain "session: cli:my-session"
+    Then the exit code should be 1
+    And the stderr should contain "config not found"
 
   Scenario: Long-term memory stored in MEMORY.md
     Given a session workspace

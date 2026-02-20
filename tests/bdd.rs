@@ -289,6 +289,8 @@ pub struct QuectoWorld {
     pub gateway_credential_store: Option<CredentialStore>,
     /// Gateway credential snapshot (loaded once, shared across resolution steps)
     pub gateway_cred_snapshot: Option<std::collections::HashMap<String, Credential>>,
+    /// Pending tool call from "the mock LLM first returns a tool call" (paired with "then returns text")
+    pub pending_tool_call: Option<(String, String)>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
@@ -3646,6 +3648,718 @@ fn then_output_should_not_contain(world: &mut QuectoWorld, unexpected: String) {
         world.stdout,
         world.stderr
     );
+}
+
+// ===========================================================================
+// Agent CLI — Headless One-Shot Mode Steps
+// ===========================================================================
+
+#[given("a temp base directory")]
+fn given_temp_base_directory(world: &mut QuectoWorld) {
+    let td = TempDir::new().expect("failed to create temp dir");
+    world.cli_context.base_dir = Some(td.path().to_path_buf());
+    world._temp_dir = Some(td);
+}
+
+#[given("a config file with an OpenAI provider pointing at a mock server")]
+fn given_config_with_openai_mock(world: &mut QuectoWorld) {
+    // Start a wiremock server and leak it so it stays alive for the scenario.
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let server = rt.block_on(wiremock::MockServer::start());
+    let uri = server.uri();
+    world._wiremock_server_uri = Some(uri.clone());
+
+    // Write config with api_base pointing at the mock server.
+    ensure_temp_dir(world);
+    let base = base_path(world);
+    let workspace = base.join("workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace dir");
+    let config_json = format!(
+        r#"{{
+  "providers": {{
+    "openai": {{ "api_key": "sk-test-key", "api_base": "{uri}" }}
+  }},
+  "agents": {{
+    "defaults": {{
+      "workspace": "{workspace}"
+    }}
+  }}
+}}"#,
+        uri = uri,
+        workspace = workspace.display()
+    );
+    std::fs::write(base.join("config.json"), config_json).expect("write config");
+
+    std::mem::forget(server);
+    std::mem::forget(rt);
+}
+
+#[given(expr = "the mock LLM returns a text response {string}")]
+fn given_mock_llm_text_response(world: &mut QuectoWorld, content: String) {
+    // Verify a mock server was previously configured (from the config step).
+    assert!(
+        world._wiremock_server_uri.is_some(),
+        "mock server URI not set — ensure a config step ran first"
+    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        // wiremock doesn't support reconnecting to an existing server.
+        // Start a new server, mount the mock, and rewrite the config to point at it.
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+        let response_body = serde_json::json!({
+            "id": "chatcmpl-test",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": content
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15
+            }
+        });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(response_body))
+            .mount(&server)
+            .await;
+
+        // Update the config to point at this new server.
+        let base = base_path(world);
+        let workspace = base.join("workspace");
+        let config_json = format!(
+            r#"{{
+  "providers": {{
+    "openai": {{ "api_key": "sk-test-key", "api_base": "{new_uri}" }}
+  }},
+  "agents": {{
+    "defaults": {{
+      "workspace": "{workspace}"
+    }}
+  }}
+}}"#,
+            new_uri = new_uri,
+            workspace = workspace.display()
+        );
+        std::fs::write(base.join("config.json"), config_json).expect("rewrite config");
+        world._wiremock_server_uri = Some(new_uri);
+        std::mem::forget(server);
+    });
+    std::mem::forget(rt);
+}
+
+#[given("the mock LLM returns an HTTP 500 error")]
+fn given_mock_llm_500_error(world: &mut QuectoWorld) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(500).set_body_string("Internal Server Error"),
+            )
+            .mount(&server)
+            .await;
+
+        let base = base_path(world);
+        let workspace = base.join("workspace");
+        let config_json = format!(
+            r#"{{
+  "providers": {{
+    "openai": {{ "api_key": "sk-test-key", "api_base": "{new_uri}" }}
+  }},
+  "agents": {{
+    "defaults": {{
+      "workspace": "{workspace}"
+    }}
+  }}
+}}"#,
+            new_uri = new_uri,
+            workspace = workspace.display()
+        );
+        std::fs::write(base.join("config.json"), config_json).expect("rewrite config");
+        world._wiremock_server_uri = Some(new_uri);
+        std::mem::forget(server);
+    });
+    std::mem::forget(rt);
+}
+
+#[given("no config file exists")]
+fn given_no_config_file(world: &mut QuectoWorld) {
+    // Delete config.json if the temp dir already has one (from prior Given steps).
+    let config_path = base_path(world).join("config.json");
+    if config_path.exists() {
+        std::fs::remove_file(&config_path).expect("remove config.json");
+    }
+}
+
+#[given("a config file with no API keys")]
+fn given_config_no_api_keys(world: &mut QuectoWorld) {
+    ensure_temp_dir(world);
+    let base = base_path(world);
+    let config_json = r#"{
+  "providers": {
+    "openai": { "api_key": "" },
+    "anthropic": { "api_key": "" }
+  }
+}"#;
+    std::fs::write(base.join("config.json"), config_json).expect("write config");
+}
+
+/// Generic step: "When I run quecto agent ..." with arbitrary flags.
+/// Parses the full argument string after "quecto " using shell-like splitting.
+#[when(expr = "I run quecto agent -m {string}")]
+fn when_run_agent_with_message(world: &mut QuectoWorld, message: String) {
+    let args = vec![
+        "quecto".to_string(),
+        "agent".to_string(),
+        "-m".to_string(),
+        message,
+    ];
+    let output = cli::run_with_output(args, &world.cli_context);
+    world.exit_code = output.exit_code;
+    world.stdout = output.stdout;
+    world.stderr = output.stderr;
+}
+
+#[when("I run quecto agent with no flags")]
+fn when_run_agent_no_flags(world: &mut QuectoWorld) {
+    let args = vec!["quecto".to_string(), "agent".to_string()];
+    let output = cli::run_with_output(args, &world.cli_context);
+    world.exit_code = output.exit_code;
+    world.stdout = output.stdout;
+    world.stderr = output.stderr;
+}
+
+#[when(expr = "I run quecto agent --system {string} -m {string}")]
+fn when_run_agent_with_system_and_message(
+    world: &mut QuectoWorld,
+    system: String,
+    message: String,
+) {
+    let args = vec![
+        "quecto".to_string(),
+        "agent".to_string(),
+        "--system".to_string(),
+        system,
+        "-m".to_string(),
+        message,
+    ];
+    let output = cli::run_with_output(args, &world.cli_context);
+    world.exit_code = output.exit_code;
+    world.stdout = output.stdout;
+    world.stderr = output.stderr;
+}
+
+#[when(expr = "I run quecto agent --model {word} -m {string}")]
+fn when_run_agent_with_model_and_message(world: &mut QuectoWorld, model: String, message: String) {
+    let args = vec![
+        "quecto".to_string(),
+        "agent".to_string(),
+        "--model".to_string(),
+        model,
+        "-m".to_string(),
+        message,
+    ];
+    let output = cli::run_with_output(args, &world.cli_context);
+    world.exit_code = output.exit_code;
+    world.stdout = output.stdout;
+    world.stderr = output.stderr;
+}
+
+#[when("I set QUECTO_BASE_DIR to the temp directory")]
+fn when_set_quecto_base_dir_env(world: &mut QuectoWorld) {
+    let base = base_path(world);
+    // Set the real env var — safe because BDD runs single-threaded (max_concurrent_scenarios(1)).
+    // The production CliContext::base_dir() reads QUECTO_BASE_DIR from the environment.
+    // SAFETY: No concurrent threads are reading env vars in the BDD test runner.
+    unsafe {
+        std::env::set_var("QUECTO_BASE_DIR", base.to_string_lossy().as_ref());
+    }
+    // Also clear cli_context.base_dir so the code must use the env var.
+    world.cli_context.base_dir = None;
+}
+
+#[then(expr = "stdout should contain {string}")]
+fn then_stdout_contains(world: &mut QuectoWorld, expected: String) {
+    assert!(
+        world.stdout.contains(&expected),
+        "expected stdout to contain '{}', got: {}",
+        expected,
+        world.stdout
+    );
+}
+
+#[then(expr = "stderr should contain {string}")]
+fn then_stderr_contains_e2e(world: &mut QuectoWorld, expected: String) {
+    assert!(
+        world.stderr.contains(&expected),
+        "expected stderr to contain '{}', got: {}",
+        expected,
+        world.stderr
+    );
+}
+
+// ===========================================================================
+// E2E Tool Use + E2E Session Steps
+// ===========================================================================
+
+/// Helper: build the OpenAI-format JSON for a tool call response.
+fn openai_tool_call_json(tool_name: &str, args_json: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": "chatcmpl-tool",
+        "object": "chat.completion",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": format!("call_{}", tool_name),
+                    "type": "function",
+                    "function": {
+                        "name": tool_name,
+                        "arguments": args_json
+                    }
+                }]
+            },
+            "finish_reason": "tool_calls"
+        }],
+        "usage": { "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15 }
+    })
+}
+
+/// Helper: build the OpenAI-format JSON for a text response.
+fn openai_text_json(content: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": "chatcmpl-text",
+        "object": "chat.completion",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": content
+            },
+            "finish_reason": "stop"
+        }],
+        "usage": { "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15 }
+    })
+}
+
+/// Helper: rewrite config to point at a new wiremock URI (shared pattern).
+fn rewrite_config_to_uri(world: &mut QuectoWorld, new_uri: &str) {
+    let base = base_path(world);
+    let workspace = base.join("workspace");
+    let config_json = format!(
+        r#"{{
+  "providers": {{
+    "openai": {{ "api_key": "sk-test-key", "api_base": "{new_uri}" }}
+  }},
+  "agents": {{
+    "defaults": {{
+      "workspace": "{workspace}"
+    }}
+  }}
+}}"#,
+        new_uri = new_uri,
+        workspace = workspace.display()
+    );
+    std::fs::write(base.join("config.json"), config_json).expect("rewrite config");
+    world._wiremock_server_uri = Some(new_uri.to_string());
+}
+
+/// Helper: mount a two-response wiremock sequence — first a tool call, then a text response.
+/// Uses priority: tool call at priority 2 with up_to_n_times(1), text at priority 1 (default).
+fn mount_tool_then_text_sequence(
+    world: &mut QuectoWorld,
+    tool_name: &str,
+    args_json: &str,
+    final_text: &str,
+) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+
+        // First call: return tool call (higher priority, consumed once)
+        let tool_body = openai_tool_call_json(tool_name, args_json);
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(tool_body))
+            .up_to_n_times(1)
+            .with_priority(1) // higher priority (lower number = higher priority in wiremock)
+            .mount(&server)
+            .await;
+
+        // Second call onward: return text response (lower priority)
+        let text_body = openai_text_json(final_text);
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(text_body))
+            .with_priority(2)
+            .mount(&server)
+            .await;
+
+        rewrite_config_to_uri(world, &new_uri);
+        std::mem::forget(server);
+    });
+    std::mem::forget(rt);
+}
+
+// --- Given: e2e workspace file creation ---
+
+#[given(expr = "a file {string} in the e2e workspace with content {string}")]
+fn given_file_in_e2e_workspace(world: &mut QuectoWorld, filename: String, content: String) {
+    let base = base_path(world);
+    let workspace = base.join("workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace");
+    let path = workspace.join(&filename);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("create parent dirs");
+    }
+    std::fs::write(&path, content).expect("write file");
+}
+
+// --- Given: wiremock tool-call mocks ---
+
+#[given(expr = "the mock LLM first returns a tool call for {string} with args:")]
+fn given_mock_llm_tool_call(world: &mut QuectoWorld, step: &gherkin::Step, tool_name: String) {
+    // Parse args from the Gherkin table into a JSON object.
+    let table = step.table.as_ref().expect("step should have a table");
+    let mut map = serde_json::Map::new();
+    for row in &table.rows {
+        if row.len() >= 2 {
+            map.insert(row[0].clone(), serde_json::Value::String(row[1].clone()));
+        }
+    }
+    let args_json = serde_json::to_string(&map).unwrap();
+    // Store for later pairing with the "then returns text" step.
+    world.pending_tool_call = Some((tool_name, args_json));
+}
+
+#[given(expr = "the mock LLM then returns a text response {string}")]
+fn given_mock_llm_then_text_response(world: &mut QuectoWorld, content: String) {
+    if let Some((tool_name, args_json)) = world.pending_tool_call.take() {
+        mount_tool_then_text_sequence(world, &tool_name, &args_json, &content);
+    } else {
+        // No pending tool call — just mount a plain text response (same as existing step).
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let server = wiremock::MockServer::start().await;
+            let new_uri = server.uri();
+            let body = openai_text_json(&content);
+            wiremock::Mock::given(wiremock::matchers::method("POST"))
+                .and(wiremock::matchers::path("/chat/completions"))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+                .mount(&server)
+                .await;
+            rewrite_config_to_uri(world, &new_uri);
+            std::mem::forget(server);
+        });
+        std::mem::forget(rt);
+    }
+}
+
+// Multi-turn tool call sequence from a table:
+//   | call | read_file  | {"path":"source.txt"} |
+//   | call | write_file | {"path":"copy.txt","content":"data"} |
+//   | text | Done       |                       |
+#[given("the mock LLM returns a tool call sequence:")]
+fn given_mock_llm_tool_call_sequence(world: &mut QuectoWorld, step: &gherkin::Step) {
+    let table = step.table.as_ref().expect("step should have a table");
+
+    // Collect responses in order.
+    let mut responses: Vec<serde_json::Value> = Vec::new();
+    for row in &table.rows {
+        let kind = &row[0];
+        match kind.as_str() {
+            "call" => {
+                let tool_name = &row[1];
+                let args_json = &row[2];
+                responses.push(openai_tool_call_json(tool_name, args_json));
+            }
+            "text" => {
+                let content = &row[1];
+                responses.push(openai_text_json(content));
+            }
+            _ => panic!("Unknown sequence row kind: {kind}"),
+        }
+    }
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+
+        // Mount each response with decreasing priority and up_to_n_times(1).
+        // Priority 1 = highest (first consumed), then 2, etc. Last one has no limit.
+        let last = responses.len() - 1;
+        for (i, body) in responses.into_iter().enumerate() {
+            let mock = wiremock::Mock::given(wiremock::matchers::method("POST"))
+                .and(wiremock::matchers::path("/chat/completions"))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+                .with_priority((i + 1) as u8);
+            if i < last {
+                mock.up_to_n_times(1).mount(&server).await;
+            } else {
+                mock.mount(&server).await;
+            }
+        }
+
+        rewrite_config_to_uri(world, &new_uri);
+        std::mem::forget(server);
+    });
+    std::mem::forget(rt);
+}
+
+// --- Given: pre-existing session ---
+
+#[given(expr = "a pre-existing session {string} with {int} messages")]
+fn given_pre_existing_session(world: &mut QuectoWorld, key: String, count: usize) {
+    let base = base_path(world);
+    let sessions_dir = base.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("create sessions dir");
+
+    // Build a session file with the requested number of user/assistant message pairs.
+    let mut messages = Vec::new();
+    for i in 0..count {
+        let role = if i % 2 == 0 { "user" } else { "assistant" };
+        let content = format!("message {}", i + 1);
+        messages.push(serde_json::json!({
+            "role": role,
+            "content": content
+        }));
+    }
+    let session_file = serde_json::json!({
+        "key": key,
+        "messages": messages
+    });
+    // The filename uses : -> _ replacement and .json suffix.
+    let filename = key.replace(':', "_") + ".json";
+    std::fs::write(
+        sessions_dir.join(&filename),
+        serde_json::to_string_pretty(&session_file).unwrap(),
+    )
+    .expect("write session file");
+}
+
+// --- When: run agent with session flags ---
+
+#[when(expr = "I run quecto agent -s {word} -m {string}")]
+fn when_run_agent_named_session(world: &mut QuectoWorld, session: String, message: String) {
+    let args = vec![
+        "quecto".to_string(),
+        "agent".to_string(),
+        "-s".to_string(),
+        session,
+        "-m".to_string(),
+        message,
+    ];
+    let output = cli::run_with_output(args, &world.cli_context);
+    world.exit_code = output.exit_code;
+    world.stdout = output.stdout;
+    world.stderr = output.stderr;
+}
+
+#[when(expr = "I run quecto agent -s {word} --system {string} -m {string}")]
+fn when_run_agent_session_system(
+    world: &mut QuectoWorld,
+    session: String,
+    system: String,
+    message: String,
+) {
+    let args = vec![
+        "quecto".to_string(),
+        "agent".to_string(),
+        "-s".to_string(),
+        session,
+        "--system".to_string(),
+        system,
+        "-m".to_string(),
+        message,
+    ];
+    let output = cli::run_with_output(args, &world.cli_context);
+    world.exit_code = output.exit_code;
+    world.stdout = output.stdout;
+    world.stderr = output.stderr;
+}
+
+// --- Then: e2e workspace file assertions ---
+
+#[then(expr = "the file {string} should exist in the e2e workspace")]
+fn then_file_exists_in_e2e_workspace(world: &mut QuectoWorld, filename: String) {
+    let base = base_path(world);
+    let path = base.join("workspace").join(&filename);
+    assert!(
+        path.exists(),
+        "expected file '{}' to exist at {}",
+        filename,
+        path.display()
+    );
+}
+
+#[then(expr = "the file {string} in the e2e workspace should contain {string}")]
+fn then_file_in_e2e_workspace_contains(
+    world: &mut QuectoWorld,
+    filename: String,
+    expected: String,
+) {
+    let base = base_path(world);
+    let path = base.join("workspace").join(&filename);
+    let content = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read '{}' at {}: {}", filename, path.display(), e));
+    assert!(
+        content.contains(&expected),
+        "expected '{}' to contain '{}', got: {}",
+        filename,
+        expected,
+        content
+    );
+}
+
+// --- Then: session file assertions ---
+
+#[then(expr = "a session file should exist for key {string}")]
+fn then_session_file_exists(world: &mut QuectoWorld, key: String) {
+    let base = base_path(world);
+    let filename = key.replace(':', "_") + ".json";
+    let path = base.join("sessions").join(&filename);
+    assert!(
+        path.exists(),
+        "expected session file for key '{}' at {}",
+        key,
+        path.display()
+    );
+}
+
+#[then(expr = "the session {string} should contain {int} messages")]
+fn then_session_has_n_messages(world: &mut QuectoWorld, key: String, expected: usize) {
+    let session = load_session_from_disk(world, &key);
+    assert_eq!(
+        session.messages.len(),
+        expected,
+        "expected session '{}' to have {} messages, got {} (messages: {:?})",
+        key,
+        expected,
+        session.messages.len(),
+        session
+            .messages
+            .iter()
+            .map(|m| format!("{}:{}", m.role, &m.content[..m.content.len().min(40)]))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[then(expr = "the session {string} should contain at least {int} messages")]
+fn then_session_has_at_least_n_messages(world: &mut QuectoWorld, key: String, expected: usize) {
+    let session = load_session_from_disk(world, &key);
+    assert!(
+        session.messages.len() >= expected,
+        "expected session '{}' to have at least {} messages, got {}",
+        key,
+        expected,
+        session.messages.len()
+    );
+}
+
+#[then(expr = "the session {string} should not contain text {string}")]
+fn then_session_not_contain_text(world: &mut QuectoWorld, key: String, text: String) {
+    let session = load_session_from_disk(world, &key);
+    let all_content: String = session
+        .messages
+        .iter()
+        .map(|m| m.content.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        !all_content.contains(&text),
+        "expected session '{}' to NOT contain '{}', but found it in: {}",
+        key,
+        text,
+        all_content
+    );
+}
+
+#[then("no session files should exist")]
+fn then_no_session_files(world: &mut QuectoWorld) {
+    let base = base_path(world);
+    let sessions_dir = base.join("sessions");
+    if !sessions_dir.exists() {
+        return; // No sessions dir = no session files, as expected.
+    }
+    let entries: Vec<_> = std::fs::read_dir(&sessions_dir)
+        .expect("read sessions dir")
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .map(|ext| ext == "json")
+                .unwrap_or(false)
+        })
+        .collect();
+    assert!(
+        entries.is_empty(),
+        "expected no session files, but found: {:?}",
+        entries.iter().map(|e| e.file_name()).collect::<Vec<_>>()
+    );
+}
+
+#[then(expr = "the session {string} should not include a system role message")]
+fn then_session_no_system_messages(world: &mut QuectoWorld, key: String) {
+    let session = load_session_from_disk(world, &key);
+    let system_count = session
+        .messages
+        .iter()
+        .filter(|m| m.role == "system")
+        .count();
+    assert_eq!(
+        system_count, 0,
+        "expected no system messages in session '{}', found {}",
+        key, system_count
+    );
+}
+
+/// Helper: load a session file from disk and parse it into a simple struct.
+struct SessionOnDisk {
+    messages: Vec<MessageOnDisk>,
+}
+
+struct MessageOnDisk {
+    role: String,
+    content: String,
+}
+
+fn load_session_from_disk(world: &QuectoWorld, key: &str) -> SessionOnDisk {
+    let base = base_path(world);
+    let filename = key.replace(':', "_") + ".json";
+    let path = base.join("sessions").join(&filename);
+    let data = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "failed to read session '{}' at {}: {}",
+            key,
+            path.display(),
+            e
+        )
+    });
+    let json: serde_json::Value = serde_json::from_str(&data)
+        .unwrap_or_else(|e| panic!("failed to parse session '{}': {}", key, e));
+    let messages = json["messages"]
+        .as_array()
+        .expect("session should have messages array")
+        .iter()
+        .map(|m| MessageOnDisk {
+            role: m["role"].as_str().unwrap_or("").to_string(),
+            content: m["content"].as_str().unwrap_or("").to_string(),
+        })
+        .collect();
+    SessionOnDisk { messages }
 }
 
 // ===========================================================================

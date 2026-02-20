@@ -29,7 +29,7 @@ Feature: Onboarding
   Scenario: Default config has sensible defaults
     Given no config file exists at "~/.quecto/config.json"
     When I run quecto with arguments "onboard"
-    Then the config should have model "gpt-4"
+    Then the config should have model "gpt-5.2-codex"
     And the config should have max_tokens 8192
     And the config should have temperature 0.7
     And the config should have restrict_to_workspace true

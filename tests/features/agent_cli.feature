@@ -1,0 +1,67 @@
+@done
+Feature: Agent CLI — Headless One-Shot Mode
+  As a user or automated system
+  I want to run a full agent cycle from the command line with a single message
+  So that I can use Quecto non-interactively for scripting, testing, and subagent spawning
+
+  Scenario: One-shot message returns LLM response on stdout
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "The answer is 42"
+    When I run quecto agent -m "What is the answer?"
+    Then the exit code should be 0
+    And stdout should contain "The answer is 42"
+
+  Scenario: Missing message flag shows usage error
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I run quecto agent with no flags
+    Then the exit code should be 1
+    And stderr should contain "agent: -m is required for non-interactive mode"
+
+  Scenario: Missing config shows setup instructions
+    Given a temp base directory
+    When I run quecto agent -m "hello"
+    Then the exit code should be 1
+    And stderr should contain "config not found"
+    And stderr should contain "quecto onboard"
+
+  Scenario: No configured providers shows clear error
+    Given a temp base directory
+    And a config file with no API keys
+    When I run quecto agent -m "hello"
+    Then the exit code should be 1
+    And stderr should contain "no LLM providers"
+
+  Scenario: System prompt is prepended to conversation
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "I am a pirate assistant"
+    When I run quecto agent --system "You are a pirate" -m "Who are you?"
+    Then the exit code should be 0
+    And stdout should contain "I am a pirate assistant"
+
+  Scenario: Model override via flag
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "Hello from override model"
+    When I run quecto agent --model gpt-5-mini -m "Hi"
+    Then the exit code should be 0
+    And stdout should contain "Hello from override model"
+
+  Scenario: QUECTO_BASE_DIR environment variable overrides default base directory
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "env override works"
+    When I set QUECTO_BASE_DIR to the temp directory
+    And I run quecto agent -m "test"
+    Then the exit code should be 0
+    And stdout should contain "env override works"
+
+  Scenario: Provider error returns non-zero exit code
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns an HTTP 500 error
+    When I run quecto agent -m "hello"
+    Then the exit code should be 1
+    And stderr should contain "Error"
