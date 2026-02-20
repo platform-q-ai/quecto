@@ -3930,6 +3930,16 @@ fn then_stderr_contains_e2e(world: &mut QuectoWorld, expected: String) {
     );
 }
 
+/// Assert that stdout is not empty (structural check for non-deterministic output).
+#[then("stdout should not be empty")]
+fn then_stdout_not_empty(world: &mut QuectoWorld) {
+    assert!(
+        !world.stdout.trim().is_empty(),
+        "expected non-empty stdout, got empty.\nstderr: {}",
+        world.stderr
+    );
+}
+
 // ===========================================================================
 // E2E Tool Use + E2E Session Steps
 // ===========================================================================
@@ -5088,6 +5098,7 @@ fn then_subprocess_stderr_contains(world: &mut QuectoWorld, expected: String) {
 
 /// Set up a workspace configured to use a real OpenAI endpoint.
 /// Reads OPENAI_API_KEY from the environment (required).
+/// Uses serde_json to avoid JSON injection from special chars in the key.
 #[given("a real LLM workspace is configured")]
 fn given_real_llm_workspace(world: &mut QuectoWorld) {
     ensure_temp_dir(world);
@@ -5098,24 +5109,22 @@ fn given_real_llm_workspace(world: &mut QuectoWorld) {
     let api_key =
         std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY must be set for real LLM tests");
 
-    let config_json = format!(
-        r#"{{
-  "providers": {{
-    "openai": {{ "api_key": "{api_key}" }}
-  }},
-  "agents": {{
-    "defaults": {{
-      "workspace": "{workspace}"
-    }}
-  }}
-}}"#,
-        api_key = api_key,
-        workspace = workspace.display()
-    );
+    let config = serde_json::json!({
+        "providers": {
+            "openai": { "api_key": api_key }
+        },
+        "agents": {
+            "defaults": {
+                "workspace": workspace.to_string_lossy()
+            }
+        }
+    });
+    let config_json = serde_json::to_string_pretty(&config).expect("serialize config");
     std::fs::write(base.join("config.json"), config_json).expect("write real LLM config");
 }
 
-/// Run the agent against the real OpenAI endpoint with a cheap model and bounded iterations.
+/// Run the agent against the real OpenAI endpoint with a cheap model, bounded iterations,
+/// and a wall-clock timeout to prevent hung HTTP requests from blocking the suite.
 #[when(expr = "I run the real LLM agent with message {string}")]
 fn when_run_real_llm_agent(world: &mut QuectoWorld, message: String) {
     let args = vec![
@@ -5125,6 +5134,8 @@ fn when_run_real_llm_agent(world: &mut QuectoWorld, message: String) {
         "gpt-4o-mini".to_string(),
         "--max-iterations".to_string(),
         "5".to_string(),
+        "--max-time".to_string(),
+        "60".to_string(),
         "-s".to_string(),
         "-".to_string(), // ephemeral session
         "-m".to_string(),
@@ -5134,16 +5145,6 @@ fn when_run_real_llm_agent(world: &mut QuectoWorld, message: String) {
     world.exit_code = output.exit_code;
     world.stdout = output.stdout;
     world.stderr = output.stderr;
-}
-
-/// Assert that stdout is not empty (structural check for non-deterministic output).
-#[then("stdout should not be empty")]
-fn then_stdout_not_empty(world: &mut QuectoWorld) {
-    assert!(
-        !world.stdout.trim().is_empty(),
-        "expected non-empty stdout, got empty.\nstderr: {}",
-        world.stderr
-    );
 }
 
 // ===========================================================================
