@@ -25,10 +25,17 @@ GREEN='\033[0;32m'
 NC='\033[0m'
 
 # Allow override via env var for multi-file repos or testing.
-BDD_FILE="${BDD_FILE:-tests/bdd.rs}"
+# Supports both single-file (tests/bdd.rs) and multi-file (tests/bdd/) layouts.
+BDD_DIR="${BDD_DIR:-tests/bdd}"
 
-if [ ! -f "$BDD_FILE" ]; then
-    echo -e "${RED}FAIL${NC}: $BDD_FILE not found"
+if [ -d "$BDD_DIR" ]; then
+    BDD_FILE=$(mktemp)
+    cat "$BDD_DIR"/*.rs > "$BDD_FILE"
+    trap "rm -f '$BDD_FILE'" EXIT
+elif [ -f "${BDD_FILE:-tests/bdd.rs}" ]; then
+    BDD_FILE="${BDD_FILE:-tests/bdd.rs}"
+else
+    echo -e "${RED}FAIL${NC}: neither $BDD_DIR/ directory nor tests/bdd.rs found"
     exit 1
 fi
 

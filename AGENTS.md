@@ -104,7 +104,7 @@ Runs a full agent cycle (LLM call → tool execution → repeat) for a single me
 | `--max-iterations` | No | Override max tool iterations (takes precedence over config `max_tool_iterations`) |
 | `--max-time` | No | Wall-clock timeout in seconds for the entire agent run. Exit code 2 on timeout |
 
-The agent loads config from `<base_dir>/config.json`, builds a `FallbackProvider` from configured credentials, constructs the tool registry with sandbox enforcement, and runs the `AgentLoopImpl`. Sessions are loaded from and saved to `<base_dir>/sessions/` via `FileSessionStore`.
+The agent loads config from `<base_dir>/config.json`, builds a `FallbackProvider` from configured credentials, constructs the tool registry with sandbox enforcement, and runs the `AgentLoopImpl`. Sessions are loaded from and saved to `<base_dir>/sessions/` via `FileSessionStore`. Workspace skills (from `<base_dir>/workspace/skills/`) are loaded at startup and their content is prepended to the system prompt (combined with `--system` if provided). Skills with empty content are silently skipped.
 
 The gateway module (`gateway.rs`) also provides credential-store integration as free functions:
 
@@ -144,20 +144,20 @@ Refactor
 @wip -> @done       Tag the feature
 ```
 
-The BDD runner (`tests/bdd.rs`) uses `.fail_on_skipped()` and runs features tagged `@wip` or `@done`. This means all completed features are regression-tested on every run. Scenarios tagged `@pending` are always excluded. Scenarios tagged `@real-llm` are excluded unless `QUECTO_REAL_LLM=1` is set (requires `OPENAI_API_KEY`). All step definitions live in `tests/bdd.rs` (~5200 lines).
+The BDD runner (`tests/bdd/main.rs`) uses `.fail_on_skipped()` and runs features tagged `@wip` or `@done`. This means all completed features are regression-tested on every run. Scenarios tagged `@pending` are always excluded. Scenarios tagged `@real-llm` are excluded unless `QUECTO_REAL_LLM=1` is set (requires `OPENAI_API_KEY`). Step definitions live in `tests/bdd/` split across 16 module files (~5400 lines total).
 
-Feature files live in `tests/features/`. There are 26 feature files covering: config, cli, onboard, security, sandbox_hardening, agent_tools, providers, agent_loop, session, auth, telegram, cron, subagent, heartbeat, skills, voice, observability, agent_cli, e2e_tool_use, e2e_session, e2e_subprocess, e2e_safety, e2e_providers, e2e_agentic_loop, e2e_real_llm, e2e_session_tools.
+Feature files live in `tests/features/`. There are 27 feature files covering: config, cli, onboard, security, sandbox_hardening, agent_tools, providers, agent_loop, session, auth, telegram, cron, subagent, heartbeat, skills, voice, observability, agent_cli, e2e_tool_use, e2e_session, e2e_subprocess, e2e_safety, e2e_providers, e2e_agentic_loop, e2e_real_llm, e2e_session_tools, e2e_skills.
 
 ## Quality gates
 
 ```
 scripts/check-quality.sh       Work markers, lint bypasses, unsafe, ignored tests (src/)
-scripts/check-bdd-quality.sh   BDD anti-pattern detection (tests/bdd.rs)
+scripts/check-bdd-quality.sh   BDD anti-pattern detection (tests/bdd/)
 cargo fmt --check              Formatting
 cargo clippy -- -D warnings    Lints (zero warnings policy)
-cargo test --lib               319 unit tests
+cargo test --lib               325 unit tests
 cargo test --test architecture Clean Architecture boundary enforcement
-cargo test --test bdd          196 active BDD scenarios across 26 @done features (+4 @real-llm gated)
+cargo test --test bdd          204 active BDD scenarios across 27 @done features (+4 @real-llm gated)
 ```
 
 ### BDD quality gate (`scripts/check-bdd-quality.sh`)
