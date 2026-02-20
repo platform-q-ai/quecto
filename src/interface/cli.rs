@@ -1,0 +1,510 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+use super::gateway::Gateway;
+use crate::application::onboard;
+use crate::domain::session::Session;
+use crate::infrastructure::config::Config;
+
+/// Result of a CLI invocation, capturing stdout, stderr, and exit code.
+#[derive(Debug, Clone)]
+pub struct CliOutput {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+}
+
+/// Runtime context for CLI commands, allowing override of paths for testing.
+#[derive(Debug, Clone, Default)]
+pub struct CliContext {
+    /// Override for the base directory (default: ~/.quecto).
+    pub base_dir: Option<PathBuf>,
+}
+
+impl CliContext {
+    /// Resolve the base directory: use override if set, otherwise default.
+    fn base_dir(&self) -> PathBuf {
+        self.base_dir
+            .clone()
+            .or_else(onboard::default_base_dir)
+            .unwrap_or_else(|| PathBuf::from(".quecto"))
+    }
+}
+
+/// Run the CLI with the given args, printing to real stdout/stderr.
+/// Returns the exit code.
+pub fn run(args: Vec<String>) -> i32 {
+    let ctx = CliContext::default();
+
+    // Handle gateway specially — it's a long-running async process
+    if args.len() >= 2 && args[1] == "gateway" {
+        return cmd_gateway_run(&ctx);
+    }
+
+    let output = run_with_output(args, &ctx);
+    if !output.stdout.is_empty() {
+        print!("{}", output.stdout);
+    }
+    if !output.stderr.is_empty() {
+        eprint!("{}", output.stderr);
+    }
+    output.exit_code
+}
+
+/// Run the CLI with the given args and context, capturing all output for testing.
+pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+
+    let exit_code = if args.len() < 2 {
+        help_text(&mut stdout);
+        1
+    } else {
+        match args[1].as_str() {
+            "onboard" => cmd_onboard(ctx, &mut stdout, &mut stderr),
+            "agent" => cmd_agent(&args[2..], &mut stdout, &mut stderr),
+            "gateway" => {
+                stdout.push_str("Use 'quecto gateway' to start the gateway service\n");
+                0
+            }
+            "status" => cmd_status(ctx, &mut stdout, &mut stderr),
+            "auth" => {
+                stderr.push_str("auth: not yet implemented\n");
+                1
+            }
+            "cron" => {
+                stderr.push_str("cron: not yet implemented\n");
+                1
+            }
+            "skills" => cmd_skills(ctx, &args[2..], &mut stdout, &mut stderr),
+            "version" | "--version" | "-v" => {
+                version_text(&mut stdout);
+                0
+            }
+            other => {
+                stderr.push_str(&format!("Unknown command: {other}\n"));
+                help_text(&mut stdout);
+                1
+            }
+        }
+    };
+
+    CliOutput {
+        stdout,
+        stderr,
+        exit_code,
+    }
+}
+
+fn cmd_agent(args: &[String], stdout: &mut String, stderr: &mut String) -> i32 {
+    let mut session_name: Option<String> = None;
+    let mut message: Option<String> = None;
+    let mut i = 0;
+
+    while i < args.len() {
+        match args[i].as_str() {
+            "-s" | "--session" => {
+                if i + 1 < args.len() {
+                    session_name = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    stderr.push_str("agent: -s requires a session name\n");
+                    return 1;
+                }
+            }
+            "-m" | "--message" => {
+                if i + 1 < args.len() {
+                    message = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    stderr.push_str("agent: -m requires a message\n");
+                    return 1;
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    let session_id = session_name.as_deref().unwrap_or("default");
+    let session_key = Session::build_key("cli", session_id);
+
+    stdout.push_str(&format!("session: {}\n", session_key));
+
+    if let Some(msg) = message {
+        // One-shot mode: would process the message through agent loop
+        // For now, report the session and message
+        stdout.push_str(&format!("message: {}\n", msg));
+        stderr.push_str("agent: LLM chat not yet implemented\n");
+        1
+    } else {
+        // Interactive mode placeholder
+        stderr.push_str("agent: interactive mode not yet implemented\n");
+        1
+    }
+}
+
+fn cmd_skills(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &mut String) -> i32 {
+    let base = ctx.base_dir();
+    let ws_skills = base.join("workspace").join("skills");
+
+    if args.is_empty() {
+        stderr.push_str("skills: missing subcommand (list, remove, install)\n");
+        return 1;
+    }
+
+    match args[0].as_str() {
+        "list" => {
+            if !ws_skills.is_dir() {
+                stdout.push_str("No skills installed\n");
+                return 0;
+            }
+            let mut found = false;
+            if let Ok(entries) = std::fs::read_dir(&ws_skills) {
+                for entry in entries.flatten() {
+                    if entry.path().is_dir() {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        stdout.push_str(&format!("  {}\n", name));
+                        found = true;
+                    }
+                }
+            }
+            if !found {
+                stdout.push_str("No skills installed\n");
+            }
+            0
+        }
+        "remove" => {
+            if args.len() < 2 {
+                stderr.push_str("skills remove: missing skill name\n");
+                return 1;
+            }
+            let name = &args[1];
+            let skill_dir = ws_skills.join(name);
+            if !skill_dir.is_dir() {
+                stderr.push_str(&format!("skill '{}' not found\n", name));
+                return 1;
+            }
+            match std::fs::remove_dir_all(&skill_dir) {
+                Ok(_) => {
+                    stdout.push_str(&format!("'{}' removed successfully\n", name));
+                    0
+                }
+                Err(e) => {
+                    stderr.push_str(&format!("failed to remove skill '{}': {}\n", name, e));
+                    1
+                }
+            }
+        }
+        "install" => {
+            stderr.push_str("skills install: not yet implemented\n");
+            1
+        }
+        other => {
+            stderr.push_str(&format!("skills: unknown subcommand '{}'\n", other));
+            1
+        }
+    }
+}
+
+fn cmd_status(ctx: &CliContext, stdout: &mut String, stderr: &mut String) -> i32 {
+    let base = ctx.base_dir();
+    let config_path = base.join("config.json");
+
+    stdout.push_str("quecto Status\n");
+    stdout.push_str(&format!("  Config:    {}\n", config_path.display()));
+
+    let config = if config_path.exists() {
+        match Config::load(config_path.to_str().unwrap_or("")) {
+            Ok(c) => c,
+            Err(e) => {
+                stderr.push_str(&format!("failed to load config: {}\n", e));
+                return 1;
+            }
+        }
+    } else {
+        stderr.push_str("config not found; run 'quecto onboard' first\n");
+        return 1;
+    };
+
+    let ws = config.workspace_path();
+    stdout.push_str(&format!("  Workspace: {}\n", ws));
+    stdout.push_str(&format!("  Model:     {}\n", config.agents.defaults.model));
+
+    // Provider availability
+    let openai_status = if config.providers.openai.api_key.is_empty() {
+        "not set".to_string()
+    } else {
+        "configured".to_string()
+    };
+    let anthropic_status = if config.providers.anthropic.api_key.is_empty() {
+        "not set".to_string()
+    } else {
+        "configured".to_string()
+    };
+    stdout.push_str(&format!("  OpenAI API:    {}\n", openai_status));
+    stdout.push_str(&format!("  Anthropic API: {}\n", anthropic_status));
+
+    // Telegram status
+    let telegram_status = if config.channels.telegram.enabled {
+        "enabled"
+    } else {
+        "disabled"
+    };
+    stdout.push_str(&format!("  Telegram:      {}\n", telegram_status));
+
+    // Heartbeat status
+    let heartbeat_status = if config.heartbeat.enabled {
+        format!("enabled ({}s)", config.heartbeat.interval)
+    } else {
+        "disabled".to_string()
+    };
+    stdout.push_str(&format!("  Heartbeat:     {}\n", heartbeat_status));
+
+    0
+}
+
+/// Run the gateway as a long-running async service.
+/// This creates a tokio runtime and blocks until shutdown.
+fn cmd_gateway_run(ctx: &CliContext) -> i32 {
+    let base_dir = ctx.base_dir();
+    let config_path = base_dir.join("config.json");
+
+    if !config_path.exists() {
+        eprintln!("config not found at {}", config_path.display());
+        eprintln!("run 'quecto onboard' first");
+        return 1;
+    }
+
+    // Load config with env overrides
+    let env_overrides: HashMap<String, String> = std::env::vars()
+        .filter(|(k, _)| k.starts_with("QUECTO_"))
+        .collect();
+
+    let config = match Config::load_with_env(config_path.to_str().unwrap_or(""), &env_overrides) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("failed to load config: {}", e);
+            return 1;
+        }
+    };
+
+    let gateway = Gateway::new(config, base_dir);
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    match rt.block_on(gateway.run()) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("gateway error: {}", e);
+            1
+        }
+    }
+}
+
+fn cmd_onboard(ctx: &CliContext, stdout: &mut String, stderr: &mut String) -> i32 {
+    let base_dir = ctx.base_dir();
+    match onboard::run_onboard(&base_dir) {
+        Ok(result) => {
+            if result.already_existed {
+                stdout.push_str("Config already exists\n");
+                stdout.push_str(&format!("  path: {}\n", result.config_path.display()));
+            } else {
+                stdout.push_str("quecto is ready!\n");
+                stdout.push_str(&format!("  config:    {}\n", result.config_path.display()));
+                stdout.push_str(&format!(
+                    "  workspace: {}\n",
+                    result.workspace_path.display()
+                ));
+            }
+            0
+        }
+        Err(e) => {
+            stderr.push_str(&format!("onboard failed: {e}\n"));
+            1
+        }
+    }
+}
+
+fn version_text(out: &mut String) {
+    out.push_str(&format!("quecto {}\n", env!("CARGO_PKG_VERSION")));
+}
+
+fn help_text(out: &mut String) {
+    out.push_str(&format!(
+        "quecto - Personal AI Assistant v{}\n",
+        env!("CARGO_PKG_VERSION")
+    ));
+    out.push_str("\nUsage: quecto <command>\n");
+    out.push_str("\nCommands:\n");
+    out.push_str("  onboard     Initialize configuration and workspace\n");
+    out.push_str("  agent       Interact with the agent directly\n");
+    out.push_str("  auth        Manage authentication (login, logout, status)\n");
+    out.push_str("  gateway     Start the Telegram gateway\n");
+    out.push_str("  status      Show status\n");
+    out.push_str("  cron        Manage scheduled tasks\n");
+    out.push_str("  skills      Manage skills (install, list, remove)\n");
+    out.push_str("  version     Show version information\n");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(s: &str) -> Vec<String> {
+        let mut v = vec!["quecto".to_string()];
+        if !s.is_empty() {
+            v.extend(s.split_whitespace().map(String::from));
+        }
+        v
+    }
+
+    fn default_ctx() -> CliContext {
+        CliContext::default()
+    }
+
+    fn assert_contains_all(haystack: &str, needles: &[&str]) {
+        for needle in needles {
+            assert!(
+                haystack.contains(needle),
+                "expected output to contain '{needle}', got:\n{haystack}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_no_args_shows_help() {
+        let out = run_with_output(vec!["quecto".to_string()], &default_ctx());
+        assert_eq!(out.exit_code, 1);
+        assert_contains_all(
+            &out.stdout,
+            &[
+                "Usage: quecto <command>",
+                "onboard",
+                "agent",
+                "gateway",
+                "status",
+                "auth",
+                "cron",
+                "skills",
+                "version",
+            ],
+        );
+    }
+
+    #[test]
+    fn test_version_command() {
+        let out = run_with_output(args("version"), &default_ctx());
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stdout.contains("quecto"));
+        assert!(out.stdout.contains(env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn test_version_flag() {
+        let out = run_with_output(args("--version"), &default_ctx());
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stdout.contains("quecto"));
+    }
+
+    #[test]
+    fn test_version_short_flag() {
+        let out = run_with_output(args("-v"), &default_ctx());
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stdout.contains("quecto"));
+    }
+
+    #[test]
+    fn test_unknown_command() {
+        let out = run_with_output(args("foobar"), &default_ctx());
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("Unknown command: foobar"));
+        assert!(out.stdout.contains("Usage: quecto <command>"));
+    }
+
+    #[test]
+    fn test_onboard_creates_config() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("onboard"), &ctx);
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stdout.contains("quecto is ready"));
+        assert!(tmp.path().join("config.json").exists());
+        assert!(tmp.path().join("workspace").exists());
+    }
+
+    #[test]
+    fn test_onboard_existing_config() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("config.json"), "{}").unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("onboard"), &ctx);
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stdout.contains("Config already exists"));
+    }
+
+    #[test]
+    fn test_status_shows_summary() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config_json = r#"{
+            "agents": { "defaults": { "model": "gpt-4o" } },
+            "providers": {
+                "openai": { "api_key": "sk-test" },
+                "anthropic": { "api_key": "" }
+            }
+        }"#;
+        std::fs::write(tmp.path().join("config.json"), config_json).unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("status"), &ctx);
+        assert_eq!(out.exit_code, 0);
+        assert_contains_all(
+            &out.stdout,
+            &[
+                "quecto Status",
+                "Config:",
+                "Workspace:",
+                "Model:",
+                "gpt-4o",
+                "OpenAI API:",
+                "configured",
+                "Anthropic API:",
+                "not set",
+            ],
+        );
+    }
+
+    #[test]
+    fn test_status_no_config() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("status"), &ctx);
+        assert_eq!(out.exit_code, 1);
+        assert!(out.stderr.contains("config not found"));
+    }
+
+    #[test]
+    fn test_status_redacts_api_keys() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config_json = r#"{
+            "providers": {
+                "openai": { "api_key": "sk-super-secret-12345" }
+            }
+        }"#;
+        std::fs::write(tmp.path().join("config.json"), config_json).unwrap();
+        let ctx = CliContext {
+            base_dir: Some(tmp.path().to_path_buf()),
+        };
+        let out = run_with_output(args("status"), &ctx);
+        assert_eq!(out.exit_code, 0);
+        assert!(!out.stdout.contains("sk-super-secret-12345"));
+        assert!(out.stdout.contains("configured"));
+    }
+}

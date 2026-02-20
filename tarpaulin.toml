@@ -1,0 +1,6 @@
+[default]
+fail-under = 90
+out = ["Html", "Xml"]
+output-dir = "target/coverage"
+skip-clean = true
+exclude-files = ["*/tests/*"]
