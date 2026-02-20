@@ -14,25 +14,28 @@ step() {
     echo -e "\n${BLUE}[$1]${NC} $2"
 }
 
-step "1/6" "Quality gate (work markers, lint bypasses, unsafe, ignored tests)"
+step "1/7" "Quality gate (work markers, lint bypasses, unsafe, ignored tests)"
 "$ROOT/scripts/check-quality.sh"
 
-step "2/6" "cargo fmt --check"
+step "2/7" "BDD quality gate (stubs, always-pass tests, reimplemented logic)"
+"$ROOT/scripts/check-bdd-quality.sh"
+
+step "3/7" "cargo fmt --check"
 cargo fmt --all -- --check
 
-step "3/6" "cargo clippy (strict: -D warnings + complexity lints)"
+step "4/7" "cargo clippy (strict: -D warnings + complexity lints)"
 cargo clippy --all-targets -- -D warnings \
     -W clippy::cognitive_complexity \
     -W clippy::too_many_arguments \
     -W clippy::too_many_lines
 
-step "4/6" "cargo build --all-targets"
+step "5/7" "cargo build --all-targets"
 cargo build --all-targets
 
-step "5/6" "cargo test --lib (unit tests)"
+step "6/7" "cargo test --lib (unit tests)"
 cargo test --lib
 
-step "6/6" "cargo test --test architecture (boundary enforcement)"
+step "7/7" "cargo test --test architecture (boundary enforcement)"
 cargo test --test architecture
 
 echo -e "\n${GREEN}Pre-commit passed.${NC}"
