@@ -3,8 +3,9 @@
 # Everything in pre-commit PLUS: full test suite, BDD tests, coverage, machete, deny.
 set -euo pipefail
 
-# Ensure ~/.cargo/bin is in PATH (needed for cargo-tarpaulin, cargo-machete, cargo-deny)
-[[ -f "$HOME/.cargo/env" ]] && source "$HOME/.cargo/env"
+# Ensure ~/.cargo/bin is in PATH (needed for cargo-tarpaulin, cargo-machete, cargo-deny).
+# Only prepend to PATH rather than sourcing full env to avoid overriding rustup overrides.
+export PATH="$HOME/.cargo/bin:$PATH"
 
 ROOT="$(git rev-parse --show-toplevel)"
 

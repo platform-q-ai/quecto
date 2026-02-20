@@ -1,5 +1,6 @@
 // Web search tool: Brave API with DuckDuckGo fallback.
 
+use std::borrow::Cow;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -12,8 +13,8 @@ use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 pub struct WebSearchTool {
     api_key: Option<String>,
     client: reqwest::Client,
-    brave_base: String,
-    ddg_base: String,
+    brave_base: Cow<'static, str>,
+    ddg_base: Cow<'static, str>,
 }
 
 impl WebSearchTool {
@@ -21,19 +22,18 @@ impl WebSearchTool {
         Self {
             api_key,
             client: reqwest::Client::new(),
-            brave_base: "https://api.search.brave.com".to_string(),
-            ddg_base: "https://api.duckduckgo.com".to_string(),
+            brave_base: Cow::Borrowed("https://api.search.brave.com"),
+            ddg_base: Cow::Borrowed("https://api.duckduckgo.com"),
         }
     }
 
     /// Create a tool with custom base URLs (for testing with wiremock).
-    #[cfg(test)]
-    fn with_base_urls(api_key: Option<String>, brave_base: &str, ddg_base: &str) -> Self {
+    pub fn with_base_urls(api_key: Option<String>, brave_base: &str, ddg_base: &str) -> Self {
         Self {
             api_key,
             client: reqwest::Client::new(),
-            brave_base: brave_base.to_string(),
-            ddg_base: ddg_base.to_string(),
+            brave_base: Cow::Owned(brave_base.to_string()),
+            ddg_base: Cow::Owned(ddg_base.to_string()),
         }
     }
 
