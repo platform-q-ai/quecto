@@ -8,9 +8,11 @@ use crate::application::onboard;
 use crate::domain::agent::AgentLoop;
 use crate::domain::message::{Message, Role};
 use crate::domain::session::{Session, SessionStore};
+use crate::domain::skill::SkillLoader;
 use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
+use crate::infrastructure::persistence::skill_loader::FileSkillLoader;
 use crate::infrastructure::providers;
 use crate::infrastructure::providers::fallback::FallbackProvider;
 use crate::infrastructure::security::sandbox::Sandbox;
@@ -232,7 +234,7 @@ fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<AgentFlags>
 }
 
 fn cmd_agent(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &mut String) -> i32 {
-    let flags = match parse_agent_flags(args, stderr) {
+    let mut flags = match parse_agent_flags(args, stderr) {
         Some(f) => f,
         None => return 1,
     };
@@ -248,8 +250,40 @@ fn cmd_agent(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &mu
         None => return 1,
     };
 
+    // Load skills and prepend their content to the system prompt
+    let skill_prompt = load_skill_prompt(&base_dir);
+    if !skill_prompt.is_empty() {
+        flags.system_prompt = Some(merge_prompts(&skill_prompt, &flags.system_prompt));
+    }
+
     let mut out = AgentOutput { stdout, stderr };
     run_agent_session(&base_dir, agent, &flags, &mut out)
+}
+
+/// Load all workspace skills and concatenate their non-empty content.
+fn load_skill_prompt(base_dir: &std::path::Path) -> String {
+    let workspace = base_dir.join("workspace");
+    let global = base_dir.join("global");
+    let builtin = base_dir.join("builtin");
+    let loader = FileSkillLoader::new(&workspace, &global, &builtin);
+    let skills = match loader.list() {
+        Ok(s) => s,
+        Err(_) => return String::new(),
+    };
+    skills
+        .iter()
+        .filter(|s| !s.content.is_empty())
+        .map(|s| s.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// Merge skill content with an optional user-provided system prompt.
+fn merge_prompts(skill_prompt: &str, user_prompt: &Option<String>) -> String {
+    match user_prompt {
+        Some(up) if !up.is_empty() => format!("{}\n\n{}", skill_prompt, up),
+        _ => skill_prompt.to_string(),
+    }
 }
 
 /// Load config, build provider, and construct the agent loop. Returns None on error.
@@ -1772,5 +1806,52 @@ mod tests {
         let flags = parse_agent_flags(&a, &mut stderr).unwrap();
         assert!(flags.max_iterations.is_none());
         assert!(flags.max_time.is_none());
+    }
+
+    // --- Skill prompt loading tests ---
+
+    #[test]
+    fn test_load_skill_prompt_with_skills() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let skill_dir = tmp.path().join("workspace").join("skills").join("weather");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "Fetch weather data").unwrap();
+        let prompt = load_skill_prompt(tmp.path());
+        assert_eq!(prompt, "Fetch weather data");
+    }
+
+    #[test]
+    fn test_load_skill_prompt_empty_when_no_skills() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let prompt = load_skill_prompt(tmp.path());
+        assert!(prompt.is_empty());
+    }
+
+    #[test]
+    fn test_load_skill_prompt_skips_empty_content() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let skill_dir = tmp.path().join("workspace").join("skills").join("empty");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        // No SKILL.md — content will be empty
+        let prompt = load_skill_prompt(tmp.path());
+        assert!(prompt.is_empty());
+    }
+
+    #[test]
+    fn test_merge_prompts_skill_only() {
+        let result = merge_prompts("Skill content", &None);
+        assert_eq!(result, "Skill content");
+    }
+
+    #[test]
+    fn test_merge_prompts_skill_and_user() {
+        let result = merge_prompts("Skill content", &Some("User prompt".to_string()));
+        assert_eq!(result, "Skill content\n\nUser prompt");
+    }
+
+    #[test]
+    fn test_merge_prompts_skill_with_empty_user() {
+        let result = merge_prompts("Skill content", &Some(String::new()));
+        assert_eq!(result, "Skill content");
     }
 }
