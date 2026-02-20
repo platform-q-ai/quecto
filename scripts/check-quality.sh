@@ -34,6 +34,15 @@ check_pattern '#\[allow(' '#[allow()] attributes (remove or justify)'
 check_pattern 'unsafe {' 'unsafe blocks (require // SAFETY: justification)'
 check_pattern '#\[ignore' '#[ignore] on tests (all tests must run)'
 
+# Warn (not block) if git wrapper is not active.
+YELLOW='\033[0;33m'
+WRAPPER_DIR="$(git rev-parse --show-toplevel)/.git/wrapper-bin"
+if ! echo "$PATH" | tr ':' '\n' | grep -qF "$WRAPPER_DIR"; then
+    echo -e "${YELLOW}WARN${NC}: Git --no-verify wrapper is not active."
+    echo "  Run: source scripts/activate-hooks.sh"
+    echo ""
+fi
+
 if [ $FAILED -eq 0 ]; then
     echo -e "${GREEN}PASS${NC}: Quality gate passed"
 else
