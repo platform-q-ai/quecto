@@ -295,6 +295,12 @@ pub struct QuectoWorld {
     pub env_base_dir_set: bool,
     /// Wiremock URI for Anthropic mock (dual-provider scenarios)
     pub wiremock_anthropic_uri: Option<String>,
+    /// Subprocess exit code (from spawning quecto as a child process)
+    pub subprocess_exit_code: Option<i32>,
+    /// Subprocess captured stdout
+    pub subprocess_stdout: Option<String>,
+    /// Subprocess captured stderr
+    pub subprocess_stderr: Option<String>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
@@ -4816,6 +4822,127 @@ fn given_openai_mock_http_error(world: &mut QuectoWorld, status: u16) {
         std::mem::forget(server);
     });
     std::mem::forget(rt);
+}
+
+// ===========================================================================
+// E2E Subprocess Protocol Steps
+// ===========================================================================
+
+/// Find the quecto binary path relative to the test executable.
+/// The test binary is at `target/debug/deps/bdd-*`,
+/// so `target/debug/quecto` is `../../quecto` relative to it.
+fn quecto_binary_path() -> PathBuf {
+    let test_exe = std::env::current_exe().expect("get current exe");
+    let deps_dir = test_exe.parent().expect("deps dir");
+    let debug_dir = deps_dir.parent().expect("debug dir");
+    debug_dir.join("quecto")
+}
+
+/// Parse a shell-like argument string into individual args.
+/// Handles double-quoted strings (e.g. `"Do the subtask"`).
+fn shell_split(s: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    for ch in s.chars() {
+        match ch {
+            '"' => in_quotes = !in_quotes,
+            ' ' if !in_quotes => {
+                if !current.is_empty() {
+                    args.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+    if !current.is_empty() {
+        args.push(current);
+    }
+    args
+}
+
+/// Spawn quecto as a real subprocess, capturing output.
+/// Sets QUECTO_BASE_DIR to the temp dir if cli_context has one,
+/// otherwise inherits from the environment (for env-var tests).
+fn spawn_quecto_subprocess(world: &mut QuectoWorld, raw_args: &str) {
+    let binary = quecto_binary_path();
+    assert!(
+        binary.exists(),
+        "quecto binary not found at {}",
+        binary.display()
+    );
+    let args = shell_split(raw_args);
+    let mut cmd = std::process::Command::new(&binary);
+    cmd.args(&args);
+
+    // If cli_context.base_dir is set, pass it explicitly.
+    // Otherwise the env var is already set (e.g. by the
+    // "I set QUECTO_BASE_DIR" step) and the child inherits it.
+    if let Some(ref base) = world.cli_context.base_dir {
+        cmd.env("QUECTO_BASE_DIR", base.to_string_lossy().as_ref());
+    }
+
+    let output = cmd.output().expect("spawn quecto subprocess");
+
+    world.subprocess_exit_code = Some(output.status.code().unwrap_or(-1));
+    world.subprocess_stdout = Some(String::from_utf8_lossy(&output.stdout).to_string());
+    world.subprocess_stderr = Some(String::from_utf8_lossy(&output.stderr).to_string());
+}
+
+#[when(regex = r"^I spawn quecto as a subprocess with args: (.+)$")]
+fn when_spawn_subprocess(world: &mut QuectoWorld, raw_args: String) {
+    spawn_quecto_subprocess(world, &raw_args);
+}
+
+// "And the mock LLM returns a text response" after a When step
+// is interpreted as a When step by cucumber-rs.
+#[when(expr = "the mock LLM returns a text response {string}")]
+fn when_mock_llm_text_response(world: &mut QuectoWorld, content: String) {
+    given_mock_llm_text_response(world, content);
+}
+
+#[then(expr = "the subprocess exit code should be {int}")]
+fn then_subprocess_exit_code(world: &mut QuectoWorld, expected: i32) {
+    let actual = world
+        .subprocess_exit_code
+        .expect("no subprocess was spawned");
+    assert_eq!(
+        actual,
+        expected,
+        "expected subprocess exit code {}, got {}.\nstdout: {}\nstderr: {}",
+        expected,
+        actual,
+        world.subprocess_stdout.as_deref().unwrap_or(""),
+        world.subprocess_stderr.as_deref().unwrap_or("")
+    );
+}
+
+#[then(expr = "the subprocess stdout should contain {string}")]
+fn then_subprocess_stdout_contains(world: &mut QuectoWorld, expected: String) {
+    let stdout = world
+        .subprocess_stdout
+        .as_ref()
+        .expect("no subprocess was spawned");
+    assert!(
+        stdout.contains(&expected),
+        "expected subprocess stdout to contain '{}', got: {}",
+        expected,
+        stdout
+    );
+}
+
+#[then(expr = "the subprocess stderr should contain {string}")]
+fn then_subprocess_stderr_contains(world: &mut QuectoWorld, expected: String) {
+    let stderr = world
+        .subprocess_stderr
+        .as_ref()
+        .expect("no subprocess was spawned");
+    assert!(
+        stderr.contains(&expected),
+        "expected subprocess stderr to contain '{}', got: {}",
+        expected,
+        stderr
+    );
 }
 
 // ===========================================================================

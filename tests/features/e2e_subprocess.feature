@@ -9,7 +9,7 @@ Feature: End-to-End Subprocess Protocol
 
   # --- Basic subprocess invocation ---
 
-  @pending
+  @done
   Scenario: Parent process spawns child agent via CLI
     Given the mock LLM returns a text response "Subtask complete"
     When I spawn quecto as a subprocess with args: agent -s child-001 -m "Do the subtask"
@@ -17,7 +17,7 @@ Feature: End-to-End Subprocess Protocol
     And the subprocess stdout should contain "Subtask complete"
     And a session file should exist for key "cli:child-001"
 
-  @pending
+  @done
   Scenario: Child process inherits QUECTO_BASE_DIR from parent
     Given the mock LLM returns a text response "Inherited config"
     When I set QUECTO_BASE_DIR to the temp directory
@@ -27,16 +27,16 @@ Feature: End-to-End Subprocess Protocol
 
   # --- Session isolation ---
 
-  @pending
+  @done
   Scenario: Parent and child use separate sessions
     Given the mock LLM returns a text response "Parent response"
     When I run quecto agent -s parent -m "Parent message"
     And the mock LLM returns a text response "Child response"
     And I spawn quecto as a subprocess with args: agent -s child -m "Child message"
-    Then the session "cli:parent" should not contain "Child message"
-    And the session "cli:child" should not contain "Parent message"
+    Then the session "cli:parent" should not contain text "Child message"
+    And the session "cli:child" should not contain text "Parent message"
 
-  @pending
+  @done
   Scenario: Ephemeral child leaves no session trace
     Given the mock LLM returns a text response "No trace"
     When I spawn quecto as a subprocess with args: agent -s - -m "Ephemeral task"
@@ -46,7 +46,7 @@ Feature: End-to-End Subprocess Protocol
 
   # --- Resource limits on child processes ---
 
-  @pending
+  @done
   Scenario: Child process respects max-iterations flag
     Given the mock LLM always returns a tool call for "exec" with args:
       | command | echo loop |
@@ -54,7 +54,7 @@ Feature: End-to-End Subprocess Protocol
     Then the subprocess exit code should be 0
     And the subprocess stdout should contain "iteration limit"
 
-  @pending
+  @done
   Scenario: Child process respects max-time flag
     Given the mock LLM takes 5 seconds to respond
     When I spawn quecto as a subprocess with args: agent -s - --max-time 1 -m "Slow"
@@ -63,14 +63,14 @@ Feature: End-to-End Subprocess Protocol
 
   # --- System prompt injection for child agents ---
 
-  @pending
+  @done
   Scenario: Parent injects task context via system prompt
     Given the mock LLM returns a text response "Task understood"
     When I spawn quecto as a subprocess with args: agent -s child-task --system "You are a research agent" -m "Research topic X"
     Then the subprocess exit code should be 0
     And the subprocess stdout should contain "Task understood"
 
-  @pending
+  @done
   Scenario: Child agent uses different model than parent
     Given the mock LLM returns a text response "Using mini model"
     When I spawn quecto as a subprocess with args: agent -s - --model gpt-5-mini -m "Quick task"
@@ -79,13 +79,13 @@ Feature: End-to-End Subprocess Protocol
 
   # --- Error propagation ---
 
-  @pending
+  @done
   Scenario: Child process failure is detectable by parent via exit code
     Given the mock LLM returns an HTTP 500 error
     When I spawn quecto as a subprocess with args: agent -s - -m "Fail"
     Then the subprocess exit code should be 1
 
-  @pending
+  @done
   Scenario: Child process timeout is detectable by parent via exit code
     Given the mock LLM takes 5 seconds to respond
     When I spawn quecto as a subprocess with args: agent -s - --max-time 1 -m "Timeout"
