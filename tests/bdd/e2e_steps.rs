@@ -1249,6 +1249,15 @@ const SUBPROCESS_TIMEOUT_SECS: u64 = 30;
 /// Kills the child after [`SUBPROCESS_TIMEOUT_SECS`] if it has
 /// not exited.
 fn spawn_quecto_subprocess(world: &mut QuectoWorld, raw_args: &str) {
+    spawn_quecto_subprocess_with_stdin(world, raw_args, None);
+}
+
+/// Spawn quecto as a real subprocess, optionally writing stdin.
+fn spawn_quecto_subprocess_with_stdin(
+    world: &mut QuectoWorld,
+    raw_args: &str,
+    stdin_data: Option<&str>,
+) {
     let binary = quecto_binary_path();
     assert!(
         binary.exists(),
@@ -1258,6 +1267,9 @@ fn spawn_quecto_subprocess(world: &mut QuectoWorld, raw_args: &str) {
     let args = shell_split(raw_args);
     let mut cmd = std::process::Command::new(&binary);
     cmd.args(&args);
+    if stdin_data.is_some() {
+        cmd.stdin(std::process::Stdio::piped());
+    }
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
 
@@ -1269,6 +1281,14 @@ fn spawn_quecto_subprocess(world: &mut QuectoWorld, raw_args: &str) {
     }
 
     let mut child = cmd.spawn().expect("spawn quecto subprocess");
+    if let Some(data) = stdin_data
+        && let Some(mut stdin) = child.stdin.take()
+    {
+        use std::io::Write as _;
+        stdin
+            .write_all(data.as_bytes())
+            .expect("write stdin to subprocess");
+    }
     let start = std::time::Instant::now();
     let deadline = std::time::Duration::from_secs(SUBPROCESS_TIMEOUT_SECS);
     let poll_interval = std::time::Duration::from_millis(50);
@@ -1305,6 +1325,16 @@ fn spawn_quecto_subprocess(world: &mut QuectoWorld, raw_args: &str) {
 #[when(regex = r"^I spawn quecto as a subprocess with args: (.+)$")]
 fn when_spawn_subprocess(world: &mut QuectoWorld, raw_args: String) {
     spawn_quecto_subprocess(world, &raw_args);
+}
+
+#[when("I spawn quecto as a subprocess with no args and stdin:")]
+fn when_spawn_subprocess_no_args_stdin(world: &mut QuectoWorld, step: &gherkin::Step) {
+    let stdin_data = step.docstring.as_ref().expect("missing docstring").trim();
+    let stdin_with_newline = format!("{}\n", stdin_data);
+    spawn_quecto_subprocess_with_stdin(world, "", Some(&stdin_with_newline));
+    world.exit_code = world.subprocess_exit_code.unwrap_or(-1);
+    world.stdout = world.subprocess_stdout.clone().unwrap_or_default();
+    world.stderr = world.subprocess_stderr.clone().unwrap_or_default();
 }
 
 // "And the mock LLM returns a text response" after a When step
@@ -1478,6 +1508,240 @@ fn when_run_real_llm_agent_system(world: &mut QuectoWorld, system: String, messa
     world.exit_code = output.exit_code;
     world.stdout = output.stdout;
     world.stderr = output.stderr;
+}
+
+/// Configure a real-LLM gateway workspace that points Telegram to a mock API.
+fn setup_real_llm_gateway_workspace(
+    world: &mut QuectoWorld,
+    updates: Vec<(i64, i64, i64, String)>,
+    allow_from: Vec<String>,
+) {
+    ensure_temp_dir(world);
+    let base = base_path(world);
+    let workspace = base.join("workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace");
+
+    let api_key = resolve_openai_api_key();
+    let token = "123:TEST";
+    let get_updates_path = format!("/bot{}/getUpdates", token);
+    let send_message_path = format!("/bot{}/sendMessage", token);
+
+    let rt = tokio::runtime::Runtime::new().expect("create runtime");
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let api_base = server.uri();
+
+        // Return each update once in sequence, then fall back to empty results.
+        for (idx, (update_id, chat_id, user_id, text)) in updates.iter().enumerate() {
+            let body = serde_json::json!({
+                "ok": true,
+                "result": [{
+                    "update_id": update_id,
+                    "message": {
+                        "message_id": update_id,
+                        "from": {
+                            "id": user_id,
+                            "first_name": "BDD",
+                            "username": "bdd"
+                        },
+                        "chat": {
+                            "id": chat_id,
+                            "type": "private"
+                        },
+                        "text": text
+                    }
+                }]
+            });
+            wiremock::Mock::given(wiremock::matchers::method("POST"))
+                .and(wiremock::matchers::path(get_updates_path.clone()))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+                .up_to_n_times(1)
+                .with_priority((idx + 1) as u8)
+                .mount(&server)
+                .await;
+        }
+
+        let empty_updates = serde_json::json!({ "ok": true, "result": [] });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path(get_updates_path))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(empty_updates))
+            .with_priority(10)
+            .mount(&server)
+            .await;
+
+        let send_ok = serde_json::json!({ "ok": true, "result": { "message_id": 1 } });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path(send_message_path))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(send_ok))
+            .mount(&server)
+            .await;
+
+        let config = serde_json::json!({
+            "providers": {
+                "openai": { "api_key": api_key }
+            },
+            "channels": {
+                "telegram": {
+                    "enabled": true,
+                    "token": token,
+                    "api_base": api_base,
+                    "allow_from": allow_from
+                }
+            },
+            "agents": {
+                "defaults": {
+                    "model": "gpt-5.2",
+                    "workspace": workspace.to_string_lossy()
+                }
+            }
+        });
+        let config_json = serde_json::to_string_pretty(&config).expect("serialize config");
+        std::fs::write(base.join("config.json"), config_json).expect("write gateway config");
+
+        let leaked: &'static wiremock::MockServer = Box::leak(Box::new(server));
+        world.wiremock_server_ref = Some(leaked);
+    });
+    std::mem::forget(rt);
+}
+
+#[given(
+    expr = "a real LLM gateway workspace is configured for chat {string} with message {string}"
+)]
+fn given_real_llm_gateway_one_update(world: &mut QuectoWorld, chat_id: String, message: String) {
+    let chat: i64 = chat_id.parse().expect("chat_id must be integer");
+    setup_real_llm_gateway_workspace(world, vec![(1, chat, chat, message)], vec![]);
+}
+
+#[given(
+    expr = "a real LLM gateway workspace is configured for chat {string} with two messages {string} and {string}"
+)]
+fn given_real_llm_gateway_two_updates(
+    world: &mut QuectoWorld,
+    chat_id: String,
+    first: String,
+    second: String,
+) {
+    let chat: i64 = chat_id.parse().expect("chat_id must be integer");
+    setup_real_llm_gateway_workspace(
+        world,
+        vec![(1, chat, chat, first), (2, chat, chat, second)],
+        vec![],
+    );
+}
+
+#[given(
+    expr = "a real LLM gateway workspace is configured with allow_from {string} and an update from user {string} with message {string}"
+)]
+fn given_real_llm_gateway_unauthorized_update(
+    world: &mut QuectoWorld,
+    allow_from: String,
+    user_id: String,
+    message: String,
+) {
+    let user: i64 = user_id.parse().expect("user_id must be integer");
+    setup_real_llm_gateway_workspace(world, vec![(1, user, user, message)], vec![allow_from]);
+}
+
+#[when(expr = "I run quecto gateway until at least {int} Telegram replies are sent")]
+fn when_run_gateway_until_replies(world: &mut QuectoWorld, expected_replies: usize) {
+    let binary = quecto_binary_path();
+    let base = base_path(world);
+    let mut cmd = std::process::Command::new(&binary);
+    cmd.arg("gateway")
+        .env("QUECTO_BASE_DIR", base.to_string_lossy().as_ref())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let mut child = cmd.spawn().expect("spawn gateway subprocess");
+    let server = world
+        .wiremock_server_ref
+        .expect("telegram mock server not configured");
+    let rt = tokio::runtime::Runtime::new().expect("create runtime");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+
+    loop {
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!(
+                "gateway did not send {} replies before timeout",
+                expected_replies
+            );
+        }
+
+        if let Ok(Some(status)) = child.try_wait() {
+            let out = child.wait_with_output().expect("collect gateway output");
+            world.subprocess_exit_code = Some(status.code().unwrap_or(-1));
+            world.subprocess_stdout = Some(String::from_utf8_lossy(&out.stdout).into_owned());
+            world.subprocess_stderr = Some(String::from_utf8_lossy(&out.stderr).into_owned());
+            panic!(
+                "gateway exited before sending replies. stdout: {} stderr: {}",
+                world.subprocess_stdout.clone().unwrap_or_default(),
+                world.subprocess_stderr.clone().unwrap_or_default()
+            );
+        }
+
+        let requests = rt
+            .block_on(server.received_requests())
+            .expect("read wiremock requests");
+        let outbound: Vec<String> = requests
+            .iter()
+            .filter(|r| r.url.path().ends_with("/sendMessage"))
+            .filter_map(|r| serde_json::from_slice::<serde_json::Value>(&r.body).ok())
+            .filter_map(|v| {
+                v.get("text")
+                    .and_then(|t| t.as_str())
+                    .map(std::string::ToString::to_string)
+            })
+            .collect();
+        if outbound.len() >= expected_replies {
+            world.gateway_telegram_outbound_texts = outbound;
+            break;
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+
+    let _ = child.kill();
+    let out = child
+        .wait_with_output()
+        .expect("collect gateway output after kill");
+    world.subprocess_exit_code = Some(-1);
+    world.subprocess_stdout = Some(String::from_utf8_lossy(&out.stdout).into_owned());
+    world.subprocess_stderr = Some(String::from_utf8_lossy(&out.stderr).into_owned());
+    world.exit_code = 0;
+    world.stdout = world.subprocess_stdout.clone().unwrap_or_default();
+    world.stderr = world.subprocess_stderr.clone().unwrap_or_default();
+}
+
+#[then(expr = "the Telegram outbound messages should include {string}")]
+fn then_gateway_outbound_includes(world: &mut QuectoWorld, expected: String) {
+    let matched = world
+        .gateway_telegram_outbound_texts
+        .iter()
+        .any(|text| text.contains(&expected));
+    assert!(
+        matched,
+        "expected outbound Telegram messages to include '{}', got: {:?}",
+        expected, world.gateway_telegram_outbound_texts
+    );
+}
+
+#[then("the Telegram outbound messages should be empty")]
+fn then_gateway_outbound_empty(world: &mut QuectoWorld) {
+    assert!(
+        world.gateway_telegram_outbound_texts.is_empty(),
+        "expected no outbound Telegram messages, got: {:?}",
+        world.gateway_telegram_outbound_texts
+    );
+}
+
+#[then("the Telegram outbound messages should not be empty")]
+fn then_gateway_outbound_not_empty(world: &mut QuectoWorld) {
+    assert!(
+        !world.gateway_telegram_outbound_texts.is_empty(),
+        "expected outbound Telegram messages, got none"
+    );
 }
 
 // ===========================================================================

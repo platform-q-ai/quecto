@@ -13,7 +13,7 @@ jobs:
   smoke-test:
     name: Smoke Test
     runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -44,3 +44,11 @@ jobs:
 
       - name: Architecture tests
         run: cargo test --test architecture
+
+      - name: Real LLM smoke subset
+        if: ${{ secrets.OPENAI_API_KEY != '' }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          QUECTO_REAL_LLM: "1"
+          QUECTO_TAG: real-llm-smoke
+        run: timeout 5m cargo test --test bdd

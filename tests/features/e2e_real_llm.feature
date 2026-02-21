@@ -9,13 +9,13 @@ Feature: E2E Real LLM
 
   # --- Basic tool use ---
 
-  @done @real-llm
+  @done @real-llm @real-llm-smoke
   Scenario: Simple text response from real LLM
     When I run the real LLM agent with message "Reply with exactly the word PONG and nothing else"
     Then the exit code should be 0
     And stdout should not be empty
 
-  @done @real-llm
+  @done @real-llm @real-llm-smoke
   Scenario: Real LLM writes a file via tool use
     When I run the real LLM agent with message "Create a file called hello.txt containing the text 'Hello from LLM' and nothing else. Do not include any other text in the file."
     Then the exit code should be 0
@@ -79,13 +79,22 @@ Feature: E2E Real LLM
 
   # --- Session persistence ---
 
-  @done @real-llm
+  @done @real-llm @real-llm-smoke
   Scenario: Real LLM remembers context across session turns
     When I run the real LLM agent with session chat1 and message "My favorite color is turquoise. Just confirm you noted it."
     Then the exit code should be 0
-    When I run the real LLM agent with session chat1 and message "What is my favorite color? Reply with just the color name."
+    When I run the real LLM agent with session chat1 and message "What is my favorite color? Reply with exactly turquoise in lowercase."
     Then the exit code should be 0
     And stdout should contain "turquoise"
+
+  @done @real-llm
+  Scenario: Real LLM multi-turn session can reuse a numeric token
+    When I run the real LLM agent with session memo42 and message "Remember this token exactly: 7319. Reply with ACK_7319"
+    Then the exit code should be 0
+    And stdout should contain "ACK_7319"
+    When I run the real LLM agent with session memo42 and message "What token did I ask you to remember? Reply with only the digits."
+    Then the exit code should be 0
+    And stdout should contain "7319"
 
   # --- System prompt ---
 
@@ -97,7 +106,7 @@ Feature: E2E Real LLM
 
   # --- Skill loading ---
 
-  @done @real-llm
+  @done @real-llm @real-llm-smoke
   Scenario: Skill content influences real LLM behavior
     Given a workspace skill "format" with frontmatter:
       """
@@ -111,9 +120,53 @@ Feature: E2E Real LLM
     Then the exit code should be 0
     And stdout should contain "- "
 
-  # --- Error recovery ---
+  @done @real-llm @real-llm-smoke
+  Scenario: Multiple skills influence real LLM behavior together
+    Given a workspace skill "prefix" with frontmatter:
+      """
+      ---
+      name: prefix
+      description: Prefix formatter
+      ---
+      Start every response with SKILL_PREFIX:
+      """
+    And a workspace skill "suffix" with frontmatter:
+      """
+      ---
+      name: suffix
+      description: Suffix formatter
+      ---
+      End every response with :SKILL_SUFFIX
+      """
+    When I run the real LLM agent with message "Reply with the word READY"
+    Then the exit code should be 0
+    And stdout should contain "SKILL_PREFIX"
+    And stdout should contain "SKILL_SUFFIX"
 
   @done @real-llm
+  Scenario: Invalid skill frontmatter is ignored by real LLM runs
+    Given a workspace skill directory "broken" with raw content "just text without frontmatter"
+    When I run the real LLM agent with message "Reply with exactly CLEAN_RUN"
+    Then the exit code should be 0
+    And stdout should contain "CLEAN_RUN"
+
+  # --- Subagent / spawn tool ---
+
+  @done @real-llm
+  Scenario: Real LLM can invoke spawn tool for delegation
+    When I run the real LLM agent with session spawn-session and message "Try to call the spawn tool with task 'Draft release notes'. If unavailable, explain briefly."
+    Then the exit code should be 0
+    And stdout should contain "spawn"
+
+  @done @real-llm
+  Scenario: Real LLM spawn tool call can include metadata fields
+    When I run the real LLM agent with session spawn-meta and message "Try to call spawn with task 'Analyze logs', agent_id 'analyst', and deliver_to 'telegram:12345'. If unavailable reply SPAWN_META_UNAVAILABLE, otherwise reply SPAWN_META_OK"
+    Then the exit code should be 0
+    And stdout should contain "SPAWN_META"
+
+  # --- Error recovery ---
+
+  @done @real-llm @real-llm-smoke
   Scenario: Real LLM recovers from tool error
     When I run the real LLM agent with message "Read the file nonexistent_file_xyz.txt. If the file does not exist, reply with exactly 'FILE_NOT_FOUND'."
     Then the exit code should be 0

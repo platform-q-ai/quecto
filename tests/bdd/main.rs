@@ -461,6 +461,8 @@ pub struct QuectoWorld {
     pub gateway_cron_store: Option<Arc<InMemoryCronStore>>,
     /// Config for gateway cron/heartbeat scenarios
     pub gateway_tick_config: Option<Config>,
+    /// Captured outbound Telegram texts from real gateway subprocess scenarios
+    pub gateway_telegram_outbound_texts: Vec<String>,
     /// Leaked wiremock server ref for web search mock (for mounting responses)
     pub web_search_mock_server: Option<&'static wiremock::MockServer>,
     /// Whether the web search used DDG (for fallback assertion)

@@ -83,6 +83,8 @@ pub struct TelegramConfig {
     #[serde(default)]
     pub token: String,
     #[serde(default)]
+    pub api_base: String,
+    #[serde(default)]
     pub allow_from: Vec<String>,
 }
 

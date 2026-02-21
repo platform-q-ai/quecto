@@ -68,11 +68,16 @@ pub struct TelegramChannel {
 impl TelegramChannel {
     /// Create a new Telegram channel from config.
     pub fn new(config: &TelegramConfig) -> Self {
+        let api_base = if config.api_base.is_empty() {
+            "https://api.telegram.org".to_string()
+        } else {
+            config.api_base.clone()
+        };
         Self {
             token: config.token.clone(),
             allow_from: config.allow_from.clone(),
             enabled: config.enabled && !config.token.is_empty(),
-            api_base: "https://api.telegram.org".to_string(),
+            api_base,
             client: reqwest::Client::new(),
         }
     }
@@ -222,6 +227,7 @@ mod tests {
         TelegramConfig {
             enabled,
             token: token.to_string(),
+            api_base: String::new(),
             allow_from: allow_from.into_iter().map(|s| s.to_string()).collect(),
         }
     }
