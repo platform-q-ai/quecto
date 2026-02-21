@@ -48,21 +48,21 @@ Feature: Scheduled Tasks (Cron)
     When the cron store is recreated from the same directory
     Then the job "Check weather" should exist in the store
 
-  @pending
+  @done
   Scenario: Gateway executes interval job when due
     Given a running gateway with a mock LLM provider
     And a cron job "weather" with interval 2 seconds and message "Check weather"
     When the cron tick fires
     Then the mock LLM should receive a request containing "Check weather"
 
-  @pending
+  @done
   Scenario: Gateway skips disabled cron jobs
     Given a running gateway with a mock LLM provider
     And a disabled cron job "weather" with interval 2 seconds
     When the cron tick fires
     Then the mock LLM should not receive any requests
 
-  @pending
+  @done
   Scenario: Cron job execution respects timeout
     Given a running gateway with a mock LLM provider
     And a cron job "slow-task" with interval 2 seconds and message "Run slow task"
@@ -71,12 +71,12 @@ Feature: Scheduled Tasks (Cron)
     Then the job execution should be terminated
     And the job should be marked as last_error containing "timeout"
 
-  @pending
+  @done
   Scenario: Cron job delivers result to configured channel
     Given a running gateway with a mock LLM provider
     And a mock Telegram API
     And a cron job "report" with interval 60 seconds and deliver_to "telegram:12345"
-    And the mock LLM returns a text response "Daily report: all systems operational"
+    And the gateway agent responds with "Daily report: all systems operational"
     When the cron tick fires for job "report"
     Then the Telegram API should receive a sendMessage to chat "12345"
     And the message should contain "all systems operational"

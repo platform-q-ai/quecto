@@ -74,6 +74,7 @@ impl CronTool {
             schedule,
             enabled: true,
             deliver_to,
+            last_error: None,
         };
 
         self.store.add(job).map_err(|e| e.to_string())?;

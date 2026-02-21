@@ -71,6 +71,74 @@ pub async fn load_tasks(workspace: impl AsRef<Path>) -> Result<Vec<HeartbeatTask
     Ok(parse_heartbeat(&content))
 }
 
+/// Result of dispatching a single heartbeat task.
+#[derive(Debug)]
+pub struct HeartbeatTaskResult {
+    /// The original task message.
+    pub message: String,
+    /// Whether the task was dispatched via spawn (subagent).
+    pub dispatched_via_spawn: bool,
+    /// The response from the agent (or indication of spawn).
+    pub response: String,
+}
+
+/// Execute a heartbeat tick: load tasks from workspace, dispatch each
+/// through the agent (or via spawn for `use_spawn` tasks).
+///
+/// Each task is executed with the given `timeout`. Returns the list of
+/// dispatched task results, or an empty list if no HEARTBEAT.md exists.
+pub async fn execute_heartbeat_tick(
+    workspace: &Path,
+    agent: &dyn crate::domain::agent::AgentLoop,
+    timeout: std::time::Duration,
+) -> Result<Vec<HeartbeatTaskResult>, DomainError> {
+    let tasks = load_tasks(workspace).await?;
+    if tasks.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let mut results = Vec::new();
+    for task in &tasks {
+        let result = dispatch_task(agent, task, timeout).await;
+        results.push(result);
+    }
+    Ok(results)
+}
+
+/// Dispatch a single heartbeat task with a timeout.
+async fn dispatch_task(
+    agent: &dyn crate::domain::agent::AgentLoop,
+    task: &HeartbeatTask,
+    timeout: std::time::Duration,
+) -> HeartbeatTaskResult {
+    let content = if task.use_spawn {
+        format!("Spawn a subagent to handle this task: {}", task.message)
+    } else {
+        task.message.clone()
+    };
+
+    let mut messages = vec![crate::domain::message::Message {
+        role: crate::domain::message::Role::User,
+        content,
+        tool_calls: vec![],
+        tool_call_id: None,
+    }];
+
+    let result = tokio::time::timeout(timeout, agent.process(&mut messages)).await;
+
+    let response = match result {
+        Ok(Ok(agent_result)) => agent_result.response,
+        Ok(Err(e)) => format!("error: {}", e),
+        Err(_) => "timeout".to_string(),
+    };
+
+    HeartbeatTaskResult {
+        message: task.message.clone(),
+        dispatched_via_spawn: task.use_spawn,
+        response,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,5 +227,108 @@ mod tests {
         .unwrap();
         let tasks = load_tasks(tmp.path()).await.unwrap();
         assert_eq!(tasks.len(), 2);
+    }
+
+    // -- Mock agent for heartbeat tick tests --
+
+    use crate::domain::agent::{AgentInfo, AgentLoop, AgentResult};
+    use crate::domain::message::{Message, Role};
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Mutex;
+
+    struct RecordingAgent {
+        response: String,
+        received: Mutex<Vec<String>>,
+    }
+
+    impl RecordingAgent {
+        fn new(response: &str) -> Self {
+            Self {
+                response: response.to_string(),
+                received: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl AgentLoop for RecordingAgent {
+        fn process<'a>(
+            &'a self,
+            messages: &'a mut Vec<Message>,
+        ) -> Pin<Box<dyn Future<Output = Result<AgentResult, DomainError>> + Send + 'a>> {
+            let user_msg = messages
+                .iter()
+                .find(|m| m.role == Role::User)
+                .map(|m| m.content.clone())
+                .unwrap_or_default();
+            self.received.lock().unwrap().push(user_msg);
+            let resp = self.response.clone();
+            Box::pin(async move { Ok(AgentResult::text(resp)) })
+        }
+
+        fn info(&self) -> AgentInfo {
+            AgentInfo {
+                tool_count: 0,
+                skill_count: 0,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_heartbeat_tick_dispatches_tasks() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("HEARTBEAT.md"),
+            "- Check health\n- Report disk\n",
+        )
+        .unwrap();
+
+        let agent = RecordingAgent::new("done");
+        let timeout = std::time::Duration::from_secs(60);
+        let results = execute_heartbeat_tick(tmp.path(), &agent, timeout)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].message, "Check health");
+        assert_eq!(results[1].message, "Report disk");
+        assert!(!results[0].dispatched_via_spawn);
+
+        let received = agent.received.lock().unwrap();
+        assert_eq!(received.len(), 2);
+        assert!(received[0].contains("Check health"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_heartbeat_tick_no_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let agent = RecordingAgent::new("done");
+        let timeout = std::time::Duration::from_secs(60);
+        let results = execute_heartbeat_tick(tmp.path(), &agent, timeout)
+            .await
+            .unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_execute_heartbeat_tick_spawn_tasks() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("HEARTBEAT.md"),
+            "## Long Tasks (use spawn)\n- Analyze data\n",
+        )
+        .unwrap();
+
+        let agent = RecordingAgent::new("spawned");
+        let timeout = std::time::Duration::from_secs(60);
+        let results = execute_heartbeat_tick(tmp.path(), &agent, timeout)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].dispatched_via_spawn);
+        assert_eq!(results[0].message, "Analyze data");
+
+        let received = agent.received.lock().unwrap();
+        assert!(received[0].contains("Analyze data"));
+        assert!(received[0].contains("Spawn"));
     }
 }

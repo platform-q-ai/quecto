@@ -38,7 +38,7 @@ Zero external dependencies except `thiserror`. Defines the vocabulary of the sys
 | `agent.rs` | `AgentLoop` trait, `AgentInfo`, `AgentResult` |
 | `session.rs` | `Session`, `SessionStore` trait |
 | `skill.rs` | `Skill`, `SkillSource`, `SkillLoader` trait |
-| `cron.rs` | `CronJob`, `CronSchedule`, `CronStore` trait |
+| `cron.rs` | `CronJob`, `CronJobResult`, `CronSchedule`, `CronStore` trait |
 | `channel.rs` | `Channel` trait |
 | `subagent.rs` | `SubagentConfig`, `validate_agent_id()` |
 | `error.rs` | `DomainError` enum (Provider, Tool, Session, Channel, Security, Config, Other) |
@@ -54,7 +54,8 @@ Depends only on `domain/`. Contains orchestration logic with no I/O — all I/O 
 | `agent_loop.rs` | `AgentLoopImpl` — the core LLM-tool loop: send messages to provider, execute tool calls, repeat until done or max iterations |
 | `onboard.rs` | `run_onboard()` — creates workspace directory, writes default config and template files |
 | `subagent.rs` | `SubagentContext` — constructs child agent contexts with inherited sandbox restrictions (re-exports `SubagentConfig` from domain) |
-| `heartbeat.rs` | `parse_heartbeat()`, `load_tasks()` — parses cron-like task definitions, determines which tasks are due |
+| `cron_executor.rs` | `execute_cron_tick()` — runs due cron jobs through the agent with timeout, records `last_error` on failure, propagates `deliver_to` |
+| `heartbeat.rs` | `parse_heartbeat()`, `load_tasks()`, `execute_heartbeat_tick()` — parses task definitions, determines which are due, dispatches tasks through the agent (spawn-aware) |
 
 ### infrastructure/ — Concrete adapters
 
@@ -167,7 +168,7 @@ Refactor
 @wip -> @done       Tag the feature
 ```
 
-The BDD runner (`tests/bdd/main.rs`) uses `.fail_on_skipped()` and runs features tagged `@wip` or `@done`. This means all completed features are regression-tested on every run. Scenarios tagged `@pending` are always excluded. Scenarios tagged `@real-llm` are excluded unless `QUECTO_REAL_LLM=1` is set (requires `OPENAI_API_KEY` via env var or `.env` file). Set `QUECTO_TAG=<tag>` to run only scenarios matching a specific tag (e.g. `QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm cargo test --test bdd`). Step definitions live in `tests/bdd/` split across 17 module files (~6000 lines total).
+The BDD runner (`tests/bdd/main.rs`) uses `.fail_on_skipped()` and runs features tagged `@wip` or `@done`. This means all completed features are regression-tested on every run. Scenarios tagged `@pending` are always excluded. Scenarios tagged `@real-llm` are excluded unless `QUECTO_REAL_LLM=1` is set (requires `OPENAI_API_KEY` via env var or `.env` file). Set `QUECTO_TAG=<tag>` to run only scenarios matching a specific tag (e.g. `QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm cargo test --test bdd`). Step definitions live in `tests/bdd/` split across 18 module files (~6500 lines total).
 
 Feature files live in `tests/features/`. There are 28 feature files covering: config, cli, onboard, security, sandbox_hardening, agent_tools, providers, agent_loop, session, auth, telegram, cron, subagent, heartbeat, skills, voice, observability, agent_cli, e2e_tool_use, e2e_session, e2e_subprocess, e2e_safety, e2e_providers, e2e_agentic_loop, e2e_real_llm, e2e_session_tools, e2e_skills, repl.
 
@@ -178,9 +179,9 @@ scripts/check-quality.sh       Work markers, lint bypasses, unsafe, ignored test
 scripts/check-bdd-quality.sh   BDD anti-pattern detection (tests/bdd/)
 cargo fmt --check              Formatting
 cargo clippy -- -D warnings    Lints (zero warnings policy)
-cargo test --lib               335 unit tests
+cargo test --lib               343 unit tests
 cargo test --test architecture Clean Architecture boundary enforcement
-cargo test --test bdd          222 active BDD scenarios across 28 @done features (+13 @real-llm gated)
+cargo test --test bdd          229 active BDD scenarios across 28 @done features (+13 @real-llm gated)
 ```
 
 ### BDD quality gate (`scripts/check-bdd-quality.sh`)

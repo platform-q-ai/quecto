@@ -2,10 +2,11 @@
 
 use cucumber::{World, gherkin, given, then, when};
 use quecto::application::agent_loop::AgentLoopImpl;
-use quecto::application::heartbeat::{self, HeartbeatResult, HeartbeatTask};
+use quecto::application::cron_executor;
+use quecto::application::heartbeat::{self, HeartbeatResult, HeartbeatTask, HeartbeatTaskResult};
 use quecto::application::subagent::{SubagentConfig, SubagentContext, validate_agent_id};
 use quecto::domain::agent::{AgentInfo, AgentLoop, AgentResult};
-use quecto::domain::cron::{CronJob, CronSchedule, CronStore};
+use quecto::domain::cron::{CronJob, CronJobResult, CronSchedule, CronStore};
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, Role, ToolCall};
 use quecto::domain::provider::LlmProvider;
@@ -21,7 +22,7 @@ use quecto::infrastructure::channels::telegram::{
     TelegramUser,
 };
 use quecto::infrastructure::config::{Config, TelegramConfig};
-use quecto::infrastructure::persistence::cron_store::{self, FileCronStore};
+use quecto::infrastructure::persistence::cron_store::FileCronStore;
 use quecto::infrastructure::persistence::memory_store::{self, MemoryStore};
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::infrastructure::persistence::skill_loader::FileSkillLoader;
@@ -149,6 +150,136 @@ impl quecto::domain::tool::Tool for MockBddTool {
                 is_error: false,
             })
         })
+    }
+}
+
+// ===========================================================================
+// In-memory CronStore for gateway BDD tests
+// ===========================================================================
+
+#[derive(Debug)]
+struct InMemoryCronStore {
+    jobs: Mutex<Vec<CronJob>>,
+}
+
+impl InMemoryCronStore {
+    fn new() -> Self {
+        Self {
+            jobs: Mutex::new(vec![]),
+        }
+    }
+}
+
+impl CronStore for InMemoryCronStore {
+    fn list(&self) -> Result<Vec<CronJob>, DomainError> {
+        Ok(self.jobs.lock().unwrap().clone())
+    }
+    fn add(&self, job: CronJob) -> Result<(), DomainError> {
+        self.jobs.lock().unwrap().push(job);
+        Ok(())
+    }
+    fn remove(&self, id: &str) -> Result<(), DomainError> {
+        self.jobs.lock().unwrap().retain(|j| j.id != id);
+        Ok(())
+    }
+    fn set_enabled(&self, id: &str, enabled: bool) -> Result<(), DomainError> {
+        if let Some(j) = self.jobs.lock().unwrap().iter_mut().find(|j| j.id == id) {
+            j.enabled = enabled;
+        }
+        Ok(())
+    }
+    fn find_by_name(&self, name: &str) -> Result<Option<CronJob>, DomainError> {
+        Ok(self
+            .jobs
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|j| j.name == name)
+            .cloned())
+    }
+    fn set_last_error(&self, id: &str, error: Option<String>) -> Result<(), DomainError> {
+        if let Some(j) = self.jobs.lock().unwrap().iter_mut().find(|j| j.id == id) {
+            j.last_error = error;
+        }
+        Ok(())
+    }
+}
+
+// ===========================================================================
+// Recording mock agent for gateway BDD tests
+// ===========================================================================
+
+#[derive(Debug)]
+struct RecordingMockAgent {
+    response: String,
+    messages: Arc<Mutex<Vec<String>>>,
+}
+
+impl AgentLoop for RecordingMockAgent {
+    fn process<'a>(
+        &'a self,
+        messages: &'a mut Vec<Message>,
+    ) -> Pin<Box<dyn Future<Output = Result<AgentResult, DomainError>> + Send + 'a>> {
+        let user_msg = messages
+            .iter()
+            .rev()
+            .find(|m| m.role == Role::User)
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+        self.messages.lock().unwrap().push(user_msg);
+        let resp = self.response.clone();
+        Box::pin(async move { Ok(AgentResult::text(resp)) })
+    }
+
+    fn info(&self) -> AgentInfo {
+        AgentInfo {
+            tool_count: 0,
+            skill_count: 0,
+        }
+    }
+}
+
+// ===========================================================================
+// Slow mock agent (for timeout tests)
+// ===========================================================================
+
+#[derive(Debug)]
+struct SlowMockAgent;
+
+impl AgentLoop for SlowMockAgent {
+    fn process<'a>(
+        &'a self,
+        _messages: &'a mut Vec<Message>,
+    ) -> Pin<Box<dyn Future<Output = Result<AgentResult, DomainError>> + Send + 'a>> {
+        Box::pin(async {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            Ok(AgentResult::text("done"))
+        })
+    }
+
+    fn info(&self) -> AgentInfo {
+        AgentInfo {
+            tool_count: 0,
+            skill_count: 0,
+        }
+    }
+}
+
+// Wrapper for Arc<dyn AgentLoop> that implements Debug (opaque).
+struct DebugAgent(Arc<dyn AgentLoop>);
+
+impl std::fmt::Debug for DebugAgent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<MockAgent>")
+    }
+}
+
+impl Default for DebugAgent {
+    fn default() -> Self {
+        Self(Arc::new(RecordingMockAgent {
+            response: String::new(),
+            messages: Arc::new(Mutex::new(vec![])),
+        }))
     }
 }
 
@@ -316,6 +447,18 @@ pub struct QuectoWorld {
     pub bot_command_response: Option<Option<String>>,
     /// Whether the gateway shutdown completed cleanly
     pub gateway_shutdown_clean: Option<bool>,
+    /// Mock agent for gateway cron/heartbeat scenarios (Debug-opaque wrapper)
+    pub _gateway_mock_agent: Option<DebugAgent>,
+    /// Mock agent: captured user messages (for gateway cron/heartbeat scenarios)
+    pub mock_agent_messages: Arc<Mutex<Vec<String>>>,
+    /// Results from execute_cron_tick()
+    pub cron_tick_results: Option<Vec<CronJobResult>>,
+    /// Results from execute_heartbeat_tick()
+    pub heartbeat_tick_results: Option<Vec<HeartbeatTaskResult>>,
+    /// In-memory cron store for gateway cron scenarios
+    pub gateway_cron_store: Option<Arc<InMemoryCronStore>>,
+    /// Config for gateway cron/heartbeat scenarios
+    pub gateway_tick_config: Option<Config>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
@@ -351,6 +494,7 @@ mod auth_steps;
 mod config_steps;
 mod cron_steps;
 mod e2e_steps;
+mod gateway_steps;
 mod heartbeat_steps;
 mod provider_steps;
 mod repl_steps;
