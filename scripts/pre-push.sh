@@ -76,7 +76,7 @@ timeout "${REAL_LLM_TIMEOUT}" env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm cargo te
 
 step "10/12" "cargo tarpaulin (code coverage)"
 if command -v cargo-tarpaulin &>/dev/null; then
-    cargo tarpaulin
+    cargo tarpaulin --tests
 else
     echo "  cargo-tarpaulin not installed, skipping coverage check"
     echo "  Install with: cargo install cargo-tarpaulin --locked"
