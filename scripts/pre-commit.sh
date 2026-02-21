@@ -38,6 +38,20 @@ cargo test --lib
 step "7/7" "cargo test --test architecture (boundary enforcement)"
 cargo test --test architecture
 
+step "info" "cargo tarpaulin (code coverage, warn-only)"
+if command -v cargo-tarpaulin &>/dev/null; then
+    tarpaulin_log="$(mktemp)"
+    if cargo tarpaulin --tests >"$tarpaulin_log" 2>&1; then
+        cat "$tarpaulin_log"
+    else
+        echo -e "${RED}WARN${NC}: tarpaulin failed (non-blocking):"
+        tail -5 "$tarpaulin_log"
+    fi
+    rm -f "$tarpaulin_log"
+else
+    echo "  cargo-tarpaulin not installed, skipping"
+fi
+
 # If committing directly to master (squash merge, ff commit, etc.),
 # also run the expensive pre-merge-commit checks. The pre-merge-commit
 # hook only fires for real merge commits, so this catches the other paths.
