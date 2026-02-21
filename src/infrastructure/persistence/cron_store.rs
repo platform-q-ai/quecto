@@ -33,6 +33,8 @@ struct CronJobRecord {
     deliver_to: Option<String>,
     #[serde(default)]
     last_error: Option<String>,
+    #[serde(default)]
+    last_run_at: u64,
 }
 
 impl FileCronStore {
@@ -84,6 +86,7 @@ fn job_to_record(job: &CronJob) -> CronJobRecord {
         enabled: job.enabled,
         deliver_to: job.deliver_to.clone(),
         last_error: job.last_error.clone(),
+        last_run_at: job.last_run_at,
     }
 }
 
@@ -104,6 +107,7 @@ fn record_to_job(rec: CronJobRecord) -> CronJob {
         enabled: rec.enabled,
         deliver_to: rec.deliver_to,
         last_error: rec.last_error,
+        last_run_at: rec.last_run_at,
     }
 }
 
@@ -148,6 +152,14 @@ impl CronStore for FileCronStore {
         }
         self.save_all(&records)
     }
+
+    fn set_last_run_at(&self, id: &str, timestamp: u64) -> Result<(), DomainError> {
+        let mut records = self.load_all()?;
+        if let Some(rec) = records.iter_mut().find(|r| r.id == id) {
+            rec.last_run_at = timestamp;
+        }
+        self.save_all(&records)
+    }
 }
 
 #[cfg(test)]
@@ -164,6 +176,7 @@ mod tests {
             enabled: true,
             deliver_to: None,
             last_error: None,
+            last_run_at: 0,
         }
     }
 
@@ -178,6 +191,7 @@ mod tests {
             enabled: true,
             deliver_to: None,
             last_error: None,
+            last_run_at: 0,
         }
     }
 

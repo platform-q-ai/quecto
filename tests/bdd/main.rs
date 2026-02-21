@@ -207,6 +207,12 @@ impl CronStore for InMemoryCronStore {
         }
         Ok(())
     }
+    fn set_last_run_at(&self, id: &str, timestamp: u64) -> Result<(), DomainError> {
+        if let Some(j) = self.jobs.lock().unwrap().iter_mut().find(|j| j.id == id) {
+            j.last_run_at = timestamp;
+        }
+        Ok(())
+    }
 }
 
 // ===========================================================================

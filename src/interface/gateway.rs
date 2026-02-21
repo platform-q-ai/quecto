@@ -58,7 +58,6 @@ struct EventLoopContext {
     session_store: Arc<FileSessionStore>,
     telegram: TelegramChannel,
     config: Config,
-    health_config: HealthConfig,
     workspace: PathBuf,
     cron_store: Arc<FileCronStore>,
 }
@@ -66,18 +65,18 @@ struct EventLoopContext {
 impl EventLoopContext {
     /// Run the concurrent event loop until shutdown.
     ///
-    /// Spawns background services (health, heartbeat, cron) as detached tasks
-    /// and selects on the core messaging pipeline plus shutdown signal. When
-    /// any core task completes or ctrl-c fires, all spawned tasks are dropped.
+    /// Spawns background services (health, heartbeat, cron) as tasks and
+    /// selects on the core messaging pipeline plus shutdown signal. When
+    /// any core task completes or ctrl-c fires, spawned tasks are aborted.
     async fn run(self) {
-        // Background services — fire and forget, cancelled on shutdown.
-        tokio::spawn(Gateway::run_health_server(self.health_config));
-        tokio::spawn(Gateway::run_heartbeat(
+        // Background services — store handles so we can abort on shutdown.
+        let h_health = tokio::spawn(Gateway::run_health_server(self.config.health.clone()));
+        let h_heartbeat = tokio::spawn(Gateway::run_heartbeat(
             self.config.heartbeat.clone(),
             self.agent.clone(),
             self.workspace,
         ));
-        tokio::spawn(Gateway::run_cron_tick(
+        let h_cron = tokio::spawn(Gateway::run_cron_tick(
             self.cron_store,
             self.agent.clone(),
             self.config.tools.cron.exec_timeout_minutes,
@@ -102,6 +101,11 @@ impl EventLoopContext {
                 tracing::info!("Shutdown signal received");
             }
         }
+
+        // Cancel background services on shutdown.
+        h_health.abort();
+        h_heartbeat.abort();
+        h_cron.abort();
     }
 }
 
@@ -143,7 +147,8 @@ impl Gateway {
         }
 
         let provider = Arc::new(self.build_fallback_provider()?);
-        let (agent, mut bus) = self.build_agent(workspace.clone(), provider);
+        let cron_store = Arc::new(FileCronStore::new(&self.base_dir));
+        let (agent, mut bus) = self.build_agent(workspace.clone(), provider, cron_store.clone());
         let agent = Arc::new(agent);
 
         let info = agent.info();
@@ -160,9 +165,8 @@ impl Gateway {
             session_store: Arc::new(FileSessionStore::new(&self.base_dir)),
             telegram: TelegramChannel::new(&self.config.channels.telegram),
             config: self.config.clone(),
-            health_config: self.config.health.clone(),
             workspace: workspace.clone(),
-            cron_store: Arc::new(FileCronStore::new(&self.base_dir)),
+            cron_store,
         };
         ctx.run().await;
 
@@ -247,6 +251,7 @@ impl Gateway {
         &self,
         workspace: PathBuf,
         provider: Arc<FallbackProvider>,
+        cron_store: Arc<FileCronStore>,
     ) -> (AgentLoopImpl, MessageBus) {
         let sandbox = Sandbox::new(
             Some(workspace.clone()),
@@ -258,7 +263,6 @@ impl Gateway {
 
         registry.register(Arc::new(MessageTool::new(outbound_tx, None)));
         registry.register(Arc::new(WebSearchTool::new(self.brave_api_key())));
-        let cron_store = Arc::new(FileCronStore::new(&self.base_dir));
         registry.register(Arc::new(CronTool::new(cron_store)));
         registry.register(Arc::new(SpawnTool::new(
             vec![],
@@ -485,8 +489,9 @@ impl Gateway {
         }
 
         let addr = format!("127.0.0.1:{}", config.port);
-        // The gateway has at least one provider (checked in build_fallback_provider),
-        // so readiness starts as true.
+        // Readiness starts as true (at least one provider exists per build_fallback_provider).
+        // NOTE: This is static — /ready reflects startup state only. Dynamic readiness
+        // (wired to FallbackProvider cooldown) is planned for a future PR.
         let readiness = Arc::new(StaticReadiness::new(true));
         match HealthServer::bind(&addr, readiness).await {
             Ok(server) => {
@@ -517,13 +522,20 @@ impl Gateway {
             return;
         }
 
-        let interval = std::time::Duration::from_secs(u64::from(config.interval));
-        let timeout = std::time::Duration::from_secs(300); // 5 min per task
-        tracing::info!(interval_secs = config.interval, "heartbeat timer started");
+        let interval_secs = u64::from(config.interval);
+        let interval = std::time::Duration::from_secs(interval_secs);
+        // Timeout per task: interval minus 10s margin, clamped to [30s, 300s].
+        let timeout_secs = interval_secs.saturating_sub(10).clamp(30, 300);
+        let timeout = std::time::Duration::from_secs(timeout_secs);
+        tracing::info!(
+            interval_secs = config.interval,
+            timeout_secs = timeout_secs,
+            "heartbeat timer started"
+        );
 
         loop {
             tokio::time::sleep(interval).await;
-            tracing::info!("heartbeat tick");
+            tracing::debug!("heartbeat tick");
             match heartbeat::execute_heartbeat_tick(&workspace, &*agent, timeout).await {
                 Ok(results) => {
                     for result in &results {
@@ -560,7 +572,7 @@ impl Gateway {
 
         loop {
             tokio::time::sleep(check_interval).await;
-            tracing::info!("cron tick");
+            tracing::debug!("cron tick");
             match cron_executor::execute_cron_tick(&*store, &*agent, timeout).await {
                 Ok(results) => {
                     for result in &results {

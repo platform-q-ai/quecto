@@ -13,6 +13,28 @@ pub struct CronJob {
     pub deliver_to: Option<String>,
     /// Last error from execution (if any).
     pub last_error: Option<String>,
+    /// Unix timestamp (seconds) of last execution, or 0 if never run.
+    pub last_run_at: u64,
+}
+
+/// Check whether a cron job is due based on current time.
+pub fn is_job_due(job: &CronJob, now_secs: u64) -> bool {
+    if !job.enabled {
+        return false;
+    }
+    match &job.schedule {
+        CronSchedule::Interval { seconds } => {
+            if *seconds == 0 {
+                return false;
+            }
+            job.last_run_at == 0 || now_secs >= job.last_run_at + seconds
+        }
+        CronSchedule::Cron { .. } => {
+            // Cron expression evaluation is not yet implemented;
+            // treat as due on every tick for now (same as interval 0).
+            true
+        }
+    }
 }
 
 /// How a cron job is scheduled.
@@ -56,4 +78,73 @@ pub trait CronStore: Send + Sync {
 
     /// Record an error on a job (sets last_error field).
     fn set_last_error(&self, id: &str, error: Option<String>) -> Result<(), DomainError>;
+
+    /// Record the last run timestamp (Unix seconds) on a job.
+    fn set_last_run_at(&self, id: &str, timestamp: u64) -> Result<(), DomainError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_job(schedule: CronSchedule, enabled: bool, last_run_at: u64) -> CronJob {
+        CronJob {
+            id: "test".to_string(),
+            name: "test".to_string(),
+            message: "test".to_string(),
+            schedule,
+            enabled,
+            deliver_to: None,
+            last_error: None,
+            last_run_at,
+        }
+    }
+
+    #[test]
+    fn test_disabled_job_is_never_due() {
+        let job = make_job(CronSchedule::Interval { seconds: 60 }, false, 0);
+        assert!(!is_job_due(&job, 1000));
+    }
+
+    #[test]
+    fn test_never_run_job_is_due() {
+        let job = make_job(CronSchedule::Interval { seconds: 60 }, true, 0);
+        assert!(is_job_due(&job, 1000));
+    }
+
+    #[test]
+    fn test_job_not_yet_due() {
+        let job = make_job(CronSchedule::Interval { seconds: 60 }, true, 1000);
+        assert!(!is_job_due(&job, 1030)); // Only 30s elapsed, need 60
+    }
+
+    #[test]
+    fn test_job_exactly_due() {
+        let job = make_job(CronSchedule::Interval { seconds: 60 }, true, 1000);
+        assert!(is_job_due(&job, 1060));
+    }
+
+    #[test]
+    fn test_job_overdue() {
+        let job = make_job(CronSchedule::Interval { seconds: 60 }, true, 1000);
+        assert!(is_job_due(&job, 2000));
+    }
+
+    #[test]
+    fn test_zero_interval_never_due() {
+        let job = make_job(CronSchedule::Interval { seconds: 0 }, true, 0);
+        assert!(!is_job_due(&job, 1000));
+    }
+
+    #[test]
+    fn test_cron_expression_always_due() {
+        let job = make_job(
+            CronSchedule::Cron {
+                expression: "0 9 * * *".to_string(),
+            },
+            true,
+            0,
+        );
+        assert!(is_job_due(&job, 1000));
+    }
 }

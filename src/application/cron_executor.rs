@@ -3,25 +3,31 @@
 use std::time::Duration;
 
 use crate::domain::agent::AgentLoop;
-use crate::domain::cron::{CronJobResult, CronStore};
+use crate::domain::cron::{CronJobResult, CronStore, is_job_due};
 use crate::domain::error::DomainError;
 use crate::domain::message::{Message, Role};
 
-/// Execute a single cron tick: list all enabled jobs and run them.
+/// Execute a single cron tick: list all jobs and run those that are due.
 ///
 /// Returns a list of results for each executed job.
-/// Disabled jobs are silently skipped.
+/// Disabled and not-yet-due jobs are silently skipped.
 pub async fn execute_cron_tick(
     store: &dyn CronStore,
     agent: &dyn AgentLoop,
     timeout: Duration,
 ) -> Result<Vec<CronJobResult>, DomainError> {
     let jobs = store.list()?;
+    let now_secs = now_unix_secs();
     let mut results = Vec::new();
 
     for job in &jobs {
-        if !job.enabled {
+        if !is_job_due(job, now_secs) {
             continue;
+        }
+
+        // Record last_run_at before execution so overlapping ticks skip.
+        if let Err(e) = store.set_last_run_at(&job.id, now_secs) {
+            tracing::warn!(job_id = %job.id, "failed to update last_run_at: {}", e);
         }
 
         let result = execute_single_job(agent, job, timeout).await;
@@ -44,6 +50,14 @@ pub async fn execute_cron_tick(
     }
 
     Ok(results)
+}
+
+/// Current time as Unix seconds.
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 /// Execute a single cron job with a timeout.
@@ -184,6 +198,12 @@ mod tests {
             }
             Ok(())
         }
+        fn set_last_run_at(&self, id: &str, timestamp: u64) -> Result<(), DomainError> {
+            if let Some(j) = self.jobs.lock().unwrap().iter_mut().find(|j| j.id == id) {
+                j.last_run_at = timestamp;
+            }
+            Ok(())
+        }
     }
 
     fn make_job(name: &str, enabled: bool) -> CronJob {
@@ -195,6 +215,7 @@ mod tests {
             enabled,
             deliver_to: None,
             last_error: None,
+            last_run_at: 0,
         }
     }
 
