@@ -28,7 +28,7 @@ infrastructure/  -----+
 
 ### domain/ — Pure types and traits
 
-Zero external dependencies except `thiserror`. Defines the vocabulary of the system:
+Zero external dependencies except `thiserror`, `serde` (derive only), and `serde_yaml` (for skill frontmatter parsing). Defines the vocabulary of the system:
 
 | File | Purpose |
 |---|---|
@@ -37,7 +37,7 @@ Zero external dependencies except `thiserror`. Defines the vocabulary of the sys
 | `tool.rs` | `Tool` trait, `ToolRegistry` trait, `ToolDefinition`, `ToolResult` |
 | `agent.rs` | `AgentLoop` trait, `AgentInfo`, `AgentResult` |
 | `session.rs` | `Session`, `SessionStore` trait |
-| `skill.rs` | `Skill`, `SkillSource`, `SkillLoader` trait |
+| `skill.rs` | `Skill`, `SkillSource`, `SkillFrontmatter`, `SkillLoader` trait, `parse_skill_md()`, `is_valid_skill_name()` |
 | `cron.rs` | `CronJob`, `CronJobResult`, `CronSchedule`, `CronStore` trait |
 | `channel.rs` | `Channel` trait |
 | `subagent.rs` | `SubagentConfig`, `validate_agent_id()` |
@@ -68,7 +68,7 @@ Implements the domain traits with real I/O. This is where serde, reqwest, tokio,
 | `config.rs` | `Config` struct with serde deserialization, env var overrides, workspace path expansion |
 | `providers/` | `OpenAiProvider`, `AnthropicProvider` (real HTTP), `FallbackProvider` (cooldown + error classification), `ErrorClass` |
 | `tools/` | `ExecTool` (shell), `ReadFileTool`/`WriteFileTool`/`EditFileTool`/`AppendFileTool`/`ListDirTool` (filesystem), `SpawnTool` (subagent), `CronTool`, `MessageTool`, `WebSearchTool` (Brave + DDG), `ToolRegistryImpl` |
-| `persistence/` | `FileSessionStore`, `MemoryStore`, `FileCronStore`, `FileSkillLoader` |
+| `persistence/` | `FileSessionStore`, `MemoryStore`, `FileCronStore`, `FileSkillLoader` (single workspace path, YAML frontmatter validation) |
 | `security/` | `Sandbox` — workspace path validation and command filtering |
 | `auth/` | `CredentialStore` (file-based token CRUD), `oauth.rs` (`OAuthConfig`, `DeviceCodeResponse`, `request_device_code()` — OAuth browser flow and device code flow for headless environments) |
 | `channels/` | `TelegramChannel` — `send_message()`, `get_updates()`, user allowlist |
@@ -127,7 +127,7 @@ Runs a full agent cycle (LLM call → tool execution → repeat) for a single me
 | `--max-iterations` | No | Override max tool iterations (takes precedence over config `max_tool_iterations`) |
 | `--max-time` | No | Wall-clock timeout in seconds for the entire agent run. Exit code 2 on timeout |
 
-The agent loads config from `<base_dir>/config.json`, builds a `FallbackProvider` from configured credentials, constructs the tool registry with sandbox enforcement, and runs the `AgentLoopImpl`. Sessions are loaded from and saved to `<base_dir>/sessions/` via `FileSessionStore`. Workspace skills (from `<base_dir>/workspace/skills/`) are loaded at startup and their content is prepended to the system prompt (combined with `--system` if provided). Skills with empty content are silently skipped.
+The agent loads config from `<base_dir>/config.json`, builds a `FallbackProvider` from configured credentials, constructs the tool registry with sandbox enforcement, and runs the `AgentLoopImpl`. Sessions are loaded from and saved to `<base_dir>/sessions/` via `FileSessionStore`. Workspace skills (from `<base_dir>/workspace/skills/`) are loaded at startup and their body content (everything after the YAML frontmatter closing `---`) is prepended to the system prompt (combined with `--system` if provided). Skills with missing or invalid frontmatter are silently skipped.
 
 The gateway module (`gateway.rs`) also provides credential-store integration and bot command handling as free functions:
 
@@ -147,7 +147,7 @@ interface/  -->  application/  -->  domain/
      +--- infrastructure/ ---+
 ```
 
-- `domain/` imports nothing from the project. Only `thiserror`.
+- `domain/` imports nothing from the project. Only `thiserror`, `serde` (derive), and `serde_yaml`.
 - `application/` imports `domain/` only. Never `infrastructure/`.
 - `infrastructure/` imports `domain/` (to implement traits). Never `application/`.
 - `interface/` imports all three to wire things together (composition root).
@@ -181,9 +181,9 @@ scripts/check-quality.sh       Work markers, lint bypasses, unsafe, ignored test
 scripts/check-bdd-quality.sh   BDD anti-pattern detection (tests/bdd/)
 cargo fmt --check              Formatting
 cargo clippy -- -D warnings    Lints (zero warnings policy)
-cargo test --lib               346 unit tests
+cargo test --lib               367 unit tests
 cargo test --test architecture Clean Architecture boundary enforcement
-cargo test --test bdd          239 active BDD scenarios across 28 @done features (+13 @real-llm gated)
+cargo test --test bdd          243 active BDD scenarios across 28 @done features (+13 @real-llm gated)
 ```
 
 ### BDD quality gate (`scripts/check-bdd-quality.sh`)
@@ -215,6 +215,6 @@ Static analysis that blocks commits when step definitions violate BDD best pract
 - Rust 2024 edition
 - Tokio async runtime (rt-multi-thread, macros, signal, time, fs, process)
 - reqwest with rustls-tls (no OpenSSL dependency)
-- serde/serde_json for config and API payloads
+- serde/serde_json/serde_yaml for config, API payloads, and skill frontmatter
 - uuid, chrono, tracing, dirs, thiserror
 - Dev: cucumber 0.21, futures, tempfile, wiremock 0.6

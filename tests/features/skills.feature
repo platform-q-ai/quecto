@@ -4,46 +4,162 @@ Feature: Skills System
   I want to install and manage skills that extend the agent
   So that I can customize what Quecto can do
 
-  Scenario: List skills from workspace
-    Given a skill loader with workspace skill "weather" containing "Weather forecast skill"
-    When the skills loader lists all skills
+  Skills use YAML frontmatter in SKILL.md files following the OpenCode
+  skill format. Required fields: name, description. Optional fields:
+  license, compatibility, metadata. The name must match the directory
+  name and follow lowercase-alphanumeric-with-hyphens convention.
+
+  # --- Frontmatter parsing ---
+
+  Scenario: Parse skill with valid frontmatter
+    Given a workspace skill directory "weather" with SKILL.md:
+      """
+      ---
+      name: weather
+      description: Fetch weather forecasts for any city
+      ---
+      ## What I do
+      - Return current weather for a location
+      """
+    When the skill loader lists all skills
     Then the skill list should contain 1 skill
     And the skill list should include "weather"
-    And the skill "weather" should have source "workspace"
+    And the skill "weather" should have description "Fetch weather forecasts for any city"
 
-  Scenario: List skills from multiple sources
-    Given a skill loader with workspace skill "weather" containing "Weather skill"
-    And a skill loader with global skill "calculator" containing "Calculator skill"
-    And a skill loader with builtin skill "news" containing "News skill"
-    When the skills loader lists all skills
-    Then the skill list should contain 3 skills
-    And the skill list should include "weather"
-    And the skill list should include "calculator"
-    And the skill list should include "news"
+  Scenario: Parse skill with all optional frontmatter fields
+    Given a workspace skill directory "git-release" with SKILL.md:
+      """
+      ---
+      name: git-release
+      description: Create consistent releases and changelogs
+      license: MIT
+      compatibility: opencode
+      metadata:
+        audience: maintainers
+        workflow: github
+      ---
+      ## Steps
+      - Draft release notes
+      """
+    When the skill loader lists all skills
+    Then the skill list should contain 1 skill
+    And the skill "git-release" should have description "Create consistent releases and changelogs"
 
-  Scenario: Load specific skill by name
-    Given a skill loader with workspace skill "weather" containing "Weather forecast content"
-    When the skill "weather" is loaded by name
+  Scenario: Skill body is content after frontmatter
+    Given a workspace skill directory "code-review" with SKILL.md:
+      """
+      ---
+      name: code-review
+      description: Review code for quality
+      ---
+      You are a code review expert.
+      Always suggest improvements.
+      """
+    When the skill "code-review" is loaded by name
     Then the loaded skill should exist
-    And the loaded skill content should contain "Weather forecast content"
+    And the loaded skill content should contain "code review expert"
+    And the loaded skill content should not contain "name: code-review"
 
-  Scenario: Load nonexistent skill returns none
-    Given an empty skill loader
-    When the skill "nonexistent" is loaded by name
-    Then the loaded skill should not exist
+  # --- Validation ---
 
-  Scenario: Workspace skills take priority over global
-    Given a skill loader with workspace skill "weather" containing "workspace version"
-    And a skill loader with global skill "weather" containing "global version"
-    When the skill "weather" is loaded by name
-    Then the loaded skill should have source "workspace"
-    And the loaded skill content should contain "workspace version"
+  Scenario: Skill without SKILL.md is skipped
+    Given a workspace skill directory "empty-skill" without SKILL.md
+    When the skill loader lists all skills
+    Then the skill list should contain 0 skills
 
-  Scenario: Skill without SKILL.md has empty content
-    Given a skill loader with workspace skill "empty_skill" without SKILL.md
-    When the skills loader lists all skills
+  Scenario: Skill without frontmatter is skipped
+    Given a workspace skill directory "bad-skill" with SKILL.md:
+      """
+      Just some plain text without frontmatter delimiters.
+      """
+    When the skill loader lists all skills
+    Then the skill list should contain 0 skills
+
+  Scenario: Skill with name-directory mismatch is skipped
+    Given a workspace skill directory "weather" with SKILL.md:
+      """
+      ---
+      name: forecast
+      description: Weather forecasts
+      ---
+      Content here
+      """
+    When the skill loader lists all skills
+    Then the skill list should contain 0 skills
+
+  Scenario: Skill with invalid name format is skipped
+    Given a workspace skill directory "My_Skill" with SKILL.md:
+      """
+      ---
+      name: My_Skill
+      description: A skill with invalid name
+      ---
+      Content
+      """
+    When the skill loader lists all skills
+    Then the skill list should contain 0 skills
+
+  Scenario: Skill with missing description is skipped
+    Given a workspace skill directory "no-desc" with SKILL.md:
+      """
+      ---
+      name: no-desc
+      ---
+      Content
+      """
+    When the skill loader lists all skills
+    Then the skill list should contain 0 skills
+
+  # --- Multiple skills ---
+
+  Scenario: List multiple valid skills
+    Given a workspace skill directory "weather" with SKILL.md:
+      """
+      ---
+      name: weather
+      description: Weather forecasts
+      ---
+      Weather content
+      """
+    And a workspace skill directory "code-review" with SKILL.md:
+      """
+      ---
+      name: code-review
+      description: Code review assistant
+      ---
+      Review content
+      """
+    When the skill loader lists all skills
+    Then the skill list should contain 2 skills
+    And the skill list should include "weather"
+    And the skill list should include "code-review"
+
+  Scenario: Invalid skills are silently skipped alongside valid ones
+    Given a workspace skill directory "weather" with SKILL.md:
+      """
+      ---
+      name: weather
+      description: Weather forecasts
+      ---
+      Weather content
+      """
+    And a workspace skill directory "bad-skill" with SKILL.md:
+      """
+      No frontmatter here
+      """
+    When the skill loader lists all skills
     Then the skill list should contain 1 skill
-    And the skill "empty_skill" should have empty content
+    And the skill list should include "weather"
+
+  # --- CLI ---
+
+  Scenario: Remove an installed skill
+    Given a workspace with skill "weather" installed
+    When I run quecto with arguments "skills remove weather"
+    Then the exit code should be 0
+    And the output should contain "removed successfully"
+
+  # --- Install (not yet implemented) ---
 
   @pending
   Scenario: Install a skill from GitHub URL
@@ -72,9 +188,3 @@ Feature: Skills System
     When I run quecto with arguments "skills install user/repo/weather"
     Then the exit code should be 1
     And the output should contain "already exists"
-
-  Scenario: Remove an installed skill
-    Given a workspace with skill "weather" installed
-    When I run quecto with arguments "skills remove weather"
-    Then the exit code should be 0
-    And the output should contain "removed successfully"

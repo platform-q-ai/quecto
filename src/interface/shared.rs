@@ -5,12 +5,12 @@ use std::path::Path;
 use crate::domain::skill::SkillLoader;
 use crate::infrastructure::persistence::skill_loader::FileSkillLoader;
 
-/// Load all workspace skills and concatenate their non-empty content.
+/// Load all workspace skills and concatenate their non-empty body content.
+///
+/// Skills without valid YAML frontmatter are silently skipped.
 pub fn load_skill_prompt(base_dir: &Path) -> String {
     let workspace = base_dir.join("workspace");
-    let global = base_dir.join("global");
-    let builtin = base_dir.join("builtin");
-    let loader = FileSkillLoader::new(&workspace, &global, &builtin);
+    let loader = FileSkillLoader::new(&workspace);
     let skills = match loader.list() {
         Ok(s) => s,
         Err(_) => return String::new(),
@@ -35,12 +35,20 @@ pub fn merge_prompts(skill_prompt: &str, user_prompt: &Option<String>) -> String
 mod tests {
     use super::*;
 
+    fn frontmatter(name: &str, desc: &str, body: &str) -> String {
+        format!("---\nname: {}\ndescription: {}\n---\n{}", name, desc, body)
+    }
+
     #[test]
     fn test_load_skill_prompt_with_skills() {
         let tmp = tempfile::TempDir::new().unwrap();
         let skill_dir = tmp.path().join("workspace").join("skills").join("weather");
         std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(skill_dir.join("SKILL.md"), "Fetch weather data").unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            frontmatter("weather", "Weather forecasts", "Fetch weather data"),
+        )
+        .unwrap();
         let prompt = load_skill_prompt(tmp.path());
         assert_eq!(prompt, "Fetch weather data");
     }
@@ -53,11 +61,11 @@ mod tests {
     }
 
     #[test]
-    fn test_load_skill_prompt_skips_empty_content() {
+    fn test_load_skill_prompt_skips_invalid_frontmatter() {
         let tmp = tempfile::TempDir::new().unwrap();
-        let skill_dir = tmp.path().join("workspace").join("skills").join("empty");
+        let skill_dir = tmp.path().join("workspace").join("skills").join("bad");
         std::fs::create_dir_all(&skill_dir).unwrap();
-        // No SKILL.md — content will be empty
+        std::fs::write(skill_dir.join("SKILL.md"), "No frontmatter").unwrap();
         let prompt = load_skill_prompt(tmp.path());
         assert!(prompt.is_empty());
     }
