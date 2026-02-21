@@ -21,7 +21,7 @@ Feature: Voice Transcription
     When the whisper client transcribes audio
     Then the transcription should fail with an error message
 
-  @pending
+  @done
   Scenario: Telegram voice message is transcribed and routed to agent
     Given a running gateway with Telegram enabled and a mock Telegram API
     And Groq voice transcription is configured with api_key "gsk-test"
@@ -32,14 +32,14 @@ Feature: Voice Transcription
     And the voice file should be sent to the Groq Whisper API
     And the mock LLM should receive a request containing "Turn off the lights"
 
-  @pending
+  @done
   Scenario: Voice message ignored when no Groq API key configured
     Given a running gateway with Telegram enabled and a mock Telegram API
     And no Groq API key is configured
     When user "12345" sends a voice message via Telegram
     Then the bot should respond to chat "12345" with "voice transcription is not configured"
 
-  @pending
+  @done
   Scenario: Groq transcription error sends friendly error to user
     Given a running gateway with Telegram enabled and a mock Telegram API
     And Groq voice transcription is configured with api_key "gsk-test"

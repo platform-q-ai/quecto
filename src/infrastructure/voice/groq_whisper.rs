@@ -3,6 +3,7 @@
 use reqwest::Client;
 use serde::Deserialize;
 use std::path::Path;
+use std::pin::Pin;
 
 /// Result of a transcription request.
 #[derive(Debug, Clone)]
@@ -187,6 +188,40 @@ impl GroqWhisperClient {
 
         Ok(TranscriptionResult {
             text: whisper_resp.text,
+        })
+    }
+}
+
+// Implement the domain VoiceTranscriber trait.
+impl crate::domain::voice::VoiceTranscriber for GroqWhisperClient {
+    fn transcribe_bytes(
+        &self,
+        audio_bytes: Vec<u8>,
+        file_name: &str,
+    ) -> Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        crate::domain::voice::TranscriptionResult,
+                        crate::domain::voice::TranscriptionError,
+                    >,
+                > + Send
+                + '_,
+        >,
+    > {
+        let file_name = file_name.to_string();
+        Box::pin(async move {
+            self.transcribe_bytes(audio_bytes, &file_name)
+                .await
+                .map(|r| crate::domain::voice::TranscriptionResult { text: r.text })
+                .map_err(|e| match e {
+                    TranscriptionError::NoApiKey(msg) => {
+                        crate::domain::voice::TranscriptionError::NotConfigured(msg)
+                    }
+                    other => {
+                        crate::domain::voice::TranscriptionError::ServiceError(other.to_string())
+                    }
+                })
         })
     }
 }

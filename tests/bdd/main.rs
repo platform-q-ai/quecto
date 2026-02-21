@@ -5,6 +5,7 @@ use quecto::application::agent_loop::AgentLoopImpl;
 use quecto::application::cron_executor;
 use quecto::application::heartbeat::{self, HeartbeatResult, HeartbeatTask, HeartbeatTaskResult};
 use quecto::application::subagent::{SubagentConfig, SubagentContext, validate_agent_id};
+use quecto::application::voice as app_voice;
 use quecto::domain::agent::{AgentInfo, AgentLoop, AgentResult};
 use quecto::domain::cron::{CronJob, CronJobResult, CronSchedule, CronStore};
 use quecto::domain::error::DomainError;
@@ -34,6 +35,7 @@ use quecto::infrastructure::tools::exec::ExecTool;
 use quecto::infrastructure::tools::message::MessageTool;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 use quecto::infrastructure::tools::spawn::SpawnTool;
+use quecto::infrastructure::tools::web_search::WebSearchTool;
 use quecto::infrastructure::voice::groq_whisper::{GroqWhisperClient, TranscriptionResult};
 use quecto::interface::cli::{self, CliContext};
 use quecto::interface::gateway::handle_bot_command;
@@ -459,6 +461,14 @@ pub struct QuectoWorld {
     pub gateway_cron_store: Option<Arc<InMemoryCronStore>>,
     /// Config for gateway cron/heartbeat scenarios
     pub gateway_tick_config: Option<Config>,
+    /// Leaked wiremock server ref for web search mock (for mounting responses)
+    pub web_search_mock_server: Option<&'static wiremock::MockServer>,
+    /// Whether the web search used DDG (for fallback assertion)
+    pub web_search_used_ddg: bool,
+    /// Voice processing result from application-layer voice pipeline
+    pub voice_processing_result: Option<Result<app_voice::VoiceProcessingResult, DomainError>>,
+    /// Outbound response text for voice gateway scenarios
+    pub voice_bot_response: Option<String>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.

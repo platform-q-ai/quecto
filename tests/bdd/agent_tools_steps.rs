@@ -169,3 +169,208 @@ fn when_heartbeat_validates_path(world: &mut QuectoWorld, path: String) {
             .map_err(|e| e.to_string()),
     );
 }
+
+// ===========================================================================
+// Web Search Steps
+// ===========================================================================
+
+/// Helper: start a wiremock server, leak it, return static ref and URI.
+fn start_leaked_mock_server() -> (&'static wiremock::MockServer, String) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (server_ref, uri) = rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let uri = server.uri();
+        let leaked: &'static wiremock::MockServer = Box::leak(Box::new(server));
+        (leaked, uri)
+    });
+    std::mem::forget(rt);
+    (server_ref, uri)
+}
+
+/// Helper: mount a mock on a leaked wiremock server.
+fn mount_mock(server: &'static wiremock::MockServer, mock: wiremock::Mock) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(mock.mount(server));
+    // rt can be safely dropped — server is already leaked via Box::leak
+}
+
+#[given("a web search tool configured with a mock DuckDuckGo API")]
+fn given_web_search_ddg_mock(world: &mut QuectoWorld) {
+    let (server_ref, uri) = start_leaked_mock_server();
+
+    let tool = WebSearchTool::with_base_urls(None, "http://unused", &uri);
+    let registry = world.tool_registry.as_mut().expect("tool registry not set");
+    registry.register(Arc::new(tool));
+
+    world.web_search_mock_server = Some(server_ref);
+    world.web_search_used_ddg = true;
+}
+
+#[given(expr = "a web search tool configured with a mock Brave Search API and api_key {string}")]
+fn given_web_search_brave_mock(world: &mut QuectoWorld, api_key: String) {
+    let (server_ref, uri) = start_leaked_mock_server();
+
+    let tool = WebSearchTool::with_base_urls(Some(api_key), &uri, "http://unused");
+    let registry = world.tool_registry.as_mut().expect("tool registry not set");
+    registry.register(Arc::new(tool));
+
+    world.web_search_mock_server = Some(server_ref);
+    world.web_search_used_ddg = false;
+}
+
+#[given("a web search tool configured with no Brave API key")]
+fn given_web_search_no_brave_key(world: &mut QuectoWorld) {
+    // No Brave key → DDG fallback. Mock will be set up in the next step.
+    world.web_search_used_ddg = true;
+}
+
+#[given("a mock DuckDuckGo API that returns results")]
+fn given_mock_ddg_returns_results(world: &mut QuectoWorld) {
+    let (server_ref, uri) = start_leaked_mock_server();
+
+    let response = serde_json::json!({
+        "AbstractText": "",
+        "AbstractURL": "",
+        "RelatedTopics": [
+            {
+                "Text": "DuckDuckGo result",
+                "FirstURL": "https://ddg.example.com/result"
+            }
+        ]
+    });
+    mount_mock(
+        server_ref,
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(&response)),
+    );
+
+    let tool = WebSearchTool::with_base_urls(None, "http://unused", &uri);
+    let registry = world.tool_registry.as_mut().expect("tool registry not set");
+    registry.register(Arc::new(tool));
+
+    world.web_search_mock_server = Some(server_ref);
+}
+
+#[given(expr = "the mock search API returns results for {string}:")]
+fn given_mock_search_returns_results(
+    world: &mut QuectoWorld,
+    _query: String,
+    step: &gherkin::Step,
+) {
+    let table = step.table.as_ref().expect("step should have a table");
+    let server = world
+        .web_search_mock_server
+        .expect("web search mock server not set");
+
+    // Parse table rows (skip header row)
+    let mut items = Vec::new();
+    for row in table.rows.iter().skip(1) {
+        if row.len() >= 2 {
+            items.push((row[0].trim().to_string(), row[1].trim().to_string()));
+        }
+    }
+
+    if world.web_search_used_ddg {
+        let topics: Vec<serde_json::Value> = items
+            .iter()
+            .map(|(title, url)| serde_json::json!({"Text": title, "FirstURL": url}))
+            .collect();
+        let response = serde_json::json!({
+            "AbstractText": "",
+            "AbstractURL": "",
+            "RelatedTopics": topics
+        });
+        mount_mock(
+            server,
+            wiremock::Mock::given(wiremock::matchers::method("GET"))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(&response)),
+        );
+    } else {
+        let results: Vec<serde_json::Value> = items
+            .iter()
+            .map(|(title, url)| serde_json::json!({"title": title, "url": url, "description": ""}))
+            .collect();
+        let response = serde_json::json!({"web": {"results": results}});
+        mount_mock(
+            server,
+            wiremock::Mock::given(wiremock::matchers::method("GET"))
+                .and(wiremock::matchers::path("/res/v1/web/search"))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(&response)),
+        );
+    }
+}
+
+#[given(expr = "the mock Brave API returns results for {string}:")]
+fn given_mock_brave_returns_results(world: &mut QuectoWorld, _query: String, step: &gherkin::Step) {
+    let table = step.table.as_ref().expect("step should have a table");
+    let server = world
+        .web_search_mock_server
+        .expect("web search mock server not set");
+
+    let mut items = Vec::new();
+    for row in table.rows.iter().skip(1) {
+        if row.len() >= 2 {
+            items.push((row[0].trim().to_string(), row[1].trim().to_string()));
+        }
+    }
+
+    let results: Vec<serde_json::Value> = items
+        .iter()
+        .map(|(title, url)| serde_json::json!({"title": title, "url": url, "description": ""}))
+        .collect();
+    let response = serde_json::json!({"web": {"results": results}});
+    mount_mock(
+        server,
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/res/v1/web/search"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(&response)),
+    );
+}
+
+#[given("the mock search API returns an HTTP 503 error")]
+fn given_mock_search_returns_503(world: &mut QuectoWorld) {
+    let server = world
+        .web_search_mock_server
+        .expect("web search mock server not set");
+    mount_mock(
+        server,
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(503)),
+    );
+}
+
+#[then("the tool result should contain search results")]
+fn then_tool_result_has_search_results(world: &mut QuectoWorld) {
+    let result = world.tool_result.as_ref().expect("no tool result");
+    match result {
+        Ok(tr) => {
+            assert!(!tr.is_error, "tool returned an error: {}", tr.content);
+            assert!(
+                !tr.content.is_empty() && tr.content != "No results found.",
+                "expected search results, got: {}",
+                tr.content
+            );
+        }
+        Err(e) => panic!("tool returned DomainError: {}", e),
+    }
+}
+
+#[then("the search should have used DuckDuckGo")]
+fn then_search_used_ddg(world: &mut QuectoWorld) {
+    // The DDG fallback is verified by the tool having been configured with
+    // no Brave key (web_search_used_ddg flag) and producing results from DDG mock.
+    assert!(
+        world.web_search_used_ddg,
+        "expected DDG search, but Brave was configured"
+    );
+    // Also verify that a result was returned (proving DDG mock was hit)
+    let result = world.tool_result.as_ref().expect("no tool result");
+    match result {
+        Ok(tr) => assert!(
+            !tr.is_error,
+            "search should have succeeded via DDG, got error: {}",
+            tr.content
+        ),
+        Err(e) => panic!("search failed: {}", e),
+    }
+}

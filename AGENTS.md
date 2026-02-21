@@ -41,6 +41,7 @@ Zero external dependencies except `thiserror`. Defines the vocabulary of the sys
 | `cron.rs` | `CronJob`, `CronJobResult`, `CronSchedule`, `CronStore` trait |
 | `channel.rs` | `Channel` trait |
 | `subagent.rs` | `SubagentConfig`, `validate_agent_id()` |
+| `voice.rs` | `VoiceTranscriber` trait, `TranscriptionResult`, `TranscriptionError` |
 | `error.rs` | `DomainError` enum (Provider, Tool, Session, Channel, Security, Config, Other) |
 
 Traits in this layer define ports. They use `Pin<Box<dyn Future + Send + '_>>` return types (not `impl Future`) so they can be used as `Arc<dyn Trait>` in registries and collections.
@@ -56,6 +57,7 @@ Depends only on `domain/`. Contains orchestration logic with no I/O — all I/O 
 | `subagent.rs` | `SubagentContext` — constructs child agent contexts with inherited sandbox restrictions (re-exports `SubagentConfig` from domain) |
 | `cron_executor.rs` | `execute_cron_tick()` — runs due cron jobs through the agent with timeout, records `last_error` on failure, propagates `deliver_to` |
 | `heartbeat.rs` | `parse_heartbeat()`, `load_tasks()`, `execute_heartbeat_tick()` — parses task definitions, determines which are due, dispatches tasks through the agent (spawn-aware) |
+| `voice.rs` | `process_voice_message()` — transcribes audio via `VoiceTranscriber` and routes the text through the agent, returns `VoiceProcessingResult` |
 
 ### infrastructure/ — Concrete adapters
 
@@ -70,7 +72,7 @@ Implements the domain traits with real I/O. This is where serde, reqwest, tokio,
 | `security/` | `Sandbox` — workspace path validation and command filtering |
 | `auth/` | `CredentialStore` (file-based token CRUD), `oauth.rs` (stub) |
 | `channels/` | `TelegramChannel` — `send_message()`, `get_updates()`, user allowlist |
-| `voice/` | `GroqWhisperClient` — speech-to-text via Groq API |
+| `voice/` | `GroqWhisperClient` — speech-to-text via Groq API, implements `VoiceTranscriber` trait |
 | `bus.rs` | `MessageBus` — async channel for inbound/outbound message passing |
 | `health/` | Health check server (stub) |
 
@@ -179,9 +181,9 @@ scripts/check-quality.sh       Work markers, lint bypasses, unsafe, ignored test
 scripts/check-bdd-quality.sh   BDD anti-pattern detection (tests/bdd/)
 cargo fmt --check              Formatting
 cargo clippy -- -D warnings    Lints (zero warnings policy)
-cargo test --lib               343 unit tests
+cargo test --lib               346 unit tests
 cargo test --test architecture Clean Architecture boundary enforcement
-cargo test --test bdd          229 active BDD scenarios across 28 @done features (+13 @real-llm gated)
+cargo test --test bdd          236 active BDD scenarios across 28 @done features (+13 @real-llm gated)
 ```
 
 ### BDD quality gate (`scripts/check-bdd-quality.sh`)
