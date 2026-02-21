@@ -54,14 +54,16 @@ struct EventLoopContext {
     agent: Arc<AgentLoopImpl>,
     session_store: Arc<FileSessionStore>,
     telegram: TelegramChannel,
+    config: Config,
 }
 
 impl EventLoopContext {
     /// Run the concurrent event loop until shutdown.
     async fn run(self) {
         let polling_telegram = self.telegram.clone();
+        let polling_config = self.config.clone();
         tokio::select! {
-            _ = Gateway::run_telegram_polling(polling_telegram, self.inbound_tx) => {
+            _ = Gateway::run_telegram_polling(polling_telegram, self.inbound_tx, polling_config) => {
                 tracing::info!("Telegram polling stopped");
             }
             _ = Gateway::run_inbound_processor(
@@ -133,6 +135,7 @@ impl Gateway {
             agent,
             session_store: Arc::new(FileSessionStore::new(&self.base_dir)),
             telegram: TelegramChannel::new(&self.config.channels.telegram),
+            config: self.config.clone(),
         };
         ctx.run().await;
 
@@ -266,6 +269,7 @@ impl Gateway {
     async fn run_telegram_polling(
         telegram: TelegramChannel,
         inbound_tx: mpsc::Sender<InboundMessage>,
+        config: Config,
     ) {
         if !telegram.is_enabled() {
             tracing::info!("Telegram disabled, polling not started");
@@ -277,7 +281,7 @@ impl Gateway {
         let mut offset: i64 = 0;
 
         loop {
-            let poll_result = Self::poll_once(&telegram, &inbound_tx, offset).await;
+            let poll_result = Self::poll_once(&telegram, &inbound_tx, offset, &config).await;
             match poll_result {
                 Ok(new_offset) => offset = new_offset,
                 Err(()) => return,
@@ -290,12 +294,13 @@ impl Gateway {
         telegram: &TelegramChannel,
         inbound_tx: &mpsc::Sender<InboundMessage>,
         mut offset: i64,
+        config: &Config,
     ) -> Result<i64, ()> {
         match telegram.get_updates(offset, 30).await {
             Ok(updates) => {
                 for update in updates {
                     offset = update.update_id + 1;
-                    Self::dispatch_update(telegram, &update, inbound_tx).await?;
+                    Self::dispatch_update(telegram, &update, inbound_tx, config).await?;
                 }
                 Ok(offset)
             }
@@ -308,11 +313,18 @@ impl Gateway {
     }
 
     /// Process a single Telegram update and dispatch it to the inbound channel.
+    ///
+    /// Known bot commands (`/start`, `/help`, `/status`) are handled directly
+    /// and responded to via `telegram.send_message()` without going through
+    /// the agent loop. Unknown messages (including unknown commands) are
+    /// forwarded to the inbound channel for agent processing.
+    ///
     /// Returns Err(()) if the inbound channel is closed.
     async fn dispatch_update(
         telegram: &TelegramChannel,
         update: &TelegramUpdate,
         inbound_tx: &mpsc::Sender<InboundMessage>,
+        config: &Config,
     ) -> Result<(), ()> {
         let Some(msg) = TelegramChannel::parse_update(update) else {
             return Ok(());
@@ -321,6 +333,15 @@ impl Gateway {
             tracing::warn!(sender_id = msg.sender_id, "unauthorized Telegram user");
             return Ok(());
         }
+
+        // Check for bot commands before routing to agent.
+        if let Some(response) = handle_bot_command(&msg.text, config) {
+            if let Err(e) = telegram.send_message(&msg.chat_id, &response).await {
+                tracing::error!(error = %e, "failed to send bot command response");
+            }
+            return Ok(());
+        }
+
         let inbound = InboundMessage {
             source: format!("telegram:{}", msg.chat_id),
             sender_id: msg.sender_id,
@@ -423,6 +444,44 @@ impl Gateway {
                 tracing::warn!(target_str = msg.target, "unknown outbound target");
             }
         }
+    }
+}
+
+/// Handle a Telegram bot command (`/start`, `/help`, `/status`).
+///
+/// Returns `Some(response_text)` if the command is a known bot command,
+/// or `None` if the message should be routed to the agent as regular text.
+/// Commands are case-sensitive and must match exactly (no arguments).
+pub fn handle_bot_command(text: &str, config: &Config) -> Option<String> {
+    let command = text.split_whitespace().next().unwrap_or("");
+    match command {
+        "/start" => Some(
+            "Welcome to quecto! I'm your personal AI assistant.\n\
+             Type a message to chat, or use /help to see available commands."
+                .to_string(),
+        ),
+        "/help" => Some(
+            "Available commands:\n\
+             /start  — Show welcome message\n\
+             /help   — Show this help\n\
+             /status — Show bot status\n\n\
+             Or just type a message to chat with me."
+                .to_string(),
+        ),
+        "/status" => {
+            let model = &config.agents.defaults.model;
+            let telegram_status = if config.channels.telegram.enabled {
+                "enabled"
+            } else {
+                "disabled"
+            };
+            Some(format!(
+                "quecto Status\n\
+                 Model: {model}\n\
+                 Telegram: {telegram_status}"
+            ))
+        }
+        _ => None,
     }
 }
 
@@ -600,6 +659,68 @@ mod tests {
         let creds = store.load_snapshot().unwrap();
         let needs_reauth = check_provider_readiness(&creds);
         assert!(needs_reauth.contains(&"openai".to_string()));
+    }
+
+    // --- Bot command tests ---
+
+    #[test]
+    fn test_handle_bot_command_start() {
+        let config: Config = serde_json::from_str("{}").unwrap();
+        let result = handle_bot_command("/start", &config);
+        assert!(result.is_some(), "/start should be handled");
+        let text = result.unwrap();
+        assert!(
+            text.contains("quecto"),
+            "start response should mention quecto"
+        );
+        assert!(
+            text.contains("Welcome"),
+            "start response should be welcoming"
+        );
+    }
+
+    #[test]
+    fn test_handle_bot_command_help() {
+        let config: Config = serde_json::from_str("{}").unwrap();
+        let result = handle_bot_command("/help", &config);
+        assert!(result.is_some(), "/help should be handled");
+        let text = result.unwrap();
+        assert!(text.contains("/start"), "help should list /start");
+        assert!(text.contains("/help"), "help should list /help");
+        assert!(text.contains("/status"), "help should list /status");
+    }
+
+    #[test]
+    fn test_handle_bot_command_status() {
+        let config: Config =
+            serde_json::from_str(r#"{"agents": {"defaults": {"model": "gpt-5.2"}}}"#).unwrap();
+        let result = handle_bot_command("/status", &config);
+        assert!(result.is_some(), "/status should be handled");
+        let text = result.unwrap();
+        assert!(text.contains("Model:"), "status should show model");
+        assert!(text.contains("gpt-5.2"), "status should show model name");
+    }
+
+    #[test]
+    fn test_handle_bot_command_unknown_returns_none() {
+        let config: Config = serde_json::from_str("{}").unwrap();
+        let result = handle_bot_command("/unknown", &config);
+        assert!(result.is_none(), "/unknown should not be handled");
+    }
+
+    #[test]
+    fn test_handle_bot_command_regular_text_returns_none() {
+        let config: Config = serde_json::from_str("{}").unwrap();
+        let result = handle_bot_command("Hello, how are you?", &config);
+        assert!(result.is_none(), "regular text should not be handled");
+    }
+
+    #[test]
+    fn test_handle_bot_command_start_with_args() {
+        let config: Config = serde_json::from_str("{}").unwrap();
+        // /start with args (deep link) should still be handled
+        let result = handle_bot_command("/start ref123", &config);
+        assert!(result.is_some(), "/start with args should be handled");
     }
 
     #[test]
