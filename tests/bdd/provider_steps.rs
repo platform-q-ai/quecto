@@ -336,3 +336,146 @@ fn then_chat_had_auth_header(world: &mut QuectoWorld) {
 }
 
 // ===========================================================================
+// Streaming Provider Steps
+// ===========================================================================
+
+#[given("an Anthropic provider with a mock server")]
+fn given_anthropic_with_mock_server(world: &mut QuectoWorld) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let server = rt.block_on(wiremock::MockServer::start());
+    let uri = server.uri();
+
+    world.provider = Some(Arc::new(
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::new(
+            "sk-ant-test-key".to_string(),
+            Some(uri.clone()),
+        ),
+    ));
+    world._wiremock_server_uri = Some(uri);
+    std::mem::forget(server);
+    std::mem::forget(rt);
+}
+
+#[given(expr = "the mock server returns an OpenAI streaming response with content {string}")]
+fn given_openai_streaming_response(world: &mut QuectoWorld, content: String) {
+    // Build SSE payload from the content string
+    let words: Vec<&str> = content.split_whitespace().collect();
+    let mut sse = String::new();
+    for (i, word) in words.iter().enumerate() {
+        let prefix = if i > 0 { " " } else { "" };
+        sse.push_str(&format!(
+            "data: {{\"choices\":[{{\"delta\":{{\"content\":\"{}{}\"}}}}]}}\n\n",
+            prefix, word
+        ));
+    }
+    sse.push_str("data: [DONE]\n\n");
+
+    // Start a new mock server with the SSE response
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (uri, _server) = rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_string(sse)
+                    .insert_header("content-type", "text/event-stream"),
+            )
+            .mount(&server)
+            .await;
+        let uri = server.uri();
+        (uri, server)
+    });
+
+    world.provider = Some(Arc::new(
+        quecto::infrastructure::providers::openai::OpenAiProvider::new(
+            "sk-test-key".to_string(),
+            Some(uri.clone()),
+        ),
+    ));
+    world._wiremock_server_uri = Some(uri);
+    std::mem::forget(_server);
+    std::mem::forget(rt);
+}
+
+#[given(expr = "the mock server returns an Anthropic streaming response with content {string}")]
+fn given_anthropic_streaming_response(world: &mut QuectoWorld, content: String) {
+    let words: Vec<&str> = content.split_whitespace().collect();
+    let mut sse = String::new();
+    for (i, word) in words.iter().enumerate() {
+        let prefix = if i > 0 { " " } else { "" };
+        sse.push_str(&format!(
+            "event: content_block_delta\ndata: {{\"delta\":{{\"type\":\"text_delta\",\"text\":\"{}{}\"}}}}\n\n",
+            prefix, word
+        ));
+    }
+    sse.push_str("event: message_stop\ndata: {}\n\n");
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (uri, _server) = rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/v1/messages"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_string(sse)
+                    .insert_header("content-type", "text/event-stream"),
+            )
+            .mount(&server)
+            .await;
+        let uri = server.uri();
+        (uri, server)
+    });
+
+    world.provider = Some(Arc::new(
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::new(
+            "sk-ant-test-key".to_string(),
+            Some(uri.clone()),
+        ),
+    ));
+    world._wiremock_server_uri = Some(uri);
+    std::mem::forget(_server);
+    std::mem::forget(rt);
+}
+
+#[when(expr = "I send a streaming chat request with message {string}")]
+fn when_send_streaming_chat(world: &mut QuectoWorld, message: String) {
+    let provider = world.provider.as_ref().expect("provider not set");
+    let messages = vec![Message {
+        role: Role::User,
+        content: message,
+        tool_calls: vec![],
+        tool_call_id: None,
+    }];
+    let req = quecto::domain::provider::ChatRequest {
+        messages: &messages,
+        tools: &[],
+        model: "test-model",
+        max_tokens: 1024,
+        temperature: 0.7,
+    };
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let result = rt
+        .block_on(provider.chat_stream(req))
+        .expect("streaming chat should succeed");
+    world.streaming_response = Some(result);
+}
+
+#[then(expr = "the streaming response content should be {string}")]
+fn then_streaming_response_content(world: &mut QuectoWorld, expected: String) {
+    let response = world
+        .streaming_response
+        .as_ref()
+        .expect("no streaming response");
+    let content = response
+        .content
+        .as_ref()
+        .expect("streaming response has no content");
+    assert_eq!(
+        content, &expected,
+        "expected streaming content '{}', got '{}'",
+        expected, content
+    );
+}
+
+// ===========================================================================

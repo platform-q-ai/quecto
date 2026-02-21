@@ -141,6 +141,108 @@ impl OpenAiProvider {
     }
 }
 
+impl OpenAiProvider {
+    /// Send a streaming chat request and assemble the response from SSE chunks.
+    async fn stream_chat(&self, request: ChatRequest<'_>) -> Result<LlmResponse, DomainError> {
+        let mut body = Self::build_request_body(&request);
+        body["stream"] = serde_json::Value::Bool(true);
+        let url = format!("{}/chat/completions", self.api_base);
+
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| DomainError::Provider(format!("HTTP error: {}", e)))?;
+
+        let status = response.status().as_u16();
+        if status != 200 {
+            let text = response.text().await.unwrap_or_default();
+            return Err(DomainError::Provider(format!(
+                "HTTP {} from OpenAI: {}",
+                status, text
+            )));
+        }
+
+        let full = response
+            .text()
+            .await
+            .map_err(|e| DomainError::Provider(format!("failed to read stream: {}", e)))?;
+
+        Self::parse_sse_response(&full)
+    }
+
+    /// Parse an SSE text stream into an assembled LlmResponse.
+    fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> {
+        let mut content = String::new();
+        let mut tool_calls: Vec<ToolCall> = Vec::new();
+
+        for line in raw.lines() {
+            let line = line.trim();
+            let Some(data) = line.strip_prefix("data: ") else {
+                continue;
+            };
+            if data == "[DONE]" {
+                break;
+            }
+            let chunk: serde_json::Value = serde_json::from_str(data).unwrap_or_default();
+            let Some(choices) = chunk["choices"].as_array() else {
+                continue;
+            };
+            for choice in choices {
+                Self::apply_delta(&choice["delta"], &mut content, &mut tool_calls);
+            }
+        }
+
+        let content_opt = if content.is_empty() {
+            None
+        } else {
+            Some(content)
+        };
+
+        Ok(LlmResponse {
+            content: content_opt,
+            tool_calls,
+            usage: None,
+        })
+    }
+
+    /// Apply a single SSE delta chunk to the accumulated content and tool calls.
+    fn apply_delta(
+        delta: &serde_json::Value,
+        content: &mut String,
+        tool_calls: &mut Vec<ToolCall>,
+    ) {
+        if let Some(text) = delta["content"].as_str() {
+            content.push_str(text);
+        }
+        if let Some(tcs) = delta["tool_calls"].as_array() {
+            for tc in tcs {
+                let idx = tc["index"].as_u64().unwrap_or(0) as usize;
+                while tool_calls.len() <= idx {
+                    tool_calls.push(ToolCall {
+                        id: String::new(),
+                        name: String::new(),
+                        arguments: String::new(),
+                    });
+                }
+                if let Some(id) = tc["id"].as_str() {
+                    tool_calls[idx].id = id.to_string();
+                }
+                if let Some(name) = tc["function"]["name"].as_str() {
+                    tool_calls[idx].name = name.to_string();
+                }
+                if let Some(args) = tc["function"]["arguments"].as_str() {
+                    tool_calls[idx].arguments.push_str(args);
+                }
+            }
+        }
+    }
+}
+
 impl LlmProvider for OpenAiProvider {
     fn name(&self) -> &str {
         "openai"
@@ -183,6 +285,28 @@ impl LlmProvider for OpenAiProvider {
                 })?;
 
             Self::parse_response(&response_json)
+        })
+    }
+
+    fn chat_stream(
+        &self,
+        request: ChatRequest<'_>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+        // Clone request data to avoid lifetime conflicts.
+        let messages = request.messages.to_vec();
+        let tools = request.tools.to_vec();
+        let model = request.model.to_string();
+        let max_tokens = request.max_tokens;
+        let temperature = request.temperature;
+        Box::pin(async move {
+            let req = ChatRequest {
+                messages: &messages,
+                tools: &tools,
+                model: &model,
+                max_tokens,
+                temperature,
+            };
+            self.stream_chat(req).await
         })
     }
 }
@@ -341,6 +465,77 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("500"), "error should mention status: {}", err);
+    }
+
+    #[test]
+    fn test_parse_sse_text_response() {
+        let sse = "\
+data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\
+data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\
+data: [DONE]\n";
+        let result = OpenAiProvider::parse_sse_response(sse).unwrap();
+        assert_eq!(result.content.as_deref(), Some("Hello world"));
+        assert!(result.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn test_parse_sse_tool_call() {
+        let sse = "\
+data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"exec\",\"arguments\":\"\"}}]}}]}\n\
+data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"cmd\\\"\"}}]}}]}\n\
+data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\": \\\"ls\\\"}\"}}]}}]}\n\
+data: [DONE]\n";
+        let result = OpenAiProvider::parse_sse_response(sse).unwrap();
+        assert!(result.content.is_none());
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].id, "call_1");
+        assert_eq!(result.tool_calls[0].name, "exec");
+        assert!(result.tool_calls[0].arguments.contains("ls"));
+    }
+
+    #[test]
+    fn test_parse_sse_empty() {
+        let sse = "data: [DONE]\n";
+        let result = OpenAiProvider::parse_sse_response(sse).unwrap();
+        assert!(result.content.is_none());
+        assert!(result.tool_calls.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_chat_stream_with_mock() {
+        let server = MockServer::start().await;
+        let sse_body = "\
+data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\n\
+data: {\"choices\":[{\"delta\":{\"content\":\" there\"}}]}\n\n\
+data: [DONE]\n\n";
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(sse_body)
+                    .insert_header("content-type", "text/event-stream"),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = OpenAiProvider::new("sk-test".to_string(), Some(server.uri()));
+        let messages = vec![Message {
+            role: Role::User,
+            content: "Hi".to_string(),
+            tool_calls: vec![],
+            tool_call_id: None,
+        }];
+        let req = ChatRequest {
+            messages: &messages,
+            tools: &[],
+            model: "gpt-4",
+            max_tokens: 1024,
+            temperature: 0.7,
+        };
+        let result = provider.chat_stream(req).await;
+        assert!(result.is_ok(), "stream should succeed: {:?}", result);
+        let resp = result.unwrap();
+        assert_eq!(resp.content.as_deref(), Some("Hi there"));
     }
 
     #[tokio::test]

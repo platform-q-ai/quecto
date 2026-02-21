@@ -3,6 +3,7 @@ pub mod bus;
 pub mod channels;
 pub mod config;
 pub mod health;
+pub mod logging;
 pub mod persistence;
 pub mod providers;
 pub mod security;

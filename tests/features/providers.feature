@@ -49,23 +49,14 @@ Feature: LLM Providers
     Then the chat response content should be "Hello!"
     And the chat request should have included an Authorization header
 
-  @pending
   Scenario: OpenAI provider handles streaming responses
     Given an OpenAI provider with a mock server
-    And the mock server returns a streaming SSE response with chunks:
-      | data: {"choices":[{"delta":{"content":"Why "}}]}   |
-      | data: {"choices":[{"delta":{"content":"did the "}}]} |
-      | data: {"choices":[{"delta":{"content":"chicken?"}}]} |
-      | data: [DONE]                                        |
-    When I send a streaming chat request with message "Tell me a joke"
-    Then the assembled response content should be "Why did the chicken?"
+    And the mock server returns an OpenAI streaming response with content "Hello world"
+    When I send a streaming chat request with message "Hi"
+    Then the streaming response content should be "Hello world"
 
-  @pending
   Scenario: Anthropic provider handles streaming responses
     Given an Anthropic provider with a mock server
-    And the mock server returns a streaming SSE response with events:
-      | event: content_block_delta |
-      | event: content_block_delta |
-      | event: message_stop        |
-    When I send a streaming chat request with message "Hello"
-    Then the assembled response should contain the concatenated deltas
+    And the mock server returns an Anthropic streaming response with content "Hello from Claude"
+    When I send a streaming chat request with message "Hi"
+    Then the streaming response content should be "Hello from Claude"

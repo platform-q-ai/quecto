@@ -1,6 +1,6 @@
 [package]
 name = "quecto"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 description = "Ultra-lightweight personal AI assistant"
 license = "MIT"
@@ -10,7 +10,7 @@ license = "MIT"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "fs", "process"] }
 
 # HTTP client
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart", "stream"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
