@@ -1,4 +1,4 @@
-@pending
+@done
 Feature: End-to-End Gateway Voice Transcription
   As a Telegram user
   I want to send voice messages to Quecto through the gateway
@@ -12,47 +12,44 @@ Feature: End-to-End Gateway Voice Transcription
   Background:
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    And a mock Telegram API
+    And a mock Telegram API that supports voice downloads
 
   # --- Happy path ---
 
   Scenario: Voice message is transcribed and processed by the agent
-    Given Groq voice transcription is configured with api_key "gsk-test-key"
-    And a mock Groq Whisper API that returns transcription "Turn off the lights"
-    And the mock LLM returns a text response "Lights turned off"
+    Given voice transcription is configured in the gateway config with api_key "gsk-test-key"
+    And a mock Groq Whisper endpoint that returns transcription "Turn off the lights"
+    And a mock LLM that captures requests and returns text "Lights turned off"
     When user "12345" sends a voice message via Telegram to the running gateway
-    Then the gateway should download the voice file from Telegram
-    And the audio should be sent to the Groq Whisper API
-    And the mock LLM should have received a request containing "Turn off the lights"
-    And the Telegram API should have received a sendMessage to chat "12345"
-    And the sent message should contain "Lights turned off"
+    Then the Telegram mock should have received a getFile request
+    And the captured LLM requests should contain "Turn off the lights"
+    And the gateway Telegram mock should have received a sendMessage containing "Lights turned off"
 
   # --- No API key ---
 
   Scenario: Voice message is rejected when Groq API key is not configured
-    Given no Groq API key is configured
+    Given no voice transcription API key is configured in the gateway config
+    And a mock LLM that captures requests and returns text "should not be called"
     When user "12345" sends a voice message via Telegram to the running gateway
-    Then the Telegram API should have received a sendMessage to chat "12345"
-    And the sent message should contain "voice transcription is not configured"
-    And the mock LLM should not have received any requests
+    Then the gateway Telegram mock should have received a sendMessage containing "voice transcription is not configured"
+    And the captured LLM requests should be empty
 
   # --- Transcription error ---
 
   Scenario: Groq API error sends friendly message to user
-    Given Groq voice transcription is configured with api_key "gsk-test-key"
-    And a mock Groq Whisper API that returns an HTTP 500 error
+    Given voice transcription is configured in the gateway config with api_key "gsk-test-key"
+    And a mock Groq Whisper endpoint that returns an HTTP 500 error
+    And a mock LLM that captures requests and returns text "should not be called"
     When user "12345" sends a voice message via Telegram to the running gateway
-    Then the Telegram API should have received a sendMessage to chat "12345"
-    And the sent message should contain an error indication
-    And the mock LLM should not have received any requests
+    Then the gateway Telegram mock should have received a sendMessage containing "could not transcribe"
+    And the captured LLM requests should be empty
 
   # --- Voice alongside text ---
 
   Scenario: Gateway handles text and voice messages in the same session
-    Given Groq voice transcription is configured with api_key "gsk-test-key"
-    And a mock Groq Whisper API that returns transcription "What time is it"
-    And the mock LLM returns a text response "It is 3pm"
-    When user "12345" sends text "Hello" via Telegram to the running gateway
-    And user "12345" sends a voice message via Telegram to the running gateway
-    Then the mock LLM should have received a request containing "Hello"
-    And the mock LLM should have received a request containing "What time is it"
+    Given voice transcription is configured in the gateway config with api_key "gsk-test-key"
+    And a mock Groq Whisper endpoint that returns transcription "What time is it"
+    And a mock LLM that captures requests and returns text "It is 3pm"
+    When user "12345" sends text "Hello" and then a voice message via Telegram to the running gateway
+    Then the captured LLM requests should contain "Hello"
+    And the captured LLM requests should contain "What time is it"

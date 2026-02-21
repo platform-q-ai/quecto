@@ -127,6 +127,7 @@ fn given_subagent_inheriting_sandbox(world: &mut QuectoWorld) {
         agent_id: None,
         restrict_to_workspace: sb.restrict_to_workspace,
         deliver_to: None,
+        system: None,
     });
     let ctx = SubagentContext::from_config(world.subagent_config.as_ref().unwrap());
     world.subagent_context = Some(ctx);

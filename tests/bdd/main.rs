@@ -495,6 +495,10 @@ pub struct QuectoWorld {
     pub gateway_child: Option<std::process::Child>,
     /// Health server port assigned for gateway health e2e tests
     pub gateway_health_port: Option<u16>,
+    /// Leaked wiremock server for gateway voice/spawn e2e tests (unified Telegram + Groq mock)
+    pub gateway_mock_server: Option<&'static wiremock::MockServer>,
+    /// Groq Whisper mock server (separate from Telegram mock) for voice e2e tests
+    pub groq_mock_server: Option<&'static wiremock::MockServer>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.

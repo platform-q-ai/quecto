@@ -10,6 +10,7 @@ fn given_subagent_spawn_request(world: &mut QuectoWorld, task: String) {
         agent_id: None,
         restrict_to_workspace: false,
         deliver_to: None,
+        system: None,
     });
 }
 
@@ -21,6 +22,7 @@ fn given_parent_config_restrict(world: &mut QuectoWorld, value: String) {
         agent_id: None,
         restrict_to_workspace: restrict,
         deliver_to: None,
+        system: None,
     });
 }
 
@@ -133,6 +135,7 @@ fn given_subagent_with_deliver_to(world: &mut QuectoWorld, deliver_to: String) {
         agent_id: None,
         restrict_to_workspace: false,
         deliver_to: Some(deliver_to),
+        system: None,
     });
     world.subagent_context = Some(SubagentContext::from_config(
         world.subagent_config.as_ref().unwrap(),

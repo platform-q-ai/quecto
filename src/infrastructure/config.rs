@@ -17,6 +17,8 @@ pub struct Config {
     pub gateway: GatewayConfig,
     #[serde(default)]
     pub health: HealthConfig,
+    #[serde(default)]
+    pub voice: VoiceConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -187,6 +189,20 @@ impl Default for HealthConfig {
             port: default_health_port(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct VoiceConfig {
+    #[serde(default)]
+    pub groq: GroqVoiceConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GroqVoiceConfig {
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub api_base: String,
 }
 
 fn default_workspace() -> String {

@@ -62,6 +62,7 @@ fn given_raw_telegram_update(world: &mut QuectoWorld, text: String, user_id: Str
                 chat_type: Some("private".to_string()),
             },
             text: Some(text),
+            voice: None,
         }),
     });
 }

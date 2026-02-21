@@ -25,6 +25,7 @@ use crate::infrastructure::tools::message::MessageTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use crate::infrastructure::tools::spawn::SpawnTool;
 use crate::infrastructure::tools::web_search::WebSearchTool;
+use crate::infrastructure::voice::groq_whisper::GroqWhisperClient;
 
 use tokio::sync::mpsc;
 
@@ -264,9 +265,10 @@ impl Gateway {
         registry.register(Arc::new(MessageTool::new(outbound_tx, None)));
         registry.register(Arc::new(WebSearchTool::new(self.brave_api_key())));
         registry.register(Arc::new(CronTool::new(cron_store)));
-        registry.register(Arc::new(SpawnTool::new(
+        registry.register(Arc::new(SpawnTool::with_base_dir(
             vec![],
             self.config.agents.defaults.restrict_to_workspace,
+            self.base_dir.clone(),
         )));
 
         let agent = AgentLoopImpl::new(AgentLoopConfig {
@@ -347,8 +349,9 @@ impl Gateway {
     ///
     /// Known bot commands (`/start`, `/help`, `/status`) are handled directly
     /// and responded to via `telegram.send_message()` without going through
-    /// the agent loop. Unknown messages (including unknown commands) are
-    /// forwarded to the inbound channel for agent processing.
+    /// the agent loop. Voice messages are transcribed via Groq Whisper before
+    /// routing. Unknown messages (including unknown commands) are forwarded to
+    /// the inbound channel for agent processing.
     ///
     /// Returns Err(()) if the inbound channel is closed.
     async fn dispatch_update(
@@ -357,30 +360,132 @@ impl Gateway {
         inbound_tx: &mpsc::Sender<InboundMessage>,
         config: &Config,
     ) -> Result<(), ()> {
-        let Some(msg) = TelegramChannel::parse_update(update) else {
-            return Ok(());
-        };
-        if !telegram.is_user_allowed(&msg.sender_id) {
-            tracing::warn!(sender_id = msg.sender_id, "unauthorized Telegram user");
-            return Ok(());
-        }
-
-        // Check for bot commands before routing to agent.
-        if let Some(response) = handle_bot_command(&msg.text, config) {
-            if let Err(e) = telegram.send_message(&msg.chat_id, &response).await {
-                tracing::error!(error = %e, "failed to send bot command response");
+        // Try text message first.
+        if let Some(msg) = TelegramChannel::parse_update(update) {
+            if !telegram.is_user_allowed(&msg.sender_id) {
+                tracing::warn!(sender_id = msg.sender_id, "unauthorized Telegram user");
+                return Ok(());
             }
-            return Ok(());
+
+            // Check for bot commands before routing to agent.
+            if let Some(response) = handle_bot_command(&msg.text, config) {
+                if let Err(e) = telegram.send_message(&msg.chat_id, &response).await {
+                    tracing::error!(error = %e, "failed to send bot command response");
+                }
+                return Ok(());
+            }
+
+            let inbound = InboundMessage {
+                source: format!("telegram:{}", msg.chat_id),
+                sender_id: msg.sender_id,
+                text: msg.text,
+            };
+            return inbound_tx.send(inbound).await.map_err(|_| {
+                tracing::error!("inbound channel closed");
+            });
         }
 
-        let inbound = InboundMessage {
-            source: format!("telegram:{}", msg.chat_id),
-            sender_id: msg.sender_id,
-            text: msg.text,
+        // Try voice message.
+        if let Some((sender_id, chat_id, file_id)) = TelegramChannel::parse_voice_update(update) {
+            if !telegram.is_user_allowed(&sender_id) {
+                tracing::warn!(sender_id = sender_id, "unauthorized Telegram user");
+                return Ok(());
+            }
+
+            let text =
+                Self::handle_voice_message(telegram, &chat_id, &file_id, &config.voice).await;
+
+            let Some(transcribed_text) = text else {
+                return Ok(());
+            };
+
+            let inbound = InboundMessage {
+                source: format!("telegram:{}", chat_id),
+                sender_id,
+                text: transcribed_text,
+            };
+            return inbound_tx.send(inbound).await.map_err(|_| {
+                tracing::error!("inbound channel closed");
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Download voice audio from Telegram's file API.
+    ///
+    /// Returns the raw audio bytes, or sends an error to the user and returns `None`.
+    async fn download_voice_audio(
+        telegram: &TelegramChannel,
+        chat_id: &str,
+        file_id: &str,
+    ) -> Option<Vec<u8>> {
+        let file_path = match telegram.get_file(file_id).await {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!(error = %e, "failed to get voice file info");
+                let _ = telegram
+                    .send_message(chat_id, "Sorry, I could not process your voice message.")
+                    .await;
+                return None;
+            }
         };
-        inbound_tx.send(inbound).await.map_err(|_| {
-            tracing::error!("inbound channel closed");
-        })
+
+        match telegram.download_file(&file_path).await {
+            Ok(b) => Some(b),
+            Err(e) => {
+                tracing::error!(error = %e, "failed to download voice file");
+                let _ = telegram
+                    .send_message(chat_id, "Sorry, I could not process your voice message.")
+                    .await;
+                None
+            }
+        }
+    }
+
+    /// Handle a voice message: download, transcribe, and return the text.
+    ///
+    /// Returns `None` if an error occurred (error message already sent to user).
+    async fn handle_voice_message(
+        telegram: &TelegramChannel,
+        chat_id: &str,
+        file_id: &str,
+        voice_config: &crate::infrastructure::config::VoiceConfig,
+    ) -> Option<String> {
+        if voice_config.groq.api_key.is_empty() {
+            let _ = telegram
+                .send_message(chat_id, "Sorry, voice transcription is not configured.")
+                .await;
+            return None;
+        }
+
+        let audio_bytes = Self::download_voice_audio(telegram, chat_id, file_id).await?;
+
+        let whisper = Self::build_whisper_client(voice_config);
+        match whisper.transcribe_bytes(audio_bytes, "voice.ogg").await {
+            Ok(result) => Some(result.text),
+            Err(e) => {
+                tracing::error!(error = %e, "voice transcription failed");
+                let _ = telegram
+                    .send_message(chat_id, "Sorry, I could not transcribe your voice message.")
+                    .await;
+                None
+            }
+        }
+    }
+
+    /// Build a Groq Whisper client from voice configuration.
+    fn build_whisper_client(
+        voice_config: &crate::infrastructure::config::VoiceConfig,
+    ) -> GroqWhisperClient {
+        if voice_config.groq.api_base.is_empty() {
+            GroqWhisperClient::new(&voice_config.groq.api_key)
+        } else {
+            GroqWhisperClient::with_base_url(
+                &voice_config.groq.api_key,
+                &voice_config.groq.api_base,
+            )
+        }
     }
 
     /// Inbound message processing task.
