@@ -49,19 +49,34 @@ Feature: Scheduled Tasks (Cron)
     Then the job "Check weather" should exist in the store
 
   @pending
-  Scenario: Job executes at scheduled time
-    Given a scheduled job with interval 1 second
-    When I wait for 2 seconds
-    Then the job should have executed at least once
+  Scenario: Gateway executes interval job when due
+    Given a running gateway with a mock LLM provider
+    And a cron job "weather" with interval 2 seconds and message "Check weather"
+    When the cron tick fires
+    Then the mock LLM should receive a request containing "Check weather"
 
   @pending
-  Scenario: Job execution respects timeout
-    Given a scheduled job with exec_timeout_minutes 1
-    When the job executes
-    Then the job should be terminated after the timeout
+  Scenario: Gateway skips disabled cron jobs
+    Given a running gateway with a mock LLM provider
+    And a disabled cron job "weather" with interval 2 seconds
+    When the cron tick fires
+    Then the mock LLM should not receive any requests
 
   @pending
-  Scenario: Job delivers result to a channel
-    Given a scheduled job configured to deliver to Telegram chat "12345"
-    When the job executes
-    Then the result should be sent to Telegram chat "12345"
+  Scenario: Cron job execution respects timeout
+    Given a running gateway with a mock LLM provider
+    And a cron job "slow-task" with interval 2 seconds and message "Run slow task"
+    And the config has exec_timeout_minutes 1
+    When the cron job starts executing and exceeds the timeout
+    Then the job execution should be terminated
+    And the job should be marked as last_error containing "timeout"
+
+  @pending
+  Scenario: Cron job delivers result to configured channel
+    Given a running gateway with a mock LLM provider
+    And a mock Telegram API
+    And a cron job "report" with interval 60 seconds and deliver_to "telegram:12345"
+    And the mock LLM returns a text response "Daily report: all systems operational"
+    When the cron tick fires for job "report"
+    Then the Telegram API should receive a sendMessage to chat "12345"
+    And the message should contain "all systems operational"

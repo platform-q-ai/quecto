@@ -22,26 +22,28 @@ Feature: Voice Transcription
     Then the transcription should fail with an error message
 
   @pending
-  Scenario: Transcribe a Telegram voice message end-to-end
-    Given a running gateway with Telegram enabled
+  Scenario: Telegram voice message is transcribed and routed to agent
+    Given a running gateway with Telegram enabled and a mock Telegram API
     And Groq voice transcription is configured with api_key "gsk-test"
-    When user sends a voice message via Telegram
-    Then the voice file should be downloaded
-    And the voice file should be sent to Groq Whisper API
-    And the transcribed text should be routed to the agent
+    And a mock Groq Whisper API that returns transcription "Turn off the lights"
+    And a mock LLM provider
+    When user "12345" sends a voice message via Telegram
+    Then the gateway should download the voice file from Telegram
+    And the voice file should be sent to the Groq Whisper API
+    And the mock LLM should receive a request containing "Turn off the lights"
 
   @pending
-  Scenario: Voice transcription disabled when no Groq key
-    Given a running gateway with Telegram enabled
+  Scenario: Voice message ignored when no Groq API key configured
+    Given a running gateway with Telegram enabled and a mock Telegram API
     And no Groq API key is configured
-    When user sends a voice message via Telegram
-    Then the voice message should be ignored or a fallback response sent
+    When user "12345" sends a voice message via Telegram
+    Then the bot should respond to chat "12345" with "voice transcription is not configured"
 
   @pending
-  Scenario: Transcription error in gateway is handled gracefully
-    Given a running gateway with Telegram enabled
-    And Groq voice transcription is configured
-    And the Groq API returns an error
-    When user sends a voice message via Telegram
-    Then an error message should be sent to the user
-    And the gateway should continue running
+  Scenario: Groq transcription error sends friendly error to user
+    Given a running gateway with Telegram enabled and a mock Telegram API
+    And Groq voice transcription is configured with api_key "gsk-test"
+    And a mock Groq Whisper API that returns an HTTP 500 error
+    When user "12345" sends a voice message via Telegram
+    Then the bot should respond to chat "12345" with an error message
+    And the gateway should continue processing other messages

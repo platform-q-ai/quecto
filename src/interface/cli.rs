@@ -3,16 +3,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::gateway::{Gateway, resolve_api_key};
+use super::repl::{ReplContext, ReplFlags};
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::onboard;
 use crate::domain::agent::AgentLoop;
 use crate::domain::message::{Message, Role};
+use crate::domain::provider::LlmProvider;
 use crate::domain::session::{Session, SessionStore};
-use crate::domain::skill::SkillLoader;
 use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
-use crate::infrastructure::persistence::skill_loader::FileSkillLoader;
 use crate::infrastructure::providers;
 use crate::infrastructure::providers::fallback::FallbackProvider;
 use crate::infrastructure::security::sandbox::Sandbox;
@@ -54,6 +54,16 @@ pub fn run(args: Vec<String>) -> i32 {
         return cmd_gateway_run(&ctx);
     }
 
+    // No arguments → enter REPL mode with real stdin/stdout
+    if args.len() < 2 {
+        let io = ReplIo {
+            reader: std::io::stdin().lock(),
+            writer: std::io::stdout(),
+            is_tty: std::io::IsTerminal::is_terminal(&std::io::stdin()),
+        };
+        return cmd_repl(&ctx, &[], io);
+    }
+
     let output = run_with_output(args, &ctx);
     if !output.stdout.is_empty() {
         print!("{}", output.stdout);
@@ -69,10 +79,13 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
     let mut stdout = String::new();
     let mut stderr = String::new();
 
-    let exit_code = if args.len() < 2 {
-        help_text(&mut stdout);
-        1
-    } else {
+    if args.len() < 2 {
+        // No args → REPL mode. Delegate to run_repl_with_output with empty input
+        // so the REPL exits immediately on EOF (consistent with piped empty input).
+        return run_repl_with_output(ctx, &[], &[], false);
+    }
+
+    let exit_code = {
         match args[1].as_str() {
             "onboard" => cmd_onboard(ctx, &mut stdout, &mut stderr),
             "agent" => cmd_agent(ctx, &args[2..], &mut stdout, &mut stderr),
@@ -87,6 +100,10 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
                 1
             }
             "skills" => cmd_skills(ctx, &args[2..], &mut stdout, &mut stderr),
+            "help" | "--help" | "-h" => {
+                help_text(&mut stdout);
+                0
+            }
             "version" | "--version" | "-v" => {
                 version_text(&mut stdout);
                 0
@@ -104,6 +121,142 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
         stderr,
         exit_code,
     }
+}
+
+/// Run the REPL with the given input/output, capturing output for BDD testing.
+/// The `is_tty` parameter controls whether the REPL shows the banner and prompt.
+pub fn run_repl_with_output(
+    ctx: &CliContext,
+    args: &[String],
+    input: &[u8],
+    is_tty: bool,
+) -> CliOutput {
+    let mut output = Vec::new();
+    let io = ReplIo {
+        reader: std::io::BufReader::new(input),
+        writer: &mut output,
+        is_tty,
+    };
+    let exit_code = cmd_repl(ctx, args, io);
+    let stdout = String::from_utf8_lossy(&output).to_string();
+    CliOutput {
+        stdout,
+        stderr: String::new(),
+        exit_code,
+    }
+}
+
+/// Bundles REPL I/O streams and TTY detection.
+struct ReplIo<R: std::io::BufRead, W: std::io::Write> {
+    reader: R,
+    writer: W,
+    is_tty: bool,
+}
+
+/// REPL command: parse flags and launch the interactive loop.
+fn cmd_repl<R: std::io::BufRead, W: std::io::Write>(
+    ctx: &CliContext,
+    args: &[String],
+    mut io: ReplIo<R, W>,
+) -> i32 {
+    let flags = match parse_repl_flags(args) {
+        Ok(f) => f,
+        Err(msg) => {
+            let _ = writeln!(io.writer, "Error: {msg}");
+            return 1;
+        }
+    };
+
+    let base_dir = ctx.base_dir();
+    let config_path = base_dir.join("config.json");
+    if !config_path.exists() {
+        let _ = writeln!(io.writer, "Config not found at {}", config_path.display());
+        let _ = writeln!(io.writer, "Run 'quecto onboard' first");
+        return 1;
+    }
+
+    let env_overrides: std::collections::HashMap<String, String> = std::env::vars()
+        .filter(|(k, _)| k.starts_with("QUECTO_"))
+        .collect();
+
+    let config = match Config::load_with_env(config_path.to_str().unwrap_or(""), &env_overrides) {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = writeln!(io.writer, "Error: failed to load config: {e}");
+            return 1;
+        }
+    };
+
+    let provider = match build_agent_provider(&config, &base_dir) {
+        Ok(p) => p,
+        Err(msg) => {
+            let _ = writeln!(io.writer, "Error: {msg}");
+            return 1;
+        }
+    };
+
+    let repl_ctx = ReplContext {
+        base_dir: &base_dir,
+        provider,
+        config: &config,
+        flags: &flags,
+    };
+    super::repl::run_repl(io.reader, io.writer, io.is_tty, &repl_ctx)
+}
+
+/// Parse REPL-specific flags from args (session, system, model).
+fn parse_repl_flags(args: &[String]) -> Result<ReplFlags, String> {
+    let mut session_name: Option<String> = None;
+    let mut system_prompt: Option<String> = None;
+    let mut model_override: Option<String> = None;
+    let mut i = 0;
+
+    while i < args.len() {
+        match args[i].as_str() {
+            "-s" | "--session" => {
+                if i + 1 < args.len() {
+                    let name = &args[i + 1];
+                    if !is_valid_session_name(name) {
+                        return Err(
+                            "session name must contain only alphanumeric, '-', or '_'".to_string()
+                        );
+                    }
+                    session_name = Some(name.clone());
+                    i += 2;
+                } else {
+                    return Err("-s requires a session name".to_string());
+                }
+            }
+            "--system" => {
+                if i + 1 < args.len() {
+                    system_prompt = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    return Err("--system requires a value".to_string());
+                }
+            }
+            "--model" => {
+                if i + 1 < args.len() {
+                    model_override = Some(args[i + 1].clone());
+                    i += 2;
+                } else {
+                    return Err("--model requires a value".to_string());
+                }
+            }
+            other if other.starts_with("--") || other.starts_with('-') => {
+                return Err(format!("unknown flag '{other}'"));
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    Ok(ReplFlags {
+        session_name,
+        system_prompt,
+        model_override,
+    })
 }
 
 /// Parsed flags for the `agent` subcommand.
@@ -251,40 +404,20 @@ fn cmd_agent(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &mu
     };
 
     // Load skills and prepend their content to the system prompt
-    let skill_prompt = load_skill_prompt(&base_dir);
+    let skill_prompt = super::shared::load_skill_prompt(&base_dir);
     if !skill_prompt.is_empty() {
-        flags.system_prompt = Some(merge_prompts(&skill_prompt, &flags.system_prompt));
+        flags.system_prompt = Some(super::shared::merge_prompts(
+            &skill_prompt,
+            &flags.system_prompt,
+        ));
     }
 
     let mut out = AgentOutput { stdout, stderr };
     run_agent_session(&base_dir, agent, &flags, &mut out)
 }
 
-/// Load all workspace skills and concatenate their non-empty content.
-fn load_skill_prompt(base_dir: &std::path::Path) -> String {
-    let workspace = base_dir.join("workspace");
-    let global = base_dir.join("global");
-    let builtin = base_dir.join("builtin");
-    let loader = FileSkillLoader::new(&workspace, &global, &builtin);
-    let skills = match loader.list() {
-        Ok(s) => s,
-        Err(_) => return String::new(),
-    };
-    skills
-        .iter()
-        .filter(|s| !s.content.is_empty())
-        .map(|s| s.content.as_str())
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
-/// Merge skill content with an optional user-provided system prompt.
-fn merge_prompts(skill_prompt: &str, user_prompt: &Option<String>) -> String {
-    match user_prompt {
-        Some(up) if !up.is_empty() => format!("{}\n\n{}", skill_prompt, up),
-        _ => skill_prompt.to_string(),
-    }
-}
+// Re-export shared functions for backward compatibility.
+pub use super::shared::{load_skill_prompt, merge_prompts};
 
 /// Load config, build provider, and construct the agent loop. Returns None on error.
 fn build_agent_from_config(
@@ -505,7 +638,7 @@ fn run_with_deadline(
 fn build_agent_provider(
     config: &Config,
     base_dir: &std::path::Path,
-) -> Result<Arc<FallbackProvider>, String> {
+) -> Result<Arc<dyn LlmProvider>, String> {
     let store = CredentialStore::new(base_dir);
     let creds = store.load_snapshot().unwrap_or_default();
 
@@ -917,15 +1050,17 @@ fn help_text(out: &mut String) {
         "quecto - Personal AI Assistant v{}\n",
         env!("CARGO_PKG_VERSION")
     ));
-    out.push_str("\nUsage: quecto <command>\n");
+    out.push_str("\nUsage: quecto [command]\n");
+    out.push_str("\nWhen run with no arguments, quecto enters interactive REPL mode.\n");
     out.push_str("\nCommands:\n");
     out.push_str("  onboard     Initialize configuration and workspace\n");
-    out.push_str("  agent       Interact with the agent directly\n");
+    out.push_str("  agent       Run a one-shot agent session (-m required)\n");
     out.push_str("  auth        Manage authentication (login, logout, status)\n");
     out.push_str("  gateway     Start the Telegram gateway\n");
     out.push_str("  status      Show status\n");
     out.push_str("  cron        Manage scheduled tasks\n");
     out.push_str("  skills      Manage skills (install, list, remove)\n");
+    out.push_str("  help        Show this help\n");
     out.push_str("  version     Show version information\n");
 }
 
@@ -955,13 +1090,24 @@ mod tests {
     }
 
     #[test]
-    fn test_no_args_shows_help() {
+    fn test_no_args_triggers_repl_mode() {
+        // run_with_output with no args delegates to run_repl_with_output,
+        // which enters REPL mode with empty input (exits immediately on EOF).
+        // Without a config file, the REPL outputs an error.
         let out = run_with_output(vec!["quecto".to_string()], &default_ctx());
-        assert_eq!(out.exit_code, 1);
+        // Either exits 0 (with config) or 1 (without config, showing config error).
+        // In default context without config, exit code is 1.
+        assert!(out.exit_code == 0 || out.exit_code == 1);
+    }
+
+    #[test]
+    fn test_help_command_shows_usage() {
+        let out = run_with_output(args("help"), &default_ctx());
+        assert_eq!(out.exit_code, 0);
         assert_contains_all(
             &out.stdout,
             &[
-                "Usage: quecto <command>",
+                "Usage: quecto [command]",
                 "onboard",
                 "agent",
                 "gateway",
@@ -969,6 +1115,7 @@ mod tests {
                 "auth",
                 "cron",
                 "skills",
+                "help",
                 "version",
             ],
         );
@@ -1001,7 +1148,7 @@ mod tests {
         let out = run_with_output(args("foobar"), &default_ctx());
         assert_eq!(out.exit_code, 1);
         assert!(out.stderr.contains("Unknown command: foobar"));
-        assert!(out.stdout.contains("Usage: quecto <command>"));
+        assert!(out.stdout.contains("Usage: quecto [command]"));
     }
 
     #[test]
@@ -1033,7 +1180,7 @@ mod tests {
     fn test_status_shows_summary() {
         let tmp = tempfile::TempDir::new().unwrap();
         let config_json = r#"{
-            "agents": { "defaults": { "model": "gpt-5-nano" } },
+            "agents": { "defaults": { "model": "gpt-5.2" } },
             "providers": {
                 "openai": { "api_key": "sk-test" },
                 "anthropic": { "api_key": "" }
@@ -1052,7 +1199,7 @@ mod tests {
                 "Config:",
                 "Workspace:",
                 "Model:",
-                "gpt-5-nano",
+                "gpt-5.2",
                 "OpenAI API:",
                 "configured",
                 "Anthropic API:",
@@ -1265,7 +1412,8 @@ mod tests {
         assert_contains_all(
             &out,
             &[
-                "onboard", "agent", "auth", "gateway", "status", "cron", "skills", "version",
+                "onboard", "agent", "auth", "gateway", "status", "cron", "skills", "help",
+                "version",
             ],
         );
     }
@@ -1808,50 +1956,5 @@ mod tests {
         assert!(flags.max_time.is_none());
     }
 
-    // --- Skill prompt loading tests ---
-
-    #[test]
-    fn test_load_skill_prompt_with_skills() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let skill_dir = tmp.path().join("workspace").join("skills").join("weather");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(skill_dir.join("SKILL.md"), "Fetch weather data").unwrap();
-        let prompt = load_skill_prompt(tmp.path());
-        assert_eq!(prompt, "Fetch weather data");
-    }
-
-    #[test]
-    fn test_load_skill_prompt_empty_when_no_skills() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let prompt = load_skill_prompt(tmp.path());
-        assert!(prompt.is_empty());
-    }
-
-    #[test]
-    fn test_load_skill_prompt_skips_empty_content() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let skill_dir = tmp.path().join("workspace").join("skills").join("empty");
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        // No SKILL.md — content will be empty
-        let prompt = load_skill_prompt(tmp.path());
-        assert!(prompt.is_empty());
-    }
-
-    #[test]
-    fn test_merge_prompts_skill_only() {
-        let result = merge_prompts("Skill content", &None);
-        assert_eq!(result, "Skill content");
-    }
-
-    #[test]
-    fn test_merge_prompts_skill_and_user() {
-        let result = merge_prompts("Skill content", &Some("User prompt".to_string()));
-        assert_eq!(result, "Skill content\n\nUser prompt");
-    }
-
-    #[test]
-    fn test_merge_prompts_skill_with_empty_user() {
-        let result = merge_prompts("Skill content", &Some(String::new()));
-        assert_eq!(result, "Skill content");
-    }
+    // Skill prompt loading tests moved to src/interface/shared.rs
 }

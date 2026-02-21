@@ -81,11 +81,11 @@ Feature: E2E Real LLM
 
   @done @real-llm
   Scenario: Real LLM remembers context across session turns
-    When I run the real LLM agent with session chat1 and message "Remember this secret code: ZEBRA42. Just confirm you received it."
+    When I run the real LLM agent with session chat1 and message "My favorite color is turquoise. Just confirm you noted it."
     Then the exit code should be 0
-    When I run the real LLM agent with session chat1 and message "What was the secret code I told you earlier? Reply with just the code."
+    When I run the real LLM agent with session chat1 and message "What is my favorite color? Reply with just the color name."
     Then the exit code should be 0
-    And stdout should contain "ZEBRA42"
+    And stdout should contain "turquoise"
 
   # --- System prompt ---
 

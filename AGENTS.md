@@ -1,6 +1,6 @@
 # Quecto
 
-Quecto is a Rust reimplementation of [PicoClaw](../picoclaw) — a Go-based personal AI assistant — rebuilt from scratch to target ultra-low resource usage. It keeps the core assistant architecture (agent loop, tool use, provider fallback, session persistence, Telegram interface) but drops hardware integrations, most provider backends, and multi-platform support.
+Quecto is a Rust reimplementation of an agentic personal AI assistant — built from scratch to target ultra-low resource usage. It keeps the core assistant architecture (agent loop, tool use, provider fallback, session persistence, Telegram interface).
 
 ## What we want to achieve
 
@@ -79,6 +79,7 @@ Manual argument parsing (no clap). The single entry point is `cli::run(args) -> 
 
 | Command | What it does |
 |---|---|
+| `quecto` (no args) | Enters interactive REPL mode (see below) |
 | `quecto onboard` | Creates workspace and default config |
 | `quecto agent -m <message> [-s <session>] [--system <prompt>] [--model <model>] [--max-iterations <n>] [--max-time <secs>]` | Runs a headless one-shot agent session (see below) |
 | `quecto skills list\|remove\|install` | Manages skill files |
@@ -90,6 +91,25 @@ Manual argument parsing (no clap). The single entry point is `cli::run(args) -> 
 | `quecto help` / `quecto version` | Self-explanatory |
 
 `CliContext` allows overriding `base_dir` for testability so commands write to temp directories in tests instead of `~/.config/quecto`. Base directory resolution order: explicit `CliContext.base_dir` override > `QUECTO_BASE_DIR` environment variable > platform default.
+
+#### `quecto` — Interactive REPL mode
+
+Runs an interactive read-eval-print loop. The REPL reads user input line by line, sends each to the LLM agent, prints the response, and repeats. Optional flags:
+
+| Flag | Description |
+|---|---|
+| `-s` / `--session` | Session name for persistence. Default: `repl:repl_default`. Use `-` for ephemeral |
+| `--system` | System prompt prepended to each turn (not persisted) |
+| `--model` | Override the default model from config |
+
+REPL commands: `/help` (show commands), `/clear` (reset history), `/exit` or `/quit` (exit). Ctrl+D (EOF) also exits cleanly.
+
+The REPL uses abstracted I/O (`BufRead` + `Write` traits) instead of hardcoded stdin/stdout. This allows:
+- Interactive terminal use (stdin/stdout with TTY detection for prompt/banner)
+- Piped input for scripting (`echo "hello" | quecto`)
+- In-memory buffers for BDD testing (`run_repl_with_output()`)
+
+Production code lives in `src/interface/repl.rs`. Key types: `ReplLoop<R, W>` (the generic loop), `ReplContext` (config + provider bundle), `ReplFlags` (parsed CLI flags), `ReplSession` (agent + persistence state).
 
 #### `quecto agent` — Headless one-shot mode
 
@@ -144,9 +164,9 @@ Refactor
 @wip -> @done       Tag the feature
 ```
 
-The BDD runner (`tests/bdd/main.rs`) uses `.fail_on_skipped()` and runs features tagged `@wip` or `@done`. This means all completed features are regression-tested on every run. Scenarios tagged `@pending` are always excluded. Scenarios tagged `@real-llm` are excluded unless `QUECTO_REAL_LLM=1` is set (requires `OPENAI_API_KEY` via env var or `.env` file). Set `QUECTO_TAG=<tag>` to run only scenarios matching a specific tag (e.g. `QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm cargo test --test bdd`). Step definitions live in `tests/bdd/` split across 16 module files (~5500 lines total).
+The BDD runner (`tests/bdd/main.rs`) uses `.fail_on_skipped()` and runs features tagged `@wip` or `@done`. This means all completed features are regression-tested on every run. Scenarios tagged `@pending` are always excluded. Scenarios tagged `@real-llm` are excluded unless `QUECTO_REAL_LLM=1` is set (requires `OPENAI_API_KEY` via env var or `.env` file). Set `QUECTO_TAG=<tag>` to run only scenarios matching a specific tag (e.g. `QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm cargo test --test bdd`). Step definitions live in `tests/bdd/` split across 17 module files (~6000 lines total).
 
-Feature files live in `tests/features/`. There are 27 feature files covering: config, cli, onboard, security, sandbox_hardening, agent_tools, providers, agent_loop, session, auth, telegram, cron, subagent, heartbeat, skills, voice, observability, agent_cli, e2e_tool_use, e2e_session, e2e_subprocess, e2e_safety, e2e_providers, e2e_agentic_loop, e2e_real_llm, e2e_session_tools, e2e_skills.
+Feature files live in `tests/features/`. There are 28 feature files covering: config, cli, onboard, security, sandbox_hardening, agent_tools, providers, agent_loop, session, auth, telegram, cron, subagent, heartbeat, skills, voice, observability, agent_cli, e2e_tool_use, e2e_session, e2e_subprocess, e2e_safety, e2e_providers, e2e_agentic_loop, e2e_real_llm, e2e_session_tools, e2e_skills, repl.
 
 ## Quality gates
 
@@ -155,9 +175,9 @@ scripts/check-quality.sh       Work markers, lint bypasses, unsafe, ignored test
 scripts/check-bdd-quality.sh   BDD anti-pattern detection (tests/bdd/)
 cargo fmt --check              Formatting
 cargo clippy -- -D warnings    Lints (zero warnings policy)
-cargo test --lib               325 unit tests
+cargo test --lib               329 unit tests
 cargo test --test architecture Clean Architecture boundary enforcement
-cargo test --test bdd          204 active BDD scenarios across 27 @done features (+13 @real-llm gated)
+cargo test --test bdd          217 active BDD scenarios across 28 @done features (+13 @real-llm gated)
 ```
 
 ### BDD quality gate (`scripts/check-bdd-quality.sh`)

@@ -305,6 +305,12 @@ pub struct QuectoWorld {
     pub subprocess_stdout: Option<String>,
     /// Subprocess captured stderr
     pub subprocess_stderr: Option<String>,
+    /// REPL: accumulated input lines (built up by "I type" steps)
+    pub repl_input_lines: Vec<String>,
+    /// REPL: flags to pass (built up by "with flags" steps)
+    pub repl_flags: Vec<String>,
+    /// REPL: whether the REPL has been executed (lazy execution)
+    pub repl_executed: bool,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
@@ -342,6 +348,7 @@ mod cron_steps;
 mod e2e_steps;
 mod heartbeat_steps;
 mod provider_steps;
+mod repl_steps;
 mod sandbox_steps;
 mod security_steps;
 mod session_steps;

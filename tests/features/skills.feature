@@ -46,10 +46,32 @@ Feature: Skills System
     And the skill "empty_skill" should have empty content
 
   @pending
-  Scenario: Install a skill from GitHub
-    When I run quecto with arguments "skills install sipeed/quecto-skills/weather"
+  Scenario: Install a skill from GitHub URL
+    Given a quecto base directory at a temporary path
+    And a config file with a workspace directory
+    And a mock GitHub API serving a skill repository at "user/repo/weather"
+    When I run quecto with arguments "skills install user/repo/weather"
     Then the exit code should be 0
-    And the output should contain "installed successfully"
+    And the output should contain "installed"
+    And the workspace should contain a skill directory "weather"
+    And the skill directory should contain a "SKILL.md" file
+
+  @pending
+  Scenario: Install skill fails for invalid GitHub path
+    Given a quecto base directory at a temporary path
+    And a config file with a workspace directory
+    When I run quecto with arguments "skills install invalid-path"
+    Then the exit code should be 1
+    And the output should contain "invalid skill path"
+
+  @pending
+  Scenario: Install skill fails when already exists
+    Given a quecto base directory at a temporary path
+    And a config file with a workspace directory
+    And a workspace with skill "weather" installed
+    When I run quecto with arguments "skills install user/repo/weather"
+    Then the exit code should be 1
+    And the output should contain "already exists"
 
   Scenario: Remove an installed skill
     Given a workspace with skill "weather" installed

@@ -79,9 +79,47 @@ Feature: Agent Tool System
     Then the spawn result should be an error mentioning "not allowed"
 
   @pending
-  Scenario: Web search returns results
-    Given a web search tool configured with DuckDuckGo
+  Scenario: Web search via DuckDuckGo returns results
+    Given a tool workspace
+    And a web search tool configured with a mock DuckDuckGo API
+    And the mock search API returns results for "rust programming":
+      | title                        | url                                  |
+      | Rust Programming Language    | https://www.rust-lang.org/           |
+      | Rust (programming language)  | https://en.wikipedia.org/wiki/Rust   |
     When the agent executes tool "web_search" with args:
-      | query | rust programming language |
+      | query | rust programming |
+    Then the tool result should contain "Rust Programming Language"
+    And the tool result should contain "rust-lang.org"
+    And the tool result should not be an error
+
+  @pending
+  Scenario: Web search via Brave API returns results
+    Given a tool workspace
+    And a web search tool configured with a mock Brave Search API and api_key "bsk-test"
+    And the mock Brave API returns results for "weather today":
+      | title           | url                         |
+      | Weather Today   | https://weather.example.com |
+    When the agent executes tool "web_search" with args:
+      | query | weather today |
+    Then the tool result should contain "Weather Today"
+    And the tool result should not be an error
+
+  @pending
+  Scenario: Web search falls back to DuckDuckGo when Brave key is missing
+    Given a tool workspace
+    And a web search tool configured with no Brave API key
+    And a mock DuckDuckGo API that returns results
+    When the agent executes tool "web_search" with args:
+      | query | test query |
     Then the tool result should contain search results
-    And each result should have a title and URL
+    And the search should have used DuckDuckGo
+
+  @pending
+  Scenario: Web search handles API error gracefully
+    Given a tool workspace
+    And a web search tool configured with a mock DuckDuckGo API
+    And the mock search API returns an HTTP 503 error
+    When the agent executes tool "web_search" with args:
+      | query | test query |
+    Then the tool result should be an error
+    And the tool result should contain "search failed"

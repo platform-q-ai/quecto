@@ -32,7 +32,7 @@ Feature: Configuration
       {}
       """
     When I load the config
-    Then the model should be "gpt-5.2-codex"
+    Then the model should be "gpt-5.2"
     And the max_tokens should be 8192
     And the temperature should be 0.7
     And the workspace should be "~/.quecto/workspace"
