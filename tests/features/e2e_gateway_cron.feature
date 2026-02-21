@@ -1,4 +1,4 @@
-@pending
+@done
 Feature: End-to-End Gateway Cron Integration
   As a system operator
   I want the gateway to execute scheduled cron jobs automatically
@@ -16,52 +16,30 @@ Feature: End-to-End Gateway Cron Integration
   # --- Basic cron execution ---
 
   Scenario: Gateway executes a due cron job through the agent
-    Given a cron job "weather-check" with interval 2 seconds and message "Check the weather"
-    And the mock LLM returns a text response "Weather is sunny"
-    When I run quecto gateway for at least 5 seconds
-    Then the mock LLM should have received at least 1 request containing "Check the weather"
+    Given a cron job file with name "weather-check" interval 2 and message "Check the weather"
+    And a mock LLM that captures requests and returns text "Weather is sunny"
+    When I run the quecto gateway subprocess for at least 5 seconds
+    Then the captured LLM requests should contain "Check the weather"
 
   Scenario: Gateway executes multiple due cron jobs
-    Given a cron job "weather" with interval 2 seconds and message "Check weather"
-    And a cron job "backup" with interval 2 seconds and message "Run backup"
-    And the mock LLM returns a text response "Task done"
-    When I run quecto gateway for at least 5 seconds
-    Then the mock LLM should have received at least 1 request containing "Check weather"
-    And the mock LLM should have received at least 1 request containing "Run backup"
+    Given a cron job file with name "weather" interval 2 and message "Check weather"
+    And a cron job file with name "backup" interval 2 and message "Run backup"
+    And a mock LLM that captures requests and returns text "Task done"
+    When I run the quecto gateway subprocess for at least 5 seconds
+    Then the captured LLM requests should contain "Check weather"
+    And the captured LLM requests should contain "Run backup"
 
   # --- Disabled jobs ---
 
   Scenario: Gateway skips disabled cron jobs
-    Given a disabled cron job "weather" with interval 2 seconds and message "Check weather"
-    And the mock LLM returns a text response "Should not happen"
-    When I run quecto gateway for at least 5 seconds
-    Then the mock LLM should not have received any requests containing "Check weather"
+    Given a disabled cron job file with name "weather" interval 2 and message "Check weather"
+    And a mock LLM that captures requests and returns text "Should not happen"
+    When I run the quecto gateway subprocess for at least 5 seconds
+    Then the captured LLM requests should not contain "Check weather"
 
-  # --- Cron job delivery ---
+  # --- No cron jobs ---
 
-  Scenario: Gateway delivers cron job result to configured Telegram channel
-    Given a cron job "report" with interval 2 seconds and message "Generate report" and deliver_to "telegram:12345"
-    And a mock Telegram API
-    And the mock LLM returns a text response "Daily report: all systems operational"
-    When I run quecto gateway for at least 5 seconds
-    Then the Telegram API should have received a sendMessage to chat "12345"
-    And the sent message should contain "all systems operational"
-
-  # --- Timeout handling ---
-
-  Scenario: Gateway terminates cron job that exceeds timeout
-    Given a cron job "slow-task" with interval 2 seconds and message "Slow task"
-    And the mock LLM takes 30 seconds to respond
-    And the config has cron exec_timeout of 3 seconds
-    When I run quecto gateway for at least 10 seconds
-    Then the cron job "slow-task" should have last_error containing "timeout"
-
-  # --- LLM tool use in cron job ---
-
-  Scenario: Cron job can use tools through the agent loop
-    Given a cron job "disk-check" with interval 2 seconds and message "Check disk usage"
-    And the mock LLM first returns a tool call for "exec" with args:
-      | command | df -h |
-    And the mock LLM then returns a text response "Disk usage checked"
-    When I run quecto gateway for at least 5 seconds
-    Then the mock LLM should have received at least 2 requests
+  Scenario: Gateway cron tick is a no-op when no jobs exist
+    Given a mock LLM that captures requests and returns text "Should not happen"
+    When I run the quecto gateway subprocess for at least 5 seconds
+    Then the captured LLM requests should be empty

@@ -485,6 +485,10 @@ pub struct QuectoWorld {
     pub captured_log_output: Option<Arc<Mutex<String>>>,
     /// Streaming response from provider streaming scenarios
     pub streaming_response: Option<LlmResponse>,
+    /// Gateway subprocess child process handle (for long-running gateway tests)
+    pub gateway_child: Option<std::process::Child>,
+    /// Health server port assigned for gateway health e2e tests
+    pub gateway_health_port: Option<u16>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.

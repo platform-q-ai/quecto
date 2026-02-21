@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::cron_executor;
+use crate::application::heartbeat;
 use crate::domain::agent::AgentLoop;
 use crate::domain::message::{Message, Role};
 use crate::domain::provider::LlmProvider;
@@ -11,7 +13,8 @@ use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::auth::credential_store::{Credential, CredentialStore};
 use crate::infrastructure::bus::{InboundMessage, MessageBus, OutboundMessage};
 use crate::infrastructure::channels::telegram::{TelegramChannel, TelegramUpdate};
-use crate::infrastructure::config::Config;
+use crate::infrastructure::config::{Config, HealthConfig};
+use crate::infrastructure::health::server::{HealthServer, StaticReadiness};
 use crate::infrastructure::persistence::cron_store::FileCronStore;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::providers;
@@ -55,19 +58,40 @@ struct EventLoopContext {
     session_store: Arc<FileSessionStore>,
     telegram: TelegramChannel,
     config: Config,
+    health_config: HealthConfig,
+    workspace: PathBuf,
+    cron_store: Arc<FileCronStore>,
 }
 
 impl EventLoopContext {
     /// Run the concurrent event loop until shutdown.
+    ///
+    /// Spawns background services (health, heartbeat, cron) as detached tasks
+    /// and selects on the core messaging pipeline plus shutdown signal. When
+    /// any core task completes or ctrl-c fires, all spawned tasks are dropped.
     async fn run(self) {
-        let polling_telegram = self.telegram.clone();
-        let polling_config = self.config.clone();
+        // Background services — fire and forget, cancelled on shutdown.
+        tokio::spawn(Gateway::run_health_server(self.health_config));
+        tokio::spawn(Gateway::run_heartbeat(
+            self.config.heartbeat.clone(),
+            self.agent.clone(),
+            self.workspace,
+        ));
+        tokio::spawn(Gateway::run_cron_tick(
+            self.cron_store,
+            self.agent.clone(),
+            self.config.tools.cron.exec_timeout_minutes,
+        ));
+
+        // Core messaging pipeline — select until one stops or shutdown.
         tokio::select! {
-            _ = Gateway::run_telegram_polling(polling_telegram, self.inbound_tx, polling_config) => {
+            _ = Gateway::run_telegram_polling(
+                self.telegram.clone(), self.inbound_tx, self.config,
+            ) => {
                 tracing::info!("Telegram polling stopped");
             }
             _ = Gateway::run_inbound_processor(
-                self.inbound_rx, self.agent, self.session_store, self.outbound_tx
+                self.inbound_rx, self.agent, self.session_store, self.outbound_tx,
             ) => {
                 tracing::info!("Inbound processor stopped");
             }
@@ -119,7 +143,7 @@ impl Gateway {
         }
 
         let provider = Arc::new(self.build_fallback_provider()?);
-        let (agent, mut bus) = self.build_agent(workspace, provider);
+        let (agent, mut bus) = self.build_agent(workspace.clone(), provider);
         let agent = Arc::new(agent);
 
         let info = agent.info();
@@ -136,6 +160,9 @@ impl Gateway {
             session_store: Arc::new(FileSessionStore::new(&self.base_dir)),
             telegram: TelegramChannel::new(&self.config.channels.telegram),
             config: self.config.clone(),
+            health_config: self.config.health.clone(),
+            workspace: workspace.clone(),
+            cron_store: Arc::new(FileCronStore::new(&self.base_dir)),
         };
         ctx.run().await;
 
@@ -445,6 +472,111 @@ impl Gateway {
             }
         }
     }
+
+    /// Health server task.
+    ///
+    /// Starts the health HTTP server if enabled in configuration.
+    /// If disabled, suspends forever (does not consume a select! slot).
+    async fn run_health_server(config: HealthConfig) {
+        if !config.enabled {
+            tracing::info!("Health server disabled");
+            std::future::pending::<()>().await;
+            return;
+        }
+
+        let addr = format!("127.0.0.1:{}", config.port);
+        // The gateway has at least one provider (checked in build_fallback_provider),
+        // so readiness starts as true.
+        let readiness = Arc::new(StaticReadiness::new(true));
+        match HealthServer::bind(&addr, readiness).await {
+            Ok(server) => {
+                tracing::info!(port = config.port, "health server started");
+                server.run().await;
+            }
+            Err(e) => {
+                tracing::error!(error = %e, addr = addr, "failed to bind health server");
+                // Don't crash the gateway — just log and suspend.
+                std::future::pending::<()>().await;
+            }
+        }
+    }
+
+    /// Heartbeat timer task.
+    ///
+    /// Periodically loads HEARTBEAT.md from the workspace, parses tasks,
+    /// and dispatches them through the agent. If disabled in config,
+    /// suspends forever (does not consume a select! slot).
+    async fn run_heartbeat(
+        config: crate::infrastructure::config::HeartbeatConfig,
+        agent: Arc<AgentLoopImpl>,
+        workspace: PathBuf,
+    ) {
+        if !config.enabled {
+            tracing::info!("Heartbeat disabled");
+            std::future::pending::<()>().await;
+            return;
+        }
+
+        let interval = std::time::Duration::from_secs(u64::from(config.interval));
+        let timeout = std::time::Duration::from_secs(300); // 5 min per task
+        tracing::info!(interval_secs = config.interval, "heartbeat timer started");
+
+        loop {
+            tokio::time::sleep(interval).await;
+            tracing::info!("heartbeat tick");
+            match heartbeat::execute_heartbeat_tick(&workspace, &*agent, timeout).await {
+                Ok(results) => {
+                    for result in &results {
+                        tracing::info!(
+                            task = result.message.as_str(),
+                            via_spawn = result.dispatched_via_spawn,
+                            "heartbeat task completed"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "heartbeat tick failed");
+                }
+            }
+        }
+    }
+
+    /// Cron tick timer task.
+    ///
+    /// Periodically checks for due cron jobs and dispatches them through the agent.
+    /// Uses a short check interval (2s) so jobs fire promptly.
+    async fn run_cron_tick(
+        store: Arc<FileCronStore>,
+        agent: Arc<AgentLoopImpl>,
+        timeout_minutes: u32,
+    ) {
+        let check_interval = std::time::Duration::from_secs(2);
+        let timeout = std::time::Duration::from_secs(u64::from(timeout_minutes) * 60);
+        tracing::info!(
+            check_interval_secs = 2,
+            timeout_minutes = timeout_minutes,
+            "cron tick timer started"
+        );
+
+        loop {
+            tokio::time::sleep(check_interval).await;
+            tracing::info!("cron tick");
+            match cron_executor::execute_cron_tick(&*store, &*agent, timeout).await {
+                Ok(results) => {
+                    for result in &results {
+                        tracing::info!(
+                            job_id = result.job_id.as_str(),
+                            ok = result.ok,
+                            "cron job executed"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "cron tick failed");
+                }
+            }
+        }
+    }
 }
 
 /// Handle a Telegram bot command (`/start`, `/help`, `/status`).
@@ -743,5 +875,71 @@ mod tests {
         let creds = store.load_snapshot().unwrap();
         let needs_reauth = check_provider_readiness(&creds);
         assert!(needs_reauth.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_run_health_server_starts_and_responds() {
+        use crate::infrastructure::config::HealthConfig;
+
+        // Bind to port 0 to get a random available port
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind to random port");
+        let port = listener.local_addr().unwrap().port();
+        drop(listener); // Release port so health server can bind to it
+
+        let config = HealthConfig {
+            enabled: true,
+            port,
+        };
+
+        // Spawn health server in background
+        let handle = tokio::spawn(Gateway::run_health_server(config));
+
+        // Wait briefly for the server to start
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Make a request
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(format!("http://127.0.0.1:{}/health", port))
+            .send()
+            .await
+            .expect("request should succeed");
+        assert_eq!(resp.status(), 200);
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["status"], "ok");
+
+        // Ready should return true (gateway sets readiness to true)
+        let resp = client
+            .get(format!("http://127.0.0.1:{}/ready", port))
+            .send()
+            .await
+            .expect("request should succeed");
+        assert_eq!(resp.status(), 200);
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["ready"], true);
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_run_health_server_disabled_suspends() {
+        use crate::infrastructure::config::HealthConfig;
+
+        let config = HealthConfig {
+            enabled: false,
+            port: 0,
+        };
+
+        // Should not return — just suspend forever. We verify by racing with a timeout.
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            Gateway::run_health_server(config),
+        )
+        .await;
+
+        assert!(
+            result.is_err(),
+            "disabled health server should suspend (timeout expected)"
+        );
     }
 }
