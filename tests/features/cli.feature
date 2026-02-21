@@ -5,6 +5,7 @@ Feature: CLI Interface
   So that I can interact with Quecto from the terminal
 
   Scenario: No arguments enters REPL mode
+    Given a valid config with OpenAI API key set
     When I run quecto with no arguments
     Then quecto should enter interactive REPL mode
 

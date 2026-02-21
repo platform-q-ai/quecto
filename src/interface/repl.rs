@@ -5,10 +5,10 @@ use std::sync::Arc;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::agent::AgentLoop;
 use crate::domain::message::{Message, Role};
+use crate::domain::provider::LlmProvider;
 use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
-use crate::infrastructure::providers::fallback::FallbackProvider;
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
@@ -75,13 +75,14 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
             self.print_banner();
         }
 
+        let mut line = String::new();
         loop {
             if self.is_tty {
                 let _ = write!(self.writer, "> ");
                 let _ = self.writer.flush();
             }
 
-            let mut line = String::new();
+            line.clear();
             match self.reader.read_line(&mut line) {
                 Ok(0) => break, // EOF
                 Ok(_) => {}
@@ -138,7 +139,9 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
                 key: self.session.session_key.clone(),
                 messages: Vec::new(),
             };
-            let _ = rt.block_on(self.session.session_store.save(&session));
+            if let Err(e) = rt.block_on(self.session.session_store.save(&session)) {
+                let _ = writeln!(self.writer, "Warning: failed to clear session: {e}");
+            }
         }
         let _ = writeln!(self.writer, "Conversation cleared.");
     }
@@ -154,6 +157,9 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
         });
 
         let result = rt.block_on(self.session.agent.process(&mut self.session.messages));
+
+        // Remove the system prompt by matching role + content, not by index.
+        // This is safe even if process() inserts messages before the system prompt position.
         self.remove_system_prompt(system_idx);
 
         match result {
@@ -179,11 +185,34 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
         })
     }
 
+    /// Remove the system prompt injected at `idx`.
+    ///
+    /// Scans backwards from `idx` to find the system message, in case the
+    /// agent loop inserted messages before it (defensive). Falls back to
+    /// forward scan if not found.
     fn remove_system_prompt(&mut self, idx: Option<usize>) {
-        if let Some(idx) = idx {
-            if idx < self.session.messages.len() {
-                self.session.messages.remove(idx);
+        let Some(original_idx) = idx else { return };
+        let Some(prompt) = &self.session.system_prompt else {
+            return;
+        };
+
+        // Try the original index first (fast path).
+        if original_idx < self.session.messages.len() {
+            let msg = &self.session.messages[original_idx];
+            if msg.role == Role::System && msg.content == *prompt {
+                self.session.messages.remove(original_idx);
+                return;
             }
+        }
+
+        // Fallback: scan for the system message by content.
+        if let Some(pos) = self
+            .session
+            .messages
+            .iter()
+            .position(|m| m.role == Role::System && m.content == *prompt)
+        {
+            self.session.messages.remove(pos);
         }
     }
 
@@ -243,18 +272,26 @@ pub fn run_repl<R: BufRead, W: Write>(
     };
 
     let session_store = FileSessionStore::new(ctx.base_dir);
-    let messages = load_session_messages(&session_store, &session_key, ephemeral);
 
-    // Load skills and merge with user system prompt
-    let skill_prompt = super::cli::load_skill_prompt(ctx.base_dir);
-    let system_prompt = if skill_prompt.is_empty() {
-        ctx.flags.system_prompt.clone()
-    } else {
-        Some(super::cli::merge_prompts(
-            &skill_prompt,
-            &ctx.flags.system_prompt,
-        ))
+    // Create the runtime once and reuse for both session loading and the REPL loop.
+    let rt = match build_repl_runtime() {
+        Ok(rt) => rt,
+        Err(e) => {
+            // Can't proceed without a runtime — fall back to empty messages.
+            tracing::error!("failed to create runtime for session load: {e}");
+            let session = ReplSession {
+                agent,
+                messages: Vec::new(),
+                session_store,
+                session_key,
+                ephemeral,
+                system_prompt: build_system_prompt(ctx),
+            };
+            return ReplLoop::new(reader, writer, is_tty, session).run();
+        }
     };
+
+    let messages = load_session_messages_with_rt(&rt, &session_store, &session_key, ephemeral);
 
     let session = ReplSession {
         agent,
@@ -262,29 +299,46 @@ pub fn run_repl<R: BufRead, W: Write>(
         session_store,
         session_key,
         ephemeral,
-        system_prompt,
+        system_prompt: build_system_prompt(ctx),
     };
 
+    // Drop the pre-built runtime so ReplLoop::run() can create its own
+    // (current_thread runtimes cannot be nested).
+    drop(rt);
     ReplLoop::new(reader, writer, is_tty, session).run()
+}
+
+/// Build the system prompt by loading skills and merging with user prompt.
+fn build_system_prompt(ctx: &ReplContext<'_>) -> Option<String> {
+    let skill_prompt = super::shared::load_skill_prompt(ctx.base_dir);
+    if skill_prompt.is_empty() {
+        ctx.flags.system_prompt.clone()
+    } else {
+        Some(super::shared::merge_prompts(
+            &skill_prompt,
+            &ctx.flags.system_prompt,
+        ))
+    }
 }
 
 /// Context for constructing a REPL session.
 pub struct ReplContext<'a> {
     pub base_dir: &'a Path,
-    pub provider: Arc<FallbackProvider>,
+    pub provider: Arc<dyn LlmProvider>,
     pub config: &'a Config,
     pub flags: &'a ReplFlags,
 }
 
-/// Load existing session messages, or return empty if ephemeral or not found.
-fn load_session_messages(store: &FileSessionStore, key: &str, ephemeral: bool) -> Vec<Message> {
+/// Load existing session messages using a provided runtime.
+fn load_session_messages_with_rt(
+    rt: &tokio::runtime::Runtime,
+    store: &FileSessionStore,
+    key: &str,
+    ephemeral: bool,
+) -> Vec<Message> {
     if ephemeral {
         return Vec::new();
     }
-    let rt = match build_repl_runtime() {
-        Ok(rt) => rt,
-        Err(_) => return Vec::new(),
-    };
     match rt.block_on(store.load(key)) {
         Ok(Some(session)) => session.messages,
         _ => Vec::new(),

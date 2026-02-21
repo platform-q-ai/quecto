@@ -16,11 +16,34 @@ quecto onboard
 # Store your API key
 quecto auth login --provider openai --token sk-proj-your-key
 
-# Talk to the agent
+# Talk to the agent (one-shot)
 quecto agent -m "Hello, what can you do?"
+
+# Or start an interactive session
+quecto
 ```
 
 ## Commands
+
+### `quecto` — Interactive REPL
+
+When run with no arguments, quecto enters an interactive read-eval-print loop:
+
+```bash
+quecto
+```
+
+The REPL reads input line by line, sends each to the LLM agent, prints the response, and repeats.
+
+| Flag | Description |
+|---|---|
+| `-s` / `--session` | Session name for persistence. Default: `repl:repl_default`. Use `-` for ephemeral |
+| `--system` | System prompt prepended to each turn (not persisted) |
+| `--model` | Override the default model from config |
+
+REPL commands: `/help` (show commands), `/clear` (reset history), `/exit` or `/quit` (exit). Ctrl+D (EOF) also exits cleanly.
+
+Piped input is supported for scripting: `echo "hello" | quecto`.
 
 ### `quecto agent` — Talk to the agent
 
@@ -107,6 +130,26 @@ Creates the default config file and workspace directory structure:
     USER.md
 ```
 
+### `quecto help` — Show usage
+
+Prints a summary of all available commands.
+
+```bash
+quecto help
+```
+
+Also available as `quecto --help` or `quecto -h`.
+
+### `quecto version` — Show version
+
+Prints the version number.
+
+```bash
+quecto version
+```
+
+Also available as `quecto --version` or `quecto -v`.
+
 ## Configuration
 
 Config file: `~/.quecto/config.json`
@@ -188,7 +231,7 @@ The agent has access to tools it can call autonomously to accomplish tasks.
 
 ### Gateway-only tools
 
-These are available when running `quecto gateway` but not through `quecto agent`:
+These are available when running `quecto gateway` but not in CLI or REPL mode:
 
 | Tool | Description |
 |---|---|
@@ -244,6 +287,7 @@ Set `allow_from` to an empty array `[]` to allow all users (not recommended for 
   credentials.json         # Stored API tokens (from quecto auth)
   sessions/                # Persisted conversation history
     cli_default.json
+    repl_repl_default.json
     telegram_123456.json
   cron/
     jobs.json              # Scheduled task definitions
