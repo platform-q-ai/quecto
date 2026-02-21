@@ -31,6 +31,10 @@ pub struct CliOutput {
 pub struct CliContext {
     /// Override for the base directory (default: ~/.quecto).
     pub base_dir: Option<PathBuf>,
+    /// Pre-loaded stdin data for testing interactive commands.
+    pub stdin_data: Option<String>,
+    /// Override OAuth base URL for testing (e.g. wiremock URI).
+    pub oauth_base_url: Option<String>,
 }
 
 impl CliContext {
@@ -688,7 +692,7 @@ fn cmd_auth(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &mut
     }
 
     match args[0].as_str() {
-        "login" => cmd_auth_login(&base, &args[1..], stdout, stderr),
+        "login" => cmd_auth_login(ctx, &args[1..], stdout, stderr),
         "logout" => cmd_auth_logout(&base, &args[1..], stdout, stderr),
         "status" => cmd_auth_status(&base, stdout),
         other => {
@@ -702,13 +706,16 @@ fn cmd_auth(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &mut
 const KNOWN_PROVIDERS: &[&str] = &["openai", "anthropic"];
 
 fn cmd_auth_login(
-    base: &std::path::Path,
+    ctx: &CliContext,
     args: &[String],
     stdout: &mut String,
     stderr: &mut String,
 ) -> i32 {
+    let base = ctx.base_dir();
     let mut provider: Option<String> = None;
     let mut token: Option<String> = None;
+    let mut use_oauth = false;
+    let mut use_device_code = false;
     let mut i = 0;
 
     while i < args.len() {
@@ -730,6 +737,14 @@ fn cmd_auth_login(
                     stderr.push_str("auth login: --token requires a value\n");
                     return 1;
                 }
+            }
+            "--oauth" => {
+                use_oauth = true;
+                i += 1;
+            }
+            "--device-code" => {
+                use_device_code = true;
+                i += 1;
             }
             other if other.starts_with("--") => {
                 stderr.push_str(&format!("auth login: unknown flag '{}'\n", other));
@@ -755,9 +770,22 @@ fn cmd_auth_login(
         return 1;
     }
 
-    let Some(token) = token else {
-        stderr.push_str("auth login: --token is required (interactive login not yet supported)\n");
-        return 1;
+    if use_oauth {
+        return cmd_auth_login_oauth(ctx, &provider, stdout, stderr);
+    }
+
+    if use_device_code {
+        return cmd_auth_login_device_code(ctx, &provider, stdout, stderr);
+    }
+
+    // If --token was provided, use it directly.
+    // Otherwise, prompt for interactive token paste.
+    let token = match token {
+        Some(t) => t,
+        None => {
+            stdout.push_str(&format!("Paste your API token for {}:\n", provider));
+            read_stdin_line(ctx)
+        }
     };
 
     let token = token.trim().to_string();
@@ -766,7 +794,7 @@ fn cmd_auth_login(
         return 1;
     }
 
-    let store = CredentialStore::new(base);
+    let store = CredentialStore::new(&base);
     match store.store(Credential {
         provider: provider.clone(),
         token,
@@ -779,6 +807,91 @@ fn cmd_auth_login(
         }
         Err(e) => {
             stderr.push_str(&format!("auth login: failed to store credential: {}\n", e));
+            1
+        }
+    }
+}
+
+/// Read a single line from stdin (or from `ctx.stdin_data` in test mode).
+fn read_stdin_line(ctx: &CliContext) -> String {
+    if let Some(ref data) = ctx.stdin_data {
+        // Return the first line of pre-loaded stdin data.
+        data.lines().next().unwrap_or("").to_string()
+    } else {
+        let mut line = String::new();
+        let _ = std::io::stdin().read_line(&mut line);
+        line
+    }
+}
+
+/// OAuth browser-based login flow.
+fn cmd_auth_login_oauth(
+    ctx: &CliContext,
+    provider: &str,
+    stdout: &mut String,
+    stderr: &mut String,
+) -> i32 {
+    use crate::infrastructure::auth::oauth::OAuthConfig;
+
+    let config = if let Some(ref base_url) = ctx.oauth_base_url {
+        OAuthConfig::with_base_url(base_url)
+    } else {
+        match OAuthConfig::for_provider(provider) {
+            Some(c) => c,
+            None => {
+                stderr.push_str(&format!(
+                    "auth login: OAuth is not supported for '{}'\n",
+                    provider
+                ));
+                return 1;
+            }
+        }
+    };
+
+    stdout.push_str(&format!(
+        "Open this URL in your browser:\n{}\n\nWaiting for authorization...\n",
+        config.authorization_url
+    ));
+    0
+}
+
+/// Device code login flow for headless environments.
+fn cmd_auth_login_device_code(
+    ctx: &CliContext,
+    provider: &str,
+    stdout: &mut String,
+    stderr: &mut String,
+) -> i32 {
+    use crate::infrastructure::auth::oauth::OAuthConfig;
+
+    let config = if let Some(ref base_url) = ctx.oauth_base_url {
+        OAuthConfig::with_base_url(base_url)
+    } else {
+        match OAuthConfig::for_provider(provider) {
+            Some(c) => c,
+            None => {
+                stderr.push_str(&format!(
+                    "auth login: device code flow is not supported for '{}'\n",
+                    provider
+                ));
+                return 1;
+            }
+        }
+    };
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    match rt.block_on(crate::infrastructure::auth::oauth::request_device_code(
+        &config,
+    )) {
+        Ok(resp) => {
+            stdout.push_str(&format!(
+                "Go to: {}\nEnter code: {}\n\nWaiting for authorization...\n",
+                resp.verification_uri, resp.user_code
+            ));
+            0
+        }
+        Err(e) => {
+            stderr.push_str(&format!("auth login: device code request failed: {}\n", e));
             1
         }
     }
@@ -1156,6 +1269,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("onboard"), &ctx);
         assert_eq!(out.exit_code, 0);
@@ -1170,6 +1284,7 @@ mod tests {
         std::fs::write(tmp.path().join("config.json"), "{}").unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("onboard"), &ctx);
         assert_eq!(out.exit_code, 0);
@@ -1189,6 +1304,7 @@ mod tests {
         std::fs::write(tmp.path().join("config.json"), config_json).unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("status"), &ctx);
         assert_eq!(out.exit_code, 0);
@@ -1213,6 +1329,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("status"), &ctx);
         assert_eq!(out.exit_code, 1);
@@ -1230,6 +1347,7 @@ mod tests {
         std::fs::write(tmp.path().join("config.json"), config_json).unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("status"), &ctx);
         assert_eq!(out.exit_code, 0);
@@ -1292,6 +1410,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("skills foobar"), &ctx);
         assert_eq!(out.exit_code, 1);
@@ -1303,6 +1422,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("skills list"), &ctx);
         assert_eq!(out.exit_code, 0);
@@ -1316,6 +1436,7 @@ mod tests {
         std::fs::create_dir_all(&skill_dir).unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("skills list"), &ctx);
         assert_eq!(out.exit_code, 0);
@@ -1327,6 +1448,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("skills remove"), &ctx);
         assert_eq!(out.exit_code, 1);
@@ -1338,6 +1460,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("skills remove nonexistent"), &ctx);
         assert_eq!(out.exit_code, 1);
@@ -1349,6 +1472,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("skills install"), &ctx);
         assert_eq!(out.exit_code, 1);
@@ -1366,6 +1490,7 @@ mod tests {
         std::fs::write(tmp.path().join("config.json"), config_json).unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("status"), &ctx);
         assert_eq!(out.exit_code, 0);
@@ -1386,6 +1511,7 @@ mod tests {
         std::fs::write(tmp.path().join("config.json"), config_json).unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("status"), &ctx);
         assert_eq!(out.exit_code, 0);
@@ -1397,6 +1523,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         // cmd_gateway_run uses eprintln directly, so we test through run_with_output
         // (which routes "gateway" to a hint message since the real gateway path
@@ -1445,6 +1572,7 @@ mod tests {
     fn test_cli_context_override_base_dir() {
         let ctx = CliContext {
             base_dir: Some(PathBuf::from("/tmp/test-quecto")),
+            ..Default::default()
         };
         assert_eq!(ctx.base_dir(), PathBuf::from("/tmp/test-quecto"));
     }
@@ -1456,6 +1584,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(
             args("auth login --provider openai --token sk-test-openai"),
@@ -1475,6 +1604,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(
             args("auth login --provider anthropic --token sk-ant-test"),
@@ -1489,6 +1619,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("auth login --token sk-test"), &ctx);
         assert_eq!(out.exit_code, 1);
@@ -1500,6 +1631,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("auth login --provider openai"), &ctx);
         assert_eq!(out.exit_code, 1);
@@ -1511,6 +1643,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         // First store a credential
         let store = crate::infrastructure::auth::credential_store::CredentialStore::new(tmp.path());
@@ -1534,6 +1667,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("auth logout --provider openai"), &ctx);
         assert_eq!(out.exit_code, 0);
@@ -1555,6 +1689,7 @@ mod tests {
 
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("auth status"), &ctx);
         assert_eq!(out.exit_code, 0);
@@ -1567,6 +1702,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("auth status"), &ctx);
         assert_eq!(out.exit_code, 0);
@@ -1588,6 +1724,7 @@ mod tests {
 
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("auth status"), &ctx);
         assert_eq!(out.exit_code, 0);
@@ -1600,6 +1737,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("auth"), &ctx);
         assert_eq!(out.exit_code, 1);
@@ -1611,6 +1749,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("auth foobar"), &ctx);
         assert_eq!(out.exit_code, 1);
@@ -1622,6 +1761,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("auth login --provider groq --token sk-test"), &ctx);
         assert_eq!(out.exit_code, 1);
@@ -1634,6 +1774,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         // We pass a token that's all whitespace
         let v = vec![
@@ -1655,6 +1796,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("auth login --provider openai --tokn sk-test"), &ctx);
         assert_eq!(out.exit_code, 1);
@@ -1667,6 +1809,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("auth logout --provder openai"), &ctx);
         assert_eq!(out.exit_code, 1);
@@ -1688,6 +1831,7 @@ mod tests {
         .unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("agent"), &ctx);
         assert_eq!(out.exit_code, 1);
@@ -1705,6 +1849,7 @@ mod tests {
         // No config file written
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("agent -m hello"), &ctx);
         assert_eq!(out.exit_code, 1);
@@ -1730,6 +1875,7 @@ mod tests {
         .unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("agent -m hello"), &ctx);
         assert_eq!(out.exit_code, 1);
@@ -1746,6 +1892,7 @@ mod tests {
         // No config — we just test flag parsing, not execution
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         // With no config, it should fail on "config not found" regardless of flags
         let out = run_with_output(
@@ -1768,6 +1915,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(
             vec![
@@ -1790,6 +1938,7 @@ mod tests {
         std::fs::write(tmp.path().join("config.json"), "{}").unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("agent --system"), &ctx);
         assert_eq!(out.exit_code, 1);
@@ -1802,6 +1951,7 @@ mod tests {
         std::fs::write(tmp.path().join("config.json"), "{}").unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            ..Default::default()
         };
         let out = run_with_output(args("agent --model"), &ctx);
         assert_eq!(out.exit_code, 1);

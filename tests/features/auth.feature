@@ -4,7 +4,7 @@ Feature: Authentication
   I want to authenticate with LLM providers via OAuth or API tokens
   So that I can securely access their APIs
 
-  @pending
+  @done
   Scenario: Interactive login prompts for token paste
     Given a quecto base directory at a temporary path
     When I start quecto with arguments "auth login --provider anthropic"
@@ -13,22 +13,22 @@ Feature: Authentication
     And the credential for "anthropic" should exist in the base directory
     And the stored credential method should be "token"
 
-  @pending
+  @done
   Scenario: OAuth login initiates browser flow
     Given a quecto base directory at a temporary path
     And a mock OAuth server for "openai"
     When I run quecto with arguments "auth login --provider openai --oauth"
     Then the output should contain a URL to open in the browser
-    And the output should contain "waiting for authorization"
+    And the output should contain "Waiting for authorization"
 
-  @pending
+  @done
   Scenario: Device code login for headless environments
     Given a quecto base directory at a temporary path
     And a mock OAuth server for "openai" supporting device code flow
     When I run quecto with arguments "auth login --provider openai --device-code"
     Then the output should contain a device code URL
     And the output should contain a user code to enter
-    And the output should contain "waiting for authorization"
+    And the output should contain "Waiting for authorization"
 
   Scenario: Store and retrieve a credential
     Given a credential store
