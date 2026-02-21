@@ -66,16 +66,7 @@ fn given_llm_returns_text(world: &mut QuectoWorld, text: String) {
 fn given_llm_returns_tool_call(world: &mut QuectoWorld, tool_name: String, step: &gherkin::Step) {
     let mock = ensure_mock_llm(world);
     let table = step.table.as_ref().expect("step should have a table");
-    let mut map = serde_json::Map::new();
-    for row in &table.rows {
-        if row.len() >= 2 {
-            map.insert(
-                row[0].trim().to_string(),
-                serde_json::Value::String(row[1].trim().to_string()),
-            );
-        }
-    }
-    let args_json = serde_json::Value::Object(map).to_string();
+    let args_json = table_to_json(table);
     mock.push_response(LlmResponse {
         content: None,
         tool_calls: vec![ToolCall {

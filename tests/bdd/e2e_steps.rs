@@ -16,28 +16,12 @@ fn given_config_with_openai_mock(world: &mut QuectoWorld) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let server = rt.block_on(wiremock::MockServer::start());
     let uri = server.uri();
-    world._wiremock_server_uri = Some(uri.clone());
 
-    // Write config with api_base pointing at the mock server.
     ensure_temp_dir(world);
     let base = base_path(world);
     let workspace = base.join("workspace");
     std::fs::create_dir_all(&workspace).expect("create workspace dir");
-    let config_json = format!(
-        r#"{{
-  "providers": {{
-    "openai": {{ "api_key": "sk-test-key", "api_base": "{uri}" }}
-  }},
-  "agents": {{
-    "defaults": {{
-      "workspace": "{workspace}"
-    }}
-  }}
-}}"#,
-        uri = uri,
-        workspace = workspace.display()
-    );
-    std::fs::write(base.join("config.json"), config_json).expect("write config");
+    rewrite_config_to_uri(world, &uri);
 
     std::mem::forget(server);
     std::mem::forget(rt);
@@ -79,25 +63,7 @@ fn given_mock_llm_text_response(world: &mut QuectoWorld, content: String) {
             .mount(&server)
             .await;
 
-        // Update the config to point at this new server.
-        let base = base_path(world);
-        let workspace = base.join("workspace");
-        let config_json = format!(
-            r#"{{
-  "providers": {{
-    "openai": {{ "api_key": "sk-test-key", "api_base": "{new_uri}" }}
-  }},
-  "agents": {{
-    "defaults": {{
-      "workspace": "{workspace}"
-    }}
-  }}
-}}"#,
-            new_uri = new_uri,
-            workspace = workspace.display()
-        );
-        std::fs::write(base.join("config.json"), config_json).expect("rewrite config");
-        world._wiremock_server_uri = Some(new_uri);
+        rewrite_config_to_uri(world, &new_uri);
         std::mem::forget(server);
     });
     std::mem::forget(rt);
@@ -117,24 +83,7 @@ fn given_mock_llm_500_error(world: &mut QuectoWorld) {
             .mount(&server)
             .await;
 
-        let base = base_path(world);
-        let workspace = base.join("workspace");
-        let config_json = format!(
-            r#"{{
-  "providers": {{
-    "openai": {{ "api_key": "sk-test-key", "api_base": "{new_uri}" }}
-  }},
-  "agents": {{
-    "defaults": {{
-      "workspace": "{workspace}"
-    }}
-  }}
-}}"#,
-            new_uri = new_uri,
-            workspace = workspace.display()
-        );
-        std::fs::write(base.join("config.json"), config_json).expect("rewrite config");
-        world._wiremock_server_uri = Some(new_uri);
+        rewrite_config_to_uri(world, &new_uri);
         std::mem::forget(server);
     });
     std::mem::forget(rt);
@@ -318,20 +267,17 @@ fn openai_text_json(content: &str) -> serde_json::Value {
 fn rewrite_config_to_uri(world: &mut QuectoWorld, new_uri: &str) {
     let base = base_path(world);
     let workspace = base.join("workspace");
-    let config_json = format!(
-        r#"{{
-  "providers": {{
-    "openai": {{ "api_key": "sk-test-key", "api_base": "{new_uri}" }}
-  }},
-  "agents": {{
-    "defaults": {{
-      "workspace": "{workspace}"
-    }}
-  }}
-}}"#,
-        new_uri = new_uri,
-        workspace = workspace.display()
-    );
+    let config = serde_json::json!({
+        "providers": {
+            "openai": { "api_key": "sk-test-key", "api_base": new_uri }
+        },
+        "agents": {
+            "defaults": {
+                "workspace": workspace.display().to_string()
+            }
+        }
+    });
+    let config_json = serde_json::to_string_pretty(&config).expect("serialize config");
     std::fs::write(base.join("config.json"), config_json).expect("rewrite config");
     world._wiremock_server_uri = Some(new_uri.to_string());
 }
@@ -392,15 +338,8 @@ fn given_file_in_e2e_workspace(world: &mut QuectoWorld, filename: String, conten
 
 #[given(expr = "the mock LLM first returns a tool call for {string} with args:")]
 fn given_mock_llm_tool_call(world: &mut QuectoWorld, step: &gherkin::Step, tool_name: String) {
-    // Parse args from the Gherkin table into a JSON object.
     let table = step.table.as_ref().expect("step should have a table");
-    let mut map = serde_json::Map::new();
-    for row in &table.rows {
-        if row.len() >= 2 {
-            map.insert(row[0].clone(), serde_json::Value::String(row[1].clone()));
-        }
-    }
-    let args_json = serde_json::to_string(&map).unwrap();
+    let args_json = table_to_json(table);
     // Store for later pairing with the "then returns text" step.
     world.pending_tool_call = Some((tool_name, args_json));
 }
@@ -921,13 +860,7 @@ fn given_mock_llm_always_tool_call(
     tool_name: String,
 ) {
     let table = step.table.as_ref().expect("step should have a table");
-    let mut map = serde_json::Map::new();
-    for row in &table.rows {
-        if row.len() >= 2 {
-            map.insert(row[0].clone(), serde_json::Value::String(row[1].clone()));
-        }
-    }
-    let args_json = serde_json::to_string(&map).unwrap();
+    let args_json = table_to_json(table);
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
@@ -1036,26 +969,26 @@ fn anthropic_text_json(content: &str) -> serde_json::Value {
 }
 
 /// Helper: write a config file with the given provider entries.
-fn write_provider_config(world: &mut QuectoWorld, openai_json: &str, anthropic_json: &str) {
+fn write_provider_config(
+    world: &mut QuectoWorld,
+    openai: serde_json::Value,
+    anthropic: serde_json::Value,
+) {
     let base = base_path(world);
     let workspace = base.join("workspace");
     std::fs::create_dir_all(&workspace).expect("create workspace");
-    let config_json = format!(
-        r#"{{
-  "providers": {{
-    "openai": {openai_json},
-    "anthropic": {anthropic_json}
-  }},
-  "agents": {{
-    "defaults": {{
-      "workspace": "{workspace}"
-    }}
-  }}
-}}"#,
-        openai_json = openai_json,
-        anthropic_json = anthropic_json,
-        workspace = workspace.display()
-    );
+    let config = serde_json::json!({
+        "providers": {
+            "openai": openai,
+            "anthropic": anthropic,
+        },
+        "agents": {
+            "defaults": {
+                "workspace": workspace.display().to_string(),
+            }
+        }
+    });
+    let config_json = serde_json::to_string_pretty(&config).expect("serialize config");
     std::fs::write(base.join("config.json"), config_json).expect("write config");
 }
 
@@ -1068,9 +1001,11 @@ fn given_config_with_anthropic_mock(world: &mut QuectoWorld) {
     world.wiremock_anthropic_uri = Some(uri.clone());
 
     ensure_temp_dir(world);
-    let openai_json = r#"{ "api_key": "", "api_base": "" }"#;
-    let anthropic_json = format!(r#"{{ "api_key": "sk-ant-test", "api_base": "{uri}" }}"#);
-    write_provider_config(world, openai_json, &anthropic_json);
+    write_provider_config(
+        world,
+        serde_json::json!({"api_key": "", "api_base": ""}),
+        serde_json::json!({"api_key": "sk-ant-test", "api_base": uri}),
+    );
 
     std::mem::forget(server);
     std::mem::forget(rt);
@@ -1093,73 +1028,44 @@ fn given_config_with_both_providers(world: &mut QuectoWorld) {
     world._wiremock_server_uri = Some(openai_uri.clone());
     world.wiremock_anthropic_uri = Some(anthropic_uri.clone());
 
-    let openai_json = format!(r#"{{ "api_key": "sk-test-key", "api_base": "{openai_uri}" }}"#);
-    let anthropic_json =
-        format!(r#"{{ "api_key": "sk-ant-test", "api_base": "{anthropic_uri}" }}"#);
-    write_provider_config(world, &openai_json, &anthropic_json);
+    write_provider_config(
+        world,
+        serde_json::json!({"api_key": "sk-test-key", "api_base": openai_uri}),
+        serde_json::json!({"api_key": "sk-ant-test", "api_base": anthropic_uri}),
+    );
 
     std::mem::forget(rt);
 }
 
 /// Helper: rewrite config with a new OpenAI URI, preserving Anthropic if present.
 fn rewrite_openai_in_config(world: &mut QuectoWorld, new_uri: &str) {
-    let base = base_path(world);
-    let workspace = base.join("workspace");
     let anthropic_uri = world.wiremock_anthropic_uri.as_deref().unwrap_or("");
     let anthropic_key = if anthropic_uri.is_empty() {
         ""
     } else {
         "sk-ant-test"
     };
-    let config_json = format!(
-        r#"{{
-  "providers": {{
-    "openai": {{ "api_key": "sk-test-key", "api_base": "{new_uri}" }},
-    "anthropic": {{ "api_key": "{anthropic_key}", "api_base": "{anthropic_uri}" }}
-  }},
-  "agents": {{
-    "defaults": {{
-      "workspace": "{workspace}"
-    }}
-  }}
-}}"#,
-        new_uri = new_uri,
-        anthropic_key = anthropic_key,
-        anthropic_uri = anthropic_uri,
-        workspace = workspace.display()
+    write_provider_config(
+        world,
+        serde_json::json!({"api_key": "sk-test-key", "api_base": new_uri}),
+        serde_json::json!({"api_key": anthropic_key, "api_base": anthropic_uri}),
     );
-    std::fs::write(base.join("config.json"), config_json).expect("rewrite config");
     world._wiremock_server_uri = Some(new_uri.to_string());
 }
 
 /// Helper: rewrite config with a new Anthropic URI, preserving OpenAI if present.
 fn rewrite_anthropic_in_config(world: &mut QuectoWorld, new_uri: &str) {
-    let base = base_path(world);
-    let workspace = base.join("workspace");
     let openai_uri = world._wiremock_server_uri.as_deref().unwrap_or("");
     let openai_key = if openai_uri.is_empty() {
         ""
     } else {
         "sk-test-key"
     };
-    let config_json = format!(
-        r#"{{
-  "providers": {{
-    "openai": {{ "api_key": "{openai_key}", "api_base": "{openai_uri}" }},
-    "anthropic": {{ "api_key": "sk-ant-test", "api_base": "{new_uri}" }}
-  }},
-  "agents": {{
-    "defaults": {{
-      "workspace": "{workspace}"
-    }}
-  }}
-}}"#,
-        openai_key = openai_key,
-        openai_uri = openai_uri,
-        new_uri = new_uri,
-        workspace = workspace.display()
+    write_provider_config(
+        world,
+        serde_json::json!({"api_key": openai_key, "api_base": openai_uri}),
+        serde_json::json!({"api_key": "sk-ant-test", "api_base": new_uri}),
     );
-    std::fs::write(base.join("config.json"), config_json).expect("rewrite config");
     world.wiremock_anthropic_uri = Some(new_uri.to_string());
 }
 
@@ -1213,21 +1119,17 @@ fn given_config_with_openai_custom_key(world: &mut QuectoWorld, api_key: String)
     let base = base_path(world);
     let workspace = base.join("workspace");
     std::fs::create_dir_all(&workspace).expect("create workspace");
-    let config_json = format!(
-        r#"{{
-  "providers": {{
-    "openai": {{ "api_key": "{api_key}", "api_base": "{uri}" }}
-  }},
-  "agents": {{
-    "defaults": {{
-      "workspace": "{workspace}"
-    }}
-  }}
-}}"#,
-        api_key = api_key,
-        uri = uri,
-        workspace = workspace.display()
-    );
+    let config = serde_json::json!({
+        "providers": {
+            "openai": { "api_key": api_key, "api_base": uri }
+        },
+        "agents": {
+            "defaults": {
+                "workspace": workspace.display().to_string()
+            }
+        }
+    });
+    let config_json = serde_json::to_string_pretty(&config).expect("serialize config");
     std::fs::write(base.join("config.json"), config_json).expect("write config");
 
     std::mem::forget(server);
@@ -1335,33 +1237,6 @@ fn quecto_binary_path() -> PathBuf {
     let deps_dir = test_exe.parent().expect("deps dir");
     let debug_dir = deps_dir.parent().expect("debug dir");
     debug_dir.join("quecto")
-}
-
-/// Parse a shell-like argument string into individual args.
-/// Handles double-quoted strings (e.g. `"Do the subtask"`).
-///
-/// Limitations: only handles double quotes; no single quotes,
-/// backslash escapes, or nested quoting. Sufficient for the
-/// hardcoded Gherkin step strings used in BDD scenarios.
-fn shell_split(s: &str) -> Vec<String> {
-    let mut args = Vec::new();
-    let mut current = String::new();
-    let mut in_quotes = false;
-    for ch in s.chars() {
-        match ch {
-            '"' => in_quotes = !in_quotes,
-            ' ' if !in_quotes => {
-                if !current.is_empty() {
-                    args.push(std::mem::take(&mut current));
-                }
-            }
-            _ => current.push(ch),
-        }
-    }
-    if !current.is_empty() {
-        args.push(current);
-    }
-    args
 }
 
 /// Maximum wall-clock time (seconds) a subprocess may run before

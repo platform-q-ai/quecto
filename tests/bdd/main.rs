@@ -511,6 +511,66 @@ fn base_path(world: &QuectoWorld) -> PathBuf {
         .expect("base_dir should be set")
 }
 
+/// Parse a shell-like argument string into individual args.
+/// Handles double-quoted and single-quoted strings.
+///
+/// Sufficient for the hardcoded Gherkin step strings used in BDD
+/// scenarios. Does not handle backslash escapes or nested quoting.
+///
+/// Uses byte-index scanning instead of `.chars()` iteration.
+fn shell_split(s: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let bytes = s.as_bytes();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        // Skip whitespace
+        if bytes[i] == b' ' {
+            i += 1;
+            continue;
+        }
+
+        let mut current = String::new();
+
+        // Quoted token
+        if bytes[i] == b'\'' || bytes[i] == b'"' {
+            let quote = bytes[i];
+            i += 1;
+            while i < bytes.len() && bytes[i] != quote {
+                current.push(bytes[i] as char);
+                i += 1;
+            }
+            // Skip closing quote
+            if i < bytes.len() {
+                i += 1;
+            }
+        } else {
+            // Unquoted token — collect until space or quote
+            while i < bytes.len() && bytes[i] != b' ' && bytes[i] != b'\'' && bytes[i] != b'"' {
+                current.push(bytes[i] as char);
+                i += 1;
+            }
+        }
+
+        if !current.is_empty() {
+            args.push(current);
+        }
+    }
+    args
+}
+
+/// Convert a 2-column Gherkin table (key | value) to a JSON object string.
+fn table_to_json(table: &gherkin::Table) -> String {
+    let obj: serde_json::Value = table
+        .rows
+        .iter()
+        .filter(|row| row.len() >= 2)
+        .map(|row| (row[0].trim().to_string(), serde_json::json!(row[1].trim())))
+        .collect::<serde_json::Map<String, serde_json::Value>>()
+        .into();
+    obj.to_string()
+}
+
 mod agent_loop_steps;
 mod agent_msg_steps;
 mod agent_tools_steps;

@@ -36,37 +36,7 @@ fn when_start_repl(world: &mut QuectoWorld) {
 fn when_start_repl_with_flags(world: &mut QuectoWorld, flags_str: String) {
     world.repl_input_lines = Vec::new();
     world.repl_executed = false;
-
-    // Parse the flags string into individual args
-    let mut flags = Vec::new();
-    let mut current = String::new();
-    let mut in_quotes = false;
-    let mut quote_char = ' ';
-
-    for ch in flags_str.chars() {
-        if in_quotes {
-            if ch == quote_char {
-                in_quotes = false;
-            } else {
-                current.push(ch);
-            }
-        } else if ch == '\'' || ch == '"' {
-            in_quotes = true;
-            quote_char = ch;
-        } else if ch == ' ' {
-            if !current.is_empty() {
-                flags.push(current.clone());
-                current.clear();
-            }
-        } else {
-            current.push(ch);
-        }
-    }
-    if !current.is_empty() {
-        flags.push(current);
-    }
-
-    world.repl_flags = flags;
+    world.repl_flags = shell_split(&flags_str);
 }
 
 #[when(expr = "I type {string}")]

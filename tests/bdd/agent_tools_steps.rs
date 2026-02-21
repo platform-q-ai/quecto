@@ -30,17 +30,7 @@ fn given_file_exists(world: &mut QuectoWorld, filename: String, content: String)
 #[when(expr = "the agent executes tool {string} with args:")]
 fn when_agent_executes_tool(world: &mut QuectoWorld, tool_name: String, step: &gherkin::Step) {
     let table = step.table.as_ref().expect("step should have a table");
-    // Build JSON from table: first column is key, second is value
-    let mut map = serde_json::Map::new();
-    for row in &table.rows {
-        if row.len() >= 2 {
-            map.insert(
-                row[0].trim().to_string(),
-                serde_json::Value::String(row[1].trim().to_string()),
-            );
-        }
-    }
-    let args_json = serde_json::Value::Object(map).to_string();
+    let args_json = table_to_json(table);
 
     let registry = world.tool_registry.as_ref().expect("tool registry not set");
 

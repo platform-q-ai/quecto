@@ -409,23 +409,7 @@ fn then_gateway_reports_reauth(world: &mut QuectoWorld, provider: String) {
 fn when_start_quecto_with_args(world: &mut QuectoWorld, args_str: String) {
     // Store the args for deferred execution (next step will provide stdin).
     let mut args = vec!["quecto".to_string()];
-    let mut current = String::new();
-    let mut in_quotes = false;
-    for ch in args_str.chars() {
-        match ch {
-            '"' => in_quotes = !in_quotes,
-            ' ' if !in_quotes => {
-                if !current.is_empty() {
-                    args.push(current.clone());
-                    current.clear();
-                }
-            }
-            _ => current.push(ch),
-        }
-    }
-    if !current.is_empty() {
-        args.push(current);
-    }
+    args.extend(shell_split(&args_str));
     world.pending_cli_args = Some(args);
 }
 

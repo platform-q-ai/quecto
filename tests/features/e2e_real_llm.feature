@@ -99,7 +99,14 @@ Feature: E2E Real LLM
 
   @done @real-llm
   Scenario: Skill content influences real LLM behavior
-    Given a workspace skill "format" with content "Always format your response as a bullet list using dashes."
+    Given a workspace skill "format" with frontmatter:
+      """
+      ---
+      name: format
+      description: Formatting skill
+      ---
+      Always format your response as a bullet list using dashes.
+      """
     When I run the real LLM agent with message "Name three colors."
     Then the exit code should be 0
     And stdout should contain "- "

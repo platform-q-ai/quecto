@@ -182,24 +182,7 @@ fn when_run_no_args(world: &mut QuectoWorld) {
 #[when(expr = "I run quecto with arguments {string}")]
 fn when_run_with_args(world: &mut QuectoWorld, args_str: String) {
     let mut args = vec!["quecto".to_string()];
-    // Simple shell-like splitting (handles quoted strings)
-    let mut current = String::new();
-    let mut in_quotes = false;
-    for ch in args_str.chars() {
-        match ch {
-            '"' => in_quotes = !in_quotes,
-            ' ' if !in_quotes => {
-                if !current.is_empty() {
-                    args.push(current.clone());
-                    current.clear();
-                }
-            }
-            _ => current.push(ch),
-        }
-    }
-    if !current.is_empty() {
-        args.push(current);
-    }
+    args.extend(shell_split(&args_str));
     let output = cli::run_with_output(args, &world.cli_context);
     world.exit_code = output.exit_code;
     world.stdout = output.stdout;
