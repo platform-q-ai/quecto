@@ -14,13 +14,18 @@ pub struct Skill {
     pub source: SkillSource,
 }
 
-/// The origin of a loaded skill.
+/// The origin of a loaded skill. Currently only workspace is supported;
+/// additional sources (global, registry) may be added in the future.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SkillSource {
     Workspace,
 }
 
 /// YAML frontmatter extracted from a SKILL.md file.
+///
+/// Required fields: `name`, `description`.
+/// Optional fields are parsed for forward-compatibility with OpenCode
+/// but are not used by quecto's runtime yet.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct SkillFrontmatter {
     pub name: String,
@@ -58,17 +63,19 @@ pub fn is_valid_skill_name(name: &str) -> bool {
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
-/// Parse a SKILL.md file into its frontmatter and body.
+/// Split a SKILL.md file into its YAML block and body.
 ///
 /// Expects the file to start with `---`, followed by YAML, then a
-/// closing `---`. Everything after the closing delimiter is the body.
-/// Returns `None` if the file does not contain valid frontmatter.
-pub fn parse_skill_md(raw: &str) -> Option<(SkillFrontmatter, String)> {
+/// closing `---`. Returns `(yaml_block, body)` where `yaml_block` is
+/// the raw YAML text and `body` is everything after the closing
+/// delimiter. Returns `None` if delimiters are missing.
+///
+/// The caller is responsible for deserializing the YAML block.
+pub fn split_skill_md(raw: &str) -> Option<(&str, String)> {
     let trimmed = raw.trim_start();
     if !trimmed.starts_with("---") {
         return None;
     }
-    // Find the closing --- (skip the opening one)
     let after_open = &trimmed[3..];
     let close_idx = find_closing_delimiter(after_open)?;
     let yaml_block = &after_open[..close_idx];
@@ -78,30 +85,22 @@ pub fn parse_skill_md(raw: &str) -> Option<(SkillFrontmatter, String)> {
     } else {
         String::new()
     };
+    Some((yaml_block, body))
+}
 
-    let fm: SkillFrontmatter = serde_yaml::from_str(yaml_block).ok()?;
-
-    // Validate required fields are non-empty
-    if fm.name.is_empty() || fm.description.is_empty() {
-        return None;
-    }
-    if fm.description.len() > 1024 {
-        return None;
-    }
-
-    Some((fm, body))
+/// Validate that frontmatter fields meet requirements.
+pub fn validate_frontmatter(fm: &SkillFrontmatter) -> bool {
+    !fm.name.is_empty() && !fm.description.is_empty() && fm.description.len() <= 1024
 }
 
 /// Find the position of the closing `---` delimiter.
 /// Looks for `\n---` (newline followed by three dashes) to avoid
 /// matching `---` inside YAML values.
 fn find_closing_delimiter(s: &str) -> Option<usize> {
-    // The closing delimiter must be on its own line
     for (i, _) in s.match_indices("\n---") {
-        // Check that what follows is either EOF, newline, or whitespace
         let after = i + 4; // skip "\n---"
         if after >= s.len() {
-            return Some(i + 1); // +1 to skip the \n
+            return Some(i + 1);
         }
         let next_char = s.as_bytes()[after];
         if next_char == b'\n' || next_char == b'\r' || next_char == b' ' {
@@ -146,80 +145,83 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_basic_frontmatter() {
+    fn test_split_basic_frontmatter() {
         let raw = "---\nname: weather\ndescription: Fetch weather\n---\nBody content";
-        let (fm, body) = parse_skill_md(raw).unwrap();
-        assert_eq!(fm.name, "weather");
-        assert_eq!(fm.description, "Fetch weather");
+        let (yaml, body) = split_skill_md(raw).unwrap();
+        assert!(yaml.contains("name: weather"));
         assert_eq!(body, "Body content");
-        assert!(fm.license.is_none());
-        assert!(fm.metadata.is_none());
     }
 
     #[test]
-    fn test_parse_all_optional_fields() {
-        let raw = "\
----
-name: git-release
-description: Create releases
-license: MIT
-compatibility: opencode
-metadata:
-  audience: maintainers
-  workflow: github
----
-## Steps
-- Draft notes";
-        let (fm, body) = parse_skill_md(raw).unwrap();
-        assert_eq!(fm.name, "git-release");
-        assert_eq!(fm.license.unwrap(), "MIT");
-        assert_eq!(fm.compatibility.unwrap(), "opencode");
-        let meta = fm.metadata.unwrap();
-        assert_eq!(meta["audience"], "maintainers");
-        assert!(body.contains("Draft notes"));
+    fn test_split_no_frontmatter_returns_none() {
+        assert!(split_skill_md("Just plain text").is_none());
     }
 
     #[test]
-    fn test_parse_no_frontmatter_returns_none() {
-        assert!(parse_skill_md("Just plain text").is_none());
+    fn test_split_missing_closing_delimiter() {
+        assert!(split_skill_md("---\nname: x\ndescription: y\n").is_none());
     }
 
     #[test]
-    fn test_parse_missing_closing_delimiter() {
-        assert!(parse_skill_md("---\nname: x\ndescription: y\n").is_none());
-    }
-
-    #[test]
-    fn test_parse_empty_name_returns_none() {
-        let raw = "---\nname: \"\"\ndescription: Something\n---\nBody";
-        assert!(parse_skill_md(raw).is_none());
-    }
-
-    #[test]
-    fn test_parse_missing_description_returns_none() {
-        let raw = "---\nname: weather\n---\nBody";
-        assert!(parse_skill_md(raw).is_none());
-    }
-
-    #[test]
-    fn test_parse_description_too_long_returns_none() {
-        let desc = "a".repeat(1025);
-        let raw = format!("---\nname: weather\ndescription: {}\n---\nBody", desc);
-        assert!(parse_skill_md(&raw).is_none());
-    }
-
-    #[test]
-    fn test_parse_empty_body() {
+    fn test_split_empty_body() {
         let raw = "---\nname: weather\ndescription: Weather\n---\n";
-        let (_, body) = parse_skill_md(raw).unwrap();
+        let (_, body) = split_skill_md(raw).unwrap();
         assert!(body.is_empty());
     }
 
     #[test]
     fn test_body_excludes_frontmatter() {
         let raw = "---\nname: test\ndescription: Test skill\n---\nHello world";
-        let (_, body) = parse_skill_md(raw).unwrap();
+        let (_, body) = split_skill_md(raw).unwrap();
         assert!(!body.contains("name:"));
         assert!(body.contains("Hello world"));
+    }
+
+    #[test]
+    fn test_validate_frontmatter_valid() {
+        let fm = SkillFrontmatter {
+            name: "test".into(),
+            description: "A test skill".into(),
+            license: None,
+            compatibility: None,
+            metadata: None,
+        };
+        assert!(validate_frontmatter(&fm));
+    }
+
+    #[test]
+    fn test_validate_frontmatter_empty_name() {
+        let fm = SkillFrontmatter {
+            name: String::new(),
+            description: "Something".into(),
+            license: None,
+            compatibility: None,
+            metadata: None,
+        };
+        assert!(!validate_frontmatter(&fm));
+    }
+
+    #[test]
+    fn test_validate_frontmatter_empty_description() {
+        let fm = SkillFrontmatter {
+            name: "test".into(),
+            description: String::new(),
+            license: None,
+            compatibility: None,
+            metadata: None,
+        };
+        assert!(!validate_frontmatter(&fm));
+    }
+
+    #[test]
+    fn test_validate_frontmatter_description_too_long() {
+        let fm = SkillFrontmatter {
+            name: "test".into(),
+            description: "a".repeat(1025),
+            license: None,
+            compatibility: None,
+            metadata: None,
+        };
+        assert!(!validate_frontmatter(&fm));
     }
 }

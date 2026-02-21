@@ -123,20 +123,42 @@ Credentials are stored in `~/.quecto/credentials.json`. The credential store tak
 
 ### `quecto skills` — Manage skills
 
-Skills are markdown files that extend the agent's system prompt with domain knowledge or instructions.
+Skills are SKILL.md files with YAML frontmatter that extend the agent's system prompt with domain knowledge or instructions.
 
 ```bash
-quecto skills list
+quecto skills list       # Shows name and description for each skill
 quecto skills remove my-skill
 ```
 
-To add a skill, create a directory under your workspace:
+To add a skill, create a directory under your workspace with a `SKILL.md` file:
 
 ```
 ~/.quecto/workspace/skills/my-skill/SKILL.md
 ```
 
-The content of `SKILL.md` is prepended to the system prompt on every agent run. Multiple skills are concatenated.
+The `SKILL.md` file must contain YAML frontmatter with `name` and `description` fields. The body content (everything after the closing `---`) is prepended to the system prompt on every agent run. Multiple skills are concatenated.
+
+```markdown
+---
+name: my-skill
+description: Short description of what this skill does
+license: MIT                    # optional
+compatibility: opencode         # optional
+metadata:                       # optional
+  audience: developers
+---
+You are an expert at ...
+
+## Instructions
+- Do this
+- Do that
+```
+
+**Frontmatter rules:**
+- `name` and `description` are required (description max 1024 chars)
+- `name` must match the directory name
+- Names must be lowercase alphanumeric with hyphens only, 1–64 chars (e.g. `code-review`, `git-release`)
+- Skills with missing or invalid frontmatter are silently skipped
 
 ### `quecto status` — Check configuration
 
@@ -325,7 +347,7 @@ The gateway shuts down cleanly on Ctrl+C (SIGINT). The Telegram polling loop exi
   cron/
     jobs.json              # Scheduled task definitions
   workspace/
-    skills/                # Skill definitions
+    skills/                # Skill definitions (YAML frontmatter required)
       my-skill/
         SKILL.md
     HEARTBEAT.md           # Periodic task list (for gateway heartbeat)

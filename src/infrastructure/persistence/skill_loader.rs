@@ -3,7 +3,14 @@
 use std::path::{Path, PathBuf};
 
 use crate::domain::error::DomainError;
-use crate::domain::skill::{Skill, SkillLoader, SkillSource, is_valid_skill_name, parse_skill_md};
+use crate::domain::skill::{
+    Skill, SkillFrontmatter, SkillLoader, SkillSource, is_valid_skill_name, split_skill_md,
+    validate_frontmatter,
+};
+
+/// Maximum SKILL.md file size (256 KB). Files larger than this are
+/// skipped to prevent OOM from symlinks or oversized files.
+const MAX_SKILL_FILE_BYTES: u64 = 256 * 1024;
 
 /// File-based skill loader that reads skills from workspace/skills/.
 ///
@@ -22,15 +29,33 @@ impl FileSkillLoader {
         }
     }
 
+    /// Parse YAML frontmatter from a raw SKILL.md string.
+    /// Returns `None` if the YAML is invalid or missing required fields.
+    fn parse_frontmatter(raw: &str) -> Option<(SkillFrontmatter, String)> {
+        let (yaml_block, body) = split_skill_md(raw)?;
+        let fm: SkillFrontmatter = serde_yaml::from_str(yaml_block).ok()?;
+        if !validate_frontmatter(&fm) {
+            return None;
+        }
+        Some((fm, body))
+    }
+
     /// Try to load a single skill from a directory entry.
     /// Returns `None` if the skill is invalid (no SKILL.md,
-    /// bad frontmatter, name mismatch, invalid name format).
+    /// bad frontmatter, name mismatch, invalid name format,
+    /// file too large).
     fn try_load_skill(skill_dir: &Path) -> Option<Skill> {
         let dir_name = skill_dir.file_name()?.to_string_lossy().to_string();
         let skill_md_path = skill_dir.join("SKILL.md");
 
+        // Check file size before reading
+        let meta = std::fs::metadata(&skill_md_path).ok()?;
+        if meta.len() > MAX_SKILL_FILE_BYTES {
+            return None;
+        }
+
         let raw = std::fs::read_to_string(&skill_md_path).ok()?;
-        let (fm, body) = parse_skill_md(&raw)?;
+        let (fm, body) = Self::parse_frontmatter(&raw)?;
 
         // Name must be valid format
         if !is_valid_skill_name(&fm.name) {
@@ -70,6 +95,10 @@ impl SkillLoader for FileSkillLoader {
     }
 
     fn load(&self, name: &str) -> Result<Option<Skill>, DomainError> {
+        // Validate name before constructing path (defense-in-depth)
+        if !is_valid_skill_name(name) {
+            return Ok(None);
+        }
         let skill_dir = self.skills_dir.join(name);
         if skill_dir.is_dir() {
             Ok(Self::try_load_skill(&skill_dir))
@@ -132,6 +161,15 @@ mod tests {
         let ws = TempDir::new().unwrap();
         let loader = FileSkillLoader::new(ws.path());
         assert!(loader.load("nonexistent").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_load_rejects_invalid_name() {
+        let ws = TempDir::new().unwrap();
+        let loader = FileSkillLoader::new(ws.path());
+        // Path traversal attempt
+        assert!(loader.load("../etc").unwrap().is_none());
+        assert!(loader.load("My_Skill").unwrap().is_none());
     }
 
     #[test]

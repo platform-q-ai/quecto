@@ -1030,6 +1030,10 @@ fn cmd_skills(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &m
                 return 1;
             }
             let name = &args[1];
+            if !crate::domain::skill::is_valid_skill_name(name) {
+                stderr.push_str(&format!("skill '{}' not found\n", name));
+                return 1;
+            }
             let skill_dir = ws_skills.join(name);
             if !skill_dir.is_dir() {
                 stderr.push_str(&format!("skill '{}' not found\n", name));
