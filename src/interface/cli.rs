@@ -1662,11 +1662,12 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
+            stdin_data: Some("\n".to_string()),
             ..Default::default()
         };
         let out = run_with_output(args("auth login --provider openai"), &ctx);
         assert_eq!(out.exit_code, 1);
-        assert!(out.stderr.contains("--token"));
+        assert!(out.stderr.contains("must not be empty"));
     }
 
     #[test]
