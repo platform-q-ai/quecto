@@ -27,10 +27,17 @@ pub async fn execute_cron_tick(
         let result = execute_single_job(agent, job, timeout).await;
 
         // Record error on the job if execution failed.
-        if !result.ok {
-            let _ = store.set_last_error(&job.id, Some(result.response.clone()));
+        let error_val = if result.ok {
+            None
         } else {
-            let _ = store.set_last_error(&job.id, None);
+            Some(result.response.clone())
+        };
+        if let Err(e) = store.set_last_error(&job.id, error_val) {
+            tracing::warn!(
+                job_id = %job.id,
+                "failed to update last_error on cron job: {}",
+                e
+            );
         }
 
         results.push(result);

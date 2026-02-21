@@ -83,7 +83,7 @@ fn job_to_record(job: &CronJob) -> CronJobRecord {
         cron_expression,
         enabled: job.enabled,
         deliver_to: job.deliver_to.clone(),
-        last_error: None,
+        last_error: job.last_error.clone(),
     }
 }
 
@@ -148,11 +148,6 @@ impl CronStore for FileCronStore {
         }
         self.save_all(&records)
     }
-}
-
-/// Helper: find a job by name from the store.
-pub fn find_by_name(store: &dyn CronStore, name: &str) -> Result<Option<CronJob>, DomainError> {
-    store.find_by_name(name)
 }
 
 #[cfg(test)]
@@ -273,11 +268,11 @@ mod tests {
         store.add(make_interval_job("Weather", 3600)).unwrap();
         store.add(make_cron_job("Brief", "0 9 * * *")).unwrap();
 
-        let found = find_by_name(&store, "Weather").unwrap();
+        let found = store.find_by_name("Weather").unwrap();
         assert!(found.is_some());
         assert_eq!(found.unwrap().name, "Weather");
 
-        let not_found = find_by_name(&store, "Missing").unwrap();
+        let not_found = store.find_by_name("Missing").unwrap();
         assert!(not_found.is_none());
     }
 

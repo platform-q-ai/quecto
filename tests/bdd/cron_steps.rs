@@ -90,7 +90,8 @@ fn when_list_jobs(world: &mut QuectoWorld) {
 #[when(expr = "I remove the job {string}")]
 fn when_remove_job(world: &mut QuectoWorld, name: String) {
     let store = world.cron_store.as_ref().unwrap();
-    let job = cron_store::find_by_name(store, &name)
+    let job = store
+        .find_by_name(&name)
         .unwrap()
         .unwrap_or_else(|| panic!("job '{}' not found", name));
     store.remove(&job.id).unwrap();
@@ -99,7 +100,8 @@ fn when_remove_job(world: &mut QuectoWorld, name: String) {
 #[when(expr = "I disable the job {string}")]
 fn when_disable_job(world: &mut QuectoWorld, name: String) {
     let store = world.cron_store.as_ref().unwrap();
-    let job = cron_store::find_by_name(store, &name)
+    let job = store
+        .find_by_name(&name)
         .unwrap()
         .unwrap_or_else(|| panic!("job '{}' not found", name));
     store.set_enabled(&job.id, false).unwrap();
@@ -108,7 +110,8 @@ fn when_disable_job(world: &mut QuectoWorld, name: String) {
 #[when(expr = "I enable the job {string}")]
 fn when_enable_job(world: &mut QuectoWorld, name: String) {
     let store = world.cron_store.as_ref().unwrap();
-    let job = cron_store::find_by_name(store, &name)
+    let job = store
+        .find_by_name(&name)
         .unwrap()
         .unwrap_or_else(|| panic!("job '{}' not found", name));
     store.set_enabled(&job.id, true).unwrap();
@@ -123,14 +126,14 @@ fn when_cron_store_recreated(world: &mut QuectoWorld) {
 #[then(expr = "the job {string} should exist in the store")]
 fn then_job_exists(world: &mut QuectoWorld, name: String) {
     let store = world.cron_store.as_ref().unwrap();
-    let found = cron_store::find_by_name(store, &name).unwrap();
+    let found = store.find_by_name(&name).unwrap();
     assert!(found.is_some(), "job '{}' should exist", name);
 }
 
 #[then(expr = "the job {string} should not exist in the store")]
 fn then_job_not_exists(world: &mut QuectoWorld, name: String) {
     let store = world.cron_store.as_ref().unwrap();
-    let found = cron_store::find_by_name(store, &name).unwrap();
+    let found = store.find_by_name(&name).unwrap();
     assert!(found.is_none(), "job '{}' should not exist", name);
 }
 
@@ -145,14 +148,14 @@ fn then_job_enabled(world: &mut QuectoWorld) {
 #[then(expr = "the job {string} should be disabled")]
 fn then_job_disabled(world: &mut QuectoWorld, name: String) {
     let store = world.cron_store.as_ref().unwrap();
-    let job = cron_store::find_by_name(store, &name).unwrap().unwrap();
+    let job = store.find_by_name(&name).unwrap().unwrap();
     assert!(!job.enabled, "job '{}' should be disabled", name);
 }
 
 #[then(expr = "the job {string} should be enabled")]
 fn then_named_job_enabled(world: &mut QuectoWorld, name: String) {
     let store = world.cron_store.as_ref().unwrap();
-    let job = cron_store::find_by_name(store, &name).unwrap().unwrap();
+    let job = store.find_by_name(&name).unwrap().unwrap();
     assert!(job.enabled, "job '{}' should be enabled", name);
 }
 

@@ -85,11 +85,12 @@ pub struct HeartbeatTaskResult {
 /// Execute a heartbeat tick: load tasks from workspace, dispatch each
 /// through the agent (or via spawn for `use_spawn` tasks).
 ///
-/// Returns the list of dispatched task results, or an empty list
-/// if no HEARTBEAT.md exists.
+/// Each task is executed with the given `timeout`. Returns the list of
+/// dispatched task results, or an empty list if no HEARTBEAT.md exists.
 pub async fn execute_heartbeat_tick(
     workspace: &Path,
     agent: &dyn crate::domain::agent::AgentLoop,
+    timeout: std::time::Duration,
 ) -> Result<Vec<HeartbeatTaskResult>, DomainError> {
     let tasks = load_tasks(workspace).await?;
     if tasks.is_empty() {
@@ -98,58 +99,43 @@ pub async fn execute_heartbeat_tick(
 
     let mut results = Vec::new();
     for task in &tasks {
-        let result = dispatch_task(agent, task).await;
+        let result = dispatch_task(agent, task, timeout).await;
         results.push(result);
     }
     Ok(results)
 }
 
-/// Dispatch a single heartbeat task.
+/// Dispatch a single heartbeat task with a timeout.
 async fn dispatch_task(
     agent: &dyn crate::domain::agent::AgentLoop,
     task: &HeartbeatTask,
+    timeout: std::time::Duration,
 ) -> HeartbeatTaskResult {
-    if task.use_spawn {
-        // For spawn tasks, we send the message through the agent
-        // with a system prompt instructing spawn tool usage.
-        // The agent loop will invoke the spawn tool if available.
-        let mut messages = vec![crate::domain::message::Message {
-            role: crate::domain::message::Role::User,
-            content: format!("Spawn a subagent to handle this task: {}", task.message),
-            tool_calls: vec![],
-            tool_call_id: None,
-        }];
-        match agent.process(&mut messages).await {
-            Ok(result) => HeartbeatTaskResult {
-                message: task.message.clone(),
-                dispatched_via_spawn: true,
-                response: result.response,
-            },
-            Err(e) => HeartbeatTaskResult {
-                message: task.message.clone(),
-                dispatched_via_spawn: true,
-                response: format!("spawn error: {}", e),
-            },
-        }
+    let content = if task.use_spawn {
+        format!("Spawn a subagent to handle this task: {}", task.message)
     } else {
-        let mut messages = vec![crate::domain::message::Message {
-            role: crate::domain::message::Role::User,
-            content: task.message.clone(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        }];
-        match agent.process(&mut messages).await {
-            Ok(result) => HeartbeatTaskResult {
-                message: task.message.clone(),
-                dispatched_via_spawn: false,
-                response: result.response,
-            },
-            Err(e) => HeartbeatTaskResult {
-                message: task.message.clone(),
-                dispatched_via_spawn: false,
-                response: format!("error: {}", e),
-            },
-        }
+        task.message.clone()
+    };
+
+    let mut messages = vec![crate::domain::message::Message {
+        role: crate::domain::message::Role::User,
+        content,
+        tool_calls: vec![],
+        tool_call_id: None,
+    }];
+
+    let result = tokio::time::timeout(timeout, agent.process(&mut messages)).await;
+
+    let response = match result {
+        Ok(Ok(agent_result)) => agent_result.response,
+        Ok(Err(e)) => format!("error: {}", e),
+        Err(_) => "timeout".to_string(),
+    };
+
+    HeartbeatTaskResult {
+        message: task.message.clone(),
+        dispatched_via_spawn: task.use_spawn,
+        response,
     }
 }
 
@@ -298,7 +284,10 @@ mod tests {
         .unwrap();
 
         let agent = RecordingAgent::new("done");
-        let results = execute_heartbeat_tick(tmp.path(), &agent).await.unwrap();
+        let timeout = std::time::Duration::from_secs(60);
+        let results = execute_heartbeat_tick(tmp.path(), &agent, timeout)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].message, "Check health");
         assert_eq!(results[1].message, "Report disk");
@@ -313,7 +302,10 @@ mod tests {
     async fn test_execute_heartbeat_tick_no_file() {
         let tmp = tempfile::TempDir::new().unwrap();
         let agent = RecordingAgent::new("done");
-        let results = execute_heartbeat_tick(tmp.path(), &agent).await.unwrap();
+        let timeout = std::time::Duration::from_secs(60);
+        let results = execute_heartbeat_tick(tmp.path(), &agent, timeout)
+            .await
+            .unwrap();
         assert!(results.is_empty());
     }
 
@@ -327,7 +319,10 @@ mod tests {
         .unwrap();
 
         let agent = RecordingAgent::new("spawned");
-        let results = execute_heartbeat_tick(tmp.path(), &agent).await.unwrap();
+        let timeout = std::time::Duration::from_secs(60);
+        let results = execute_heartbeat_tick(tmp.path(), &agent, timeout)
+            .await
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert!(results[0].dispatched_via_spawn);
         assert_eq!(results[0].message, "Analyze data");

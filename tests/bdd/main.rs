@@ -22,7 +22,7 @@ use quecto::infrastructure::channels::telegram::{
     TelegramUser,
 };
 use quecto::infrastructure::config::{Config, TelegramConfig};
-use quecto::infrastructure::persistence::cron_store::{self, FileCronStore};
+use quecto::infrastructure::persistence::cron_store::FileCronStore;
 use quecto::infrastructure::persistence::memory_store::{self, MemoryStore};
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::infrastructure::persistence::skill_loader::FileSkillLoader;

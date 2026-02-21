@@ -175,7 +175,11 @@ fn when_heartbeat_tick_fires(world: &mut QuectoWorld) {
 
     let results = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(heartbeat::execute_heartbeat_tick(&ws, agent.as_ref()))
+        .block_on(heartbeat::execute_heartbeat_tick(
+            &ws,
+            agent.as_ref(),
+            std::time::Duration::from_secs(60),
+        ))
         .unwrap();
     world.heartbeat_tick_results = Some(results);
 }
