@@ -24,6 +24,7 @@ fn make_interval_job(name: &str, seconds: u64) -> CronJob {
         enabled: true,
         deliver_to: None,
         last_error: None,
+        last_run_at: 0,
     }
 }
 
@@ -38,6 +39,7 @@ fn make_cron_expr_job(name: &str, expr: &str) -> CronJob {
         enabled: true,
         deliver_to: None,
         last_error: None,
+        last_run_at: 0,
     }
 }
 
@@ -205,6 +207,7 @@ fn given_gateway_cron_job_with_message(
         enabled: true,
         deliver_to: None,
         last_error: None,
+        last_run_at: 0,
     };
     store.add(job).unwrap();
 }
@@ -223,6 +226,7 @@ fn given_gateway_disabled_cron_job(world: &mut QuectoWorld, name: String, second
         enabled: false,
         deliver_to: None,
         last_error: None,
+        last_run_at: 0,
     };
     store.add(job).unwrap();
 }
@@ -261,6 +265,7 @@ fn given_gateway_cron_job_deliver_to(
         enabled: true,
         deliver_to: Some(deliver_to),
         last_error: None,
+        last_run_at: 0,
     };
     store.add(job).unwrap();
 }

@@ -15,6 +15,8 @@ pub struct Config {
     pub heartbeat: HeartbeatConfig,
     #[serde(default)]
     pub gateway: GatewayConfig,
+    #[serde(default)]
+    pub health: HealthConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -170,6 +172,23 @@ impl Default for GatewayConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_health_port")]
+    pub port: u16,
+}
+
+impl Default for HealthConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            port: default_health_port(),
+        }
+    }
+}
+
 fn default_workspace() -> String {
     "~/.quecto/workspace".to_string()
 }
@@ -202,6 +221,9 @@ fn default_host() -> String {
 }
 fn default_port() -> u16 {
     8080
+}
+fn default_health_port() -> u16 {
+    9090
 }
 
 impl Config {

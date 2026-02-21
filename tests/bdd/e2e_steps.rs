@@ -264,21 +264,27 @@ fn openai_text_json(content: &str) -> serde_json::Value {
 }
 
 /// Helper: rewrite config to point at a new wiremock URI (shared pattern).
+///
+/// Preserves any existing config fields (e.g. health, channels) by reading
+/// the current config, merging the provider/workspace fields, and writing back.
 fn rewrite_config_to_uri(world: &mut QuectoWorld, new_uri: &str) {
     let base = base_path(world);
     let workspace = base.join("workspace");
-    let config = serde_json::json!({
-        "providers": {
-            "openai": { "api_key": "sk-test-key", "api_base": new_uri }
-        },
-        "agents": {
-            "defaults": {
-                "workspace": workspace.display().to_string()
-            }
-        }
-    });
+    let config_path = base.join("config.json");
+
+    // Read existing config or start from empty object.
+    let mut config: serde_json::Value = std::fs::read_to_string(&config_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+
+    // Merge provider and workspace settings.
+    config["providers"]["openai"]["api_key"] = serde_json::json!("sk-test-key");
+    config["providers"]["openai"]["api_base"] = serde_json::json!(new_uri);
+    config["agents"]["defaults"]["workspace"] = serde_json::json!(workspace.display().to_string());
+
     let config_json = serde_json::to_string_pretty(&config).expect("serialize config");
-    std::fs::write(base.join("config.json"), config_json).expect("rewrite config");
+    std::fs::write(&config_path, config_json).expect("rewrite config");
     world._wiremock_server_uri = Some(new_uri.to_string());
 }
 
@@ -1861,3 +1867,380 @@ fn then_llm_no_system_message(world: &mut QuectoWorld) {
 }
 
 // ===========================================================================
+// E2E Gateway Health Server Steps
+// ===========================================================================
+
+/// Pick a random available TCP port by binding to port 0.
+fn random_available_port() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind to random port");
+    listener.local_addr().expect("local addr").port()
+}
+
+#[given("the config has health server enabled on a random port")]
+fn given_config_health_enabled_random_port(world: &mut QuectoWorld) {
+    let port = random_available_port();
+    world.gateway_health_port = Some(port);
+
+    // Read existing config, merge health settings, write back.
+    let base = base_path(world);
+    let config_path = base.join("config.json");
+    let content = std::fs::read_to_string(&config_path).expect("read config.json");
+    let mut config: serde_json::Value = serde_json::from_str(&content).expect("parse config.json");
+    config["health"] = serde_json::json!({
+        "enabled": true,
+        "port": port
+    });
+    let updated = serde_json::to_string_pretty(&config).expect("serialize config");
+    std::fs::write(&config_path, updated).expect("write updated config.json");
+}
+
+#[given(expr = "a mock Telegram API with one pending update from user {string} with text {string}")]
+fn given_mock_telegram_one_update(world: &mut QuectoWorld, user_id: String, text: String) {
+    let user: i64 = user_id.parse().expect("user_id must be integer");
+    let token = "123:TEST";
+    let get_updates_path = format!("/bot{}/getUpdates", token);
+    let send_message_path = format!("/bot{}/sendMessage", token);
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let api_base = server.uri();
+
+        // First poll: return one update
+        let update_body = serde_json::json!({
+            "ok": true,
+            "result": [{
+                "update_id": 1,
+                "message": {
+                    "message_id": 1,
+                    "from": { "id": user, "first_name": "BDD", "username": "bdd" },
+                    "chat": { "id": user, "type": "private" },
+                    "text": text
+                }
+            }]
+        });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path(get_updates_path.clone()))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(update_body))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+
+        // Subsequent polls: empty
+        let empty = serde_json::json!({ "ok": true, "result": [] });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path(get_updates_path))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(empty))
+            .with_priority(10)
+            .mount(&server)
+            .await;
+
+        // sendMessage: accept
+        let send_ok = serde_json::json!({ "ok": true, "result": { "message_id": 1 } });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path(send_message_path))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(send_ok))
+            .mount(&server)
+            .await;
+
+        // Update config to enable Telegram with this mock server
+        let base = base_path(world);
+        let config_path = base.join("config.json");
+        let content = std::fs::read_to_string(&config_path).expect("read config");
+        let mut config: serde_json::Value = serde_json::from_str(&content).expect("parse config");
+        config["channels"] = serde_json::json!({
+            "telegram": {
+                "enabled": true,
+                "token": token,
+                "api_base": api_base,
+                "allow_from": []
+            }
+        });
+        let updated = serde_json::to_string_pretty(&config).expect("serialize config");
+        std::fs::write(&config_path, updated).expect("write config");
+
+        std::mem::forget(server);
+    });
+    std::mem::forget(rt);
+}
+
+#[when("I start the quecto gateway subprocess")]
+fn when_start_gateway_subprocess(world: &mut QuectoWorld) {
+    let binary = quecto_binary_path();
+    let base = base_path(world);
+    let mut cmd = std::process::Command::new(&binary);
+    cmd.arg("gateway")
+        .env("QUECTO_BASE_DIR", base.to_string_lossy().as_ref())
+        .env("QUECTO_ALLOW_INSECURE_TELEGRAM_API_BASE", "1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let child = cmd.spawn().expect("spawn gateway subprocess");
+    world.gateway_child = Some(child);
+}
+
+#[when("I wait for the health server to accept connections")]
+fn when_wait_for_health_server(world: &mut QuectoWorld) {
+    let port = world
+        .gateway_health_port
+        .expect("health port not set — run 'config has health server enabled' step first");
+    let addr = format!("127.0.0.1:{}", port);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+
+    loop {
+        if std::time::Instant::now() >= deadline {
+            // Collect subprocess output for diagnostics before panicking.
+            if let Some(mut child) = world.gateway_child.take() {
+                let _ = child.kill();
+                let out = child.wait_with_output().expect("collect output");
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                panic!(
+                    "health server on {} did not accept connections within 15s.\n\
+                     stdout: {}\nstderr: {}",
+                    addr, stdout, stderr
+                );
+            }
+            panic!(
+                "health server on {} did not accept connections within 15s (no child)",
+                addr
+            );
+        }
+
+        if std::net::TcpStream::connect_timeout(
+            &addr.parse().unwrap(),
+            std::time::Duration::from_millis(200),
+        )
+        .is_ok()
+        {
+            break;
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+#[when(expr = "I request GET {string} from the gateway health server")]
+fn when_request_gateway_health(world: &mut QuectoWorld, path: String) {
+    let port = world.gateway_health_port.expect("health port not set");
+    let url = format!("http://127.0.0.1:{}{}", port, path);
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let resp = rt
+        .block_on(async { reqwest::Client::new().get(&url).send().await })
+        .expect("HTTP request to gateway health server should succeed");
+    world.health_response_status = Some(resp.status().as_u16());
+    let body = rt.block_on(resp.text()).expect("should read body");
+    world.health_response_body = Some(body);
+}
+
+#[then(expr = "the response body should contain {string}")]
+fn then_response_body_contains(world: &mut QuectoWorld, expected: String) {
+    let body = world
+        .health_response_body
+        .as_ref()
+        .expect("no response body captured");
+    assert!(
+        body.contains(&expected),
+        "expected response body to contain '{}', got: {}",
+        expected,
+        body
+    );
+}
+
+// ===========================================================================
+// E2E Gateway Heartbeat Steps
+// ===========================================================================
+
+#[given("a HEARTBEAT.md in the e2e workspace containing:")]
+fn given_e2e_workspace_heartbeat_md(world: &mut QuectoWorld, step: &gherkin::Step) {
+    let content = step.docstring.as_ref().expect("missing docstring").trim();
+    let base = base_path(world);
+    let workspace = base.join("workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace");
+    std::fs::write(workspace.join("HEARTBEAT.md"), content).expect("write HEARTBEAT.md");
+}
+
+#[given(expr = "the config has heartbeat enabled with interval {int} seconds")]
+fn given_config_heartbeat_enabled(world: &mut QuectoWorld, interval: u32) {
+    let base = base_path(world);
+    let config_path = base.join("config.json");
+    let content = std::fs::read_to_string(&config_path).expect("read config.json");
+    let mut config: serde_json::Value = serde_json::from_str(&content).expect("parse config.json");
+    config["heartbeat"] = serde_json::json!({
+        "enabled": true,
+        "interval": interval
+    });
+    let updated = serde_json::to_string_pretty(&config).expect("serialize config");
+    std::fs::write(&config_path, updated).expect("write config.json");
+}
+
+#[given("the config has heartbeat disabled")]
+fn given_config_heartbeat_disabled(world: &mut QuectoWorld) {
+    let base = base_path(world);
+    let config_path = base.join("config.json");
+    let content = std::fs::read_to_string(&config_path).expect("read config.json");
+    let mut config: serde_json::Value = serde_json::from_str(&content).expect("parse config.json");
+    config["heartbeat"] = serde_json::json!({
+        "enabled": false,
+        "interval": 60
+    });
+    let updated = serde_json::to_string_pretty(&config).expect("serialize config");
+    std::fs::write(&config_path, updated).expect("write config.json");
+}
+
+#[when(expr = "I run the quecto gateway subprocess for at least {int} seconds")]
+fn when_run_gateway_for_seconds(world: &mut QuectoWorld, seconds: u32) {
+    let binary = quecto_binary_path();
+    let base = base_path(world);
+    let mut cmd = std::process::Command::new(&binary);
+    cmd.arg("gateway")
+        .env("QUECTO_BASE_DIR", base.to_string_lossy().as_ref())
+        .env("QUECTO_ALLOW_INSECURE_TELEGRAM_API_BASE", "1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let mut child = cmd.spawn().expect("spawn gateway subprocess");
+
+    // Let the gateway run for the specified time.
+    std::thread::sleep(std::time::Duration::from_secs(u64::from(seconds)));
+
+    let _ = child.kill();
+    let out = child
+        .wait_with_output()
+        .expect("collect gateway output after kill");
+    world.subprocess_exit_code = Some(-1);
+    world.subprocess_stdout = Some(String::from_utf8_lossy(&out.stdout).into_owned());
+    world.subprocess_stderr = Some(String::from_utf8_lossy(&out.stderr).into_owned());
+}
+
+#[then(expr = "the captured LLM requests should contain {string}")]
+fn then_captured_llm_contains(world: &mut QuectoWorld, expected: String) {
+    let server = world
+        .wiremock_server_ref
+        .expect("no capturing mock LLM configured");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let requests = rt.block_on(async { server.received_requests().await });
+    std::mem::forget(rt);
+    let requests = requests.expect("request recording not enabled");
+    let found = requests.iter().any(|req| {
+        let body = String::from_utf8_lossy(&req.body);
+        body.contains(&expected)
+    });
+    assert!(
+        found,
+        "expected at least one LLM request containing '{}', got {} requests.\n\
+         stdout: {}\nstderr: {}",
+        expected,
+        requests.len(),
+        world.subprocess_stdout.as_deref().unwrap_or(""),
+        world.subprocess_stderr.as_deref().unwrap_or("")
+    );
+}
+
+#[then(expr = "the captured LLM requests should not contain {string}")]
+fn then_captured_llm_not_contains(world: &mut QuectoWorld, unexpected: String) {
+    let server = world
+        .wiremock_server_ref
+        .expect("no capturing mock LLM configured");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let requests = rt.block_on(async { server.received_requests().await });
+    std::mem::forget(rt);
+    let requests = requests.expect("request recording not enabled");
+    let found = requests.iter().any(|req| {
+        let body = String::from_utf8_lossy(&req.body);
+        body.contains(&unexpected)
+    });
+    assert!(
+        !found,
+        "expected no LLM requests containing '{}', but found one in {} requests",
+        unexpected,
+        requests.len()
+    );
+}
+
+#[then("the captured LLM requests should be empty")]
+fn then_captured_llm_empty(world: &mut QuectoWorld) {
+    let server = world
+        .wiremock_server_ref
+        .expect("no capturing mock LLM configured");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let requests = rt.block_on(async { server.received_requests().await });
+    std::mem::forget(rt);
+    let requests = requests.expect("request recording not enabled");
+    assert!(
+        requests.is_empty(),
+        "expected no LLM requests, got {}",
+        requests.len()
+    );
+}
+
+// ===========================================================================
+// E2E Gateway Cron Steps
+// ===========================================================================
+
+/// Helper: append a cron job record to `<base_dir>/cron/jobs.json`.
+fn append_cron_job(base: &std::path::Path, record: serde_json::Value) {
+    let cron_dir = base.join("cron");
+    std::fs::create_dir_all(&cron_dir).expect("create cron dir");
+    let path = cron_dir.join("jobs.json");
+
+    // Load existing jobs or start fresh.
+    let mut jobs: Vec<serde_json::Value> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v["jobs"].as_array().cloned())
+        .unwrap_or_default();
+
+    jobs.push(record);
+    let file = serde_json::json!({ "jobs": jobs });
+    let json = serde_json::to_string_pretty(&file).expect("serialize cron jobs");
+    std::fs::write(&path, json).expect("write cron jobs");
+}
+
+#[given(expr = "a cron job file with name {string} interval {int} and message {string}")]
+fn given_cron_job_file(world: &mut QuectoWorld, name: String, interval: u64, message: String) {
+    let base = base_path(world);
+    append_cron_job(
+        &base,
+        serde_json::json!({
+            "id": format!("{}-{}", name, uuid::Uuid::new_v4()),
+            "name": name,
+            "message": message,
+            "schedule_type": "interval",
+            "interval_seconds": interval,
+            "enabled": true
+        }),
+    );
+}
+
+#[given(expr = "a disabled cron job file with name {string} interval {int} and message {string}")]
+fn given_disabled_cron_job_file(
+    world: &mut QuectoWorld,
+    name: String,
+    interval: u64,
+    message: String,
+) {
+    let base = base_path(world);
+    append_cron_job(
+        &base,
+        serde_json::json!({
+            "id": format!("{}-{}", name, uuid::Uuid::new_v4()),
+            "name": name,
+            "message": message,
+            "schedule_type": "interval",
+            "interval_seconds": interval,
+            "enabled": false
+        }),
+    );
+}
+
+/// Clean up gateway subprocess when the world is dropped (end of scenario).
+impl Drop for QuectoWorld {
+    fn drop(&mut self) {
+        if let Some(ref mut child) = self.gateway_child {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
