@@ -190,7 +190,8 @@ fn start_leaked_mock_server() -> (&'static wiremock::MockServer, String) {
 /// Helper: mount a mock on a leaked wiremock server.
 fn mount_mock(server: &'static wiremock::MockServer, mock: wiremock::Mock) {
     let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async { mock.mount(server).await });
+    rt.block_on(mock.mount(server));
+    // rt can be safely dropped — server is already leaked via Box::leak
 }
 
 #[given("a web search tool configured with a mock DuckDuckGo API")]
