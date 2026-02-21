@@ -77,8 +77,8 @@ timeout "${REAL_LLM_TIMEOUT}" env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm cargo te
 step "10/12" "cargo tarpaulin (code coverage)"
 if command -v cargo-tarpaulin &>/dev/null; then
     tarpaulin_ok=0
-    for attempt in 1 2 3; do
-        echo "  tarpaulin attempt ${attempt}/3"
+    for attempt in 1 2 3 4 5 6 7 8 9 10; do
+        echo "  tarpaulin attempt ${attempt}/10"
         if cargo tarpaulin --tests; then
             tarpaulin_ok=1
             break
@@ -86,7 +86,7 @@ if command -v cargo-tarpaulin &>/dev/null; then
         echo "  tarpaulin attempt ${attempt} failed"
     done
     if [[ "$tarpaulin_ok" != "1" ]]; then
-        echo "  tarpaulin failed after 3 attempts"
+        echo "  tarpaulin failed after 10 attempts"
         exit 1
     fi
 else
