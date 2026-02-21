@@ -191,7 +191,6 @@ fn start_leaked_mock_server() -> (&'static wiremock::MockServer, String) {
 fn mount_mock(server: &'static wiremock::MockServer, mock: wiremock::Mock) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async { mock.mount(server).await });
-    std::mem::forget(rt);
 }
 
 #[given("a web search tool configured with a mock DuckDuckGo API")]

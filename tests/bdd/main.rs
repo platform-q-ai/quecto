@@ -466,7 +466,7 @@ pub struct QuectoWorld {
     /// Whether the web search used DDG (for fallback assertion)
     pub web_search_used_ddg: bool,
     /// Voice processing result from application-layer voice pipeline
-    pub voice_processing_result: Option<Result<app_voice::VoiceProcessingResult, String>>,
+    pub voice_processing_result: Option<Result<app_voice::VoiceProcessingResult, DomainError>>,
     /// Outbound response text for voice gateway scenarios
     pub voice_bot_response: Option<String>,
 }

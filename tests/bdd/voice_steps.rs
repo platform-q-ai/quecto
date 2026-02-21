@@ -156,7 +156,6 @@ fn given_mock_groq_whisper_transcription(world: &mut QuectoWorld, text: String) 
         let leaked: &'static wiremock::MockServer = Box::leak(Box::new(server));
         (uri, leaked)
     });
-    std::mem::forget(rt);
 
     // Reconfigure client to point at mock server
     world.whisper_client = Some(GroqWhisperClient::with_base_url("gsk-test", &uri));
@@ -183,7 +182,6 @@ fn given_mock_groq_whisper_500(world: &mut QuectoWorld) {
     world.whisper_client = Some(GroqWhisperClient::with_base_url("gsk-test", &uri));
     world._wiremock_server_uri = Some(uri);
     std::mem::forget(server);
-    std::mem::forget(rt);
 }
 
 #[given("a mock LLM provider")]
@@ -234,21 +232,20 @@ fn when_user_sends_voice_message(world: &mut QuectoWorld, _user_id: String) {
             world.voice_bot_response = Some(vr.agent_response.clone());
         }
         Err(e) => {
-            world.voice_bot_response = Some(e.clone());
+            world.voice_bot_response = Some(e.to_string());
         }
     }
     world.voice_processing_result = Some(result);
-    std::mem::forget(rt);
 }
 
 #[then("the gateway should download the voice file from Telegram")]
-fn then_gateway_downloaded_voice(_world: &mut QuectoWorld) {
+fn then_gateway_downloaded_voice(world: &mut QuectoWorld) {
     // In our test, "downloading" is simulated by passing fake audio bytes.
     // The process_voice_message function received audio bytes, so this is
     // implicitly verified by the pipeline succeeding.
     // Assert that processing was attempted (result exists).
     assert!(
-        _world.voice_processing_result.is_some(),
+        world.voice_processing_result.is_some(),
         "voice processing was not executed"
     );
 }
@@ -292,11 +289,11 @@ fn then_bot_responds_with_error(world: &mut QuectoWorld, _chat_id: String) {
 }
 
 #[then("the gateway should continue processing other messages")]
-fn then_gateway_continues(_world: &mut QuectoWorld) {
+fn then_gateway_continues(world: &mut QuectoWorld) {
     // The gateway continues processing because process_voice_message
     // returns a Result (doesn't panic). Verify no panic occurred.
     assert!(
-        _world.voice_processing_result.is_some(),
+        world.voice_processing_result.is_some(),
         "voice processing result should exist (no crash)"
     );
 }

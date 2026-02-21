@@ -1,8 +1,12 @@
 // Voice message processing: transcribe audio and route to agent.
 
 use crate::domain::agent::AgentLoop;
+use crate::domain::error::DomainError;
 use crate::domain::message::{Message, Role};
 use crate::domain::voice::{TranscriptionError, VoiceTranscriber};
+
+/// Maximum audio size in bytes (25 MB — Whisper API limit).
+const MAX_AUDIO_BYTES: usize = 25 * 1024 * 1024;
 
 /// Result of processing a voice message.
 #[derive(Debug)]
@@ -16,21 +20,30 @@ pub struct VoiceProcessingResult {
 /// Process a voice message: transcribe audio bytes and route to the agent.
 ///
 /// Returns the transcription and agent response on success, or a
-/// user-friendly error message on failure.
+/// `DomainError` on failure. Error messages are sanitized for user display;
+/// internal details are not exposed.
 pub async fn process_voice_message(
     whisper: &dyn VoiceTranscriber,
     audio_bytes: Vec<u8>,
     file_name: &str,
     agent: &dyn AgentLoop,
-) -> Result<VoiceProcessingResult, String> {
+) -> Result<VoiceProcessingResult, DomainError> {
+    if audio_bytes.len() > MAX_AUDIO_BYTES {
+        return Err(DomainError::Tool(
+            "audio file too large (max 25 MB)".to_string(),
+        ));
+    }
+
     let transcription = whisper
         .transcribe_bytes(audio_bytes, file_name)
         .await
-        .map_err(|e| match &e {
+        .map_err(|e| match e {
             TranscriptionError::NotConfigured(_) => {
-                "voice transcription is not configured".to_string()
+                DomainError::Config("voice transcription is not configured".into())
             }
-            _ => format!("transcription failed: {}", e),
+            TranscriptionError::ServiceError(_) => {
+                DomainError::Provider("voice transcription failed".into())
+            }
         })?;
 
     let mut messages = vec![Message {
@@ -40,10 +53,7 @@ pub async fn process_voice_message(
         tool_call_id: None,
     }];
 
-    let result = agent
-        .process(&mut messages)
-        .await
-        .map_err(|e| format!("agent processing failed: {}", e))?;
+    let result = agent.process(&mut messages).await?;
 
     Ok(VoiceProcessingResult {
         transcription: transcription.text,
@@ -55,7 +65,6 @@ pub async fn process_voice_message(
 mod tests {
     use super::*;
     use crate::domain::agent::{AgentInfo, AgentResult};
-    use crate::domain::error::DomainError;
     use crate::domain::voice::TranscriptionResult;
     use std::future::Future;
     use std::pin::Pin;
@@ -110,7 +119,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_no_api_key_returns_error() {
+    async fn test_no_api_key_returns_config_error() {
         let transcriber = StubTranscriber {
             result: Err(TranscriptionError::NotConfigured(
                 "api key not configured".into(),
@@ -121,10 +130,10 @@ mod tests {
         };
         let result = process_voice_message(&transcriber, vec![1, 2], "test.ogg", &agent).await;
         assert!(result.is_err());
-        let err = result.unwrap_err();
+        let err = result.unwrap_err().to_string();
         assert!(
             err.contains("voice transcription is not configured"),
-            "expected 'voice transcription is not configured', got: {}",
+            "expected config error, got: {}",
             err
         );
     }
@@ -147,10 +156,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_service_error() {
+    async fn test_service_error_is_sanitized() {
         let transcriber = StubTranscriber {
             result: Err(TranscriptionError::ServiceError(
-                "API error (500): error".into(),
+                "API error (500): internal stack trace here".into(),
             )),
         };
         let agent = StubAgent {
@@ -159,6 +168,33 @@ mod tests {
         let result =
             process_voice_message(&transcriber, b"audio".to_vec(), "test.ogg", &agent).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("transcription failed"));
+        let err = result.unwrap_err().to_string();
+        // Error should be sanitized — no internal details leaked
+        assert!(
+            err.contains("voice transcription failed"),
+            "expected sanitized error, got: {}",
+            err
+        );
+        assert!(
+            !err.contains("stack trace"),
+            "internal details leaked: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_audio_too_large() {
+        let transcriber = StubTranscriber {
+            result: Ok(TranscriptionResult {
+                text: "hello".into(),
+            }),
+        };
+        let agent = StubAgent {
+            response: "ok".into(),
+        };
+        let large_audio = vec![0u8; MAX_AUDIO_BYTES + 1];
+        let result = process_voice_message(&transcriber, large_audio, "test.ogg", &agent).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("too large"));
     }
 }
