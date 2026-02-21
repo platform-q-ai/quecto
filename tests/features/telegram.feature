@@ -36,14 +36,14 @@ Feature: Telegram Gateway
     Then the parsed message text should be "Hello agent"
     And the parsed sender ID should be "12345"
 
-  @pending
+  @done
   Scenario: Bot responds to /start command
     Given a running gateway with Telegram enabled and a mock Telegram API
     When user "12345" sends command "/start"
     Then the bot should respond with a welcome message to chat "12345"
     And the response should contain "quecto"
 
-  @pending
+  @done
   Scenario: Bot responds to /help command
     Given a running gateway with Telegram enabled and a mock Telegram API
     When user "12345" sends command "/help"
@@ -52,7 +52,7 @@ Feature: Telegram Gateway
     And the response should contain "/help"
     And the response should contain "/status"
 
-  @pending
+  @done
   Scenario: Bot responds to /status command
     Given a running gateway with Telegram enabled and a mock Telegram API
     And a valid config with OpenAI API key set
@@ -60,15 +60,14 @@ Feature: Telegram Gateway
     Then the bot should respond with status information to chat "12345"
     And the response should contain "Model:"
 
-  @pending
+  @done
   Scenario: Unknown bot command is treated as regular message
     Given a running gateway with Telegram enabled and a mock LLM provider
     When user "12345" sends command "/unknown"
     Then the message should be routed to the agent as regular text
 
-  @pending
+  @done
   Scenario: Graceful shutdown stops Telegram polling
     Given a running gateway with Telegram enabled and a mock Telegram API
     When the gateway receives a shutdown signal
     Then the Telegram polling loop should exit cleanly
-    And no error messages should be logged

@@ -35,6 +35,7 @@ use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 use quecto::infrastructure::tools::spawn::SpawnTool;
 use quecto::infrastructure::voice::groq_whisper::{GroqWhisperClient, TranscriptionResult};
 use quecto::interface::cli::{self, CliContext};
+use quecto::interface::gateway::handle_bot_command;
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -311,6 +312,10 @@ pub struct QuectoWorld {
     pub repl_flags: Vec<String>,
     /// REPL: whether the REPL has been executed (lazy execution)
     pub repl_executed: bool,
+    /// Bot command response from handle_bot_command()
+    pub bot_command_response: Option<Option<String>>,
+    /// Whether the gateway shutdown completed cleanly
+    pub gateway_shutdown_clean: Option<bool>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
