@@ -53,7 +53,7 @@ Feature: End-to-End Gateway Heartbeat Integration
   # --- Missing HEARTBEAT.md ---
 
   Scenario: Gateway heartbeat is a no-op when HEARTBEAT.md does not exist
-    And the config has heartbeat enabled with interval 2 seconds
+    Given the config has heartbeat enabled with interval 2 seconds
     And the mock LLM returns a text response "Should not happen"
     When I run quecto gateway for at least 5 seconds
     Then the mock LLM should not have received any heartbeat requests
