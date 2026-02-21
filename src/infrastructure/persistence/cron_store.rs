@@ -31,6 +31,8 @@ struct CronJobRecord {
     enabled: bool,
     #[serde(default)]
     deliver_to: Option<String>,
+    #[serde(default)]
+    last_error: Option<String>,
 }
 
 impl FileCronStore {
@@ -81,6 +83,7 @@ fn job_to_record(job: &CronJob) -> CronJobRecord {
         cron_expression,
         enabled: job.enabled,
         deliver_to: job.deliver_to.clone(),
+        last_error: None,
     }
 }
 
@@ -100,6 +103,7 @@ fn record_to_job(rec: CronJobRecord) -> CronJob {
         schedule,
         enabled: rec.enabled,
         deliver_to: rec.deliver_to,
+        last_error: rec.last_error,
     }
 }
 
@@ -128,12 +132,27 @@ impl CronStore for FileCronStore {
         }
         self.save_all(&records)
     }
+
+    fn find_by_name(&self, name: &str) -> Result<Option<CronJob>, DomainError> {
+        let records = self.load_all()?;
+        Ok(records
+            .into_iter()
+            .find(|r| r.name == name)
+            .map(record_to_job))
+    }
+
+    fn set_last_error(&self, id: &str, error: Option<String>) -> Result<(), DomainError> {
+        let mut records = self.load_all()?;
+        if let Some(rec) = records.iter_mut().find(|r| r.id == id) {
+            rec.last_error = error;
+        }
+        self.save_all(&records)
+    }
 }
 
 /// Helper: find a job by name from the store.
 pub fn find_by_name(store: &dyn CronStore, name: &str) -> Result<Option<CronJob>, DomainError> {
-    let jobs = store.list()?;
-    Ok(jobs.into_iter().find(|j| j.name == name))
+    store.find_by_name(name)
 }
 
 #[cfg(test)]
@@ -149,6 +168,7 @@ mod tests {
             schedule: CronSchedule::Interval { seconds },
             enabled: true,
             deliver_to: None,
+            last_error: None,
         }
     }
 
@@ -162,6 +182,7 @@ mod tests {
             },
             enabled: true,
             deliver_to: None,
+            last_error: None,
         }
     }
 

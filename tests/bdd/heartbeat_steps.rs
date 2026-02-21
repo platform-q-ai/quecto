@@ -128,3 +128,76 @@ fn then_heartbeat_status(world: &mut QuectoWorld, expected: String) {
 }
 
 // ===========================================================================
+// Gateway heartbeat scenario steps
+// ===========================================================================
+
+#[given(expr = "a workspace HEARTBEAT.md containing:")]
+fn given_workspace_heartbeat_md(world: &mut QuectoWorld, step: &gherkin::Step) {
+    let content = step.docstring().expect("step should have a docstring");
+    let ws = world.heartbeat_workspace.as_ref().expect(
+        "heartbeat workspace not set (run 'a running gateway with a mock LLM provider' first)",
+    );
+    std::fs::write(ws.join("HEARTBEAT.md"), content).expect("write HEARTBEAT.md");
+}
+
+#[given("no HEARTBEAT.md in the workspace")]
+fn given_no_heartbeat_md(world: &mut QuectoWorld) {
+    let ws = world
+        .heartbeat_workspace
+        .as_ref()
+        .expect("heartbeat workspace not set");
+    let path = ws.join("HEARTBEAT.md");
+    if path.exists() {
+        std::fs::remove_file(&path).expect("remove HEARTBEAT.md");
+    }
+}
+
+#[given(expr = "the config has heartbeat_interval_minutes {int}")]
+fn given_config_heartbeat_interval(world: &mut QuectoWorld, minutes: u32) {
+    let config = world
+        .gateway_tick_config
+        .get_or_insert_with(Config::default);
+    config.heartbeat.interval = minutes;
+}
+
+#[when("the heartbeat tick fires")]
+fn when_heartbeat_tick_fires(world: &mut QuectoWorld) {
+    let agent = &world
+        ._gateway_mock_agent
+        .as_ref()
+        .expect("mock agent not set")
+        .0;
+    let ws = world
+        .heartbeat_workspace
+        .as_ref()
+        .expect("heartbeat workspace not set")
+        .clone();
+
+    let results = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(heartbeat::execute_heartbeat_tick(&ws, agent.as_ref()))
+        .unwrap();
+    world.heartbeat_tick_results = Some(results);
+}
+
+#[then(expr = "the task {string} should be dispatched via the spawn tool")]
+fn then_task_dispatched_via_spawn(world: &mut QuectoWorld, task_msg: String) {
+    let results = world
+        .heartbeat_tick_results
+        .as_ref()
+        .expect("no heartbeat tick results");
+    let found = results
+        .iter()
+        .any(|r| r.message == task_msg && r.dispatched_via_spawn);
+    assert!(
+        found,
+        "expected task '{}' dispatched via spawn, got: {:?}",
+        task_msg,
+        results
+            .iter()
+            .map(|r| (&r.message, r.dispatched_via_spawn))
+            .collect::<Vec<_>>()
+    );
+}
+
+// ===========================================================================

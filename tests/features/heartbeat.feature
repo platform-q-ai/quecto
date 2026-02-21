@@ -65,7 +65,7 @@ Feature: Heartbeat (Periodic Autonomous Tasks)
     Given a heartbeat result with 2 tasks found, 1 executed, and ok false
     Then the heartbeat status should be "HEARTBEAT_FAIL"
 
-  @pending
+  @done
   Scenario: Gateway heartbeat dispatches tasks at configured interval
     Given a running gateway with a mock LLM provider
     And a workspace HEARTBEAT.md containing:
@@ -78,7 +78,7 @@ Feature: Heartbeat (Periodic Autonomous Tasks)
     Then the mock LLM should receive a request containing "Check system health"
     And the mock LLM should receive a request containing "Report disk usage"
 
-  @pending
+  @done
   Scenario: Heartbeat skips when no HEARTBEAT.md exists
     Given a running gateway with a mock LLM provider
     And no HEARTBEAT.md in the workspace
@@ -86,7 +86,7 @@ Feature: Heartbeat (Periodic Autonomous Tasks)
     When the heartbeat tick fires
     Then the mock LLM should not receive any requests
 
-  @pending
+  @done
   Scenario: Heartbeat spawn tasks use subagent
     Given a running gateway with a mock LLM provider
     And a workspace HEARTBEAT.md containing:
