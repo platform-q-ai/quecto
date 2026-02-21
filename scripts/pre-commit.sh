@@ -38,4 +38,13 @@ cargo test --lib
 step "7/7" "cargo test --test architecture (boundary enforcement)"
 cargo test --test architecture
 
+# If committing directly to master (squash merge, ff commit, etc.),
+# also run the expensive pre-merge-commit checks. The pre-merge-commit
+# hook only fires for real merge commits, so this catches the other paths.
+CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+if [[ "$CURRENT_BRANCH" == "master" || "$CURRENT_BRANCH" == "main" ]]; then
+    echo -e "\n${BLUE}[master]${NC} Detected commit to master — running pre-merge-commit checks"
+    "$ROOT/scripts/pre-merge-commit.sh"
+fi
+
 echo -e "\n${GREEN}Pre-commit passed.${NC}"
