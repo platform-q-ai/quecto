@@ -23,6 +23,18 @@ Feature: Security Sandbox
     When the agent tries to validate path "/tmp/quecto-test/../evil.txt"
     Then the validation should be an error
 
+  Scenario: Relative path traversal blocked
+    Given a sandboxed workspace at "/tmp/quecto-test"
+    And restrict_to_workspace is true
+    When the agent tries to validate path "notes/../../etc/passwd"
+    Then the validation should be an error
+
+  Scenario: Double-slash traversal blocked
+    Given a sandboxed workspace at "/tmp/quecto-test"
+    And restrict_to_workspace is true
+    When the agent tries to validate path "/tmp/quecto-test//..//evil.txt"
+    Then the validation should be an error
+
   Scenario: Valid path inside workspace allowed
     Given a sandboxed workspace at "/tmp/quecto-test"
     And restrict_to_workspace is true
@@ -46,6 +58,18 @@ Feature: Security Sandbox
       | dd if=/dev/zero      |
       | shutdown -h now      |
       | reboot               |
+
+  Scenario: Dangerous command check is case-insensitive
+    Given restrict_to_workspace is false
+    When the agent tries to validate command "ReBoOt"
+    Then the validation should be an error
+    And the error should mention "dangerous pattern"
+
+  Scenario: Dangerous rm wildcard variant is blocked
+    Given restrict_to_workspace is false
+    When the agent tries to validate command "rm -rf /*"
+    Then the validation should be an error
+    And the error should mention "dangerous pattern"
 
   Scenario: Safe command allowed when restriction disabled
     Given restrict_to_workspace is false

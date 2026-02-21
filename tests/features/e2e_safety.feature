@@ -27,6 +27,22 @@ Feature: End-to-End Safety and Limits
     Then the exit code should be 0
     And stdout should contain "not allowed"
 
+  Scenario: Tool call to execute wildcard root delete is blocked
+    Given the mock LLM first returns a tool call for "exec" with args:
+      | command | rm -rf /* |
+    And the mock LLM then returns a text response "That destructive command is blocked"
+    When I run quecto agent -s - -m "Delete root recursively"
+    Then the exit code should be 0
+    And stdout should contain "blocked"
+
+  Scenario: Tool call to execute mkfs variant is blocked
+    Given the mock LLM first returns a tool call for "exec" with args:
+      | command | mkfs.ext4 /dev/sda |
+    And the mock LLM then returns a text response "Formatting commands are blocked"
+    When I run quecto agent -s - -m "Format the disk"
+    Then the exit code should be 0
+    And stdout should contain "blocked"
+
   Scenario: Path traversal via tool call is blocked
     Given the mock LLM first returns a tool call for "read_file" with args:
       | path | ../../etc/passwd |
@@ -34,6 +50,42 @@ Feature: End-to-End Safety and Limits
     When I run quecto agent -s - -m "Read ../../etc/passwd"
     Then the exit code should be 0
     And stdout should contain "Access denied"
+
+  Scenario: Write_file outside workspace is blocked
+    Given the mock LLM first returns a tool call for "write_file" with args:
+      | path    | ../../tmp/pwned.txt |
+      | content | owned               |
+    And the mock LLM then returns a text response "Write denied"
+    When I run quecto agent -s - -m "Write outside workspace"
+    Then the exit code should be 0
+    And stdout should contain "Write denied"
+
+  Scenario: Edit_file outside workspace is blocked
+    Given the mock LLM first returns a tool call for "edit_file" with args:
+      | path | ../../etc/passwd |
+      | old  | root             |
+      | new  | pwned            |
+    And the mock LLM then returns a text response "Edit denied"
+    When I run quecto agent -s - -m "Edit protected file"
+    Then the exit code should be 0
+    And stdout should contain "Edit denied"
+
+  Scenario: Append_file outside workspace is blocked
+    Given the mock LLM first returns a tool call for "append_file" with args:
+      | path    | ../../var/log/syslog |
+      | content | injected             |
+    And the mock LLM then returns a text response "Append denied"
+    When I run quecto agent -s - -m "Append outside workspace"
+    Then the exit code should be 0
+    And stdout should contain "Append denied"
+
+  Scenario: List_dir outside workspace is blocked
+    Given the mock LLM first returns a tool call for "list_dir" with args:
+      | path | ../../ |
+    And the mock LLM then returns a text response "Listing denied"
+    When I run quecto agent -s - -m "List parent directories"
+    Then the exit code should be 0
+    And stdout should contain "Listing denied"
 
   # --- Iteration limits ---
 

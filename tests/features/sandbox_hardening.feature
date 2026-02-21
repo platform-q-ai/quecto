@@ -49,6 +49,18 @@ Feature: Sandbox Hardening
     Then the validation should be an error
     And the error should mention "not in allowlist"
 
+  Scenario: Logical-AND bypass attempt is rejected
+    Given a sandbox with command allowlist "echo,ls"
+    When the agent tries to validate command "echo ok && bash -lc id"
+    Then the validation should be an error
+    And the error should mention "not in allowlist"
+
+  Scenario: Logical-OR bypass attempt is rejected
+    Given a sandbox with command allowlist "echo,ls"
+    When the agent tries to validate command "ls || python -c 'print(1)'"
+    Then the validation should be an error
+    And the error should mention "not in allowlist"
+
   Scenario: Command substitution bypass attempt is rejected
     Given a sandbox with command allowlist "echo,ls"
     When the agent tries to validate command "echo $(cat /etc/shadow)"
@@ -58,6 +70,12 @@ Feature: Sandbox Hardening
   Scenario: Backtick command substitution is rejected
     Given a sandbox with command allowlist "echo,ls"
     When the agent tries to validate command "echo `id`"
+    Then the validation should be an error
+    And the error should mention "not in allowlist"
+
+  Scenario: Process substitution bypass attempt is rejected
+    Given a sandbox with command allowlist "echo,ls"
+    When the agent tries to validate command "echo <(cat /etc/passwd)"
     Then the validation should be an error
     And the error should mention "not in allowlist"
 
