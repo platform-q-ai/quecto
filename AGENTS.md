@@ -126,12 +126,15 @@ Runs a full agent cycle (LLM call → tool execution → repeat) for a single me
 
 The agent loads config from `<base_dir>/config.json`, builds a `FallbackProvider` from configured credentials, constructs the tool registry with sandbox enforcement, and runs the `AgentLoopImpl`. Sessions are loaded from and saved to `<base_dir>/sessions/` via `FileSessionStore`. Workspace skills (from `<base_dir>/workspace/skills/`) are loaded at startup and their content is prepended to the system prompt (combined with `--system` if provided). Skills with empty content are silently skipped.
 
-The gateway module (`gateway.rs`) also provides credential-store integration as free functions:
+The gateway module (`gateway.rs`) also provides credential-store integration and bot command handling as free functions:
 
 - `resolve_api_key(config_key, creds, provider)` — given a pre-loaded credential snapshot, returns the store token if present and not expired, otherwise falls back to the config file key
 - `check_provider_readiness(creds)` — given a pre-loaded credential snapshot, returns a list of providers whose stored credentials have expired and need re-authentication
+- `handle_bot_command(text, config)` — intercepts known Telegram bot commands (`/start`, `/help`, `/status`) and returns a response string. Returns `None` for unknown commands, which are forwarded to the agent as regular text. Called by `dispatch_update()` before routing messages to the inbound channel.
 
-Both functions operate on a `HashMap<String, Credential>` snapshot (from `CredentialStore::load_snapshot()`) to avoid redundant file I/O. The gateway calls `load_snapshot()` once at startup and passes the result to both functions.
+Both credential functions operate on a `HashMap<String, Credential>` snapshot (from `CredentialStore::load_snapshot()`) to avoid redundant file I/O. The gateway calls `load_snapshot()` once at startup and passes the result to both functions.
+
+The `EventLoopContext` struct holds the runtime state for the gateway's `tokio::select!` event loop: inbound/outbound channels, agent, session store, Telegram channel, and `Config`. The `Config` field is passed through the polling chain (`run_telegram_polling` → `poll_once` → `dispatch_update`) so that bot commands can access configuration values (e.g. current model name for `/status`). Graceful shutdown is handled by `tokio::select!` — when `ctrl_c()` fires, all branches are dropped and channel receivers return `None`, exiting loops cleanly without errors.
 
 ## Dependency rule
 
@@ -175,9 +178,9 @@ scripts/check-quality.sh       Work markers, lint bypasses, unsafe, ignored test
 scripts/check-bdd-quality.sh   BDD anti-pattern detection (tests/bdd/)
 cargo fmt --check              Formatting
 cargo clippy -- -D warnings    Lints (zero warnings policy)
-cargo test --lib               329 unit tests
+cargo test --lib               335 unit tests
 cargo test --test architecture Clean Architecture boundary enforcement
-cargo test --test bdd          217 active BDD scenarios across 28 @done features (+13 @real-llm gated)
+cargo test --test bdd          222 active BDD scenarios across 28 @done features (+13 @real-llm gated)
 ```
 
 ### BDD quality gate (`scripts/check-bdd-quality.sh`)

@@ -314,8 +314,6 @@ pub struct QuectoWorld {
     pub repl_executed: bool,
     /// Bot command response from handle_bot_command()
     pub bot_command_response: Option<Option<String>>,
-    /// Captured outbound messages sent during gateway command handling
-    pub gateway_sent_messages: Vec<(String, String)>,
     /// Whether the gateway shutdown completed cleanly
     pub gateway_shutdown_clean: Option<bool>,
 }

@@ -71,4 +71,3 @@ Feature: Telegram Gateway
     Given a running gateway with Telegram enabled and a mock Telegram API
     When the gateway receives a shutdown signal
     Then the Telegram polling loop should exit cleanly
-    And no error messages should be logged

@@ -79,6 +79,18 @@ quecto gateway
 
 Requires Telegram configuration in `config.json` (see [Configuration](#configuration)).
 
+#### Telegram bot commands
+
+The gateway intercepts the following bot commands directly, without routing them through the agent:
+
+| Command | Response |
+|---|---|
+| `/start` | Welcome message |
+| `/help` | Lists available bot commands |
+| `/status` | Shows current model and Telegram status |
+
+Any other message (including unknown `/commands`) is forwarded to the agent for processing.
+
 ### `quecto auth` — Manage API keys
 
 ```bash
@@ -278,6 +290,8 @@ API key resolution order: credential store (`quecto auth login`) > config file >
 4. Run `quecto gateway`
 
 Set `allow_from` to an empty array `[]` to allow all users (not recommended for public bots).
+
+The gateway shuts down cleanly on Ctrl+C (SIGINT). The Telegram polling loop exits and all in-flight tasks are dropped without error.
 
 ## Directory Structure
 

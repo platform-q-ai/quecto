@@ -62,12 +62,9 @@ fn given_raw_telegram_update(world: &mut QuectoWorld, text: String, user_id: Str
     });
 }
 
-/// Set up a gateway context with a mock Telegram API (wiremock).
-/// Stores the config on the world so handle_bot_command can use it.
-#[given("a running gateway with Telegram enabled and a mock Telegram API")]
-fn given_running_gateway_mock_telegram(world: &mut QuectoWorld) {
+/// Shared setup: write a default config with Telegram enabled and store it on world.
+fn setup_gateway_with_telegram(world: &mut QuectoWorld) {
     ensure_temp_dir(world);
-    // Write a default config with Telegram enabled
     let config_json = serde_json::json!({
         "agents": { "defaults": { "model": "gpt-5.2" } },
         "providers": { "openai": { "api_key": "sk-test-key" } },
@@ -77,23 +74,18 @@ fn given_running_gateway_mock_telegram(world: &mut QuectoWorld) {
     std::fs::write(&config_path, config_json.to_string()).expect("write config");
     let config: Config = serde_json::from_value(config_json).expect("parse config");
     world.gateway_config = Some(config);
-    world.gateway_sent_messages.clear();
+}
+
+/// Set up a gateway context with a mock Telegram API (wiremock).
+#[given("a running gateway with Telegram enabled and a mock Telegram API")]
+fn given_running_gateway_mock_telegram(world: &mut QuectoWorld) {
+    setup_gateway_with_telegram(world);
 }
 
 /// Set up a gateway context with a mock LLM provider (for unknown command routing).
 #[given("a running gateway with Telegram enabled and a mock LLM provider")]
 fn given_running_gateway_mock_llm(world: &mut QuectoWorld) {
-    ensure_temp_dir(world);
-    let config_json = serde_json::json!({
-        "agents": { "defaults": { "model": "gpt-5.2" } },
-        "providers": { "openai": { "api_key": "sk-test-key" } },
-        "channels": { "telegram": { "enabled": true, "token": "123:TEST" } }
-    });
-    let config_path = base_path(world).join("config.json");
-    std::fs::write(&config_path, config_json.to_string()).expect("write config");
-    let config: Config = serde_json::from_value(config_json).expect("parse config");
-    world.gateway_config = Some(config);
-    world.gateway_sent_messages.clear();
+    setup_gateway_with_telegram(world);
 }
 
 /// Send a bot command and capture the response from handle_bot_command.
@@ -207,22 +199,6 @@ fn then_routed_to_agent(world: &mut QuectoWorld) {
 fn then_polling_exits_cleanly(world: &mut QuectoWorld) {
     let clean = world.gateway_shutdown_clean.expect("shutdown test not run");
     assert!(clean, "polling loop did not exit cleanly");
-}
-
-/// Verify no error messages were logged during shutdown.
-#[then("no error messages should be logged")]
-fn then_no_error_messages(world: &mut QuectoWorld) {
-    // The shutdown path (dropping channels) causes recv() to return None,
-    // which exits loops via `while let Some(msg) = rx.recv().await`.
-    // This does NOT trigger the tracing::error!("channel closed") paths
-    // because those are only reached when send() fails, not when recv()
-    // returns None. The architecture is correct by design.
-    // The clean shutdown flag was set in the When step above.
-    assert!(
-        world.gateway_shutdown_clean == Some(true),
-        "Expected clean shutdown (no errors), but flag was {:?}",
-        world.gateway_shutdown_clean
-    );
 }
 
 // --- Existing steps below ---
