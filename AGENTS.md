@@ -33,7 +33,7 @@ Zero external dependencies except `thiserror`, `serde` (derive only), and `serde
 | File | Purpose |
 |---|---|
 | `message.rs` | `Message`, `Role`, `ToolCall`, `LlmResponse`, `UsageInfo` |
-| `provider.rs` | `LlmProvider` trait (dyn-compatible via `Pin<Box<dyn Future>>`) |
+| `provider.rs` | `LlmProvider` trait (dyn-compatible via `Pin<Box<dyn Future>>`), `chat()` + `chat_stream()` (SSE streaming with non-streaming fallback) |
 | `tool.rs` | `Tool` trait, `ToolRegistry` trait, `ToolDefinition`, `ToolResult` |
 | `agent.rs` | `AgentLoop` trait, `AgentInfo`, `AgentResult` |
 | `session.rs` | `Session`, `SessionStore` trait |
@@ -52,7 +52,7 @@ Depends only on `domain/`. Contains orchestration logic with no I/O — all I/O 
 
 | File | Purpose |
 |---|---|
-| `agent_loop.rs` | `AgentLoopImpl` — the core LLM-tool loop: send messages to provider, execute tool calls, repeat until done or max iterations |
+| `agent_loop.rs` | `AgentLoopImpl` — the core LLM-tool loop: send messages to provider, execute tool calls, repeat until done or max iterations. Emits `tracing::info!` on each tool execution with `tool_name`, `duration_ms`, `is_error` fields (target: `tool_exec`) |
 | `onboard.rs` | `run_onboard()` — creates workspace directory, writes default config and template files |
 | `subagent.rs` | `SubagentContext` — constructs child agent contexts with inherited sandbox restrictions (re-exports `SubagentConfig` from domain) |
 | `cron_executor.rs` | `execute_cron_tick()` — runs due cron jobs through the agent with timeout, records `last_error` on failure, propagates `deliver_to` |
@@ -66,15 +66,16 @@ Implements the domain traits with real I/O. This is where serde, reqwest, tokio,
 | Directory | Contents |
 |---|---|
 | `config.rs` | `Config` struct with serde deserialization, env var overrides, workspace path expansion |
-| `providers/` | `OpenAiProvider`, `AnthropicProvider` (real HTTP), `FallbackProvider` (cooldown + error classification), `ErrorClass` |
+| `providers/` | `OpenAiProvider`, `AnthropicProvider` (real HTTP, SSE streaming via `chat_stream()`), `FallbackProvider` (cooldown + error classification), `ErrorClass` |
 | `tools/` | `ExecTool` (shell), `ReadFileTool`/`WriteFileTool`/`EditFileTool`/`AppendFileTool`/`ListDirTool` (filesystem), `SpawnTool` (subagent), `CronTool`, `MessageTool`, `WebSearchTool` (Brave + DDG), `ToolRegistryImpl` |
 | `persistence/` | `FileSessionStore`, `MemoryStore`, `FileCronStore`, `FileSkillLoader` (single workspace path, YAML frontmatter validation) |
 | `security/` | `Sandbox` — workspace path validation and command filtering |
 | `auth/` | `CredentialStore` (file-based token CRUD), `oauth.rs` (`OAuthConfig`, `DeviceCodeResponse`, `request_device_code()` — OAuth browser flow and device code flow for headless environments) |
 | `channels/` | `TelegramChannel` — `send_message()`, `get_updates()`, user allowlist |
 | `voice/` | `GroqWhisperClient` — speech-to-text via Groq API, implements `VoiceTranscriber` trait |
+| `logging.rs` | `redact_api_keys()` — pattern-based API key redaction for tracing output (matches `sk-*`, `sk-ant-*` prefixes) |
 | `bus.rs` | `MessageBus` — async channel for inbound/outbound message passing |
-| `health/` | Health check server (stub) |
+| `health/` | `HealthServer` — lightweight HTTP health server using raw tokio TCP (no hyper/axum). `ReadinessCheck` trait, `StaticReadiness`. Endpoints: `/health` (liveness, always 200), `/ready` (readiness, 200 or 503 based on provider availability) |
 
 ### interface/ — CLI + Gateway (composition root)
 
@@ -214,7 +215,7 @@ Static analysis that blocks commits when step definitions violate BDD best pract
 
 - Rust 2024 edition
 - Tokio async runtime (rt-multi-thread, macros, signal, time, fs, process)
-- reqwest with rustls-tls (no OpenSSL dependency)
+- reqwest with rustls-tls and stream feature (no OpenSSL dependency)
 - serde/serde_json/serde_yaml for config, API payloads, and skill frontmatter
 - uuid, chrono, tracing, dirs, thiserror
 - Dev: cucumber 0.21, futures, tempfile, wiremock 0.6

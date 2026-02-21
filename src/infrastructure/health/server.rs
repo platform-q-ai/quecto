@@ -63,14 +63,28 @@ impl HealthServer {
     }
 
     /// Run the server loop, accepting connections until cancelled.
+    ///
+    /// Limits concurrent connections via semaphore and applies read timeouts
+    /// to prevent slowloris-style resource exhaustion.
     pub async fn run(&self) {
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
         loop {
             match self.listener.accept().await {
                 Ok((stream, _)) => {
                     let readiness = self.readiness.clone();
-                    tokio::spawn(async move {
-                        handle_connection(stream, &*readiness).await;
-                    });
+                    let permit = semaphore.clone().try_acquire_owned();
+                    match permit {
+                        Ok(permit) => {
+                            tokio::spawn(async move {
+                                handle_connection(stream, &*readiness).await;
+                                drop(permit);
+                            });
+                        }
+                        Err(_) => {
+                            // At connection limit — drop the connection
+                            drop(stream);
+                        }
+                    }
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "health server accept error");
@@ -80,11 +94,17 @@ impl HealthServer {
     }
 }
 
-/// Handle a single HTTP connection.
+/// Read timeout for health check connections (5 seconds).
+const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Maximum concurrent health check connections.
+const MAX_CONNECTIONS: usize = 64;
+
+/// Handle a single HTTP connection with read timeout.
 async fn handle_connection(mut stream: tokio::net::TcpStream, readiness: &dyn ReadinessCheck) {
     let mut buf = [0u8; 1024];
-    let n = match stream.read(&mut buf).await {
-        Ok(n) if n > 0 => n,
+    let n = match tokio::time::timeout(READ_TIMEOUT, stream.read(&mut buf)).await {
+        Ok(Ok(n)) if n > 0 => n,
         _ => return,
     };
 
@@ -92,12 +112,7 @@ async fn handle_connection(mut stream: tokio::net::TcpStream, readiness: &dyn Re
     let (status, body) = route_request(&request, readiness);
 
     let response = format!(
-        "HTTP/1.1 {status}\r\n\
-         Content-Type: application/json\r\n\
-         Content-Length: {len}\r\n\
-         Connection: close\r\n\
-         \r\n\
-         {body}",
+        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n{body}",
         status = status,
         len = body.len(),
         body = body,
@@ -107,19 +122,21 @@ async fn handle_connection(mut stream: tokio::net::TcpStream, readiness: &dyn Re
 }
 
 /// Route an HTTP request to the appropriate handler.
-fn route_request(request: &str, readiness: &dyn ReadinessCheck) -> (&'static str, String) {
+///
+/// Returns static string slices for zero-allocation responses.
+fn route_request(request: &str, readiness: &dyn ReadinessCheck) -> (&'static str, &'static str) {
     let path = parse_request_path(request);
 
     match path {
-        "/health" => ("200 OK", r#"{"status":"ok"}"#.to_string()),
+        "/health" => ("200 OK", r#"{"status":"ok"}"#),
         "/ready" => {
             if readiness.is_ready() {
-                ("200 OK", r#"{"ready":true}"#.to_string())
+                ("200 OK", r#"{"ready":true}"#)
             } else {
-                ("503 Service Unavailable", r#"{"ready":false}"#.to_string())
+                ("503 Service Unavailable", r#"{"ready":false}"#)
             }
         }
-        _ => ("404 Not Found", r#"{"error":"not found"}"#.to_string()),
+        _ => ("404 Not Found", r#"{"error":"not found"}"#),
     }
 }
 

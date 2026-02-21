@@ -210,6 +210,9 @@ impl OpenAiProvider {
         })
     }
 
+    /// Maximum number of tool calls allowed in a single streaming response.
+    const MAX_TOOL_CALLS: usize = 128;
+
     /// Apply a single SSE delta chunk to the accumulated content and tool calls.
     fn apply_delta(
         delta: &serde_json::Value,
@@ -222,6 +225,9 @@ impl OpenAiProvider {
         if let Some(tcs) = delta["tool_calls"].as_array() {
             for tc in tcs {
                 let idx = tc["index"].as_u64().unwrap_or(0) as usize;
+                if idx >= Self::MAX_TOOL_CALLS {
+                    continue;
+                }
                 while tool_calls.len() <= idx {
                     tool_calls.push(ToolCall {
                         id: String::new(),

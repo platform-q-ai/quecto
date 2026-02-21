@@ -5,6 +5,11 @@
 /// Matches patterns like `sk-...`, `sk-ant-...`, and similar API key prefixes.
 /// Replaces the key with a redacted placeholder preserving the prefix.
 pub fn redact_api_keys(input: &str) -> String {
+    // Fast path: skip scanning if no API key prefix present
+    if !input.contains("sk-") {
+        return input.to_string();
+    }
+
     let mut result = String::with_capacity(input.len());
     let mut chars = input.char_indices().peekable();
 
