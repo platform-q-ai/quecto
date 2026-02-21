@@ -12,7 +12,7 @@ use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, Role, ToolCall};
 use quecto::domain::provider::LlmProvider;
 use quecto::domain::session::{Session, SessionStore};
-use quecto::domain::skill::{Skill, SkillLoader, SkillSource};
+use quecto::domain::skill::{Skill, SkillLoader};
 use quecto::domain::tool::{Tool, ToolDefinition, ToolResult};
 use quecto::infrastructure::auth::credential_store::{
     AuthMethod, Credential, CredentialStatus, CredentialStore,
@@ -373,10 +373,8 @@ pub struct QuectoWorld {
     pub spawn_result: Option<ToolResult>,
     /// Spawn tool for BDD
     pub spawn_tool: Option<SpawnTool>,
-    /// Skill loader for skills scenarios
+    /// Skill loader workspace directory for skills scenarios
     pub skill_loader_workspace: Option<PathBuf>,
-    pub skill_loader_global: Option<PathBuf>,
-    pub skill_loader_builtin: Option<PathBuf>,
     /// Listed skills from skill loader
     pub skill_list: Option<Vec<Skill>>,
     /// Loaded single skill

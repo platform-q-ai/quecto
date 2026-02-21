@@ -1,94 +1,81 @@
-// Skill loader: loads skills from workspace, global, and builtin sources.
+// Skill loader: loads skills from workspace/skills/ with YAML frontmatter.
 
 use std::path::{Path, PathBuf};
 
 use crate::domain::error::DomainError;
-use crate::domain::skill::{Skill, SkillLoader, SkillSource};
+use crate::domain::skill::{Skill, SkillLoader, SkillSource, is_valid_skill_name, parse_skill_md};
 
-/// File-based skill loader that resolves skills from multiple directories.
+/// File-based skill loader that reads skills from workspace/skills/.
+///
+/// Each skill is a directory containing a `SKILL.md` file with YAML
+/// frontmatter (name + description required). Skills with missing or
+/// invalid frontmatter, or name-directory mismatches, are skipped.
 #[derive(Debug)]
 pub struct FileSkillLoader {
-    workspace_dir: PathBuf,
-    global_dir: PathBuf,
-    builtin_dir: PathBuf,
+    skills_dir: PathBuf,
 }
 
 impl FileSkillLoader {
-    pub fn new(
-        workspace: impl AsRef<Path>,
-        global: impl AsRef<Path>,
-        builtin: impl AsRef<Path>,
-    ) -> Self {
+    pub fn new(workspace: impl AsRef<Path>) -> Self {
         Self {
-            workspace_dir: workspace.as_ref().join("skills"),
-            global_dir: global.as_ref().join("skills"),
-            builtin_dir: builtin.as_ref().to_path_buf(),
+            skills_dir: workspace.as_ref().join("skills"),
         }
     }
 
-    /// Load skills from a single directory with a given source label.
-    fn load_from_dir(dir: &Path, source: SkillSource) -> Vec<Skill> {
-        let mut skills = Vec::new();
-        if !dir.is_dir() {
-            return skills;
+    /// Try to load a single skill from a directory entry.
+    /// Returns `None` if the skill is invalid (no SKILL.md,
+    /// bad frontmatter, name mismatch, invalid name format).
+    fn try_load_skill(skill_dir: &Path) -> Option<Skill> {
+        let dir_name = skill_dir.file_name()?.to_string_lossy().to_string();
+        let skill_md_path = skill_dir.join("SKILL.md");
+
+        let raw = std::fs::read_to_string(&skill_md_path).ok()?;
+        let (fm, body) = parse_skill_md(&raw)?;
+
+        // Name must be valid format
+        if !is_valid_skill_name(&fm.name) {
+            return None;
         }
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                if entry.path().is_dir() {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    let skill_md = entry.path().join("SKILL.md");
-                    let content = if skill_md.exists() {
-                        std::fs::read_to_string(&skill_md).unwrap_or_default()
-                    } else {
-                        String::new()
-                    };
-                    skills.push(Skill {
-                        name,
-                        content,
-                        source: source.clone(),
-                    });
-                }
-            }
+
+        // Name must match directory name
+        if fm.name != dir_name {
+            return None;
         }
-        skills
+
+        Some(Skill {
+            name: fm.name,
+            description: fm.description,
+            content: body,
+            source: SkillSource::Workspace,
+        })
     }
 }
 
 impl SkillLoader for FileSkillLoader {
     fn list(&self) -> Result<Vec<Skill>, DomainError> {
-        let mut all = Vec::new();
-        all.extend(Self::load_from_dir(
-            &self.workspace_dir,
-            SkillSource::Workspace,
-        ));
-        all.extend(Self::load_from_dir(&self.global_dir, SkillSource::Global));
-        all.extend(Self::load_from_dir(&self.builtin_dir, SkillSource::Builtin));
-        Ok(all)
+        let mut skills = Vec::new();
+        if !self.skills_dir.is_dir() {
+            return Ok(skills);
+        }
+        if let Ok(entries) = std::fs::read_dir(&self.skills_dir) {
+            for entry in entries.flatten() {
+                if entry.path().is_dir() {
+                    if let Some(skill) = Self::try_load_skill(&entry.path()) {
+                        skills.push(skill);
+                    }
+                }
+            }
+        }
+        Ok(skills)
     }
 
     fn load(&self, name: &str) -> Result<Option<Skill>, DomainError> {
-        // Search workspace first, then global, then builtin
-        for (dir, source) in [
-            (&self.workspace_dir, SkillSource::Workspace),
-            (&self.global_dir, SkillSource::Global),
-            (&self.builtin_dir, SkillSource::Builtin),
-        ] {
-            let skill_dir = dir.join(name);
-            if skill_dir.is_dir() {
-                let skill_md = skill_dir.join("SKILL.md");
-                let content = if skill_md.exists() {
-                    std::fs::read_to_string(&skill_md).unwrap_or_default()
-                } else {
-                    String::new()
-                };
-                return Ok(Some(Skill {
-                    name: name.to_string(),
-                    content,
-                    source,
-                }));
-            }
+        let skill_dir = self.skills_dir.join(name);
+        if skill_dir.is_dir() {
+            Ok(Self::try_load_skill(&skill_dir))
+        } else {
+            Ok(None)
         }
-        Ok(None)
     }
 }
 
@@ -97,105 +84,142 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    fn setup_dirs() -> (TempDir, TempDir, TempDir) {
-        (
-            TempDir::new().unwrap(),
-            TempDir::new().unwrap(),
-            TempDir::new().unwrap(),
-        )
-    }
-
     fn create_skill(base: &Path, name: &str, content: &str) {
         let skill_dir = base.join("skills").join(name);
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(skill_dir.join("SKILL.md"), content).unwrap();
     }
 
-    fn create_builtin_skill(base: &Path, name: &str, content: &str) {
-        let skill_dir = base.join(name);
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(skill_dir.join("SKILL.md"), content).unwrap();
+    fn frontmatter(name: &str, desc: &str, body: &str) -> String {
+        format!("---\nname: {}\ndescription: {}\n---\n{}", name, desc, body)
     }
 
     #[test]
     fn test_list_workspace_skills() {
-        let (ws, global, builtin) = setup_dirs();
-        create_skill(ws.path(), "weather", "Weather skill content");
+        let ws = TempDir::new().unwrap();
+        create_skill(
+            ws.path(),
+            "weather",
+            &frontmatter("weather", "Weather forecasts", "Weather body"),
+        );
 
-        let loader = FileSkillLoader::new(ws.path(), global.path(), builtin.path());
+        let loader = FileSkillLoader::new(ws.path());
         let skills = loader.list().unwrap();
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].name, "weather");
+        assert_eq!(skills[0].description, "Weather forecasts");
+        assert_eq!(skills[0].content, "Weather body");
         assert_eq!(skills[0].source, SkillSource::Workspace);
     }
 
     #[test]
-    fn test_list_from_multiple_sources() {
-        let (ws, global, builtin) = setup_dirs();
-        create_skill(ws.path(), "weather", "ws weather");
-        create_skill(global.path(), "calculator", "global calc");
-        create_builtin_skill(builtin.path(), "news", "builtin news");
-
-        let loader = FileSkillLoader::new(ws.path(), global.path(), builtin.path());
-        let skills = loader.list().unwrap();
-        assert_eq!(skills.len(), 3);
-
-        let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
-        assert!(names.contains(&"weather"));
-        assert!(names.contains(&"calculator"));
-        assert!(names.contains(&"news"));
-    }
-
-    #[test]
     fn test_load_specific_skill() {
-        let (ws, global, builtin) = setup_dirs();
-        create_skill(ws.path(), "weather", "Weather content");
+        let ws = TempDir::new().unwrap();
+        create_skill(
+            ws.path(),
+            "weather",
+            &frontmatter("weather", "Weather", "Content here"),
+        );
 
-        let loader = FileSkillLoader::new(ws.path(), global.path(), builtin.path());
-        let skill = loader.load("weather").unwrap();
-        assert!(skill.is_some());
-        let skill = skill.unwrap();
-        assert_eq!(skill.content, "Weather content");
-        assert_eq!(skill.source, SkillSource::Workspace);
+        let loader = FileSkillLoader::new(ws.path());
+        let skill = loader.load("weather").unwrap().unwrap();
+        assert_eq!(skill.name, "weather");
+        assert_eq!(skill.content, "Content here");
     }
 
     #[test]
     fn test_load_nonexistent_skill() {
-        let (ws, global, builtin) = setup_dirs();
-        let loader = FileSkillLoader::new(ws.path(), global.path(), builtin.path());
-        let skill = loader.load("nonexistent").unwrap();
-        assert!(skill.is_none());
-    }
-
-    #[test]
-    fn test_workspace_priority_over_global() {
-        let (ws, global, builtin) = setup_dirs();
-        create_skill(ws.path(), "weather", "workspace version");
-        create_skill(global.path(), "weather", "global version");
-
-        let loader = FileSkillLoader::new(ws.path(), global.path(), builtin.path());
-        let skill = loader.load("weather").unwrap().unwrap();
-        assert_eq!(skill.source, SkillSource::Workspace);
-        assert_eq!(skill.content, "workspace version");
+        let ws = TempDir::new().unwrap();
+        let loader = FileSkillLoader::new(ws.path());
+        assert!(loader.load("nonexistent").unwrap().is_none());
     }
 
     #[test]
     fn test_empty_dirs() {
-        let (ws, global, builtin) = setup_dirs();
-        let loader = FileSkillLoader::new(ws.path(), global.path(), builtin.path());
-        let skills = loader.list().unwrap();
-        assert!(skills.is_empty());
+        let ws = TempDir::new().unwrap();
+        let loader = FileSkillLoader::new(ws.path());
+        assert!(loader.list().unwrap().is_empty());
     }
 
     #[test]
-    fn test_skill_without_skill_md() {
-        let (ws, global, builtin) = setup_dirs();
-        // Create skill dir without SKILL.md
-        std::fs::create_dir_all(ws.path().join("skills").join("empty_skill")).unwrap();
+    fn test_skill_without_skill_md_is_skipped() {
+        let ws = TempDir::new().unwrap();
+        std::fs::create_dir_all(ws.path().join("skills").join("empty")).unwrap();
 
-        let loader = FileSkillLoader::new(ws.path(), global.path(), builtin.path());
+        let loader = FileSkillLoader::new(ws.path());
+        assert!(loader.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_skill_without_frontmatter_is_skipped() {
+        let ws = TempDir::new().unwrap();
+        create_skill(ws.path(), "bad-skill", "Just plain text, no frontmatter");
+
+        let loader = FileSkillLoader::new(ws.path());
+        assert!(loader.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_name_directory_mismatch_is_skipped() {
+        let ws = TempDir::new().unwrap();
+        create_skill(
+            ws.path(),
+            "weather",
+            &frontmatter("forecast", "Forecasts", "Body"),
+        );
+
+        let loader = FileSkillLoader::new(ws.path());
+        assert!(loader.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_invalid_name_format_is_skipped() {
+        let ws = TempDir::new().unwrap();
+        create_skill(
+            ws.path(),
+            "My_Skill",
+            "---\nname: My_Skill\ndescription: Bad\n---\nContent",
+        );
+
+        let loader = FileSkillLoader::new(ws.path());
+        assert!(loader.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_multiple_valid_skills() {
+        let ws = TempDir::new().unwrap();
+        create_skill(
+            ws.path(),
+            "weather",
+            &frontmatter("weather", "Weather", "W body"),
+        );
+        create_skill(
+            ws.path(),
+            "code-review",
+            &frontmatter("code-review", "Reviews", "CR body"),
+        );
+
+        let loader = FileSkillLoader::new(ws.path());
+        let skills = loader.list().unwrap();
+        assert_eq!(skills.len(), 2);
+        let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"weather"));
+        assert!(names.contains(&"code-review"));
+    }
+
+    #[test]
+    fn test_invalid_skills_skipped_alongside_valid() {
+        let ws = TempDir::new().unwrap();
+        create_skill(
+            ws.path(),
+            "weather",
+            &frontmatter("weather", "Weather", "Valid"),
+        );
+        create_skill(ws.path(), "bad", "No frontmatter");
+
+        let loader = FileSkillLoader::new(ws.path());
         let skills = loader.list().unwrap();
         assert_eq!(skills.len(), 1);
-        assert!(skills[0].content.is_empty());
+        assert_eq!(skills[0].name, "weather");
     }
 }

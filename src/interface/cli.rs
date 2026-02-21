@@ -989,6 +989,30 @@ fn cmd_auth_status(base: &std::path::Path, stdout: &mut String) -> i32 {
     }
 }
 
+/// List installed skills with their descriptions from SKILL.md frontmatter.
+fn cmd_skills_list(base: &std::path::Path, stdout: &mut String) -> i32 {
+    use crate::domain::skill::SkillLoader;
+    use crate::infrastructure::persistence::skill_loader::FileSkillLoader;
+
+    let workspace = base.join("workspace");
+    let loader = FileSkillLoader::new(&workspace);
+    let skills = match loader.list() {
+        Ok(s) => s,
+        Err(_) => {
+            stdout.push_str("No skills installed\n");
+            return 0;
+        }
+    };
+    if skills.is_empty() {
+        stdout.push_str("No skills installed\n");
+    } else {
+        for skill in &skills {
+            stdout.push_str(&format!("  {} — {}\n", skill.name, skill.description));
+        }
+    }
+    0
+}
+
 fn cmd_skills(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &mut String) -> i32 {
     let base = ctx.base_dir();
     let ws_skills = base.join("workspace").join("skills");
@@ -999,26 +1023,7 @@ fn cmd_skills(ctx: &CliContext, args: &[String], stdout: &mut String, stderr: &m
     }
 
     match args[0].as_str() {
-        "list" => {
-            if !ws_skills.is_dir() {
-                stdout.push_str("No skills installed\n");
-                return 0;
-            }
-            let mut found = false;
-            if let Ok(entries) = std::fs::read_dir(&ws_skills) {
-                for entry in entries.flatten() {
-                    if entry.path().is_dir() {
-                        let name = entry.file_name().to_string_lossy().to_string();
-                        stdout.push_str(&format!("  {}\n", name));
-                        found = true;
-                    }
-                }
-            }
-            if !found {
-                stdout.push_str("No skills installed\n");
-            }
-            0
-        }
+        "list" => cmd_skills_list(&base, stdout),
         "remove" => {
             if args.len() < 2 {
                 stderr.push_str("skills remove: missing skill name\n");
@@ -1450,6 +1455,11 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let skill_dir = tmp.path().join("workspace").join("skills").join("weather");
         std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: weather\ndescription: Weather forecasts\n---\nBody",
+        )
+        .unwrap();
         let ctx = CliContext {
             base_dir: Some(tmp.path().to_path_buf()),
             ..Default::default()
@@ -1457,6 +1467,7 @@ mod tests {
         let out = run_with_output(args("skills list"), &ctx);
         assert_eq!(out.exit_code, 0);
         assert!(out.stdout.contains("weather"));
+        assert!(out.stdout.contains("Weather forecasts"));
     }
 
     #[test]
