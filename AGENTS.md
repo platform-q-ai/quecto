@@ -70,7 +70,7 @@ Implements the domain traits with real I/O. This is where serde, reqwest, tokio,
 | `tools/` | `ExecTool` (shell), `ReadFileTool`/`WriteFileTool`/`EditFileTool`/`AppendFileTool`/`ListDirTool` (filesystem), `SpawnTool` (subagent), `CronTool`, `MessageTool`, `WebSearchTool` (Brave + DDG), `ToolRegistryImpl` |
 | `persistence/` | `FileSessionStore`, `MemoryStore`, `FileCronStore`, `FileSkillLoader` |
 | `security/` | `Sandbox` — workspace path validation and command filtering |
-| `auth/` | `CredentialStore` (file-based token CRUD), `oauth.rs` (stub) |
+| `auth/` | `CredentialStore` (file-based token CRUD), `oauth.rs` (`OAuthConfig`, `DeviceCodeResponse`, `request_device_code()` — OAuth browser flow and device code flow for headless environments) |
 | `channels/` | `TelegramChannel` — `send_message()`, `get_updates()`, user allowlist |
 | `voice/` | `GroqWhisperClient` — speech-to-text via Groq API, implements `VoiceTranscriber` trait |
 | `bus.rs` | `MessageBus` — async channel for inbound/outbound message passing |
@@ -87,13 +87,13 @@ Manual argument parsing (no clap). The single entry point is `cli::run(args) -> 
 | `quecto agent -m <message> [-s <session>] [--system <prompt>] [--model <model>] [--max-iterations <n>] [--max-time <secs>]` | Runs a headless one-shot agent session (see below) |
 | `quecto skills list\|remove\|install` | Manages skill files |
 | `quecto status` | Shows config summary, provider availability, redacted API keys |
-| `quecto auth login --provider <name> --token <key>` | Stores an API token for a provider in the credential store |
+| `quecto auth login --provider <name> [--token <key>] [--oauth] [--device-code]` | Authenticates with a provider: paste token interactively (default), pass `--token` directly, `--oauth` for browser flow, or `--device-code` for headless environments |
 | `quecto auth logout --provider <name>` | Removes a stored credential (no-op if absent) |
 | `quecto auth status` | Lists all stored credentials with provider, method, and active/expired status |
 | `quecto gateway` | Runs the full async gateway (Telegram polling + agent loop) |
 | `quecto help` / `quecto version` | Self-explanatory |
 
-`CliContext` allows overriding `base_dir` for testability so commands write to temp directories in tests instead of `~/.config/quecto`. Base directory resolution order: explicit `CliContext.base_dir` override > `QUECTO_BASE_DIR` environment variable > platform default.
+`CliContext` allows overriding `base_dir` for testability so commands write to temp directories in tests instead of `~/.config/quecto`. Additional fields: `stdin_data` (pre-loaded stdin for testing interactive commands like token paste) and `oauth_base_url` (override OAuth endpoints for testing with wiremock). Base directory resolution order: explicit `CliContext.base_dir` override > `QUECTO_BASE_DIR` environment variable > platform default.
 
 #### `quecto` — Interactive REPL mode
 
@@ -183,7 +183,7 @@ cargo fmt --check              Formatting
 cargo clippy -- -D warnings    Lints (zero warnings policy)
 cargo test --lib               346 unit tests
 cargo test --test architecture Clean Architecture boundary enforcement
-cargo test --test bdd          236 active BDD scenarios across 28 @done features (+13 @real-llm gated)
+cargo test --test bdd          239 active BDD scenarios across 28 @done features (+13 @real-llm gated)
 ```
 
 ### BDD quality gate (`scripts/check-bdd-quality.sh`)

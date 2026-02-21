@@ -402,3 +402,133 @@ fn then_gateway_reports_reauth(world: &mut QuectoWorld, provider: String) {
 }
 
 // ===========================================================================
+// Interactive Auth + OAuth Steps
+// ===========================================================================
+
+#[when(expr = "I start quecto with arguments {string}")]
+fn when_start_quecto_with_args(world: &mut QuectoWorld, args_str: String) {
+    // Store the args for deferred execution (next step will provide stdin).
+    let mut args = vec!["quecto".to_string()];
+    let mut current = String::new();
+    let mut in_quotes = false;
+    for ch in args_str.chars() {
+        match ch {
+            '"' => in_quotes = !in_quotes,
+            ' ' if !in_quotes => {
+                if !current.is_empty() {
+                    args.push(current.clone());
+                    current.clear();
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+    if !current.is_empty() {
+        args.push(current);
+    }
+    world.pending_cli_args = Some(args);
+}
+
+#[when(expr = "I paste the token {string}")]
+fn when_paste_token(world: &mut QuectoWorld, token: String) {
+    let args = world
+        .pending_cli_args
+        .take()
+        .expect("no pending CLI args — call 'I start quecto' first");
+    // Set stdin_data on the CLI context so cmd_auth_login reads from it.
+    world.cli_context.stdin_data = Some(token);
+    let output = cli::run_with_output(args, &world.cli_context);
+    world.exit_code = output.exit_code;
+    world.stdout = output.stdout;
+    world.stderr = output.stderr;
+}
+
+#[given(expr = "a mock OAuth server for {string}")]
+fn given_mock_oauth_server(world: &mut QuectoWorld, _provider: String) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let uri = rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let uri = server.uri();
+        let _leaked: &'static wiremock::MockServer = Box::leak(Box::new(server));
+        uri
+    });
+    std::mem::forget(rt);
+    world.cli_context.oauth_base_url = Some(uri);
+}
+
+#[given(expr = "a mock OAuth server for {string} supporting device code flow")]
+fn given_mock_oauth_device_code(world: &mut QuectoWorld, _provider: String) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (uri, _server_ref) = rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+
+        let response = serde_json::json!({
+            "device_code": "DEVCODE-TEST-123",
+            "user_code": "ABCD-1234",
+            "verification_uri": "https://auth.example.com/device"
+        });
+
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/device/code"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(&response))
+            .mount(&server)
+            .await;
+
+        let uri = server.uri();
+        let leaked: &'static wiremock::MockServer = Box::leak(Box::new(server));
+        (uri, leaked)
+    });
+    std::mem::forget(rt);
+    world.cli_context.oauth_base_url = Some(uri);
+}
+
+#[then("the output should contain a URL to open in the browser")]
+fn then_output_contains_url(world: &mut QuectoWorld) {
+    let combined = format!("{}{}", world.stdout, world.stderr);
+    assert!(
+        combined.contains("http://") || combined.contains("https://"),
+        "expected output to contain a URL, got:\n{}",
+        combined
+    );
+}
+
+#[then("the output should contain a device code URL")]
+fn then_output_contains_device_code_url(world: &mut QuectoWorld) {
+    let combined = format!("{}{}", world.stdout, world.stderr);
+    assert!(
+        combined.contains("https://") || combined.contains("http://"),
+        "expected output to contain a device code URL, got:\n{}",
+        combined
+    );
+    assert!(
+        combined.contains("Go to:"),
+        "expected 'Go to:' prefix for device code URL, got:\n{}",
+        combined
+    );
+}
+
+#[then("the output should contain a user code to enter")]
+fn then_output_contains_user_code(world: &mut QuectoWorld) {
+    let combined = format!("{}{}", world.stdout, world.stderr);
+    assert!(
+        combined.contains("Enter code:"),
+        "expected output to contain 'Enter code:', got:\n{}",
+        combined
+    );
+}
+
+#[then(expr = "the stored credential method should be {string}")]
+fn then_stored_credential_method(world: &mut QuectoWorld, expected_method: String) {
+    let base = base_path(world);
+    let store = CredentialStore::new(&base);
+    let list = store.list().unwrap();
+    assert!(!list.is_empty(), "expected at least one stored credential");
+    let cred = list.first().unwrap();
+    assert_eq!(
+        cred.method.as_str(),
+        expected_method,
+        "expected credential method '{}', got '{}'",
+        expected_method,
+        cred.method.as_str()
+    );
+}

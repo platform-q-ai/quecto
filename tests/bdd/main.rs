@@ -469,6 +469,8 @@ pub struct QuectoWorld {
     pub voice_processing_result: Option<Result<app_voice::VoiceProcessingResult, DomainError>>,
     /// Outbound response text for voice gateway scenarios
     pub voice_bot_response: Option<String>,
+    /// Pending CLI args for interactive auth scenarios (set by "I start quecto")
+    pub pending_cli_args: Option<Vec<String>>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
