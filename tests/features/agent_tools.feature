@@ -78,7 +78,7 @@ Feature: Agent Tool System
     When the agent executes the spawn tool with task "evil" and agent_id "evil-bot"
     Then the spawn result should be an error mentioning "not allowed"
 
-  @pending
+  @done
   Scenario: Web search via DuckDuckGo returns results
     Given a tool workspace
     And a web search tool configured with a mock DuckDuckGo API
@@ -92,7 +92,7 @@ Feature: Agent Tool System
     And the tool result should contain "rust-lang.org"
     And the tool result should not be an error
 
-  @pending
+  @done
   Scenario: Web search via Brave API returns results
     Given a tool workspace
     And a web search tool configured with a mock Brave Search API and api_key "bsk-test"
@@ -104,7 +104,7 @@ Feature: Agent Tool System
     Then the tool result should contain "Weather Today"
     And the tool result should not be an error
 
-  @pending
+  @done
   Scenario: Web search falls back to DuckDuckGo when Brave key is missing
     Given a tool workspace
     And a web search tool configured with no Brave API key
@@ -114,7 +114,7 @@ Feature: Agent Tool System
     Then the tool result should contain search results
     And the search should have used DuckDuckGo
 
-  @pending
+  @done
   Scenario: Web search handles API error gracefully
     Given a tool workspace
     And a web search tool configured with a mock DuckDuckGo API
@@ -122,4 +122,4 @@ Feature: Agent Tool System
     When the agent executes tool "web_search" with args:
       | query | test query |
     Then the tool result should be an error
-    And the tool result should contain "search failed"
+    And the tool result should contain "Search failed"
