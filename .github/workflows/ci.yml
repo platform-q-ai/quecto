@@ -48,10 +48,5 @@ jobs:
       - name: Architecture tests
         run: cargo test --test architecture
 
-      - name: Real LLM smoke subset
-        if: env.OPENAI_API_KEY != ''
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          QUECTO_REAL_LLM: "1"
-          QUECTO_TAG: real-llm-smoke
-        run: timeout 5m cargo test --test bdd
+      - name: BDD integration tests
+        run: cargo test --test bdd
