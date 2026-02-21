@@ -230,6 +230,7 @@ Config file: `~/.quecto/config.json`
     "telegram": {
       "enabled": true,
       "token": "your-bot-token-from-botfather",
+      "api_base": "https://api.telegram.org",
       "allow_from": ["123456789"]
     }
   },
@@ -329,21 +330,44 @@ The health server uses raw tokio TCP (no hyper/axum) for minimal binary footprin
 2. Copy the bot token
 3. Add to your config:
    ```json
-   {
-     "channels": {
-       "telegram": {
-         "enabled": true,
-         "token": "your-bot-token",
-         "allow_from": ["your-telegram-user-id"]
-       }
-     }
-   }
+    {
+      "channels": {
+        "telegram": {
+          "enabled": true,
+          "token": "your-bot-token",
+          "api_base": "https://api.telegram.org",
+          "allow_from": ["your-telegram-user-id"]
+        }
+      }
+    }
    ```
 4. Run `quecto gateway`
 
 Set `allow_from` to an empty array `[]` to allow all users (not recommended for public bots).
 
+Set `api_base` only when you need to override the Telegram API endpoint (for example, local integration tests with a mock server). Leave it as the default `https://api.telegram.org` for normal use.
+
 The gateway shuts down cleanly on Ctrl+C (SIGINT). The Telegram polling loop exits and all in-flight tasks are dropped without error.
+
+## Testing
+
+```bash
+# Core suite (no real provider calls)
+cargo test --test bdd
+
+# Real-LLM smoke subset (CI-sized)
+timeout 5m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm-smoke cargo test --test bdd
+
+# Real-LLM full suite
+timeout 5m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm cargo test --test bdd
+```
+
+`scripts/pre-push.sh` now runs both default BDD coverage and the full real-LLM suite (tagged `@real-llm`) with timeouts, caches successful runs per `HEAD` commit + script hash, and writes a full log to `.git/pre-push.last.log`.
+
+Pre-push controls:
+- `QUECTO_E2E_TIMEOUT` for the default BDD timeout (default `5m`)
+- `QUECTO_REAL_LLM_TIMEOUT` for the real-LLM timeout (default `5m`)
+- `QUECTO_PREPUSH_FORCE=1` to bypass cache and rerun all checks
 
 ## Directory Structure
 

@@ -71,7 +71,7 @@ Implements the domain traits with real I/O. This is where serde, reqwest, tokio,
 | `persistence/` | `FileSessionStore`, `MemoryStore`, `FileCronStore`, `FileSkillLoader` (single workspace path, YAML frontmatter validation) |
 | `security/` | `Sandbox` — workspace path validation and command filtering |
 | `auth/` | `CredentialStore` (file-based token CRUD), `oauth.rs` (`OAuthConfig`, `DeviceCodeResponse`, `request_device_code()` — OAuth browser flow and device code flow for headless environments) |
-| `channels/` | `TelegramChannel` — `send_message()`, `get_updates()`, user allowlist |
+| `channels/` | `TelegramChannel` — `send_message()`, `get_updates()`, user allowlist, configurable `api_base` (defaults to `https://api.telegram.org`) |
 | `voice/` | `GroqWhisperClient` — speech-to-text via Groq API, implements `VoiceTranscriber` trait |
 | `logging.rs` | `redact_api_keys()` — pattern-based API key redaction for tracing output (matches `sk-*`, `sk-ant-*` prefixes) |
 | `bus.rs` | `MessageBus` — async channel for inbound/outbound message passing |
@@ -173,7 +173,7 @@ Refactor
 
 The BDD runner (`tests/bdd/main.rs`) uses `.fail_on_skipped()` and runs features tagged `@wip` or `@done`. This means all completed features are regression-tested on every run. Scenarios tagged `@pending` are always excluded. Scenarios tagged `@real-llm` are excluded unless `QUECTO_REAL_LLM=1` is set (requires `OPENAI_API_KEY` via env var or `.env` file). Set `QUECTO_TAG=<tag>` to run only scenarios matching a specific tag (e.g. smoke: `timeout 5m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm-smoke cargo test --test bdd`, full: `timeout 5m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm cargo test --test bdd`). Step definitions live in `tests/bdd/` split across 18 module files (~6500 lines total).
 
-Feature files live in `tests/features/`. There are 28 feature files covering: config, cli, onboard, security, sandbox_hardening, agent_tools, providers, agent_loop, session, auth, telegram, cron, subagent, heartbeat, skills, voice, observability, agent_cli, e2e_tool_use, e2e_session, e2e_subprocess, e2e_safety, e2e_providers, e2e_agentic_loop, e2e_real_llm, e2e_session_tools, e2e_skills, repl.
+Feature files live in `tests/features/`. There are 35 feature files covering: agent_cli, agent_loop, agent_tools, auth, cli, config, cron, e2e_agentic_loop, e2e_providers, e2e_real_llm, e2e_real_llm_agent_matrix, e2e_real_llm_entrypoints, e2e_real_llm_entrypoints_matrix, e2e_real_llm_gateway, e2e_real_llm_gateway_matrix, e2e_real_llm_repl, e2e_real_llm_repl_matrix, e2e_safety, e2e_session, e2e_session_tools, e2e_skills, e2e_subprocess, e2e_tool_use, heartbeat, observability, onboard, providers, repl, sandbox_hardening, security, session, skills, subagent, telegram, voice.
 
 ## Quality gates
 
@@ -184,8 +184,10 @@ cargo fmt --check              Formatting
 cargo clippy -- -D warnings    Lints (zero warnings policy)
 cargo test --lib               367 unit tests
 cargo test --test architecture Clean Architecture boundary enforcement
-cargo test --test bdd          243 active BDD scenarios across 28 @done features (+13 @real-llm gated)
+cargo test --test bdd          BDD scenarios in `@done`/`@wip` features (`@real-llm` gated unless `QUECTO_REAL_LLM=1`)
 ```
+
+`scripts/pre-push.sh` runs the full quality sequence plus two BDD passes: default suite (`cargo test --test bdd`) and real-LLM full suite (`timeout "$QUECTO_REAL_LLM_TIMEOUT" env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm cargo test --test bdd`). Successful runs are cached per `HEAD` SHA + pre-push script hash in `.git/pre-push.passed.*`; use `QUECTO_PREPUSH_FORCE=1` to bypass cache. Logs are tee'd to `.git/pre-push.last.log`.
 
 ### BDD quality gate (`scripts/check-bdd-quality.sh`)
 
