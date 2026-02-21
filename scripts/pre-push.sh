@@ -8,8 +8,25 @@ set -euo pipefail
 export PATH="$HOME/.cargo/bin:$PATH"
 
 ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
 E2E_TIMEOUT="${QUECTO_E2E_TIMEOUT:-5m}"
 REAL_LLM_TIMEOUT="${QUECTO_REAL_LLM_TIMEOUT:-5m}"
+FORCE_RUN="${QUECTO_PREPUSH_FORCE:-0}"
+
+HEAD_SHA="$(git rev-parse HEAD)"
+SCRIPT_HASH="$(sha256sum "$ROOT/scripts/pre-push.sh" | awk '{print $1}')"
+CACHE_FILE="$ROOT/.git/pre-push.passed.${HEAD_SHA}.${SCRIPT_HASH}"
+LOG_FILE="$ROOT/.git/pre-push.last.log"
+
+if [[ "$FORCE_RUN" != "1" && -f "$CACHE_FILE" ]]; then
+    echo "Pre-push checks already passed for commit $HEAD_SHA."
+    echo "Use QUECTO_PREPUSH_FORCE=1 to force a full rerun."
+    exit 0
+fi
+
+# Keep a full log for post-mortem while preserving console output.
+exec > >(tee "$LOG_FILE") 2>&1
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -82,3 +99,6 @@ else
 fi
 
 echo -e "\n${GREEN}Pre-push passed.${NC}"
+touch "$CACHE_FILE"
+echo "Cached pass marker: $CACHE_FILE"
+echo "Full log: $LOG_FILE"
