@@ -96,12 +96,23 @@ impl AgentLoopImpl {
 
                 // Execute each tool call
                 for tc in &response.tool_calls {
+                    let start = std::time::Instant::now();
                     let tool_result = self.tool_registry.execute(&tc.name, &tc.arguments).await;
+                    let duration_ms = start.elapsed().as_millis() as u64;
 
+                    let is_err = tool_result.is_err();
                     let (content, _is_error) = match tool_result {
                         Ok(tr) => (tr.content, tr.is_error),
                         Err(e) => (format!("Error: {}", e), true),
                     };
+
+                    tracing::info!(
+                        target: "tool_exec",
+                        tool_name = tc.name.as_str(),
+                        duration_ms,
+                        is_error = is_err,
+                        "tool executed"
+                    );
 
                     // Append tool result message
                     messages.push(Message {

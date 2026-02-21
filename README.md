@@ -303,7 +303,7 @@ The agent operates inside a sandbox:
 
 ## Provider Fallback
 
-Quecto supports OpenAI and Anthropic as LLM providers. If both are configured, it uses automatic fallback:
+Quecto supports OpenAI and Anthropic as LLM providers. Both providers support SSE streaming (`chat_stream()`) for incremental response assembly, with automatic fallback to non-streaming mode. If both are configured, it uses automatic fallback:
 
 - Tries the primary provider first
 - On rate-limit or server errors, falls back to the secondary provider
@@ -311,6 +311,17 @@ Quecto supports OpenAI and Anthropic as LLM providers. If both are configured, i
 - Providers enter a cooldown period after failures
 
 API key resolution order: credential store (`quecto auth login`) > config file > environment variable.
+
+## Health Endpoints
+
+When running as a gateway, Quecto exposes HTTP health endpoints for monitoring:
+
+| Endpoint | Description | Response |
+|---|---|---|
+| `GET /health` | Liveness check | Always `200 OK` with `{"status":"ok"}` |
+| `GET /ready` | Readiness check | `200 OK` with `{"ready":true}` if providers available, `503` with `{"ready":false}` otherwise |
+
+The health server uses raw tokio TCP (no hyper/axum) for minimal binary footprint.
 
 ## Telegram Setup
 

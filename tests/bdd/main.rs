@@ -23,6 +23,8 @@ use quecto::infrastructure::channels::telegram::{
     TelegramUser,
 };
 use quecto::infrastructure::config::{Config, TelegramConfig};
+use quecto::infrastructure::health::server::StaticReadiness;
+
 use quecto::infrastructure::persistence::cron_store::FileCronStore;
 use quecto::infrastructure::persistence::memory_store::{self, MemoryStore};
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
@@ -469,6 +471,18 @@ pub struct QuectoWorld {
     pub voice_bot_response: Option<String>,
     /// Pending CLI args for interactive auth scenarios (set by "I start quecto")
     pub pending_cli_args: Option<Vec<String>>,
+    /// Health server address (host:port) for observability scenarios
+    pub health_server_addr: Option<String>,
+    /// Health server readiness control
+    pub health_readiness: Option<Arc<StaticReadiness>>,
+    /// HTTP response status from health server request
+    pub health_response_status: Option<u16>,
+    /// HTTP response body from health server request
+    pub health_response_body: Option<String>,
+    /// Captured tracing log output for observability scenarios
+    pub captured_log_output: Option<Arc<Mutex<String>>>,
+    /// Streaming response from provider streaming scenarios
+    pub streaming_response: Option<LlmResponse>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
@@ -506,6 +520,7 @@ mod cron_steps;
 mod e2e_steps;
 mod gateway_steps;
 mod heartbeat_steps;
+mod observability_steps;
 mod provider_steps;
 mod repl_steps;
 mod sandbox_steps;

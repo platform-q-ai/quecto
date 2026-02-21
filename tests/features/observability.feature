@@ -4,28 +4,25 @@ Feature: Observability
   I want structured logging and health endpoints
   So that I can monitor Quecto in production
 
-  @pending
-  Scenario: Health endpoint returns OK when gateway is running
-    Given a running gateway with health server on port 9090
-    When I request GET "http://127.0.0.1:9090/health"
-    Then the response status should be 200
+  Scenario: Health endpoint returns OK
+    Given a health server started on a random port
+    When I request GET "/health" from the health server
+    Then the HTTP response status should be 200
     And the response body should be JSON containing "status" with value "ok"
 
-  @pending
-  Scenario: Ready endpoint checks provider availability
-    Given a running gateway with health server on port 9090
-    And at least one LLM provider is configured
-    When I request GET "http://127.0.0.1:9090/ready"
-    Then the response status should be 200
-    And the response body should be JSON containing "ready" with value true
+  Scenario: Ready endpoint reports ready when providers are available
+    Given a health server started on a random port
+    And the readiness check reports providers available
+    When I request GET "/ready" from the health server
+    Then the HTTP response status should be 200
+    And the response body should be JSON containing "ready" with value "true"
 
-  @pending
   Scenario: Ready endpoint returns 503 when no providers available
-    Given a running gateway with health server on port 9090
-    And no LLM providers are configured
-    When I request GET "http://127.0.0.1:9090/ready"
-    Then the response status should be 503
-    And the response body should be JSON containing "ready" with value false
+    Given a health server started on a random port
+    And the readiness check reports no providers available
+    When I request GET "/ready" from the health server
+    Then the HTTP response status should be 503
+    And the response body should be JSON containing "ready" with value "false"
 
   Scenario: Status command shows configuration summary
     Given a valid config with OpenAI API key set
@@ -49,19 +46,16 @@ Feature: Observability
     Then the output should not contain "sk-secret-key-12345"
     And the output should contain "OpenAI API:"
 
-  @pending
   Scenario: Structured logging includes span fields for tool execution
-    Given a running gateway with RUST_LOG set to "debug"
-    And a mock LLM provider
-    When the agent executes a tool call
-    Then the log output should include a "tool_exec" span
-    And the log output should include field "tool_name"
-    And the log output should include field "duration_ms"
+    Given an agent loop with a mock provider and mock tools
+    And a tracing subscriber capturing JSON log output
+    When the agent processes a message that triggers a tool call
+    Then the captured log output should include span "tool_exec"
+    And the captured log output should include field "tool_name"
+    And the captured log output should include field "duration_ms"
 
-  @pending
-  Scenario: API keys are redacted in all log output
-    Given a config with OpenAI api_key "sk-secret-key-12345"
-    And RUST_LOG set to "trace"
-    When the gateway starts and initializes providers
-    Then the log output should not contain "sk-secret-key-12345"
-    And the log output should contain "sk-***" or a redacted placeholder
+  Scenario: API keys are redacted in log output
+    Given a tracing subscriber capturing JSON log output
+    When the message "Provider configured with key sk-secret-key-12345" is logged at info level
+    Then the captured log output should not contain "sk-secret-key-12345"
+    And the captured log output should contain a redacted placeholder

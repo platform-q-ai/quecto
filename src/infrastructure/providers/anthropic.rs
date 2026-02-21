@@ -168,6 +168,124 @@ impl AnthropicProvider {
     }
 }
 
+impl AnthropicProvider {
+    /// Send a streaming chat request and assemble the response from SSE events.
+    async fn stream_chat(&self, request: ChatRequest<'_>) -> Result<LlmResponse, DomainError> {
+        let (_system, mut body) = Self::build_request_body(&request);
+        body["stream"] = serde_json::Value::Bool(true);
+        let url = format!("{}/v1/messages", self.api_base);
+
+        let response = self
+            .client
+            .post(&url)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| DomainError::Provider(format!("HTTP error: {}", e)))?;
+
+        let status = response.status().as_u16();
+        if status != 200 {
+            let text = response.text().await.unwrap_or_default();
+            return Err(DomainError::Provider(format!(
+                "HTTP {} from Anthropic: {}",
+                status, text
+            )));
+        }
+
+        let full = response
+            .text()
+            .await
+            .map_err(|e| DomainError::Provider(format!("failed to read stream: {}", e)))?;
+
+        Self::parse_sse_response(&full)
+    }
+
+    /// Parse Anthropic SSE events into an assembled LlmResponse.
+    fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> {
+        let mut content = String::new();
+        let mut tool_calls: Vec<ToolCall> = Vec::new();
+        let mut current_tool_id = String::new();
+        let mut current_tool_name = String::new();
+        let mut current_tool_input = String::new();
+        let mut in_tool_input = false;
+
+        let mut current_event = String::new();
+
+        for line in raw.lines() {
+            let line = line.trim();
+            if let Some(event) = line.strip_prefix("event: ") {
+                current_event = event.to_string();
+                continue;
+            }
+            if !line.starts_with("data: ") {
+                continue;
+            }
+            let data = &line[6..];
+            let chunk: serde_json::Value = serde_json::from_str(data).unwrap_or_default();
+
+            match current_event.as_str() {
+                "content_block_start" => {
+                    if chunk["content_block"]["type"].as_str() == Some("tool_use") {
+                        current_tool_id = chunk["content_block"]["id"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_string();
+                        current_tool_name = chunk["content_block"]["name"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_string();
+                        current_tool_input.clear();
+                        in_tool_input = true;
+                    }
+                }
+                "content_block_delta" => {
+                    let delta = &chunk["delta"];
+                    match delta["type"].as_str() {
+                        Some("text_delta") => {
+                            if let Some(text) = delta["text"].as_str() {
+                                content.push_str(text);
+                            }
+                        }
+                        Some("input_json_delta") => {
+                            if let Some(json) = delta["partial_json"].as_str() {
+                                current_tool_input.push_str(json);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                "content_block_stop" => {
+                    if in_tool_input {
+                        tool_calls.push(ToolCall {
+                            id: std::mem::take(&mut current_tool_id),
+                            name: std::mem::take(&mut current_tool_name),
+                            arguments: std::mem::take(&mut current_tool_input),
+                        });
+                        in_tool_input = false;
+                    }
+                }
+                "message_stop" => break,
+                _ => {}
+            }
+        }
+
+        let content_opt = if content.is_empty() {
+            None
+        } else {
+            Some(content)
+        };
+
+        Ok(LlmResponse {
+            content: content_opt,
+            tool_calls,
+            usage: None,
+        })
+    }
+}
+
 impl LlmProvider for AnthropicProvider {
     fn name(&self) -> &str {
         "anthropic"
@@ -211,6 +329,28 @@ impl LlmProvider for AnthropicProvider {
                 })?;
 
             Self::parse_response(&response_json)
+        })
+    }
+
+    fn chat_stream(
+        &self,
+        request: ChatRequest<'_>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+        // Clone request data to avoid lifetime conflicts.
+        let messages = request.messages.to_vec();
+        let tools = request.tools.to_vec();
+        let model = request.model.to_string();
+        let max_tokens = request.max_tokens;
+        let temperature = request.temperature;
+        Box::pin(async move {
+            let req = ChatRequest {
+                messages: &messages,
+                tools: &tools,
+                model: &model,
+                max_tokens,
+                temperature,
+            };
+            self.stream_chat(req).await
         })
     }
 }
@@ -349,6 +489,89 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("500"), "error should mention status: {}", err);
+    }
+
+    #[test]
+    fn test_parse_sse_text_response() {
+        let sse = "\
+event: content_block_delta\n\
+data: {\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n\
+event: content_block_delta\n\
+data: {\"delta\":{\"type\":\"text_delta\",\"text\":\" from Claude\"}}\n\n\
+event: message_stop\n\
+data: {}\n";
+        let result = AnthropicProvider::parse_sse_response(sse).unwrap();
+        assert_eq!(result.content.as_deref(), Some("Hello from Claude"));
+        assert!(result.tool_calls.is_empty());
+    }
+
+    #[test]
+    fn test_parse_sse_tool_use() {
+        let sse = "\
+event: content_block_start\n\
+data: {\"content_block\":{\"type\":\"tool_use\",\"id\":\"tu_1\",\"name\":\"exec\"}}\n\n\
+event: content_block_delta\n\
+data: {\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"cmd\\\"\"}}\n\n\
+event: content_block_delta\n\
+data: {\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\": \\\"ls\\\"}\"}}\n\n\
+event: content_block_stop\n\
+data: {}\n\n\
+event: message_stop\n\
+data: {}\n";
+        let result = AnthropicProvider::parse_sse_response(sse).unwrap();
+        assert!(result.content.is_none());
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0].id, "tu_1");
+        assert_eq!(result.tool_calls[0].name, "exec");
+        assert!(result.tool_calls[0].arguments.contains("ls"));
+    }
+
+    #[test]
+    fn test_parse_sse_empty_stops() {
+        let sse = "event: message_stop\ndata: {}\n";
+        let result = AnthropicProvider::parse_sse_response(sse).unwrap();
+        assert!(result.content.is_none());
+        assert!(result.tool_calls.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_chat_stream_with_mock() {
+        let server = MockServer::start().await;
+        let sse_body = "\
+event: content_block_delta\n\
+data: {\"delta\":{\"type\":\"text_delta\",\"text\":\"Hi\"}}\n\n\
+event: content_block_delta\n\
+data: {\"delta\":{\"type\":\"text_delta\",\"text\":\" there\"}}\n\n\
+event: message_stop\n\
+data: {}\n\n";
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(sse_body)
+                    .insert_header("content-type", "text/event-stream"),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
+        let messages = vec![Message {
+            role: Role::User,
+            content: "Hi".to_string(),
+            tool_calls: vec![],
+            tool_call_id: None,
+        }];
+        let req = ChatRequest {
+            messages: &messages,
+            tools: &[],
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 1024,
+            temperature: 0.7,
+        };
+        let result = provider.chat_stream(req).await;
+        assert!(result.is_ok(), "stream should succeed: {:?}", result);
+        let resp = result.unwrap();
+        assert_eq!(resp.content.as_deref(), Some("Hi there"));
     }
 
     #[tokio::test]

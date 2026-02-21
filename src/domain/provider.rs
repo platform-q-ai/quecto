@@ -27,4 +27,15 @@ pub trait LlmProvider: Send + Sync + std::fmt::Debug {
         &self,
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>>;
+
+    /// Send a streaming chat request and return the assembled response.
+    ///
+    /// Default implementation delegates to `chat()` (non-streaming).
+    /// Providers that support SSE streaming override this method.
+    fn chat_stream(
+        &self,
+        request: ChatRequest<'_>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+        self.chat(request)
+    }
 }
