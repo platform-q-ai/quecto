@@ -32,6 +32,15 @@ pub struct TelegramUpdateMessage {
     pub from: Option<TelegramUser>,
     pub chat: TelegramChat,
     pub text: Option<String>,
+    pub voice: Option<TelegramVoice>,
+}
+
+/// A Telegram voice message attachment.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct TelegramVoice {
+    pub file_id: String,
+    pub duration: u32,
+    pub file_size: Option<u64>,
 }
 
 /// A Telegram user.
@@ -173,6 +182,106 @@ Allowed default is '{}'. Set {}=1 only for local test endpoints.",
             sender_id,
             chat_id,
         })
+    }
+
+    /// Parse a raw Telegram update as a voice message.
+    /// Returns None if the update doesn't contain a voice attachment.
+    pub fn parse_voice_update(
+        update: &TelegramUpdate,
+    ) -> Option<(String, String, String, Option<u64>)> {
+        let msg = update.message.as_ref()?;
+        let voice = msg.voice.as_ref()?;
+        let sender_id = msg
+            .from
+            .as_ref()
+            .map(|u| u.id.to_string())
+            .unwrap_or_default();
+        let chat_id = msg.chat.id.to_string();
+        Some((sender_id, chat_id, voice.file_id.clone(), voice.file_size))
+    }
+
+    /// Get the file path for a Telegram file ID via the `getFile` API.
+    pub async fn get_file(&self, file_id: &str) -> Result<String, DomainError> {
+        let url = self.api_url("getFile");
+        let body = serde_json::json!({ "file_id": file_id });
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| DomainError::Channel(format!("Telegram getFile error: {}", e)))?;
+
+        let status = response.status().as_u16();
+        let response_text = response
+            .text()
+            .await
+            .map_err(|e| DomainError::Channel(format!("failed to read getFile response: {}", e)))?;
+
+        if status != 200 {
+            return Err(DomainError::Channel(format!(
+                "Telegram getFile failed ({}): {}",
+                status, response_text
+            )));
+        }
+
+        let parsed: serde_json::Value = serde_json::from_str(&response_text).map_err(|e| {
+            DomainError::Channel(format!("failed to parse getFile response: {}", e))
+        })?;
+
+        parsed["result"]["file_path"]
+            .as_str()
+            .map(String::from)
+            .ok_or_else(|| DomainError::Channel("getFile response missing file_path".to_string()))
+    }
+
+    /// Download a file from Telegram's file storage.
+    pub async fn download_file(
+        &self,
+        file_path: &str,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, DomainError> {
+        let url = format!("{}/file/bot{}/{}", self.api_base, self.token, file_path);
+
+        let mut response =
+            self.client.get(&url).send().await.map_err(|e| {
+                DomainError::Channel(format!("Telegram file download error: {}", e))
+            })?;
+
+        let status = response.status().as_u16();
+        if status != 200 {
+            return Err(DomainError::Channel(format!(
+                "Telegram file download failed ({})",
+                status
+            )));
+        }
+
+        if let Some(content_length) = response.content_length()
+            && content_length > max_bytes as u64
+        {
+            return Err(DomainError::Channel(format!(
+                "Telegram file exceeds size limit ({} > {} bytes)",
+                content_length, max_bytes
+            )));
+        }
+
+        let mut data = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| DomainError::Channel(format!("failed to read file bytes: {}", e)))?
+        {
+            if data.len() + chunk.len() > max_bytes {
+                return Err(DomainError::Channel(format!(
+                    "Telegram file exceeds size limit (>{} bytes)",
+                    max_bytes
+                )));
+            }
+            data.extend_from_slice(&chunk);
+        }
+
+        Ok(data)
     }
 
     /// Get the bot token.
@@ -385,6 +494,7 @@ mod tests {
                     chat_type: Some("private".to_string()),
                 },
                 text: Some("Hello agent".to_string()),
+                voice: None,
             }),
         };
 
@@ -417,6 +527,7 @@ mod tests {
                     chat_type: None,
                 },
                 text: None,
+                voice: None,
             }),
         };
         assert!(TelegramChannel::parse_update(&update).is_none());

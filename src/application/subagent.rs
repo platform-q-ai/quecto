@@ -39,6 +39,7 @@ mod tests {
             agent_id: None,
             restrict_to_workspace: true,
             deliver_to: None,
+            system: None,
         };
         let ctx = SubagentContext::from_config(&config);
         assert_eq!(ctx.task, "Do stuff");
@@ -52,6 +53,7 @@ mod tests {
             agent_id: None,
             restrict_to_workspace: true,
             deliver_to: None,
+            system: None,
         };
         let ctx = SubagentContext::from_config(&config);
         assert!(ctx.restrict_to_workspace);
@@ -64,6 +66,7 @@ mod tests {
             agent_id: None,
             restrict_to_workspace: false,
             deliver_to: None,
+            system: None,
         };
         let ctx = SubagentContext::from_config(&config);
         assert!(!ctx.restrict_to_workspace);
@@ -76,6 +79,7 @@ mod tests {
             agent_id: None,
             restrict_to_workspace: true,
             deliver_to: Some("telegram:12345".to_string()),
+            system: None,
         };
         let ctx = SubagentContext::from_config(&config);
         assert_eq!(ctx.deliver_to.as_deref(), Some("telegram:12345"));

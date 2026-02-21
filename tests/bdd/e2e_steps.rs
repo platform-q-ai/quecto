@@ -2235,6 +2235,413 @@ fn given_disabled_cron_job_file(
     );
 }
 
+// ===========================================================================
+// E2E Gateway Voice + Spawn Steps
+// ===========================================================================
+
+/// Set up a unified wiremock server that handles Telegram API endpoints
+/// (getUpdates, sendMessage, getFile, file download) for gateway e2e tests.
+/// This step does NOT mount any getUpdates responses yet — those are mounted
+/// by subsequent When steps that send text/voice messages.
+#[given("a mock Telegram API that supports voice downloads")]
+fn given_mock_telegram_with_voice(world: &mut QuectoWorld) {
+    let token = "123:TEST";
+    let send_message_path = format!("/bot{}/sendMessage", token);
+    let get_file_path = format!("/bot{}/getFile", token);
+    let file_download_path = format!("/file/bot{}/voice/file_0.oga", token);
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let api_base = server.uri();
+
+        // sendMessage: always accept
+        let send_ok = serde_json::json!({ "ok": true, "result": { "message_id": 1 } });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path(send_message_path))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(send_ok))
+            .mount(&server)
+            .await;
+
+        // getFile: return a file_path for voice downloads
+        let get_file_response = serde_json::json!({
+            "ok": true,
+            "result": {
+                "file_id": "voice_file_id_123",
+                "file_unique_id": "unique_123",
+                "file_size": 1024,
+                "file_path": "voice/file_0.oga"
+            }
+        });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path(get_file_path))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(get_file_response))
+            .mount(&server)
+            .await;
+
+        // File download: return fake audio bytes
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path(file_download_path))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_raw(b"fake-ogg-audio-data".to_vec(), "audio/ogg"),
+            )
+            .mount(&server)
+            .await;
+
+        // getUpdates: default empty (will be overridden by When steps)
+        let get_updates_path = format!("/bot{}/getUpdates", token);
+        let empty = serde_json::json!({ "ok": true, "result": [] });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path(get_updates_path))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(empty))
+            .with_priority(100)
+            .mount(&server)
+            .await;
+
+        // Write Telegram config
+        let base = base_path(world);
+        let config_path = base.join("config.json");
+        let content = std::fs::read_to_string(&config_path).expect("read config");
+        let mut config: serde_json::Value = serde_json::from_str(&content).expect("parse config");
+        config["channels"] = serde_json::json!({
+            "telegram": {
+                "enabled": true,
+                "token": token,
+                "api_base": api_base,
+                "allow_from": []
+            }
+        });
+        // Disable heartbeat and health to reduce noise
+        config["heartbeat"] = serde_json::json!({ "enabled": false });
+        config["health"] = serde_json::json!({ "enabled": false });
+        let updated = serde_json::to_string_pretty(&config).expect("serialize config");
+        std::fs::write(&config_path, updated).expect("write config");
+
+        let leaked: &'static wiremock::MockServer = Box::leak(Box::new(server));
+        world.gateway_mock_server = Some(leaked);
+        world.wiremock_server_ref = Some(leaked);
+    });
+    std::mem::forget(rt);
+}
+
+#[given(expr = "voice transcription is configured in the gateway config with api_key {string}")]
+fn given_voice_config_with_key(world: &mut QuectoWorld, api_key: String) {
+    // Start a separate Groq Whisper mock server
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let groq_uri = rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let uri = server.uri();
+        let leaked: &'static wiremock::MockServer = Box::leak(Box::new(server));
+        world.groq_mock_server = Some(leaked);
+        uri
+    });
+    std::mem::forget(rt);
+
+    // Write voice config into config.json
+    let base = base_path(world);
+    let config_path = base.join("config.json");
+    let content = std::fs::read_to_string(&config_path).expect("read config");
+    let mut config: serde_json::Value = serde_json::from_str(&content).expect("parse config");
+    config["voice"] = serde_json::json!({
+        "groq": {
+            "api_key": api_key,
+            "api_base": groq_uri
+        }
+    });
+    let updated = serde_json::to_string_pretty(&config).expect("serialize config");
+    std::fs::write(&config_path, updated).expect("write config");
+}
+
+#[given("no voice transcription API key is configured in the gateway config")]
+fn given_no_voice_config(world: &mut QuectoWorld) {
+    // Ensure voice config has empty api_key
+    let base = base_path(world);
+    let config_path = base.join("config.json");
+    let content = std::fs::read_to_string(&config_path).expect("read config");
+    let mut config: serde_json::Value = serde_json::from_str(&content).expect("parse config");
+    config["voice"] = serde_json::json!({
+        "groq": { "api_key": "", "api_base": "" }
+    });
+    let updated = serde_json::to_string_pretty(&config).expect("serialize config");
+    std::fs::write(&config_path, updated).expect("write config");
+}
+
+#[given(expr = "a mock Groq Whisper endpoint that returns transcription {string}")]
+fn given_groq_whisper_mock_transcription(world: &mut QuectoWorld, transcription: String) {
+    let server = world
+        .groq_mock_server
+        .expect("Groq mock server not set — run voice config step first");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let body = serde_json::json!({ "text": transcription });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/openai/v1/audio/transcriptions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+            .mount(server)
+            .await;
+    });
+    std::mem::forget(rt);
+}
+
+#[given("a mock Groq Whisper endpoint that returns an HTTP 500 error")]
+fn given_groq_whisper_mock_error(world: &mut QuectoWorld) {
+    let server = world
+        .groq_mock_server
+        .expect("Groq mock server not set — run voice config step first");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/openai/v1/audio/transcriptions"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(500).set_body_string("Internal Server Error"),
+            )
+            .mount(server)
+            .await;
+    });
+    std::mem::forget(rt);
+}
+
+/// Mount a voice message update on the Telegram mock and run the gateway.
+#[when(expr = "user {string} sends a voice message via Telegram to the running gateway")]
+fn when_user_sends_voice_to_gateway(world: &mut QuectoWorld, user_id: String) {
+    let user: i64 = user_id.parse().expect("user_id must be integer");
+    let server = world
+        .gateway_mock_server
+        .expect("gateway mock server not set");
+    let token = "123:TEST";
+    let get_updates_path = format!("/bot{}/getUpdates", token);
+
+    // Mount a voice message update
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let update_body = serde_json::json!({
+            "ok": true,
+            "result": [{
+                "update_id": 1,
+                "message": {
+                    "message_id": 1,
+                    "from": { "id": user, "first_name": "BDD", "username": "bdd" },
+                    "chat": { "id": user, "type": "private" },
+                    "voice": {
+                        "file_id": "voice_file_id_123",
+                        "file_unique_id": "unique_123",
+                        "duration": 5,
+                        "file_size": 1024
+                    }
+                }
+            }]
+        });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path(get_updates_path))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(update_body))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(server)
+            .await;
+    });
+    std::mem::forget(rt);
+
+    // Run gateway for enough time to process the voice message
+    run_gateway_for_duration(world, 8);
+}
+
+/// Mount a text update followed by a voice update, then run the gateway.
+#[when(
+    expr = "user {string} sends text {string} and then a voice message via Telegram to the running gateway"
+)]
+fn when_user_sends_text_then_voice(world: &mut QuectoWorld, user_id: String, text: String) {
+    let user: i64 = user_id.parse().expect("user_id must be integer");
+    let server = world
+        .gateway_mock_server
+        .expect("gateway mock server not set");
+    let token = "123:TEST";
+    let get_updates_path = format!("/bot{}/getUpdates", token);
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        // First poll: text message
+        let text_update = serde_json::json!({
+            "ok": true,
+            "result": [{
+                "update_id": 1,
+                "message": {
+                    "message_id": 1,
+                    "from": { "id": user, "first_name": "BDD", "username": "bdd" },
+                    "chat": { "id": user, "type": "private" },
+                    "text": text
+                }
+            }]
+        });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path(get_updates_path.clone()))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(text_update))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(server)
+            .await;
+
+        // Second poll: voice message
+        let voice_update = serde_json::json!({
+            "ok": true,
+            "result": [{
+                "update_id": 2,
+                "message": {
+                    "message_id": 2,
+                    "from": { "id": user, "first_name": "BDD", "username": "bdd" },
+                    "chat": { "id": user, "type": "private" },
+                    "voice": {
+                        "file_id": "voice_file_id_123",
+                        "file_unique_id": "unique_123",
+                        "duration": 5,
+                        "file_size": 1024
+                    }
+                }
+            }]
+        });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path(get_updates_path))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(voice_update))
+            .up_to_n_times(1)
+            .with_priority(2)
+            .mount(server)
+            .await;
+    });
+    std::mem::forget(rt);
+
+    // Run gateway for enough time to process both messages
+    run_gateway_for_duration(world, 10);
+}
+
+/// Mount a text update on the Telegram mock and run the gateway.
+#[when(expr = "user {string} sends text {string} via Telegram to the running gateway")]
+fn when_user_sends_text_to_gateway(world: &mut QuectoWorld, user_id: String, text: String) {
+    let user: i64 = user_id.parse().expect("user_id must be integer");
+    let server = world
+        .gateway_mock_server
+        .expect("gateway mock server not set");
+    let token = "123:TEST";
+    let get_updates_path = format!("/bot{}/getUpdates", token);
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let update_body = serde_json::json!({
+            "ok": true,
+            "result": [{
+                "update_id": 1,
+                "message": {
+                    "message_id": 1,
+                    "from": { "id": user, "first_name": "BDD", "username": "bdd" },
+                    "chat": { "id": user, "type": "private" },
+                    "text": text
+                }
+            }]
+        });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path(get_updates_path))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(update_body))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(server)
+            .await;
+    });
+    std::mem::forget(rt);
+
+    // Run gateway for enough time to process the message (spawn tool may take longer)
+    run_gateway_for_duration(world, 10);
+}
+
+/// Helper: run the gateway subprocess for a fixed duration then kill it.
+fn run_gateway_for_duration(world: &mut QuectoWorld, seconds: u32) {
+    let binary = quecto_binary_path();
+    let base = base_path(world);
+    let mut cmd = std::process::Command::new(&binary);
+    cmd.arg("gateway")
+        .env("QUECTO_BASE_DIR", base.to_string_lossy().as_ref())
+        .env("QUECTO_ALLOW_INSECURE_TELEGRAM_API_BASE", "1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let mut child = cmd.spawn().expect("spawn gateway subprocess");
+    std::thread::sleep(std::time::Duration::from_secs(u64::from(seconds)));
+
+    let _ = child.kill();
+    let out = child
+        .wait_with_output()
+        .expect("collect gateway output after kill");
+    world.subprocess_exit_code = Some(-1);
+    world.subprocess_stdout = Some(String::from_utf8_lossy(&out.stdout).into_owned());
+    world.subprocess_stderr = Some(String::from_utf8_lossy(&out.stderr).into_owned());
+}
+
+#[then("the Telegram mock should have received a getFile request")]
+fn then_telegram_received_get_file(world: &mut QuectoWorld) {
+    let server = world
+        .gateway_mock_server
+        .expect("gateway mock server not set");
+    let token = "123:TEST";
+    let get_file_path = format!("/bot{}/getFile", token);
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let requests = rt.block_on(async { server.received_requests().await });
+    std::mem::forget(rt);
+    let requests = requests.expect("request recording not enabled");
+    let found = requests
+        .iter()
+        .any(|r| r.url.path().ends_with(&get_file_path));
+    assert!(
+        found,
+        "expected a getFile request, got {} requests: {:?}",
+        requests.len(),
+        requests
+            .iter()
+            .map(|r| r.url.path().to_string())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[then(expr = "the gateway Telegram mock should have received a sendMessage containing {string}")]
+fn then_telegram_received_send_message_containing(world: &mut QuectoWorld, expected: String) {
+    let server = world
+        .gateway_mock_server
+        .expect("gateway mock server not set");
+    let token = "123:TEST";
+    let send_message_path = format!("/bot{}/sendMessage", token);
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let requests = rt.block_on(async { server.received_requests().await });
+    std::mem::forget(rt);
+    let requests = requests.expect("request recording not enabled");
+    let send_requests: Vec<String> = requests
+        .iter()
+        .filter(|r| r.url.path().ends_with(&send_message_path))
+        .filter_map(|r| serde_json::from_slice::<serde_json::Value>(&r.body).ok())
+        .filter_map(|v| v.get("text").and_then(|t| t.as_str()).map(String::from))
+        .collect();
+    let found = send_requests.iter().any(|t| t.contains(&expected));
+    assert!(
+        found,
+        "expected a sendMessage containing '{}', got: {:?}\nstdout: {}\nstderr: {}",
+        expected,
+        send_requests,
+        world.subprocess_stdout.as_deref().unwrap_or(""),
+        world.subprocess_stderr.as_deref().unwrap_or("")
+    );
+}
+
+#[then(expr = "the child session {string} should exist in the base directory")]
+fn then_child_session_exists(world: &mut QuectoWorld, session_key: String) {
+    let base = base_path(world);
+    let filename = session_key.replace(':', "_") + ".json";
+    let path = base.join("sessions").join(&filename);
+    assert!(
+        path.exists(),
+        "expected child session '{}' at {}\nstdout: {}\nstderr: {}",
+        session_key,
+        path.display(),
+        world.subprocess_stdout.as_deref().unwrap_or(""),
+        world.subprocess_stderr.as_deref().unwrap_or("")
+    );
+}
+
 /// Clean up gateway subprocess when the world is dropped (end of scenario).
 impl Drop for QuectoWorld {
     fn drop(&mut self) {
