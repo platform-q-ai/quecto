@@ -66,7 +66,34 @@ Feature: Heartbeat (Periodic Autonomous Tasks)
     Then the heartbeat status should be "HEARTBEAT_FAIL"
 
   @pending
-  Scenario: Heartbeat triggers at configured interval
-    Given a heartbeat interval of 5 minutes
-    When 5 minutes have elapsed
-    Then the heartbeat should trigger exactly once
+  Scenario: Gateway heartbeat dispatches tasks at configured interval
+    Given a running gateway with a mock LLM provider
+    And a workspace HEARTBEAT.md containing:
+      """
+      - Check system health
+      - Report disk usage
+      """
+    And the config has heartbeat_interval_minutes 5
+    When the heartbeat tick fires
+    Then the mock LLM should receive a request containing "Check system health"
+    And the mock LLM should receive a request containing "Report disk usage"
+
+  @pending
+  Scenario: Heartbeat skips when no HEARTBEAT.md exists
+    Given a running gateway with a mock LLM provider
+    And no HEARTBEAT.md in the workspace
+    And the config has heartbeat_interval_minutes 5
+    When the heartbeat tick fires
+    Then the mock LLM should not receive any requests
+
+  @pending
+  Scenario: Heartbeat spawn tasks use subagent
+    Given a running gateway with a mock LLM provider
+    And a workspace HEARTBEAT.md containing:
+      """
+      ## Long Tasks (use spawn)
+      - Analyze monthly data
+      """
+    And the config has heartbeat_interval_minutes 5
+    When the heartbeat tick fires
+    Then the task "Analyze monthly data" should be dispatched via the spawn tool

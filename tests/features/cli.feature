@@ -4,10 +4,14 @@ Feature: CLI Interface
   I want a command-line interface with clear subcommands
   So that I can interact with Quecto from the terminal
 
-  Scenario: Show help when no command is given
+  Scenario: No arguments enters REPL mode
     When I run quecto with no arguments
-    Then the exit code should be 1
-    And the output should contain "Usage: quecto <command>"
+    Then quecto should enter interactive REPL mode
+
+  Scenario: Help subcommand shows usage
+    When I run quecto with arguments "help"
+    Then the exit code should be 0
+    And the output should contain "Usage: quecto [command]"
     And the output should contain "onboard"
     And the output should contain "agent"
     And the output should contain "gateway"
@@ -36,7 +40,7 @@ Feature: CLI Interface
     When I run quecto with arguments "foobar"
     Then the exit code should be 1
     And the stderr should contain "Unknown command: foobar"
-    And the output should contain "Usage: quecto <command>"
+    And the output should contain "Usage: quecto [command]"
 
   # Agent one-shot mode is covered in agent_cli.feature
-  # Agent interactive mode is out of scope (headless-first design)
+  # REPL interactive mode is covered in repl.feature
