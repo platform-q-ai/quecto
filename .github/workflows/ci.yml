@@ -49,7 +49,7 @@ jobs:
         run: cargo test --test architecture
 
       - name: Real LLM smoke subset
-        if: ${{ github.event_name != 'pull_request' && secrets.OPENAI_API_KEY != '' }}
+        if: ${{ secrets.OPENAI_API_KEY != '' }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           QUECTO_REAL_LLM: "1"
