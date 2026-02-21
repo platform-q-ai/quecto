@@ -19,6 +19,7 @@ EOF
 
 install_hook "pre-commit"
 install_hook "pre-push"
+install_hook "pre-merge-commit"
 
 # Install git wrapper that bans --no-verify.
 WRAPPER_DIR="$ROOT/.git/wrapper-bin"

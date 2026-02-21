@@ -187,7 +187,19 @@ cargo test --test architecture Clean Architecture boundary enforcement
 cargo test --test bdd          BDD scenarios in `@done`/`@wip` features (`@real-llm` gated unless `QUECTO_REAL_LLM=1`)
 ```
 
-`scripts/pre-push.sh` runs the full quality sequence plus two BDD passes: default suite (`cargo test --test bdd`) and real-LLM full suite (`timeout "$QUECTO_REAL_LLM_TIMEOUT" env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm cargo test --test bdd`). Successful runs are cached per `HEAD` SHA + pre-push script hash in `.git/pre-push.passed.*`; use `QUECTO_PREPUSH_FORCE=1` to bypass cache. Logs are tee'd to `.git/pre-push.last.log`.
+Three-tier local hook model keeps pushes fast and gates expensive checks at merge time:
+
+| Hook | Script | What it runs | When | ~Time |
+|---|---|---|---|---|
+| `pre-commit` | `scripts/pre-commit.sh` | fmt, clippy, quality scripts | every commit | ~30s |
+| `pre-push` | `scripts/pre-push.sh` | unit tests, architecture, BDD (no real-LLM) | every push | ~2-3 min |
+| `pre-merge-commit` | `scripts/pre-merge-commit.sh` | real-LLM full, tarpaulin, machete, deny | local merge to master | ~10-15 min |
+
+`scripts/pre-push.sh` runs the quality sequence plus BDD (excluding real-LLM). Successful runs are cached per `HEAD` SHA + script hash in `.git/pre-push.passed.*`; use `QUECTO_PREPUSH_FORCE=1` to bypass cache. Logs are tee'd to `.git/pre-push.last.log`.
+
+`scripts/pre-merge-commit.sh` runs the expensive checks that gate merges to master: real-LLM end-to-end tests (requires `OPENAI_API_KEY`), tarpaulin coverage (with segfault retry), machete, and deny. Cached per `HEAD` SHA + script hash in `.git/pre-merge-commit.passed.*`; use `QUECTO_PREMERGE_FORCE=1` to bypass cache. Logs are tee'd to `.git/pre-merge-commit.last.log`.
+
+Run `scripts/install-hooks.sh` to install all three hooks. Set `QUECTO_TAG=real-llm-smoke` to run only the smoke subset of real-LLM tests.
 
 ### BDD quality gate (`scripts/check-bdd-quality.sh`)
 

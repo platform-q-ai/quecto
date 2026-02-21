@@ -1649,6 +1649,7 @@ fn when_run_gateway_until_replies(world: &mut QuectoWorld, expected_replies: usi
     let mut cmd = std::process::Command::new(&binary);
     cmd.arg("gateway")
         .env("QUECTO_BASE_DIR", base.to_string_lossy().as_ref())
+        .env("QUECTO_ALLOW_INSECURE_TELEGRAM_API_BASE", "1")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
@@ -1684,6 +1685,9 @@ fn when_run_gateway_until_replies(world: &mut QuectoWorld, expected_replies: usi
         let requests = rt
             .block_on(server.received_requests())
             .expect("read wiremock requests");
+        let has_polled_updates = requests
+            .iter()
+            .any(|r| r.url.path().ends_with("/getUpdates"));
         let outbound: Vec<String> = requests
             .iter()
             .filter(|r| r.url.path().ends_with("/sendMessage"))
@@ -1694,7 +1698,7 @@ fn when_run_gateway_until_replies(world: &mut QuectoWorld, expected_replies: usi
                     .map(std::string::ToString::to_string)
             })
             .collect();
-        if outbound.len() >= expected_replies {
+        if outbound.len() >= expected_replies && (expected_replies > 0 || has_polled_updates) {
             world.gateway_telegram_outbound_texts = outbound;
             break;
         }

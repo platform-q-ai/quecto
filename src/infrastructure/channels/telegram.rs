@@ -3,6 +3,9 @@
 use crate::domain::error::DomainError;
 use crate::infrastructure::config::TelegramConfig;
 
+const DEFAULT_TELEGRAM_API_BASE: &str = "https://api.telegram.org";
+const ALLOW_INSECURE_API_BASE_ENV: &str = "QUECTO_ALLOW_INSECURE_TELEGRAM_API_BASE";
+
 /// A parsed incoming Telegram message.
 #[derive(Debug, Clone)]
 pub struct TelegramMessage {
@@ -66,18 +69,61 @@ pub struct TelegramChannel {
 }
 
 impl TelegramChannel {
+    fn allow_insecure_api_base() -> bool {
+        matches!(
+            std::env::var(ALLOW_INSECURE_API_BASE_ENV).ok().as_deref(),
+            Some("1") | Some("true") | Some("TRUE") | Some("True")
+        )
+    }
+
+    fn validate_api_base(raw: &str, allow_insecure: bool) -> Option<String> {
+        let parsed = reqwest::Url::parse(raw).ok()?;
+
+        if parsed.scheme() != "https" && !(allow_insecure && parsed.scheme() == "http") {
+            return None;
+        }
+        parsed.host_str()?;
+        if !parsed.username().is_empty() || parsed.password().is_some() {
+            return None;
+        }
+        if parsed.query().is_some() || parsed.fragment().is_some() {
+            return None;
+        }
+        if parsed.path() != "/" && !parsed.path().is_empty() {
+            return None;
+        }
+        if !allow_insecure && parsed.host_str() != Some("api.telegram.org") {
+            return None;
+        }
+
+        Some(parsed.to_string().trim_end_matches('/').to_string())
+    }
+
     /// Create a new Telegram channel from config.
     pub fn new(config: &TelegramConfig) -> Self {
-        let api_base = if config.api_base.is_empty() {
-            "https://api.telegram.org".to_string()
+        let allow_insecure = Self::allow_insecure_api_base();
+        let requested_api_base = if config.api_base.trim().is_empty() {
+            DEFAULT_TELEGRAM_API_BASE
         } else {
-            config.api_base.clone()
+            config.api_base.trim()
         };
+        let validated_api_base = Self::validate_api_base(requested_api_base, allow_insecure);
+        let has_invalid_custom_api_base =
+            !config.api_base.trim().is_empty() && validated_api_base.is_none();
+
+        if has_invalid_custom_api_base {
+            eprintln!(
+                "Ignoring invalid Telegram api_base '{}' and disabling Telegram channel. \
+Allowed default is '{}'. Set {}=1 only for local test endpoints.",
+                config.api_base, DEFAULT_TELEGRAM_API_BASE, ALLOW_INSECURE_API_BASE_ENV
+            );
+        }
+
         Self {
             token: config.token.clone(),
             allow_from: config.allow_from.clone(),
-            enabled: config.enabled && !config.token.is_empty(),
-            api_base,
+            enabled: config.enabled && !config.token.is_empty() && !has_invalid_custom_api_base,
+            api_base: validated_api_base.unwrap_or_else(|| DEFAULT_TELEGRAM_API_BASE.to_string()),
             client: reqwest::Client::new(),
         }
     }
@@ -230,6 +276,53 @@ mod tests {
             api_base: String::new(),
             allow_from: allow_from.into_iter().map(|s| s.to_string()).collect(),
         }
+    }
+
+    #[test]
+    fn test_validate_api_base_accepts_default_https_host() {
+        let base = TelegramChannel::validate_api_base("https://api.telegram.org", false);
+        assert_eq!(base.as_deref(), Some("https://api.telegram.org"));
+    }
+
+    #[test]
+    fn test_validate_api_base_rejects_http_without_override() {
+        let base = TelegramChannel::validate_api_base("http://api.telegram.org", false);
+        assert!(base.is_none());
+    }
+
+    #[test]
+    fn test_validate_api_base_allows_http_with_override() {
+        let base = TelegramChannel::validate_api_base("http://127.0.0.1:8080", true);
+        assert_eq!(base.as_deref(), Some("http://127.0.0.1:8080"));
+    }
+
+    #[test]
+    fn test_validate_api_base_rejects_non_telegram_host_without_override() {
+        let base = TelegramChannel::validate_api_base("https://example.com", false);
+        assert!(base.is_none());
+    }
+
+    #[test]
+    fn test_validate_api_base_rejects_credentials_query_and_fragment() {
+        assert!(
+            TelegramChannel::validate_api_base("https://user:pass@api.telegram.org", false)
+                .is_none()
+        );
+        assert!(
+            TelegramChannel::validate_api_base("https://api.telegram.org?x=1", false).is_none()
+        );
+        assert!(
+            TelegramChannel::validate_api_base("https://api.telegram.org#frag", false).is_none()
+        );
+    }
+
+    #[test]
+    fn test_invalid_custom_api_base_disables_channel() {
+        let mut cfg = make_config(true, "123:ABC", vec![]);
+        cfg.api_base = "http://example.com".to_string();
+        let ch = TelegramChannel::new(&cfg);
+        assert!(!ch.is_enabled());
+        assert_eq!(ch.api_base, DEFAULT_TELEGRAM_API_BASE);
     }
 
     #[test]
