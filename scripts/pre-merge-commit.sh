@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # pre-merge-commit.sh — Runs locally before a merge commit is created.
 # Contains the expensive checks that don't belong in pre-push:
-#   real-LLM end-to-end tests, tarpaulin coverage, machete, deny.
+#   real-LLM end-to-end tests, machete, deny.
+# Tarpaulin runs as a warn-only step in pre-commit.sh instead.
 # This fires on `git merge <branch>` into master (Git 2.24+).
 set -euo pipefail
 
@@ -35,7 +36,7 @@ step() {
     echo -e "\n${BLUE}[$1]${NC} $2"
 }
 
-step "1/4" "Real-LLM end-to-end tests (timeout ${REAL_LLM_TIMEOUT})"
+step "1/3" "Real-LLM end-to-end tests (timeout ${REAL_LLM_TIMEOUT})"
 if [[ -n "${OPENAI_API_KEY:-}" ]]; then
     timeout "${REAL_LLM_TIMEOUT}" env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm cargo test --test bdd
 else
@@ -43,44 +44,7 @@ else
     echo "  Set OPENAI_API_KEY to run the full real-LLM end-to-end tests before merge"
 fi
 
-step "2/4" "cargo tarpaulin (code coverage)"
-if command -v cargo-tarpaulin &>/dev/null; then
-    is_transient_tarpaulin_failure() {
-        [[ -f "$1" ]] && grep -q "A segfault occurred while executing tests" "$1"
-    }
-
-    tarpaulin_ok=0
-    for attempt in 1 2; do
-        echo "  tarpaulin attempt ${attempt}/2"
-        tarpaulin_log="$(mktemp)"
-        if cargo tarpaulin --tests >"$tarpaulin_log" 2>&1; then
-            cat "$tarpaulin_log"
-            rm -f "$tarpaulin_log"
-            tarpaulin_ok=1
-            break
-        fi
-
-        cat "$tarpaulin_log"
-        if is_transient_tarpaulin_failure "$tarpaulin_log" && [[ "$attempt" -lt 2 ]]; then
-            echo "  tarpaulin transient failure detected, retrying"
-            rm -f "$tarpaulin_log"
-            continue
-        fi
-
-        rm -f "$tarpaulin_log"
-        echo "  tarpaulin attempt ${attempt} failed"
-        break
-    done
-    if [[ "$tarpaulin_ok" != "1" ]]; then
-        echo "  tarpaulin failed after retries"
-        exit 1
-    fi
-else
-    echo "  cargo-tarpaulin not installed, skipping coverage check"
-    echo "  Install with: cargo install cargo-tarpaulin --locked"
-fi
-
-step "3/4" "cargo machete (unused dependencies)"
+step "2/3" "cargo machete (unused dependencies)"
 if command -v cargo-machete &>/dev/null; then
     cargo machete
 else
@@ -88,7 +52,7 @@ else
     echo "  Install with: cargo install cargo-machete --locked"
 fi
 
-step "4/4" "cargo deny check (licenses, advisories, bans)"
+step "3/3" "cargo deny check (licenses, advisories, bans)"
 if command -v cargo-deny &>/dev/null; then
     cargo deny check
 else
