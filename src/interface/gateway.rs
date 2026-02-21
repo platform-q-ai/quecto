@@ -451,7 +451,8 @@ impl Gateway {
 ///
 /// Returns `Some(response_text)` if the command is a known bot command,
 /// or `None` if the message should be routed to the agent as regular text.
-/// Commands are case-sensitive and must match exactly (no arguments).
+/// Only the first whitespace-delimited token is matched; trailing arguments are ignored
+/// (e.g. `/start deep_link_payload` still matches `/start`).
 pub fn handle_bot_command(text: &str, config: &Config) -> Option<String> {
     let command = text.split_whitespace().next().unwrap_or("");
     match command {
