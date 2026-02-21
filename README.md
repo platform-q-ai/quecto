@@ -94,11 +94,30 @@ Any other message (including unknown `/commands`) is forwarded to the agent for 
 ### `quecto auth` — Manage API keys
 
 ```bash
+# Pass token directly
 quecto auth login --provider openai --token sk-proj-your-key
-quecto auth login --provider anthropic --token sk-ant-your-key
+
+# Interactive: prompts you to paste the token
+quecto auth login --provider anthropic
+
+# OAuth browser flow
+quecto auth login --provider openai --oauth
+
+# Device code flow (for headless environments)
+quecto auth login --provider openai --device-code
+
 quecto auth status
 quecto auth logout --provider openai
 ```
+
+| Subcommand | Flags | Description |
+|---|---|---|
+| `auth login` | `--provider <name>` (required) | Authenticate with a provider |
+| | `--token <key>` | Pass token directly (skips interactive prompt) |
+| | `--oauth` | Initiate OAuth browser-based login flow |
+| | `--device-code` | Initiate device code flow for headless environments |
+| `auth logout` | `--provider <name>` | Remove a stored credential |
+| `auth status` | | List all stored credentials with status |
 
 Credentials are stored in `~/.quecto/credentials.json`. The credential store takes priority over keys in `config.json`.
 

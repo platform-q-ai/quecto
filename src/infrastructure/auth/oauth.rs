@@ -35,17 +35,37 @@ impl OAuthConfig {
 }
 
 /// Response from a device code grant request.
-#[derive(Debug, Deserialize)]
+///
+/// Note: `Debug` is intentionally NOT derived — `device_code` is a secret
+/// that should not appear in logs. Use explicit field access instead.
+#[derive(Deserialize)]
 pub struct DeviceCodeResponse {
     pub device_code: String,
     pub user_code: String,
     pub verification_uri: String,
 }
 
+impl std::fmt::Debug for DeviceCodeResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeviceCodeResponse")
+            .field("device_code", &"[REDACTED]")
+            .field("user_code", &self.user_code)
+            .field("verification_uri", &self.verification_uri)
+            .finish()
+    }
+}
+
+/// Maximum error body size to read from OAuth server responses (4 KB).
+const MAX_ERROR_BODY_BYTES: usize = 4096;
+
 /// Initiate a device code flow: POST to the device code endpoint and
 /// return the response containing the user code and verification URI.
 pub async fn request_device_code(config: &OAuthConfig) -> Result<DeviceCodeResponse, DomainError> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| DomainError::Provider(format!("failed to build HTTP client: {}", e)))?;
+
     let resp = client
         .post(&config.device_code_url)
         .form(&[("client_id", &config.client_id)])
@@ -55,10 +75,16 @@ pub async fn request_device_code(config: &OAuthConfig) -> Result<DeviceCodeRespo
 
     let status = resp.status().as_u16();
     if status != 200 {
-        let body = resp.text().await.unwrap_or_else(|_| "unknown error".into());
+        // Read and discard the body (truncated to prevent OOM from
+        // malicious servers), but do NOT include server response
+        // details in the error message to avoid leaking internals.
+        let _ = resp
+            .bytes()
+            .await
+            .map(|b| b.len().min(MAX_ERROR_BODY_BYTES));
         return Err(DomainError::Provider(format!(
-            "device code request failed ({}): {}",
-            status, body
+            "device code request failed ({})",
+            status
         )));
     }
 

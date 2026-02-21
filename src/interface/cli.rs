@@ -784,7 +784,13 @@ fn cmd_auth_login(
         Some(t) => t,
         None => {
             stdout.push_str(&format!("Paste your API token for {}:\n", provider));
-            read_stdin_line(ctx)
+            match read_stdin_line(ctx) {
+                Ok(line) => line,
+                Err(e) => {
+                    stderr.push_str(&format!("auth login: {}\n", e));
+                    return 1;
+                }
+            }
         }
     };
 
@@ -813,14 +819,42 @@ fn cmd_auth_login(
 }
 
 /// Read a single line from stdin (or from `ctx.stdin_data` in test mode).
-fn read_stdin_line(ctx: &CliContext) -> String {
+/// Returns `Err` with an error message if stdin cannot be read.
+fn read_stdin_line(ctx: &CliContext) -> Result<String, String> {
     if let Some(ref data) = ctx.stdin_data {
         // Return the first line of pre-loaded stdin data.
-        data.lines().next().unwrap_or("").to_string()
+        Ok(data.lines().next().unwrap_or("").to_string())
     } else {
         let mut line = String::new();
-        let _ = std::io::stdin().read_line(&mut line);
-        line
+        std::io::stdin()
+            .read_line(&mut line)
+            .map_err(|e| format!("failed to read from stdin: {}", e))?;
+        Ok(line)
+    }
+}
+
+/// Resolve OAuth config: use test override if set, otherwise look up the provider.
+fn resolve_oauth_config(
+    ctx: &CliContext,
+    provider: &str,
+    flow_name: &str,
+    stderr: &mut String,
+) -> Option<crate::infrastructure::auth::oauth::OAuthConfig> {
+    use crate::infrastructure::auth::oauth::OAuthConfig;
+
+    if let Some(ref base_url) = ctx.oauth_base_url {
+        Some(OAuthConfig::with_base_url(base_url))
+    } else {
+        match OAuthConfig::for_provider(provider) {
+            Some(c) => Some(c),
+            None => {
+                stderr.push_str(&format!(
+                    "auth login: {} is not supported for '{}'\n",
+                    flow_name, provider
+                ));
+                None
+            }
+        }
     }
 }
 
@@ -831,21 +865,9 @@ fn cmd_auth_login_oauth(
     stdout: &mut String,
     stderr: &mut String,
 ) -> i32 {
-    use crate::infrastructure::auth::oauth::OAuthConfig;
-
-    let config = if let Some(ref base_url) = ctx.oauth_base_url {
-        OAuthConfig::with_base_url(base_url)
-    } else {
-        match OAuthConfig::for_provider(provider) {
-            Some(c) => c,
-            None => {
-                stderr.push_str(&format!(
-                    "auth login: OAuth is not supported for '{}'\n",
-                    provider
-                ));
-                return 1;
-            }
-        }
+    let config = match resolve_oauth_config(ctx, provider, "OAuth", stderr) {
+        Some(c) => c,
+        None => return 1,
     };
 
     stdout.push_str(&format!(
@@ -862,24 +884,18 @@ fn cmd_auth_login_device_code(
     stdout: &mut String,
     stderr: &mut String,
 ) -> i32 {
-    use crate::infrastructure::auth::oauth::OAuthConfig;
-
-    let config = if let Some(ref base_url) = ctx.oauth_base_url {
-        OAuthConfig::with_base_url(base_url)
-    } else {
-        match OAuthConfig::for_provider(provider) {
-            Some(c) => c,
-            None => {
-                stderr.push_str(&format!(
-                    "auth login: device code flow is not supported for '{}'\n",
-                    provider
-                ));
-                return 1;
-            }
-        }
+    let config = match resolve_oauth_config(ctx, provider, "device code flow", stderr) {
+        Some(c) => c,
+        None => return 1,
     };
 
-    let rt = tokio::runtime::Runtime::new().unwrap();
+    let rt = match build_tokio_runtime() {
+        Ok(rt) => rt,
+        Err(e) => {
+            stderr.push_str(&format!("auth login: failed to create runtime: {}\n", e));
+            return 1;
+        }
+    };
     match rt.block_on(crate::infrastructure::auth::oauth::request_device_code(
         &config,
     )) {
