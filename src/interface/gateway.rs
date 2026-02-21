@@ -29,6 +29,9 @@ use crate::infrastructure::voice::groq_whisper::GroqWhisperClient;
 
 use tokio::sync::mpsc;
 
+const MAX_VOICE_BYTES: usize = 10 * 1024 * 1024;
+const ALLOW_INSECURE_VOICE_API_BASE_ENV: &str = "QUECTO_ALLOW_INSECURE_TELEGRAM_API_BASE";
+
 /// Gateway error type.
 #[derive(Debug)]
 pub enum GatewayError {
@@ -61,6 +64,17 @@ struct EventLoopContext {
     config: Config,
     workspace: PathBuf,
     cron_store: Arc<FileCronStore>,
+}
+
+struct UpdateDispatchContext<'a> {
+    config: &'a Config,
+    whisper: Option<GroqWhisperClient>,
+}
+
+struct VoicePayload {
+    chat_id: String,
+    file_id: String,
+    file_size: Option<u64>,
 }
 
 impl EventLoopContext {
@@ -312,9 +326,13 @@ impl Gateway {
 
         tracing::info!("Telegram polling started");
         let mut offset: i64 = 0;
+        let dispatch_ctx = UpdateDispatchContext {
+            whisper: Self::build_whisper_client(&config.voice),
+            config: &config,
+        };
 
         loop {
-            let poll_result = Self::poll_once(&telegram, &inbound_tx, offset, &config).await;
+            let poll_result = Self::poll_once(&telegram, &inbound_tx, offset, &dispatch_ctx).await;
             match poll_result {
                 Ok(new_offset) => offset = new_offset,
                 Err(()) => return,
@@ -327,13 +345,13 @@ impl Gateway {
         telegram: &TelegramChannel,
         inbound_tx: &mpsc::Sender<InboundMessage>,
         mut offset: i64,
-        config: &Config,
+        ctx: &UpdateDispatchContext<'_>,
     ) -> Result<i64, ()> {
         match telegram.get_updates(offset, 30).await {
             Ok(updates) => {
                 for update in updates {
                     offset = update.update_id + 1;
-                    Self::dispatch_update(telegram, &update, inbound_tx, config).await?;
+                    Self::dispatch_update(telegram, &update, inbound_tx, ctx).await?;
                 }
                 Ok(offset)
             }
@@ -358,7 +376,7 @@ impl Gateway {
         telegram: &TelegramChannel,
         update: &TelegramUpdate,
         inbound_tx: &mpsc::Sender<InboundMessage>,
-        config: &Config,
+        ctx: &UpdateDispatchContext<'_>,
     ) -> Result<(), ()> {
         // Try text message first.
         if let Some(msg) = TelegramChannel::parse_update(update) {
@@ -368,7 +386,7 @@ impl Gateway {
             }
 
             // Check for bot commands before routing to agent.
-            if let Some(response) = handle_bot_command(&msg.text, config) {
+            if let Some(response) = handle_bot_command(&msg.text, ctx.config) {
                 if let Err(e) = telegram.send_message(&msg.chat_id, &response).await {
                     tracing::error!(error = %e, "failed to send bot command response");
                 }
@@ -386,27 +404,41 @@ impl Gateway {
         }
 
         // Try voice message.
-        if let Some((sender_id, chat_id, file_id)) = TelegramChannel::parse_voice_update(update) {
+        if let Some((sender_id, chat_id, file_id, file_size)) =
+            TelegramChannel::parse_voice_update(update)
+        {
             if !telegram.is_user_allowed(&sender_id) {
                 tracing::warn!(sender_id = sender_id, "unauthorized Telegram user");
                 return Ok(());
             }
 
-            let text =
-                Self::handle_voice_message(telegram, &chat_id, &file_id, &config.voice).await;
+            let telegram_cloned = telegram.clone();
+            let inbound_tx_cloned = inbound_tx.clone();
+            let whisper = ctx.whisper.clone();
 
-            let Some(transcribed_text) = text else {
-                return Ok(());
-            };
+            tokio::spawn(async move {
+                let payload = VoicePayload {
+                    chat_id: chat_id.clone(),
+                    file_id,
+                    file_size,
+                };
+                let text = Self::handle_voice_message(&telegram_cloned, &payload, whisper).await;
 
-            let inbound = InboundMessage {
-                source: format!("telegram:{}", chat_id),
-                sender_id,
-                text: transcribed_text,
-            };
-            return inbound_tx.send(inbound).await.map_err(|_| {
-                tracing::error!("inbound channel closed");
+                let Some(transcribed_text) = text else {
+                    return;
+                };
+
+                let inbound = InboundMessage {
+                    source: format!("telegram:{}", chat_id),
+                    sender_id,
+                    text: transcribed_text,
+                };
+                if inbound_tx_cloned.send(inbound).await.is_err() {
+                    tracing::error!("inbound channel closed");
+                }
             });
+
+            return Ok(());
         }
 
         Ok(())
@@ -419,7 +451,20 @@ impl Gateway {
         telegram: &TelegramChannel,
         chat_id: &str,
         file_id: &str,
+        file_size: Option<u64>,
     ) -> Option<Vec<u8>> {
+        if let Some(size) = file_size
+            && size > MAX_VOICE_BYTES as u64
+        {
+            let _ = telegram
+                .send_message(
+                    chat_id,
+                    "Sorry, that voice message is too large to process.",
+                )
+                .await;
+            return None;
+        }
+
         let file_path = match telegram.get_file(file_id).await {
             Ok(p) => p,
             Err(e) => {
@@ -431,7 +476,7 @@ impl Gateway {
             }
         };
 
-        match telegram.download_file(&file_path).await {
+        match telegram.download_file(&file_path, MAX_VOICE_BYTES).await {
             Ok(b) => Some(b),
             Err(e) => {
                 tracing::error!(error = %e, "failed to download voice file");
@@ -448,26 +493,39 @@ impl Gateway {
     /// Returns `None` if an error occurred (error message already sent to user).
     async fn handle_voice_message(
         telegram: &TelegramChannel,
-        chat_id: &str,
-        file_id: &str,
-        voice_config: &crate::infrastructure::config::VoiceConfig,
+        payload: &VoicePayload,
+        whisper: Option<GroqWhisperClient>,
     ) -> Option<String> {
-        if voice_config.groq.api_key.is_empty() {
+        let Some(whisper_client) = whisper else {
             let _ = telegram
-                .send_message(chat_id, "Sorry, voice transcription is not configured.")
+                .send_message(
+                    &payload.chat_id,
+                    "Sorry, voice transcription is not configured.",
+                )
                 .await;
             return None;
-        }
+        };
 
-        let audio_bytes = Self::download_voice_audio(telegram, chat_id, file_id).await?;
+        let audio_bytes = Self::download_voice_audio(
+            telegram,
+            &payload.chat_id,
+            &payload.file_id,
+            payload.file_size,
+        )
+        .await?;
 
-        let whisper = Self::build_whisper_client(voice_config);
-        match whisper.transcribe_bytes(audio_bytes, "voice.ogg").await {
+        match whisper_client
+            .transcribe_bytes(audio_bytes, "voice.ogg")
+            .await
+        {
             Ok(result) => Some(result.text),
             Err(e) => {
                 tracing::error!(error = %e, "voice transcription failed");
                 let _ = telegram
-                    .send_message(chat_id, "Sorry, I could not transcribe your voice message.")
+                    .send_message(
+                        &payload.chat_id,
+                        "Sorry, I could not transcribe your voice message.",
+                    )
                     .await;
                 None
             }
@@ -477,14 +535,40 @@ impl Gateway {
     /// Build a Groq Whisper client from voice configuration.
     fn build_whisper_client(
         voice_config: &crate::infrastructure::config::VoiceConfig,
-    ) -> GroqWhisperClient {
+    ) -> Option<GroqWhisperClient> {
+        if voice_config.groq.api_key.is_empty() {
+            return None;
+        }
+
         if voice_config.groq.api_base.is_empty() {
-            GroqWhisperClient::new(&voice_config.groq.api_key)
+            return Some(GroqWhisperClient::new(&voice_config.groq.api_key));
+        }
+
+        let allow_insecure = matches!(
+            std::env::var(ALLOW_INSECURE_VOICE_API_BASE_ENV)
+                .ok()
+                .as_deref(),
+            Some("1") | Some("true") | Some("TRUE") | Some("True")
+        );
+        let parsed = reqwest::Url::parse(&voice_config.groq.api_base).ok();
+        let Some(url) = parsed else {
+            tracing::warn!("invalid voice API base URL, disabling voice transcription");
+            return None;
+        };
+        let valid_scheme = url.scheme() == "https" || (allow_insecure && url.scheme() == "http");
+        let valid_host = allow_insecure || url.host_str() == Some("api.groq.com");
+        let clean_url = url.query().is_none()
+            && url.fragment().is_none()
+            && url.username().is_empty()
+            && url.password().is_none();
+        if !(valid_scheme && valid_host && clean_url) {
+            tracing::warn!("voice API base URL rejected by security policy");
+            None
         } else {
-            GroqWhisperClient::with_base_url(
+            Some(GroqWhisperClient::with_base_url(
                 &voice_config.groq.api_key,
                 &voice_config.groq.api_base,
-            )
+            ))
         }
     }
 

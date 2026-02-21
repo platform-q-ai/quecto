@@ -186,7 +186,9 @@ Allowed default is '{}'. Set {}=1 only for local test endpoints.",
 
     /// Parse a raw Telegram update as a voice message.
     /// Returns None if the update doesn't contain a voice attachment.
-    pub fn parse_voice_update(update: &TelegramUpdate) -> Option<(String, String, String)> {
+    pub fn parse_voice_update(
+        update: &TelegramUpdate,
+    ) -> Option<(String, String, String, Option<u64>)> {
         let msg = update.message.as_ref()?;
         let voice = msg.voice.as_ref()?;
         let sender_id = msg
@@ -195,7 +197,7 @@ Allowed default is '{}'. Set {}=1 only for local test endpoints.",
             .map(|u| u.id.to_string())
             .unwrap_or_default();
         let chat_id = msg.chat.id.to_string();
-        Some((sender_id, chat_id, voice.file_id.clone()))
+        Some((sender_id, chat_id, voice.file_id.clone(), voice.file_size))
     }
 
     /// Get the file path for a Telegram file ID via the `getFile` API.
@@ -235,10 +237,14 @@ Allowed default is '{}'. Set {}=1 only for local test endpoints.",
     }
 
     /// Download a file from Telegram's file storage.
-    pub async fn download_file(&self, file_path: &str) -> Result<Vec<u8>, DomainError> {
+    pub async fn download_file(
+        &self,
+        file_path: &str,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, DomainError> {
         let url = format!("{}/file/bot{}/{}", self.api_base, self.token, file_path);
 
-        let response =
+        let mut response =
             self.client.get(&url).send().await.map_err(|e| {
                 DomainError::Channel(format!("Telegram file download error: {}", e))
             })?;
@@ -251,11 +257,31 @@ Allowed default is '{}'. Set {}=1 only for local test endpoints.",
             )));
         }
 
-        response
-            .bytes()
+        if let Some(content_length) = response.content_length()
+            && content_length > max_bytes as u64
+        {
+            return Err(DomainError::Channel(format!(
+                "Telegram file exceeds size limit ({} > {} bytes)",
+                content_length, max_bytes
+            )));
+        }
+
+        let mut data = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
             .await
-            .map(|b| b.to_vec())
-            .map_err(|e| DomainError::Channel(format!("failed to read file bytes: {}", e)))
+            .map_err(|e| DomainError::Channel(format!("failed to read file bytes: {}", e)))?
+        {
+            if data.len() + chunk.len() > max_bytes {
+                return Err(DomainError::Channel(format!(
+                    "Telegram file exceeds size limit (>{} bytes)",
+                    max_bytes
+                )));
+            }
+            data.extend_from_slice(&chunk);
+        }
+
+        Ok(data)
     }
 
     /// Get the bot token.

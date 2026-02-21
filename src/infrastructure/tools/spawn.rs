@@ -3,6 +3,7 @@
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::time::Duration;
 
 use crate::domain::error::DomainError;
 use crate::domain::subagent::{SubagentConfig, validate_agent_id};
@@ -24,6 +25,8 @@ pub struct SpawnTool {
 }
 
 impl SpawnTool {
+    const SUBAGENT_TIMEOUT_SECS: u64 = 120;
+
     pub fn new(allowed_agents: Vec<String>, restrict_to_workspace: bool) -> Self {
         Self {
             allowed_agents,
@@ -61,30 +64,40 @@ impl SpawnTool {
             .and_then(|v| v.as_str())
             .map(String::from);
 
-        let deliver_to = args
-            .get("deliver_to")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-
         let system = args
             .get("system")
             .and_then(|v| v.as_str())
             .map(String::from);
 
-        // Validate agent_id if provided and allowlist is non-empty
-        if let Some(ref id) = agent_id
-            && !self.allowed_agents.is_empty()
-        {
-            validate_agent_id(id, &self.allowed_agents).map_err(|e| e.to_string())?;
+        if let Some(ref id) = agent_id {
+            Self::validate_agent_id_format(id)?;
+            if !self.allowed_agents.is_empty() {
+                validate_agent_id(id, &self.allowed_agents).map_err(|e| e.to_string())?;
+            }
         }
 
         Ok(SubagentConfig {
             task,
             agent_id,
             restrict_to_workspace: self.restrict_to_workspace,
-            deliver_to,
+            deliver_to: None,
             system,
         })
+    }
+
+    fn validate_agent_id_format(agent_id: &str) -> Result<(), String> {
+        let len = agent_id.len();
+        if len == 0 || len > 64 {
+            return Err("agent_id must be 1-64 characters".to_string());
+        }
+        if agent_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+        {
+            Ok(())
+        } else {
+            Err("agent_id must use only [a-zA-Z0-9_-]".to_string())
+        }
     }
 
     /// Spawn a child quecto agent process and collect its output.
@@ -109,48 +122,43 @@ impl SpawnTool {
             cmd.env("QUECTO_BASE_DIR", &self.base_dir);
         }
 
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
+        cmd.stdout(std::process::Stdio::null());
+        cmd.stderr(std::process::Stdio::null());
 
-        let child = cmd
+        let mut child = cmd
             .spawn()
             .map_err(|e| DomainError::Tool(format!("failed to spawn subagent: {}", e)))?;
 
-        let output = child
-            .wait_with_output()
-            .await
-            .map_err(|e| DomainError::Tool(format!("subagent process error: {}", e)))?;
+        let status = match tokio::time::timeout(
+            Duration::from_secs(Self::SUBAGENT_TIMEOUT_SECS),
+            child.wait(),
+        )
+        .await
+        {
+            Ok(wait_result) => wait_result
+                .map_err(|e| DomainError::Tool(format!("subagent process error: {}", e)))?,
+            Err(_) => {
+                let _ = child.kill().await;
+                return Ok(ToolResult {
+                    content: format!(
+                        "Subagent '{}' timed out after {}s.",
+                        session_name,
+                        Self::SUBAGENT_TIMEOUT_SECS
+                    ),
+                    is_error: true,
+                });
+            }
+        };
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-        if output.status.success() {
-            let content = if stdout.trim().is_empty() {
-                format!(
-                    "Subagent '{}' completed successfully (no output).",
-                    session_name
-                )
-            } else {
-                stdout.trim().to_string()
-            };
+        if status.success() {
             Ok(ToolResult {
-                content,
+                content: format!("Subagent '{}' completed successfully.", session_name),
                 is_error: false,
             })
         } else {
-            let code = output.status.code().unwrap_or(-1);
-            let detail = if stderr.trim().is_empty() {
-                stdout
-            } else {
-                stderr
-            };
+            let code = status.code().unwrap_or(-1);
             Ok(ToolResult {
-                content: format!(
-                    "Subagent '{}' failed (exit code {}): {}",
-                    session_name,
-                    code,
-                    detail.trim()
-                ),
+                content: format!("Subagent '{}' failed (exit code {}).", session_name, code),
                 is_error: true,
             })
         }
@@ -163,7 +171,7 @@ impl Tool for SpawnTool {
             name: "spawn".to_string(),
             description: "Spawn a subagent to handle a task. The subagent runs as a child process."
                 .to_string(),
-            parameters_schema: r#"{"type":"object","properties":{"task":{"type":"string","description":"The task description for the subagent"},"agent_id":{"type":"string","description":"Optional agent ID for the subagent session"},"system":{"type":"string","description":"Optional system prompt for the subagent"},"deliver_to":{"type":"string","description":"Optional channel:chat_id to deliver results to"}},"required":["task"]}"#.to_string(),
+            parameters_schema: r#"{"type":"object","properties":{"task":{"type":"string","description":"The task description for the subagent"},"agent_id":{"type":"string","description":"Optional agent ID for the subagent session"},"system":{"type":"string","description":"Optional system prompt for the subagent"}},"required":["task"]}"#.to_string(),
         }
     }
 
@@ -267,5 +275,13 @@ mod tests {
             .parse_args(r#"{"task":"Summarize","system":"You are a summarizer"}"#)
             .unwrap();
         assert_eq!(config.system.as_deref(), Some("You are a summarizer"));
+    }
+
+    #[test]
+    fn test_parse_rejects_invalid_agent_id_format() {
+        let tool = SpawnTool::new(vec![], true);
+        let result = tool.parse_args(r#"{"task":"Do stuff","agent_id":"../escape"}"#);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("[a-zA-Z0-9_-]"));
     }
 }
