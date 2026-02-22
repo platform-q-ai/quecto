@@ -386,3 +386,128 @@ fn find_repl_session_file(sessions_dir: &Path) -> PathBuf {
 // "I type /quit" is called, so stdout/stderr/exit_code are populated
 // before any Then steps run. EOF scenarios use "I send EOF" which also
 // triggers execution immediately.
+
+// ===========================================================================
+// REPL Cron Steps — /cron slash command scenarios
+// ===========================================================================
+
+/// Helper: create a cron job on disk via FileCronStore.
+fn create_cron_job_on_disk(base: &Path, name: &str, interval: u64, enabled: bool) {
+    use quecto::domain::cron::{CronJob, CronSchedule, CronStore};
+    use quecto::infrastructure::persistence::cron_store::FileCronStore;
+
+    let store = FileCronStore::new(base);
+    store
+        .add(CronJob {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            message: format!("Run {}", name),
+            schedule: CronSchedule::Interval { seconds: interval },
+            enabled,
+            deliver_to: None,
+            last_error: None,
+            last_run_at: 0,
+        })
+        .expect("add cron job");
+}
+
+#[given(expr = "a cron job {string} with interval {int} seconds already exists on disk")]
+fn given_cron_job_on_disk(world: &mut QuectoWorld, name: String, interval: u64) {
+    let base = base_path(world);
+    create_cron_job_on_disk(&base, &name, interval, true);
+}
+
+#[given(expr = "a disabled cron job {string} with interval {int} seconds already exists on disk")]
+fn given_disabled_cron_job_on_disk(world: &mut QuectoWorld, name: String, interval: u64) {
+    let base = base_path(world);
+    create_cron_job_on_disk(&base, &name, interval, false);
+}
+
+/// Helper: load the cron store from the base dir and find a job by name.
+fn load_cron_job(base: &Path, name: &str) -> Option<quecto::domain::cron::CronJob> {
+    use quecto::domain::cron::CronStore;
+    use quecto::infrastructure::persistence::cron_store::FileCronStore;
+
+    let store = FileCronStore::new(base);
+    store.find_by_name(name).expect("load cron store")
+}
+
+#[then(expr = "the cron store should contain a job named {string}")]
+fn then_cron_store_contains(world: &mut QuectoWorld, name: String) {
+    ensure_repl_executed(world);
+    let base = base_path(world);
+    let job = load_cron_job(&base, &name);
+    assert!(
+        job.is_some(),
+        "expected cron store to contain job '{}', but it was not found",
+        name
+    );
+}
+
+#[then(expr = "the cron store should not contain a job named {string}")]
+fn then_cron_store_not_contains(world: &mut QuectoWorld, name: String) {
+    ensure_repl_executed(world);
+    let base = base_path(world);
+    let job = load_cron_job(&base, &name);
+    assert!(
+        job.is_none(),
+        "expected cron store NOT to contain job '{}', but it was found",
+        name
+    );
+}
+
+#[then(expr = "the job {string} should have interval {int}")]
+fn then_job_has_interval(world: &mut QuectoWorld, name: String, expected: u64) {
+    ensure_repl_executed(world);
+    let base = base_path(world);
+    let job = load_cron_job(&base, &name).unwrap_or_else(|| panic!("job '{}' not found", name));
+    match &job.schedule {
+        quecto::domain::cron::CronSchedule::Interval { seconds } => {
+            assert_eq!(
+                *seconds, expected,
+                "expected job '{}' interval {}, got {}",
+                name, expected, seconds
+            );
+        }
+        other => panic!("expected interval schedule for '{}', got {:?}", name, other),
+    }
+}
+
+#[then(expr = "the job {string} should have deliver_to {string}")]
+fn then_job_has_deliver_to(world: &mut QuectoWorld, name: String, expected: String) {
+    ensure_repl_executed(world);
+    let base = base_path(world);
+    let job = load_cron_job(&base, &name).unwrap_or_else(|| panic!("job '{}' not found", name));
+    assert_eq!(
+        job.deliver_to.as_deref(),
+        Some(expected.as_str()),
+        "expected job '{}' deliver_to '{}', got {:?}",
+        name,
+        expected,
+        job.deliver_to
+    );
+}
+
+#[then(expr = "the job {string} should be disabled in the cron store")]
+fn then_job_is_disabled(world: &mut QuectoWorld, name: String) {
+    ensure_repl_executed(world);
+    let base = base_path(world);
+    let job = load_cron_job(&base, &name).unwrap_or_else(|| panic!("job '{}' not found", name));
+    assert!(
+        !job.enabled,
+        "expected job '{}' to be disabled, but it is enabled",
+        name
+    );
+}
+
+#[then(expr = "the job {string} should be enabled in the cron store")]
+fn then_job_is_enabled(world: &mut QuectoWorld, name: String) {
+    ensure_repl_executed(world);
+    let base = base_path(world);
+    let job = load_cron_job(&base, &name).unwrap_or_else(|| panic!("job '{}' not found", name));
+    assert!(
+        job.enabled,
+        "expected job '{}' to be enabled, but it is disabled",
+        name
+    );
+}

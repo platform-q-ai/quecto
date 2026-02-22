@@ -1,4 +1,4 @@
-@pending
+@done
 Feature: REPL Cron Job Management
   As a user in the interactive REPL
   I want to create, list, modify, and remove scheduled cron jobs
