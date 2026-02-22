@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Write;
 use std::time::Duration;
 
 use super::CliContext;
@@ -235,16 +236,54 @@ fn cmd_skills_install(
         ));
     }
 
-    if let Err(e) = std::fs::create_dir_all(&skill_dir) {
+    if let Err(e) = std::fs::create_dir_all(ws_skills) {
+        return Err(format!(
+            "failed to create skills directory '{}': {}\n",
+            ws_skills.display(),
+            e
+        ));
+    }
+
+    if let Err(e) = std::fs::create_dir(&skill_dir) {
         return Err(format!(
             "failed to create skill directory '{}': {}\n",
             name, e
         ));
     }
 
-    if let Err(e) = std::fs::write(skill_dir.join("SKILL.md"), skill_md) {
+    match std::fs::symlink_metadata(&skill_dir) {
+        Ok(meta) if meta.file_type().is_symlink() || !meta.is_dir() => {
+            let _ = std::fs::remove_dir_all(&skill_dir);
+            return Err(format!(
+                "invalid skill directory '{}'\n",
+                skill_dir.display()
+            ));
+        }
+        Ok(_) => {}
+        Err(e) => {
+            return Err(format!(
+                "failed to validate skill directory '{}': {}\n",
+                skill_dir.display(),
+                e
+            ));
+        }
+    }
+
+    let skill_md_path = skill_dir.join("SKILL.md");
+    let write_result = (|| -> Result<(), String> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&skill_md_path)
+            .map_err(|e| format!("failed to open SKILL.md for '{}': {}", name, e))?;
+        file.write_all(skill_md.as_bytes())
+            .map_err(|e| format!("failed to write SKILL.md for '{}': {}", name, e))?;
+        Ok(())
+    })();
+
+    if let Err(e) = write_result {
         let _ = std::fs::remove_dir_all(&skill_dir);
-        return Err(format!("failed to write SKILL.md for '{}': {}\n", name, e));
+        return Err(format!("{}\n", e));
     }
 
     Ok(format!("'{}' installed\n", name))
@@ -272,6 +311,10 @@ fn parse_github_skill_path(path: &str) -> Option<(&str, &str, &str)> {
 
 fn is_valid_github_slug(value: &str) -> bool {
     !value.is_empty()
+        && value != "."
+        && value != ".."
+        && !value.starts_with('.')
+        && !value.ends_with('.')
         && value
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
