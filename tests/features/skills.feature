@@ -161,7 +161,7 @@ Feature: Skills System
 
   # --- Install (not yet implemented) ---
 
-  @pending
+  @done
   Scenario: Install a skill from GitHub URL
     Given a quecto base directory at a temporary path
     And a config file with a workspace directory
@@ -172,7 +172,7 @@ Feature: Skills System
     And the workspace should contain a skill directory "weather"
     And the skill directory should contain a "SKILL.md" file
 
-  @pending
+  @done
   Scenario: Install skill fails for invalid GitHub path
     Given a quecto base directory at a temporary path
     And a config file with a workspace directory
@@ -180,7 +180,7 @@ Feature: Skills System
     Then the exit code should be 1
     And the output should contain "invalid skill path"
 
-  @pending
+  @done
   Scenario: Install skill fails when already exists
     Given a quecto base directory at a temporary path
     And a config file with a workspace directory

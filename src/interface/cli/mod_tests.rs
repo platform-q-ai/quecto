@@ -406,10 +406,12 @@ fn test_cli_context_all_fields() {
         base_dir: Some(PathBuf::from("/tmp/test")),
         stdin_data: Some("input".to_string()),
         oauth_base_url: Some("http://oauth.local".to_string()),
+        github_raw_base_url: Some("http://raw.local".to_string()),
     };
     assert_eq!(ctx.base_dir(), PathBuf::from("/tmp/test"));
     assert_eq!(ctx.stdin_data.as_deref(), Some("input"));
     assert_eq!(ctx.oauth_base_url.as_deref(), Some("http://oauth.local"));
+    assert_eq!(ctx.github_raw_base_url.as_deref(), Some("http://raw.local"));
 }
 
 // ===================================================================

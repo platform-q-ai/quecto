@@ -87,7 +87,7 @@ Manual argument parsing (no clap). The single entry point is `cli::run(args) -> 
 | `quecto` (no args) | Enters interactive REPL mode (see below) |
 | `quecto onboard` | Creates workspace and default config |
 | `quecto agent -m <message> [-s <session>] [--system <prompt>] [--model <model>] [--max-iterations <n>] [--max-time <secs>]` | Runs a headless one-shot agent session (see below) |
-| `quecto skills list\|remove\|install` | Manages skill files |
+| `quecto skills list\|remove\|install` | Lists/removes local skills and installs `SKILL.md` from `<owner>/<repo>/<skill-name>` into workspace |
 | `quecto status` | Shows config summary, provider availability, redacted API keys |
 | `quecto auth login --provider <name> [--token <key>] [--oauth] [--device-code]` | Authenticates with a provider: paste token interactively (default), pass `--token` directly, `--oauth` for browser flow, or `--device-code` for headless environments |
 | `quecto auth logout --provider <name>` | Removes a stored credential (no-op if absent) |
@@ -95,7 +95,7 @@ Manual argument parsing (no clap). The single entry point is `cli::run(args) -> 
 | `quecto gateway` | Runs the full async gateway (Telegram polling + agent loop) |
 | `quecto help` / `quecto version` | Self-explanatory |
 
-`CliContext` allows overriding `base_dir` for testability so commands write to temp directories in tests instead of `~/.config/quecto`. Additional fields: `stdin_data` (pre-loaded stdin for testing interactive commands like token paste) and `oauth_base_url` (override OAuth endpoints for testing with wiremock). Base directory resolution order: explicit `CliContext.base_dir` override > `QUECTO_BASE_DIR` environment variable > platform default.
+`CliContext` allows overriding `base_dir` for testability so commands write to temp directories in tests instead of `~/.config/quecto`. Additional fields: `stdin_data` (pre-loaded stdin for testing interactive commands like token paste), `oauth_base_url` (override OAuth endpoints for testing with wiremock), and `github_raw_base_url` (override GitHub raw endpoint for `skills install` tests). Base directory resolution order: explicit `CliContext.base_dir` override > `QUECTO_BASE_DIR` environment variable > platform default.
 
 #### `quecto` — Interactive REPL mode
 
@@ -129,7 +129,7 @@ Runs a full agent cycle (LLM call → tool execution → repeat) for a single me
 | `--max-iterations` | No | Override max tool iterations (takes precedence over config `max_tool_iterations`) |
 | `--max-time` | No | Wall-clock timeout in seconds for the entire agent run. Exit code 2 on timeout |
 
-The agent loads config from `<base_dir>/config.json`, builds a `FallbackProvider` from configured credentials, constructs the tool registry with sandbox enforcement, and runs the `AgentLoopImpl`. Sessions are loaded from and saved to `<base_dir>/sessions/` via `FileSessionStore`. Workspace skills (from `<base_dir>/workspace/skills/`) are loaded at startup and their body content (everything after the YAML frontmatter closing `---`) is prepended to the system prompt (combined with `--system` if provided). Skills with missing or invalid frontmatter are silently skipped.
+The agent loads config from `<base_dir>/config.json`, builds a `FallbackProvider` from configured credentials, constructs the tool registry with sandbox enforcement, and runs the `AgentLoopImpl`. Sessions are loaded from and saved to `<base_dir>/sessions/` via `FileSessionStore`. Workspace skills (from `<config.workspace_path()>/skills/`) are loaded at startup and their body content (everything after the YAML frontmatter closing `---`) is prepended to the system prompt (combined with `--system` if provided). Skills with missing or invalid frontmatter are silently skipped.
 
 The CLI module (`src/interface/cli/`) is split into `mod.rs` (entry point, dispatch, REPL wiring), `agent.rs` (agent subcommand, flag parsing, session management), `auth.rs` (auth login/logout/status flows), and `commands.rs` (onboard, status, skills, help, version).
 

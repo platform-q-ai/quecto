@@ -52,6 +52,21 @@ fn given_config_with_workspace(world: &mut QuectoWorld, workspace: String) {
     world.config_path = Some(config_file.to_string_lossy().to_string());
 }
 
+#[given("a config file with a workspace directory")]
+fn given_config_file_with_workspace_directory(world: &mut QuectoWorld) {
+    let content = r#"{
+  "agents": {
+    "defaults": {
+      "workspace": "workspace"
+    }
+  }
+}"#;
+    ensure_temp_dir(world);
+    let config_file = base_path(world).join("config.json");
+    std::fs::write(&config_file, content).expect("failed to write config file");
+    world.config_path = Some(config_file.to_string_lossy().to_string());
+}
+
 // ===========================================================================
 // Onboard Steps (Given)
 // ===========================================================================

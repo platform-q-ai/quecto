@@ -30,6 +30,8 @@ pub struct CliContext {
     pub stdin_data: Option<String>,
     /// Override OAuth base URL for testing (e.g. wiremock URI).
     pub oauth_base_url: Option<String>,
+    /// Override GitHub raw content base URL for skills install testing.
+    pub github_raw_base_url: Option<String>,
 }
 
 impl CliContext {
