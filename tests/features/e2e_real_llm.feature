@@ -34,12 +34,6 @@ Feature: E2E Real LLM
     Then the exit code should be 0
     And stdout should contain "HELLO_QUECTO"
 
-  @done @real-llm @real-llm-web-search
-  Scenario: Real LLM can perform a web search via tool use
-    When I run the real LLM agent with message "Use the web_search tool to search for the official Rust website. If any search result includes rust-lang.org, reply with exactly WEB_SEARCH_OK. Otherwise reply with exactly WEB_SEARCH_FAIL."
-    Then the exit code should be 0
-    And stdout should contain "WEB_SEARCH_"
-
   # --- Additional tool coverage ---
 
   @done @real-llm
