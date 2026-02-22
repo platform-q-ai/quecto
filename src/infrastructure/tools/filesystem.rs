@@ -10,6 +10,8 @@ use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
 
+const MAX_TEXT_FILE_BYTES: u64 = 1024 * 1024;
+
 // ===========================================================================
 // Helper: resolve a relative path within the workspace and validate it.
 // ===========================================================================
@@ -24,6 +26,23 @@ fn resolve_and_validate(
     sandbox
         .validate_path(&full_str)
         .map_err(|e| DomainError::Security(e.to_string()))
+}
+
+async fn enforce_text_file_size_limit(full_path: &Path) -> Result<(), DomainError> {
+    let metadata = tokio::fs::metadata(full_path)
+        .await
+        .map_err(|e| DomainError::Tool(format!("metadata check failed: {}", e)))?;
+
+    if metadata.len() > MAX_TEXT_FILE_BYTES {
+        return Err(DomainError::Tool(format!(
+            "file '{}' exceeds maximum allowed size ({} > {} bytes)",
+            full_path.display(),
+            metadata.len(),
+            MAX_TEXT_FILE_BYTES
+        )));
+    }
+
+    Ok(())
 }
 
 // ===========================================================================
@@ -66,6 +85,7 @@ impl Tool for ReadFileTool {
                 .ok_or_else(|| DomainError::Tool("missing 'path' argument".to_string()))?;
 
             let full_path = resolve_and_validate(&workspace, &sandbox, path)?;
+            enforce_text_file_size_limit(&full_path).await?;
 
             let content = tokio::fs::read_to_string(&full_path)
                 .await
@@ -187,6 +207,7 @@ impl Tool for EditFileTool {
                 .ok_or_else(|| DomainError::Tool("missing 'new' argument".to_string()))?;
 
             let full_path = resolve_and_validate(&workspace, &sandbox, path)?;
+            enforce_text_file_size_limit(&full_path).await?;
 
             let content = tokio::fs::read_to_string(&full_path)
                 .await
@@ -452,6 +473,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_read_file_rejects_oversized_file() {
+        let (ws, sb, tmp) = test_tools();
+        let tool = ReadFileTool::new(ws, sb);
+
+        let large_content = "a".repeat(1_048_577);
+        std::fs::write(tmp.path().join("big.txt"), large_content).unwrap();
+
+        let result = tool.execute(r#"{"path": "big.txt"}"#).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("exceeds maximum allowed size")
+        );
+    }
+
+    #[tokio::test]
     async fn test_write_file_creates_parent_dirs() {
         let (ws, sb, tmp) = test_tools();
         let tool = WriteFileTool::new(ws, sb);
@@ -461,5 +500,25 @@ mod tests {
             .unwrap();
         assert!(!result.is_error);
         assert!(tmp.path().join("sub/dir/file.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn test_edit_file_rejects_oversized_file() {
+        let (ws, sb, tmp) = test_tools();
+        let tool = EditFileTool::new(ws, sb);
+
+        let large_content = "a".repeat(1_048_577);
+        std::fs::write(tmp.path().join("big-edit.txt"), large_content).unwrap();
+
+        let result = tool
+            .execute(r#"{"path": "big-edit.txt", "old": "a", "new": "b"}"#)
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("exceeds maximum allowed size")
+        );
     }
 }
