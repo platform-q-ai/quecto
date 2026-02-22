@@ -67,7 +67,7 @@ pub struct ProvidersConfig {
     pub anthropic: ProviderEntry,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct ProviderEntry {
     #[serde(default)]
     pub api_key: String,
@@ -77,13 +77,23 @@ pub struct ProviderEntry {
     pub auth_method: String,
 }
 
+impl std::fmt::Debug for ProviderEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProviderEntry")
+            .field("api_key", &"[REDACTED]")
+            .field("api_base", &self.api_base)
+            .field("auth_method", &self.auth_method)
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChannelsConfig {
     #[serde(default)]
     pub telegram: TelegramConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct TelegramConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -93,6 +103,17 @@ pub struct TelegramConfig {
     pub api_base: String,
     #[serde(default)]
     pub allow_from: Vec<String>,
+}
+
+impl std::fmt::Debug for TelegramConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TelegramConfig")
+            .field("enabled", &self.enabled)
+            .field("token", &"[REDACTED]")
+            .field("api_base", &self.api_base)
+            .field("allow_from", &self.allow_from)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -111,7 +132,7 @@ pub struct WebToolConfig {
     pub duckduckgo: DuckDuckGoConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct BraveConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -119,6 +140,16 @@ pub struct BraveConfig {
     pub api_key: String,
     #[serde(default = "default_max_results")]
     pub max_results: u32,
+}
+
+impl std::fmt::Debug for BraveConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BraveConfig")
+            .field("enabled", &self.enabled)
+            .field("api_key", &"[REDACTED]")
+            .field("max_results", &self.max_results)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -200,12 +231,21 @@ pub struct VoiceConfig {
     pub groq: GroqVoiceConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct GroqVoiceConfig {
     #[serde(default)]
     pub api_key: String,
     #[serde(default)]
     pub api_base: String,
+}
+
+impl std::fmt::Debug for GroqVoiceConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GroqVoiceConfig")
+            .field("api_key", &"[REDACTED]")
+            .field("api_base", &self.api_base)
+            .finish()
+    }
 }
 
 fn default_workspace() -> String {
@@ -491,5 +531,16 @@ mod tests {
         let config = Config::load_with_env(tmp.path().to_str().unwrap(), &env).unwrap();
         // Should keep the default since parse failed
         assert_eq!(config.agents.defaults.max_tokens, 8192);
+    }
+
+    #[test]
+    fn test_provider_entry_debug_redacts_api_key() {
+        let entry = ProviderEntry {
+            api_key: "sk-secret-key-12345".to_string(),
+            api_base: "https://api.openai.com/v1".to_string(),
+            auth_method: "token".to_string(),
+        };
+        let debug = format!("{:?}", entry);
+        assert!(!debug.contains("sk-secret-key-12345"));
     }
 }
