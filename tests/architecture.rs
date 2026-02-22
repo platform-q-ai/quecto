@@ -74,6 +74,38 @@ fn assert_no_imports(layer: &str, dir: &Path, forbidden: &[&str]) {
     }
 }
 
+/// Check that a specific source file does not contain forbidden patterns in
+/// production code (everything after `#[cfg(test)]` is skipped).
+fn assert_file_no_patterns(file: &str, forbidden: &[&str], rule: &str) {
+    let content = fs::read_to_string(file).expect("read file");
+
+    for (line_no, line) in content.lines().enumerate() {
+        let trimmed = line.trim();
+
+        // Stop scanning this file once we hit a test module.
+        if trimmed == "#[cfg(test)]" {
+            break;
+        }
+
+        // Skip comments
+        if trimmed.starts_with("//") {
+            continue;
+        }
+
+        for pattern in forbidden {
+            if trimmed.contains(pattern) {
+                panic!(
+                    "Architecture violation: {file}\n\
+                     Line {}: {trimmed}\n\
+                     Forbidden pattern: {pattern}\n\
+                     Rule: {rule}",
+                    line_no + 1
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn all_architecture_layers_exist() {
     assert!(Path::new("src/domain").exists(), "src/domain/ must exist");
@@ -143,6 +175,70 @@ fn infrastructure_has_no_interface_imports() {
         "infrastructure",
         Path::new("src/infrastructure"),
         &["crate::interface"],
+    );
+}
+
+#[test]
+fn application_layer_has_no_runtime_io_calls() {
+    assert_no_imports(
+        "application",
+        Path::new("src/application"),
+        &["std::fs::", "tokio::fs::", "std::env::", "dirs::"],
+    );
+
+    // Extra guard: filesystem existence checks are also I/O and should move to infrastructure ports.
+    assert_no_imports("application", Path::new("src/application"), &[".exists("]);
+}
+
+#[test]
+fn domain_channel_trait_is_dyn_compatible() {
+    let file = "src/domain/channel.rs";
+    let content = fs::read_to_string(file).expect("read domain/channel.rs");
+
+    assert!(
+        content.contains("Pin<Box<dyn Future"),
+        "Architecture violation: {file}\n\
+         Rule: domain ports must be dyn-compatible and use boxed futures (Pin<Box<dyn Future + Send + '_>>)",
+    );
+
+    assert!(
+        !content.contains("-> impl std::future::Future"),
+        "Architecture violation: {file}\n\
+         Rule: domain ports must not use RPITIT return types (-> impl Future) because they break dyn trait compatibility",
+    );
+}
+
+#[test]
+fn gateway_runtime_context_uses_domain_ports_not_concrete_types() {
+    let file = "src/interface/gateway/mod.rs";
+    let content = fs::read_to_string(file).expect("read gateway/mod.rs");
+
+    for pattern in [
+        "pub(super) agent: Arc<AgentLoopImpl>",
+        "pub(super) session_store: Arc<FileSessionStore>",
+        "pub(super) telegram: TelegramChannel",
+    ] {
+        assert!(
+            !content.contains(pattern),
+            "Architecture violation: {file}\n\
+             Forbidden pattern: {pattern}\n\
+             Rule: gateway event-loop context should depend on domain ports (Arc<dyn AgentLoop>, Arc<dyn SessionStore>, Arc<dyn Channel>)",
+        );
+    }
+}
+
+#[test]
+fn gateway_services_signatures_use_ports_not_concrete_types() {
+    assert_file_no_patterns(
+        "src/interface/gateway/services.rs",
+        &[
+            "agent: Arc<AgentLoopImpl>",
+            "agent: &Arc<AgentLoopImpl>",
+            "session_store: Arc<FileSessionStore>",
+            "session_store: &Arc<FileSessionStore>",
+            "telegram: TelegramChannel",
+        ],
+        "gateway services should accept trait ports instead of concrete infrastructure/application types",
     );
 }
 

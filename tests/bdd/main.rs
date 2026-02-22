@@ -747,6 +747,7 @@ fn table_to_json(table: &gherkin::Table) -> String {
 mod agent_loop_steps;
 mod agent_msg_steps;
 mod agent_tools_steps;
+mod architecture_steps;
 mod auth_steps;
 mod config_steps;
 mod cron_steps;

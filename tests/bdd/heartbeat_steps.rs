@@ -1,4 +1,5 @@
 use super::*;
+use quecto::infrastructure::persistence::workspace_store::FileHeartbeatTaskSource;
 
 // Heartbeat Steps
 // ===========================================================================
@@ -51,9 +52,10 @@ fn when_heartbeat_loads_tasks(world: &mut QuectoWorld) {
         .as_ref()
         .expect("heartbeat workspace not set")
         .clone();
+    let source = FileHeartbeatTaskSource::new(ws);
     let tasks = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(heartbeat::load_tasks(&ws))
+        .block_on(heartbeat::load_tasks(&source))
         .unwrap();
     world.heartbeat_tasks = Some(tasks);
 }
@@ -179,11 +181,12 @@ fn when_heartbeat_tick_fires(world: &mut QuectoWorld) {
         .as_ref()
         .expect("heartbeat workspace not set")
         .clone();
+    let source = FileHeartbeatTaskSource::new(ws);
 
     let results = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(heartbeat::execute_heartbeat_tick(
-            &ws,
+            &source,
             agent.as_ref(),
             std::time::Duration::from_secs(60),
         ))

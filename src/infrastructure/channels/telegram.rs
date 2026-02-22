@@ -1,5 +1,6 @@
 // Telegram adapter: implements Telegram bot message handling.
 
+use crate::domain::channel::Channel;
 use crate::domain::error::DomainError;
 use crate::infrastructure::config::TelegramConfig;
 
@@ -370,6 +371,29 @@ Allowed default is '{}'. Set {}=1 only for local test endpoints.",
         }
 
         Ok(api_response.result.unwrap_or_default())
+    }
+}
+
+impl Channel for TelegramChannel {
+    fn name(&self) -> &str {
+        "telegram"
+    }
+
+    fn send_message<'a>(
+        &'a self,
+        target: &'a str,
+        text: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            let Some(chat_id) = target.strip_prefix("telegram:") else {
+                return Err(DomainError::Channel(format!(
+                    "unsupported channel target: {}",
+                    target
+                )));
+            };
+            TelegramChannel::send_message(self, chat_id, text).await
+        })
     }
 }
 
