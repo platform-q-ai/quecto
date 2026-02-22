@@ -1,4 +1,4 @@
-@pending
+@done
 Feature: REPL Subagent Management
   As a user in the interactive REPL
   I want to create, list, edit, run, and remove named subagent profiles

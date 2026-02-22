@@ -800,10 +800,12 @@ fn main() {
                 }
                 // If a tag filter is set, require matching scenarios, but still
                 // allow optional sharding to apply.
-                if let Some(ref tag) = tag_filter
-                    && !sc.tags.iter().any(|t| t == tag.as_str())
-                {
-                    return false;
+                if let Some(ref tag) = tag_filter {
+                    let matches_feature = feat.tags.iter().any(|t| t == tag.as_str());
+                    let matches_scenario = sc.tags.iter().any(|t| t == tag.as_str());
+                    if !matches_feature && !matches_scenario {
+                        return false;
+                    }
                 }
                 // Optional process-level deterministic shard filter.
                 if let Some((idx, total)) = shard {

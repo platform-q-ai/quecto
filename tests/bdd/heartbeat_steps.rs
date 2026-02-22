@@ -134,9 +134,16 @@ fn then_heartbeat_status(world: &mut QuectoWorld, expected: String) {
 #[given(expr = "a workspace HEARTBEAT.md containing:")]
 fn given_workspace_heartbeat_md(world: &mut QuectoWorld, step: &gherkin::Step) {
     let content = step.docstring().expect("step should have a docstring");
-    let ws = world.heartbeat_workspace.as_ref().expect(
-        "heartbeat workspace not set (run 'a running gateway with a mock LLM provider' first)",
-    );
+    // Support both gateway heartbeat scenarios (heartbeat_workspace) and
+    // REPL heartbeat scenarios (base_path + /workspace fallback).
+    let ws = if let Some(hw) = world.heartbeat_workspace.as_ref() {
+        hw.clone()
+    } else {
+        let base = base_path(world);
+        let ws = base.join("workspace");
+        std::fs::create_dir_all(&ws).expect("create workspace");
+        ws
+    };
     std::fs::write(ws.join("HEARTBEAT.md"), content).expect("write HEARTBEAT.md");
 }
 

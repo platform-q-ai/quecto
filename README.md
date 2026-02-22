@@ -41,7 +41,19 @@ The REPL reads input line by line, sends each to the LLM agent, prints the respo
 | `--system` | System prompt prepended to each turn (not persisted) |
 | `--model` | Override the default model from config |
 
-REPL commands: `/help` (show commands), `/clear` (reset history), `/exit` or `/quit` (exit). Ctrl+D (EOF) also exits cleanly.
+REPL commands:
+
+| Command | Description |
+|---|---|
+| `/help` | Show available commands |
+| `/clear` | Clear conversation history |
+| `/cron` | Manage scheduled cron jobs (subcommands: `list`, `add`, `remove`, `enable`, `disable`) |
+| `/heartbeat` | Manage heartbeat tasks (subcommands: `show`, `add`, `remove`, `enable`, `disable`, `interval`, `status`) |
+| `/agent` | Manage subagent profiles (subcommands: `list`, `create`, `show`, `edit`, `remove`, `run`) |
+| `/spawn` | Spawn a task as a child agent (flags: `--agent`, `--system`, `--model`, `--max-time`, `--help`) |
+| `/exit` / `/quit` | Exit the REPL |
+
+Ctrl+D (EOF) also exits cleanly.
 
 Piped input is supported for scripting: `echo "hello" | quecto`.
 

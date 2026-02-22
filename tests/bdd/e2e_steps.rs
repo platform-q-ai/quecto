@@ -270,7 +270,7 @@ fn openai_text_json(content: &str) -> serde_json::Value {
 ///
 /// Preserves any existing config fields (e.g. health, channels) by reading
 /// the current config, merging the provider/workspace fields, and writing back.
-fn rewrite_config_to_uri(world: &mut QuectoWorld, new_uri: &str) {
+pub(crate) fn rewrite_config_to_uri(world: &mut QuectoWorld, new_uri: &str) {
     let base = base_path(world);
     let workspace = base.join("workspace");
     let config_path = base.join("config.json");
