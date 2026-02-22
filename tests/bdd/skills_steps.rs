@@ -219,9 +219,15 @@ fn then_skill_directory_should_contain_file(world: &mut QuectoWorld, filename: S
         .collect::<Vec<_>>();
 
     skill_dirs.sort();
+    assert_eq!(
+        skill_dirs.len(),
+        1,
+        "expected exactly one installed skill directory in {}",
+        skills_root.display()
+    );
     let skill_dir = skill_dirs
         .first()
-        .unwrap_or_else(|| panic!("no skill directories found in {}", skills_root.display()));
+        .expect("one skill directory should exist");
 
     let file_path = skill_dir.join(&filename);
     assert!(

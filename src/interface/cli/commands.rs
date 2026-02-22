@@ -259,11 +259,21 @@ fn parse_github_skill_path(path: &str) -> Option<(&str, &str, &str)> {
         return None;
     }
 
-    if owner.is_empty() || repo.is_empty() || !crate::domain::skill::is_valid_skill_name(skill) {
+    if !is_valid_github_slug(owner)
+        || !is_valid_github_slug(repo)
+        || !crate::domain::skill::is_valid_skill_name(skill)
+    {
         return None;
     }
 
     Some((owner, repo, skill))
+}
+
+fn is_valid_github_slug(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
 }
 
 fn download_skill_markdown(
@@ -278,13 +288,12 @@ fn download_skill_markdown(
         .map(|branch| format!("{base}/{owner}/{repo}/{branch}/{skill}/SKILL.md"))
         .collect::<Vec<_>>();
 
-    let fut = download_skill_markdown_async(paths);
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        tokio::task::block_in_place(|| handle.block_on(fut))
-    } else {
-        let rt = tokio::runtime::Runtime::new().map_err(|e| format!("runtime init failed: {e}"))?;
-        rt.block_on(fut)
+    if tokio::runtime::Handle::try_current().is_ok() {
+        return Err("cannot run skills install from within an async runtime".to_string());
     }
+
+    let rt = tokio::runtime::Runtime::new().map_err(|e| format!("runtime init failed: {e}"))?;
+    rt.block_on(download_skill_markdown_async(paths))
 }
 
 async fn download_skill_markdown_async(paths: Vec<String>) -> Result<String, String> {
