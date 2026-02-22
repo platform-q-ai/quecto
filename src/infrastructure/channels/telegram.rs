@@ -129,10 +129,19 @@ Allowed default is '{}'. Set {}=1 only for local test endpoints.",
             );
         }
 
+        if config.enabled && !config.token.is_empty() && config.allow_from.is_empty() {
+            eprintln!(
+                "Telegram is enabled but allow_from is empty; disabling channel to fail closed."
+            );
+        }
+
         Self {
             token: config.token.clone(),
             allow_from: config.allow_from.clone(),
-            enabled: config.enabled && !config.token.is_empty() && !has_invalid_custom_api_base,
+            enabled: config.enabled
+                && !config.token.is_empty()
+                && !has_invalid_custom_api_base
+                && !config.allow_from.is_empty(),
             api_base: validated_api_base.unwrap_or_else(|| DEFAULT_TELEGRAM_API_BASE.to_string()),
             client: reqwest::Client::new(),
         }
@@ -143,7 +152,7 @@ Allowed default is '{}'. Set {}=1 only for local test endpoints.",
         Self {
             token: config.token.clone(),
             allow_from: config.allow_from.clone(),
-            enabled: config.enabled && !config.token.is_empty(),
+            enabled: config.enabled && !config.token.is_empty() && !config.allow_from.is_empty(),
             api_base: api_base.to_string(),
             client: reqwest::Client::new(),
         }
@@ -160,10 +169,9 @@ Allowed default is '{}'. Set {}=1 only for local test endpoints.",
     }
 
     /// Check if a user is allowed to send messages.
-    /// Returns true if the allow_from list is empty (all users allowed)
-    /// or if the user_id is in the allow_from list.
+    /// Returns true only if user_id is in the allow_from list.
     pub fn is_user_allowed(&self, user_id: &str) -> bool {
-        self.allow_from.is_empty() || self.allow_from.iter().any(|id| id == user_id)
+        self.allow_from.iter().any(|id| id == user_id)
     }
 
     /// Parse a raw Telegram update into a TelegramMessage.
@@ -485,8 +493,14 @@ mod tests {
 
     #[test]
     fn test_enabled_with_token() {
-        let ch = TelegramChannel::new(&make_config(true, "123:ABC", vec![]));
+        let ch = TelegramChannel::new(&make_config(true, "123:ABC", vec!["12345"]));
         assert!(ch.is_enabled());
+    }
+
+    #[test]
+    fn test_disabled_when_allow_from_empty() {
+        let ch = TelegramChannel::new(&make_config(true, "123:ABC", vec![]));
+        assert!(!ch.is_enabled());
     }
 
     #[test]
@@ -515,10 +529,10 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_allow_from_allows_all() {
+    fn test_empty_allow_from_denies_all() {
         let ch = TelegramChannel::new(&make_config(true, "t", vec![]));
-        assert!(ch.is_user_allowed("99999"));
-        assert!(ch.is_user_allowed("12345"));
+        assert!(!ch.is_user_allowed("99999"));
+        assert!(!ch.is_user_allowed("12345"));
     }
 
     #[test]

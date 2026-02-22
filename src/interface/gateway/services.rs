@@ -14,6 +14,7 @@ use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::bus::{InboundMessage, OutboundMessage};
 use crate::infrastructure::config::HealthConfig;
 use crate::infrastructure::health::server::{HealthServer, StaticReadiness};
+use crate::infrastructure::logging::redact_api_keys;
 use crate::infrastructure::persistence::cron_store::FileCronStore;
 use crate::infrastructure::persistence::workspace_store::FileHeartbeatTaskSource;
 
@@ -94,7 +95,7 @@ impl Gateway {
             }
             Err(e) => {
                 tracing::error!(error = %e, "agent processing failed");
-                format!("Error: {}", e)
+                format!("Error: {}", redact_api_keys(&e.to_string()))
             }
         }
     }
@@ -275,6 +276,65 @@ fn trim_session_messages(messages: &mut Vec<Message>, max_non_system_messages: u
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::agent::{AgentInfo, AgentLoop, AgentResult};
+    use crate::domain::error::DomainError;
+    use crate::domain::session::{Session, SessionStore};
+
+    #[derive(Debug)]
+    struct FailingAgent;
+
+    impl AgentLoop for FailingAgent {
+        fn process<'a>(
+            &'a self,
+            _messages: &'a mut Vec<Message>,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<AgentResult, DomainError>> + Send + 'a>,
+        > {
+            Box::pin(async {
+                Err(DomainError::Provider(
+                    "upstream rejected key sk-secret-key-12345".to_string(),
+                ))
+            })
+        }
+
+        fn info(&self) -> AgentInfo {
+            AgentInfo {
+                tool_count: 0,
+                skill_count: 0,
+            }
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct NoopSessionStore;
+
+    impl SessionStore for NoopSessionStore {
+        fn load(
+            &self,
+            _key: &str,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Option<Session>, DomainError>> + Send + '_>,
+        > {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn save(
+            &self,
+            _session: &Session,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + '_>>
+        {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn exists(
+            &self,
+            _key: &str,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<bool, DomainError>> + Send + '_>,
+        > {
+            Box::pin(async { Ok(false) })
+        }
+    }
 
     #[test]
     fn test_trim_messages_keeps_latest_non_system() {
@@ -374,5 +434,28 @@ mod tests {
         assert!(!messages.is_empty());
         assert_ne!(messages[0].role, Role::Tool);
         assert!(messages.iter().any(|m| m.role == Role::Tool));
+    }
+
+    #[tokio::test]
+    async fn test_process_and_save_redacts_secret_in_error_response() {
+        let ctx = InboundProcessorContext {
+            agent: Arc::new(FailingAgent),
+            session_store: Arc::new(NoopSessionStore),
+            outbound_tx: tokio::sync::mpsc::channel(1).0,
+            max_session_messages: 50,
+        };
+
+        let msg = InboundMessage {
+            source: "telegram:12345".to_string(),
+            sender_id: "12345".to_string(),
+            text: "hello".to_string(),
+        };
+        let mut messages = vec![];
+
+        let response = Gateway::process_and_save(&ctx, &msg, &mut messages).await;
+
+        assert!(response.starts_with("Error:"));
+        assert!(!response.contains("sk-secret-key-12345"));
+        assert!(response.contains("sk-***"));
     }
 }
