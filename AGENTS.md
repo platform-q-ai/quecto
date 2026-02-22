@@ -191,13 +191,15 @@ Three-tier local hook model keeps pushes fast and gates expensive checks at merg
 
 | Hook | Script | What it runs | When | ~Time |
 |---|---|---|---|---|
-| `pre-commit` | `scripts/pre-commit.sh` | fmt, clippy, quality scripts | every commit | ~30s |
-| `pre-push` | `scripts/pre-push.sh` | unit tests, architecture, BDD (no real-LLM) | every push | ~2-3 min |
-| `pre-merge-commit` | `scripts/pre-merge-commit.sh` | real-LLM full, tarpaulin, machete, deny | local merge to master | ~10-15 min |
+| `pre-commit` | `scripts/pre-commit.sh` | quality scripts, fmt, clippy | every commit | ~20-40s |
+| `pre-push` | `scripts/pre-push.sh` | unit tests + architecture + non-real BDD (25-way shards) | every push | ~30-60s |
+| `pre-merge-commit` | `scripts/pre-merge-commit.sh` | real-LLM BDD (25-way shards), machete, deny | local merge to master | ~30-90s |
 
-`scripts/pre-push.sh` runs the quality sequence plus BDD (excluding real-LLM). Successful runs are cached per `HEAD` SHA + script hash in `.git/pre-push.passed.*`; use `QUECTO_PREPUSH_FORCE=1` to bypass cache. Logs are tee'd to `.git/pre-push.last.log`.
+`scripts/pre-push.sh` runs quality + static checks, then a parallel test wave: `cargo test --lib`, `cargo test --test architecture`, and sharded non-real BDD via `scripts/run-bdd-shards.sh` (default `QUECTO_BDD_SHARDS=25`). Successful runs are cached per `HEAD` SHA + script hash in `.git/pre-push.passed.*`; use `QUECTO_PREPUSH_FORCE=1` to bypass cache. Logs are tee'd to `.git/pre-push.last.log`.
 
-`scripts/pre-merge-commit.sh` runs the expensive checks that gate merges to master: real-LLM end-to-end tests (requires `OPENAI_API_KEY`), tarpaulin coverage (with segfault retry), machete, and deny. Cached per `HEAD` SHA + script hash in `.git/pre-merge-commit.passed.*`; use `QUECTO_PREMERGE_FORCE=1` to bypass cache. Logs are tee'd to `.git/pre-merge-commit.last.log`.
+`scripts/pre-merge-commit.sh` runs merge-time checks: sharded real-LLM end-to-end tests (requires `OPENAI_API_KEY`, defaults `QUECTO_REAL_LLM_SHARDS=25`, tag via `QUECTO_REAL_LLM_TAG`), plus machete and deny. Cached per `HEAD` SHA + script hash in `.git/pre-merge-commit.passed.*`; use `QUECTO_PREMERGE_FORCE=1` to bypass cache. Logs are tee'd to `.git/pre-merge-commit.last.log`.
+
+Coverage is no longer gated by hooks. Run coverage in nightly CI using `cargo llvm-cov` (recommended) to keep commit/push loops fast.
 
 Run `scripts/install-hooks.sh` to install all three hooks. Set `QUECTO_TAG=real-llm-smoke` to run only the smoke subset of real-LLM tests.
 

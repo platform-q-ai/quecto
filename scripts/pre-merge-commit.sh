@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # pre-merge-commit.sh — Runs locally before a merge commit is created.
-# Contains the expensive checks that don't belong in pre-push:
-#   real-LLM end-to-end tests, machete, deny.
-# Tarpaulin runs as a warn-only step in pre-commit.sh instead.
+# Contains expensive checks that don't belong in pre-push:
+#   real-LLM end-to-end tests (sharded), machete, deny.
 # This fires on `git merge <branch>` into master (Git 2.24+).
 set -euo pipefail
 
@@ -11,7 +10,11 @@ export PATH="$HOME/.cargo/bin:$PATH"
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
-REAL_LLM_TIMEOUT="${QUECTO_REAL_LLM_TIMEOUT:-5m}"
+bash "$ROOT/scripts/load-dotenv.sh"
+
+REAL_LLM_TIMEOUT="${QUECTO_REAL_LLM_TIMEOUT:-12m}"
+REAL_LLM_SHARDS="${QUECTO_REAL_LLM_SHARDS:-25}"
+REAL_LLM_TAG="${QUECTO_REAL_LLM_TAG:-real-llm}"
 FORCE_RUN="${QUECTO_PREMERGE_FORCE:-0}"
 
 HEAD_SHA="$(git rev-parse HEAD)"
@@ -36,9 +39,14 @@ step() {
     echo -e "\n${BLUE}[$1]${NC} $2"
 }
 
-step "1/3" "Real-LLM end-to-end tests (timeout ${REAL_LLM_TIMEOUT})"
+step "1/3" "Real-LLM end-to-end tests (${REAL_LLM_SHARDS} shards, timeout ${REAL_LLM_TIMEOUT})"
 if [[ -n "${OPENAI_API_KEY:-}" ]]; then
-    timeout "${REAL_LLM_TIMEOUT}" env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm cargo test --test bdd
+    bash "$ROOT/scripts/run-bdd-shards.sh" \
+        --suite "real-llm-bdd" \
+        --shards "$REAL_LLM_SHARDS" \
+        --timeout "$REAL_LLM_TIMEOUT" \
+        --tag "$REAL_LLM_TAG" \
+        --real-llm
 else
     echo "  OPENAI_API_KEY is not set — skipping real-LLM suite"
     echo "  Set OPENAI_API_KEY to run the full real-LLM end-to-end tests before merge"

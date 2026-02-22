@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # pre-commit.sh — Runs on every git commit.
-# Checks: quality gate, formatting, clippy (strict), build, unit tests, architecture tests.
+# Fast static checks only; runtime test waves run in pre-push.
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
@@ -14,43 +14,20 @@ step() {
     echo -e "\n${BLUE}[$1]${NC} $2"
 }
 
-step "1/7" "Quality gate (work markers, lint bypasses, unsafe, ignored tests)"
+step "1/4" "Quality gate (work markers, lint bypasses, unsafe, ignored tests)"
 "$ROOT/scripts/check-quality.sh"
 
-step "2/7" "BDD quality gate (stubs, always-pass tests, reimplemented logic)"
+step "2/4" "BDD quality gate (stubs, always-pass tests, reimplemented logic)"
 "$ROOT/scripts/check-bdd-quality.sh"
 
-step "3/7" "cargo fmt --check"
+step "3/4" "cargo fmt --check"
 cargo fmt --all -- --check
 
-step "4/7" "cargo clippy (strict: -D warnings + complexity lints)"
+step "4/4" "cargo clippy (strict: -D warnings + complexity lints)"
 cargo clippy --all-targets -- -D warnings \
     -W clippy::cognitive_complexity \
     -W clippy::too_many_arguments \
     -W clippy::too_many_lines
-
-step "5/7" "cargo build --all-targets"
-cargo build --all-targets
-
-step "6/7" "cargo test --lib (unit tests)"
-cargo test --lib
-
-step "7/7" "cargo test --test architecture (boundary enforcement)"
-cargo test --test architecture
-
-step "info" "cargo tarpaulin (code coverage, warn-only)"
-if command -v cargo-tarpaulin &>/dev/null; then
-    tarpaulin_log="$(mktemp)"
-    if cargo tarpaulin --tests >"$tarpaulin_log" 2>&1; then
-        cat "$tarpaulin_log"
-    else
-        echo -e "${RED}WARN${NC}: tarpaulin failed (non-blocking):"
-        tail -5 "$tarpaulin_log"
-    fi
-    rm -f "$tarpaulin_log"
-else
-    echo "  cargo-tarpaulin not installed, skipping"
-fi
 
 # If committing directly to master (squash merge, ff commit, etc.),
 # also run the expensive pre-merge-commit checks. The pre-merge-commit
