@@ -8,19 +8,30 @@ fn given_provider_config(world: &mut QuectoWorld, provider_name: String, api_key
     world.provider = providers::create_provider(&provider_name, api_key, None);
 }
 
+#[given(expr = "a config with provider {string}, api_key {string}, and api_base {string}")]
+fn given_provider_config_with_api_base(
+    world: &mut QuectoWorld,
+    provider_name: String,
+    api_key: String,
+    api_base: String,
+) {
+    world.provider = providers::create_provider(&provider_name, api_key, Some(api_base));
+}
+
 #[when("I create a provider from config")]
-fn when_create_provider(world: &mut QuectoWorld) {
-    // Provider was already created in the Given step
-    assert!(
-        world.provider.is_some(),
-        "provider should have been created"
-    );
+fn when_create_provider(_world: &mut QuectoWorld) {
+    let _ = &_world.provider;
 }
 
 #[then(expr = "the provider should be {string}")]
 fn then_provider_is(world: &mut QuectoWorld, expected: String) {
     let provider = world.provider.as_ref().expect("no provider created");
     assert_eq!(provider.name(), expected);
+}
+
+#[then("no provider should be created")]
+fn then_no_provider_created(world: &mut QuectoWorld) {
+    assert!(world.provider.is_none(), "provider should not be created");
 }
 
 #[given(expr = "a provider error with status {int}")]
