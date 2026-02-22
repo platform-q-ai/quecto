@@ -313,7 +313,7 @@ These are available when running `quecto gateway` but not in CLI or REPL mode:
 | Tool | Description |
 |---|---|
 | `web_search` | Search the web via Brave Search or DuckDuckGo |
-| `cron` | Manage scheduled tasks (add, remove, list, enable, disable) |
+| `cron` | Manage scheduled tasks (add, remove, list, enable, disable). Interval schedules execute; cron-expression schedules are currently skipped and marked with `last_error` |
 | `spawn` | Spawn a background subagent for long-running tasks |
 | `message` | Send a message to the user's channel |
 
@@ -334,6 +334,7 @@ Quecto supports OpenAI and Anthropic as LLM providers. Both providers support SS
 - On rate-limit or server errors, falls back to the secondary provider
 - Authentication errors (wrong API key) do not trigger fallback
 - Providers enter a cooldown period after failures
+- Classification is provider-scoped (`DomainError::Provider`), using extracted HTTP status codes first, then semantic message matching.
 
 API key resolution order: credential store (`quecto auth login`) > config file > environment variable.
 

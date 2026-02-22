@@ -80,3 +80,11 @@ Feature: Scheduled Tasks (Cron)
     When the cron tick fires for job "report"
     Then the Telegram API should receive a sendMessage to chat "12345"
     And the message should contain "all systems operational"
+
+  @done @pr2-correctness
+  Scenario: Gateway skips cron-expression jobs until parsing is implemented
+    Given a running gateway with a mock LLM provider
+    And a cron job "morning-brief" with cron expression "0 9 * * *" and message "Good morning brief"
+    When the cron tick fires
+    Then the mock LLM should not receive any requests
+    And the job should be marked as last_error containing "not implemented"

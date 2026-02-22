@@ -82,22 +82,38 @@ impl FallbackProvider {
 
     /// Classify a DomainError into an ErrorClass for retry decisions.
     fn classify_error(err: &DomainError) -> ErrorClass {
-        let msg = err.to_string();
-        // Try to extract an HTTP status code from the error message
-        if msg.contains("429") || msg.to_lowercase().contains("rate limit") {
+        let msg = match err {
+            DomainError::Provider(msg) => msg,
+            _ => return ErrorClass::Unknown,
+        };
+
+        if let Some(status) = extract_http_status(msg) {
+            return ErrorClass::from_status(status);
+        }
+
+        let lowered = msg.to_ascii_lowercase();
+
+        if lowered.contains("rate limit") {
             ErrorClass::RateLimit
-        } else if msg.contains("401") || msg.contains("403") || msg.to_lowercase().contains("auth")
+        } else if lowered.contains("auth")
+            || lowered.contains("unauthorized")
+            || lowered.contains("forbidden")
+            || lowered.contains("invalid api key")
+            || lowered.contains("authentication")
         {
             ErrorClass::Auth
-        } else if msg.contains("500")
-            || msg.contains("502")
-            || msg.contains("503")
-            || msg.contains("504")
+        } else if lowered.contains("internal server error")
+            || lowered.contains("bad gateway")
+            || lowered.contains("service unavailable")
+            || lowered.contains("gateway timeout")
         {
             ErrorClass::Server
-        } else if msg.to_lowercase().contains("connect")
-            || msg.to_lowercase().contains("timeout")
-            || msg.to_lowercase().contains("network")
+        } else if lowered.contains("connect")
+            || lowered.contains("connection")
+            || lowered.contains("timeout")
+            || lowered.contains("timed out")
+            || lowered.contains("network")
+            || lowered.contains("dns")
         {
             ErrorClass::Network
         } else {
@@ -144,6 +160,51 @@ impl FallbackProvider {
         Err(last_error
             .unwrap_or_else(|| DomainError::Provider("no providers available".to_string())))
     }
+}
+
+fn extract_http_status(msg: &str) -> Option<u16> {
+    let lowered = msg.to_ascii_lowercase();
+
+    for marker in ["http", "status", "code"] {
+        let mut search_from = 0;
+        while let Some(rel) = lowered[search_from..].find(marker) {
+            let idx = search_from + rel + marker.len();
+            if let Some(code) = parse_status_near(&lowered[idx..]) {
+                return Some(code);
+            }
+            search_from = idx;
+        }
+    }
+
+    None
+}
+
+fn parse_status_near(s: &str) -> Option<u16> {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b.is_ascii_digit() {
+            if i + 2 >= bytes.len()
+                || !bytes[i + 1].is_ascii_digit()
+                || !bytes[i + 2].is_ascii_digit()
+            {
+                return None;
+            }
+            let code = ((bytes[i] - b'0') as u16) * 100
+                + ((bytes[i + 1] - b'0') as u16) * 10
+                + ((bytes[i + 2] - b'0') as u16);
+            return (100..=599).contains(&code).then_some(code);
+        }
+
+        if !(b.is_ascii_whitespace() || b == b':' || b == b'=' || b == b'-' || b == b'/') {
+            return None;
+        }
+        i += 1;
+    }
+
+    None
 }
 
 impl LlmProvider for FallbackProvider {
@@ -374,6 +435,26 @@ mod tests {
                 code
             );
         }
+    }
+
+    #[test]
+    fn test_non_provider_errors_are_not_classified_as_provider_server_errors() {
+        let err = DomainError::Tool("HTTP 500 from subprocess".to_string());
+        assert_eq!(FallbackProvider::classify_error(&err), ErrorClass::Unknown);
+    }
+
+    #[test]
+    fn test_classify_auth_by_semantic_message() {
+        let err = DomainError::Provider("Authentication failed: invalid api key".to_string());
+        assert_eq!(FallbackProvider::classify_error(&err), ErrorClass::Auth);
+    }
+
+    #[test]
+    fn test_status_extraction_prefers_http_context_over_other_numbers() {
+        let err = DomainError::Provider(
+            "connect to 10.0.0.1:443 failed, HTTP 503 Service Unavailable".to_string(),
+        );
+        assert_eq!(FallbackProvider::classify_error(&err), ErrorClass::Server);
     }
 
     #[test]

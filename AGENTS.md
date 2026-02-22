@@ -56,7 +56,7 @@ Depends only on `domain/`. Contains orchestration logic with no I/O — all I/O 
 | `agent_loop.rs` | `AgentLoopImpl` — the core LLM-tool loop: send messages to provider, execute tool calls, repeat until done or max iterations. Emits `tracing::info!` on each tool execution with `tool_name`, `duration_ms`, `is_error` fields (target: `tool_exec`) |
 | `onboard.rs` | `run_onboard()` — onboarding orchestration through `OnboardStore` (config + workspace bootstrap) |
 | `subagent.rs` | `SubagentContext` — constructs child agent contexts with inherited sandbox restrictions (re-exports `SubagentConfig` from domain) |
-| `cron_executor.rs` | `execute_cron_tick()` — runs due cron jobs through the agent with timeout, records `last_error` on failure, propagates `deliver_to` |
+| `cron_executor.rs` | `execute_cron_tick()` — runs due cron jobs through the agent with timeout, records `last_error` on failure, propagates `deliver_to`; cron-expression schedules are currently skipped and marked as not implemented |
 | `heartbeat.rs` | `parse_heartbeat()`, `load_tasks()`, `execute_heartbeat_tick()` — parses task definitions via `HeartbeatTaskSource`, determines which are due, dispatches tasks through the agent (spawn-aware) |
 | `voice.rs` | `process_voice_message()` — transcribes audio via `VoiceTranscriber` and routes the text through the agent, returns `VoiceProcessingResult` |
 
@@ -67,7 +67,7 @@ Implements the domain traits with real I/O. This is where serde, reqwest, tokio,
 | Directory | Contents |
 |---|---|
 | `config.rs` | `Config` struct with serde deserialization, env var overrides, workspace path expansion |
-| `providers/` | `OpenAiProvider`, `AnthropicProvider` (real HTTP, SSE streaming via `chat_stream()`), `FallbackProvider` (cooldown + error classification), `ErrorClass`. `create_provider()` validates `api_base` (https for non-local hosts; http allowed only on loopback) and rejects unsafe URLs |
+| `providers/` | `OpenAiProvider`, `AnthropicProvider` (real HTTP, SSE streaming via `chat_stream()`), `FallbackProvider` (cooldown + provider-scoped error classification using extracted status codes and semantic matching), `ErrorClass`. `create_provider()` validates `api_base` (https for non-local hosts; http allowed only on loopback) and rejects unsafe URLs |
 | `tools/` | `ExecTool` (shell; drains stdout/stderr while running and caps captured output to 1 MiB per stream), `ReadFileTool`/`WriteFileTool`/`EditFileTool`/`AppendFileTool`/`ListDirTool` (filesystem), `SpawnTool` (subagent), `CronTool`, `MessageTool`, `WebSearchTool` (Brave + DDG), `ToolRegistryImpl` |
 | `persistence/` | `FileSessionStore`, `MemoryStore`, `FileCronStore`, `FileSkillLoader`, `workspace_store.rs` (`FileHeartbeatTaskSource`, `FileOnboardStore`) |
 | `security/` | `Sandbox` — workspace path validation and command filtering |
