@@ -115,6 +115,16 @@ fn given_config_no_api_keys(world: &mut QuectoWorld) {
 /// Parses the full argument string after "quecto " using shell-like splitting.
 #[when(expr = "I run quecto agent -m {string}")]
 fn when_run_agent_with_message(world: &mut QuectoWorld, message: String) {
+    if world.run_agent_via_subprocess_with_env_base_dir {
+        let raw_args = format!("agent -m '{}'", message);
+        spawn_quecto_subprocess(world, &raw_args);
+        world.exit_code = world.subprocess_exit_code.unwrap_or(-1);
+        world.stdout = world.subprocess_stdout.clone().unwrap_or_default();
+        world.stderr = world.subprocess_stderr.clone().unwrap_or_default();
+        world.run_agent_via_subprocess_with_env_base_dir = false;
+        return;
+    }
+
     let args = vec![
         "quecto".to_string(),
         "agent".to_string(),
@@ -174,17 +184,10 @@ fn when_run_agent_with_model_and_message(world: &mut QuectoWorld, model: String,
 
 #[when("I set QUECTO_BASE_DIR to the temp directory")]
 fn when_set_quecto_base_dir_env(world: &mut QuectoWorld) {
-    let base = base_path(world);
-    // Set the real env var — safe because BDD runs single-threaded (max_concurrent_scenarios(1)).
-    // The production CliContext::base_dir() reads QUECTO_BASE_DIR from the environment.
-    // SAFETY: No concurrent threads are reading env vars in the BDD test runner.
-    unsafe {
-        std::env::set_var("QUECTO_BASE_DIR", base.to_string_lossy().as_ref());
-    }
-    // Track for cleanup in ensure_temp_dir (next scenario init).
-    world.env_base_dir_set = true;
-    // Also clear cli_context.base_dir so the code must use the env var.
-    world.cli_context.base_dir = None;
+    // Do not mutate process-global env in BDD runner.
+    // Instead, mark the next "run quecto agent" step to run as a subprocess
+    // with QUECTO_BASE_DIR set in child env.
+    world.run_agent_via_subprocess_with_env_base_dir = true;
 }
 
 #[then(expr = "stdout should contain {string}")]

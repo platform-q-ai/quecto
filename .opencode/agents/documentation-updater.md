@@ -21,7 +21,7 @@ Update documentation when the PR introduces:
 - **New application use cases** in `src/application/` (update Architecture section)
 - **New infrastructure adapters** in `src/infrastructure/` (update Architecture section)
 - **Configuration changes** (new env vars, changes to `config.toml`, new config files)
-- **Quality tooling changes** (changes to `clippy.toml`, `deny.toml`, `tarpaulin.toml`, `rustfmt.toml`)
+- **Quality tooling changes** (changes to `clippy.toml`, `deny.toml`, `rustfmt.toml`, coverage workflow)
 - **Script changes** (changes to `scripts/*.sh`)
 - **New file roles** (add to relevant reference tables)
 - **Architecture changes** (new layers, new directories, new patterns)
@@ -61,10 +61,10 @@ Analyze the diff to identify documentation-relevant changes:
 - New files in `.opencode/commands/` → new commands to document
 - Changes to `Cargo.toml` → dependency updates, version changes
 - Changes to `tests/features/*.feature` → BDD coverage updates
-- Changes to `tests/bdd.rs` → step definition updates
+- Changes to `tests/bdd/*.rs` or `tests/bdd/main.rs` → step definition/runner updates
 - Changes to `tests/architecture.rs` → boundary enforcement updates
 - Changes to `scripts/*.sh` → quality tooling or workflow updates
-- Changes to `clippy.toml`, `deny.toml`, `tarpaulin.toml`, `rustfmt.toml` → quality config updates
+- Changes to `clippy.toml`, `deny.toml`, `rustfmt.toml`, coverage scripts/workflows → quality config updates
 - New env var usage → configuration documentation
 
 ### Step 3: Update files

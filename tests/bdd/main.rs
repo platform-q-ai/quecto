@@ -42,7 +42,9 @@ use quecto::infrastructure::voice::groq_whisper::{GroqWhisperClient, Transcripti
 use quecto::interface::cli::{self, CliContext};
 use quecto::interface::gateway::handle_bot_command;
 use std::collections::HashMap;
+use std::fs;
 use std::future::Future;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -435,8 +437,10 @@ pub struct QuectoWorld {
     pub pending_tool_call: Option<(String, String)>,
     /// Pending parallel tool calls (name, args_json) for the parallel-then-text step
     pub pending_parallel_calls: Option<Vec<(String, String)>>,
-    /// Whether QUECTO_BASE_DIR env var was set by this scenario (needs cleanup)
-    pub env_base_dir_set: bool,
+    /// If true, the next "run quecto agent" step should run as subprocess
+    /// with QUECTO_BASE_DIR set in child env to exercise env-based resolution
+    /// without mutating process-global env in this test runner.
+    pub run_agent_via_subprocess_with_env_base_dir: bool,
     /// Wiremock URI for Anthropic mock (dual-provider scenarios)
     pub wiremock_anthropic_uri: Option<String>,
     /// Subprocess exit code (from spawning quecto as a child process)
@@ -502,16 +506,7 @@ pub struct QuectoWorld {
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
-/// Also cleans up QUECTO_BASE_DIR env var if a previous scenario set it.
 fn ensure_temp_dir(world: &mut QuectoWorld) {
-    // Clean up env var from a previous scenario (single-threaded BDD runner).
-    if world.env_base_dir_set {
-        // SAFETY: BDD runner is single-threaded (max_concurrent_scenarios(1)).
-        unsafe {
-            std::env::remove_var("QUECTO_BASE_DIR");
-        }
-        world.env_base_dir_set = false;
-    }
     if world._temp_dir.is_none() {
         let td = TempDir::new().expect("failed to create temp dir");
         world.cli_context.base_dir = Some(td.path().to_path_buf());
@@ -575,6 +570,168 @@ fn shell_split(s: &str) -> Vec<String> {
     args
 }
 
+#[derive(Debug, Clone)]
+struct ScenarioShardEntry {
+    feature: String,
+    scenario: String,
+    weight: u64,
+}
+
+fn scenario_weight(tags: &[String], step_lines: &[String], feature: &str, scenario: &str) -> u64 {
+    let mut w = 1_u64;
+    if tags.iter().any(|t| t == "real-llm") {
+        w += 4;
+    }
+    if tags.iter().any(|t| t == "real-llm-smoke") {
+        w += 2;
+    }
+    if feature.to_ascii_lowercase().contains("gateway") {
+        w += 2;
+    }
+    if scenario.to_ascii_lowercase().contains("gateway") {
+        w += 2;
+    }
+    for line in step_lines {
+        let l = line.to_ascii_lowercase();
+        if l.contains("for at least 5 seconds") {
+            w += 10;
+        }
+        if l.contains("takes 5 seconds") {
+            w += 8;
+        }
+        if l.contains("wait for the health server to accept connections") {
+            w += 6;
+        }
+        if l.contains("run the quecto gateway subprocess") {
+            w += 4;
+        }
+    }
+    w
+}
+
+fn discover_scenarios(features_dir: &str) -> Vec<ScenarioShardEntry> {
+    let mut files = Vec::new();
+    if let Ok(entries) = fs::read_dir(features_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "feature") {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+
+    let mut out = Vec::new();
+    for path in files {
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let mut feature_name = String::new();
+        let mut pending_tags: Vec<String> = Vec::new();
+        let mut current_scenario: Option<String> = None;
+        let mut current_tags: Vec<String> = Vec::new();
+        let mut current_steps: Vec<String> = Vec::new();
+
+        let flush_current = |out: &mut Vec<ScenarioShardEntry>,
+                             feature_name: &String,
+                             current_scenario: &mut Option<String>,
+                             current_tags: &mut Vec<String>,
+                             current_steps: &mut Vec<String>| {
+            if let Some(scenario_name) = current_scenario.take() {
+                let weight =
+                    scenario_weight(current_tags, current_steps, feature_name, &scenario_name);
+                out.push(ScenarioShardEntry {
+                    feature: feature_name.clone(),
+                    scenario: scenario_name,
+                    weight,
+                });
+                current_tags.clear();
+                current_steps.clear();
+            }
+        };
+
+        for raw_line in content.lines() {
+            let line = raw_line.trim();
+            if let Some(rest) = line.strip_prefix("Feature:") {
+                feature_name = rest.trim().to_string();
+                continue;
+            }
+            if line.starts_with('@') {
+                pending_tags.extend(
+                    line.split_whitespace()
+                        .filter_map(|t| t.strip_prefix('@').map(str::to_string)),
+                );
+                continue;
+            }
+            if let Some(rest) = line
+                .strip_prefix("Scenario:")
+                .or_else(|| line.strip_prefix("Scenario Outline:"))
+            {
+                flush_current(
+                    &mut out,
+                    &feature_name,
+                    &mut current_scenario,
+                    &mut current_tags,
+                    &mut current_steps,
+                );
+                current_scenario = Some(rest.trim().to_string());
+                current_tags = std::mem::take(&mut pending_tags);
+                continue;
+            }
+            if current_scenario.is_some() && !line.is_empty() {
+                current_steps.push(line.to_string());
+            }
+        }
+
+        flush_current(
+            &mut out,
+            &feature_name,
+            &mut current_scenario,
+            &mut current_tags,
+            &mut current_steps,
+        );
+    }
+
+    out
+}
+
+fn stable_hash(feature: &str, scenario: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    feature.hash(&mut hasher);
+    scenario.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn build_shard_plan(features_dir: &str, shard_total: u64) -> HashMap<(String, String), u64> {
+    let mut scenarios = discover_scenarios(features_dir);
+    scenarios.sort_by(|a, b| {
+        b.weight.cmp(&a.weight).then_with(|| {
+            stable_hash(&a.feature, &a.scenario).cmp(&stable_hash(&b.feature, &b.scenario))
+        })
+    });
+
+    let mut loads = vec![0_u64; shard_total as usize];
+    let mut plan = HashMap::new();
+    for s in scenarios {
+        let key_hash = stable_hash(&s.feature, &s.scenario);
+        let mut best_idx = 0_u64;
+        let mut best_load = u64::MAX;
+        let mut best_tie = u64::MAX;
+        for idx in 0..shard_total {
+            let load = loads[idx as usize];
+            let tie = key_hash ^ idx;
+            if load < best_load || (load == best_load && tie < best_tie) {
+                best_load = load;
+                best_tie = tie;
+                best_idx = idx;
+            }
+        }
+        loads[best_idx as usize] += s.weight;
+        plan.insert((s.feature, s.scenario), best_idx);
+    }
+    plan
+}
+
 /// Convert a 2-column Gherkin table (key | value) to a JSON object string.
 fn table_to_json(table: &gherkin::Table) -> String {
     let obj: serde_json::Value = table
@@ -614,10 +771,23 @@ fn main() {
     let real_llm_enabled = std::env::var("QUECTO_REAL_LLM").unwrap_or_default() == "1";
     // Optional tag filter: QUECTO_TAG=real-llm runs only scenarios with that tag.
     let tag_filter = std::env::var("QUECTO_TAG").ok();
+    // Optional deterministic scenario sharding across separate bdd processes.
+    // Example: QUECTO_BDD_SHARD_INDEX=0 QUECTO_BDD_SHARD_TOTAL=4
+    let shard_index = std::env::var("QUECTO_BDD_SHARD_INDEX")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok());
+    let shard_total = std::env::var("QUECTO_BDD_SHARD_TOTAL")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok());
+    let shard = match (shard_index, shard_total) {
+        (Some(i), Some(t)) if t > 0 && i < t => Some((i, t)),
+        _ => None,
+    };
+    let shard_plan = shard.map(|(_, total)| build_shard_plan("tests/features", total));
 
     futures::executor::block_on(
         QuectoWorld::cucumber()
-            .max_concurrent_scenarios(1)
+            .max_concurrent_scenarios(25)
             .fail_on_skipped()
             .filter_run("tests/features", move |feat, _, sc| {
                 // Exclude scenarios explicitly tagged @pending
@@ -628,9 +798,27 @@ fn main() {
                 if sc.tags.iter().any(|t| t == "real-llm") && !real_llm_enabled {
                     return false;
                 }
-                // If a tag filter is set, only run matching scenarios
-                if let Some(ref tag) = tag_filter {
-                    return sc.tags.iter().any(|t| t == tag.as_str());
+                // If a tag filter is set, require matching scenarios, but still
+                // allow optional sharding to apply.
+                if let Some(ref tag) = tag_filter
+                    && !sc.tags.iter().any(|t| t == tag.as_str())
+                {
+                    return false;
+                }
+                // Optional process-level deterministic shard filter.
+                if let Some((idx, total)) = shard {
+                    if let Some(plan) = shard_plan.as_ref() {
+                        let key = (feat.name.clone(), sc.name.clone());
+                        if let Some(assigned) = plan.get(&key) {
+                            if *assigned != idx {
+                                return false;
+                            }
+                        } else if stable_hash(&feat.name, &sc.name) % total != idx {
+                            return false;
+                        }
+                    } else if stable_hash(&feat.name, &sc.name) % total != idx {
+                        return false;
+                    }
                 }
                 // Include if feature or scenario is tagged @wip or @done
                 feat.tags.iter().any(|t| t == "wip" || t == "done")
