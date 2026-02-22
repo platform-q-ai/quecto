@@ -19,12 +19,14 @@ const SECRET_ENV_PREFIX: &str = "QUECTO_";
 
 /// Maximum bytes captured per stream (stdout and stderr) to avoid unbounded memory growth.
 const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
+const STREAM_DRAIN_TIMEOUT_ON_KILL: Duration = Duration::from_millis(250);
 
 /// Tool that executes shell commands within the workspace.
 pub struct ExecTool {
     workspace: Arc<PathBuf>,
     sandbox: Arc<Sandbox>,
     timeout: Duration,
+    max_capture_bytes: usize,
 }
 
 impl std::fmt::Debug for ExecTool {
@@ -32,6 +34,7 @@ impl std::fmt::Debug for ExecTool {
         f.debug_struct("ExecTool")
             .field("workspace", &self.workspace)
             .field("timeout", &self.timeout)
+            .field("max_capture_bytes", &self.max_capture_bytes)
             .finish()
     }
 }
@@ -43,6 +46,7 @@ impl ExecTool {
             workspace,
             sandbox,
             timeout: DEFAULT_EXEC_TIMEOUT,
+            max_capture_bytes: MAX_CAPTURE_BYTES,
         }
     }
 
@@ -52,6 +56,22 @@ impl ExecTool {
             workspace,
             sandbox,
             timeout,
+            max_capture_bytes: MAX_CAPTURE_BYTES,
+        }
+    }
+
+    /// Create a new exec tool with custom timeout and output capture cap.
+    pub fn with_limits(
+        workspace: Arc<PathBuf>,
+        sandbox: Arc<Sandbox>,
+        timeout: Duration,
+        max_capture_bytes: usize,
+    ) -> Self {
+        Self {
+            workspace,
+            sandbox,
+            timeout,
+            max_capture_bytes,
         }
     }
 
@@ -108,13 +128,18 @@ impl ExecTool {
         let stdout_task = child
             .stdout
             .take()
-            .map(|pipe| tokio::spawn(read_stream_limited(pipe)));
+            .map(|pipe| tokio::spawn(read_stream_limited(pipe, self.max_capture_bytes)));
         let stderr_task = child
             .stderr
             .take()
-            .map(|pipe| tokio::spawn(read_stream_limited(pipe)));
+            .map(|pipe| tokio::spawn(read_stream_limited(pipe, self.max_capture_bytes)));
 
-        run_child_with_timeout(child, stdout_task, stderr_task, self.timeout).await
+        let stream_tasks = StreamTasks {
+            stdout_task,
+            stderr_task,
+        };
+
+        run_child_with_timeout(child, stream_tasks, self.timeout, self.max_capture_bytes).await
     }
 }
 
@@ -162,17 +187,19 @@ fn build_shell_command(
 
 async fn run_child_with_timeout(
     mut child: tokio::process::Child,
-    mut stdout_task: Option<tokio::task::JoinHandle<(String, bool)>>,
-    mut stderr_task: Option<tokio::task::JoinHandle<(String, bool)>>,
+    mut stream_tasks: StreamTasks,
     timeout_dur: Duration,
+    max_capture_bytes: usize,
 ) -> Result<ToolResult, DomainError> {
     match tokio::time::timeout(timeout_dur, child.wait()).await {
         Ok(Ok(status)) => {
-            let (stdout, stdout_truncated) = await_stream_output(stdout_task.take()).await;
-            let (stderr, stderr_truncated) = await_stream_output(stderr_task.take()).await;
+            let (stdout, stdout_truncated) =
+                await_stream_output(stream_tasks.stdout_task.take()).await;
+            let (stderr, stderr_truncated) =
+                await_stream_output(stream_tasks.stderr_task.take()).await;
 
-            let stdout = annotate_truncation(stdout, stdout_truncated, "stdout");
-            let stderr = annotate_truncation(stderr, stderr_truncated, "stderr");
+            let stdout = annotate_truncation(stdout, stdout_truncated, "stdout", max_capture_bytes);
+            let stderr = annotate_truncation(stderr, stderr_truncated, "stderr", max_capture_bytes);
 
             if status.success() {
                 Ok(ToolResult {
@@ -194,8 +221,16 @@ async fn run_child_with_timeout(
             // Timeout: kill the child process to prevent orphan leak
             let _ = child.kill().await;
             let _ = child.wait().await;
-            let _ = await_stream_output(stdout_task.take()).await;
-            let _ = await_stream_output(stderr_task.take()).await;
+            let _ = await_stream_output_with_timeout(
+                stream_tasks.stdout_task.take(),
+                STREAM_DRAIN_TIMEOUT_ON_KILL,
+            )
+            .await;
+            let _ = await_stream_output_with_timeout(
+                stream_tasks.stderr_task.take(),
+                STREAM_DRAIN_TIMEOUT_ON_KILL,
+            )
+            .await;
             Ok(ToolResult {
                 content: format!("command timed out after {}s", timeout_dur.as_secs()),
                 is_error: true,
@@ -204,8 +239,13 @@ async fn run_child_with_timeout(
     }
 }
 
+struct StreamTasks {
+    stdout_task: Option<tokio::task::JoinHandle<(String, bool)>>,
+    stderr_task: Option<tokio::task::JoinHandle<(String, bool)>>,
+}
+
 /// Read bytes from a process stream with a fixed capture cap.
-async fn read_stream_limited<R>(mut pipe: R) -> (String, bool)
+async fn read_stream_limited<R>(mut pipe: R, max_capture_bytes: usize) -> (String, bool)
 where
     R: tokio::io::AsyncRead + Unpin,
 {
@@ -219,7 +259,7 @@ where
         match pipe.read(&mut chunk).await {
             Ok(0) => break,
             Ok(n) => {
-                let remaining = MAX_CAPTURE_BYTES.saturating_sub(collected.len());
+                let remaining = max_capture_bytes.saturating_sub(collected.len());
                 if remaining > 0 {
                     let keep = remaining.min(n);
                     collected.extend_from_slice(&chunk[..keep]);
@@ -244,11 +284,30 @@ async fn await_stream_output(
     }
 }
 
-fn annotate_truncation(mut content: String, truncated: bool, stream_name: &str) -> String {
+async fn await_stream_output_with_timeout(
+    task: Option<tokio::task::JoinHandle<(String, bool)>>,
+    timeout: Duration,
+) -> (String, bool) {
+    if let Some(handle) = task {
+        match tokio::time::timeout(timeout, handle).await {
+            Ok(join) => join.unwrap_or_default(),
+            Err(_) => (String::new(), false),
+        }
+    } else {
+        (String::new(), false)
+    }
+}
+
+fn annotate_truncation(
+    mut content: String,
+    truncated: bool,
+    stream_name: &str,
+    max_capture_bytes: usize,
+) -> String {
     if truncated {
         content.push_str(&format!(
             "\n[{} output truncated at {} bytes]",
-            stream_name, MAX_CAPTURE_BYTES
+            stream_name, max_capture_bytes
         ));
     }
     content

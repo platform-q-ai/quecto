@@ -42,11 +42,25 @@ impl ToolRegistryImpl {
 
     /// Create a registry with the core filesystem and exec tools.
     pub fn with_core_tools(workspace: PathBuf, sandbox: Sandbox) -> Self {
+        Self::with_core_tools_and_exec_capture_bytes(workspace, sandbox, 1024 * 1024)
+    }
+
+    /// Create a registry with core tools and configurable exec output capture bytes.
+    pub fn with_core_tools_and_exec_capture_bytes(
+        workspace: PathBuf,
+        sandbox: Sandbox,
+        exec_max_capture_bytes: usize,
+    ) -> Self {
         let sandbox = Arc::new(sandbox);
         let workspace = Arc::new(workspace);
         let mut reg = Self::new();
 
-        reg.register(Arc::new(ExecTool::new(workspace.clone(), sandbox.clone())));
+        reg.register(Arc::new(ExecTool::with_limits(
+            workspace.clone(),
+            sandbox.clone(),
+            std::time::Duration::from_secs(30),
+            exec_max_capture_bytes,
+        )));
         reg.register(Arc::new(ReadFileTool::new(
             workspace.clone(),
             sandbox.clone(),
