@@ -1,4 +1,4 @@
-@pending
+@done
 Feature: REPL Heartbeat Management
   As a user in the interactive REPL
   I want to view and edit the heartbeat task list and toggle heartbeat on/off

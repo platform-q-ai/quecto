@@ -388,6 +388,87 @@ fn find_repl_session_file(sessions_dir: &Path) -> PathBuf {
 // triggers execution immediately.
 
 // ===========================================================================
+// REPL Heartbeat Steps — /heartbeat slash command scenarios
+// ===========================================================================
+
+// Note: "a workspace HEARTBEAT.md containing:" is defined in heartbeat_steps.rs
+// with fallback support for both gateway and REPL contexts.
+
+// Note: "the config has heartbeat enabled with interval N seconds" and
+// "the config has heartbeat disabled" are defined in e2e_steps.rs.
+
+#[then("the workspace HEARTBEAT.md should exist")]
+fn then_heartbeat_exists(world: &mut QuectoWorld) {
+    ensure_repl_executed(world);
+    let base = base_path(world);
+    let path = base.join("workspace").join("HEARTBEAT.md");
+    assert!(path.exists(), "expected HEARTBEAT.md at {}", path.display());
+}
+
+#[then(expr = "the workspace HEARTBEAT.md should contain {string}")]
+fn then_heartbeat_contains(world: &mut QuectoWorld, expected: String) {
+    ensure_repl_executed(world);
+    let base = base_path(world);
+    let path = base.join("workspace").join("HEARTBEAT.md");
+    let content = std::fs::read_to_string(&path).unwrap_or_else(|_| {
+        panic!("could not read HEARTBEAT.md at {}", path.display());
+    });
+    assert!(
+        content.contains(&expected),
+        "expected HEARTBEAT.md to contain '{}', got:\n{}",
+        expected,
+        content
+    );
+}
+
+#[then(expr = "the workspace HEARTBEAT.md should not contain {string}")]
+fn then_heartbeat_not_contains(world: &mut QuectoWorld, expected: String) {
+    ensure_repl_executed(world);
+    let base = base_path(world);
+    let path = base.join("workspace").join("HEARTBEAT.md");
+    let content = std::fs::read_to_string(&path).unwrap_or_else(|_| {
+        panic!("could not read HEARTBEAT.md at {}", path.display());
+    });
+    assert!(
+        !content.contains(&expected),
+        "expected HEARTBEAT.md NOT to contain '{}', got:\n{}",
+        expected,
+        content
+    );
+}
+
+#[then(expr = "the config file should have heartbeat enabled set to {word}")]
+fn then_config_heartbeat_enabled(world: &mut QuectoWorld, expected: String) {
+    ensure_repl_executed(world);
+    let base = base_path(world);
+    let config_path = base.join("config.json");
+    let content = std::fs::read_to_string(&config_path).expect("read config");
+    let config: serde_json::Value = serde_json::from_str(&content).expect("parse config");
+    let enabled = config["heartbeat"]["enabled"].as_bool().unwrap_or(true);
+    let expected_val = expected == "true";
+    assert_eq!(
+        enabled, expected_val,
+        "expected heartbeat.enabled = {}, got {}",
+        expected_val, enabled
+    );
+}
+
+#[then(expr = "the config file should have heartbeat interval set to {int}")]
+fn then_config_heartbeat_interval(world: &mut QuectoWorld, expected: u64) {
+    ensure_repl_executed(world);
+    let base = base_path(world);
+    let config_path = base.join("config.json");
+    let content = std::fs::read_to_string(&config_path).expect("read config");
+    let config: serde_json::Value = serde_json::from_str(&content).expect("parse config");
+    let interval = config["heartbeat"]["interval"].as_u64().unwrap_or(0);
+    assert_eq!(
+        interval, expected,
+        "expected heartbeat.interval = {}, got {}",
+        expected, interval
+    );
+}
+
+// ===========================================================================
 // REPL Cron Steps — /cron slash command scenarios
 // ===========================================================================
 

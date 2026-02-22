@@ -54,6 +54,7 @@ const CMD_QUIT: &str = "/quit";
 const CMD_HELP: &str = "/help";
 const CMD_CLEAR: &str = "/clear";
 const CMD_CRON: &str = "/cron";
+const CMD_HEARTBEAT: &str = "/heartbeat";
 
 impl<R: BufRead, W: Write> ReplLoop<R, W> {
     /// Create a new REPL loop.
@@ -116,6 +117,10 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
                     self.handle_cron(input);
                     continue;
                 }
+                _ if input.starts_with(CMD_HEARTBEAT) => {
+                    self.handle_heartbeat(input);
+                    continue;
+                }
                 _ => {}
             }
 
@@ -138,6 +143,7 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
         let _ = writeln!(self.writer, "  /help       Show this help");
         let _ = writeln!(self.writer, "  /clear      Clear conversation history");
         let _ = writeln!(self.writer, "  /cron       Manage scheduled cron jobs");
+        let _ = writeln!(self.writer, "  /heartbeat  Manage heartbeat tasks");
         let _ = writeln!(self.writer, "  /exit       Exit the REPL");
         let _ = writeln!(self.writer, "  /quit       Exit the REPL");
     }
@@ -316,6 +322,280 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
                 let _ = writeln!(self.writer, "Error: {}", e);
             }
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // /heartbeat command
+    // -----------------------------------------------------------------------
+
+    fn handle_heartbeat(&mut self, input: &str) {
+        let rest = input.strip_prefix(CMD_HEARTBEAT).unwrap_or("").trim();
+        let parts: Vec<&str> = rest.splitn(2, char::is_whitespace).collect();
+        let subcmd = parts.first().copied().unwrap_or("");
+        let args_str = if parts.len() > 1 { parts[1] } else { "" };
+
+        match subcmd {
+            "show" => self.heartbeat_show(),
+            "add" => self.heartbeat_add(args_str),
+            "remove" => self.heartbeat_remove(args_str),
+            "enable" => self.heartbeat_enable(),
+            "disable" => self.heartbeat_disable(),
+            "interval" => self.heartbeat_interval(args_str),
+            "status" => self.heartbeat_status(),
+            _ => self.heartbeat_usage(),
+        }
+    }
+
+    fn heartbeat_md_path(&self) -> PathBuf {
+        let config = self.load_config();
+        let workspace = config.map(|c| c.workspace_path()).unwrap_or_else(|| {
+            self.session
+                .base_dir
+                .join("workspace")
+                .to_string_lossy()
+                .to_string()
+        });
+        PathBuf::from(workspace).join("HEARTBEAT.md")
+    }
+
+    fn heartbeat_usage(&mut self) {
+        let _ = writeln!(self.writer, "Usage: /heartbeat <subcommand>");
+        let _ = writeln!(self.writer, "  show       Show current heartbeat tasks");
+        let _ = writeln!(self.writer, "  add        Add a new task");
+        let _ = writeln!(self.writer, "  remove     Remove a task by text");
+        let _ = writeln!(self.writer, "  enable     Enable heartbeat in config");
+        let _ = writeln!(self.writer, "  disable    Disable heartbeat in config");
+        let _ = writeln!(self.writer, "  interval   Set heartbeat interval (seconds)");
+        let _ = writeln!(self.writer, "  status     Show heartbeat configuration");
+    }
+
+    fn heartbeat_show(&mut self) {
+        let path = self.heartbeat_md_path();
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => {
+                let _ = writeln!(self.writer, "No heartbeat tasks configured");
+                return;
+            }
+        };
+
+        let tasks = crate::application::heartbeat::parse_heartbeat(&content);
+        if tasks.is_empty() {
+            let _ = writeln!(self.writer, "No heartbeat tasks configured");
+            return;
+        }
+
+        let _ = writeln!(self.writer, "Heartbeat tasks:");
+        for task in &tasks {
+            if task.use_spawn {
+                let _ = writeln!(self.writer, "  - {} [spawn]", task.message);
+            } else {
+                let _ = writeln!(self.writer, "  - {}", task.message);
+            }
+        }
+        let _ = writeln!(self.writer, "{} tasks", tasks.len());
+    }
+
+    fn heartbeat_add(&mut self, args_str: &str) {
+        let args_str = args_str.trim();
+        let use_spawn = args_str.starts_with("--spawn");
+        let task_text = if use_spawn {
+            args_str.strip_prefix("--spawn").unwrap_or("").trim()
+        } else {
+            args_str
+        };
+
+        if task_text.is_empty() {
+            let _ = writeln!(self.writer, "Error: missing task description");
+            return;
+        }
+
+        let path = self.heartbeat_md_path();
+
+        // Read existing content or start fresh
+        let mut content = std::fs::read_to_string(&path).unwrap_or_default();
+
+        if use_spawn {
+            // Ensure there's a spawn section header
+            if !content.to_lowercase().contains("spawn") {
+                if !content.is_empty() && !content.ends_with('\n') {
+                    content.push('\n');
+                }
+                content.push_str("## Long Tasks (use spawn)\n");
+            }
+            content.push_str(&format!("- {}\n", task_text));
+        } else {
+            // Find insertion point: before any ## header, or at end
+            let insert_pos = content.find("##").unwrap_or(content.len());
+            let line = format!("- {}\n", task_text);
+            content.insert_str(insert_pos, &line);
+        }
+
+        // Ensure parent directory exists
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        match std::fs::write(&path, &content) {
+            Ok(()) => {
+                let _ = writeln!(self.writer, "Task added: {}", task_text);
+            }
+            Err(e) => {
+                let _ = writeln!(self.writer, "Error: {}", e);
+            }
+        }
+    }
+
+    fn heartbeat_remove(&mut self, args_str: &str) {
+        let needle = args_str.trim();
+        if needle.is_empty() {
+            let _ = writeln!(self.writer, "Error: missing task description");
+            return;
+        }
+
+        let path = self.heartbeat_md_path();
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => {
+                let _ = writeln!(self.writer, "Error: task '{}' not found", needle);
+                return;
+            }
+        };
+
+        let mut found = false;
+        let mut new_lines = Vec::new();
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if !found
+                && trimmed.starts_with("- ")
+                && trimmed
+                    .strip_prefix("- ")
+                    .is_some_and(|t| t.trim() == needle)
+            {
+                found = true;
+                continue; // Skip this line
+            }
+            new_lines.push(line);
+        }
+
+        if !found {
+            let _ = writeln!(self.writer, "Error: task '{}' not found", needle);
+            return;
+        }
+
+        let new_content = new_lines.join("\n") + "\n";
+        match std::fs::write(&path, new_content) {
+            Ok(()) => {
+                let _ = writeln!(self.writer, "Task removed: {}", needle);
+            }
+            Err(e) => {
+                let _ = writeln!(self.writer, "Error: {}", e);
+            }
+        }
+    }
+
+    fn heartbeat_enable(&mut self) {
+        self.set_heartbeat_enabled(true);
+    }
+
+    fn heartbeat_disable(&mut self) {
+        self.set_heartbeat_enabled(false);
+    }
+
+    fn set_heartbeat_enabled(&mut self, enabled: bool) {
+        let config_path = self.session.base_dir.join("config.json");
+        match self.read_config_json(&config_path) {
+            Ok(mut config) => {
+                if config.get("heartbeat").is_none() {
+                    config["heartbeat"] = serde_json::json!({});
+                }
+                config["heartbeat"]["enabled"] = serde_json::Value::Bool(enabled);
+                match self.write_config_json(&config_path, &config) {
+                    Ok(()) => {
+                        let action = if enabled { "enabled" } else { "disabled" };
+                        let _ = writeln!(self.writer, "Heartbeat {}", action);
+                    }
+                    Err(e) => {
+                        let _ = writeln!(self.writer, "Error: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = writeln!(self.writer, "Error: {}", e);
+            }
+        }
+    }
+
+    fn heartbeat_interval(&mut self, args_str: &str) {
+        let val_str = args_str.trim();
+        let seconds: u32 = match val_str.parse() {
+            Ok(n) => n,
+            Err(_) => {
+                let _ = writeln!(self.writer, "Error: invalid interval '{}'", val_str);
+                return;
+            }
+        };
+
+        let config_path = self.session.base_dir.join("config.json");
+        match self.read_config_json(&config_path) {
+            Ok(mut config) => {
+                if config.get("heartbeat").is_none() {
+                    config["heartbeat"] = serde_json::json!({});
+                }
+                config["heartbeat"]["interval"] =
+                    serde_json::Value::Number(serde_json::Number::from(seconds));
+                match self.write_config_json(&config_path, &config) {
+                    Ok(()) => {
+                        let _ = writeln!(self.writer, "Heartbeat interval set to {}s", seconds);
+                    }
+                    Err(e) => {
+                        let _ = writeln!(self.writer, "Error: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = writeln!(self.writer, "Error: {}", e);
+            }
+        }
+    }
+
+    fn heartbeat_status(&mut self) {
+        // Load config for heartbeat settings
+        let config = self.load_config();
+        let (hb_enabled, hb_interval) = config
+            .as_ref()
+            .map(|c| (c.heartbeat.enabled, c.heartbeat.interval))
+            .unwrap_or((true, 30));
+
+        let status = if hb_enabled { "enabled" } else { "disabled" };
+        let _ = writeln!(self.writer, "Heartbeat: {} ({}s)", status, hb_interval);
+
+        // Count tasks
+        let path = self.heartbeat_md_path();
+        let task_count = std::fs::read_to_string(&path)
+            .map(|c| crate::application::heartbeat::parse_heartbeat(&c).len())
+            .unwrap_or(0);
+        let _ = writeln!(self.writer, "{} task(s) configured", task_count);
+    }
+
+    // -----------------------------------------------------------------------
+    // Config helpers
+    // -----------------------------------------------------------------------
+
+    fn load_config(&self) -> Option<Config> {
+        let config_path = self.session.base_dir.join("config.json");
+        Config::load(config_path.to_str()?).ok()
+    }
+
+    fn read_config_json(&self, path: &Path) -> Result<serde_json::Value, String> {
+        let content = std::fs::read_to_string(path).map_err(|e| format!("read config: {}", e))?;
+        serde_json::from_str(&content).map_err(|e| format!("parse config: {}", e))
+    }
+
+    fn write_config_json(&self, path: &Path, config: &serde_json::Value) -> Result<(), String> {
+        let content =
+            serde_json::to_string_pretty(config).map_err(|e| format!("serialize config: {}", e))?;
+        std::fs::write(path, content).map_err(|e| format!("write config: {}", e))
     }
 
     // -----------------------------------------------------------------------
@@ -669,6 +949,7 @@ mod tests {
         assert_eq!(CMD_QUIT, "/quit");
         assert_eq!(CMD_HELP, "/help");
         assert_eq!(CMD_CLEAR, "/clear");
+        assert_eq!(CMD_HEARTBEAT, "/heartbeat");
     }
 
     #[test]
@@ -761,5 +1042,51 @@ mod tests {
     fn test_shell_split_repl_quotes() {
         let tokens = shell_split_repl("--cron '0 9 * * *' --message Hello");
         assert_eq!(tokens, vec!["--cron", "0 9 * * *", "--message", "Hello"]);
+    }
+
+    // -- Heartbeat add argument parsing tests --
+
+    #[test]
+    fn test_heartbeat_add_spawn_flag_parsing() {
+        // --spawn flag should be stripped and remainder used as task text
+        let input = "--spawn Analyze monthly data";
+        let use_spawn = input.starts_with("--spawn");
+        let task_text = input.strip_prefix("--spawn").unwrap_or("").trim();
+        assert!(use_spawn);
+        assert_eq!(task_text, "Analyze monthly data");
+    }
+
+    #[test]
+    fn test_heartbeat_add_no_spawn_flag() {
+        let input = "Regular task";
+        let use_spawn = input.starts_with("--spawn");
+        let task_text = if use_spawn {
+            input.strip_prefix("--spawn").unwrap_or("").trim()
+        } else {
+            input
+        };
+        assert!(!use_spawn);
+        assert_eq!(task_text, "Regular task");
+    }
+
+    #[test]
+    fn test_heartbeat_add_empty_after_spawn() {
+        let input = "--spawn";
+        let use_spawn = input.starts_with("--spawn");
+        let task_text = input.strip_prefix("--spawn").unwrap_or("").trim();
+        assert!(use_spawn);
+        assert!(task_text.is_empty());
+    }
+
+    #[test]
+    fn test_heartbeat_interval_parsing_valid() {
+        let val: Result<u32, _> = "300".parse();
+        assert_eq!(val.unwrap(), 300);
+    }
+
+    #[test]
+    fn test_heartbeat_interval_parsing_invalid() {
+        let val: Result<u32, _> = "abc".parse();
+        assert!(val.is_err());
     }
 }
