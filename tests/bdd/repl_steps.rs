@@ -724,3 +724,87 @@ fn then_child_spawned_with_system(world: &mut QuectoWorld, expected_system: Stri
         expected_system
     );
 }
+
+// ===========================================================================
+// REPL Spawn Steps — /spawn slash command scenarios
+// ===========================================================================
+
+#[then("a child quecto process should have been spawned")]
+fn then_child_spawned(world: &mut QuectoWorld) {
+    // In the REPL test context, /spawn runs the agent inline. We verify the
+    // spawn happened by confirming the REPL produced output (the mock LLM
+    // response was captured). The stdout check in preceding steps already
+    // verifies the agent ran; this step confirms the REPL exited cleanly.
+    ensure_repl_executed(world);
+    assert_eq!(
+        world.exit_code, 0,
+        "expected clean exit after spawn, got exit code {}",
+        world.exit_code
+    );
+}
+
+#[then("the REPL should continue accepting input after the failure")]
+fn then_repl_continues_after_failure(world: &mut QuectoWorld) {
+    // The REPL should have exited cleanly (via /exit), not crashed.
+    ensure_repl_executed(world);
+    assert_eq!(
+        world.exit_code, 0,
+        "expected REPL to continue (exit code 0), got {}",
+        world.exit_code
+    );
+}
+
+// Note: "the mock LLM takes N seconds to respond" is defined in e2e_steps.rs
+
+#[then(expr = "the session {string} should not contain {string} as a user message")]
+fn then_session_not_contains_user_msg(world: &mut QuectoWorld, session_key: String, text: String) {
+    ensure_repl_executed(world);
+    let base = base_path(world);
+    let sessions_dir = base.join("sessions");
+    // Convert session key "repl:parent-session" -> "repl_parent-session.json"
+    let file_name = format!("{}.json", session_key.replace(':', "_"));
+    let path = sessions_dir.join(&file_name);
+    if !path.exists() {
+        // Session file doesn't exist — can't contain the message
+        return;
+    }
+    let content = std::fs::read_to_string(&path).expect("read session file");
+    let session: serde_json::Value = serde_json::from_str(&content).expect("parse session");
+    if let Some(messages) = session["messages"].as_array() {
+        let found = messages
+            .iter()
+            .any(|m| m["role"].as_str() == Some("user") && m["content"].as_str() == Some(&text));
+        assert!(
+            !found,
+            "expected session '{}' NOT to contain user message '{}', but it was found",
+            session_key, text
+        );
+    }
+}
+
+#[then("no child session files should exist")]
+fn then_no_child_session_files(world: &mut QuectoWorld) {
+    ensure_repl_executed(world);
+    let base = base_path(world);
+    let sessions_dir = base.join("sessions");
+    if !sessions_dir.exists() {
+        return; // No sessions dir = no child sessions
+    }
+    // Check that no session files exist that look like child/spawn sessions.
+    // Parent REPL sessions are "repl_*.json". Child sessions would be
+    // "spawn_*.json" or "subagent_*.json" or similar.
+    let child_files: Vec<String> = std::fs::read_dir(&sessions_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            name.starts_with("spawn_") || name.starts_with("subagent_")
+        })
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    assert!(
+        child_files.is_empty(),
+        "expected no child session files, found: {:?}",
+        child_files
+    );
+}

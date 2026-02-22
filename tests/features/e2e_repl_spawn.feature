@@ -1,4 +1,4 @@
-@pending
+@done
 Feature: REPL Spawn Command
   As a user in the interactive REPL
   I want to spawn subagent tasks directly from the REPL

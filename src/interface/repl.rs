@@ -56,6 +56,7 @@ const CMD_CLEAR: &str = "/clear";
 const CMD_CRON: &str = "/cron";
 const CMD_HEARTBEAT: &str = "/heartbeat";
 const CMD_AGENT: &str = "/agent";
+const CMD_SPAWN: &str = "/spawn";
 
 impl<R: BufRead, W: Write> ReplLoop<R, W> {
     /// Create a new REPL loop.
@@ -126,6 +127,10 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
                     self.handle_agent(input, &rt);
                     continue;
                 }
+                _ if input.starts_with(CMD_SPAWN) => {
+                    self.handle_spawn(input, &rt);
+                    continue;
+                }
                 _ => {}
             }
 
@@ -150,6 +155,7 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
         let _ = writeln!(self.writer, "  /agent      Manage subagent profiles");
         let _ = writeln!(self.writer, "  /cron       Manage scheduled cron jobs");
         let _ = writeln!(self.writer, "  /heartbeat  Manage heartbeat tasks");
+        let _ = writeln!(self.writer, "  /spawn      Spawn a task as a child agent");
         let _ = writeln!(self.writer, "  /exit       Exit the REPL");
         let _ = writeln!(self.writer, "  /quit       Exit the REPL");
     }
@@ -874,6 +880,134 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
     }
 
     // -----------------------------------------------------------------------
+    // /spawn command
+    // -----------------------------------------------------------------------
+
+    fn handle_spawn(&mut self, input: &str, rt: &tokio::runtime::Runtime) {
+        let rest = input.strip_prefix(CMD_SPAWN).unwrap_or("").trim();
+
+        if rest.is_empty() {
+            let _ = writeln!(self.writer, "Error: missing task description");
+            return;
+        }
+
+        // Parse flags from the arguments
+        let parsed = match parse_spawn_args(rest) {
+            Ok(p) => p,
+            Err(msg) => {
+                let _ = writeln!(self.writer, "Error: {}", msg);
+                return;
+            }
+        };
+
+        if parsed.help {
+            self.spawn_usage();
+            return;
+        }
+
+        if parsed.task.is_empty() {
+            let _ = writeln!(self.writer, "Error: missing task description");
+            return;
+        }
+
+        // Note: model override is accepted but not applied in REPL mode
+        // because the agent is constructed once at startup.
+        if let Some(ref model) = parsed.model {
+            tracing::debug!(model = %model, "spawn --model flag accepted but not applied in REPL");
+        }
+
+        // Resolve system prompt: from --agent profile or --system flag
+        let system = if let Some(ref agent_name) = parsed.agent {
+            let path = self.agents_dir().join(format!("{}.json", agent_name));
+            match std::fs::read_to_string(&path) {
+                Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+                    Ok(profile) => profile["system"].as_str().map(String::from),
+                    Err(_) => {
+                        let _ =
+                            writeln!(self.writer, "Error: invalid profile for '{}'", agent_name);
+                        return;
+                    }
+                },
+                Err(_) => {
+                    let _ = writeln!(self.writer, "Error: agent '{}' not found", agent_name);
+                    return;
+                }
+            }
+        } else {
+            parsed.system.clone()
+        };
+
+        // Build an ephemeral message list for the spawn (session isolation).
+        // The spawn task and system prompt are NOT added to the parent session.
+        let mut spawn_messages = Vec::new();
+
+        if let Some(ref prompt) = system {
+            spawn_messages.push(Message {
+                role: Role::System,
+                content: prompt.clone(),
+                tool_calls: vec![],
+                tool_call_id: None,
+            });
+        }
+
+        spawn_messages.push(Message {
+            role: Role::User,
+            content: parsed.task.clone(),
+            tool_calls: vec![],
+            tool_call_id: None,
+        });
+
+        // Run with optional timeout
+        let result = if let Some(max_secs) = parsed.max_time {
+            let timeout = std::time::Duration::from_secs(max_secs);
+            rt.block_on(async {
+                match tokio::time::timeout(timeout, self.session.agent.process(&mut spawn_messages))
+                    .await
+                {
+                    Ok(r) => r,
+                    Err(_) => Err(crate::domain::error::DomainError::Other(
+                        "spawn timed out".to_string(),
+                    )),
+                }
+            })
+        } else {
+            rt.block_on(self.session.agent.process(&mut spawn_messages))
+        };
+
+        match result {
+            Ok(r) => {
+                // Inject only the result into the parent conversation
+                // so the LLM can reference it in subsequent turns.
+                self.session.messages.push(Message {
+                    role: Role::Assistant,
+                    content: r.response.clone(),
+                    tool_calls: vec![],
+                    tool_call_id: None,
+                });
+                let _ = writeln!(self.writer, "{}", r.response);
+            }
+            Err(e) => {
+                let _ = writeln!(self.writer, "Error: {e}");
+            }
+        }
+    }
+
+    fn spawn_usage(&mut self) {
+        let _ = writeln!(self.writer, "Usage: /spawn [flags] <task>");
+        let _ = writeln!(
+            self.writer,
+            "  --agent <name>       Use a named agent profile"
+        );
+        let _ = writeln!(self.writer, "  --system <prompt>    Set a system prompt");
+        let _ = writeln!(self.writer, "  --model <model>      Override the model");
+        let _ = writeln!(
+            self.writer,
+            "  --max-time <secs>    Set a timeout in seconds"
+        );
+        let _ = writeln!(self.writer, "  --help               Show this help");
+    }
+
+    // -----------------------------------------------------------------------
     // Config helpers
     // -----------------------------------------------------------------------
 
@@ -1192,6 +1326,106 @@ fn is_valid_agent_name(name: &str) -> bool {
     }
     name.chars()
         .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+}
+
+// ===========================================================================
+// /spawn argument parser
+// ===========================================================================
+
+/// Parsed arguments for `/spawn`.
+#[derive(Debug)]
+struct ParsedSpawnArgs {
+    agent: Option<String>,
+    system: Option<String>,
+    model: Option<String>,
+    max_time: Option<u64>,
+    task: String,
+    help: bool,
+}
+
+/// Parse `/spawn [--agent name] [--system prompt] [--model model] [--max-time secs] [--help] <task>`
+fn parse_spawn_args(args_str: &str) -> Result<ParsedSpawnArgs, String> {
+    let tokens = shell_split_repl(args_str);
+    if tokens.is_empty() {
+        return Ok(ParsedSpawnArgs {
+            agent: None,
+            system: None,
+            model: None,
+            max_time: None,
+            task: String::new(),
+            help: false,
+        });
+    }
+
+    let mut agent: Option<String> = None;
+    let mut system: Option<String> = None;
+    let mut model: Option<String> = None;
+    let mut max_time: Option<u64> = None;
+    let mut help = false;
+    let mut task_parts = Vec::new();
+
+    let mut i = 0;
+    while i < tokens.len() {
+        match tokens[i].as_str() {
+            "--help" => {
+                help = true;
+                i += 1;
+            }
+            "--agent" => {
+                if i + 1 < tokens.len() {
+                    agent = Some(tokens[i + 1].clone());
+                    i += 2;
+                } else {
+                    return Err("--agent requires a value".to_string());
+                }
+            }
+            "--system" => {
+                if i + 1 < tokens.len() {
+                    // Take the next token as the system prompt. If the user
+                    // wants a multi-word prompt they must quote it:
+                    //   /spawn --system 'You are a translator' task
+                    system = Some(tokens[i + 1].clone());
+                    i += 2;
+                } else {
+                    return Err("--system requires a value".to_string());
+                }
+            }
+            "--model" => {
+                if i + 1 < tokens.len() {
+                    model = Some(tokens[i + 1].clone());
+                    i += 2;
+                } else {
+                    return Err("--model requires a value".to_string());
+                }
+            }
+            "--max-time" => {
+                if i + 1 < tokens.len() {
+                    max_time = Some(
+                        tokens[i + 1]
+                            .parse::<u64>()
+                            .map_err(|_| "invalid --max-time value".to_string())?,
+                    );
+                    i += 2;
+                } else {
+                    return Err("--max-time requires a value".to_string());
+                }
+            }
+            _ => {
+                // Everything else is the task
+                task_parts.push(tokens[i].clone());
+                i += 1;
+            }
+        }
+    }
+
+    Ok(ParsedSpawnArgs {
+        agent,
+        system,
+        model,
+        max_time,
+        task: task_parts.join(" "),
+        help,
+    })
 }
 
 /// Build a tokio runtime for REPL execution.
@@ -1525,5 +1759,69 @@ mod tests {
         assert!(!is_valid_agent_name("bad/name"));
         assert!(!is_valid_agent_name("bad.name"));
         assert!(!is_valid_agent_name(&"a".repeat(65)));
+    }
+
+    // -- /spawn argument parser tests --
+
+    #[test]
+    fn test_parse_spawn_args_simple_task() {
+        let parsed = parse_spawn_args("What is the meaning of life?").unwrap();
+        assert_eq!(parsed.task, "What is the meaning of life?");
+        assert!(parsed.agent.is_none());
+        assert!(parsed.system.is_none());
+        assert!(parsed.max_time.is_none());
+        assert!(!parsed.help);
+    }
+
+    #[test]
+    fn test_parse_spawn_args_with_agent() {
+        let parsed =
+            parse_spawn_args("--agent researcher What is new in quantum computing?").unwrap();
+        assert_eq!(parsed.agent.as_deref(), Some("researcher"));
+        assert_eq!(parsed.task, "What is new in quantum computing?");
+    }
+
+    #[test]
+    fn test_parse_spawn_args_with_system() {
+        let parsed = parse_spawn_args("--system 'You are a translator' Translate: hello").unwrap();
+        assert_eq!(parsed.system.as_deref(), Some("You are a translator"));
+        assert_eq!(parsed.task, "Translate: hello");
+    }
+
+    #[test]
+    fn test_parse_spawn_args_with_model() {
+        let parsed = parse_spawn_args("--model gpt-5-mini Summarize briefly").unwrap();
+        assert_eq!(parsed.model.as_deref(), Some("gpt-5-mini"));
+        assert_eq!(parsed.task, "Summarize briefly");
+    }
+
+    #[test]
+    fn test_parse_spawn_args_with_max_time() {
+        let parsed = parse_spawn_args("--max-time 30 Slow task").unwrap();
+        assert_eq!(parsed.max_time, Some(30));
+        assert_eq!(parsed.task, "Slow task");
+    }
+
+    #[test]
+    fn test_parse_spawn_args_help() {
+        let parsed = parse_spawn_args("--help").unwrap();
+        assert!(parsed.help);
+    }
+
+    #[test]
+    fn test_parse_spawn_args_empty() {
+        let parsed = parse_spawn_args("").unwrap();
+        assert!(parsed.task.is_empty());
+    }
+
+    #[test]
+    fn test_parse_spawn_args_combined_flags() {
+        let parsed =
+            parse_spawn_args("--agent bot --system 'Custom prompt' --max-time 60 Do the thing")
+                .unwrap();
+        assert_eq!(parsed.agent.as_deref(), Some("bot"));
+        assert_eq!(parsed.system.as_deref(), Some("Custom prompt"));
+        assert_eq!(parsed.max_time, Some(60));
+        assert_eq!(parsed.task, "Do the thing");
     }
 }
