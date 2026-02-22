@@ -68,7 +68,7 @@ Implements the domain traits with real I/O. This is where serde, reqwest, tokio,
 |---|---|
 | `config.rs` | `Config` struct with serde deserialization, env var overrides, workspace path expansion |
 | `providers/` | `OpenAiProvider`, `AnthropicProvider` (real HTTP, SSE streaming via `chat_stream()`), `FallbackProvider` (cooldown + provider-scoped error classification using extracted status codes and semantic matching), `ErrorClass`. `create_provider()` validates `api_base` (https for non-local hosts; http allowed only on loopback) and rejects unsafe URLs |
-| `tools/` | `ExecTool` (shell; drains stdout/stderr while running and caps captured output to 1 MiB per stream), `ReadFileTool`/`WriteFileTool`/`EditFileTool`/`AppendFileTool`/`ListDirTool` (filesystem), `SpawnTool` (subagent), `CronTool`, `MessageTool`, `WebSearchTool` (Brave + DDG), `ToolRegistryImpl` |
+| `tools/` | `ExecTool` (shell; drains stdout/stderr while running and caps captured output to 1 MiB per stream), `ReadFileTool`/`WriteFileTool`/`EditFileTool`/`AppendFileTool`/`ListDirTool` (filesystem, async via `tokio::fs`), `SpawnTool` (subagent), `CronTool`, `MessageTool`, `WebSearchTool` (Brave + DDG), `ToolRegistryImpl` (caches sorted tool definitions at registration time) |
 | `persistence/` | `FileSessionStore`, `MemoryStore`, `FileCronStore`, `FileSkillLoader`, `workspace_store.rs` (`FileHeartbeatTaskSource`, `FileOnboardStore`) |
 | `security/` | `Sandbox` — workspace path validation and command filtering |
 | `auth/` | `CredentialStore` (file-based token CRUD), `oauth.rs` (`OAuthConfig`, `DeviceCodeResponse`, `request_device_code()` — OAuth browser flow and device code flow for headless environments) |
@@ -141,7 +141,7 @@ The gateway module (`src/interface/gateway/`) is split into `mod.rs` (Gateway st
 
 Both credential functions operate on a `HashMap<String, Credential>` snapshot (from `CredentialStore::load_snapshot()`) to avoid redundant file I/O. The gateway calls `load_snapshot()` once at startup and passes the result to both functions.
 
-The `EventLoopContext` struct holds the runtime state for the gateway's `tokio::select!` event loop: inbound/outbound channels, `Arc<dyn AgentLoop>`, `Arc<dyn SessionStore>`, outbound `Arc<dyn Channel>`, dedicated Telegram poller, and `Config`. The `Config` field is passed through the polling chain (`run_telegram_polling` → `poll_once` → `dispatch_update`) so that bot commands can access configuration values (e.g. current model name for `/status`). Graceful shutdown is handled by `tokio::select!` — when `ctrl_c()` fires, all branches are dropped and channel receivers return `None`, exiting loops cleanly without errors.
+The `EventLoopContext` struct holds the runtime state for the gateway's `tokio::select!` event loop: inbound/outbound channels, `Arc<dyn AgentLoop>`, `Arc<dyn SessionStore>`, outbound `Arc<dyn Channel>`, dedicated Telegram poller, and `Config`. The `Config` field is passed through the polling chain (`run_telegram_polling` → `poll_once` → `dispatch_update`) so that bot commands can access configuration values (e.g. current model name for `/status`). The inbound processor trims session history using `agents.defaults.max_session_messages` (clamped to a safe range at runtime), keeping latest non-system messages while preserving system messages. Graceful shutdown is handled by `tokio::select!` — when `ctrl_c()` fires, all branches are dropped and channel receivers return `None`, exiting loops cleanly without errors.
 
 ## Dependency rule
 
