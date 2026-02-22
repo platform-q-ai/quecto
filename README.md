@@ -299,7 +299,7 @@ The agent has access to tools it can call autonomously to accomplish tasks.
 
 | Tool | Description |
 |---|---|
-| `exec` | Execute a shell command (30s timeout, dangerous commands blocked) |
+| `exec` | Execute a shell command (30s timeout, dangerous commands blocked, captures up to 1 MiB each for stdout/stderr) |
 | `read_file` | Read file contents |
 | `write_file` | Create or overwrite a file (auto-creates parent directories) |
 | `edit_file` | Replace a substring in a file |

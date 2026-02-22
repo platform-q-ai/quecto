@@ -68,7 +68,7 @@ Implements the domain traits with real I/O. This is where serde, reqwest, tokio,
 |---|---|
 | `config.rs` | `Config` struct with serde deserialization, env var overrides, workspace path expansion |
 | `providers/` | `OpenAiProvider`, `AnthropicProvider` (real HTTP, SSE streaming via `chat_stream()`), `FallbackProvider` (cooldown + error classification), `ErrorClass`. `create_provider()` validates `api_base` (https for non-local hosts; http allowed only on loopback) and rejects unsafe URLs |
-| `tools/` | `ExecTool` (shell), `ReadFileTool`/`WriteFileTool`/`EditFileTool`/`AppendFileTool`/`ListDirTool` (filesystem), `SpawnTool` (subagent), `CronTool`, `MessageTool`, `WebSearchTool` (Brave + DDG), `ToolRegistryImpl` |
+| `tools/` | `ExecTool` (shell; drains stdout/stderr while running and caps captured output to 1 MiB per stream), `ReadFileTool`/`WriteFileTool`/`EditFileTool`/`AppendFileTool`/`ListDirTool` (filesystem), `SpawnTool` (subagent), `CronTool`, `MessageTool`, `WebSearchTool` (Brave + DDG), `ToolRegistryImpl` |
 | `persistence/` | `FileSessionStore`, `MemoryStore`, `FileCronStore`, `FileSkillLoader`, `workspace_store.rs` (`FileHeartbeatTaskSource`, `FileOnboardStore`) |
 | `security/` | `Sandbox` — workspace path validation and command filtering |
 | `auth/` | `CredentialStore` (file-based token CRUD), `oauth.rs` (`OAuthConfig`, `DeviceCodeResponse`, `request_device_code()` — OAuth browser flow and device code flow for headless environments) |
