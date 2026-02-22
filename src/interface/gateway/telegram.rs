@@ -30,6 +30,7 @@ impl Gateway {
         telegram: TelegramChannel,
         inbound_tx: mpsc::Sender<InboundMessage>,
         config: Config,
+        allow_insecure_voice: bool,
     ) {
         if !telegram.is_enabled() {
             tracing::info!("Telegram disabled, polling not started");
@@ -40,14 +41,8 @@ impl Gateway {
         tracing::info!("Telegram polling started");
         let mut offset: i64 = 0;
 
-        let allow_insecure = matches!(
-            std::env::var(ALLOW_INSECURE_VOICE_API_BASE_ENV)
-                .ok()
-                .as_deref(),
-            Some("1") | Some("true") | Some("TRUE") | Some("True")
-        );
         let dispatch_ctx = UpdateDispatchContext {
-            whisper: Self::build_whisper_client(&config.voice, allow_insecure),
+            whisper: Self::build_whisper_client(&config.voice, allow_insecure_voice),
             config: &config,
         };
 
@@ -275,7 +270,13 @@ impl Gateway {
             tracing::warn!("invalid voice API base URL, disabling voice transcription");
             return None;
         };
-        let valid_scheme = url.scheme() == "https" || (allow_insecure && url.scheme() == "http");
+        let is_http = url.scheme() == "http";
+        if is_http && allow_insecure {
+            tracing::warn!(
+                "insecure voice API base allowed \u{2014} API key may be sent over plaintext HTTP"
+            );
+        }
+        let valid_scheme = url.scheme() == "https" || (allow_insecure && is_http);
         let valid_host = allow_insecure || url.host_str() == Some("api.groq.com");
         let clean_url = url.query().is_none()
             && url.fragment().is_none()

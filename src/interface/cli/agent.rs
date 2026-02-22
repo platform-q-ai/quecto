@@ -16,7 +16,7 @@ use crate::infrastructure::providers::fallback::FallbackProvider;
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
-use crate::interface::gateway::resolve_api_key;
+use crate::interface::shared::resolve_api_key;
 
 /// Parsed flags for the `agent` subcommand.
 pub(crate) struct AgentFlags {

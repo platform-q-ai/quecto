@@ -30,7 +30,7 @@ BDD build cycle (feature implementation)
 12. Deploy Local Reviewers.
 13. Fix relevant comments and mark all as resolved.
 
-ALWASY USE: Fast local quality gate (parallelized)
+ALWAYS USE: Fast local quality gate (parallelized)
 
 Run these checks, fixing failures immediately:
 

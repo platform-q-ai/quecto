@@ -64,7 +64,7 @@ pub(crate) fn cmd_status(ctx: &CliContext, stdout: &mut String, stderr: &mut Str
 /// Run the gateway as a long-running async service.
 /// This creates a tokio runtime and blocks until shutdown.
 pub(crate) fn cmd_gateway_run(ctx: &CliContext) -> i32 {
-    use super::super::gateway::Gateway;
+    use crate::interface::gateway::Gateway;
 
     let base_dir = ctx.base_dir();
     let config_path = base_dir.join("config.json");

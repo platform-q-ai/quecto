@@ -64,6 +64,9 @@ pub(super) struct EventLoopContext {
     pub(super) config: Config,
     pub(super) workspace: PathBuf,
     pub(super) cron_store: Arc<FileCronStore>,
+    /// Whether to allow insecure (HTTP) voice API base URLs.
+    /// Read once at startup from env var, threaded through to avoid mid-run env reads.
+    pub(super) allow_insecure_voice: bool,
 }
 
 impl EventLoopContext {
@@ -89,7 +92,7 @@ impl EventLoopContext {
         // Core messaging pipeline — select until one stops or shutdown.
         tokio::select! {
             _ = Gateway::run_telegram_polling(
-                self.telegram.clone(), self.inbound_tx, self.config,
+                self.telegram.clone(), self.inbound_tx, self.config, self.allow_insecure_voice,
             ) => {
                 tracing::info!("Telegram polling stopped");
             }
@@ -150,7 +153,7 @@ impl Gateway {
             );
         }
 
-        let provider = Arc::new(self.build_fallback_provider()?);
+        let provider = Arc::new(self.build_fallback_provider(&creds)?);
         let cron_store = Arc::new(FileCronStore::new(&self.base_dir));
         let (agent, mut bus) = self.build_agent(workspace.clone(), provider, cron_store.clone());
         let agent = Arc::new(agent);
@@ -158,6 +161,14 @@ impl Gateway {
         let info = agent.info();
         let model = &self.config.agents.defaults.model;
         tracing::info!(tools = info.tool_count, model, "quecto gateway starting");
+
+        // Read insecure voice flag once at startup (not per-request).
+        let allow_insecure_voice = matches!(
+            std::env::var(telegram::ALLOW_INSECURE_VOICE_API_BASE_ENV)
+                .ok()
+                .as_deref(),
+            Some("1") | Some("true") | Some("TRUE") | Some("True")
+        );
 
         let (inbound_tx, inbound_rx, outbound_tx, outbound_rx) = Self::take_channels(&mut bus);
         let ctx = EventLoopContext {
@@ -171,6 +182,7 @@ impl Gateway {
             config: self.config.clone(),
             workspace: workspace.clone(),
             cron_store,
+            allow_insecure_voice,
         };
         ctx.run().await;
 
@@ -200,15 +212,15 @@ impl Gateway {
 
     /// Build the fallback provider from configured API keys.
     ///
-    /// Loads the credential store snapshot once and uses it to resolve API keys
-    /// for all providers, avoiding redundant file reads.
-    fn build_fallback_provider(&self) -> Result<FallbackProvider, GatewayError> {
-        let store = CredentialStore::new(&self.base_dir);
-        let creds = store.load_snapshot().unwrap_or_default();
-
+    /// Accepts a pre-loaded credential snapshot to maintain the
+    /// single-snapshot-at-startup invariant and avoid redundant file reads.
+    fn build_fallback_provider(
+        &self,
+        creds: &std::collections::HashMap<String, Credential>,
+    ) -> Result<FallbackProvider, GatewayError> {
         let mut provider_list = Vec::new();
-        self.maybe_add_provider(&mut provider_list, "openai", &creds);
-        self.maybe_add_provider(&mut provider_list, "anthropic", &creds);
+        self.maybe_add_provider(&mut provider_list, "openai", creds);
+        self.maybe_add_provider(&mut provider_list, "anthropic", creds);
         if provider_list.is_empty() {
             return Err(GatewayError::NoProviders);
         }
@@ -341,33 +353,5 @@ pub fn handle_bot_command(text: &str, config: &Config) -> Option<String> {
     }
 }
 
-/// Resolve an API key for a provider from a credential snapshot.
-///
-/// The credential store snapshot takes priority over the config-file key.
-/// Expired credentials are ignored (falls back to config key).
-/// Operates on a pre-loaded snapshot to avoid redundant file I/O.
-pub fn resolve_api_key(
-    config_key: &str,
-    creds: &std::collections::HashMap<String, Credential>,
-    provider: &str,
-) -> String {
-    if let Some(cred) = creds.get(provider) {
-        if !cred.is_expired() {
-            return cred.token.clone();
-        }
-    }
-    config_key.to_string()
-}
-
-/// Check which providers have expired credentials and need re-authentication.
-///
-/// Operates on a pre-loaded snapshot to avoid redundant file I/O.
-pub fn check_provider_readiness(
-    creds: &std::collections::HashMap<String, Credential>,
-) -> Vec<String> {
-    creds
-        .values()
-        .filter(|c| c.is_expired())
-        .map(|c| c.provider.clone())
-        .collect()
-}
+// Re-export shared credential resolution functions for backward compatibility.
+pub use crate::interface::shared::{check_provider_readiness, resolve_api_key};
