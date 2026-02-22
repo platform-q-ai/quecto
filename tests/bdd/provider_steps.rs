@@ -5,7 +5,7 @@ use super::*;
 
 #[given(expr = "a config with provider {string} and api_key {string}")]
 fn given_provider_config(world: &mut QuectoWorld, provider_name: String, api_key: String) {
-    world.provider = providers::create_provider(&provider_name, api_key, None);
+    world.provider = providers::create_provider(&provider_name, api_key, None).ok();
 }
 
 #[given(expr = "a config with provider {string}, api_key {string}, and api_base {string}")]
@@ -15,7 +15,7 @@ fn given_provider_config_with_api_base(
     api_key: String,
     api_base: String,
 ) {
-    world.provider = providers::create_provider(&provider_name, api_key, Some(api_base));
+    world.provider = providers::create_provider(&provider_name, api_key, Some(api_base)).ok();
 }
 
 #[when("I create a provider from config")]

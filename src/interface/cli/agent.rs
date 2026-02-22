@@ -393,8 +393,11 @@ pub fn build_agent_provider(
         } else {
             Some(config.providers.openai.api_base.clone())
         };
-        if let Some(p) = providers::create_provider("openai", openai_key, base) {
-            provider_list.push(p);
+        match providers::create_provider("openai", openai_key, base) {
+            Ok(p) => provider_list.push(p),
+            Err(e) => {
+                return Err(format!("openai provider configuration error: {}", e));
+            }
         }
     }
 
@@ -406,8 +409,11 @@ pub fn build_agent_provider(
         } else {
             Some(config.providers.anthropic.api_base.clone())
         };
-        if let Some(p) = providers::create_provider("anthropic", anthropic_key, base) {
-            provider_list.push(p);
+        match providers::create_provider("anthropic", anthropic_key, base) {
+            Ok(p) => provider_list.push(p),
+            Err(e) => {
+                return Err(format!("anthropic provider configuration error: {}", e));
+            }
         }
     }
 

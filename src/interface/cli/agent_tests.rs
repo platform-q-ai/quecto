@@ -360,13 +360,18 @@ fn test_build_agent_provider_no_keys() {
 }
 
 #[test]
-fn test_build_agent_provider_with_api_base() {
+fn test_build_agent_provider_rejects_unapproved_api_base_host() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config = config_from_str(
         r#"{"providers":{"openai":{"api_key":"sk-test","api_base":"https://custom.openai.com/v1"}}}"#,
     );
     let result = build_agent_provider(&config, tmp.path());
-    assert!(result.is_ok());
+    assert!(result.is_err());
+    assert!(
+        result
+            .unwrap_err()
+            .contains("openai provider configuration error")
+    );
 }
 
 #[test]
