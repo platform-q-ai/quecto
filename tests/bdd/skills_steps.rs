@@ -76,6 +76,7 @@ fn given_mock_github_api_serving_skill_repository(world: &mut QuectoWorld, repo_
             .await;
         server
     });
+    let server = Box::leak(Box::new(server));
 
     world.cli_context.github_raw_base_url = Some(server.uri());
     world.github_mock_server = Some(server);

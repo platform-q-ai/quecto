@@ -421,7 +421,14 @@ fn resolve_workspace_for_skills(base: &std::path::Path) -> std::path::PathBuf {
     };
 
     match Config::load_with_env(config_path_str, &env_overrides) {
-        Ok(config) => std::path::PathBuf::from(config.workspace_path()),
+        Ok(config) => {
+            let workspace = std::path::PathBuf::from(config.workspace_path());
+            if workspace.is_absolute() {
+                workspace
+            } else {
+                base.join(workspace)
+            }
+        }
         Err(_) => fallback,
     }
 }

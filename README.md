@@ -145,21 +145,22 @@ quecto skills remove my-skill
 quecto skills install user/repo/my-skill
 ```
 
-`skills install` downloads `SKILL.md` from GitHub raw content using `<owner>/<repo>/<skill-name>` and writes it to your workspace:
+`skills install` downloads `SKILL.md` from GitHub raw content using `<owner>/<repo>/<skill-name>` and writes it to your configured workspace:
 
 ```
-~/.quecto/workspace/skills/<skill-name>/SKILL.md
+<workspace>/skills/<skill-name>/SKILL.md
 ```
 
 Install fails when:
 - the skill path is missing or invalid
 - the skill already exists locally
 - the remote `SKILL.md` cannot be downloaded from `main` or `master`
+- `SKILL.md` frontmatter is invalid or the skill `name` does not match `<skill-name>`
 
 You can still add a skill manually by creating a directory under your workspace with a `SKILL.md` file:
 
 ```
-~/.quecto/workspace/skills/my-skill/SKILL.md
+<workspace>/skills/my-skill/SKILL.md
 ```
 
 The `SKILL.md` file must contain YAML frontmatter with `name` and `description` fields. The body content (everything after the closing `---`) is prepended to the system prompt on every agent run. Multiple skills are concatenated.

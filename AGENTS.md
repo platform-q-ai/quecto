@@ -129,7 +129,7 @@ Runs a full agent cycle (LLM call → tool execution → repeat) for a single me
 | `--max-iterations` | No | Override max tool iterations (takes precedence over config `max_tool_iterations`) |
 | `--max-time` | No | Wall-clock timeout in seconds for the entire agent run. Exit code 2 on timeout |
 
-The agent loads config from `<base_dir>/config.json`, builds a `FallbackProvider` from configured credentials, constructs the tool registry with sandbox enforcement, and runs the `AgentLoopImpl`. Sessions are loaded from and saved to `<base_dir>/sessions/` via `FileSessionStore`. Workspace skills (from `<base_dir>/workspace/skills/`) are loaded at startup and their body content (everything after the YAML frontmatter closing `---`) is prepended to the system prompt (combined with `--system` if provided). Skills with missing or invalid frontmatter are silently skipped.
+The agent loads config from `<base_dir>/config.json`, builds a `FallbackProvider` from configured credentials, constructs the tool registry with sandbox enforcement, and runs the `AgentLoopImpl`. Sessions are loaded from and saved to `<base_dir>/sessions/` via `FileSessionStore`. Workspace skills (from `<config.workspace_path()>/skills/`) are loaded at startup and their body content (everything after the YAML frontmatter closing `---`) is prepended to the system prompt (combined with `--system` if provided). Skills with missing or invalid frontmatter are silently skipped.
 
 The CLI module (`src/interface/cli/`) is split into `mod.rs` (entry point, dispatch, REPL wiring), `agent.rs` (agent subcommand, flag parsing, session management), `auth.rs` (auth login/logout/status flows), and `commands.rs` (onboard, status, skills, help, version).
 
