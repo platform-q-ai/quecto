@@ -96,6 +96,20 @@ Feature: Sandbox Hardening
     When the agent tries to validate command "echo hello"
     Then the validation should be ok
 
+  @security-pr1
+  Scenario: Dangerous command with repeated whitespace is rejected
+    Given a sandbox without a command allowlist
+    When the agent tries to validate command "rm  -rf /"
+    Then the validation should be an error
+    And the error should mention "dangerous pattern"
+
+  @security-pr1
+  Scenario: Dangerous command with split rm flags is rejected
+    Given a sandbox without a command allowlist
+    When the agent tries to validate command "rm -r -f /"
+    Then the validation should be an error
+    And the error should mention "dangerous pattern"
+
   # --- Exec timeout enforcement ---
 
   Scenario: Command completes within timeout

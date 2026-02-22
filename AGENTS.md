@@ -74,7 +74,7 @@ Implements the domain traits with real I/O. This is where serde, reqwest, tokio,
 | `auth/` | `CredentialStore` (file-based token CRUD), `oauth.rs` (`OAuthConfig`, `DeviceCodeResponse`, `request_device_code()` — OAuth browser flow and device code flow for headless environments) |
 | `channels/` | `TelegramChannel` — `send_message()`, `get_updates()`, user allowlist, configurable `api_base` (defaults to `https://api.telegram.org`) |
 | `voice/` | `GroqWhisperClient` — speech-to-text via Groq API, implements `VoiceTranscriber` trait |
-| `logging.rs` | `redact_api_keys()` — pattern-based API key redaction for tracing output (matches `sk-*`, `sk-ant-*` prefixes) |
+| `logging.rs` | `redact_api_keys()` — pattern-based secret redaction for tracing/debug output (matches OpenAI/Anthropic `sk-*`, Groq `gsk_*`/`gsk-*`, and Telegram token formats) |
 | `bus.rs` | `MessageBus` — async channel for inbound/outbound message passing |
 | `health/` | `HealthServer` — lightweight HTTP health server using raw tokio TCP (no hyper/axum). `ReadinessCheck` trait, `StaticReadiness`. Endpoints: `/health` (liveness, always 200), `/ready` (readiness, 200 or 503 based on provider availability) |
 

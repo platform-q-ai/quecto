@@ -174,7 +174,7 @@ You are an expert at ...
 
 ### `quecto status` — Check configuration
 
-Shows the current config, workspace path, model, API key status, and Telegram/heartbeat settings.
+Shows the current config, workspace path, model, API key status, and Telegram/heartbeat settings. Secret values are redacted in status/debug output.
 
 ```bash
 quecto status
@@ -322,8 +322,9 @@ These are available when running `quecto gateway` but not in CLI or REPL mode:
 The agent operates inside a sandbox:
 
 - **Workspace restriction**: When `restrict_to_workspace` is `true` (default), all file operations are confined to the workspace directory. Symlinks pointing outside are blocked. Path traversal (`../`) is caught.
-- **Dangerous commands blocked**: `rm -rf /`, `mkfs`, `dd`, `shutdown`, `reboot`, `chmod -R 777 /`, fork bombs, and pipe-to-shell patterns (`curl|sh`) are always blocked regardless of other settings.
+- **Dangerous commands blocked**: `rm -rf /`, `rm -r -f /`, `mkfs`, `dd`, `shutdown`, `reboot`, `chmod -R 777 /`, fork bombs, and pipe-to-shell patterns (`curl|sh`) are always blocked regardless of other settings. Command checks normalize whitespace/casing, so equivalent variants like `rm  -rf /` are also blocked.
 - **Environment isolation**: `QUECTO_*` environment variables (including API keys) are stripped from child processes spawned by the `exec` tool.
+- **Secret redaction**: Log/status output redacts OpenAI/Anthropic (`sk-*`), Groq (`gsk_*`/`gsk-*`), and Telegram bot token values.
 
 ## Provider Fallback
 
@@ -409,7 +410,7 @@ Coverage is intentionally not part of git hooks. Run coverage in nightly CI (rec
 ~/.quecto/
   config.json              # Main configuration
   credentials.json         # Stored API tokens (from quecto auth)
-  sessions/                # Persisted conversation history
+  sessions/                # Persisted conversation history (safe filename mapping)
     cli_default.json
     repl_repl_default.json
     telegram_123456.json

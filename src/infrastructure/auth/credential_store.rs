@@ -159,12 +159,6 @@ impl CredentialStore {
                 .map_err(|e| DomainError::Config(format!("failed to write credentials: {}", e)))?;
         }
 
-        #[cfg(not(unix))]
-        {
-            std::fs::write(&self.path, json)
-                .map_err(|e| DomainError::Config(format!("failed to write credentials: {}", e)))?;
-        }
-
         Ok(())
     }
 

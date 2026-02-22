@@ -10,6 +10,7 @@ const SHELL_METACHARACTERS: &[&str] = &[";", "&&", "||", "|", "$(", "`", "<(", "
 const DANGEROUS_PATTERNS: &[&str] = &[
     "rm -rf /",
     "rm -rf /*",
+    "rm -r -f /",
     "mkfs ",
     "mkfs.",
     "dd if=/dev/zero",
@@ -26,7 +27,9 @@ const DANGEROUS_PATTERNS: &[&str] = &[
     "chown -R ",
     "> /dev/sda",
     "wget|sh",
+    "wget | sh",
     "curl|sh",
+    "curl | sh",
 ];
 
 /// Security sandbox that validates file paths and commands.
@@ -130,10 +133,10 @@ impl Sandbox {
 
     /// Check command against the dangerous patterns denylist.
     fn check_denylist(&self, command: &str) -> Result<(), SandboxError> {
-        let lower = command.to_lowercase();
+        let normalized = normalize_command_for_denylist(command);
         for pattern in DANGEROUS_PATTERNS {
             // Patterns are already lowercase, no need to convert them
-            if lower.contains(pattern) {
+            if normalized.contains(pattern) {
                 return Err(SandboxError::DangerousPattern(
                     command.to_string(),
                     pattern.to_string(),
@@ -180,6 +183,31 @@ impl Sandbox {
             ))
         }
     }
+}
+
+fn normalize_command_for_denylist(command: &str) -> String {
+    let mut normalized = String::with_capacity(command.len());
+    let mut in_whitespace = false;
+
+    for ch in command.chars() {
+        for lower in ch.to_lowercase() {
+            if lower.is_whitespace() {
+                if !in_whitespace && !normalized.is_empty() {
+                    normalized.push(' ');
+                }
+                in_whitespace = true;
+            } else {
+                normalized.push(lower);
+                in_whitespace = false;
+            }
+        }
+    }
+
+    if normalized.ends_with(' ') {
+        normalized.pop();
+    }
+
+    normalized
 }
 
 /// Extract all command tokens (first words) from a shell command string,
@@ -519,6 +547,33 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("dangerous pattern")
+        );
+    }
+
+    #[test]
+    fn test_dangerous_command_rm_rf_with_extra_spaces() {
+        let sb = sandbox("/tmp/quecto-test", false);
+        let result = sb.validate_command("rm  -rf /");
+        assert!(
+            result.is_err(),
+            "expected repeated whitespace variant to be blocked"
+        );
+    }
+
+    #[test]
+    fn test_dangerous_command_rm_with_split_flags() {
+        let sb = sandbox("/tmp/quecto-test", false);
+        let result = sb.validate_command("rm -r -f /");
+        assert!(result.is_err(), "expected split-flag variant to be blocked");
+    }
+
+    #[test]
+    fn test_dangerous_command_pipe_to_shell_with_spaces() {
+        let sb = sandbox("/tmp/quecto-test", false);
+        let result = sb.validate_command("curl | sh");
+        assert!(
+            result.is_err(),
+            "expected spaced pipe-to-shell variant to be blocked"
         );
     }
 

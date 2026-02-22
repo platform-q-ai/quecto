@@ -1,5 +1,6 @@
 // File-based SessionStore: persists sessions as JSON files in a directory.
 
+use std::fmt::Write as _;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -50,9 +51,18 @@ impl FileSessionStore {
     }
 
     /// Convert a session key to a safe filename.
-    /// Replaces `:` with `_` for cross-platform compatibility.
+    /// Keeps legacy-safe keys readable (`:` -> `_`) and encodes other keys
+    /// to avoid path traversal and filename collisions.
     fn key_to_filename(key: &str) -> String {
-        format!("{}.json", key.replace(':', "_"))
+        if key.chars().all(is_legacy_safe_key_char) {
+            return format!("{}.json", key.replace(':', "_"));
+        }
+
+        let mut encoded = String::with_capacity(key.len() * 2);
+        for b in key.as_bytes() {
+            let _ = write!(encoded, "{b:02x}");
+        }
+        format!("key_{}.json", encoded)
     }
 
     fn session_path(&self, key: &str) -> PathBuf {
@@ -65,6 +75,10 @@ impl FileSessionStore {
             .await
             .map_err(|e| DomainError::Session(format!("failed to create sessions dir: {}", e)))
     }
+}
+
+fn is_legacy_safe_key_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, ':' | '_' | '-' | '.')
 }
 
 impl SessionStore for FileSessionStore {
@@ -249,6 +263,22 @@ mod tests {
             FileSessionStore::key_to_filename("cli:default"),
             "cli_default.json"
         );
+    }
+
+    #[test]
+    fn test_key_to_filename_sanitizes_path_traversal_chars() {
+        let filename = FileSessionStore::key_to_filename("../../tmp/escape");
+        assert!(!filename.contains(".."));
+        assert!(!filename.contains('/'));
+        assert!(!filename.contains('\\'));
+        assert!(filename.ends_with(".json"));
+    }
+
+    #[test]
+    fn test_key_to_filename_avoids_collision_for_unsafe_keys() {
+        let a = FileSessionStore::key_to_filename("a/b");
+        let b = FileSessionStore::key_to_filename("a?b");
+        assert_ne!(a, b);
     }
 
     #[tokio::test]
