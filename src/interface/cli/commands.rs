@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use super::CliContext;
 use crate::application::onboard;
 use crate::infrastructure::config::Config;
+use crate::infrastructure::persistence::workspace_store::FileOnboardStore;
 
 pub(crate) fn cmd_status(ctx: &CliContext, stdout: &mut String, stderr: &mut String) -> i32 {
     let base = ctx.base_dir();
@@ -102,7 +103,8 @@ pub(crate) fn cmd_gateway_run(ctx: &CliContext) -> i32 {
 
 pub(crate) fn cmd_onboard(ctx: &CliContext, stdout: &mut String, stderr: &mut String) -> i32 {
     let base_dir = ctx.base_dir();
-    match onboard::run_onboard(&base_dir) {
+    let store = FileOnboardStore::new(&base_dir);
+    match onboard::run_onboard(&store) {
         Ok(result) => {
             if result.already_existed {
                 stdout.push_str("Config already exists\n");

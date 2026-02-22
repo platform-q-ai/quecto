@@ -12,7 +12,9 @@ use std::sync::Arc;
 
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::agent::AgentLoop;
+use crate::domain::channel::Channel;
 use crate::domain::provider::LlmProvider;
+use crate::domain::session::SessionStore;
 use crate::infrastructure::auth::credential_store::{Credential, CredentialStore};
 use crate::infrastructure::bus::MessageBus;
 use crate::infrastructure::channels::telegram::TelegramChannel;
@@ -58,9 +60,10 @@ pub(super) struct EventLoopContext {
     pub(super) inbound_rx: mpsc::Receiver<InboundMessage>,
     pub(super) outbound_tx: mpsc::Sender<OutboundMessage>,
     pub(super) outbound_rx: mpsc::Receiver<OutboundMessage>,
-    pub(super) agent: Arc<AgentLoopImpl>,
-    pub(super) session_store: Arc<FileSessionStore>,
-    pub(super) telegram: TelegramChannel,
+    pub(super) agent: Arc<dyn AgentLoop>,
+    pub(super) session_store: Arc<dyn SessionStore>,
+    pub(super) outbound_channel: Arc<dyn Channel>,
+    pub(super) telegram_poller: Arc<TelegramChannel>,
     pub(super) config: Config,
     pub(super) workspace: PathBuf,
     pub(super) cron_store: Arc<FileCronStore>,
@@ -92,7 +95,7 @@ impl EventLoopContext {
         // Core messaging pipeline — select until one stops or shutdown.
         tokio::select! {
             _ = Gateway::run_telegram_polling(
-                self.telegram.clone(), self.inbound_tx, self.config, self.allow_insecure_voice,
+                self.telegram_poller, self.inbound_tx, self.config, self.allow_insecure_voice,
             ) => {
                 tracing::info!("Telegram polling stopped");
             }
@@ -101,7 +104,7 @@ impl EventLoopContext {
             ) => {
                 tracing::info!("Inbound processor stopped");
             }
-            _ = Gateway::run_outbound_dispatcher(self.outbound_rx, self.telegram) => {
+            _ = Gateway::run_outbound_dispatcher(self.outbound_rx, self.outbound_channel) => {
                 tracing::info!("Outbound dispatcher stopped");
             }
             _ = tokio::signal::ctrl_c() => {
@@ -155,8 +158,9 @@ impl Gateway {
 
         let provider = Arc::new(self.build_fallback_provider(&creds)?);
         let cron_store = Arc::new(FileCronStore::new(&self.base_dir));
-        let (agent, mut bus) = self.build_agent(workspace.clone(), provider, cron_store.clone());
-        let agent = Arc::new(agent);
+        let (agent_impl, mut bus) =
+            self.build_agent(workspace.clone(), provider, cron_store.clone());
+        let agent: Arc<dyn AgentLoop> = Arc::new(agent_impl);
 
         let info = agent.info();
         let model = &self.config.agents.defaults.model;
@@ -171,6 +175,7 @@ impl Gateway {
         );
 
         let (inbound_tx, inbound_rx, outbound_tx, outbound_rx) = Self::take_channels(&mut bus);
+        let telegram = Arc::new(TelegramChannel::new(&self.config.channels.telegram));
         let ctx = EventLoopContext {
             inbound_tx,
             inbound_rx,
@@ -178,7 +183,8 @@ impl Gateway {
             outbound_rx,
             agent,
             session_store: Arc::new(FileSessionStore::new(&self.base_dir)),
-            telegram: TelegramChannel::new(&self.config.channels.telegram),
+            outbound_channel: telegram.clone(),
+            telegram_poller: telegram,
             config: self.config.clone(),
             workspace: workspace.clone(),
             cron_store,

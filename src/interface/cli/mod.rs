@@ -5,7 +5,6 @@ mod commands;
 use std::path::PathBuf;
 
 use super::repl::{ReplContext, ReplFlags};
-use crate::application::onboard;
 use crate::infrastructure::config::Config;
 
 // Re-export public types for external consumers.
@@ -39,7 +38,7 @@ impl CliContext {
         self.base_dir
             .clone()
             .or_else(|| std::env::var("QUECTO_BASE_DIR").ok().map(PathBuf::from))
-            .or_else(onboard::default_base_dir)
+            .or_else(|| dirs::home_dir().map(|h| h.join(".quecto")))
             .unwrap_or_else(|| PathBuf::from(".quecto"))
     }
 }

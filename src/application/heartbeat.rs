@@ -1,8 +1,7 @@
 // Heartbeat service: reads HEARTBEAT.md, parses tasks, dispatches.
 
-use std::path::Path;
-
 use crate::domain::error::DomainError;
+use crate::domain::workspace::HeartbeatTaskSource;
 
 /// A parsed heartbeat task from HEARTBEAT.md.
 #[derive(Debug, Clone)]
@@ -58,17 +57,14 @@ pub fn parse_heartbeat(content: &str) -> Vec<HeartbeatTask> {
     tasks
 }
 
-/// Read HEARTBEAT.md from the workspace and parse tasks.
-/// Returns an empty list if the file doesn't exist.
-pub async fn load_tasks(workspace: impl AsRef<Path>) -> Result<Vec<HeartbeatTask>, DomainError> {
-    let path = workspace.as_ref().join("HEARTBEAT.md");
-    if !path.exists() {
-        return Ok(vec![]);
+/// Read HEARTBEAT.md from a source and parse tasks.
+pub async fn load_tasks(
+    source: &dyn HeartbeatTaskSource,
+) -> Result<Vec<HeartbeatTask>, DomainError> {
+    match source.read_heartbeat_md().await? {
+        Some(content) => Ok(parse_heartbeat(&content)),
+        None => Ok(vec![]),
     }
-    let content = tokio::fs::read_to_string(&path)
-        .await
-        .map_err(|e| DomainError::Other(format!("failed to read HEARTBEAT.md: {}", e)))?;
-    Ok(parse_heartbeat(&content))
 }
 
 /// Result of dispatching a single heartbeat task.
@@ -88,11 +84,11 @@ pub struct HeartbeatTaskResult {
 /// Each task is executed with the given `timeout`. Returns the list of
 /// dispatched task results, or an empty list if no HEARTBEAT.md exists.
 pub async fn execute_heartbeat_tick(
-    workspace: &Path,
+    source: &dyn HeartbeatTaskSource,
     agent: &dyn crate::domain::agent::AgentLoop,
     timeout: std::time::Duration,
 ) -> Result<Vec<HeartbeatTaskResult>, DomainError> {
-    let tasks = load_tasks(workspace).await?;
+    let tasks = load_tasks(source).await?;
     if tasks.is_empty() {
         return Ok(vec![]);
     }
@@ -212,8 +208,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_tasks_missing_file() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let tasks = load_tasks(tmp.path()).await.unwrap();
+        struct EmptySource;
+        impl HeartbeatTaskSource for EmptySource {
+            fn read_heartbeat_md(
+                &self,
+            ) -> std::pin::Pin<
+                Box<
+                    dyn std::future::Future<Output = Result<Option<String>, DomainError>>
+                        + Send
+                        + '_,
+                >,
+            > {
+                Box::pin(async { Ok(None) })
+            }
+        }
+
+        let tasks = load_tasks(&EmptySource).await.unwrap();
         assert!(tasks.is_empty());
     }
 
@@ -225,7 +235,11 @@ mod tests {
             "- Check weather\n- Report time\n",
         )
         .unwrap();
-        let tasks = load_tasks(tmp.path()).await.unwrap();
+        let source =
+            crate::infrastructure::persistence::workspace_store::FileHeartbeatTaskSource::new(
+                tmp.path(),
+            );
+        let tasks = load_tasks(&source).await.unwrap();
         assert_eq!(tasks.len(), 2);
     }
 
@@ -284,8 +298,12 @@ mod tests {
         .unwrap();
 
         let agent = RecordingAgent::new("done");
+        let source =
+            crate::infrastructure::persistence::workspace_store::FileHeartbeatTaskSource::new(
+                tmp.path(),
+            );
         let timeout = std::time::Duration::from_secs(60);
-        let results = execute_heartbeat_tick(tmp.path(), &agent, timeout)
+        let results = execute_heartbeat_tick(&source, &agent, timeout)
             .await
             .unwrap();
         assert_eq!(results.len(), 2);
@@ -302,8 +320,12 @@ mod tests {
     async fn test_execute_heartbeat_tick_no_file() {
         let tmp = tempfile::TempDir::new().unwrap();
         let agent = RecordingAgent::new("done");
+        let source =
+            crate::infrastructure::persistence::workspace_store::FileHeartbeatTaskSource::new(
+                tmp.path(),
+            );
         let timeout = std::time::Duration::from_secs(60);
-        let results = execute_heartbeat_tick(tmp.path(), &agent, timeout)
+        let results = execute_heartbeat_tick(&source, &agent, timeout)
             .await
             .unwrap();
         assert!(results.is_empty());
@@ -319,8 +341,12 @@ mod tests {
         .unwrap();
 
         let agent = RecordingAgent::new("spawned");
+        let source =
+            crate::infrastructure::persistence::workspace_store::FileHeartbeatTaskSource::new(
+                tmp.path(),
+            );
         let timeout = std::time::Duration::from_secs(60);
-        let results = execute_heartbeat_tick(tmp.path(), &agent, timeout)
+        let results = execute_heartbeat_tick(&source, &agent, timeout)
             .await
             .unwrap();
         assert_eq!(results.len(), 1);

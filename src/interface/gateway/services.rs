@@ -5,18 +5,17 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
-use crate::application::agent_loop::AgentLoopImpl;
 use crate::application::cron_executor;
 use crate::application::heartbeat;
 use crate::domain::agent::AgentLoop;
+use crate::domain::channel::{Channel, ChannelTarget};
 use crate::domain::message::{Message, Role};
 use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::bus::{InboundMessage, OutboundMessage};
-use crate::infrastructure::channels::telegram::TelegramChannel;
 use crate::infrastructure::config::HealthConfig;
 use crate::infrastructure::health::server::{HealthServer, StaticReadiness};
 use crate::infrastructure::persistence::cron_store::FileCronStore;
-use crate::infrastructure::persistence::session_store::FileSessionStore;
+use crate::infrastructure::persistence::workspace_store::FileHeartbeatTaskSource;
 
 use super::Gateway;
 
@@ -24,8 +23,8 @@ impl Gateway {
     /// Inbound message processing task.
     pub(super) async fn run_inbound_processor(
         mut inbound_rx: mpsc::Receiver<InboundMessage>,
-        agent: Arc<AgentLoopImpl>,
-        session_store: Arc<FileSessionStore>,
+        agent: Arc<dyn AgentLoop>,
+        session_store: Arc<dyn SessionStore>,
         outbound_tx: mpsc::Sender<OutboundMessage>,
     ) {
         while let Some(msg) = inbound_rx.recv().await {
@@ -54,7 +53,7 @@ impl Gateway {
 
     /// Load session messages for an inbound message, or return empty vec.
     async fn load_session(
-        session_store: &Arc<FileSessionStore>,
+        session_store: &Arc<dyn SessionStore>,
         msg: &InboundMessage,
     ) -> Vec<Message> {
         let session_key = Session::build_key("telegram", &msg.source);
@@ -70,8 +69,8 @@ impl Gateway {
 
     /// Process messages through agent loop, save session, return response text.
     async fn process_and_save(
-        agent: &Arc<AgentLoopImpl>,
-        session_store: &Arc<FileSessionStore>,
+        agent: &Arc<dyn AgentLoop>,
+        session_store: &Arc<dyn SessionStore>,
         msg: &InboundMessage,
         messages: &mut Vec<Message>,
     ) -> String {
@@ -97,20 +96,17 @@ impl Gateway {
     /// Outbound message dispatching task.
     pub(super) async fn run_outbound_dispatcher(
         mut outbound_rx: mpsc::Receiver<OutboundMessage>,
-        telegram: TelegramChannel,
+        channel: Arc<dyn Channel>,
     ) {
         while let Some(msg) = outbound_rx.recv().await {
-            // Parse target: "telegram:chat_id"
-            if let Some(chat_id) = msg.target.strip_prefix("telegram:") {
-                if let Err(e) = telegram.send_message(chat_id, &msg.text).await {
-                    tracing::error!(
-                        error = %e,
-                        chat_id = chat_id,
-                        "failed to send Telegram message"
-                    );
-                }
-            } else {
-                tracing::warn!(target_str = msg.target, "unknown outbound target");
+            let target = ChannelTarget::parse(&msg.target);
+            if let ChannelTarget::Unsupported(raw) = &target {
+                tracing::warn!(target = raw, "unknown outbound target");
+                continue;
+            }
+
+            if let Err(e) = channel.send_message(&target, &msg.text).await {
+                tracing::error!(error = %e, target = msg.target, "failed outbound send");
             }
         }
     }
@@ -151,7 +147,7 @@ impl Gateway {
     /// suspends forever (does not consume a select! slot).
     pub(super) async fn run_heartbeat(
         config: crate::infrastructure::config::HeartbeatConfig,
-        agent: Arc<AgentLoopImpl>,
+        agent: Arc<dyn AgentLoop>,
         workspace: PathBuf,
     ) {
         if !config.enabled {
@@ -162,6 +158,7 @@ impl Gateway {
 
         let interval_secs = u64::from(config.interval);
         let interval = std::time::Duration::from_secs(interval_secs);
+        let source = FileHeartbeatTaskSource::new(workspace);
         // Timeout per task: interval minus 10s margin, clamped to [30s, 300s].
         let timeout_secs = interval_secs.saturating_sub(10).clamp(30, 300);
         let timeout = std::time::Duration::from_secs(timeout_secs);
@@ -174,7 +171,7 @@ impl Gateway {
         loop {
             tokio::time::sleep(interval).await;
             tracing::debug!("heartbeat tick");
-            match heartbeat::execute_heartbeat_tick(&workspace, &*agent, timeout).await {
+            match heartbeat::execute_heartbeat_tick(&source, &*agent, timeout).await {
                 Ok(results) => {
                     for result in &results {
                         tracing::info!(
@@ -197,7 +194,7 @@ impl Gateway {
     /// Uses a short check interval (2s) so jobs fire promptly.
     pub(super) async fn run_cron_tick(
         store: Arc<FileCronStore>,
-        agent: Arc<AgentLoopImpl>,
+        agent: Arc<dyn AgentLoop>,
         timeout_minutes: u32,
     ) {
         let check_interval = std::time::Duration::from_secs(2);
