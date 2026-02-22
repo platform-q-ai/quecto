@@ -33,6 +33,7 @@ use crate::infrastructure::tools::web_search::WebSearchTool;
 use tokio::sync::mpsc;
 
 use crate::infrastructure::bus::{InboundMessage, OutboundMessage};
+use services::InboundProcessorContext;
 
 /// Gateway error type.
 #[derive(Debug)]
@@ -91,16 +92,29 @@ impl EventLoopContext {
             self.agent.clone(),
             self.config.tools.cron.exec_timeout_minutes,
         ));
+        let max_session_messages = self
+            .config
+            .agents
+            .defaults
+            .max_session_messages
+            .clamp(10, 1000);
+        let polling_config = self.config.clone();
 
         // Core messaging pipeline — select until one stops or shutdown.
         tokio::select! {
             _ = Gateway::run_telegram_polling(
-                self.telegram_poller, self.inbound_tx, self.config, self.allow_insecure_voice,
+                self.telegram_poller, self.inbound_tx, polling_config, self.allow_insecure_voice,
             ) => {
                 tracing::info!("Telegram polling stopped");
             }
             _ = Gateway::run_inbound_processor(
-                self.inbound_rx, self.agent, self.session_store, self.outbound_tx,
+                self.inbound_rx,
+                InboundProcessorContext {
+                    agent: self.agent,
+                    session_store: self.session_store,
+                    outbound_tx: self.outbound_tx,
+                    max_session_messages,
+                },
             ) => {
                 tracing::info!("Inbound processor stopped");
             }

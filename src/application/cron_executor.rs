@@ -34,7 +34,7 @@ pub async fn execute_cron_tick(
         record_last_run(store, &job.id, now_secs);
 
         let result = execute_single_job(agent, job, timeout).await;
-        record_job_error(store, &job.id, &result);
+        record_job_error(store, job, &result);
 
         results.push(result);
     }
@@ -75,15 +75,23 @@ fn record_last_run(store: &dyn CronStore, job_id: &str, now_secs: u64) {
     }
 }
 
-fn record_job_error(store: &dyn CronStore, job_id: &str, result: &CronJobResult) {
+fn record_job_error(
+    store: &dyn CronStore,
+    job: &crate::domain::cron::CronJob,
+    result: &CronJobResult,
+) {
     let error_val = if result.ok {
         None
     } else {
         Some(result.response.clone())
     };
-    if let Err(e) = store.set_last_error(job_id, error_val) {
+    if job.last_error == error_val {
+        return;
+    }
+
+    if let Err(e) = store.set_last_error(&job.id, error_val) {
         tracing::warn!(
-            job_id = %job_id,
+            job_id = %job.id,
             "failed to update last_error on cron job: {}",
             e
         );

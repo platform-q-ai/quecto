@@ -43,6 +43,8 @@ pub struct AgentDefaults {
     pub restrict_to_workspace: bool,
     #[serde(default = "default_exec_max_capture_bytes")]
     pub exec_max_capture_bytes: usize,
+    #[serde(default = "default_max_session_messages")]
+    pub max_session_messages: usize,
 }
 
 impl Default for AgentDefaults {
@@ -55,6 +57,7 @@ impl Default for AgentDefaults {
             max_tool_iterations: default_max_tool_iterations(),
             restrict_to_workspace: true,
             exec_max_capture_bytes: default_exec_max_capture_bytes(),
+            max_session_messages: default_max_session_messages(),
         }
     }
 }
@@ -266,6 +269,9 @@ fn default_max_tool_iterations() -> u32 {
 fn default_exec_max_capture_bytes() -> usize {
     1024 * 1024
 }
+fn default_max_session_messages() -> usize {
+    200
+}
 fn default_true() -> bool {
     true
 }
@@ -317,6 +323,7 @@ impl Config {
     /// - `QUECTO_AGENTS_DEFAULTS_MAX_TOKENS` → agents.defaults.max_tokens
     /// - `QUECTO_AGENTS_DEFAULTS_TEMPERATURE` → agents.defaults.temperature
     /// - `QUECTO_AGENTS_DEFAULTS_WORKSPACE` → agents.defaults.workspace
+    /// - `QUECTO_AGENTS_DEFAULTS_MAX_SESSION_MESSAGES` → agents.defaults.max_session_messages
     /// - `QUECTO_PROVIDERS_OPENAI_API_KEY` → providers.openai.api_key
     /// - `QUECTO_PROVIDERS_ANTHROPIC_API_KEY` → providers.anthropic.api_key
     fn apply_env_overrides(config: &mut Config, env: &HashMap<String, String>) {
@@ -335,6 +342,11 @@ impl Config {
         }
         if let Some(v) = env.get("QUECTO_AGENTS_DEFAULTS_WORKSPACE") {
             config.agents.defaults.workspace = v.clone();
+        }
+        if let Some(v) = env.get("QUECTO_AGENTS_DEFAULTS_MAX_SESSION_MESSAGES")
+            && let Ok(n) = v.parse::<usize>()
+        {
+            config.agents.defaults.max_session_messages = n;
         }
         if let Some(v) = env.get("QUECTO_PROVIDERS_OPENAI_API_KEY") {
             config.providers.openai.api_key = v.clone();
@@ -542,5 +554,20 @@ mod tests {
         };
         let debug = format!("{:?}", entry);
         assert!(!debug.contains("sk-secret-key-12345"));
+    }
+
+    #[test]
+    fn test_default_max_session_messages() {
+        let config: Config = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.agents.defaults.max_session_messages, 200);
+    }
+
+    #[test]
+    fn test_deserialize_max_session_messages_override() {
+        let json = r#"{
+            "agents": { "defaults": { "max_session_messages": 12 } }
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.agents.defaults.max_session_messages, 12);
     }
 }

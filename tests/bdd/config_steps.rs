@@ -116,6 +116,12 @@ fn then_max_tokens_should_be(world: &mut QuectoWorld, expected: u32) {
     assert_eq!(config.agents.defaults.max_tokens, expected);
 }
 
+#[then(expr = "the max_session_messages should be {int}")]
+fn then_max_session_messages_should_be(world: &mut QuectoWorld, expected: usize) {
+    let config = world.config.as_ref().expect("config not loaded");
+    assert_eq!(config.agents.defaults.max_session_messages, expected);
+}
+
 #[then(expr = "the OpenAI API key should be {string}")]
 fn then_openai_key_should_be(world: &mut QuectoWorld, expected: String) {
     let config = world.config.as_ref().expect("config not loaded");

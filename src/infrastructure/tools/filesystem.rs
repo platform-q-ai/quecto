@@ -4,6 +4,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
 
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
@@ -66,7 +67,8 @@ impl Tool for ReadFileTool {
 
             let full_path = resolve_and_validate(&workspace, &sandbox, path)?;
 
-            let content = std::fs::read_to_string(&full_path)
+            let content = tokio::fs::read_to_string(&full_path)
+                .await
                 .map_err(|e| DomainError::Tool(format!("read_file failed: {}", e)))?;
 
             Ok(ToolResult {
@@ -122,11 +124,13 @@ impl Tool for WriteFileTool {
             let full_path = resolve_and_validate(&workspace, &sandbox, path)?;
 
             if let Some(parent) = full_path.parent() {
-                std::fs::create_dir_all(parent)
+                tokio::fs::create_dir_all(parent)
+                    .await
                     .map_err(|e| DomainError::Tool(format!("create dirs failed: {}", e)))?;
             }
 
-            std::fs::write(&full_path, content)
+            tokio::fs::write(&full_path, content)
+                .await
                 .map_err(|e| DomainError::Tool(format!("write_file failed: {}", e)))?;
 
             Ok(ToolResult {
@@ -184,7 +188,8 @@ impl Tool for EditFileTool {
 
             let full_path = resolve_and_validate(&workspace, &sandbox, path)?;
 
-            let content = std::fs::read_to_string(&full_path)
+            let content = tokio::fs::read_to_string(&full_path)
+                .await
                 .map_err(|e| DomainError::Tool(format!("edit_file read failed: {}", e)))?;
 
             if !content.contains(old) {
@@ -195,7 +200,8 @@ impl Tool for EditFileTool {
             }
 
             let updated = content.replacen(old, new, 1);
-            std::fs::write(&full_path, &updated)
+            tokio::fs::write(&full_path, &updated)
+                .await
                 .map_err(|e| DomainError::Tool(format!("edit_file write failed: {}", e)))?;
 
             Ok(ToolResult {
@@ -250,15 +256,19 @@ impl Tool for AppendFileTool {
 
             let full_path = resolve_and_validate(&workspace, &sandbox, path)?;
 
-            use std::io::Write;
-            let mut file = std::fs::OpenOptions::new()
+            let mut file = tokio::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&full_path)
+                .await
                 .map_err(|e| DomainError::Tool(format!("append_file failed: {}", e)))?;
 
             file.write_all(content.as_bytes())
+                .await
                 .map_err(|e| DomainError::Tool(format!("append_file write failed: {}", e)))?;
+            file.flush()
+                .await
+                .map_err(|e| DomainError::Tool(format!("append_file flush failed: {}", e)))?;
 
             Ok(ToolResult {
                 content: format!("appended {} bytes to {}", content.len(), path),
@@ -309,15 +319,23 @@ impl Tool for ListDirTool {
 
             let full_path = resolve_and_validate(&workspace, &sandbox, path)?;
 
-            let entries = std::fs::read_dir(&full_path)
+            let mut entries = tokio::fs::read_dir(&full_path)
+                .await
                 .map_err(|e| DomainError::Tool(format!("list_dir failed: {}", e)))?;
 
             let mut names: Vec<String> = Vec::new();
-            for entry in entries {
-                let entry =
-                    entry.map_err(|e| DomainError::Tool(format!("list_dir entry error: {}", e)))?;
+            while let Some(entry) = entries
+                .next_entry()
+                .await
+                .map_err(|e| DomainError::Tool(format!("list_dir entry error: {}", e)))?
+            {
                 let name = entry.file_name().to_string_lossy().to_string();
-                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                if entry
+                    .file_type()
+                    .await
+                    .map_err(|e| DomainError::Tool(format!("list_dir file_type error: {}", e)))?
+                    .is_dir()
+                {
                     names.push(format!("{}/", name));
                 } else {
                     names.push(name);

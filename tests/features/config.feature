@@ -48,3 +48,25 @@ Feature: Configuration
     When I resolve the workspace path
     Then the workspace path should start with "/"
     And the workspace path should end with ".quecto/workspace"
+
+  @pr3-performance
+  Scenario: Max session messages default and override are loaded
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {}
+      """
+    When I load the config
+    Then the max_session_messages should be 200
+
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {
+        "agents": {
+          "defaults": {
+            "max_session_messages": 12
+          }
+        }
+      }
+      """
+    When I load the config
+    Then the max_session_messages should be 12

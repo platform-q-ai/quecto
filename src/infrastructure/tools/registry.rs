@@ -16,6 +16,7 @@ use super::filesystem::{AppendFileTool, EditFileTool, ListDirTool, ReadFileTool,
 /// Registry of all available tools, keyed by name.
 pub struct ToolRegistryImpl {
     tools: HashMap<String, Arc<dyn Tool>>,
+    definitions: Vec<ToolDefinition>,
 }
 
 impl std::fmt::Debug for ToolRegistryImpl {
@@ -37,6 +38,7 @@ impl ToolRegistryImpl {
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
+            definitions: Vec::new(),
         }
     }
 
@@ -87,8 +89,12 @@ impl ToolRegistryImpl {
 
     /// Register a tool.
     pub fn register(&mut self, tool: Arc<dyn Tool>) {
-        let name = tool.definition().name;
+        let def = tool.definition();
+        let name = def.name.clone();
         self.tools.insert(name, tool);
+
+        self.definitions = self.tools.values().map(|t| t.definition()).collect();
+        self.definitions.sort_by(|a, b| a.name.cmp(&b.name));
     }
 
     /// Look up a tool by name.
@@ -98,7 +104,7 @@ impl ToolRegistryImpl {
 
     /// Return all tool definitions (for injection into the LLM system prompt).
     pub fn definitions(&self) -> Vec<ToolDefinition> {
-        self.tools.values().map(|t| t.definition()).collect()
+        self.definitions.clone()
     }
 
     /// List all registered tool names.

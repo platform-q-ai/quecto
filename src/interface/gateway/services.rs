@@ -19,16 +19,21 @@ use crate::infrastructure::persistence::workspace_store::FileHeartbeatTaskSource
 
 use super::Gateway;
 
+pub(super) struct InboundProcessorContext {
+    pub(super) agent: Arc<dyn AgentLoop>,
+    pub(super) session_store: Arc<dyn SessionStore>,
+    pub(super) outbound_tx: mpsc::Sender<OutboundMessage>,
+    pub(super) max_session_messages: usize,
+}
+
 impl Gateway {
     /// Inbound message processing task.
     pub(super) async fn run_inbound_processor(
         mut inbound_rx: mpsc::Receiver<InboundMessage>,
-        agent: Arc<dyn AgentLoop>,
-        session_store: Arc<dyn SessionStore>,
-        outbound_tx: mpsc::Sender<OutboundMessage>,
+        ctx: InboundProcessorContext,
     ) {
         while let Some(msg) = inbound_rx.recv().await {
-            let mut messages = Self::load_session(&session_store, &msg).await;
+            let mut messages = Self::load_session(&ctx.session_store, &msg).await;
 
             messages.push(Message {
                 role: Role::User,
@@ -37,14 +42,15 @@ impl Gateway {
                 tool_call_id: None,
             });
 
-            let response_text =
-                Self::process_and_save(&agent, &session_store, &msg, &mut messages).await;
+            trim_session_messages(&mut messages, ctx.max_session_messages);
+
+            let response_text = Self::process_and_save(&ctx, &msg, &mut messages).await;
 
             let outbound = OutboundMessage {
                 target: msg.source.clone(),
                 text: response_text,
             };
-            if outbound_tx.send(outbound).await.is_err() {
+            if ctx.outbound_tx.send(outbound).await.is_err() {
                 tracing::error!("outbound channel closed");
                 return;
             }
@@ -69,19 +75,19 @@ impl Gateway {
 
     /// Process messages through agent loop, save session, return response text.
     async fn process_and_save(
-        agent: &Arc<dyn AgentLoop>,
-        session_store: &Arc<dyn SessionStore>,
+        ctx: &InboundProcessorContext,
         msg: &InboundMessage,
         messages: &mut Vec<Message>,
     ) -> String {
         let session_key = Session::build_key("telegram", &msg.source);
-        match agent.process(messages).await {
+        match ctx.agent.process(messages).await {
             Ok(result) => {
+                trim_session_messages(messages, ctx.max_session_messages);
                 let session = Session {
                     key: session_key,
                     messages: messages.clone(),
                 };
-                if let Err(e) = session_store.save(&session).await {
+                if let Err(e) = ctx.session_store.save(&session).await {
                     tracing::error!(error = %e, "failed to save session");
                 }
                 result.response
@@ -223,5 +229,150 @@ impl Gateway {
                 }
             }
         }
+    }
+}
+
+fn trim_session_messages(messages: &mut Vec<Message>, max_non_system_messages: usize) {
+    if max_non_system_messages == 0 {
+        messages.retain(|m| matches!(m.role, Role::System));
+        return;
+    }
+
+    let non_system_count = messages
+        .iter()
+        .filter(|m| !matches!(m.role, Role::System))
+        .count();
+    if non_system_count <= max_non_system_messages {
+        return;
+    }
+
+    let mut kept_non_system = 0usize;
+    let mut start = messages.len();
+    for i in (0..messages.len()).rev() {
+        if !matches!(messages[i].role, Role::System) {
+            kept_non_system += 1;
+        }
+        if kept_non_system > max_non_system_messages {
+            start = i + 1;
+            break;
+        }
+        start = i;
+    }
+
+    while start > 0 && matches!(messages[start].role, Role::Tool) {
+        start -= 1;
+    }
+
+    let mut trimmed = Vec::with_capacity(messages.len());
+    for (idx, message) in messages.drain(..).enumerate() {
+        if matches!(message.role, Role::System) || idx >= start {
+            trimmed.push(message);
+        }
+    }
+    *messages = trimmed;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_trim_messages_keeps_latest_non_system() {
+        let mut messages = vec![
+            Message {
+                role: Role::User,
+                content: "u1".to_string(),
+                tool_calls: vec![],
+                tool_call_id: None,
+            },
+            Message {
+                role: Role::Assistant,
+                content: "a1".to_string(),
+                tool_calls: vec![],
+                tool_call_id: None,
+            },
+            Message {
+                role: Role::User,
+                content: "u2".to_string(),
+                tool_calls: vec![],
+                tool_call_id: None,
+            },
+        ];
+
+        trim_session_messages(&mut messages, 2);
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].content, "a1");
+        assert_eq!(messages[1].content, "u2");
+    }
+
+    #[test]
+    fn test_trim_messages_preserves_system_messages() {
+        let mut messages = vec![
+            Message {
+                role: Role::System,
+                content: "sys".to_string(),
+                tool_calls: vec![],
+                tool_call_id: None,
+            },
+            Message {
+                role: Role::User,
+                content: "u1".to_string(),
+                tool_calls: vec![],
+                tool_call_id: None,
+            },
+            Message {
+                role: Role::Assistant,
+                content: "a1".to_string(),
+                tool_calls: vec![],
+                tool_call_id: None,
+            },
+        ];
+
+        trim_session_messages(&mut messages, 1);
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, Role::System);
+        assert_eq!(messages[1].content, "a1");
+    }
+
+    #[test]
+    fn test_trim_messages_does_not_start_with_tool_message() {
+        let mut messages = vec![
+            Message {
+                role: Role::User,
+                content: "u1".to_string(),
+                tool_calls: vec![],
+                tool_call_id: None,
+            },
+            Message {
+                role: Role::Assistant,
+                content: "calling tool".to_string(),
+                tool_calls: vec![crate::domain::message::ToolCall {
+                    id: "t1".to_string(),
+                    name: "read_file".to_string(),
+                    arguments: "{}".to_string(),
+                }],
+                tool_call_id: None,
+            },
+            Message {
+                role: Role::Tool,
+                content: "tool result".to_string(),
+                tool_calls: vec![],
+                tool_call_id: Some("t1".to_string()),
+            },
+            Message {
+                role: Role::User,
+                content: "u2".to_string(),
+                tool_calls: vec![],
+                tool_call_id: None,
+            },
+        ];
+
+        trim_session_messages(&mut messages, 2);
+
+        assert!(!messages.is_empty());
+        assert_ne!(messages[0].role, Role::Tool);
+        assert!(messages.iter().any(|m| m.role == Role::Tool));
     }
 }

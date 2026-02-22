@@ -91,6 +91,8 @@ quecto gateway
 
 Requires Telegram configuration in `config.json` (see [Configuration](#configuration)).
 
+Gateway sessions are bounded to prevent unbounded history growth. The gateway keeps the most recent non-system messages and preserves system messages, using `agents.defaults.max_session_messages` (default: `200`).
+
 #### Telegram bot commands
 
 The gateway intercepts the following bot commands directly, without routing them through the agent:
@@ -227,6 +229,7 @@ Config file: `~/.quecto/config.json`
       "workspace": "~/Documents/quecto-workspace",
       "max_tokens": 8192,
       "max_tool_iterations": 20,
+      "max_session_messages": 200,
       "restrict_to_workspace": true
     }
   },
@@ -288,12 +291,15 @@ Set `providers.<name>.api_base` only when you need a non-default endpoint (for e
 | `QUECTO_AGENTS_DEFAULTS_MAX_TOKENS` | `agents.defaults.max_tokens` |
 | `QUECTO_AGENTS_DEFAULTS_TEMPERATURE` | `agents.defaults.temperature` |
 | `QUECTO_AGENTS_DEFAULTS_WORKSPACE` | `agents.defaults.workspace` |
+| `QUECTO_AGENTS_DEFAULTS_MAX_SESSION_MESSAGES` | `agents.defaults.max_session_messages` |
 | `QUECTO_PROVIDERS_OPENAI_API_KEY` | `providers.openai.api_key` |
 | `QUECTO_PROVIDERS_ANTHROPIC_API_KEY` | `providers.anthropic.api_key` |
 
 ## Tools
 
 The agent has access to tools it can call autonomously to accomplish tasks.
+
+Tool definitions are cached in the registry at registration time (sorted once, reused for subsequent definition lookups).
 
 ### CLI mode tools
 
@@ -305,6 +311,8 @@ The agent has access to tools it can call autonomously to accomplish tasks.
 | `edit_file` | Replace a substring in a file |
 | `append_file` | Append content to a file |
 | `list_dir` | List directory contents |
+
+Filesystem tools (`read_file`, `write_file`, `edit_file`, `append_file`, `list_dir`) run on async `tokio::fs` adapters.
 
 ### Gateway-only tools
 
