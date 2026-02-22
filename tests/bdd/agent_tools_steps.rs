@@ -14,6 +14,26 @@ fn given_tool_workspace(world: &mut QuectoWorld) {
     world._temp_dir = Some(td);
 }
 
+#[given(expr = "a tool workspace with exec timeout {int} second")]
+fn given_tool_workspace_with_exec_timeout(world: &mut QuectoWorld, timeout_secs: u64) {
+    let td = TempDir::new().expect("failed to create temp dir");
+    let ws = td.path().to_path_buf();
+    let sandbox = Sandbox::new(Some(ws.clone()), true);
+    let mut registry = ToolRegistryImpl::with_core_tools(ws.clone(), sandbox);
+
+    let exec_sandbox = Sandbox::new(Some(ws.clone()), true);
+    let exec = ExecTool::with_timeout(
+        std::sync::Arc::new(ws.clone()),
+        std::sync::Arc::new(exec_sandbox),
+        std::time::Duration::from_secs(timeout_secs),
+    );
+    registry.register(std::sync::Arc::new(exec));
+
+    world.tool_workspace = Some(ws);
+    world.tool_registry = Some(registry);
+    world._temp_dir = Some(td);
+}
+
 #[given(expr = "a file {string} exists with content {string}")]
 fn given_file_exists(world: &mut QuectoWorld, filename: String, content: String) {
     let ws = world

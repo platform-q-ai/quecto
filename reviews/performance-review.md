@@ -38,3 +38,30 @@ Scope: Full repository review (not PR diff)
 3. Stress cron with N={10,100,1000} jobs and measure tick duration, file I/O bytes, and p95 latency before and after batched persistence.
 4. Run long-session replay tests (for example 1k and 5k turns) to track RSS, serialization time, and provider call latency growth from unbounded history.
 5. Profile provider streaming on large SSE outputs (heap profile plus CPU flamegraph) to validate gains from incremental parsing and reduced cloning.
+
+## Post-Merge Delta Addendum
+
+Date: 2026-02-22
+Scope: Delta review from `aafeeda..256fc2b` (provider API-base hardening and wiring updates)
+
+### Executive Summary
+
+- No material runtime performance regression found in the merged security/provider changes.
+- New provider validation is on provider-construction paths (startup/CLI build), not message hot paths, so steady-state agent throughput is unchanged.
+- Fail-fast provider configuration errors can reduce wasted retries/startup churn when configuration is invalid.
+
+### Delta Findings
+
+| ID | Severity | Title | Evidence | Performance impact | Recommendation |
+|---|---|---|---|---|---|
+| PERF-D1 | Low | Repeated env var lookup during provider base validation | `src/infrastructure/providers/mod.rs:43`, `src/infrastructure/providers/mod.rs:50`, `src/infrastructure/providers/mod.rs:96`, `src/infrastructure/providers/mod.rs:142`, `src/interface/cli/agent.rs:396`, `src/interface/gateway/mod.rs:266` | `std::env::var(QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS)` is evaluated in host validation; cost is small and currently on provider construction only, but it is repeated when building multiple providers/entrypoints. | Optional micro-optimization: cache the opt-in flag once (e.g., `OnceLock<bool>`) inside the providers module if startup latency becomes measurable. |
+
+### Delta Strengths
+
+- Provider validation now fails before adapter construction/network I/O, reducing wasted work on invalid configurations (`src/infrastructure/providers/mod.rs:142`).
+- Composition roots now surface explicit config errors instead of silently dropping providers, improving operator feedback and reducing misconfiguration retry loops (`src/interface/cli/agent.rs:399`, `src/interface/gateway/mod.rs:269`).
+- Host allowlist checks are constant-time string comparisons and do not introduce new async blocking points (`src/infrastructure/providers/mod.rs:54`, `src/infrastructure/providers/mod.rs:95`).
+
+### Targeted Follow-Up Benchmark
+
+1. Add a small startup benchmark for provider creation paths (`create_provider`, CLI provider build, gateway fallback build) with valid vs invalid `api_base` to confirm negligible overhead under representative configurations.

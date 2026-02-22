@@ -11,6 +11,14 @@ Feature: Agent Tool System
     Then the tool result should contain "hello"
     And the tool result should not be an error
 
+  @agent-tools
+  Scenario: Execute large output command without timeout
+    Given a tool workspace with exec timeout 1 second
+    When the agent executes tool "exec" with args:
+      | command | printf 'x%.0s' {1..100000} |
+    Then the tool result should contain "x"
+    And the tool result should not be an error
+
   Scenario: Read a file
     Given a tool workspace
     And a file "notes.txt" exists with content "important notes"
