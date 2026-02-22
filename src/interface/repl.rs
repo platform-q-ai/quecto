@@ -55,6 +55,7 @@ const CMD_HELP: &str = "/help";
 const CMD_CLEAR: &str = "/clear";
 const CMD_CRON: &str = "/cron";
 const CMD_HEARTBEAT: &str = "/heartbeat";
+const CMD_AGENT: &str = "/agent";
 
 impl<R: BufRead, W: Write> ReplLoop<R, W> {
     /// Create a new REPL loop.
@@ -121,6 +122,10 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
                     self.handle_heartbeat(input);
                     continue;
                 }
+                _ if input.starts_with(CMD_AGENT) => {
+                    self.handle_agent(input, &rt);
+                    continue;
+                }
                 _ => {}
             }
 
@@ -142,6 +147,7 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
         let _ = writeln!(self.writer, "Commands:");
         let _ = writeln!(self.writer, "  /help       Show this help");
         let _ = writeln!(self.writer, "  /clear      Clear conversation history");
+        let _ = writeln!(self.writer, "  /agent      Manage subagent profiles");
         let _ = writeln!(self.writer, "  /cron       Manage scheduled cron jobs");
         let _ = writeln!(self.writer, "  /heartbeat  Manage heartbeat tasks");
         let _ = writeln!(self.writer, "  /exit       Exit the REPL");
@@ -579,6 +585,295 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
     }
 
     // -----------------------------------------------------------------------
+    // /agent command
+    // -----------------------------------------------------------------------
+
+    fn handle_agent(&mut self, input: &str, rt: &tokio::runtime::Runtime) {
+        let rest = input.strip_prefix(CMD_AGENT).unwrap_or("").trim();
+        let parts: Vec<&str> = rest.splitn(2, char::is_whitespace).collect();
+        let subcmd = parts.first().copied().unwrap_or("");
+        let args_str = if parts.len() > 1 { parts[1] } else { "" };
+
+        match subcmd {
+            "list" => self.agent_list(),
+            "create" => self.agent_create(args_str),
+            "show" => self.agent_show(args_str),
+            "edit" => self.agent_edit(args_str),
+            "remove" => self.agent_remove(args_str),
+            "run" => self.agent_run(args_str, rt),
+            _ => self.agent_usage(),
+        }
+    }
+
+    fn agents_dir(&self) -> PathBuf {
+        self.session.base_dir.join("agents")
+    }
+
+    fn agent_usage(&mut self) {
+        let _ = writeln!(self.writer, "Usage: /agent <subcommand>");
+        let _ = writeln!(self.writer, "  list     List all subagent profiles");
+        let _ = writeln!(self.writer, "  create   Create a new profile");
+        let _ = writeln!(self.writer, "  show     Show a profile's configuration");
+        let _ = writeln!(self.writer, "  edit     Edit an existing profile");
+        let _ = writeln!(self.writer, "  remove   Remove a profile");
+        let _ = writeln!(self.writer, "  run      Run a task using a profile");
+    }
+
+    fn agent_list(&mut self) {
+        let dir = self.agents_dir();
+        if !dir.exists() {
+            let _ = writeln!(self.writer, "No subagent profiles configured");
+            return;
+        }
+
+        let entries: Vec<String> = std::fs::read_dir(&dir)
+            .ok()
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+                    .filter_map(|e| {
+                        e.path()
+                            .file_stem()
+                            .map(|s| s.to_string_lossy().to_string())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if entries.is_empty() {
+            let _ = writeln!(self.writer, "No subagent profiles configured");
+            return;
+        }
+
+        let _ = writeln!(self.writer, "Subagent profiles:");
+        for name in &entries {
+            let _ = writeln!(self.writer, "  {}", name);
+        }
+    }
+
+    fn agent_create(&mut self, args_str: &str) {
+        match parse_agent_args(args_str) {
+            Ok(parsed) => {
+                if parsed.system.is_none() {
+                    let _ = writeln!(self.writer, "Error: missing required flag: --system");
+                    return;
+                }
+
+                // Validate name
+                if !is_valid_agent_name(&parsed.name) {
+                    let _ = writeln!(self.writer, "Error: invalid agent name '{}'", parsed.name);
+                    return;
+                }
+
+                let dir = self.agents_dir();
+                let path = dir.join(format!("{}.json", parsed.name));
+
+                if path.exists() {
+                    let _ = writeln!(self.writer, "Error: agent '{}' already exists", parsed.name);
+                    return;
+                }
+
+                if let Err(e) = std::fs::create_dir_all(&dir) {
+                    let _ = writeln!(self.writer, "Error: {}", e);
+                    return;
+                }
+
+                let mut profile = serde_json::json!({
+                    "name": parsed.name,
+                    "system": parsed.system
+                });
+                if let Some(ref model) = parsed.model {
+                    profile["model"] = serde_json::json!(model);
+                }
+
+                match serde_json::to_string_pretty(&profile) {
+                    Ok(content) => match std::fs::write(&path, content) {
+                        Ok(()) => {
+                            let _ = writeln!(self.writer, "Agent '{}' created", parsed.name);
+                        }
+                        Err(e) => {
+                            let _ = writeln!(self.writer, "Error: {}", e);
+                        }
+                    },
+                    Err(e) => {
+                        let _ = writeln!(self.writer, "Error: {}", e);
+                    }
+                }
+            }
+            Err(msg) => {
+                let _ = writeln!(self.writer, "Error: {}", msg);
+            }
+        }
+    }
+
+    fn agent_show(&mut self, args_str: &str) {
+        let name = args_str.trim();
+        if name.is_empty() {
+            let _ = writeln!(self.writer, "Error: missing agent name");
+            return;
+        }
+
+        let path = self.agents_dir().join(format!("{}.json", name));
+        match std::fs::read_to_string(&path) {
+            Ok(content) => {
+                if let Ok(profile) = serde_json::from_str::<serde_json::Value>(&content) {
+                    let _ = writeln!(self.writer, "Agent: {}", name);
+                    if let Some(system) = profile["system"].as_str() {
+                        let _ = writeln!(self.writer, "System: {}", system);
+                    }
+                    if let Some(model) = profile["model"].as_str() {
+                        let _ = writeln!(self.writer, "Model: {}", model);
+                    }
+                } else {
+                    let _ = writeln!(self.writer, "Error: invalid profile for '{}'", name);
+                }
+            }
+            Err(_) => {
+                let _ = writeln!(self.writer, "Error: agent '{}' not found", name);
+            }
+        }
+    }
+
+    fn agent_edit(&mut self, args_str: &str) {
+        match parse_agent_args(args_str) {
+            Ok(parsed) => {
+                let path = self.agents_dir().join(format!("{}.json", parsed.name));
+                match std::fs::read_to_string(&path) {
+                    Ok(content) => {
+                        let mut profile: serde_json::Value =
+                            serde_json::from_str(&content).unwrap_or_default();
+                        if let Some(ref system) = parsed.system {
+                            profile["system"] = serde_json::json!(system);
+                        }
+                        if let Some(ref model) = parsed.model {
+                            profile["model"] = serde_json::json!(model);
+                        }
+                        match serde_json::to_string_pretty(&profile) {
+                            Ok(updated) => match std::fs::write(&path, updated) {
+                                Ok(()) => {
+                                    let _ =
+                                        writeln!(self.writer, "Agent '{}' updated", parsed.name);
+                                }
+                                Err(e) => {
+                                    let _ = writeln!(self.writer, "Error: {}", e);
+                                }
+                            },
+                            Err(e) => {
+                                let _ = writeln!(self.writer, "Error: {}", e);
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        let _ = writeln!(self.writer, "Error: agent '{}' not found", parsed.name);
+                    }
+                }
+            }
+            Err(msg) => {
+                let _ = writeln!(self.writer, "Error: {}", msg);
+            }
+        }
+    }
+
+    fn agent_remove(&mut self, args_str: &str) {
+        let name = args_str.trim();
+        if name.is_empty() {
+            let _ = writeln!(self.writer, "Error: missing agent name");
+            return;
+        }
+
+        let path = self.agents_dir().join(format!("{}.json", name));
+        if !path.exists() {
+            let _ = writeln!(self.writer, "Error: agent '{}' not found", name);
+            return;
+        }
+
+        match std::fs::remove_file(&path) {
+            Ok(()) => {
+                let _ = writeln!(self.writer, "Agent '{}' removed", name);
+            }
+            Err(e) => {
+                let _ = writeln!(self.writer, "Error: {}", e);
+            }
+        }
+    }
+
+    fn agent_run(&mut self, args_str: &str, rt: &tokio::runtime::Runtime) {
+        let parts: Vec<&str> = args_str.splitn(2, char::is_whitespace).collect();
+        let name = parts.first().copied().unwrap_or("").trim();
+        let task = if parts.len() > 1 { parts[1].trim() } else { "" };
+
+        if name.is_empty() {
+            let _ = writeln!(self.writer, "Error: missing agent name");
+            return;
+        }
+
+        // Load profile
+        let path = self.agents_dir().join(format!("{}.json", name));
+        let profile = match std::fs::read_to_string(&path) {
+            Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(p) => p,
+                Err(_) => {
+                    let _ = writeln!(self.writer, "Error: invalid profile for '{}'", name);
+                    return;
+                }
+            },
+            Err(_) => {
+                let _ = writeln!(self.writer, "Error: agent '{}' not found", name);
+                return;
+            }
+        };
+
+        if task.is_empty() {
+            let _ = writeln!(self.writer, "Error: missing task description");
+            return;
+        }
+
+        // Get the profile's system prompt
+        let system = profile["system"].as_str().unwrap_or("").to_string();
+
+        // Inject system prompt for this run
+        let system_idx = if !system.is_empty() {
+            let idx = self.session.messages.len();
+            self.session.messages.push(Message {
+                role: Role::System,
+                content: system,
+                tool_calls: vec![],
+                tool_call_id: None,
+            });
+            Some(idx)
+        } else {
+            None
+        };
+
+        self.session.messages.push(Message {
+            role: Role::User,
+            content: task.to_string(),
+            tool_calls: vec![],
+            tool_call_id: None,
+        });
+
+        let result = rt.block_on(self.session.agent.process(&mut self.session.messages));
+
+        // Remove the injected system prompt
+        if let Some(idx) = system_idx {
+            if idx < self.session.messages.len() && self.session.messages[idx].role == Role::System
+            {
+                self.session.messages.remove(idx);
+            }
+        }
+
+        match result {
+            Ok(r) => {
+                let _ = writeln!(self.writer, "{}", r.response);
+            }
+            Err(e) => {
+                let _ = writeln!(self.writer, "Error: {e}");
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Config helpers
     // -----------------------------------------------------------------------
 
@@ -819,6 +1114,84 @@ fn shell_split_repl(s: &str) -> Vec<String> {
         }
     }
     tokens
+}
+
+// ===========================================================================
+// /agent argument parser
+// ===========================================================================
+
+/// Parsed arguments for `/agent create` or `/agent edit`.
+#[derive(Debug)]
+struct ParsedAgentArgs {
+    name: String,
+    system: Option<String>,
+    model: Option<String>,
+}
+
+/// Parse `/agent create|edit <name> [--system ...] [--model ...]`
+///
+/// The name is the first token. `--system` collects all subsequent tokens
+/// until the next `--` flag (or end). `--model` takes a single token.
+fn parse_agent_args(args_str: &str) -> Result<ParsedAgentArgs, String> {
+    let tokens = shell_split_repl(args_str);
+    if tokens.is_empty() {
+        return Err("missing agent name".to_string());
+    }
+
+    let name = tokens[0].clone();
+    let mut system: Option<String> = None;
+    let mut model: Option<String> = None;
+
+    let mut i = 1;
+    while i < tokens.len() {
+        match tokens[i].as_str() {
+            "--system" => {
+                if i + 1 < tokens.len() {
+                    let mut parts = Vec::new();
+                    i += 1;
+                    while i < tokens.len() && !tokens[i].starts_with("--") {
+                        parts.push(tokens[i].clone());
+                        i += 1;
+                    }
+                    if parts.is_empty() {
+                        return Err("--system requires a value".to_string());
+                    }
+                    system = Some(parts.join(" "));
+                } else {
+                    return Err("--system requires a value".to_string());
+                }
+            }
+            "--model" => {
+                if i + 1 < tokens.len() {
+                    model = Some(tokens[i + 1].clone());
+                    i += 2;
+                } else {
+                    return Err("--model requires a value".to_string());
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    Ok(ParsedAgentArgs {
+        name,
+        system,
+        model,
+    })
+}
+
+/// Check whether an agent name is valid (safe for use as a filename).
+///
+/// Allowed: ASCII alphanumeric, hyphens, underscores. 1-64 characters.
+fn is_valid_agent_name(name: &str) -> bool {
+    let len = name.len();
+    if len == 0 || len > 64 {
+        return false;
+    }
+    name.chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
 }
 
 /// Build a tokio runtime for REPL execution.
@@ -1088,5 +1461,69 @@ mod tests {
     fn test_heartbeat_interval_parsing_invalid() {
         let val: Result<u32, _> = "abc".parse();
         assert!(val.is_err());
+    }
+
+    // -- /agent argument parser tests --
+
+    #[test]
+    fn test_parse_agent_args_with_system() {
+        let parsed = parse_agent_args("researcher --system You are a research specialist").unwrap();
+        assert_eq!(parsed.name, "researcher");
+        assert_eq!(
+            parsed.system.as_deref(),
+            Some("You are a research specialist")
+        );
+        assert!(parsed.model.is_none());
+    }
+
+    #[test]
+    fn test_parse_agent_args_with_system_and_model() {
+        let parsed =
+            parse_agent_args("fast-bot --system Quick answers only --model gpt-5-mini").unwrap();
+        assert_eq!(parsed.name, "fast-bot");
+        assert_eq!(parsed.system.as_deref(), Some("Quick answers only"));
+        assert_eq!(parsed.model.as_deref(), Some("gpt-5-mini"));
+    }
+
+    #[test]
+    fn test_parse_agent_args_model_only() {
+        let parsed = parse_agent_args("researcher --model gpt-5-mini").unwrap();
+        assert_eq!(parsed.name, "researcher");
+        assert!(parsed.system.is_none());
+        assert_eq!(parsed.model.as_deref(), Some("gpt-5-mini"));
+    }
+
+    #[test]
+    fn test_parse_agent_args_empty() {
+        let err = parse_agent_args("").unwrap_err();
+        assert!(err.contains("missing agent name"), "{}", err);
+    }
+
+    #[test]
+    fn test_parse_agent_args_name_only() {
+        let parsed = parse_agent_args("nameless").unwrap();
+        assert_eq!(parsed.name, "nameless");
+        assert!(parsed.system.is_none());
+        assert!(parsed.model.is_none());
+    }
+
+    // -- Agent name validation tests --
+
+    #[test]
+    fn test_valid_agent_names() {
+        assert!(is_valid_agent_name("researcher"));
+        assert!(is_valid_agent_name("fast-bot"));
+        assert!(is_valid_agent_name("my_agent_1"));
+        assert!(is_valid_agent_name("A"));
+    }
+
+    #[test]
+    fn test_invalid_agent_names() {
+        assert!(!is_valid_agent_name(""));
+        assert!(!is_valid_agent_name("../escape"));
+        assert!(!is_valid_agent_name("bad name"));
+        assert!(!is_valid_agent_name("bad/name"));
+        assert!(!is_valid_agent_name("bad.name"));
+        assert!(!is_valid_agent_name(&"a".repeat(65)));
     }
 }
