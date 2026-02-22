@@ -185,7 +185,7 @@ fn test_skills_remove_not_found() {
 }
 
 #[test]
-fn test_skills_install_not_implemented() {
+fn test_skills_install_missing_path() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
@@ -193,7 +193,49 @@ fn test_skills_install_not_implemented() {
     };
     let out = run_with_output(args("skills install"), &ctx);
     assert_eq!(out.exit_code, 1);
-    assert!(out.stderr.contains("not yet implemented"));
+    assert!(out.stderr.contains("missing skill path"));
+}
+
+#[test]
+fn test_skills_install_invalid_path() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
+    let out = run_with_output(args("skills install invalid-path"), &ctx);
+    assert_eq!(out.exit_code, 1);
+    assert!(out.stderr.contains("invalid skill path"));
+}
+
+#[test]
+fn test_skills_install_already_exists() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let skill_dir = tmp.path().join("workspace").join("skills").join("weather");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
+    let out = run_with_output(args("skills install user/repo/weather"), &ctx);
+    assert_eq!(out.exit_code, 1);
+    assert!(out.stderr.contains("already exists"));
+}
+
+#[test]
+fn test_skills_install_creates_skill_files() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
+    let out = run_with_output(args("skills install user/repo/weather"), &ctx);
+    assert_eq!(out.exit_code, 0);
+    assert!(out.stdout.contains("installed"));
+
+    let skill_dir = tmp.path().join("workspace").join("skills").join("weather");
+    assert!(skill_dir.is_dir());
+    assert!(skill_dir.join("SKILL.md").is_file());
 }
 
 #[test]

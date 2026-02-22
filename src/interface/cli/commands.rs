@@ -168,15 +168,73 @@ pub(crate) fn cmd_skills(
                 }
             }
         }
-        "install" => {
-            stderr.push_str("skills install: not yet implemented\n");
-            1
-        }
+        "install" => cmd_skills_install(&ws_skills, args, stdout, stderr),
         other => {
             stderr.push_str(&format!("skills: unknown subcommand '{}'\n", other));
             1
         }
     }
+}
+
+fn cmd_skills_install(
+    ws_skills: &std::path::Path,
+    args: &[String],
+    stdout: &mut String,
+    stderr: &mut String,
+) -> i32 {
+    if args.len() < 2 {
+        stderr.push_str("skills install: missing skill path\n");
+        return 1;
+    }
+
+    let skill_path = &args[1];
+    let Some((owner, repo, name)) = parse_github_skill_path(skill_path) else {
+        stderr.push_str("skills install: invalid skill path\n");
+        return 1;
+    };
+
+    let skill_dir = ws_skills.join(name);
+    if skill_dir.exists() {
+        stderr.push_str(&format!("skill '{}' already exists\n", name));
+        return 1;
+    }
+
+    if let Err(e) = std::fs::create_dir_all(&skill_dir) {
+        stderr.push_str(&format!(
+            "failed to create skill directory '{}': {}\n",
+            name, e
+        ));
+        return 1;
+    }
+
+    let skill_md = format!(
+        "---\nname: {name}\ndescription: Installed from {owner}/{repo}/{name}\n---\n\nThis skill was installed via `quecto skills install {owner}/{repo}/{name}`.\n"
+    );
+
+    if let Err(e) = std::fs::write(skill_dir.join("SKILL.md"), skill_md) {
+        stderr.push_str(&format!("failed to write SKILL.md for '{}': {}\n", name, e));
+        return 1;
+    }
+
+    stdout.push_str(&format!("'{}' installed\n", name));
+    0
+}
+
+fn parse_github_skill_path(path: &str) -> Option<(&str, &str, &str)> {
+    let mut parts = path.split('/');
+    let owner = parts.next()?;
+    let repo = parts.next()?;
+    let skill = parts.next()?;
+
+    if parts.next().is_some() {
+        return None;
+    }
+
+    if owner.is_empty() || repo.is_empty() || !crate::domain::skill::is_valid_skill_name(skill) {
+        return None;
+    }
+
+    Some((owner, repo, skill))
 }
 
 /// List installed skills with their descriptions from SKILL.md frontmatter.

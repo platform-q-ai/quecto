@@ -53,6 +53,14 @@ fn given_workspace_skill_installed(world: &mut QuectoWorld, name: String) {
     std::fs::write(skill_dir.join("SKILL.md"), content).expect("write SKILL.md");
 }
 
+#[given(expr = "a mock GitHub API serving a skill repository at {string}")]
+fn given_mock_github_api_serving_skill_repository(world: &mut QuectoWorld, _repo: String) {
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let server = rt.block_on(async { wiremock::MockServer::start().await });
+    let leaked: &'static wiremock::MockServer = Box::leak(Box::new(server));
+    world.wiremock_server_ref = Some(leaked);
+}
+
 #[given("an empty skill loader")]
 fn given_empty_skill_loader(world: &mut QuectoWorld) {
     ensure_skill_dirs(world);
@@ -164,6 +172,43 @@ fn then_loaded_skill_content_not_contain(world: &mut QuectoWorld, unexpected: St
         "expected skill content to NOT contain '{}', got: {}",
         unexpected,
         loaded.content
+    );
+}
+
+#[then(expr = "the workspace should contain a skill directory {string}")]
+fn then_workspace_should_contain_skill_directory(world: &mut QuectoWorld, name: String) {
+    let skill_dir = base_path(world)
+        .join("workspace")
+        .join("skills")
+        .join(&name);
+    assert!(
+        skill_dir.is_dir(),
+        "workspace should contain a skill directory at {}",
+        skill_dir.display()
+    );
+}
+
+#[then(expr = "the skill directory should contain a {string} file")]
+fn then_skill_directory_should_contain_file(world: &mut QuectoWorld, filename: String) {
+    let skills_root = base_path(world).join("workspace").join("skills");
+    let mut skill_dirs = std::fs::read_dir(&skills_root)
+        .expect("skills directory should exist")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect::<Vec<_>>();
+
+    skill_dirs.sort();
+    let skill_dir = skill_dirs
+        .first()
+        .unwrap_or_else(|| panic!("no skill directories found in {}", skills_root.display()));
+
+    let file_path = skill_dir.join(&filename);
+    assert!(
+        file_path.is_file(),
+        "expected file '{}' at {}",
+        filename,
+        file_path.display()
     );
 }
 
