@@ -40,12 +40,11 @@ Feature: REPL Spawn Command
     Then stdout should contain "Bonjour"
     And a child quecto process should have been spawned
 
-  Scenario: /spawn with model override
-    Given the mock LLM returns a text response "Quick response from mini"
+  Scenario: /spawn with model override is rejected
     When I start quecto in REPL mode
     And I type "/spawn --model gpt-5-mini Summarize briefly"
     And I type "/exit"
-    Then stdout should contain "Quick response from mini"
+    Then stdout should contain "not supported in REPL mode"
 
   # --- Error handling ---
 

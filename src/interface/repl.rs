@@ -919,10 +919,12 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
             return;
         }
 
-        // Note: model override is accepted but not applied in REPL mode
-        // because the agent is constructed once at startup.
-        if let Some(ref model) = parsed.model {
-            tracing::debug!(model = %model, "spawn --model flag accepted but not applied in REPL");
+        if parsed.model.is_some() {
+            let _ = writeln!(
+                self.writer,
+                "Error: --model is not supported in REPL mode (agent uses the model from startup)"
+            );
+            return;
         }
 
         // Resolve system prompt: from --agent profile or --system flag
@@ -1010,7 +1012,10 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
             "  --agent <name>       Use a named agent profile"
         );
         let _ = writeln!(self.writer, "  --system <prompt>    Set a system prompt");
-        let _ = writeln!(self.writer, "  --model <model>      Override the model");
+        let _ = writeln!(
+            self.writer,
+            "  --model <model>      Not supported in REPL mode"
+        );
         let _ = writeln!(
             self.writer,
             "  --max-time <secs>    Set a timeout in seconds"
@@ -1227,31 +1232,35 @@ fn parse_cron_add_args(args_str: &str) -> Result<ParsedCronAdd, String> {
 ///
 /// Handles single-quoted and double-quoted strings. Does not handle
 /// backslash escapes (sufficient for REPL slash command parsing).
+/// Uses `chars()` iteration to correctly handle multi-byte UTF-8.
 fn shell_split_repl(s: &str) -> Vec<String> {
     let mut tokens = Vec::new();
-    let bytes = s.as_bytes();
-    let mut i = 0;
+    let mut chars = s.chars().peekable();
 
-    while i < bytes.len() {
-        if bytes[i] == b' ' {
-            i += 1;
+    while let Some(&ch) = chars.peek() {
+        if ch == ' ' {
+            chars.next();
             continue;
         }
         let mut current = String::new();
-        if bytes[i] == b'\'' || bytes[i] == b'"' {
-            let quote = bytes[i];
-            i += 1;
-            while i < bytes.len() && bytes[i] != quote {
-                current.push(bytes[i] as char);
-                i += 1;
-            }
-            if i < bytes.len() {
-                i += 1;
+        if ch == '\'' || ch == '"' {
+            let quote = ch;
+            chars.next();
+            while let Some(&c) = chars.peek() {
+                if c == quote {
+                    chars.next();
+                    break;
+                }
+                current.push(c);
+                chars.next();
             }
         } else {
-            while i < bytes.len() && bytes[i] != b' ' && bytes[i] != b'\'' && bytes[i] != b'"' {
-                current.push(bytes[i] as char);
-                i += 1;
+            while let Some(&c) = chars.peek() {
+                if c == ' ' || c == '\'' || c == '"' {
+                    break;
+                }
+                current.push(c);
+                chars.next();
             }
         }
         if !current.is_empty() {
@@ -1660,6 +1669,19 @@ mod tests {
     fn test_shell_split_repl_quotes() {
         let tokens = shell_split_repl("--cron '0 9 * * *' --message Hello");
         assert_eq!(tokens, vec!["--cron", "0 9 * * *", "--message", "Hello"]);
+    }
+
+    #[test]
+    fn test_shell_split_repl_utf8() {
+        // Multi-byte UTF-8: accented chars, CJK, emoji
+        let tokens = shell_split_repl("--message 'café résumé'");
+        assert_eq!(tokens, vec!["--message", "café résumé"]);
+
+        let tokens = shell_split_repl("hello 世界");
+        assert_eq!(tokens, vec!["hello", "世界"]);
+
+        let tokens = shell_split_repl("--system '你好世界' task");
+        assert_eq!(tokens, vec!["--system", "你好世界", "task"]);
     }
 
     // -- Heartbeat add argument parsing tests --
