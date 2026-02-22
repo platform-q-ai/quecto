@@ -541,6 +541,10 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
     fn heartbeat_interval(&mut self, args_str: &str) {
         let val_str = args_str.trim();
         let seconds: u32 = match val_str.parse() {
+            Ok(0) => {
+                let _ = writeln!(self.writer, "Error: interval must be at least 1 second");
+                return;
+            }
             Ok(n) => n,
             Err(_) => {
                 let _ = writeln!(self.writer, "Error: invalid interval '{}'", val_str);
@@ -613,6 +617,20 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
 
     fn agents_dir(&self) -> PathBuf {
         self.session.base_dir.join("agents")
+    }
+
+    /// Validate and return the path to an agent profile. Returns an error
+    /// message if the name is empty or contains path traversal characters.
+    fn validated_agent_path(&mut self, name: &str) -> Option<PathBuf> {
+        if name.is_empty() {
+            let _ = writeln!(self.writer, "Error: missing agent name");
+            return None;
+        }
+        if !is_valid_agent_name(name) {
+            let _ = writeln!(self.writer, "Error: invalid agent name '{}'", name);
+            return None;
+        }
+        Some(self.agents_dir().join(format!("{}.json", name)))
     }
 
     fn agent_usage(&mut self) {
@@ -715,12 +733,9 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
 
     fn agent_show(&mut self, args_str: &str) {
         let name = args_str.trim();
-        if name.is_empty() {
-            let _ = writeln!(self.writer, "Error: missing agent name");
+        let Some(path) = self.validated_agent_path(name) else {
             return;
-        }
-
-        let path = self.agents_dir().join(format!("{}.json", name));
+        };
         match std::fs::read_to_string(&path) {
             Ok(content) => {
                 if let Ok(profile) = serde_json::from_str::<serde_json::Value>(&content) {
@@ -744,7 +759,9 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
     fn agent_edit(&mut self, args_str: &str) {
         match parse_agent_args(args_str) {
             Ok(parsed) => {
-                let path = self.agents_dir().join(format!("{}.json", parsed.name));
+                let Some(path) = self.validated_agent_path(&parsed.name) else {
+                    return;
+                };
                 match std::fs::read_to_string(&path) {
                     Ok(content) => {
                         let mut profile: serde_json::Value =
@@ -783,12 +800,9 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
 
     fn agent_remove(&mut self, args_str: &str) {
         let name = args_str.trim();
-        if name.is_empty() {
-            let _ = writeln!(self.writer, "Error: missing agent name");
+        let Some(path) = self.validated_agent_path(name) else {
             return;
-        }
-
-        let path = self.agents_dir().join(format!("{}.json", name));
+        };
         if !path.exists() {
             let _ = writeln!(self.writer, "Error: agent '{}' not found", name);
             return;
@@ -809,13 +823,11 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
         let name = parts.first().copied().unwrap_or("").trim();
         let task = if parts.len() > 1 { parts[1].trim() } else { "" };
 
-        if name.is_empty() {
-            let _ = writeln!(self.writer, "Error: missing agent name");
+        let Some(path) = self.validated_agent_path(name) else {
             return;
-        }
+        };
 
         // Load profile
-        let path = self.agents_dir().join(format!("{}.json", name));
         let profile = match std::fs::read_to_string(&path) {
             Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
                 Ok(p) => p,
@@ -838,39 +850,36 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
         // Get the profile's system prompt
         let system = profile["system"].as_str().unwrap_or("").to_string();
 
-        // Inject system prompt for this run
-        let system_idx = if !system.is_empty() {
-            let idx = self.session.messages.len();
-            self.session.messages.push(Message {
+        // Build ephemeral message list (same pattern as /spawn for session isolation)
+        let mut run_messages = Vec::new();
+
+        if !system.is_empty() {
+            run_messages.push(Message {
                 role: Role::System,
                 content: system,
                 tool_calls: vec![],
                 tool_call_id: None,
             });
-            Some(idx)
-        } else {
-            None
-        };
+        }
 
-        self.session.messages.push(Message {
+        run_messages.push(Message {
             role: Role::User,
             content: task.to_string(),
             tool_calls: vec![],
             tool_call_id: None,
         });
 
-        let result = rt.block_on(self.session.agent.process(&mut self.session.messages));
-
-        // Remove the injected system prompt
-        if let Some(idx) = system_idx {
-            if idx < self.session.messages.len() && self.session.messages[idx].role == Role::System
-            {
-                self.session.messages.remove(idx);
-            }
-        }
+        let result = rt.block_on(self.session.agent.process(&mut run_messages));
 
         match result {
             Ok(r) => {
+                // Inject only the result into the parent conversation
+                self.session.messages.push(Message {
+                    role: Role::Assistant,
+                    content: r.response.clone(),
+                    tool_calls: vec![],
+                    tool_call_id: None,
+                });
                 let _ = writeln!(self.writer, "{}", r.response);
             }
             Err(e) => {
@@ -918,7 +927,9 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
 
         // Resolve system prompt: from --agent profile or --system flag
         let system = if let Some(ref agent_name) = parsed.agent {
-            let path = self.agents_dir().join(format!("{}.json", agent_name));
+            let Some(path) = self.validated_agent_path(agent_name) else {
+                return;
+            };
             match std::fs::read_to_string(&path) {
                 Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
                     Ok(profile) => profile["system"].as_str().map(String::from),
