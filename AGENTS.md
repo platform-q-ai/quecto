@@ -106,7 +106,7 @@ Runs an interactive read-eval-print loop. The REPL reads user input line by line
 | `--system` | System prompt prepended to each turn (not persisted) |
 | `--model` | Override the default model from config |
 
-REPL commands: `/help` (show commands), `/clear` (reset history), `/exit` or `/quit` (exit). Ctrl+D (EOF) also exits cleanly.
+REPL commands: `/help` (show commands), `/clear` (reset history), `/cron` (manage cron jobs), `/heartbeat` (manage heartbeat tasks), `/agent` (manage subagent profiles), `/spawn` (spawn child agent tasks), `/exit` or `/quit` (exit). Ctrl+D (EOF) also exits cleanly.
 
 The REPL uses abstracted I/O (`BufRead` + `Write` traits) instead of hardcoded stdin/stdout. This allows:
 - Interactive terminal use (stdin/stdout with TTY detection for prompt/banner)
@@ -171,9 +171,9 @@ Refactor
 @wip -> @done       Tag the feature
 ```
 
-The BDD runner (`tests/bdd/main.rs`) uses `.fail_on_skipped()` and runs features tagged `@wip` or `@done`. This means all completed features are regression-tested on every run. Scenarios tagged `@pending` are always excluded. Scenarios tagged `@real-llm` are excluded unless `QUECTO_REAL_LLM=1` is set (requires `OPENAI_API_KEY` via env var or `.env` file). Set `QUECTO_TAG=<tag>` to run only scenarios matching a specific tag (e.g. smoke: `timeout 5m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm-smoke cargo test --test bdd`, full: `timeout 5m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm cargo test --test bdd`). Step definitions live in `tests/bdd/` split across 18 module files (~6500 lines total).
+The BDD runner (`tests/bdd/main.rs`) uses `.fail_on_skipped()` and runs features tagged `@wip` or `@done`. This means all completed features are regression-tested on every run. Scenarios tagged `@pending` are always excluded. Scenarios tagged `@real-llm` are excluded unless `QUECTO_REAL_LLM=1` is set (requires `OPENAI_API_KEY` via env var or `.env` file). Set `QUECTO_TAG=<tag>` to run only scenarios matching a specific tag (e.g. smoke: `timeout 5m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm-smoke cargo test --test bdd`, full: `timeout 5m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm cargo test --test bdd`). Step definitions live in `tests/bdd/` split across 19 module files (~9000 lines total).
 
-Feature files live in `tests/features/`. There are 35 feature files covering: agent_cli, agent_loop, agent_tools, auth, cli, config, cron, e2e_agentic_loop, e2e_providers, e2e_real_llm, e2e_real_llm_agent_matrix, e2e_real_llm_entrypoints, e2e_real_llm_entrypoints_matrix, e2e_real_llm_gateway, e2e_real_llm_gateway_matrix, e2e_real_llm_repl, e2e_real_llm_repl_matrix, e2e_safety, e2e_session, e2e_session_tools, e2e_skills, e2e_subprocess, e2e_tool_use, heartbeat, observability, onboard, providers, repl, sandbox_hardening, security, session, skills, subagent, telegram, voice.
+Feature files live in `tests/features/`. There are 44 feature files covering: agent_cli, agent_loop, agent_tools, auth, cli, config, cron, e2e_agentic_loop, e2e_gateway_cron, e2e_gateway_health, e2e_gateway_heartbeat, e2e_gateway_spawn, e2e_gateway_voice, e2e_providers, e2e_real_llm, e2e_real_llm_agent_matrix, e2e_real_llm_entrypoints, e2e_real_llm_entrypoints_matrix, e2e_real_llm_gateway, e2e_real_llm_gateway_matrix, e2e_real_llm_repl, e2e_real_llm_repl_matrix, e2e_repl_agents, e2e_repl_cron, e2e_repl_heartbeat, e2e_repl_spawn, e2e_safety, e2e_session, e2e_session_tools, e2e_skills, e2e_subprocess, e2e_tool_use, heartbeat, observability, onboard, providers, repl, sandbox_hardening, security, session, skills, subagent, telegram, voice.
 
 ## Quality gates
 
@@ -182,7 +182,7 @@ scripts/check-quality.sh       Work markers, lint bypasses, unsafe, ignored test
 scripts/check-bdd-quality.sh   BDD anti-pattern detection (tests/bdd/)
 cargo fmt --check              Formatting
 cargo clippy -- -D warnings    Lints (zero warnings policy)
-cargo test --lib               367 unit tests
+cargo test --lib               442 unit tests
 cargo test --test architecture Clean Architecture boundary enforcement
 cargo test --test bdd          BDD scenarios in `@done`/`@wip` features (`@real-llm` gated unless `QUECTO_REAL_LLM=1`)
 ```

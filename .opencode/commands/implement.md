@@ -3,6 +3,8 @@ description: Implement feature with ultra-fast local quality gates and pre-PR re
 agent: build
 ---
 
+**ALWAYS ADD THE FULL BDD CYCLE RED - GREEN - REFACTOR PROCESS TO YOUR TODO LIST**
+
 `$ARGUMENTS`
 
 ## Goals
@@ -102,3 +104,5 @@ Report:
 - Reviewer findings summary (fixed/skipped)
 - Commit hash/message
 - PR URL (if pushed)
+
+**ALWAYS ADD THE FULL BDD CYCLE RED - GREEN - REFACTOR PROCESS TO YOUR TODO LIST**
