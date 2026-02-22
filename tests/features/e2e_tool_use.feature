@@ -39,6 +39,15 @@ Feature: End-to-End Tool Execution
     Then the exit code should be 0
     And stdout should contain "hello from shell"
 
+  @done @e2e-tool-use
+  Scenario: LLM exec tool with large output completes within max-time
+    Given the mock LLM first returns a tool call for "exec" with args:
+      | command | printf 'x%.0s' {1..100000} |
+    And the mock LLM then returns a text response "Large output command completed"
+    When I run quecto agent -s - --max-time 4 -m "Run a large output command"
+    Then the exit code should be 0
+    And stdout should contain "Large output command completed"
+
   @done
   Scenario: LLM lists a directory via tool call
     Given a file "a.txt" in the e2e workspace with content "a"

@@ -310,7 +310,11 @@ pub fn run_repl<R: BufRead, W: Write>(
         Some(workspace.clone()),
         ctx.config.agents.defaults.restrict_to_workspace,
     );
-    let registry = ToolRegistryImpl::with_core_tools(workspace, sandbox);
+    let registry = ToolRegistryImpl::with_core_tools_and_exec_capture_bytes(
+        workspace,
+        sandbox,
+        ctx.config.agents.defaults.exec_max_capture_bytes,
+    );
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: ctx.provider.clone(),
         tool_registry: Box::new(registry),

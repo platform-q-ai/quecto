@@ -17,11 +17,16 @@ const DEFAULT_EXEC_TIMEOUT: Duration = Duration::from_secs(30);
 /// Prefix for environment variables that should be stripped from child processes.
 const SECRET_ENV_PREFIX: &str = "QUECTO_";
 
+/// Maximum bytes captured per stream (stdout and stderr) to avoid unbounded memory growth.
+const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
+const STREAM_DRAIN_TIMEOUT_ON_KILL: Duration = Duration::from_millis(250);
+
 /// Tool that executes shell commands within the workspace.
 pub struct ExecTool {
     workspace: Arc<PathBuf>,
     sandbox: Arc<Sandbox>,
     timeout: Duration,
+    max_capture_bytes: usize,
 }
 
 impl std::fmt::Debug for ExecTool {
@@ -29,6 +34,7 @@ impl std::fmt::Debug for ExecTool {
         f.debug_struct("ExecTool")
             .field("workspace", &self.workspace)
             .field("timeout", &self.timeout)
+            .field("max_capture_bytes", &self.max_capture_bytes)
             .finish()
     }
 }
@@ -40,6 +46,7 @@ impl ExecTool {
             workspace,
             sandbox,
             timeout: DEFAULT_EXEC_TIMEOUT,
+            max_capture_bytes: MAX_CAPTURE_BYTES,
         }
     }
 
@@ -49,6 +56,22 @@ impl ExecTool {
             workspace,
             sandbox,
             timeout,
+            max_capture_bytes: MAX_CAPTURE_BYTES,
+        }
+    }
+
+    /// Create a new exec tool with custom timeout and output capture cap.
+    pub fn with_limits(
+        workspace: Arc<PathBuf>,
+        sandbox: Arc<Sandbox>,
+        timeout: Duration,
+        max_capture_bytes: usize,
+    ) -> Self {
+        Self {
+            workspace,
+            sandbox,
+            timeout,
+            max_capture_bytes,
         }
     }
 
@@ -83,43 +106,15 @@ impl ExecTool {
         arguments: &str,
         env_overrides: Option<&HashMap<String, String>>,
     ) -> Result<ToolResult, DomainError> {
-        let args: serde_json::Value =
-            serde_json::from_str(arguments).map_err(|e| DomainError::Tool(e.to_string()))?;
-
-        let command = args["command"]
-            .as_str()
-            .ok_or_else(|| DomainError::Tool("missing 'command' argument".to_string()))?;
+        let command = extract_command(arguments)?;
 
         // Validate command against sandbox
         self.sandbox
-            .validate_command(command)
+            .validate_command(&command)
             .map_err(|e| DomainError::Security(e.to_string()))?;
 
-        // Build the command
-        let mut cmd = tokio::process::Command::new("sh");
-        cmd.arg("-c")
-            .arg(command)
-            .current_dir(self.workspace.as_ref())
-            .env_clear();
-
-        // Build the environment: always strip QUECTO_ prefixed vars
-        let source_env: HashMap<String, String> = match env_overrides {
-            Some(overrides) => overrides.clone(),
-            None => std::env::vars().collect(),
-        };
-
-        for (k, v) in &source_env {
-            if !k.starts_with(SECRET_ENV_PREFIX) {
-                cmd.env(k, v);
-            }
-        }
-
-        // Ensure PATH is always set so commands can be found
-        if !source_env.contains_key("PATH") {
-            if let Ok(path) = std::env::var("PATH") {
-                cmd.env("PATH", path);
-            }
-        }
+        let source_env = build_source_env(env_overrides);
+        let mut cmd = build_shell_command(self.workspace.as_ref(), &command, &source_env);
 
         // Spawn the child process so we can kill it on timeout.
         // We use spawn + wait (not output) so we retain a handle to kill the process.
@@ -129,72 +124,193 @@ impl ExecTool {
             .spawn()
             .map_err(|e| DomainError::Tool(format!("exec failed: {}", e)))?;
 
-        // Take stdout/stderr handles before waiting, so we can read them after wait completes
-        // while still retaining the child handle for kill.
-        let mut stdout_pipe = child.stdout.take();
-        let mut stderr_pipe = child.stderr.take();
+        // Start draining stdout/stderr immediately so child processes do not block on full pipes.
+        let stdout_task = child
+            .stdout
+            .take()
+            .map(|pipe| tokio::spawn(read_stream_limited(pipe, self.max_capture_bytes)));
+        let stderr_task = child
+            .stderr
+            .take()
+            .map(|pipe| tokio::spawn(read_stream_limited(pipe, self.max_capture_bytes)));
 
-        let timeout_dur = self.timeout;
+        let stream_tasks = StreamTasks {
+            stdout_task,
+            stderr_task,
+        };
 
-        match tokio::time::timeout(timeout_dur, child.wait()).await {
-            Ok(Ok(status)) => {
-                // Child exited — read captured output
-                let stdout = read_pipe(&mut stdout_pipe).await;
-                let stderr = read_stderr_pipe(&mut stderr_pipe).await;
+        run_child_with_timeout(child, stream_tasks, self.timeout, self.max_capture_bytes).await
+    }
+}
 
-                if status.success() {
-                    Ok(ToolResult {
-                        content: stdout,
-                        is_error: false,
-                    })
-                } else {
-                    Ok(ToolResult {
-                        content: format!(
-                            "exit code {}\nstdout: {}\nstderr: {}",
-                            status, stdout, stderr
-                        ),
-                        is_error: true,
-                    })
-                }
-            }
-            Ok(Err(e)) => Err(DomainError::Tool(format!("exec failed: {}", e))),
-            Err(_) => {
-                // Timeout: kill the child process to prevent orphan leak
-                let _ = child.kill().await;
+fn extract_command(arguments: &str) -> Result<String, DomainError> {
+    let args: serde_json::Value =
+        serde_json::from_str(arguments).map_err(|e| DomainError::Tool(e.to_string()))?;
+    args["command"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| DomainError::Tool("missing 'command' argument".to_string()))
+}
+
+fn build_source_env(env_overrides: Option<&HashMap<String, String>>) -> HashMap<String, String> {
+    match env_overrides {
+        Some(overrides) => overrides.clone(),
+        None => std::env::vars().collect(),
+    }
+}
+
+fn build_shell_command(
+    workspace: &PathBuf,
+    command: &str,
+    source_env: &HashMap<String, String>,
+) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new("sh");
+    cmd.arg("-c")
+        .arg(command)
+        .current_dir(workspace)
+        .env_clear();
+
+    for (k, v) in source_env {
+        if !k.starts_with(SECRET_ENV_PREFIX) {
+            cmd.env(k, v);
+        }
+    }
+
+    if !source_env.contains_key("PATH") {
+        if let Ok(path) = std::env::var("PATH") {
+            cmd.env("PATH", path);
+        }
+    }
+
+    cmd
+}
+
+async fn run_child_with_timeout(
+    mut child: tokio::process::Child,
+    mut stream_tasks: StreamTasks,
+    timeout_dur: Duration,
+    max_capture_bytes: usize,
+) -> Result<ToolResult, DomainError> {
+    match tokio::time::timeout(timeout_dur, child.wait()).await {
+        Ok(Ok(status)) => {
+            let (stdout, stdout_truncated) =
+                await_stream_output(stream_tasks.stdout_task.take()).await;
+            let (stderr, stderr_truncated) =
+                await_stream_output(stream_tasks.stderr_task.take()).await;
+
+            let stdout = annotate_truncation(stdout, stdout_truncated, "stdout", max_capture_bytes);
+            let stderr = annotate_truncation(stderr, stderr_truncated, "stderr", max_capture_bytes);
+
+            if status.success() {
                 Ok(ToolResult {
-                    content: format!("command timed out after {}s", timeout_dur.as_secs()),
+                    content: stdout,
+                    is_error: false,
+                })
+            } else {
+                Ok(ToolResult {
+                    content: format!(
+                        "exit code {}\nstdout: {}\nstderr: {}",
+                        status, stdout, stderr
+                    ),
                     is_error: true,
                 })
             }
         }
+        Ok(Err(e)) => Err(DomainError::Tool(format!("exec failed: {}", e))),
+        Err(_) => {
+            // Timeout: kill the child process to prevent orphan leak
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            let _ = await_stream_output_with_timeout(
+                stream_tasks.stdout_task.take(),
+                STREAM_DRAIN_TIMEOUT_ON_KILL,
+            )
+            .await;
+            let _ = await_stream_output_with_timeout(
+                stream_tasks.stderr_task.take(),
+                STREAM_DRAIN_TIMEOUT_ON_KILL,
+            )
+            .await;
+            Ok(ToolResult {
+                content: format!("command timed out after {}s", timeout_dur.as_secs()),
+                is_error: true,
+            })
+        }
     }
 }
 
-/// Read all bytes from an optional pipe and return as a lossy UTF-8 string.
-async fn read_pipe(pipe: &mut Option<tokio::process::ChildStdout>) -> String {
-    // This helper is typed for ChildStdout; we use a separate one for stderr below.
+struct StreamTasks {
+    stdout_task: Option<tokio::task::JoinHandle<(String, bool)>>,
+    stderr_task: Option<tokio::task::JoinHandle<(String, bool)>>,
+}
+
+/// Read bytes from a process stream with a fixed capture cap.
+async fn read_stream_limited<R>(mut pipe: R, max_capture_bytes: usize) -> (String, bool)
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
     use tokio::io::AsyncReadExt;
-    match pipe.take() {
-        Some(mut p) => {
-            let mut buf = Vec::new();
-            let _ = p.read_to_end(&mut buf).await;
-            String::from_utf8_lossy(&buf).to_string()
+
+    let mut collected = Vec::new();
+    let mut chunk = [0_u8; 8192];
+    let mut truncated = false;
+
+    loop {
+        match pipe.read(&mut chunk).await {
+            Ok(0) => break,
+            Ok(n) => {
+                let remaining = max_capture_bytes.saturating_sub(collected.len());
+                if remaining > 0 {
+                    let keep = remaining.min(n);
+                    collected.extend_from_slice(&chunk[..keep]);
+                }
+                if n > remaining {
+                    truncated = true;
+                }
+            }
+            Err(_) => break,
         }
-        None => String::new(),
+    }
+
+    (String::from_utf8_lossy(&collected).to_string(), truncated)
+}
+
+async fn await_stream_output(
+    task: Option<tokio::task::JoinHandle<(String, bool)>>,
+) -> (String, bool) {
+    match task {
+        Some(handle) => (handle.await).unwrap_or_default(),
+        None => (String::new(), false),
     }
 }
 
-/// Read all bytes from an optional stderr pipe and return as a lossy UTF-8 string.
-async fn read_stderr_pipe(pipe: &mut Option<tokio::process::ChildStderr>) -> String {
-    use tokio::io::AsyncReadExt;
-    match pipe.take() {
-        Some(mut p) => {
-            let mut buf = Vec::new();
-            let _ = p.read_to_end(&mut buf).await;
-            String::from_utf8_lossy(&buf).to_string()
+async fn await_stream_output_with_timeout(
+    task: Option<tokio::task::JoinHandle<(String, bool)>>,
+    timeout: Duration,
+) -> (String, bool) {
+    if let Some(handle) = task {
+        match tokio::time::timeout(timeout, handle).await {
+            Ok(join) => join.unwrap_or_default(),
+            Err(_) => (String::new(), false),
         }
-        None => String::new(),
+    } else {
+        (String::new(), false)
     }
+}
+
+fn annotate_truncation(
+    mut content: String,
+    truncated: bool,
+    stream_name: &str,
+    max_capture_bytes: usize,
+) -> String {
+    if truncated {
+        content.push_str(&format!(
+            "\n[{} output truncated at {} bytes]",
+            stream_name, max_capture_bytes
+        ));
+    }
+    content
 }
 
 impl Tool for ExecTool {
@@ -280,6 +396,29 @@ mod tests {
         let result = tool.execute(r#"{"command": "echo fast"}"#).await.unwrap();
         assert!(!result.is_error);
         assert!(result.content.contains("fast"));
+    }
+
+    #[tokio::test]
+    async fn test_exec_large_output_completes_without_timeout() {
+        let tmp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
+        let tool = ExecTool::with_timeout(
+            Arc::new(tmp.path().to_path_buf()),
+            Arc::new(sandbox),
+            Duration::from_secs(1),
+        );
+
+        let result = tool
+            .execute(r#"{"command": "printf 'x%.0s' {1..100000}"}"#)
+            .await
+            .unwrap();
+
+        assert!(
+            !result.is_error,
+            "expected large output command to complete, got: {}",
+            result.content
+        );
+        assert!(result.content.contains('x'));
     }
 
     #[test]

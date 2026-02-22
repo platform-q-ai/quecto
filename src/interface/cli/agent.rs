@@ -225,7 +225,11 @@ pub(crate) fn build_agent_from_config(
         Some(workspace.clone()),
         config.agents.defaults.restrict_to_workspace,
     );
-    let registry = ToolRegistryImpl::with_core_tools(workspace, sandbox);
+    let registry = ToolRegistryImpl::with_core_tools_and_exec_capture_bytes(
+        workspace,
+        sandbox,
+        config.agents.defaults.exec_max_capture_bytes,
+    );
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),

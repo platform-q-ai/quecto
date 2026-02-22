@@ -41,6 +41,8 @@ pub struct AgentDefaults {
     pub max_tool_iterations: u32,
     #[serde(default = "default_true")]
     pub restrict_to_workspace: bool,
+    #[serde(default = "default_exec_max_capture_bytes")]
+    pub exec_max_capture_bytes: usize,
 }
 
 impl Default for AgentDefaults {
@@ -52,6 +54,7 @@ impl Default for AgentDefaults {
             temperature: default_temperature(),
             max_tool_iterations: default_max_tool_iterations(),
             restrict_to_workspace: true,
+            exec_max_capture_bytes: default_exec_max_capture_bytes(),
         }
     }
 }
@@ -219,6 +222,9 @@ fn default_temperature() -> f32 {
 }
 fn default_max_tool_iterations() -> u32 {
     20
+}
+fn default_exec_max_capture_bytes() -> usize {
+    1024 * 1024
 }
 fn default_true() -> bool {
     true
