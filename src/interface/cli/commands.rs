@@ -138,7 +138,8 @@ pub(crate) fn cmd_skills(
     stderr: &mut String,
 ) -> i32 {
     let base = ctx.base_dir();
-    let ws_skills = base.join("workspace").join("skills");
+    let workspace = resolve_workspace_for_skills(&base);
+    let ws_skills = workspace.join("skills");
     let github_raw_base = ctx
         .github_raw_base_url
         .as_deref()
@@ -150,7 +151,7 @@ pub(crate) fn cmd_skills(
     }
 
     match args[0].as_str() {
-        "list" => cmd_skills_list(&base, stdout),
+        "list" => cmd_skills_list(&workspace, stdout),
         "remove" => {
             if args.len() < 2 {
                 stderr.push_str("skills remove: missing skill name\n");
@@ -339,12 +340,11 @@ async fn download_skill_markdown_async(paths: Vec<String>) -> Result<String, Str
 }
 
 /// List installed skills with their descriptions from SKILL.md frontmatter.
-fn cmd_skills_list(base: &std::path::Path, stdout: &mut String) -> i32 {
+fn cmd_skills_list(workspace: &std::path::Path, stdout: &mut String) -> i32 {
     use crate::domain::skill::SkillLoader;
     use crate::infrastructure::persistence::skill_loader::FileSkillLoader;
 
-    let workspace = base.join("workspace");
-    let loader = FileSkillLoader::new(&workspace);
+    let loader = FileSkillLoader::new(workspace);
     let skills = match loader.list() {
         Ok(s) => s,
         Err(_) => {
@@ -360,6 +360,27 @@ fn cmd_skills_list(base: &std::path::Path, stdout: &mut String) -> i32 {
         }
     }
     0
+}
+
+fn resolve_workspace_for_skills(base: &std::path::Path) -> std::path::PathBuf {
+    let fallback = base.join("workspace");
+    let config_path = base.join("config.json");
+    if !config_path.exists() {
+        return fallback;
+    }
+
+    let env_overrides: HashMap<String, String> = std::env::vars()
+        .filter(|(k, _)| k.starts_with("QUECTO_"))
+        .collect();
+
+    let Some(config_path_str) = config_path.to_str() else {
+        return fallback;
+    };
+
+    match Config::load_with_env(config_path_str, &env_overrides) {
+        Ok(config) => std::path::PathBuf::from(config.workspace_path()),
+        Err(_) => fallback,
+    }
 }
 
 #[cfg(test)]
