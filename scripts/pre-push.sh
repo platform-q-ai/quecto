@@ -9,7 +9,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
-bash "$ROOT/scripts/load-dotenv.sh"
+source "$ROOT/scripts/load-dotenv.sh"
 
 E2E_TIMEOUT="${QUECTO_E2E_TIMEOUT:-12m}"
 BDD_SHARDS="${QUECTO_BDD_SHARDS:-25}"

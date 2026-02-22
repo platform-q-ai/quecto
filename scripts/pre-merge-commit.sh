@@ -10,7 +10,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
-bash "$ROOT/scripts/load-dotenv.sh"
+source "$ROOT/scripts/load-dotenv.sh"
 
 REAL_LLM_TIMEOUT="${QUECTO_REAL_LLM_TIMEOUT:-12m}"
 REAL_LLM_SHARDS="${QUECTO_REAL_LLM_SHARDS:-25}"
