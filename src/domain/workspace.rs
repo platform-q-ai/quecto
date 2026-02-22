@@ -17,8 +17,5 @@ pub trait OnboardStore: Send + Sync {
     fn config_path(&self) -> PathBuf;
     fn workspace_path(&self) -> PathBuf;
     fn config_exists(&self) -> Result<bool, DomainError>;
-    fn create_base_dir(&self) -> Result<(), DomainError>;
-    fn write_default_config(&self) -> Result<(), DomainError>;
-    fn create_workspace_dir(&self) -> Result<(), DomainError>;
-    fn write_workspace_file(&self, filename: &str, content: &str) -> Result<(), DomainError>;
+    fn initialize(&self, templates: &[(&str, &str)]) -> Result<(), DomainError>;
 }

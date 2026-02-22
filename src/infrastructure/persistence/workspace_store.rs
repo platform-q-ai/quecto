@@ -47,6 +47,30 @@ impl FileOnboardStore {
             base_dir: base_dir.into(),
         }
     }
+
+    fn write_workspace_file(&self, filename: &str, content: &str) -> Result<(), DomainError> {
+        let file_name = std::path::Path::new(filename)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| {
+                DomainError::Other(format!("invalid workspace filename: {}", filename))
+            })?;
+        if file_name != filename {
+            return Err(DomainError::Other(format!(
+                "workspace filename must be a basename: {}",
+                filename
+            )));
+        }
+
+        let file_path = self.workspace_path().join(filename);
+        std::fs::write(&file_path, content).map_err(|e| {
+            DomainError::Other(format!(
+                "failed to write workspace file '{}': {}",
+                file_path.display(),
+                e
+            ))
+        })
+    }
 }
 
 impl OnboardStore for FileOnboardStore {
@@ -62,12 +86,10 @@ impl OnboardStore for FileOnboardStore {
         Ok(self.config_path().exists())
     }
 
-    fn create_base_dir(&self) -> Result<(), DomainError> {
+    fn initialize(&self, templates: &[(&str, &str)]) -> Result<(), DomainError> {
         std::fs::create_dir_all(&self.base_dir)
-            .map_err(|e| DomainError::Other(format!("failed to create base dir: {}", e)))
-    }
+            .map_err(|e| DomainError::Other(format!("failed to create base dir: {}", e)))?;
 
-    fn write_default_config(&self) -> Result<(), DomainError> {
         let config_path = self.config_path();
         std::fs::write(&config_path, "{}\n").map_err(|e| {
             DomainError::Other(format!(
@@ -75,10 +97,8 @@ impl OnboardStore for FileOnboardStore {
                 config_path.display(),
                 e
             ))
-        })
-    }
+        })?;
 
-    fn create_workspace_dir(&self) -> Result<(), DomainError> {
         let workspace_path = self.workspace_path();
         std::fs::create_dir_all(&workspace_path).map_err(|e| {
             DomainError::Other(format!(
@@ -86,17 +106,38 @@ impl OnboardStore for FileOnboardStore {
                 workspace_path.display(),
                 e
             ))
-        })
+        })?;
+
+        for (filename, content) in templates {
+            self.write_workspace_file(filename, content)?;
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_heartbeat_source_missing_file_returns_none() {
+        let tmp = TempDir::new().unwrap();
+        let source = FileHeartbeatTaskSource::new(tmp.path());
+        let content = source.read_heartbeat_md().await.unwrap();
+        assert!(content.is_none());
     }
 
-    fn write_workspace_file(&self, filename: &str, content: &str) -> Result<(), DomainError> {
-        let file_path = self.workspace_path().join(filename);
-        std::fs::write(&file_path, content).map_err(|e| {
-            DomainError::Other(format!(
-                "failed to write workspace file '{}': {}",
-                file_path.display(),
-                e
-            ))
-        })
+    #[test]
+    fn test_onboard_store_rejects_non_basename_workspace_file() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileOnboardStore::new(tmp.path());
+        store.initialize(&[]).unwrap();
+
+        let err = store
+            .write_workspace_file("nested/file.txt", "data")
+            .unwrap_err();
+        assert!(err.to_string().contains("basename"));
     }
 }

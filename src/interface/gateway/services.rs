@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use crate::application::cron_executor;
 use crate::application::heartbeat;
 use crate::domain::agent::AgentLoop;
-use crate::domain::channel::Channel;
+use crate::domain::channel::{Channel, ChannelTarget};
 use crate::domain::message::{Message, Role};
 use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::bus::{InboundMessage, OutboundMessage};
@@ -99,7 +99,13 @@ impl Gateway {
         channel: Arc<dyn Channel>,
     ) {
         while let Some(msg) = outbound_rx.recv().await {
-            if let Err(e) = channel.send_message(&msg.target, &msg.text).await {
+            let target = ChannelTarget::parse(&msg.target);
+            if let ChannelTarget::Unsupported(raw) = &target {
+                tracing::warn!(target = raw, "unknown outbound target");
+                continue;
+            }
+
+            if let Err(e) = channel.send_message(&target, &msg.text).await {
                 tracing::error!(error = %e, target = msg.target, "failed outbound send");
             }
         }

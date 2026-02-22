@@ -1,6 +1,6 @@
 // Telegram adapter: implements Telegram bot message handling.
 
-use crate::domain::channel::Channel;
+use crate::domain::channel::{Channel, ChannelTarget};
 use crate::domain::error::DomainError;
 use crate::infrastructure::config::TelegramConfig;
 
@@ -381,18 +381,27 @@ impl Channel for TelegramChannel {
 
     fn send_message<'a>(
         &'a self,
-        target: &'a str,
+        target: &'a ChannelTarget,
         text: &'a str,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + 'a>>
     {
         Box::pin(async move {
-            let Some(chat_id) = target.strip_prefix("telegram:") else {
-                return Err(DomainError::Channel(format!(
-                    "unsupported channel target: {}",
-                    target
-                )));
+            let chat_id = match target {
+                ChannelTarget::TelegramChat(chat_id) => chat_id,
+                ChannelTarget::Unsupported(raw) => {
+                    return Err(DomainError::Channel(format!(
+                        "unsupported channel target for telegram adapter: {}",
+                        raw
+                    )));
+                }
             };
-            TelegramChannel::send_message(self, chat_id, text).await
+            if !self.is_user_allowed(chat_id.as_str()) {
+                return Err(DomainError::Channel(format!(
+                    "target chat is not in allowlist: {}",
+                    chat_id
+                )));
+            }
+            TelegramChannel::send_message(self, chat_id.as_str(), text).await
         })
     }
 }
@@ -462,6 +471,16 @@ mod tests {
     fn test_channel_name() {
         let ch = TelegramChannel::new(&make_config(true, "123:ABC", vec![]));
         assert_eq!(ch.name(), "telegram");
+    }
+
+    #[tokio::test]
+    async fn test_channel_send_rejects_target_not_in_allowlist() {
+        let ch = TelegramChannel::new(&make_config(true, "123:ABC", vec!["12345"]));
+        let target = ChannelTarget::TelegramChat("99999".to_string());
+        let err = Channel::send_message(&ch, &target, "hello")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("allowlist"));
     }
 
     #[test]

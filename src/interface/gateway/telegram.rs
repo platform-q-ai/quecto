@@ -1,5 +1,6 @@
 // Telegram polling, update dispatch, and voice message handling.
 
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::infrastructure::bus::InboundMessage;
@@ -27,7 +28,7 @@ pub(super) struct VoicePayload {
 impl Gateway {
     /// Telegram long-polling task.
     pub(super) async fn run_telegram_polling(
-        telegram: TelegramChannel,
+        telegram: Arc<TelegramChannel>,
         inbound_tx: mpsc::Sender<InboundMessage>,
         config: Config,
         allow_insecure_voice: bool,

@@ -26,10 +26,6 @@ pub fn run_onboard(store: &dyn OnboardStore) -> Result<OnboardResult, DomainErro
         });
     }
 
-    store.create_base_dir()?;
-    store.write_default_config()?;
-    store.create_workspace_dir()?;
-
     let templates = [
         (
             "AGENTS.md",
@@ -50,9 +46,7 @@ pub fn run_onboard(store: &dyn OnboardStore) -> Result<OnboardResult, DomainErro
         ("USER.md", "# User\n\nInformation about the user.\n"),
     ];
 
-    for (filename, content) in &templates {
-        store.write_workspace_file(filename, content)?;
-    }
+    store.initialize(&templates)?;
 
     Ok(OnboardResult {
         config_path,

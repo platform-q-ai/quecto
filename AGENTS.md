@@ -39,7 +39,8 @@ Zero external dependencies except `thiserror`, `serde` (derive only), and `serde
 | `session.rs` | `Session`, `SessionStore` trait |
 | `skill.rs` | `Skill`, `SkillSource`, `SkillFrontmatter`, `SkillLoader` trait, `parse_skill_md()`, `is_valid_skill_name()` |
 | `cron.rs` | `CronJob`, `CronJobResult`, `CronSchedule`, `CronStore` trait |
-| `channel.rs` | `Channel` trait |
+| `channel.rs` | `Channel` trait (dyn-compatible outbound delivery port via `send_message()`) |
+| `workspace.rs` | `HeartbeatTaskSource` and `OnboardStore` ports for workspace/bootstrapping I/O |
 | `subagent.rs` | `SubagentConfig`, `validate_agent_id()` |
 | `voice.rs` | `VoiceTranscriber` trait, `TranscriptionResult`, `TranscriptionError` |
 | `error.rs` | `DomainError` enum (Provider, Tool, Session, Channel, Security, Config, Other) |
@@ -53,10 +54,10 @@ Depends only on `domain/`. Contains orchestration logic with no I/O — all I/O 
 | File | Purpose |
 |---|---|
 | `agent_loop.rs` | `AgentLoopImpl` — the core LLM-tool loop: send messages to provider, execute tool calls, repeat until done or max iterations. Emits `tracing::info!` on each tool execution with `tool_name`, `duration_ms`, `is_error` fields (target: `tool_exec`) |
-| `onboard.rs` | `run_onboard()` — creates workspace directory, writes default config and template files |
+| `onboard.rs` | `run_onboard()` — onboarding orchestration through `OnboardStore` (config + workspace bootstrap) |
 | `subagent.rs` | `SubagentContext` — constructs child agent contexts with inherited sandbox restrictions (re-exports `SubagentConfig` from domain) |
 | `cron_executor.rs` | `execute_cron_tick()` — runs due cron jobs through the agent with timeout, records `last_error` on failure, propagates `deliver_to` |
-| `heartbeat.rs` | `parse_heartbeat()`, `load_tasks()`, `execute_heartbeat_tick()` — parses task definitions, determines which are due, dispatches tasks through the agent (spawn-aware) |
+| `heartbeat.rs` | `parse_heartbeat()`, `load_tasks()`, `execute_heartbeat_tick()` — parses task definitions via `HeartbeatTaskSource`, determines which are due, dispatches tasks through the agent (spawn-aware) |
 | `voice.rs` | `process_voice_message()` — transcribes audio via `VoiceTranscriber` and routes the text through the agent, returns `VoiceProcessingResult` |
 
 ### infrastructure/ — Concrete adapters
@@ -68,7 +69,7 @@ Implements the domain traits with real I/O. This is where serde, reqwest, tokio,
 | `config.rs` | `Config` struct with serde deserialization, env var overrides, workspace path expansion |
 | `providers/` | `OpenAiProvider`, `AnthropicProvider` (real HTTP, SSE streaming via `chat_stream()`), `FallbackProvider` (cooldown + error classification), `ErrorClass` |
 | `tools/` | `ExecTool` (shell), `ReadFileTool`/`WriteFileTool`/`EditFileTool`/`AppendFileTool`/`ListDirTool` (filesystem), `SpawnTool` (subagent), `CronTool`, `MessageTool`, `WebSearchTool` (Brave + DDG), `ToolRegistryImpl` |
-| `persistence/` | `FileSessionStore`, `MemoryStore`, `FileCronStore`, `FileSkillLoader` (single workspace path, YAML frontmatter validation) |
+| `persistence/` | `FileSessionStore`, `MemoryStore`, `FileCronStore`, `FileSkillLoader`, `workspace_store.rs` (`FileHeartbeatTaskSource`, `FileOnboardStore`) |
 | `security/` | `Sandbox` — workspace path validation and command filtering |
 | `auth/` | `CredentialStore` (file-based token CRUD), `oauth.rs` (`OAuthConfig`, `DeviceCodeResponse`, `request_device_code()` — OAuth browser flow and device code flow for headless environments) |
 | `channels/` | `TelegramChannel` — `send_message()`, `get_updates()`, user allowlist, configurable `api_base` (defaults to `https://api.telegram.org`) |
@@ -140,7 +141,7 @@ The gateway module (`src/interface/gateway/`) is split into `mod.rs` (Gateway st
 
 Both credential functions operate on a `HashMap<String, Credential>` snapshot (from `CredentialStore::load_snapshot()`) to avoid redundant file I/O. The gateway calls `load_snapshot()` once at startup and passes the result to both functions.
 
-The `EventLoopContext` struct holds the runtime state for the gateway's `tokio::select!` event loop: inbound/outbound channels, agent, session store, Telegram channel, and `Config`. The `Config` field is passed through the polling chain (`run_telegram_polling` → `poll_once` → `dispatch_update`) so that bot commands can access configuration values (e.g. current model name for `/status`). Graceful shutdown is handled by `tokio::select!` — when `ctrl_c()` fires, all branches are dropped and channel receivers return `None`, exiting loops cleanly without errors.
+The `EventLoopContext` struct holds the runtime state for the gateway's `tokio::select!` event loop: inbound/outbound channels, `Arc<dyn AgentLoop>`, `Arc<dyn SessionStore>`, outbound `Arc<dyn Channel>`, dedicated Telegram poller, and `Config`. The `Config` field is passed through the polling chain (`run_telegram_polling` → `poll_once` → `dispatch_update`) so that bot commands can access configuration values (e.g. current model name for `/status`). Graceful shutdown is handled by `tokio::select!` — when `ctrl_c()` fires, all branches are dropped and channel receivers return `None`, exiting loops cleanly without errors.
 
 ## Dependency rule
 
@@ -173,9 +174,9 @@ Refactor
 @wip -> @done       Tag the feature
 ```
 
-The BDD runner (`tests/bdd/main.rs`) uses `.fail_on_skipped()` and runs features tagged `@wip` or `@done`. This means all completed features are regression-tested on every run. Scenarios tagged `@pending` are always excluded. Scenarios tagged `@real-llm` are excluded unless `QUECTO_REAL_LLM=1` is set (requires `OPENAI_API_KEY` via env var or `.env` file). Set `QUECTO_TAG=<tag>` to run only scenarios matching a specific tag (e.g. smoke: `timeout 5m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm-smoke cargo test --test bdd`, full: `timeout 5m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm cargo test --test bdd`). Step definitions live in `tests/bdd/` split across 19 module files (~9000 lines total).
+The BDD runner (`tests/bdd/main.rs`) uses `.fail_on_skipped()` and runs features tagged `@wip` or `@done`. This means all completed features are regression-tested on every run. Scenarios tagged `@pending` are always excluded. Scenarios tagged `@real-llm` are excluded unless `QUECTO_REAL_LLM=1` is set (requires `OPENAI_API_KEY` via env var or `.env` file). Set `QUECTO_TAG=<tag>` to run only scenarios matching a specific tag (e.g. smoke: `timeout 5m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm-smoke cargo test --test bdd`, full: `timeout 5m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm cargo test --test bdd`). Step definitions live in `tests/bdd/` split across 20 module files (~9000 lines total).
 
-Feature files live in `tests/features/`. There are 44 feature files covering: agent_cli, agent_loop, agent_tools, auth, cli, config, cron, e2e_agentic_loop, e2e_gateway_cron, e2e_gateway_health, e2e_gateway_heartbeat, e2e_gateway_spawn, e2e_gateway_voice, e2e_providers, e2e_real_llm, e2e_real_llm_agent_matrix, e2e_real_llm_entrypoints, e2e_real_llm_entrypoints_matrix, e2e_real_llm_gateway, e2e_real_llm_gateway_matrix, e2e_real_llm_repl, e2e_real_llm_repl_matrix, e2e_repl_agents, e2e_repl_cron, e2e_repl_heartbeat, e2e_repl_spawn, e2e_safety, e2e_session, e2e_session_tools, e2e_skills, e2e_subprocess, e2e_tool_use, heartbeat, observability, onboard, providers, repl, sandbox_hardening, security, session, skills, subagent, telegram, voice.
+Feature files live in `tests/features/`. There are 45 feature files covering: agent_cli, agent_loop, agent_tools, architecture, auth, cli, config, cron, e2e_agentic_loop, e2e_gateway_cron, e2e_gateway_health, e2e_gateway_heartbeat, e2e_gateway_spawn, e2e_gateway_voice, e2e_providers, e2e_real_llm, e2e_real_llm_agent_matrix, e2e_real_llm_entrypoints, e2e_real_llm_entrypoints_matrix, e2e_real_llm_gateway, e2e_real_llm_gateway_matrix, e2e_real_llm_repl, e2e_real_llm_repl_matrix, e2e_repl_agents, e2e_repl_cron, e2e_repl_heartbeat, e2e_repl_spawn, e2e_safety, e2e_session, e2e_session_tools, e2e_skills, e2e_subprocess, e2e_tool_use, heartbeat, observability, onboard, providers, repl, sandbox_hardening, security, session, skills, subagent, telegram, voice.
 
 ## Quality gates
 

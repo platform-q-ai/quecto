@@ -63,7 +63,7 @@ pub(super) struct EventLoopContext {
     pub(super) agent: Arc<dyn AgentLoop>,
     pub(super) session_store: Arc<dyn SessionStore>,
     pub(super) outbound_channel: Arc<dyn Channel>,
-    pub(super) telegram_poller: TelegramChannel,
+    pub(super) telegram_poller: Arc<TelegramChannel>,
     pub(super) config: Config,
     pub(super) workspace: PathBuf,
     pub(super) cron_store: Arc<FileCronStore>,
@@ -175,6 +175,7 @@ impl Gateway {
         );
 
         let (inbound_tx, inbound_rx, outbound_tx, outbound_rx) = Self::take_channels(&mut bus);
+        let telegram = Arc::new(TelegramChannel::new(&self.config.channels.telegram));
         let ctx = EventLoopContext {
             inbound_tx,
             inbound_rx,
@@ -182,8 +183,8 @@ impl Gateway {
             outbound_rx,
             agent,
             session_store: Arc::new(FileSessionStore::new(&self.base_dir)),
-            outbound_channel: Arc::new(TelegramChannel::new(&self.config.channels.telegram)),
-            telegram_poller: TelegramChannel::new(&self.config.channels.telegram),
+            outbound_channel: telegram.clone(),
+            telegram_poller: telegram,
             config: self.config.clone(),
             workspace: workspace.clone(),
             cron_store,
