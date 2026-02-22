@@ -225,8 +225,8 @@ impl Gateway {
         creds: &std::collections::HashMap<String, Credential>,
     ) -> Result<FallbackProvider, GatewayError> {
         let mut provider_list = Vec::new();
-        self.maybe_add_provider(&mut provider_list, "openai", creds);
-        self.maybe_add_provider(&mut provider_list, "anthropic", creds);
+        self.maybe_add_provider(&mut provider_list, "openai", creds)?;
+        self.maybe_add_provider(&mut provider_list, "anthropic", creds)?;
         if provider_list.is_empty() {
             return Err(GatewayError::NoProviders);
         }
@@ -242,7 +242,7 @@ impl Gateway {
         list: &mut Vec<Arc<dyn LlmProvider>>,
         name: &str,
         creds: &std::collections::HashMap<String, Credential>,
-    ) {
+    ) -> Result<(), GatewayError> {
         let (config_key, api_base) = match name {
             "openai" => (
                 &self.config.providers.openai.api_key,
@@ -252,20 +252,27 @@ impl Gateway {
                 &self.config.providers.anthropic.api_key,
                 &self.config.providers.anthropic.api_base,
             ),
-            _ => return,
+            _ => return Ok(()),
         };
         let api_key = resolve_api_key(config_key, creds, name);
         if api_key.is_empty() {
-            return;
+            return Ok(());
         }
         let base = if api_base.is_empty() {
             None
         } else {
             Some(api_base.clone())
         };
-        if let Some(p) = providers::create_provider(name, api_key, base) {
-            list.push(p);
+        match providers::create_provider(name, api_key, base) {
+            Ok(p) => list.push(p),
+            Err(e) => {
+                return Err(GatewayError::Config(format!(
+                    "{} provider configuration error: {}",
+                    name, e
+                )));
+            }
         }
+        Ok(())
     }
 
     /// Build agent loop with tool registry and message bus.

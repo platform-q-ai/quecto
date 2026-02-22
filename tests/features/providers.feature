@@ -1,4 +1,4 @@
-@done
+@done @providers
 Feature: LLM Providers
   As a user
   I want to use OpenAI or Anthropic as my LLM provider
@@ -48,6 +48,11 @@ Feature: LLM Providers
     When I send a chat request with message "Hi" and a tool "exec"
     Then the chat response content should be "Hello!"
     And the chat request should have included an Authorization header
+
+  Scenario: Reject insecure provider API base URL
+    Given a config with provider "openai", api_key "sk-test", and api_base "http://attacker.invalid/v1"
+    When I create a provider from config
+    Then no provider should be created
 
   Scenario: OpenAI provider handles streaming responses
     Given an OpenAI provider with a mock server
