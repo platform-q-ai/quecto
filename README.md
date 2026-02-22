@@ -232,10 +232,12 @@ Config file: `~/.quecto/config.json`
   },
   "providers": {
     "openai": {
-      "api_key": "sk-proj-..."
+      "api_key": "sk-proj-...",
+      "api_base": "https://api.openai.com/v1"
     },
     "anthropic": {
-      "api_key": "sk-ant-..."
+      "api_key": "sk-ant-...",
+      "api_base": "https://api.anthropic.com"
     }
   },
   "channels": {
@@ -267,6 +269,15 @@ Config file: `~/.quecto/config.json`
 ```
 
 All fields are optional. An empty `{}` is valid — everything uses sensible defaults.
+
+### Provider API base overrides
+
+Set `providers.<name>.api_base` only when you need a non-default endpoint (for example, a local mock server).
+
+- URLs must be valid and must not include username/password, query params, or fragments.
+- `https://` is required for non-local hosts.
+- `http://` is allowed only for loopback hosts: `localhost`, `127.0.0.1`, or `::1`.
+- Invalid `api_base` values cause that provider to be rejected during startup.
 
 ### Environment variable overrides
 
