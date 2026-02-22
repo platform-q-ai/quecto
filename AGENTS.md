@@ -113,7 +113,7 @@ The REPL uses abstracted I/O (`BufRead` + `Write` traits) instead of hardcoded s
 - Piped input for scripting (`echo "hello" | quecto`)
 - In-memory buffers for BDD testing (`run_repl_with_output()`)
 
-Production code lives in `src/interface/repl.rs`. Key types: `ReplLoop<R, W>` (the generic loop), `ReplContext` (config + provider bundle), `ReplFlags` (parsed CLI flags), `ReplSession` (agent + persistence state).
+Production code lives in `src/interface/repl/`. Key types: `ReplLoop<R, W>` (the generic loop), `ReplContext` (config + provider bundle), `ReplFlags` (parsed CLI flags), `ReplSession` (agent + persistence state). The module is split into `mod.rs` (core loop), `parsers.rs` (input parsing), `cmd_agent.rs` (agent profile management), `cmd_cron.rs` (cron commands), `cmd_heartbeat.rs` (heartbeat commands), and `cmd_spawn.rs` (spawn commands).
 
 #### `quecto agent` — Headless one-shot mode
 
@@ -130,7 +130,9 @@ Runs a full agent cycle (LLM call → tool execution → repeat) for a single me
 
 The agent loads config from `<base_dir>/config.json`, builds a `FallbackProvider` from configured credentials, constructs the tool registry with sandbox enforcement, and runs the `AgentLoopImpl`. Sessions are loaded from and saved to `<base_dir>/sessions/` via `FileSessionStore`. Workspace skills (from `<base_dir>/workspace/skills/`) are loaded at startup and their body content (everything after the YAML frontmatter closing `---`) is prepended to the system prompt (combined with `--system` if provided). Skills with missing or invalid frontmatter are silently skipped.
 
-The gateway module (`gateway.rs`) also provides credential-store integration and bot command handling as free functions:
+The CLI module (`src/interface/cli/`) is split into `mod.rs` (entry point, dispatch, REPL wiring), `agent.rs` (agent subcommand, flag parsing, session management), `auth.rs` (auth login/logout/status flows), and `commands.rs` (onboard, status, skills, help, version).
+
+The gateway module (`src/interface/gateway/`) is split into `mod.rs` (Gateway struct, event loop, startup), `telegram.rs` (Telegram polling, update dispatch, bot commands), and `services.rs` (credential resolution, provider building, whisper client construction). It also provides credential-store integration and bot command handling as free functions:
 
 - `resolve_api_key(config_key, creds, provider)` — given a pre-loaded credential snapshot, returns the store token if present and not expired, otherwise falls back to the config file key
 - `check_provider_readiness(creds)` — given a pre-loaded credential snapshot, returns a list of providers whose stored credentials have expired and need re-authentication
@@ -153,7 +155,7 @@ interface/  -->  application/  -->  domain/
 - `infrastructure/` imports `domain/` (to implement traits). Never `application/`.
 - `interface/` imports all three to wire things together (composition root).
 
-The composition root is `main.rs` -> `cli::run()` -> `gateway.rs`. The gateway constructs all concrete types and passes them as `Arc<dyn Trait>` to the application layer.
+The composition root is `main.rs` -> `cli::run()` -> `gateway/`. The gateway constructs all concrete types and passes them as `Arc<dyn Trait>` to the application layer.
 
 ## Development workflow
 
@@ -178,11 +180,11 @@ Feature files live in `tests/features/`. There are 44 feature files covering: ag
 ## Quality gates
 
 ```
-scripts/check-quality.sh       Work markers, lint bypasses, unsafe, ignored tests (src/)
+scripts/check-quality.sh       Work markers, lint bypasses, unsafe, ignored tests, file size limit (src/)
 scripts/check-bdd-quality.sh   BDD anti-pattern detection (tests/bdd/)
 cargo fmt --check              Formatting
 cargo clippy -- -D warnings    Lints (zero warnings policy)
-cargo test --lib               442 unit tests
+cargo test --lib               721 unit tests
 cargo test --test architecture Clean Architecture boundary enforcement
 cargo test --test bdd          BDD scenarios in `@done`/`@wip` features (`@real-llm` gated unless `QUECTO_REAL_LLM=1`)
 ```

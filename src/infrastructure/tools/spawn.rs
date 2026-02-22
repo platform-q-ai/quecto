@@ -284,4 +284,246 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("[a-zA-Z0-9_-]"));
     }
+
+    // --- with_base_dir constructor ---
+
+    #[test]
+    fn test_with_base_dir_sets_fields() {
+        let base = PathBuf::from("/tmp/quecto-test");
+        let tool = SpawnTool::with_base_dir(vec!["bot-a".to_string()], false, base.clone());
+        assert_eq!(tool.base_dir, base);
+        assert_eq!(tool.allowed_agents, vec!["bot-a".to_string()]);
+        assert!(!tool.restrict_to_workspace);
+    }
+
+    #[test]
+    fn test_new_sets_empty_base_dir() {
+        let tool = SpawnTool::new(vec![], false);
+        assert!(tool.base_dir.as_os_str().is_empty());
+    }
+
+    // --- validate_agent_id_format ---
+
+    #[test]
+    fn test_validate_agent_id_format_empty_string() {
+        let result = SpawnTool::validate_agent_id_format("");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("1-64 characters"));
+    }
+
+    #[test]
+    fn test_validate_agent_id_format_max_length_64() {
+        let id = "a".repeat(64);
+        let result = SpawnTool::validate_agent_id_format(&id);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_agent_id_format_too_long_65() {
+        let id = "a".repeat(65);
+        let result = SpawnTool::validate_agent_id_format(&id);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("1-64 characters"));
+    }
+
+    #[test]
+    fn test_validate_agent_id_format_all_valid_chars() {
+        assert!(SpawnTool::validate_agent_id_format("abcXYZ019_-").is_ok());
+    }
+
+    #[test]
+    fn test_validate_agent_id_format_single_char() {
+        assert!(SpawnTool::validate_agent_id_format("a").is_ok());
+        assert!(SpawnTool::validate_agent_id_format("Z").is_ok());
+        assert!(SpawnTool::validate_agent_id_format("0").is_ok());
+        assert!(SpawnTool::validate_agent_id_format("_").is_ok());
+        assert!(SpawnTool::validate_agent_id_format("-").is_ok());
+    }
+
+    #[test]
+    fn test_validate_agent_id_format_invalid_dot() {
+        let result = SpawnTool::validate_agent_id_format("hello.world");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("[a-zA-Z0-9_-]"));
+    }
+
+    #[test]
+    fn test_validate_agent_id_format_invalid_space() {
+        let result = SpawnTool::validate_agent_id_format("hello world");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("[a-zA-Z0-9_-]"));
+    }
+
+    #[test]
+    fn test_validate_agent_id_format_invalid_slash() {
+        let result = SpawnTool::validate_agent_id_format("a/b");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_agent_id_format_invalid_unicode() {
+        let result = SpawnTool::validate_agent_id_format("böt");
+        assert!(result.is_err());
+    }
+
+    // --- execute() stub mode (empty base_dir) ---
+
+    #[tokio::test]
+    async fn test_execute_stub_mode_success() {
+        let tool = SpawnTool::new(vec![], true);
+        let result = tool
+            .execute(r#"{"task":"Do something useful"}"#)
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains("Do something useful"));
+        assert!(result.content.contains("Restrict to workspace: true"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_stub_mode_restrict_false() {
+        let tool = SpawnTool::new(vec![], false);
+        let result = tool.execute(r#"{"task":"background job"}"#).await.unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains("Restrict to workspace: false"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_stub_mode_with_agent_id() {
+        let tool = SpawnTool::new(vec!["my-bot".to_string()], true);
+        let result = tool
+            .execute(r#"{"task":"fetch data","agent_id":"my-bot"}"#)
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains("fetch data"));
+    }
+
+    // --- execute() with invalid input ---
+
+    #[tokio::test]
+    async fn test_execute_invalid_json() {
+        let tool = SpawnTool::new(vec![], true);
+        let result = tool.execute("not valid json").await.unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("Failed to spawn subagent"));
+        assert!(result.content.contains("invalid JSON"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_missing_task_field() {
+        let tool = SpawnTool::new(vec![], true);
+        let result = tool.execute(r#"{"agent_id":"bot"}"#).await.unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("missing"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_disallowed_agent_returns_error() {
+        let tool = SpawnTool::new(vec!["allowed-bot".to_string()], true);
+        let result = tool
+            .execute(r#"{"task":"evil","agent_id":"not-allowed"}"#)
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("not allowed"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_invalid_agent_id_format_returns_error() {
+        let tool = SpawnTool::new(vec![], true);
+        let result = tool
+            .execute(r#"{"task":"test","agent_id":"bad id!"}"#)
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("[a-zA-Z0-9_-]"));
+    }
+
+    // --- parse_args edge cases ---
+
+    #[test]
+    fn test_parse_args_invalid_json_garbage() {
+        let tool = test_tool();
+        let result = tool.parse_args("{garbage}}}");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid JSON"));
+    }
+
+    #[test]
+    fn test_parse_args_task_not_string() {
+        let tool = test_tool();
+        let result = tool.parse_args(r#"{"task":42}"#);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("missing"));
+    }
+
+    #[test]
+    fn test_parse_args_task_null() {
+        let tool = test_tool();
+        let result = tool.parse_args(r#"{"task":null}"#);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("missing"));
+    }
+
+    #[test]
+    fn test_parse_args_empty_object() {
+        let tool = test_tool();
+        let result = tool.parse_args(r#"{}"#);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("missing"));
+    }
+
+    #[test]
+    fn test_parse_args_system_not_string_ignored() {
+        let tool = test_tool();
+        // system is a number — as_str() returns None, so system should be None
+        let config = tool.parse_args(r#"{"task":"work","system":123}"#).unwrap();
+        assert!(config.system.is_none());
+    }
+
+    #[test]
+    fn test_parse_args_agent_id_not_string_ignored() {
+        let tool = test_tool();
+        // agent_id is a number — as_str() returns None, so agent_id should be None
+        let config = tool
+            .parse_args(r#"{"task":"work","agent_id":999}"#)
+            .unwrap();
+        assert!(config.agent_id.is_none());
+    }
+
+    #[test]
+    fn test_parse_args_deliver_to_always_none() {
+        let tool = test_tool();
+        let config = tool.parse_args(r#"{"task":"work"}"#).unwrap();
+        assert!(config.deliver_to.is_none());
+    }
+
+    #[test]
+    fn test_parse_args_restrict_to_workspace_inherited() {
+        let tool_true = SpawnTool::new(vec![], true);
+        let tool_false = SpawnTool::new(vec![], false);
+        let cfg_t = tool_true.parse_args(r#"{"task":"a"}"#).unwrap();
+        let cfg_f = tool_false.parse_args(r#"{"task":"a"}"#).unwrap();
+        assert!(cfg_t.restrict_to_workspace);
+        assert!(!cfg_f.restrict_to_workspace);
+    }
+
+    // --- Debug trait ---
+
+    #[test]
+    fn test_debug_trait() {
+        let tool = SpawnTool::new(vec!["bot".to_string()], true);
+        let debug_str = format!("{:?}", tool);
+        assert!(debug_str.contains("SpawnTool"));
+        assert!(debug_str.contains("bot"));
+        assert!(debug_str.contains("restrict_to_workspace: true"));
+    }
+
+    #[test]
+    fn test_debug_with_base_dir() {
+        let tool = SpawnTool::with_base_dir(vec![], false, PathBuf::from("/some/path"));
+        let debug_str = format!("{:?}", tool);
+        assert!(debug_str.contains("/some/path"));
+    }
 }

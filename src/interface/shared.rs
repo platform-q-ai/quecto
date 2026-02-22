@@ -1,8 +1,10 @@
-//! Shared utility functions used by both CLI and REPL modules.
+//! Shared utility functions used by CLI, REPL, and gateway modules.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use crate::domain::skill::SkillLoader;
+use crate::infrastructure::auth::credential_store::Credential;
 use crate::infrastructure::persistence::skill_loader::FileSkillLoader;
 
 /// Load all workspace skills and concatenate their non-empty body content.
@@ -29,6 +31,35 @@ pub fn merge_prompts(skill_prompt: &str, user_prompt: &Option<String>) -> String
         Some(up) if !up.is_empty() => format!("{}\n\n{}", skill_prompt, up),
         _ => skill_prompt.to_string(),
     }
+}
+
+/// Resolve an API key for a provider from a credential snapshot.
+///
+/// The credential store snapshot takes priority over the config-file key.
+/// Expired credentials are ignored (falls back to config key).
+/// Operates on a pre-loaded snapshot to avoid redundant file I/O.
+pub fn resolve_api_key(
+    config_key: &str,
+    creds: &HashMap<String, Credential>,
+    provider: &str,
+) -> String {
+    if let Some(cred) = creds.get(provider) {
+        if !cred.is_expired() {
+            return cred.token.clone();
+        }
+    }
+    config_key.to_string()
+}
+
+/// Check which providers have expired credentials and need re-authentication.
+///
+/// Operates on a pre-loaded snapshot to avoid redundant file I/O.
+pub fn check_provider_readiness(creds: &HashMap<String, Credential>) -> Vec<String> {
+    creds
+        .values()
+        .filter(|c| c.is_expired())
+        .map(|c| c.provider.clone())
+        .collect()
 }
 
 #[cfg(test)]
