@@ -142,9 +142,21 @@ Skills are SKILL.md files with YAML frontmatter that extend the agent's system p
 ```bash
 quecto skills list       # Shows name and description for each skill
 quecto skills remove my-skill
+quecto skills install user/repo/my-skill
 ```
 
-To add a skill, create a directory under your workspace with a `SKILL.md` file:
+`skills install` downloads `SKILL.md` from GitHub raw content using `<owner>/<repo>/<skill-name>` and writes it to your workspace:
+
+```
+~/.quecto/workspace/skills/<skill-name>/SKILL.md
+```
+
+Install fails when:
+- the skill path is missing or invalid
+- the skill already exists locally
+- the remote `SKILL.md` cannot be downloaded from `main` or `master`
+
+You can still add a skill manually by creating a directory under your workspace with a `SKILL.md` file:
 
 ```
 ~/.quecto/workspace/skills/my-skill/SKILL.md

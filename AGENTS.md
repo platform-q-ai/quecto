@@ -87,7 +87,7 @@ Manual argument parsing (no clap). The single entry point is `cli::run(args) -> 
 | `quecto` (no args) | Enters interactive REPL mode (see below) |
 | `quecto onboard` | Creates workspace and default config |
 | `quecto agent -m <message> [-s <session>] [--system <prompt>] [--model <model>] [--max-iterations <n>] [--max-time <secs>]` | Runs a headless one-shot agent session (see below) |
-| `quecto skills list\|remove\|install` | Manages skill files |
+| `quecto skills list\|remove\|install` | Lists/removes local skills and installs `SKILL.md` from `<owner>/<repo>/<skill-name>` into workspace |
 | `quecto status` | Shows config summary, provider availability, redacted API keys |
 | `quecto auth login --provider <name> [--token <key>] [--oauth] [--device-code]` | Authenticates with a provider: paste token interactively (default), pass `--token` directly, `--oauth` for browser flow, or `--device-code` for headless environments |
 | `quecto auth logout --provider <name>` | Removes a stored credential (no-op if absent) |
@@ -95,7 +95,7 @@ Manual argument parsing (no clap). The single entry point is `cli::run(args) -> 
 | `quecto gateway` | Runs the full async gateway (Telegram polling + agent loop) |
 | `quecto help` / `quecto version` | Self-explanatory |
 
-`CliContext` allows overriding `base_dir` for testability so commands write to temp directories in tests instead of `~/.config/quecto`. Additional fields: `stdin_data` (pre-loaded stdin for testing interactive commands like token paste) and `oauth_base_url` (override OAuth endpoints for testing with wiremock). Base directory resolution order: explicit `CliContext.base_dir` override > `QUECTO_BASE_DIR` environment variable > platform default.
+`CliContext` allows overriding `base_dir` for testability so commands write to temp directories in tests instead of `~/.config/quecto`. Additional fields: `stdin_data` (pre-loaded stdin for testing interactive commands like token paste), `oauth_base_url` (override OAuth endpoints for testing with wiremock), and `github_raw_base_url` (override GitHub raw endpoint for `skills install` tests). Base directory resolution order: explicit `CliContext.base_dir` override > `QUECTO_BASE_DIR` environment variable > platform default.
 
 #### `quecto` — Interactive REPL mode
 

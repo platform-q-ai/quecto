@@ -1,6 +1,21 @@
 use super::*;
 use crate::interface::cli::{CliContext, run_with_output};
 
+fn mock_github_raw_skill(owner: &str, repo: &str, skill: &str, body: &str) -> wiremock::MockServer {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path(format!(
+                "/{owner}/{repo}/main/{skill}/SKILL.md"
+            )))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(body))
+            .mount(&server)
+            .await;
+        server
+    })
+}
+
 fn args(s: &str) -> Vec<String> {
     let mut v = vec!["quecto".to_string()];
     if !s.is_empty() {
@@ -225,8 +240,15 @@ fn test_skills_install_already_exists() {
 #[test]
 fn test_skills_install_creates_skill_files() {
     let tmp = tempfile::TempDir::new().unwrap();
+    let server = mock_github_raw_skill(
+        "user",
+        "repo",
+        "weather",
+        "---\nname: weather\ndescription: Weather forecasts\n---\nWeather content",
+    );
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        github_raw_base_url: Some(server.uri()),
         ..Default::default()
     };
     let out = run_with_output(args("skills install user/repo/weather"), &ctx);
@@ -236,6 +258,8 @@ fn test_skills_install_creates_skill_files() {
     let skill_dir = tmp.path().join("workspace").join("skills").join("weather");
     assert!(skill_dir.is_dir());
     assert!(skill_dir.join("SKILL.md").is_file());
+    let content = std::fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
+    assert!(content.contains("Weather forecasts"));
 }
 
 #[test]

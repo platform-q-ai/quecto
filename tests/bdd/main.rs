@@ -413,6 +413,8 @@ pub struct QuectoWorld {
     pub _wiremock_server_uri: Option<String>,
     /// Leaked wiremock server ref for request inspection (skills e2e)
     pub wiremock_server_ref: Option<&'static wiremock::MockServer>,
+    /// Owned wiremock server for skills install mock API scenarios
+    pub github_mock_server: Option<wiremock::MockServer>,
     /// Transcription result from voice scenarios
     pub transcription_result: Option<Result<TranscriptionResult, String>>,
     /// Temp directory handle (kept alive so the dir isn't deleted)

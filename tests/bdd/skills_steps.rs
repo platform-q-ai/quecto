@@ -54,11 +54,31 @@ fn given_workspace_skill_installed(world: &mut QuectoWorld, name: String) {
 }
 
 #[given(expr = "a mock GitHub API serving a skill repository at {string}")]
-fn given_mock_github_api_serving_skill_repository(world: &mut QuectoWorld, _repo: String) {
+fn given_mock_github_api_serving_skill_repository(world: &mut QuectoWorld, repo_path: String) {
+    let parts = repo_path.split('/').collect::<Vec<_>>();
+    assert_eq!(parts.len(), 3, "expected owner/repo/skill path");
+    let owner = parts[0];
+    let repo = parts[1];
+    let skill = parts[2];
+
     let rt = tokio::runtime::Runtime::new().expect("runtime");
-    let server = rt.block_on(async { wiremock::MockServer::start().await });
-    let leaked: &'static wiremock::MockServer = Box::leak(Box::new(server));
-    world.wiremock_server_ref = Some(leaked);
+    let server = rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let body = format!(
+            "---\nname: {skill}\ndescription: Skill from mock GitHub\n---\nMock skill content"
+        );
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path(format!(
+                "/{owner}/{repo}/main/{skill}/SKILL.md"
+            )))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(body))
+            .mount(&server)
+            .await;
+        server
+    });
+
+    world.cli_context.github_raw_base_url = Some(server.uri());
+    world.github_mock_server = Some(server);
 }
 
 #[given("an empty skill loader")]
