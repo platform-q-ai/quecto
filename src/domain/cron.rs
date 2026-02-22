@@ -30,10 +30,20 @@ pub fn is_job_due(job: &CronJob, now_secs: u64) -> bool {
             job.last_run_at == 0 || now_secs >= job.last_run_at + seconds
         }
         CronSchedule::Cron { .. } => {
-            // Cron expression evaluation is not yet implemented;
-            // treat as due on every tick for now (same as interval 0).
-            true
+            // Cron expression evaluation is not yet implemented.
+            false
         }
+    }
+}
+
+/// Returns an unsupported scheduling reason when a job cannot execute yet.
+pub fn unsupported_schedule_reason(job: &CronJob) -> Option<&'static str> {
+    if !job.enabled {
+        return None;
+    }
+    match job.schedule {
+        CronSchedule::Cron { .. } => Some("cron expression execution not implemented"),
+        CronSchedule::Interval { .. } => None,
     }
 }
 
@@ -137,7 +147,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cron_expression_always_due() {
+    fn test_cron_expression_not_due_until_supported() {
         let job = make_job(
             CronSchedule::Cron {
                 expression: "0 9 * * *".to_string(),
@@ -145,6 +155,30 @@ mod tests {
             true,
             0,
         );
-        assert!(is_job_due(&job, 1000));
+        assert!(!is_job_due(&job, 1000));
+    }
+
+    #[test]
+    fn test_unsupported_schedule_reason_only_for_enabled_cron_expression() {
+        let enabled = make_job(
+            CronSchedule::Cron {
+                expression: "0 9 * * *".to_string(),
+            },
+            true,
+            0,
+        );
+        assert_eq!(
+            unsupported_schedule_reason(&enabled),
+            Some("cron expression execution not implemented")
+        );
+
+        let disabled = make_job(
+            CronSchedule::Cron {
+                expression: "0 9 * * *".to_string(),
+            },
+            false,
+            0,
+        );
+        assert_eq!(unsupported_schedule_reason(&disabled), None);
     }
 }

@@ -270,6 +270,30 @@ fn given_gateway_cron_job_deliver_to(
     store.add(job).unwrap();
 }
 
+#[given(expr = "a cron job {string} with cron expression {string} and message {string}")]
+fn given_gateway_cron_job_with_expression_and_message(
+    world: &mut QuectoWorld,
+    name: String,
+    expression: String,
+    message: String,
+) {
+    let store = world
+        .gateway_cron_store
+        .as_ref()
+        .expect("gateway cron store not set");
+    let job = CronJob {
+        id: name.to_lowercase().replace(' ', "-"),
+        name,
+        message,
+        schedule: CronSchedule::Cron { expression },
+        enabled: true,
+        deliver_to: None,
+        last_error: None,
+        last_run_at: 0,
+    };
+    store.add(job).unwrap();
+}
+
 #[when("the cron tick fires")]
 fn when_cron_tick_fires(world: &mut QuectoWorld) {
     let agent = &world
