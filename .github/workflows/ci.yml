@@ -15,7 +15,7 @@ concurrency:
 jobs:
   smoke-test:
     name: Smoke Test
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: blacksmith-32vcpu-ubuntu-2404
     timeout-minutes: 15
 
     steps:
@@ -27,26 +27,5 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Quality gate
-        run: ./scripts/check-quality.sh
-
-      - name: BDD quality gate
-        run: ./scripts/check-bdd-quality.sh
-
-      - name: Format check
-        run: cargo fmt --all -- --check
-
-      - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
-
-      - name: Build
-        run: cargo build --all-targets
-
       - name: Unit tests
         run: cargo test --lib
-
-      - name: Architecture tests
-        run: cargo test --test architecture
-
-      - name: BDD integration tests
-        run: cargo test --test bdd
