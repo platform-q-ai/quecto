@@ -34,6 +34,17 @@ check_pattern '#\[allow(' '#[allow()] attributes (remove or justify)'
 check_pattern 'unsafe {' 'unsafe blocks (require // SAFETY: justification)'
 check_pattern '#\[ignore' '#[ignore] on tests (all tests must run)'
 
+# ── File size check: no source file may exceed MAX_LINES lines ──
+MAX_LINES=750
+oversized=$(find src/ -name '*.rs' -exec awk -v max="$MAX_LINES" -v f="{}" \
+    'END { if (NR > max) printf "  %s: %d lines (max %d)\n", f, NR, max }' {} \; 2>/dev/null || true)
+if [ -n "$oversized" ]; then
+    echo -e "${RED}FAIL${NC}: Source files exceed $MAX_LINES line limit"
+    echo "$oversized"
+    echo ""
+    FAILED=1
+fi
+
 # Warn (not block) if git wrapper is not active.
 YELLOW='\033[0;33m'
 WRAPPER_DIR="$(git rev-parse --show-toplevel)/.git/wrapper-bin"
