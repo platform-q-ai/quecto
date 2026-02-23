@@ -32,11 +32,11 @@ Zero external dependencies except `thiserror`, `serde` (derive only), and `serde
 
 | File | Purpose |
 |---|---|
-| `message.rs` | `Message`, `Role`, `ToolCall`, `LlmResponse`, `UsageInfo` |
+| `message.rs` | `Message` (with constructors `::system()`, `::user()`, `::assistant()`, `::tool()`; context-pruning fields: `turn`, `is_pinned`, `is_manifest`, `is_collapsed`, `tool_name`, `input_preview`, `spill_id`), `Role`, `ToolCall`, `LlmResponse`, `UsageInfo` |
 | `provider.rs` | `LlmProvider` trait (dyn-compatible via `Pin<Box<dyn Future>>`), `chat()` + `chat_stream()` (SSE streaming with non-streaming fallback) |
 | `tool.rs` | `Tool` trait, `ToolRegistry` trait, `ToolDefinition`, `ToolResult` |
 | `agent.rs` | `AgentLoop` trait, `AgentInfo`, `AgentResult` |
-| `session.rs` | `Session`, `SessionStore` trait |
+| `session.rs` | `Session`, `SessionStore` trait, `SpillEntry`, `SpillIndex`, `ContextSpillStore` trait (spill storage port for context pruning and `recall()`) |
 | `skill.rs` | `Skill`, `SkillSource`, `SkillFrontmatter`, `SkillLoader` trait, `parse_skill_md()`, `is_valid_skill_name()` |
 | `cron.rs` | `CronJob`, `CronJobResult`, `CronSchedule`, `CronStore` trait |
 | `channel.rs` | `Channel` trait (dyn-compatible outbound delivery port via `send_message()`) |
@@ -54,6 +54,7 @@ Depends only on `domain/`. Contains orchestration logic with no I/O — all I/O 
 | File | Purpose |
 |---|---|
 | `agent_loop.rs` | `AgentLoopImpl` — the core LLM-tool loop: send messages to provider, execute tool calls, repeat until done or max iterations. Emits `tracing::info!` on each tool execution with `tool_name`, `duration_ms`, `is_error` fields (target: `tool_exec`) |
+| `context_pruning.rs` | `estimate_tokens()`, `collapse_old_tool_results()`, `enforce_context_ceiling()`, `update_spill_manifest()`, `build_manifest_text()`, `truncate_utf8_safe()` — 3-turn collapse of tool results with spill-to-disk, sliding window enforcement, and pinned manifest management |
 | `onboard.rs` | `run_onboard()` — onboarding orchestration through `OnboardStore` (config + workspace bootstrap) |
 | `subagent.rs` | `SubagentContext` — constructs child agent contexts with inherited sandbox restrictions (re-exports `SubagentConfig` from domain) |
 | `cron_executor.rs` | `execute_cron_tick()` — runs due cron jobs through the agent with timeout, records `last_error` on failure, propagates `deliver_to`; cron-expression schedules are currently skipped and marked as not implemented |
@@ -68,8 +69,8 @@ Implements the domain traits with real I/O. This is where serde, reqwest, tokio,
 |---|---|
 | `config.rs` | `Config` struct with serde deserialization, env var overrides, workspace path expansion |
 | `providers/` | `OpenAiProvider`, `AnthropicProvider` (real HTTP, SSE streaming via `chat_stream()`), `FallbackProvider` (cooldown + provider-scoped error classification using extracted status codes and semantic matching), `ErrorClass`. `create_provider()` validates `api_base` (https for non-local hosts; http allowed only on loopback) and rejects unsafe URLs |
-| `tools/` | `ExecTool` (shell; drains stdout/stderr while running and caps captured output to 1 MiB per stream), `ReadFileTool`/`WriteFileTool`/`EditFileTool`/`AppendFileTool`/`ListDirTool` (filesystem, async via `tokio::fs`), `SpawnTool` (subagent), `CronTool`, `MessageTool`, `WebSearchTool` (Brave + DDG), `ToolRegistryImpl` (caches sorted tool definitions at registration time) |
-| `persistence/` | `FileSessionStore`, `MemoryStore`, `FileCronStore`, `FileSkillLoader`, `workspace_store.rs` (`FileHeartbeatTaskSource`, `FileOnboardStore`) |
+| `tools/` | `ExecTool` (shell; drains stdout/stderr while running and caps captured output to 1 MiB per stream), `ReadFileTool`/`WriteFileTool`/`EditFileTool`/`AppendFileTool`/`ListDirTool` (filesystem, async via `tokio::fs`), `SpawnTool` (subagent), `CronTool`, `MessageTool`, `WebSearchTool` (Brave + DDG), `RecallTool` (retrieves spilled tool outputs by ID, supports `"list"` for full index, tracks repeated recalls with diagnostic warnings), `ToolRegistryImpl` (caches sorted tool definitions at registration time) |
+| `persistence/` | `FileSessionStore`, `MemoryStore`, `FileCronStore`, `FileSkillLoader`, `workspace_store.rs` (`FileHeartbeatTaskSource`, `FileOnboardStore`), `context_spill.rs` (`FileContextSpillStore` — JSONL append-only spill file for context pruning, implements `ContextSpillStore`) |
 | `security/` | `Sandbox` — workspace path validation and command filtering |
 | `auth/` | `CredentialStore` (file-based token CRUD), `oauth.rs` (`OAuthConfig`, `DeviceCodeResponse`, `request_device_code()` — OAuth browser flow and device code flow for headless environments) |
 | `channels/` | `TelegramChannel` — `send_message()`, `get_updates()`, user allowlist, configurable `api_base` (defaults to `https://api.telegram.org`) |
@@ -174,9 +175,9 @@ Refactor
 @wip -> @done       Tag the feature
 ```
 
-The BDD runner (`tests/bdd/main.rs`) uses `.fail_on_skipped()` and runs features tagged `@wip` or `@done`. This means all completed features are regression-tested on every run. Scenarios tagged `@pending` are always excluded. Scenarios tagged `@real-llm` are excluded unless `QUECTO_REAL_LLM=1` is set (requires `OPENAI_API_KEY` via env var or `.env` file). Set `QUECTO_TAG=<tag>` to run only scenarios matching a specific tag (e.g. smoke: `timeout 5m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm-smoke cargo test --test bdd`, full: `timeout 5m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm cargo test --test bdd`). Step definitions live in `tests/bdd/` split across 20 module files (~9000 lines total).
+The BDD runner (`tests/bdd/main.rs`) uses `.fail_on_skipped()` and runs features tagged `@wip` or `@done`. This means all completed features are regression-tested on every run. Scenarios tagged `@pending` are always excluded. Scenarios tagged `@real-llm` are excluded unless `QUECTO_REAL_LLM=1` is set (requires `OPENAI_API_KEY` via env var or `.env` file). Set `QUECTO_TAG=<tag>` to run only scenarios matching a specific tag (e.g. smoke: `timeout 5m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm-smoke cargo test --test bdd`, full: `timeout 5m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm cargo test --test bdd`). Step definitions live in `tests/bdd/` split across 21 module files (~10000 lines total).
 
-Feature files live in `tests/features/`. There are 45 feature files covering: agent_cli, agent_loop, agent_tools, architecture, auth, cli, config, cron, e2e_agentic_loop, e2e_gateway_cron, e2e_gateway_health, e2e_gateway_heartbeat, e2e_gateway_spawn, e2e_gateway_voice, e2e_providers, e2e_real_llm, e2e_real_llm_agent_matrix, e2e_real_llm_entrypoints, e2e_real_llm_entrypoints_matrix, e2e_real_llm_gateway, e2e_real_llm_gateway_matrix, e2e_real_llm_repl, e2e_real_llm_repl_matrix, e2e_repl_agents, e2e_repl_cron, e2e_repl_heartbeat, e2e_repl_spawn, e2e_safety, e2e_session, e2e_session_tools, e2e_skills, e2e_subprocess, e2e_tool_use, heartbeat, observability, onboard, providers, repl, sandbox_hardening, security, session, skills, subagent, telegram, voice.
+Feature files live in `tests/features/`. There are 46 feature files covering: agent_cli, agent_loop, agent_tools, architecture, auth, cli, config, context_pruning, cron, e2e_agentic_loop, e2e_gateway_cron, e2e_gateway_health, e2e_gateway_heartbeat, e2e_gateway_spawn, e2e_gateway_voice, e2e_providers, e2e_real_llm, e2e_real_llm_agent_matrix, e2e_real_llm_entrypoints, e2e_real_llm_entrypoints_matrix, e2e_real_llm_gateway, e2e_real_llm_gateway_matrix, e2e_real_llm_repl, e2e_real_llm_repl_matrix, e2e_repl_agents, e2e_repl_cron, e2e_repl_heartbeat, e2e_repl_spawn, e2e_safety, e2e_session, e2e_session_tools, e2e_skills, e2e_subprocess, e2e_tool_use, heartbeat, observability, onboard, providers, repl, sandbox_hardening, security, session, skills, subagent, telegram, voice.
 
 ## Quality gates
 

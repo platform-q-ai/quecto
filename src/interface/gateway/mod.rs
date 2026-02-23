@@ -330,7 +330,9 @@ impl Gateway {
             self.base_dir.clone(),
         )));
         let spill_store = Arc::new(FileContextSpillStore::new(self.base_dir.clone()));
-        let session_key = "gateway:shared".to_string();
+        // Shared agent handles cron/heartbeat tasks, not per-user Telegram messages.
+        // Per-user messages use InboundAgentBuilder with session-scoped spill stores.
+        let session_key = "gateway:cron-heartbeat".to_string();
         registry.register(Arc::new(RecallTool::new(
             spill_store.clone(),
             session_key.clone(),

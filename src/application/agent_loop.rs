@@ -82,20 +82,28 @@ impl AgentLoopImpl {
         self
     }
 
-    async fn apply_context_pruning(&self, messages: &mut Vec<Message>, current_turn: u32) {
+    async fn apply_context_pruning(
+        &self,
+        messages: &mut Vec<Message>,
+        current_turn: u32,
+        spills_dirty: bool,
+    ) {
         let collapsed = context_pruning::collapse_old_tool_results(
             messages,
             current_turn,
             self.context_collapse_after_turns,
         );
         let dropped = context_pruning::enforce_context_ceiling(messages, self.max_context_tokens);
-        if let Some(ref spill_store) = self.spill_store {
-            context_pruning::update_spill_manifest(
-                messages,
-                spill_store.as_ref(),
-                &self.session_key,
-            )
-            .await;
+        // Only rebuild manifest when spills have changed (new tool results spilled)
+        if spills_dirty {
+            if let Some(ref spill_store) = self.spill_store {
+                context_pruning::update_spill_manifest(
+                    messages,
+                    spill_store.as_ref(),
+                    &self.session_key,
+                )
+                .await;
+            }
         }
         if collapsed > 0 || dropped > 0 {
             tracing::info!(
@@ -213,9 +221,13 @@ impl AgentLoopImpl {
         let tool_defs = self.tool_registry.definitions();
         let mut iterations: u32 = 0;
         let mut current_turn: u32 = 1;
+        // Track whether spills happened so we only rebuild manifest when needed.
+        // Start true to build initial manifest from any prior session spills.
+        let mut spills_dirty = true;
 
         loop {
-            self.apply_context_pruning(messages, current_turn).await;
+            self.apply_context_pruning(messages, current_turn, spills_dirty)
+                .await;
 
             let request = self.build_chat_request(messages, &tool_defs);
             let response = self.provider.chat(request).await?;
@@ -226,6 +238,8 @@ impl AgentLoopImpl {
 
             self.execute_tool_calls_for_response(messages, current_turn, &response)
                 .await;
+            // Tool calls were executed and spilled — mark dirty for next iteration
+            spills_dirty = self.spill_store.is_some();
             iterations += 1;
             current_turn += 1;
 

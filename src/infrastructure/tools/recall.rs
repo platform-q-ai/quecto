@@ -61,18 +61,21 @@ impl Tool for RecallTool {
                 return self.handle_list().await;
             }
 
-            // Track recall count for diagnostics
+            // Track recall count for diagnostics (capped to prevent unbounded growth)
             {
                 let mut counts = self.recall_counts.lock().unwrap();
-                let count = counts.entry(id.clone()).or_insert(0);
-                *count += 1;
-                if *count >= 3 {
-                    tracing::warn!(
-                        target: "context_prune",
-                        id = id.as_str(),
-                        recall_count = *count,
-                        "repeated recall — model may be stuck in a recall-collapse loop"
-                    );
+                // Cap at 256 tracked IDs to prevent memory leak in long sessions
+                if counts.len() < 256 || counts.contains_key(&id) {
+                    let count = counts.entry(id.clone()).or_insert(0);
+                    *count += 1;
+                    if *count >= 3 {
+                        tracing::warn!(
+                            target: "context_prune",
+                            id = id.as_str(),
+                            recall_count = *count,
+                            "repeated recall — model may be stuck in a recall-collapse loop"
+                        );
+                    }
                 }
             }
 

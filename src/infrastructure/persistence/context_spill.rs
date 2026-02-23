@@ -82,36 +82,69 @@ impl FileContextSpillStore {
 }
 
 /// Sanitize a session key for use as a directory name.
-/// Replaces characters that are invalid in filenames.
+/// Replaces characters that are invalid in filenames, strips null bytes,
+/// handles empty strings and leading dots (path traversal).
 fn sanitize_filename(key: &str) -> String {
-    key.chars()
+    if key.is_empty() {
+        return "_empty".to_string();
+    }
+    let sanitized: String = key
+        .chars()
+        .filter(|c| *c != '\0') // strip null bytes
         .map(|c| match c {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '.' => '_',
             _ => c,
         })
-        .collect()
+        .collect();
+    if sanitized.is_empty() {
+        return "_empty".to_string();
+    }
+    sanitized
 }
 
-/// Read and parse all spill records from a JSONL file.
-async fn read_spill_records(path: &Path) -> Result<Vec<SpillRecord>, DomainError> {
-    let content = match tokio::fs::read_to_string(path).await {
-        Ok(c) => c,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
-        Err(e) => {
-            return Err(DomainError::Session(format!(
-                "failed to read spill file: {}",
-                e
-            )));
-        }
-    };
+/// Lightweight index record for list_entries — avoids deserializing content.
+#[derive(Deserialize)]
+struct SpillIndexRecord {
+    id: String,
+    tool: String,
+    input_preview: String,
+    tokens: usize,
+    // content field is intentionally omitted to skip deserialization
+}
 
+/// Read the raw JSONL content from a spill file.
+async fn read_spill_content(path: &Path) -> Result<String, DomainError> {
+    match tokio::fs::read_to_string(path).await {
+        Ok(c) => Ok(c),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(DomainError::Session(format!(
+            "failed to read spill file: {}",
+            e
+        ))),
+    }
+}
+
+/// Read and parse all spill records from a JSONL file (full content).
+async fn read_spill_records(path: &Path) -> Result<Vec<SpillRecord>, DomainError> {
+    let content = read_spill_content(path).await?;
+    Ok(parse_jsonl::<SpillRecord>(&content))
+}
+
+/// Read and parse spill index records from a JSONL file (no content field).
+async fn read_spill_index_records(path: &Path) -> Result<Vec<SpillIndexRecord>, DomainError> {
+    let content = read_spill_content(path).await?;
+    Ok(parse_jsonl::<SpillIndexRecord>(&content))
+}
+
+/// Parse JSONL content into a vector of deserialized records.
+fn parse_jsonl<T: serde::de::DeserializeOwned>(content: &str) -> Vec<T> {
     let mut records = Vec::new();
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
-        match serde_json::from_str::<SpillRecord>(trimmed) {
+        match serde_json::from_str::<T>(trimmed) {
             Ok(rec) => records.push(rec),
             Err(e) => {
                 tracing::warn!(
@@ -122,7 +155,7 @@ async fn read_spill_records(path: &Path) -> Result<Vec<SpillRecord>, DomainError
             }
         }
     }
-    Ok(records)
+    records
 }
 
 impl ContextSpillStore for FileContextSpillStore {
@@ -145,21 +178,19 @@ impl ContextSpillStore for FileContextSpillStore {
                 serde_json::to_string(&record).map_err(|e| DomainError::Session(e.to_string()))?;
             line.push('\n');
 
-            tokio::fs::OpenOptions::new()
+            // True append: open in append mode and write directly.
+            // No read-modify-write cycle, no TOCTOU race.
+            use tokio::io::AsyncWriteExt;
+            let mut file = tokio::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&path)
                 .await
                 .map_err(|e| DomainError::Session(format!("failed to open spill file: {}", e)))?;
 
-            tokio::fs::write(&path, {
-                // Read existing content and append
-                let mut existing = tokio::fs::read_to_string(&path).await.unwrap_or_default();
-                existing.push_str(&line);
-                existing
-            })
-            .await
-            .map_err(|e| DomainError::Session(format!("failed to write spill entry: {}", e)))?;
+            file.write_all(line.as_bytes())
+                .await
+                .map_err(|e| DomainError::Session(format!("failed to write spill entry: {}", e)))?;
 
             Ok(())
         })
@@ -184,8 +215,16 @@ impl ContextSpillStore for FileContextSpillStore {
     ) -> Pin<Box<dyn Future<Output = Result<Vec<SpillIndex>, DomainError>> + Send + '_>> {
         let path = self.spill_path(session_key);
         Box::pin(async move {
-            let records = read_spill_records(&path).await?;
-            Ok(records.iter().map(SpillIndex::from).collect())
+            let records = read_spill_index_records(&path).await?;
+            Ok(records
+                .into_iter()
+                .map(|r| SpillIndex {
+                    id: r.id,
+                    tool: r.tool,
+                    input_preview: r.input_preview,
+                    tokens: r.tokens,
+                })
+                .collect())
         })
     }
 }
@@ -265,7 +304,7 @@ mod tests {
         let store = FileContextSpillStore::new(tmp.path().to_path_buf());
         let entry = test_entry();
 
-        // Session keys with special characters should work
+        // Session keys with special characters should work (colon is sanitized to _)
         store.append("telegram:12345", &entry).await.unwrap();
 
         let recalled = store
@@ -280,5 +319,18 @@ mod tests {
         assert_eq!(sanitize_filename("simple"), "simple");
         assert_eq!(sanitize_filename("telegram:12345"), "telegram_12345");
         assert_eq!(sanitize_filename("a/b\\c"), "a_b_c");
+    }
+
+    #[test]
+    fn test_sanitize_filename_edge_cases() {
+        // Empty string
+        assert_eq!(sanitize_filename(""), "_empty");
+        // Null bytes stripped
+        assert_eq!(sanitize_filename("a\0b"), "ab");
+        // Only null bytes
+        assert_eq!(sanitize_filename("\0\0"), "_empty");
+        // Dots replaced (prevents path traversal via "..")
+        assert_eq!(sanitize_filename(".."), "__");
+        assert_eq!(sanitize_filename(".hidden"), "_hidden");
     }
 }
