@@ -46,6 +46,7 @@ fn setup_nsjail_exec_tool(world: &mut QuectoWorld, setup: NsjailSetup) {
             cpu_time_limit_secs: setup.cpu_time_limit_secs,
             wall_time_limit_secs: setup.wall_time_limit_secs,
             die_with_parent: true,
+            allow_without_die_with_parent: true,
         },
     };
 
@@ -328,6 +329,7 @@ fn when_registry_constructed(world: &mut QuectoWorld) {
                 cpu_time_limit_secs: Some(settings.cpu_time_limit_secs),
                 wall_time_limit_secs: Some(settings.wall_time_limit_secs),
                 die_with_parent: settings.die_with_parent,
+                allow_without_die_with_parent: settings.allow_without_die_with_parent,
             },
             ..ExecOptions::default()
         },

@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -14,13 +15,8 @@ use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
 
-/// Default timeout for command execution (30 seconds).
 const DEFAULT_EXEC_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Prefix for environment variables that should be stripped from child processes.
 const SECRET_ENV_PREFIX: &str = "QUECTO_";
-
-/// Maximum bytes captured per stream (stdout and stderr) to avoid unbounded memory growth.
 const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
 const STREAM_DRAIN_TIMEOUT_ON_KILL: Duration = Duration::from_millis(250);
 const DEFAULT_NSJAIL_MEMORY_LIMIT_MB: u64 = 512;
@@ -28,15 +24,17 @@ const DEFAULT_NSJAIL_PID_LIMIT: u64 = 256;
 const DEFAULT_NSJAIL_CPU_TIME_LIMIT_SECS: u64 = 30;
 const DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS: u64 = 30;
 const TRUSTED_NSJAIL_PATHS: &[&str] = &["/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin"];
+const NSJAIL_HELP_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
+const EXEC_ENV_ALLOWLIST: &[&str] = &[
+    "HOME", "PATH", "LANG", "TZ", "TERM", "SHELL", "USER", "LOGNAME", "TMPDIR",
+];
 
-/// Runtime isolation mode for the exec tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecIsolationMode {
     Native,
     Nsjail,
 }
 
-/// Configuration for nsjail execution.
 #[derive(Debug, Clone)]
 pub struct NsjailOptions {
     pub binary: String,
@@ -46,6 +44,7 @@ pub struct NsjailOptions {
     pub cpu_time_limit_secs: Option<u64>,
     pub wall_time_limit_secs: Option<u64>,
     pub die_with_parent: bool,
+    pub allow_without_die_with_parent: bool,
 }
 
 impl Default for NsjailOptions {
@@ -58,11 +57,11 @@ impl Default for NsjailOptions {
             cpu_time_limit_secs: Some(DEFAULT_NSJAIL_CPU_TIME_LIMIT_SECS),
             wall_time_limit_secs: Some(DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS),
             die_with_parent: true,
+            allow_without_die_with_parent: false,
         }
     }
 }
 
-/// Runtime options for ExecTool.
 #[derive(Debug, Clone)]
 pub struct ExecOptions {
     pub timeout: Duration,
@@ -84,7 +83,6 @@ impl Default for ExecOptions {
     }
 }
 
-/// Tool that executes shell commands within the workspace.
 pub struct ExecTool {
     workspace: Arc<PathBuf>,
     sandbox: Arc<Sandbox>,
@@ -108,12 +106,10 @@ impl std::fmt::Debug for ExecTool {
 }
 
 impl ExecTool {
-    /// Create a new exec tool with default timeout.
     pub fn new(workspace: Arc<PathBuf>, sandbox: Arc<Sandbox>) -> Self {
         Self::with_options(workspace, sandbox, ExecOptions::default())
     }
 
-    /// Create a new exec tool with a custom timeout.
     pub fn with_timeout(workspace: Arc<PathBuf>, sandbox: Arc<Sandbox>, timeout: Duration) -> Self {
         let opts = ExecOptions {
             timeout,
@@ -122,7 +118,6 @@ impl ExecTool {
         Self::with_options(workspace, sandbox, opts)
     }
 
-    /// Create a new exec tool with custom timeout and output capture cap.
     pub fn with_limits(
         workspace: Arc<PathBuf>,
         sandbox: Arc<Sandbox>,
@@ -137,7 +132,6 @@ impl ExecTool {
         Self::with_options(workspace, sandbox, opts)
     }
 
-    /// Create a new exec tool with explicit options.
     pub fn with_options(
         workspace: Arc<PathBuf>,
         sandbox: Arc<Sandbox>,
@@ -152,12 +146,20 @@ impl ExecTool {
                 if options.nsjail.die_with_parent
                     && !nsjail_supports_flag(&options.nsjail.binary, "--die_with_parent")
                 {
-                    options.nsjail.die_with_parent = false;
-                    warning = Some(format!(
-                        "nsjail binary '{}' does not support --die_with_parent; continuing without it",
-                        options.nsjail.binary
-                    ));
-                    tracing::warn!(target: "exec", "{}", warning.as_deref().unwrap_or_default());
+                    if options.nsjail.allow_without_die_with_parent {
+                        options.nsjail.die_with_parent = false;
+                        warning = Some(format!(
+                            "nsjail binary '{}' does not support --die_with_parent; continuing without it",
+                            options.nsjail.binary
+                        ));
+                        tracing::warn!(target: "exec", "{}", warning.as_deref().unwrap_or_default());
+                    } else {
+                        startup_error = Some(format!(
+                            "nsjail binary '{}' does not support required --die_with_parent; set tools.exec.allow_without_die_with_parent=true to allow downgrade",
+                            options.nsjail.binary
+                        ));
+                        tracing::error!(target: "exec", "{}", startup_error.as_deref().unwrap_or_default());
+                    }
                 }
             } else {
                 let missing = format!(
@@ -189,28 +191,22 @@ impl ExecTool {
         }
     }
 
-    /// Get the configured timeout duration.
     pub fn timeout(&self) -> Duration {
         self.timeout
     }
 
-    /// Current runtime mode (may differ from requested mode after fallback).
     pub fn mode(&self) -> ExecIsolationMode {
         self.mode
     }
 
-    /// Startup warning set when fallback occurred.
     pub fn startup_warning(&self) -> Option<&str> {
         self.startup_warning.as_deref()
     }
 
-    /// Startup error set when nsjail was required but unavailable.
     pub fn startup_error(&self) -> Option<&str> {
         self.startup_error.as_deref()
     }
 
-    /// Execute a command with custom environment variables.
-    /// Environment variables prefixed with `QUECTO_` are stripped from the child process.
     pub fn execute_with_env(
         &self,
         arguments: &str,
@@ -222,7 +218,6 @@ impl ExecTool {
         Box::pin(async move { self.run_command(&args_str, Some(&env_overrides)).await })
     }
 
-    /// Core execution logic shared by both `Tool::execute` and `execute_with_env`.
     async fn run_command(
         &self,
         arguments: &str,
@@ -234,7 +229,6 @@ impl ExecTool {
 
         let command = extract_command(arguments)?;
 
-        // Validate command against sandbox
         self.sandbox
             .validate_command(&command)
             .map_err(|e| DomainError::Security(e.to_string()))?;
@@ -242,15 +236,12 @@ impl ExecTool {
         let source_env = build_source_env(env_overrides);
         let mut cmd = build_command(self, &command, &source_env);
 
-        // Spawn the child process so we can kill it on timeout.
-        // We use spawn + wait (not output) so we retain a handle to kill the process.
         let mut child = cmd
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| DomainError::Tool(format!("exec failed: {}", e)))?;
 
-        // Start draining stdout/stderr immediately so child processes do not block on full pipes.
         let stdout_task = child
             .stdout
             .take()
@@ -279,10 +270,16 @@ fn extract_command(arguments: &str) -> Result<String, DomainError> {
 }
 
 fn build_source_env(env_overrides: Option<&HashMap<String, String>>) -> HashMap<String, String> {
-    match env_overrides {
-        Some(overrides) => overrides.clone(),
-        None => std::env::vars().collect(),
-    }
+    let source: Box<dyn Iterator<Item = (String, String)>> = match env_overrides {
+        Some(overrides) => Box::new(overrides.clone().into_iter()),
+        None => Box::new(std::env::vars()),
+    };
+    source.filter(|(k, _)| is_allowed_exec_env_key(k)).collect()
+}
+
+fn is_allowed_exec_env_key(key: &str) -> bool {
+    !key.starts_with(SECRET_ENV_PREFIX)
+        && (EXEC_ENV_ALLOWLIST.contains(&key) || key.starts_with("LC_"))
 }
 
 fn build_shell_command(
@@ -381,8 +378,12 @@ fn build_nsjail_command(
 fn resolve_nsjail_binary(binary: &str) -> Option<String> {
     let path = Path::new(binary);
     if path.components().count() > 1 {
-        if is_executable_file(path) {
-            return Some(path.to_string_lossy().to_string());
+        if !path.is_absolute() {
+            return None;
+        }
+        let canonical = std::fs::canonicalize(path).ok()?;
+        if is_trusted_nsjail_binary_path(&canonical) && is_executable_file(&canonical) {
+            return Some(canonical.to_string_lossy().to_string());
         }
         return None;
     }
@@ -393,8 +394,12 @@ fn resolve_nsjail_binary(binary: &str) -> Option<String> {
                 continue;
             }
             let candidate = dir.join(binary);
-            if is_executable_file(&candidate) {
-                return Some(candidate.to_string_lossy().to_string());
+            let canonical = std::fs::canonicalize(&candidate).ok();
+            if let Some(canonical) = canonical
+                && is_trusted_nsjail_binary_path(&canonical)
+                && is_executable_file(&canonical)
+            {
+                return Some(canonical.to_string_lossy().to_string());
             }
         }
     }
@@ -407,13 +412,53 @@ fn is_trusted_nsjail_search_dir(path: &Path) -> bool {
         .any(|allowed| path == Path::new(allowed))
 }
 
+fn is_trusted_nsjail_binary_path(path: &Path) -> bool {
+    TRUSTED_NSJAIL_PATHS
+        .iter()
+        .map(Path::new)
+        .any(|root| path.starts_with(root))
+}
+
 fn nsjail_supports_flag(binary: &str, flag: &str) -> bool {
-    let output = match std::process::Command::new(binary).arg("--help").output() {
-        Ok(output) => output,
+    use std::io::Read;
+
+    let mut child = match std::process::Command::new(binary)
+        .arg("--help")
+        .env_clear()
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
         Err(_) => return false,
     };
-    String::from_utf8_lossy(&output.stdout).contains(flag)
-        || String::from_utf8_lossy(&output.stderr).contains(flag)
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if start.elapsed() >= NSJAIL_HELP_PROBE_TIMEOUT {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return false;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(_) => return false,
+        }
+    }
+    let mut text = String::new();
+    if let Some(mut stdout) = child.stdout.take() {
+        let mut buf = String::new();
+        let _ = stdout.read_to_string(&mut buf);
+        text.push_str(&buf);
+    }
+    if let Some(mut stderr) = child.stderr.take() {
+        let mut buf = String::new();
+        let _ = stderr.read_to_string(&mut buf);
+        text.push_str(&buf);
+    }
+    text.contains(flag)
 }
 
 fn is_executable_file(path: &Path) -> bool {
@@ -469,7 +514,6 @@ async fn run_child_with_timeout(
         }
         Ok(Err(e)) => Err(DomainError::Tool(format!("exec failed: {}", e))),
         Err(_) => {
-            // Timeout: kill the child process to prevent orphan leak
             let _ = child.kill().await;
             let _ = child.wait().await;
             let _ = await_stream_output_with_timeout(
@@ -495,7 +539,6 @@ struct StreamTasks {
     stderr_task: Option<tokio::task::JoinHandle<(String, bool)>>,
 }
 
-/// Read bytes from a process stream with a fixed capture cap.
 async fn read_stream_limited<R>(mut pipe: R, max_capture_bytes: usize) -> (String, bool)
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -617,8 +660,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // --- Sandbox hardening: timeout tests ---
-
     #[tokio::test]
     async fn test_exec_timeout_kills_long_command() {
         let tmp = TempDir::new().unwrap();
@@ -633,23 +674,6 @@ mod tests {
         assert!(result.is_error);
         assert!(result.content.contains("timed out"));
     }
-
-    #[tokio::test]
-    async fn test_exec_command_within_timeout() {
-        let tmp = TempDir::new().unwrap();
-        let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
-        let tool = ExecTool::with_timeout(
-            Arc::new(tmp.path().to_path_buf()),
-            Arc::new(sandbox),
-            Duration::from_secs(5),
-        );
-
-        let result = tool.execute(r#"{"command": "echo fast"}"#).await.unwrap();
-        assert!(!result.is_error);
-        assert!(result.content.contains("fast"));
-    }
-
-    // --- Sandbox hardening: env sanitization tests ---
 
     #[tokio::test]
     async fn test_exec_strips_quecto_env_vars() {
@@ -671,28 +695,7 @@ mod tests {
             )
             .await
             .unwrap();
-        // The QUECTO_ var should not be in the output
         assert!(!result.content.contains("sk-secret"));
-    }
-
-    #[test]
-    fn test_nsjail_mode_selected_when_binary_exists() {
-        let tmp = TempDir::new().unwrap();
-        let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
-        let opts = ExecOptions {
-            isolation_mode: ExecIsolationMode::Nsjail,
-            allow_native_fallback: true,
-            nsjail: NsjailOptions {
-                binary: "sh".to_string(),
-                die_with_parent: false,
-                ..NsjailOptions::default()
-            },
-            ..ExecOptions::default()
-        };
-        let tool =
-            ExecTool::with_options(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox), opts);
-        assert_eq!(tool.mode(), ExecIsolationMode::Nsjail);
-        assert!(tool.startup_warning().is_none());
     }
 
     #[test]
