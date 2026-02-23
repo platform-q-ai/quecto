@@ -35,11 +35,13 @@ struct MessageRecord {
     // Context-pruning metadata (all optional for backward compat)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     turn: Option<u32>,
-    #[serde(default, skip_serializing_if = "is_false")]
-    is_pinned: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    /// `None` = absent in old files (use constructor default);
+    /// `Some(true/false)` = explicitly persisted value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    is_pinned: Option<bool>,
+    #[serde(default, skip_serializing_if = "skip_if_false")]
     is_manifest: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing_if = "skip_if_false")]
     is_collapsed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tool_name: Option<String>,
@@ -49,7 +51,7 @@ struct MessageRecord {
     spill_id: Option<String>,
 }
 
-fn is_false(v: &bool) -> bool {
+fn skip_if_false(v: &bool) -> bool {
     !v
 }
 
@@ -192,7 +194,7 @@ fn message_to_record(msg: &Message) -> MessageRecord {
             .collect(),
         tool_call_id: msg.tool_call_id.clone(),
         turn: msg.turn,
-        is_pinned: msg.is_pinned,
+        is_pinned: Some(msg.is_pinned),
         is_manifest: msg.is_manifest,
         is_collapsed: msg.is_collapsed,
         tool_name: msg.tool_name.clone(),
@@ -224,13 +226,11 @@ fn record_to_message(rec: MessageRecord) -> Message {
     msg.tool_name = rec.tool_name;
     msg.input_preview = rec.input_preview;
     msg.spill_id = rec.spill_id;
-    // For is_pinned: if the record has it set, use it. Otherwise keep the
-    // constructor default (true for System, false for others). Since serde
-    // defaults to false and skip_serializing_if skips false values, old
-    // session files without is_pinned will get the constructor default.
-    // Only override when the record explicitly says true.
-    if rec.is_pinned {
-        msg.is_pinned = true;
+    // is_pinned: `Some(v)` = explicitly persisted, use it.
+    // `None` = absent (old session file), keep constructor default
+    // (true for System, false for others).
+    if let Some(pinned) = rec.is_pinned {
+        msg.is_pinned = pinned;
     }
     msg
 }

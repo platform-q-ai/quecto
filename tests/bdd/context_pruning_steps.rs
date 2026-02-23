@@ -975,14 +975,18 @@ fn when_spill_manifest_updated(world: &mut QuectoWorld) {
         ));
 }
 
+/// Find the collapsed tool result from turn 1 by structural criteria.
+fn find_collapsed_tool(messages: &[Message]) -> &Message {
+    messages
+        .iter()
+        .find(|m| m.role == Role::Tool && m.is_collapsed)
+        .expect("should find a collapsed tool result")
+}
+
 #[then("the tool result from turn 1 still has is_collapsed true")]
 fn then_tool_result_turn1_still_collapsed(world: &mut QuectoWorld) {
     let messages = world.context_messages.as_ref().unwrap();
-    // After reload, find by content pattern since turn may not persist yet
-    let tool_msg = messages
-        .iter()
-        .find(|m| m.role == Role::Tool && m.content.contains("turn1:bash:0"))
-        .expect("should find collapsed tool result with turn1:bash:0");
+    let tool_msg = find_collapsed_tool(messages);
     assert!(
         tool_msg.is_collapsed,
         "is_collapsed should survive save/load round-trip"
@@ -992,10 +996,7 @@ fn then_tool_result_turn1_still_collapsed(world: &mut QuectoWorld) {
 #[then(expr = "the tool result from turn 1 still has turn {int}")]
 fn then_tool_result_turn1_still_has_turn(world: &mut QuectoWorld, expected: u32) {
     let messages = world.context_messages.as_ref().unwrap();
-    let tool_msg = messages
-        .iter()
-        .find(|m| m.role == Role::Tool && m.content.contains("recall("))
-        .expect("should find collapsed tool result");
+    let tool_msg = find_collapsed_tool(messages);
     assert_eq!(
         tool_msg.turn,
         Some(expected),
@@ -1006,10 +1007,7 @@ fn then_tool_result_turn1_still_has_turn(world: &mut QuectoWorld, expected: u32)
 #[then(expr = "the tool result from turn 1 still has tool_name {string}")]
 fn then_tool_result_turn1_still_has_tool_name(world: &mut QuectoWorld, expected: String) {
     let messages = world.context_messages.as_ref().unwrap();
-    let tool_msg = messages
-        .iter()
-        .find(|m| m.role == Role::Tool && m.content.contains("recall("))
-        .expect("should find collapsed tool result");
+    let tool_msg = find_collapsed_tool(messages);
     assert_eq!(
         tool_msg.tool_name.as_deref(),
         Some(expected.as_str()),
@@ -1034,10 +1032,7 @@ fn then_exactly_one_system_msg_contains(world: &mut QuectoWorld, needle: String)
 #[then(expr = "the tool result from turn 1 still has spill_id {string}")]
 fn then_tool_result_turn1_still_has_spill_id(world: &mut QuectoWorld, expected: String) {
     let messages = world.context_messages.as_ref().unwrap();
-    let tool_msg = messages
-        .iter()
-        .find(|m| m.role == Role::Tool && m.content.contains("recall("))
-        .expect("should find collapsed tool result");
+    let tool_msg = find_collapsed_tool(messages);
     assert_eq!(
         tool_msg.spill_id.as_deref(),
         Some(expected.as_str()),
