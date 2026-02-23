@@ -1,17 +1,21 @@
 //! WasmToolWrapper: bridges a WASM component to the domain::Tool trait.
 //!
 //! Each call to `execute()` creates a fresh Store with a new HostState,
-//! compiles/instantiates the component, and invokes the exported `execute`
-//! function. The Store is dropped after each call (no state leaks).
+//! instantiates the WASM component, links host functions via the WIT
+//! interface, and calls the exported `execute` function. The Store is
+//! dropped after each call — no state carries between invocations.
 
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Instant;
+
+use wasmtime::Store;
+use wasmtime::component::Linker;
 
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 
+use super::bindings::SandboxedTool;
 use super::host::HostState;
 use super::runtime::{PreparedModule, WasmToolRuntime};
 
@@ -30,6 +34,10 @@ pub struct WasmToolMeta {
 }
 
 /// Wraps a compiled WASM component as a domain::Tool.
+///
+/// The component is instantiated fresh on each `execute()` call with a
+/// new `Store<HostState>`. Fuel metering and epoch interruption enforce
+/// resource limits. Host functions are linked via `SandboxedTool::add_to_linker`.
 pub struct WasmToolWrapper {
     runtime: Arc<WasmToolRuntime>,
     module: Arc<PreparedModule>,
@@ -67,46 +75,81 @@ impl WasmToolWrapper {
         self
     }
 
-    /// Execute the tool using the WASM runtime.
+    /// Execute the tool via real WASM component instantiation.
     ///
-    /// Creates a fresh Store + HostState per call. In the current
-    /// implementation, this delegates to the HostState methods directly
-    /// (simulating what a real WASM component would do via host imports).
-    /// When real WIT bindgen integration is added, this will instantiate
-    /// the component and call the exported `execute` function.
-    fn execute_inner(&self, _arguments: &str) -> Result<ToolResult, DomainError> {
+    /// 1. Create a fresh `Store<HostState>` with fuel + epoch limits
+    /// 2. Link host functions via `SandboxedTool::add_to_linker`
+    /// 3. Instantiate the WASM component
+    /// 4. Call the exported `execute(params)` function
+    /// 5. Drop the Store (no state leaks)
+    fn execute_inner(&self, arguments: &str) -> Result<ToolResult, DomainError> {
         let config = self.runtime.config();
+
+        // Build HostState for this invocation.
         let mut host_state =
             HostState::new(std::path::PathBuf::from("/tmp"), config.max_log_entries);
-
-        // Let the composition root configure the host state.
         if let Some(configurator) = &self.host_configurator {
             configurator(&mut host_state);
         }
 
-        // Parse the arguments and delegate to the WASM module.
-        // For now, we simulate this by parsing the tool-specific params
-        // and calling the appropriate host functions.
-        //
-        // In the real implementation, this would:
-        // 1. Create a fresh wasmtime::Store<HostState>
-        // 2. Set fuel limit: store.set_fuel(config.fuel_limit)
-        // 3. Set epoch deadline: store.epoch_deadline_trap()
-        // 4. Link host functions via wasmtime::component::Linker
-        // 5. Instantiate the component
-        // 6. Call tool.execute(params) on the exported interface
-        // 7. Extract result, logs, drop store
+        // Create Store with fuel and epoch enforcement.
+        let mut store = Store::new(self.runtime.engine(), host_state);
+        store
+            .set_fuel(config.fuel_limit)
+            .map_err(|e| DomainError::Tool(format!("set fuel: {e}")))?;
+        // Set epoch deadline far enough that it won't fire during tests.
+        store.set_epoch_deadline(u64::MAX / 2);
 
-        let _start = Instant::now();
-        let _component = &self.module.component;
+        // Link WASI host imports (required by wasm32-wasip2 components).
+        let mut linker: Linker<HostState> = Linker::new(self.runtime.engine());
+        wasmtime_wasi::add_to_linker_sync(&mut linker)
+            .map_err(|e| DomainError::Tool(format!("link wasi: {e}")))?;
 
-        // Placeholder: the real dispatch happens via component instantiation.
-        // For the initial implementation, we verify that the runtime, module,
-        // and wrapper infrastructure work end-to-end.
-        Ok(ToolResult {
-            content: format!("WASM tool '{}' executed (stub)", self.meta.name),
-            is_error: false,
-        })
+        // Link our custom host functions from the WIT interface.
+        SandboxedTool::add_to_linker(&mut linker, |state| state)
+            .map_err(|e| DomainError::Tool(format!("link host: {e}")))?;
+
+        // Instantiate the WASM component.
+        let instance = SandboxedTool::instantiate(&mut store, &self.module.component, &linker)
+            .map_err(|e| DomainError::Tool(format!("instantiate: {e}")))?;
+
+        // Inject __tool field so the guest dispatch knows which tool.
+        let params = inject_tool_name(arguments, &self.meta.name);
+
+        // Call the exported execute function across the WASM boundary.
+        let result = instance
+            .quecto_tools_tool()
+            .call_execute(&mut store, &params)
+            .map_err(|e| DomainError::Tool(format!("call execute: {e}")))?;
+
+        match result {
+            Ok(content) => Ok(ToolResult {
+                content,
+                is_error: false,
+            }),
+            Err(content) => Ok(ToolResult {
+                content,
+                is_error: true,
+            }),
+        }
+    }
+}
+
+/// Inject `__tool` into the JSON arguments so the guest knows which
+/// tool to dispatch.
+fn inject_tool_name(arguments: &str, tool_name: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(arguments) {
+        Ok(serde_json::Value::Object(mut map)) => {
+            map.insert(
+                "__tool".to_string(),
+                serde_json::Value::String(tool_name.to_string()),
+            );
+            serde_json::to_string(&map).unwrap_or_else(|_| arguments.to_string())
+        }
+        _ => {
+            // If args aren't a JSON object, wrap them.
+            serde_json::json!({ "__tool": tool_name }).to_string()
+        }
     }
 }
 
@@ -133,57 +176,101 @@ mod tests {
     use super::*;
     use crate::infrastructure::tools::wasm::runtime::WasmRuntimeConfig;
 
-    fn create_test_wrapper() -> Option<WasmToolWrapper> {
-        let rt = Arc::new(WasmToolRuntime::new(WasmRuntimeConfig::default()).ok()?);
-        let wasm = wat::parse_str(MINIMAL_COMPONENT_WAT).ok()?;
-        let module = rt.prepare("test_tool", &wasm).ok()?;
-        Some(WasmToolWrapper::new(
+    /// The real guest component bytes, compiled from guest/src/lib.rs.
+    const GUEST_WASM: &[u8] = include_bytes!("../../../../guest/quecto_wasm_guest.wasm");
+
+    fn create_real_wrapper(name: &str) -> WasmToolWrapper {
+        let rt = Arc::new(WasmToolRuntime::new(WasmRuntimeConfig::default()).unwrap());
+        let module = rt.prepare(name, GUEST_WASM).unwrap();
+        WasmToolWrapper::new(
             rt,
             module,
             WasmToolMeta {
-                name: "test_tool".to_string(),
-                description: "A test tool".to_string(),
-                schema: r#"{"type":"object","properties":{}}"#.to_string(),
+                name: name.to_string(),
+                description: format!("{name} tool"),
+                schema: r#"{"type":"object"}"#.to_string(),
             },
-        ))
+        )
     }
 
     #[test]
     fn test_wrapper_definition() {
-        let wrapper = create_test_wrapper().unwrap();
+        let wrapper = create_real_wrapper("read_file");
         let def = wrapper.definition();
-        assert_eq!(def.name, "test_tool");
-        assert_eq!(def.description, "A test tool");
+        assert_eq!(def.name, "read_file");
     }
 
     #[tokio::test]
-    async fn test_wrapper_execute() {
-        let wrapper = create_test_wrapper().unwrap();
-        let result = wrapper.execute("{}").await;
-        assert!(result.is_ok());
-        let tool_result = result.unwrap();
-        assert!(!tool_result.is_error);
+    async fn test_wrapper_execute_read_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ws = tmp.path().to_path_buf();
+        std::fs::write(ws.join("test.txt"), "hello from wasm").unwrap();
+
+        let wrapper = create_real_wrapper("read_file").with_host_configurator(Arc::new(
+            move |host: &mut HostState| {
+                host.workspace = ws.clone();
+            },
+        ));
+
+        let result = wrapper.execute(r#"{"path":"test.txt"}"#).await.unwrap();
+        assert!(!result.is_error, "got error: {}", result.content);
+        assert_eq!(result.content, "hello from wasm");
+    }
+
+    #[tokio::test]
+    async fn test_wrapper_execute_write_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let ws = tmp.path().to_path_buf();
+        let ws2 = ws.clone();
+
+        let wrapper = create_real_wrapper("write_file").with_host_configurator(Arc::new(
+            move |host: &mut HostState| {
+                host.workspace = ws2.clone();
+            },
+        ));
+
+        let result = wrapper
+            .execute(r#"{"path":"out.txt","content":"wasm wrote this"}"#)
+            .await
+            .unwrap();
+        assert!(!result.is_error, "got error: {}", result.content);
+
+        let content = std::fs::read_to_string(ws.join("out.txt")).unwrap();
+        assert_eq!(content, "wasm wrote this");
+    }
+
+    #[tokio::test]
+    async fn test_wrapper_execute_unknown_tool() {
+        let wrapper = create_real_wrapper("nonexistent_tool");
+        let result = wrapper.execute(r#"{}"#).await.unwrap();
+        assert!(result.is_error);
         assert!(
-            tool_result.content.contains("test_tool"),
+            result.content.contains("unknown tool"),
             "content: {}",
-            tool_result.content
+            result.content
         );
     }
 
     #[test]
     fn test_wrapper_debug() {
-        let wrapper = create_test_wrapper().unwrap();
+        let wrapper = create_real_wrapper("read_file");
         let debug = format!("{:?}", wrapper);
         assert!(debug.contains("WasmToolWrapper"));
-        assert!(debug.contains("test_tool"));
+        assert!(debug.contains("read_file"));
     }
 
-    const MINIMAL_COMPONENT_WAT: &str = r#"
-        (component
-            (core module $m
-                (func (export "memory") (result i32) (i32.const 0))
-                (memory (export "mem") 1)
-            )
-        )
-    "#;
+    #[test]
+    fn test_inject_tool_name() {
+        let result = inject_tool_name(r#"{"path":"test.txt"}"#, "read_file");
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["__tool"], "read_file");
+        assert_eq!(parsed["path"], "test.txt");
+    }
+
+    #[test]
+    fn test_inject_tool_name_invalid_json() {
+        let result = inject_tool_name("not json", "read_file");
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["__tool"], "read_file");
+    }
 }

@@ -8,6 +8,9 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use wasmtime::component::ResourceTable;
+use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiView};
+
 /// An HTTP request from a WASM tool.
 #[derive(Debug, Clone)]
 pub struct HttpRequest {
@@ -35,8 +38,14 @@ pub struct HostState {
     pub spill_ops: Vec<StoreOp>,
     /// Spill store data (pre-loaded for recall operations).
     pub spill_data: std::collections::HashMap<String, String>,
+    /// Cron job data (pre-loaded for list operations).
+    pub cron_data: std::collections::HashMap<String, String>,
     /// HTTP response stubs for testing.
     pub http_stubs: std::collections::HashMap<String, String>,
+    /// WASI context (required for wasm32-wasip2 components).
+    wasi_ctx: WasiCtx,
+    /// WASI resource table.
+    wasi_table: ResourceTable,
 }
 
 /// A structured log entry from a WASM tool.
@@ -72,8 +81,16 @@ impl HostState {
             cron_ops: Vec::new(),
             spill_ops: Vec::new(),
             spill_data: std::collections::HashMap::new(),
+            cron_data: std::collections::HashMap::new(),
             http_stubs: std::collections::HashMap::new(),
+            wasi_ctx: WasiCtxBuilder::new().build(),
+            wasi_table: ResourceTable::new(),
         }
+    }
+
+    /// Validate that a path is within the workspace (public for dispatch).
+    pub fn validate_path_public(&self, path: &str) -> Result<PathBuf, String> {
+        self.validate_path(path)
     }
 
     /// Validate that a path is within the workspace.
@@ -87,9 +104,22 @@ impl HostState {
 
     // --- Host function implementations ---
 
+    /// Maximum file size for read operations (1 MiB), matching native ReadFileTool.
+    const MAX_READ_SIZE: u64 = 1024 * 1024;
+
     /// Read a workspace file.
     pub fn workspace_read(&self, path: &str) -> Result<String, String> {
         let full = self.validate_path(path)?;
+        // Enforce file size limit before reading (matches native ReadFileTool).
+        if let Ok(meta) = std::fs::metadata(&full) {
+            if meta.len() > Self::MAX_READ_SIZE {
+                return Err(format!(
+                    "file too large: {} bytes (max {})",
+                    meta.len(),
+                    Self::MAX_READ_SIZE
+                ));
+            }
+        }
         std::fs::read_to_string(&full)
             .map_err(|e| format!("failed to read '{}': {e}", full.display()))
     }
@@ -177,7 +207,29 @@ impl HostState {
             action: action.to_string(),
             payload: payload.to_string(),
         });
-        Ok(format!("cron op '{action}' executed"))
+        match action {
+            "list" => {
+                let names: Vec<&str> = self.cron_data.keys().map(|s| s.as_str()).collect();
+                Ok(format!("cron jobs: {}", names.join(", ")))
+            }
+            "add" => {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(payload) {
+                    if let Some(name) = parsed.get("name").and_then(|v| v.as_str()) {
+                        self.cron_data.insert(name.to_string(), payload.to_string());
+                    }
+                }
+                Ok(format!("cron op '{action}' executed"))
+            }
+            "remove" => {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(payload) {
+                    if let Some(name) = parsed.get("name").and_then(|v| v.as_str()) {
+                        self.cron_data.remove(name);
+                    }
+                }
+                Ok(format!("cron op '{action}' executed"))
+            }
+            _ => Ok(format!("cron op '{action}' executed")),
+        }
     }
 
     /// Perform a spill store operation.
@@ -186,18 +238,24 @@ impl HostState {
             action: action.to_string(),
             payload: payload.to_string(),
         });
-        // Handle recall by looking up spill data.
-        if action == "recall" {
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(payload) {
-                if let Some(id) = parsed.get("id").and_then(|v| v.as_str()) {
-                    if let Some(content) = self.spill_data.get(id) {
-                        return Ok(content.clone());
+        match action {
+            "recall" => {
+                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(payload) {
+                    if let Some(id) = parsed.get("id").and_then(|v| v.as_str()) {
+                        if let Some(content) = self.spill_data.get(id) {
+                            return Ok(content.clone());
+                        }
+                        return Err(format!("spill entry '{id}' not found"));
                     }
-                    return Err(format!("spill entry '{id}' not found"));
                 }
+                Ok("spill op 'recall' executed".to_string())
             }
+            "list" => {
+                let ids: Vec<&str> = self.spill_data.keys().map(|s| s.as_str()).collect();
+                Ok(format!("spill entries: {}", ids.join(", ")))
+            }
+            _ => Ok(format!("spill op '{action}' executed")),
         }
-        Ok(format!("spill op '{action}' executed"))
     }
 
     /// Log a message (rate-limited).
@@ -208,6 +266,75 @@ impl HostState {
                 message: message.to_string(),
             });
         }
+    }
+}
+
+// ============================================================
+// Implement WasiView so WASI host imports are satisfied.
+// ============================================================
+
+impl WasiView for HostState {
+    fn table(&mut self) -> &mut ResourceTable {
+        &mut self.wasi_table
+    }
+
+    fn ctx(&mut self) -> &mut WasiCtx {
+        &mut self.wasi_ctx
+    }
+}
+
+// ============================================================
+// Implement the wasmtime bindgen! generated Host trait.
+// This bridges HostState methods to the WIT interface contract.
+// ============================================================
+
+impl super::bindings::quecto::tools::host::Host for HostState {
+    fn workspace_read(&mut self, path: String) -> Result<String, String> {
+        HostState::workspace_read(self, &path)
+    }
+
+    fn workspace_write(&mut self, path: String, content: String) -> Result<String, String> {
+        HostState::workspace_write(self, &path, &content)
+    }
+
+    fn workspace_append(&mut self, path: String, content: String) -> Result<String, String> {
+        HostState::workspace_append(self, &path, &content)
+    }
+
+    fn workspace_list_dir(&mut self, path: String) -> Result<String, String> {
+        HostState::workspace_list_dir(self, &path)
+    }
+
+    fn http_request(
+        &mut self,
+        method: String,
+        url: String,
+        headers_json: String,
+        body: String,
+    ) -> Result<String, String> {
+        let req = HttpRequest {
+            method,
+            url,
+            headers_json,
+            body,
+        };
+        HostState::http_request(self, &req)
+    }
+
+    fn send_message(&mut self, target: String, text: String) -> Result<String, String> {
+        HostState::send_message(self, &target, &text)
+    }
+
+    fn cron_store_op(&mut self, action: String, payload: String) -> Result<String, String> {
+        HostState::cron_store_op(self, &action, &payload)
+    }
+
+    fn spill_store_op(&mut self, action: String, payload: String) -> Result<String, String> {
+        HostState::spill_store_op(self, &action, &payload)
+    }
+
+    fn log(&mut self, level: String, message: String) {
+        HostState::log(self, &level, &message);
     }
 }
 

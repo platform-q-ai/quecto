@@ -5,6 +5,7 @@
 //! cross-call state. Tools interact with the host through the WIT interface
 //! defined in `wit/tool.wit`.
 
+pub mod bindings;
 pub mod capabilities;
 pub mod host;
 pub mod loader;
