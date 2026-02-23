@@ -88,17 +88,19 @@ impl WasmToolWrapper {
         // Build HostState for this invocation.
         let mut host_state =
             HostState::new(std::path::PathBuf::from("/tmp"), config.max_log_entries);
+        host_state.set_memory_limit(config.memory_limit);
         if let Some(configurator) = &self.host_configurator {
             configurator(&mut host_state);
         }
 
         // Create Store with fuel and epoch enforcement.
         let mut store = Store::new(self.runtime.engine(), host_state);
+        store.limiter(|state| state.store_limits_mut());
         store
             .set_fuel(config.fuel_limit)
             .map_err(|e| DomainError::Tool(format!("set fuel: {e}")))?;
-        // Set epoch deadline far enough that it won't fire during tests.
-        store.set_epoch_deadline(u64::MAX / 2);
+        store.epoch_deadline_trap();
+        store.set_epoch_deadline(epoch_deadline_ticks(config));
 
         // Link WASI host imports (required by wasm32-wasip2 components).
         let mut linker: Linker<HostState> = Linker::new(self.runtime.engine());
@@ -151,6 +153,15 @@ fn inject_tool_name(arguments: &str, tool_name: &str) -> String {
             serde_json::json!({ "__tool": tool_name }).to_string()
         }
     }
+}
+
+fn epoch_deadline_ticks(
+    config: &crate::infrastructure::tools::wasm::runtime::WasmRuntimeConfig,
+) -> u64 {
+    let tick_ns = config.epoch_tick_interval.as_nanos().max(1);
+    let timeout_ns = config.execution_timeout.as_nanos();
+    let ticks = timeout_ns.div_ceil(tick_ns);
+    ticks.max(1) as u64
 }
 
 impl Tool for WasmToolWrapper {
@@ -272,5 +283,15 @@ mod tests {
         let result = inject_tool_name("not json", "read_file");
         let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["__tool"], "read_file");
+    }
+
+    #[test]
+    fn test_epoch_deadline_ticks_minimum_one() {
+        let cfg = WasmRuntimeConfig {
+            execution_timeout: std::time::Duration::from_nanos(1),
+            epoch_tick_interval: std::time::Duration::from_secs(1),
+            ..WasmRuntimeConfig::default()
+        };
+        assert_eq!(epoch_deadline_ticks(&cfg), 1);
     }
 }

@@ -342,6 +342,24 @@ These are available when running `quecto gateway` but not in CLI or REPL mode:
 | `spawn` | Spawn a background subagent for long-running tasks |
 | `message` | Send a message to the user's channel |
 
+### WASM tool ports
+
+Quecto includes a real WASM component execution path for tool isolation work:
+
+- `guest/` is a standalone Rust crate that compiles to `wasm32-wasip2`; the checked-in runtime artifact is `guest/quecto_wasm_guest.wasm`.
+- `src/infrastructure/tools/wasm/wrapper.rs` instantiates the component per call, links WASI plus host imports from `wit/tool.wit`, and invokes `execute(params)` through generated bindings.
+- The guest component dispatches built-in tools (`read_file`, `write_file`, `edit_file`, `append_file`, `list_dir`, `cron`, `recall`, `message`, `web_search`) via host-imported functions.
+- Each call gets a fresh `Store<HostState>` with fuel, memory, and epoch limits, and no cross-call state.
+- Host parity includes workspace path checks, 1 MiB `read_file` size enforcement, cron/spill list+lookup behavior, channel send, and allowlisted HTTP.
+
+Build the guest component with:
+
+```bash
+cargo build --manifest-path guest/Cargo.toml --target wasm32-wasip2 --release
+```
+
+This produces `guest/target/wasm32-wasip2/release/quecto_wasm_guest.wasm`.
+
 ## Security
 
 The agent operates inside a sandbox:

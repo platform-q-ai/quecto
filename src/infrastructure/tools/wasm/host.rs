@@ -5,10 +5,11 @@
 //! touches these resources directly.
 
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use wasmtime::component::ResourceTable;
+use wasmtime::{StoreLimits, StoreLimitsBuilder};
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiView};
 
 /// An HTTP request from a WASM tool.
@@ -46,6 +47,8 @@ pub struct HostState {
     wasi_ctx: WasiCtx,
     /// WASI resource table.
     wasi_table: ResourceTable,
+    /// Per-store resource limits used by wasmtime limiter hooks.
+    store_limits: StoreLimits,
 }
 
 /// A structured log entry from a WASM tool.
@@ -85,7 +88,18 @@ impl HostState {
             http_stubs: std::collections::HashMap::new(),
             wasi_ctx: WasiCtxBuilder::new().build(),
             wasi_table: ResourceTable::new(),
+            store_limits: StoreLimitsBuilder::new().build(),
         }
+    }
+
+    /// Configure the maximum linear-memory size for this invocation.
+    pub fn set_memory_limit(&mut self, memory_limit: usize) {
+        self.store_limits = StoreLimitsBuilder::new().memory_size(memory_limit).build();
+    }
+
+    /// Return mutable store limits for `Store::limiter`.
+    pub fn store_limits_mut(&mut self) -> &mut StoreLimits {
+        &mut self.store_limits
     }
 
     /// Validate that a path is within the workspace (public for dispatch).
@@ -95,11 +109,34 @@ impl HostState {
 
     /// Validate that a path is within the workspace.
     fn validate_path(&self, path: &str) -> Result<PathBuf, String> {
-        if path.starts_with('/') || path.contains("..") {
+        if Path::new(path).is_absolute() {
             return Err(format!("path denied: '{path}' is outside workspace"));
         }
-        let full = self.workspace.join(path);
-        Ok(full)
+
+        let workspace_root = std::fs::canonicalize(&self.workspace)
+            .map_err(|e| format!("workspace unavailable '{}': {e}", self.workspace.display()))?;
+        let mut resolved = workspace_root.clone();
+
+        for component in Path::new(path).components() {
+            match component {
+                Component::Normal(seg) => {
+                    resolved.push(seg);
+                    if resolved.exists() {
+                        resolved = std::fs::canonicalize(&resolved)
+                            .map_err(|e| format!("failed to resolve '{}': {e}", path))?;
+                        if !resolved.starts_with(&workspace_root) {
+                            return Err(format!("path denied: '{path}' is outside workspace"));
+                        }
+                    }
+                }
+                Component::CurDir => {}
+                Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                    return Err(format!("path denied: '{path}' is outside workspace"));
+                }
+            }
+        }
+
+        Ok(resolved)
     }
 
     // --- Host function implementations ---
@@ -382,6 +419,18 @@ mod tests {
     fn test_workspace_path_traversal_blocked() {
         let (host, _tmp) = test_host();
         let result = host.workspace_read("../etc/passwd");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("outside workspace"));
+    }
+
+    #[test]
+    fn test_workspace_symlink_escape_blocked() {
+        let (host, tmp) = test_host();
+        let outside = TempDir::new().unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "top-secret").unwrap();
+
+        std::os::unix::fs::symlink(outside.path(), tmp.path().join("linked")).unwrap();
+        let result = host.workspace_read("linked/secret.txt");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("outside workspace"));
     }
