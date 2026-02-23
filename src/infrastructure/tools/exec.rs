@@ -27,6 +27,7 @@ const DEFAULT_NSJAIL_MEMORY_LIMIT_MB: u64 = 512;
 const DEFAULT_NSJAIL_PID_LIMIT: u64 = 256;
 const DEFAULT_NSJAIL_CPU_TIME_LIMIT_SECS: u64 = 30;
 const DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS: u64 = 30;
+const TRUSTED_NSJAIL_PATHS: &[&str] = &["/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin"];
 
 /// Runtime isolation mode for the exec tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,26 +141,30 @@ impl ExecTool {
     pub fn with_options(
         workspace: Arc<PathBuf>,
         sandbox: Arc<Sandbox>,
-        options: ExecOptions,
+        mut options: ExecOptions,
     ) -> Self {
         let mut warning = None;
         let mut startup_error = None;
         let mut mode = options.isolation_mode;
-        if mode == ExecIsolationMode::Nsjail && !binary_exists(&options.nsjail.binary) {
-            let missing = format!(
-                "nsjail binary '{}' is not available or not executable",
-                options.nsjail.binary
-            );
-            if options.allow_native_fallback {
-                mode = ExecIsolationMode::Native;
-                warning = Some(format!("{}; falling back to native exec", missing));
-                tracing::warn!(target: "exec", "{}", warning.as_deref().unwrap_or_default());
+        if mode == ExecIsolationMode::Nsjail {
+            if let Some(resolved_binary) = resolve_nsjail_binary(&options.nsjail.binary) {
+                options.nsjail.binary = resolved_binary;
             } else {
-                startup_error = Some(format!(
-                    "{}; set tools.exec.allow_native_fallback=true to permit native fallback",
-                    missing
-                ));
-                tracing::error!(target: "exec", "{}", startup_error.as_deref().unwrap_or_default());
+                let missing = format!(
+                    "nsjail binary '{}' is not available or not executable",
+                    options.nsjail.binary
+                );
+                if options.allow_native_fallback {
+                    mode = ExecIsolationMode::Native;
+                    warning = Some(format!("{}; falling back to native exec", missing));
+                    tracing::warn!(target: "exec", "{}", warning.as_deref().unwrap_or_default());
+                } else {
+                    startup_error = Some(format!(
+                        "{}; set tools.exec.allow_native_fallback=true to permit native fallback",
+                        missing
+                    ));
+                    tracing::error!(target: "exec", "{}", startup_error.as_deref().unwrap_or_default());
+                }
             }
         }
         Self {
@@ -370,21 +375,33 @@ fn build_nsjail_command(
     cmd
 }
 
-fn binary_exists(binary: &str) -> bool {
+fn resolve_nsjail_binary(binary: &str) -> Option<String> {
     let path = Path::new(binary);
     if path.components().count() > 1 {
-        return is_executable_file(path);
+        if is_executable_file(path) {
+            return Some(path.to_string_lossy().to_string());
+        }
+        return None;
     }
 
     if let Ok(path_var) = std::env::var("PATH") {
         for dir in std::env::split_paths(&path_var) {
+            if !is_trusted_nsjail_search_dir(&dir) {
+                continue;
+            }
             let candidate = dir.join(binary);
             if is_executable_file(&candidate) {
-                return true;
+                return Some(candidate.to_string_lossy().to_string());
             }
         }
     }
-    false
+    None
+}
+
+fn is_trusted_nsjail_search_dir(path: &Path) -> bool {
+    TRUSTED_NSJAIL_PATHS
+        .iter()
+        .any(|allowed| path == Path::new(allowed))
 }
 
 fn is_executable_file(path: &Path) -> bool {
