@@ -393,7 +393,7 @@ The health server uses raw tokio TCP (no hyper/axum) for minimal binary footprin
    ```
 4. Run `quecto gateway`
 
-Set `allow_from` to an empty array `[]` to allow all users (not recommended for public bots).
+An empty `allow_from` array `[]` disables the Telegram channel entirely (fail closed). You must list at least one user ID for the channel to accept messages.
 
 Set `api_base` only when you need to override the Telegram API endpoint (for example, local integration tests with a mock server). Leave it as the default `https://api.telegram.org` for normal use.
 
