@@ -3,6 +3,8 @@ use super::*;
 // Telegram Steps
 // ===========================================================================
 
+/// Config with empty allow_from — channel will be disabled (fail closed).
+/// Kept for scenarios that test the disabled/fail-closed state.
 #[given(expr = "a config with Telegram enabled and token {string}")]
 fn given_telegram_enabled(world: &mut QuectoWorld, token: String) {
     world.telegram_config = Some(TelegramConfig {
@@ -10,6 +12,16 @@ fn given_telegram_enabled(world: &mut QuectoWorld, token: String) {
         token,
         api_base: String::new(),
         allow_from: vec![],
+    });
+}
+
+#[given(expr = "a config with Telegram enabled and token {string} and allow_from {string}")]
+fn given_telegram_enabled_with_allow_from(world: &mut QuectoWorld, token: String, user_id: String) {
+    world.telegram_config = Some(TelegramConfig {
+        enabled: true,
+        token,
+        api_base: String::new(),
+        allow_from: vec![user_id],
     });
 }
 

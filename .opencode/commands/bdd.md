@@ -15,8 +15,13 @@ Change the feature-level tag from `@pending` (or `@done`) to `@wip` in the `.fea
 
 ### 2. Run BDD — expect FAIL (skipped steps)
 
-```
-cargo test --test bdd
+Run full BDD using 25-way shards:
+
+```bash
+for i in $(seq 0 24); do
+  (timeout 12m env QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=25 cargo test --test bdd) &
+done
+wait
 ```
 
 This should fail because step definitions don't exist yet. The runner uses `.fail_on_skipped()` so undefined steps cause failures. Confirm the failure is from missing steps, not a parse error. Note: the runner includes both `@wip` and `@done` features, so all existing `@done` features will also run as a regression check.
@@ -33,7 +38,7 @@ Add `#[given]`, `#[when]`, and `#[then]` functions to `tests/bdd.rs`. Important 
 - For wiremock `MockServer`, do NOT store it in the World directly (causes silent crashes). Leak it with `std::mem::forget()` and store only the URI string.
 - Async traits returning futures must use `Pin<Box<dyn Future + Send + '_>>` to be dyn-compatible.
 
-Run `cargo test --test bdd` again — it should still fail because production code doesn't exist yet.
+Run the 25-way sharded BDD again — it should still fail because production code doesn't exist yet.
 
 ### 4. Write unit tests — expect FAIL (red)
 
@@ -64,30 +69,36 @@ All unit tests must pass. Fix any failures before proceeding.
 
 ### 7. BDD tests — expect PASS (green)
 
-```
-cargo test --test bdd
+Run full BDD using 25-way shards:
+
+```bash
+for i in $(seq 0 24); do
+  (timeout 12m env QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=25 cargo test --test bdd) &
+done
+wait
 ```
 
 All `@wip` scenarios (excluding `@pending` ones) must pass. Fix any failures.
 
 ### 8. Quality checks
 
-Run formatting and lint checks:
+Run formatting, lint, and architecture checks:
 
 ```
 cargo fmt --check
 cargo clippy -- -D warnings
+cargo test --test architecture
 ```
 
 Fix any issues. If `cargo fmt --check` fails, run `cargo fmt` and verify.
 
 ### 9. Refactor
 
-Clean up the code if needed. Re-run `cargo test --lib && cargo test --test bdd` after any refactor to confirm nothing broke.
+Clean up the code if needed. Re-run `cargo test --lib` and the 25-way sharded BDD after any refactor to confirm nothing broke.
 
 ### 10. Promote `@wip` to `@done`
 
-Change the feature-level tag from `@wip` to `@done`. Run BDD one final time to confirm the runner now skips this feature (output should show 0 features/scenarios/steps unless other `@wip` features exist).
+Change the feature-level tag from `@wip` to `@done`. Run the 25-way sharded BDD one final time to confirm all scenarios pass as a regression check.
 
 ## Final output
 
@@ -96,5 +107,5 @@ Print a summary with:
 - Feature name and number of scenarios implemented
 - Number of unit tests added
 - Production files created or modified
-- All test results: `cargo test --lib` count, `cargo test --test bdd` count
+- All test results: `cargo test --lib` count, `cargo test --test architecture` count, 25-shard BDD count
 - Any `@pending` scenarios left for future work

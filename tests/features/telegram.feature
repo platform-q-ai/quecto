@@ -5,7 +5,7 @@ Feature: Telegram Gateway
   So that I can chat with my AI assistant from my phone
 
   Scenario: Telegram channel is created from config
-    Given a config with Telegram enabled and token "123456:ABC"
+    Given a config with Telegram enabled and token "123456:ABC" and allow_from "12345"
     When the Telegram channel is created
     Then the channel name should be "telegram"
     And the channel should be enabled
@@ -25,10 +25,10 @@ Feature: Telegram Gateway
     When user "99999" sends a message
     Then the message should be rejected by the allow_from filter
 
-  Scenario: Empty allow_from allows all users
+  Scenario: Empty allow_from rejects all users (fail closed)
     Given a Telegram channel with empty allow_from
     When user "99999" sends a message
-    Then the message should pass the allow_from filter
+    Then the message should be rejected by the allow_from filter
 
   Scenario: Incoming message is parsed correctly
     Given a raw Telegram update with text "Hello agent" from user "12345"
