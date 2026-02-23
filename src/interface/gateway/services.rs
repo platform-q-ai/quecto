@@ -14,7 +14,7 @@ use crate::domain::message::{Message, Role};
 use crate::domain::provider::LlmProvider;
 use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::bus::{InboundMessage, OutboundMessage};
-use crate::infrastructure::config::{Config, ExecIsolationConfig, HealthConfig};
+use crate::infrastructure::config::{Config, HealthConfig};
 use crate::infrastructure::health::server::{HealthServer, StaticReadiness};
 use crate::infrastructure::logging::redact_api_keys;
 use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
@@ -22,10 +22,8 @@ use crate::infrastructure::persistence::cron_store::FileCronStore;
 use crate::infrastructure::persistence::workspace_store::FileHeartbeatTaskSource;
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::cron_tool::CronTool;
-use crate::infrastructure::tools::exec::ExecIsolationMode;
 use crate::infrastructure::tools::message::MessageTool;
 use crate::infrastructure::tools::recall::RecallTool;
-use crate::infrastructure::tools::registry::ExecRegistrySettings;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use crate::infrastructure::tools::spawn::SpawnTool;
 use crate::infrastructure::tools::web_search::WebSearchTool;
@@ -58,19 +56,9 @@ impl InboundAgentBuilder {
             Some(workspace.clone()),
             self.config.agents.defaults.restrict_to_workspace,
         );
-        let mut registry = ToolRegistryImpl::with_core_tools_and_exec_settings(
-            workspace,
-            sandbox,
-            ExecRegistrySettings {
-                max_capture_bytes: self.config.agents.defaults.exec_max_capture_bytes,
-                isolation_mode: if self.config.tools.exec.isolation == ExecIsolationConfig::Nsjail {
-                    ExecIsolationMode::Nsjail
-                } else {
-                    ExecIsolationMode::Native
-                },
-                nsjail_binary: self.config.tools.exec.nsjail_binary.clone(),
-            },
-        );
+        let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&self.config);
+        let mut registry =
+            ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
 
         registry.register(Arc::new(MessageTool::new(outbound_tx, None)));
         let brave = &self.config.tools.web.brave;

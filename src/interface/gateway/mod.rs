@@ -18,7 +18,7 @@ use crate::domain::session::SessionStore;
 use crate::infrastructure::auth::credential_store::{Credential, CredentialStore};
 use crate::infrastructure::bus::MessageBus;
 use crate::infrastructure::channels::telegram::TelegramChannel;
-use crate::infrastructure::config::{Config, ExecIsolationConfig};
+use crate::infrastructure::config::Config;
 use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 use crate::infrastructure::persistence::cron_store::FileCronStore;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
@@ -26,10 +26,8 @@ use crate::infrastructure::providers;
 use crate::infrastructure::providers::fallback::FallbackProvider;
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::cron_tool::CronTool;
-use crate::infrastructure::tools::exec::ExecIsolationMode;
 use crate::infrastructure::tools::message::MessageTool;
 use crate::infrastructure::tools::recall::RecallTool;
-use crate::infrastructure::tools::registry::ExecRegistrySettings;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use crate::infrastructure::tools::spawn::SpawnTool;
 use crate::infrastructure::tools::web_search::WebSearchTool;
@@ -315,19 +313,9 @@ impl Gateway {
             Some(workspace.clone()),
             self.config.agents.defaults.restrict_to_workspace,
         );
-        let mut registry = ToolRegistryImpl::with_core_tools_and_exec_settings(
-            workspace,
-            sandbox,
-            ExecRegistrySettings {
-                max_capture_bytes: self.config.agents.defaults.exec_max_capture_bytes,
-                isolation_mode: if self.config.tools.exec.isolation == ExecIsolationConfig::Nsjail {
-                    ExecIsolationMode::Nsjail
-                } else {
-                    ExecIsolationMode::Native
-                },
-                nsjail_binary: self.config.tools.exec.nsjail_binary.clone(),
-            },
-        );
+        let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&self.config);
+        let mut registry =
+            ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
         let bus = MessageBus::new(256);
         let outbound_tx = bus.outbound_sender();
 

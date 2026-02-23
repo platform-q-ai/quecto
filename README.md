@@ -268,8 +268,15 @@ Config file: `~/.quecto/config.json`
   },
   "tools": {
     "exec": {
-      "isolation": "native",
-      "nsjail_binary": "nsjail"
+      "isolation": "nsjail",
+      "nsjail_binary": "nsjail",
+      "allow_native_fallback": false,
+      "network_passthrough": false,
+      "memory_limit_mb": 512,
+      "pid_limit": 256,
+      "cpu_time_limit_secs": 30,
+      "wall_time_limit_secs": 30,
+      "die_with_parent": true
     },
     "web": {
       "brave": {
@@ -303,9 +310,12 @@ Set `providers.<name>.api_base` only when you need a non-default endpoint (for e
 
 ### Exec isolation settings
 
-- `tools.exec.isolation`: `native` (default) or `nsjail`
+- `tools.exec.isolation`: `nsjail` (default) or `native`
 - `tools.exec.nsjail_binary`: binary name or absolute path used when `isolation` is `nsjail` (default `nsjail`)
-- If `isolation` is `nsjail` but the binary is unavailable at startup, Quecto logs a warning and falls back to native exec mode.
+- `tools.exec.allow_native_fallback`: when `true`, missing/unexecutable nsjail falls back to native mode; when `false` (default), `exec` calls fail with a config error
+- `tools.exec.network_passthrough`: allow outbound network inside nsjail (`false` by default)
+- `tools.exec.memory_limit_mb`, `tools.exec.pid_limit`, `tools.exec.cpu_time_limit_secs`, `tools.exec.wall_time_limit_secs`: per-call nsjail resource limits (safe defaults enabled)
+- `tools.exec.die_with_parent`: enable parent-death cleanup for jailed processes (`true` by default)
 
 ### Environment variable overrides
 
@@ -376,7 +386,7 @@ The agent operates inside a sandbox:
 
 - **Workspace restriction**: When `restrict_to_workspace` is `true` (default), all file operations are confined to the workspace directory. Symlinks pointing outside are blocked. Path traversal (`../`) is caught.
 - **Dangerous commands blocked**: `rm -rf /`, `rm -r -f /`, `mkfs`, `dd`, `shutdown`, `reboot`, `chmod -R 777 /`, fork bombs, and pipe-to-shell patterns (`curl|sh`) are always blocked regardless of other settings. Command checks normalize whitespace/casing, so equivalent variants like `rm  -rf /` are also blocked.
-- **Exec runtime isolation**: The `exec` tool runs in `native` mode by default (Sandbox filtering only) or in `nsjail` mode when configured via `tools.exec.isolation`.
+- **Exec runtime isolation**: The `exec` tool runs in `nsjail` mode by default with bounded resources and parent-death cleanup; `native` remains available as an explicit opt-in via `tools.exec.isolation`.
 - **Environment isolation**: `QUECTO_*` environment variables (including API keys) are stripped from child processes spawned by the `exec` tool.
 - **Secret redaction**: Log/status output redacts OpenAI/Anthropic (`sk-*`), Groq (`gsk_*`/`gsk-*`), and Telegram bot token values.
 

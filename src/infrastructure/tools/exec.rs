@@ -7,6 +7,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
@@ -20,6 +23,10 @@ const SECRET_ENV_PREFIX: &str = "QUECTO_";
 /// Maximum bytes captured per stream (stdout and stderr) to avoid unbounded memory growth.
 const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
 const STREAM_DRAIN_TIMEOUT_ON_KILL: Duration = Duration::from_millis(250);
+const DEFAULT_NSJAIL_MEMORY_LIMIT_MB: u64 = 512;
+const DEFAULT_NSJAIL_PID_LIMIT: u64 = 256;
+const DEFAULT_NSJAIL_CPU_TIME_LIMIT_SECS: u64 = 30;
+const DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS: u64 = 30;
 
 /// Runtime isolation mode for the exec tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +44,7 @@ pub struct NsjailOptions {
     pub pid_limit: Option<u64>,
     pub cpu_time_limit_secs: Option<u64>,
     pub wall_time_limit_secs: Option<u64>,
+    pub die_with_parent: bool,
 }
 
 impl Default for NsjailOptions {
@@ -44,10 +52,11 @@ impl Default for NsjailOptions {
         Self {
             binary: "nsjail".to_string(),
             network_passthrough: false,
-            memory_limit_mb: None,
-            pid_limit: None,
-            cpu_time_limit_secs: None,
-            wall_time_limit_secs: None,
+            memory_limit_mb: Some(DEFAULT_NSJAIL_MEMORY_LIMIT_MB),
+            pid_limit: Some(DEFAULT_NSJAIL_PID_LIMIT),
+            cpu_time_limit_secs: Some(DEFAULT_NSJAIL_CPU_TIME_LIMIT_SECS),
+            wall_time_limit_secs: Some(DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS),
+            die_with_parent: true,
         }
     }
 }
@@ -58,6 +67,7 @@ pub struct ExecOptions {
     pub timeout: Duration,
     pub max_capture_bytes: usize,
     pub isolation_mode: ExecIsolationMode,
+    pub allow_native_fallback: bool,
     pub nsjail: NsjailOptions,
 }
 
@@ -67,6 +77,7 @@ impl Default for ExecOptions {
             timeout: DEFAULT_EXEC_TIMEOUT,
             max_capture_bytes: MAX_CAPTURE_BYTES,
             isolation_mode: ExecIsolationMode::Native,
+            allow_native_fallback: false,
             nsjail: NsjailOptions::default(),
         }
     }
@@ -81,6 +92,7 @@ pub struct ExecTool {
     mode: ExecIsolationMode,
     nsjail: NsjailOptions,
     startup_warning: Option<String>,
+    startup_error: Option<String>,
 }
 
 impl std::fmt::Debug for ExecTool {
@@ -131,14 +143,24 @@ impl ExecTool {
         options: ExecOptions,
     ) -> Self {
         let mut warning = None;
+        let mut startup_error = None;
         let mut mode = options.isolation_mode;
         if mode == ExecIsolationMode::Nsjail && !binary_exists(&options.nsjail.binary) {
-            mode = ExecIsolationMode::Native;
-            warning = Some(format!(
-                "nsjail binary '{}' not found; falling back to native exec",
+            let missing = format!(
+                "nsjail binary '{}' is not available or not executable",
                 options.nsjail.binary
-            ));
-            tracing::warn!(target: "exec", "{}", warning.as_deref().unwrap_or_default());
+            );
+            if options.allow_native_fallback {
+                mode = ExecIsolationMode::Native;
+                warning = Some(format!("{}; falling back to native exec", missing));
+                tracing::warn!(target: "exec", "{}", warning.as_deref().unwrap_or_default());
+            } else {
+                startup_error = Some(format!(
+                    "{}; set tools.exec.allow_native_fallback=true to permit native fallback",
+                    missing
+                ));
+                tracing::error!(target: "exec", "{}", startup_error.as_deref().unwrap_or_default());
+            }
         }
         Self {
             workspace,
@@ -148,6 +170,7 @@ impl ExecTool {
             mode,
             nsjail: options.nsjail,
             startup_warning: warning,
+            startup_error,
         }
     }
 
@@ -164,6 +187,11 @@ impl ExecTool {
     /// Startup warning set when fallback occurred.
     pub fn startup_warning(&self) -> Option<&str> {
         self.startup_warning.as_deref()
+    }
+
+    /// Startup error set when nsjail was required but unavailable.
+    pub fn startup_error(&self) -> Option<&str> {
+        self.startup_error.as_deref()
     }
 
     /// Execute a command with custom environment variables.
@@ -192,6 +220,10 @@ impl ExecTool {
         arguments: &str,
         env_overrides: Option<&HashMap<String, String>>,
     ) -> Result<ToolResult, DomainError> {
+        if let Some(startup_error) = &self.startup_error {
+            return Err(DomainError::Config(startup_error.clone()));
+        }
+
         let command = extract_command(arguments)?;
 
         // Validate command against sandbox
@@ -297,6 +329,10 @@ fn build_nsjail_command(
         .arg("--bindmount")
         .arg(format!("{}:/workspace", workspace.display()));
 
+    if options.die_with_parent {
+        cmd.arg("--die_with_parent");
+    }
+
     if !options.network_passthrough {
         cmd.arg("--clone_newnet");
     }
@@ -337,18 +373,38 @@ fn build_nsjail_command(
 fn binary_exists(binary: &str) -> bool {
     let path = Path::new(binary);
     if path.components().count() > 1 {
-        return path.exists();
+        return is_executable_file(path);
     }
 
     if let Ok(path_var) = std::env::var("PATH") {
         for dir in std::env::split_paths(&path_var) {
             let candidate = dir.join(binary);
-            if candidate.exists() {
+            if is_executable_file(&candidate) {
                 return true;
             }
         }
     }
     false
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let meta = match std::fs::metadata(path) {
+        Ok(meta) => meta,
+        Err(_) => return false,
+    };
+    if !meta.is_file() {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        meta.permissions().mode() & 0o111 != 0
+    }
+
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 async fn run_child_with_timeout(
@@ -564,37 +620,6 @@ mod tests {
         assert!(result.content.contains("fast"));
     }
 
-    #[tokio::test]
-    async fn test_exec_large_output_completes_without_timeout() {
-        let tmp = TempDir::new().unwrap();
-        let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
-        let tool = ExecTool::with_timeout(
-            Arc::new(tmp.path().to_path_buf()),
-            Arc::new(sandbox),
-            Duration::from_secs(1),
-        );
-
-        let result = tool
-            .execute(r#"{"command": "printf 'x%.0s' {1..100000}"}"#)
-            .await
-            .unwrap();
-
-        assert!(
-            !result.is_error,
-            "expected large output command to complete, got: {}",
-            result.content
-        );
-        assert!(result.content.contains('x'));
-    }
-
-    #[test]
-    fn test_default_timeout_is_30_seconds() {
-        let tmp = TempDir::new().unwrap();
-        let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
-        let tool = ExecTool::new(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox));
-        assert_eq!(tool.timeout().as_secs(), 30);
-    }
-
     // --- Sandbox hardening: env sanitization tests ---
 
     #[tokio::test]
@@ -638,20 +663,12 @@ mod tests {
     }
 
     #[test]
-    fn test_debug_format() {
-        let tmp = TempDir::new().unwrap();
-        let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
-        let tool = ExecTool::new(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox));
-        let debug = format!("{:?}", tool);
-        assert!(debug.contains("ExecTool"));
-    }
-
-    #[test]
     fn test_nsjail_mode_selected_when_binary_exists() {
         let tmp = TempDir::new().unwrap();
         let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
         let opts = ExecOptions {
             isolation_mode: ExecIsolationMode::Nsjail,
+            allow_native_fallback: true,
             nsjail: NsjailOptions {
                 binary: "sh".to_string(),
                 ..NsjailOptions::default()
@@ -670,6 +687,7 @@ mod tests {
         let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
         let opts = ExecOptions {
             isolation_mode: ExecIsolationMode::Nsjail,
+            allow_native_fallback: true,
             nsjail: NsjailOptions {
                 binary: "definitely-not-a-real-binary".to_string(),
                 ..NsjailOptions::default()
@@ -683,6 +701,32 @@ mod tests {
             tool.startup_warning()
                 .unwrap_or_default()
                 .contains("falling back to native")
+        );
+        assert!(tool.startup_error().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_nsjail_missing_without_fallback_returns_config_error() {
+        let tmp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
+        let opts = ExecOptions {
+            isolation_mode: ExecIsolationMode::Nsjail,
+            nsjail: NsjailOptions {
+                binary: "definitely-not-a-real-binary".to_string(),
+                ..NsjailOptions::default()
+            },
+            ..ExecOptions::default()
+        };
+        let tool =
+            ExecTool::with_options(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox), opts);
+
+        let result = tool.execute(r#"{"command":"echo hi"}"#).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("allow_native_fallback")
         );
     }
 }

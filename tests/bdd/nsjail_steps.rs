@@ -1,6 +1,7 @@
 use super::*;
 
 use quecto::infrastructure::tools::exec::{ExecIsolationMode, ExecOptions, NsjailOptions};
+use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 
 #[derive(Default)]
 struct NsjailSetup {
@@ -36,6 +37,7 @@ fn setup_nsjail_exec_tool(world: &mut QuectoWorld, setup: NsjailSetup) {
         timeout: std::time::Duration::from_secs(setup.timeout_secs.unwrap_or(30)),
         max_capture_bytes: setup.max_capture_bytes.unwrap_or(1024 * 1024),
         isolation_mode: ExecIsolationMode::Nsjail,
+        allow_native_fallback: true,
         nsjail: NsjailOptions {
             binary: binary.clone(),
             network_passthrough: setup.network_passthrough,
@@ -43,6 +45,7 @@ fn setup_nsjail_exec_tool(world: &mut QuectoWorld, setup: NsjailSetup) {
             pid_limit: setup.pid_limit,
             cpu_time_limit_secs: setup.cpu_time_limit_secs,
             wall_time_limit_secs: setup.wall_time_limit_secs,
+            die_with_parent: true,
         },
     };
 
@@ -285,6 +288,12 @@ fn given_config_exec_isolation(world: &mut QuectoWorld, isolation: String) {
     world.config = Some(cfg);
 }
 
+#[given("exec native fallback is allowed")]
+fn given_exec_native_fallback_allowed(world: &mut QuectoWorld) {
+    let cfg = world.config.as_mut().expect("config not set");
+    cfg.tools.exec.allow_native_fallback = true;
+}
+
 #[when("the tool registry is constructed")]
 fn when_registry_constructed(world: &mut QuectoWorld) {
     let cfg = world.config.as_ref().expect("config not set");
@@ -301,35 +310,24 @@ fn when_registry_constructed(world: &mut QuectoWorld) {
         "definitely-missing-nsjail".to_string()
     };
     let sandbox = Sandbox::new(Some(ws.clone()), true);
-    let _registry = ToolRegistryImpl::with_core_tools_and_exec_settings(
-        ws.clone(),
-        sandbox,
-        quecto::infrastructure::tools::registry::ExecRegistrySettings {
-            max_capture_bytes: cfg.agents.defaults.exec_max_capture_bytes,
-            isolation_mode: if cfg.tools.exec.isolation
-                == quecto::infrastructure::config::ExecIsolationConfig::Nsjail
-            {
-                ExecIsolationMode::Nsjail
-            } else {
-                ExecIsolationMode::Native
-            },
-            nsjail_binary: nsjail_binary.clone(),
-        },
-    );
+    let mut settings = ToolRegistryImpl::exec_registry_settings_from_config(cfg);
+    settings.nsjail_binary = nsjail_binary.clone();
+    let _registry =
+        ToolRegistryImpl::with_core_tools_and_exec_settings(ws.clone(), sandbox, settings.clone());
     let exec = ExecTool::with_options(
         Arc::new(ws),
         Arc::new(Sandbox::new(None, false)),
         ExecOptions {
-            isolation_mode: if cfg.tools.exec.isolation
-                == quecto::infrastructure::config::ExecIsolationConfig::Nsjail
-            {
-                ExecIsolationMode::Nsjail
-            } else {
-                ExecIsolationMode::Native
-            },
+            isolation_mode: settings.isolation_mode,
+            allow_native_fallback: settings.allow_native_fallback,
             nsjail: NsjailOptions {
                 binary: nsjail_binary,
-                ..NsjailOptions::default()
+                network_passthrough: settings.network_passthrough,
+                memory_limit_mb: Some(settings.memory_limit_mb),
+                pid_limit: Some(settings.pid_limit),
+                cpu_time_limit_secs: Some(settings.cpu_time_limit_secs),
+                wall_time_limit_secs: Some(settings.wall_time_limit_secs),
+                die_with_parent: settings.die_with_parent,
             },
             ..ExecOptions::default()
         },

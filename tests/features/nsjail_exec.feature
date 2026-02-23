@@ -192,6 +192,7 @@ Feature: nsjail Exec Isolation
   @done
   Scenario: nsjail unavailable triggers graceful fallback to native
     Given a config file with exec.isolation set to "nsjail"
+    And exec native fallback is allowed
     And nsjail is not available on the system
     When the tool registry is constructed
     Then the exec tool should fall back to native isolation

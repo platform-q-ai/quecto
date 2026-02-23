@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolRegistry, ToolResult};
+use crate::infrastructure::config::{Config, ExecIsolationConfig};
 use crate::infrastructure::security::sandbox::Sandbox;
 
 use super::exec::{ExecIsolationMode, ExecOptions, ExecTool, NsjailOptions};
@@ -16,7 +17,14 @@ use super::exec::{ExecIsolationMode, ExecOptions, ExecTool, NsjailOptions};
 pub struct ExecRegistrySettings {
     pub max_capture_bytes: usize,
     pub isolation_mode: ExecIsolationMode,
+    pub allow_native_fallback: bool,
     pub nsjail_binary: String,
+    pub network_passthrough: bool,
+    pub memory_limit_mb: u64,
+    pub pid_limit: u64,
+    pub cpu_time_limit_secs: u64,
+    pub wall_time_limit_secs: u64,
+    pub die_with_parent: bool,
 }
 use super::filesystem::{AppendFileTool, EditFileTool, ListDirTool, ReadFileTool, WriteFileTool};
 
@@ -41,6 +49,27 @@ impl Default for ToolRegistryImpl {
 }
 
 impl ToolRegistryImpl {
+    /// Build exec registry settings from config in one place.
+    pub fn exec_registry_settings_from_config(config: &Config) -> ExecRegistrySettings {
+        let exec = &config.tools.exec;
+        ExecRegistrySettings {
+            max_capture_bytes: config.agents.defaults.exec_max_capture_bytes,
+            isolation_mode: if exec.isolation == ExecIsolationConfig::Nsjail {
+                ExecIsolationMode::Nsjail
+            } else {
+                ExecIsolationMode::Native
+            },
+            allow_native_fallback: exec.allow_native_fallback,
+            nsjail_binary: exec.nsjail_binary.clone(),
+            network_passthrough: exec.network_passthrough,
+            memory_limit_mb: exec.memory_limit_mb,
+            pid_limit: exec.pid_limit,
+            cpu_time_limit_secs: exec.cpu_time_limit_secs,
+            wall_time_limit_secs: exec.wall_time_limit_secs,
+            die_with_parent: exec.die_with_parent,
+        }
+    }
+
     /// Create a new empty registry.
     pub fn new() -> Self {
         Self {
@@ -76,9 +105,15 @@ impl ToolRegistryImpl {
         let exec_options = ExecOptions {
             max_capture_bytes: settings.max_capture_bytes,
             isolation_mode: settings.isolation_mode,
+            allow_native_fallback: settings.allow_native_fallback,
             nsjail: NsjailOptions {
                 binary: settings.nsjail_binary,
-                ..NsjailOptions::default()
+                network_passthrough: settings.network_passthrough,
+                memory_limit_mb: Some(settings.memory_limit_mb),
+                pid_limit: Some(settings.pid_limit),
+                cpu_time_limit_secs: Some(settings.cpu_time_limit_secs),
+                wall_time_limit_secs: Some(settings.wall_time_limit_secs),
+                die_with_parent: settings.die_with_parent,
             },
             ..ExecOptions::default()
         };

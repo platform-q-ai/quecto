@@ -9,15 +9,13 @@ use crate::domain::message::Message;
 use crate::domain::provider::LlmProvider;
 use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::auth::credential_store::CredentialStore;
-use crate::infrastructure::config::{Config, ExecIsolationConfig};
+use crate::infrastructure::config::Config;
 use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::providers;
 use crate::infrastructure::providers::fallback::FallbackProvider;
 use crate::infrastructure::security::sandbox::Sandbox;
-use crate::infrastructure::tools::exec::ExecIsolationMode;
 use crate::infrastructure::tools::recall::RecallTool;
-use crate::infrastructure::tools::registry::ExecRegistrySettings;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
 use crate::interface::shared::resolve_api_key;
@@ -229,19 +227,9 @@ pub(crate) fn build_agent_from_config(
         Some(workspace.clone()),
         config.agents.defaults.restrict_to_workspace,
     );
-    let registry = ToolRegistryImpl::with_core_tools_and_exec_settings(
-        workspace,
-        sandbox,
-        ExecRegistrySettings {
-            max_capture_bytes: config.agents.defaults.exec_max_capture_bytes,
-            isolation_mode: if config.tools.exec.isolation == ExecIsolationConfig::Nsjail {
-                ExecIsolationMode::Nsjail
-            } else {
-                ExecIsolationMode::Native
-            },
-            nsjail_binary: config.tools.exec.nsjail_binary.clone(),
-        },
-    );
+    let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
+    let registry =
+        ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
     let mut registry = registry;
     let session_key = if flags.session_name.as_deref() == Some("-") {
         String::new()
