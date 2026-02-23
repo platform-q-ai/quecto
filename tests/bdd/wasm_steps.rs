@@ -15,19 +15,14 @@ use quecto::infrastructure::tools::wasm::wrapper::{WasmToolMeta, WasmToolWrapper
 use super::QuectoWorld;
 
 // ============================================================
-// Helper: minimal valid WASM component bytes
+// Helper: real guest WASM component bytes
 // ============================================================
 
-fn minimal_component_bytes() -> Vec<u8> {
-    wat::parse_str(
-        r#"(component
-            (core module $m
-                (func (export "memory") (result i32) (i32.const 0))
-                (memory (export "mem") 1)
-            )
-        )"#,
-    )
-    .expect("valid WAT")
+/// The real guest component bytes, compiled from guest/src/lib.rs.
+const GUEST_WASM: &[u8] = include_bytes!("../../guest/quecto_wasm_guest.wasm");
+
+fn real_component_bytes() -> Vec<u8> {
+    GUEST_WASM.to_vec()
 }
 
 // ============================================================
@@ -76,7 +71,7 @@ fn then_wasm_threads_disabled(world: &mut QuectoWorld) {
 #[given(expr = "a valid WASM tool module {string}")]
 fn given_valid_wasm_module(world: &mut QuectoWorld, name: String) {
     let rt = world.wasm_runtime.as_ref().expect("runtime should exist");
-    let wasm = minimal_component_bytes();
+    let wasm = real_component_bytes();
     rt.prepare(&name, &wasm)
         .expect("module preparation should succeed");
 }
@@ -102,7 +97,7 @@ fn then_cache_contains(world: &mut QuectoWorld, name: String) {
 #[then("registering the same module again should return the cached version")]
 fn then_same_cached_version(world: &mut QuectoWorld) {
     let rt = world.wasm_runtime.as_ref().expect("runtime should exist");
-    let wasm = minimal_component_bytes();
+    let wasm = real_component_bytes();
     let first = rt.get("read_file").expect("should be cached");
     let second = rt
         .prepare("read_file", &wasm)
@@ -116,7 +111,7 @@ fn then_same_cached_version(world: &mut QuectoWorld) {
 #[given(expr = "a registered WASM tool module {string}")]
 fn given_registered_module(world: &mut QuectoWorld, name: String) {
     let rt = world.wasm_runtime.as_ref().expect("runtime should exist");
-    let wasm = minimal_component_bytes();
+    let wasm = real_component_bytes();
     rt.prepare(&name, &wasm)
         .expect("module preparation should succeed");
 }
@@ -145,7 +140,7 @@ fn given_stateful_wasm_tool(world: &mut QuectoWorld, _name: String) {
     // We simulate this via the wrapper — each execute() creates a fresh
     // HostState, so state can't leak between calls.
     let rt = world.wasm_runtime.as_ref().expect("runtime should exist");
-    let wasm = minimal_component_bytes();
+    let wasm = real_component_bytes();
     rt.prepare("stateful_test", &wasm).unwrap();
     let module = rt.get("stateful_test").unwrap();
     let wrapper = WasmToolWrapper::new(
@@ -215,7 +210,7 @@ fn given_fuel_consuming_tool(world: &mut QuectoWorld, _name: String) {
     // Real fuel exhaustion testing requires actual WASM execution.
     let rt = world.wasm_runtime.as_ref().expect("runtime should exist");
     assert_eq!(rt.config().fuel_limit, 1000);
-    let wasm = minimal_component_bytes();
+    let wasm = real_component_bytes();
     rt.prepare("busy_loop", &wasm).unwrap();
     let module = rt.get("busy_loop").unwrap();
     world.wasm_wrapper = Some(Arc::new(WasmToolWrapper::new(
@@ -264,7 +259,7 @@ fn given_runtime_memory_limit(world: &mut QuectoWorld, mb: usize) {
 fn given_memory_hog_tool(world: &mut QuectoWorld, _name: String) {
     let rt = world.wasm_runtime.as_ref().expect("runtime should exist");
     assert_eq!(rt.config().memory_limit, 1024 * 1024);
-    let wasm = minimal_component_bytes();
+    let wasm = real_component_bytes();
     rt.prepare("memory_hog", &wasm).unwrap();
     let module = rt.get("memory_hog").unwrap();
     world.wasm_wrapper = Some(Arc::new(WasmToolWrapper::new(
@@ -301,7 +296,7 @@ fn given_runtime_epoch_timeout(world: &mut QuectoWorld, secs: u64) {
 #[given(expr = "a WASM tool {string} that never returns")]
 fn given_infinite_loop_tool(world: &mut QuectoWorld, _name: String) {
     let rt = world.wasm_runtime.as_ref().expect("runtime should exist");
-    let wasm = minimal_component_bytes();
+    let wasm = real_component_bytes();
     rt.prepare("infinite_loop", &wasm).unwrap();
     let module = rt.get("infinite_loop").unwrap();
     world.wasm_wrapper = Some(Arc::new(WasmToolWrapper::new(
@@ -748,7 +743,7 @@ fn given_compiled_wasm_module(world: &mut QuectoWorld, name: String) {
         world.wasm_runtime = Some(Arc::new(rt));
     }
     let rt = world.wasm_runtime.as_ref().unwrap();
-    let wasm = minimal_component_bytes();
+    let wasm = real_component_bytes();
     rt.prepare(&name, &wasm).unwrap();
 }
 
@@ -790,7 +785,7 @@ fn then_valid_tool_result(world: &mut QuectoWorld) {
 #[given(expr = "a WasmToolWrapper for {string}")]
 fn given_wasm_wrapper(world: &mut QuectoWorld, name: String) {
     let rt = world.wasm_runtime.as_ref().unwrap();
-    let wasm = minimal_component_bytes();
+    let wasm = real_component_bytes();
     rt.prepare(&name, &wasm).unwrap();
     let module = rt.get(&name).unwrap();
     let wrapper = WasmToolWrapper::new(
@@ -828,12 +823,19 @@ fn then_registry_includes(world: &mut QuectoWorld, name: String) {
 fn then_registry_delegates(world: &mut QuectoWorld, name: String) {
     let registry = world.wasm_tool_registry.as_ref().unwrap();
     let rt = tokio::runtime::Runtime::new().unwrap();
+    // Call with empty args — the dispatch layer should parse and return
+    // a meaningful error (not a DomainError), proving delegation works.
     let result = rt.block_on(registry.execute(&name, "{}"));
-    assert!(result.is_ok(), "execution through registry should succeed");
-    let tr = result.unwrap();
     assert!(
-        tr.content.contains("WASM tool"),
-        "result should indicate WASM execution, got: {}",
+        result.is_ok(),
+        "execution through registry should not return DomainError"
+    );
+    let tr = result.unwrap();
+    // The dispatch returns a ToolResult (is_error: true for missing args),
+    // confirming the call reached the WASM dispatch layer.
+    assert!(
+        tr.content.contains("missing required field") || !tr.is_error,
+        "result should come from WASM dispatch, got: {}",
         tr.content
     );
 }
@@ -845,7 +847,7 @@ fn then_registry_delegates(world: &mut QuectoWorld, name: String) {
 #[given(regex = r#"^a tools directory containing "([^"]+)" and "([^"]+)"$"#)]
 fn given_tools_dir_with_files(world: &mut QuectoWorld, wasm_file: String, caps_file: String) {
     let tmp = TempDir::new().unwrap();
-    let wasm = minimal_component_bytes();
+    let wasm = real_component_bytes();
     std::fs::write(tmp.path().join(&wasm_file), &wasm).unwrap();
 
     let caps = ToolCapabilities {

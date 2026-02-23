@@ -580,6 +580,19 @@ pub struct QuectoWorld {
     pub wasm_load_result: Option<Result<loader::LoadResult, String>>,
     /// WASM registration error (for missing exports scenario)
     pub wasm_registration_error: Option<String>,
+    // --- WASM tool port BDD fields ---
+    /// WASM tool port: tool result from WASM execution
+    pub wasm_tool_result: Option<quecto::domain::tool::ToolResult>,
+    /// WASM tool port: native tool result for parity comparison
+    pub wasm_native_result: Option<quecto::domain::tool::ToolResult>,
+    /// WASM tool port: native tool registry for parity tests
+    pub wasm_native_registry: Option<ToolRegistryImpl>,
+    /// WASM tool port: WASM tool registry for port tests
+    pub wasm_port_registry: Option<ToolRegistryImpl>,
+    /// WASM tool port: shared workspace path for parity tests
+    pub wasm_parity_workspace: Option<PathBuf>,
+    /// WASM tool port: temp dir for parity tests
+    pub _wasm_parity_temp_dir: Option<TempDir>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
@@ -843,6 +856,7 @@ mod subagent_steps;
 mod telegram_steps;
 mod voice_steps;
 mod wasm_steps;
+mod wasm_tools_steps;
 
 // Runner
 // ===========================================================================
