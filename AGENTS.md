@@ -79,6 +79,18 @@ Implements the domain traits with real I/O. This is where serde, reqwest, tokio,
 | `bus.rs` | `MessageBus` — async channel for inbound/outbound message passing |
 | `health/` | `HealthServer` — lightweight HTTP health server using raw tokio TCP (no hyper/axum). `ReadinessCheck` trait, `StaticReadiness`. Endpoints: `/health` (liveness, always 200), `/ready` (readiness, 200 or 503 based on provider availability) |
 
+### Tool isolation (planned)
+
+Two-tier isolation model for tool execution. No Docker. No daemon.
+
+**WASM containers** (all tools except exec and spawn): Tools run as WebAssembly components (`wasm32-wasip2`) executed by Wasmtime with the Component Model. Each invocation gets a fresh `Store` — no cross-call state. Tools interact with the host through a WIT interface (`wit/tool.wit`) that exposes workspace filesystem, HTTP, channel, and storage operations as host-imported functions. Fuel metering, memory limits, and epoch interruption enforce resource bounds. Covers: ReadFileTool, WriteFileTool, EditFileTool, AppendFileTool, ListDirTool, CronTool, RecallTool, MessageTool, WebSearchTool, and future third-party/agent-built tools.
+
+**nsjail** (exec tool only): Shell commands run inside nsjail — a lightweight Linux process isolator using kernel namespaces and cgroups directly. Workspace bind-mounted RW, host toolchain RO, everything else invisible. cgroups v2 enforces memory limits, PID limits, and CPU time. Built-in timeout with automatic kill. Kafel seccomp-bpf for syscall filtering. Falls back to native exec with Sandbox denylist when nsjail is unavailable (`exec.isolation` config option).
+
+**Spawn tool** unchanged — it launches `quecto agent` as a child process, which inherits the same WASM + nsjail isolation.
+
+Full strategy: `reviews/tool-isolation-strategy.md`
+
 ### interface/ — CLI + Gateway (composition root)
 
 Manual argument parsing (no clap). The single entry point is `cli::run(args) -> i32`. The gateway lives here because it wires concrete infrastructure types together (composition root).
@@ -177,7 +189,7 @@ Refactor
 
 The BDD runner (`tests/bdd/main.rs`) uses `.fail_on_skipped()` and runs features tagged `@wip` or `@done`. This means all completed features are regression-tested on every run. Scenarios tagged `@pending` are always excluded. Scenarios tagged `@real-llm` are excluded unless `QUECTO_REAL_LLM=1` is set (requires `OPENAI_API_KEY` via env var or `.env` file). Set `QUECTO_TAG=<tag>` to run only scenarios matching a specific tag (e.g. smoke: `timeout 5m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm-smoke cargo test --test bdd`, full: `timeout 5m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm cargo test --test bdd`). Step definitions live in `tests/bdd/` split across 21 module files (~10000 lines total).
 
-Feature files live in `tests/features/`. There are 46 feature files covering: agent_cli, agent_loop, agent_tools, architecture, auth, cli, config, context_pruning, cron, e2e_agentic_loop, e2e_gateway_cron, e2e_gateway_health, e2e_gateway_heartbeat, e2e_gateway_spawn, e2e_gateway_voice, e2e_providers, e2e_real_llm, e2e_real_llm_agent_matrix, e2e_real_llm_entrypoints, e2e_real_llm_entrypoints_matrix, e2e_real_llm_gateway, e2e_real_llm_gateway_matrix, e2e_real_llm_repl, e2e_real_llm_repl_matrix, e2e_repl_agents, e2e_repl_cron, e2e_repl_heartbeat, e2e_repl_spawn, e2e_safety, e2e_session, e2e_session_tools, e2e_skills, e2e_subprocess, e2e_tool_use, heartbeat, observability, onboard, providers, repl, sandbox_hardening, security, session, skills, subagent, telegram, voice.
+Feature files live in `tests/features/`. There are 49 feature files covering: agent_cli, agent_loop, agent_tools, architecture, auth, cli, config, context_pruning, cron, e2e_agentic_loop, e2e_gateway_cron, e2e_gateway_health, e2e_gateway_heartbeat, e2e_gateway_spawn, e2e_gateway_voice, e2e_providers, e2e_real_llm, e2e_real_llm_agent_matrix, e2e_real_llm_entrypoints, e2e_real_llm_entrypoints_matrix, e2e_real_llm_gateway, e2e_real_llm_gateway_matrix, e2e_real_llm_repl, e2e_real_llm_repl_matrix, e2e_repl_agents, e2e_repl_cron, e2e_repl_heartbeat, e2e_repl_spawn, e2e_safety, e2e_session, e2e_session_tools, e2e_skills, e2e_subprocess, e2e_tool_use, heartbeat, nsjail_exec, observability, onboard, providers, repl, sandbox_hardening, security, session, skills, subagent, telegram, voice, wasm_tool_runtime, wasm_tools.
 
 ## Quality gates
 
