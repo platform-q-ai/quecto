@@ -47,3 +47,42 @@ pub trait SessionStore: Send + Sync {
         key: &str,
     ) -> Pin<Box<dyn Future<Output = Result<bool, DomainError>> + Send + '_>>;
 }
+
+/// A single spilled tool output entry.
+#[derive(Debug, Clone)]
+pub struct SpillEntry {
+    pub id: String,
+    pub tool: String,
+    pub input_preview: String,
+    pub tokens: usize,
+    pub content: String,
+}
+
+/// Index-only view of spill entries (without full content).
+#[derive(Debug, Clone)]
+pub struct SpillIndex {
+    pub id: String,
+    pub tool: String,
+    pub input_preview: String,
+    pub tokens: usize,
+}
+
+/// Port: spill storage used by context pruning and recall().
+pub trait ContextSpillStore: Send + Sync {
+    fn append(
+        &self,
+        session_key: &str,
+        entry: &SpillEntry,
+    ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>>;
+
+    fn recall(
+        &self,
+        session_key: &str,
+        id: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<SpillEntry>, DomainError>> + Send + '_>>;
+
+    fn list_entries(
+        &self,
+        session_key: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<SpillIndex>, DomainError>> + Send + '_>>;
+}

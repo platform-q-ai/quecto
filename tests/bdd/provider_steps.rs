@@ -154,12 +154,7 @@ fn when_send_through_fallback(world: &mut QuectoWorld) {
         .fallback_provider
         .as_ref()
         .expect("fallback provider not set");
-    let messages = vec![Message {
-        role: Role::User,
-        content: "test".to_string(),
-        tool_calls: vec![],
-        tool_call_id: None,
-    }];
+    let messages = vec![Message::user("test")];
     let req = quecto::domain::provider::ChatRequest {
         messages: &messages,
         tools: &[],
@@ -181,12 +176,7 @@ fn when_send_second_through_fallback(world: &mut QuectoWorld) {
         .fallback_provider
         .as_ref()
         .expect("fallback provider not set");
-    let messages = vec![Message {
-        role: Role::User,
-        content: "second test".to_string(),
-        tool_calls: vec![],
-        tool_call_id: None,
-    }];
+    let messages = vec![Message::user("second test")];
     let req = quecto::domain::provider::ChatRequest {
         messages: &messages,
         tools: &[],
@@ -288,12 +278,7 @@ fn given_mock_chat_response(world: &mut QuectoWorld, content: String) {
 #[when(expr = "I send a chat request with message {string} and a tool {string}")]
 fn when_send_chat_with_tool(world: &mut QuectoWorld, message: String, tool_name: String) {
     let provider = world.provider.as_ref().expect("provider not set");
-    let messages = vec![Message {
-        role: Role::User,
-        content: message,
-        tool_calls: vec![],
-        tool_call_id: None,
-    }];
+    let messages = vec![Message::user(message)];
     let tools = vec![quecto::domain::tool::ToolDefinition {
         name: tool_name,
         description: "Execute a command".to_string(),
@@ -452,12 +437,7 @@ fn given_anthropic_streaming_response(world: &mut QuectoWorld, content: String) 
 #[when(expr = "I send a streaming chat request with message {string}")]
 fn when_send_streaming_chat(world: &mut QuectoWorld, message: String) {
     let provider = world.provider.as_ref().expect("provider not set");
-    let messages = vec![Message {
-        role: Role::User,
-        content: message,
-        tool_calls: vec![],
-        tool_call_id: None,
-    }];
+    let messages = vec![Message::user(message)];
     let req = quecto::domain::provider::ChatRequest {
         messages: &messages,
         tools: &[],

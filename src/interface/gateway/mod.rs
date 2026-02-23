@@ -19,6 +19,7 @@ use crate::infrastructure::auth::credential_store::{Credential, CredentialStore}
 use crate::infrastructure::bus::MessageBus;
 use crate::infrastructure::channels::telegram::TelegramChannel;
 use crate::infrastructure::config::Config;
+use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 use crate::infrastructure::persistence::cron_store::FileCronStore;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::providers;
@@ -26,6 +27,7 @@ use crate::infrastructure::providers::fallback::FallbackProvider;
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::cron_tool::CronTool;
 use crate::infrastructure::tools::message::MessageTool;
+use crate::infrastructure::tools::recall::RecallTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use crate::infrastructure::tools::spawn::SpawnTool;
 use crate::infrastructure::tools::web_search::WebSearchTool;
@@ -66,8 +68,10 @@ pub(super) struct EventLoopContext {
     pub(super) outbound_channel: Arc<dyn Channel>,
     pub(super) telegram_poller: Arc<TelegramChannel>,
     pub(super) config: Config,
+    pub(super) base_dir: PathBuf,
     pub(super) workspace: PathBuf,
     pub(super) cron_store: Arc<FileCronStore>,
+    pub(super) provider_for_inbound: Arc<dyn LlmProvider>,
     /// Whether to allow insecure (HTTP) voice API base URLs.
     /// Read once at startup from env var, threaded through to avoid mid-run env reads.
     pub(super) allow_insecure_voice: bool,
@@ -88,7 +92,7 @@ impl EventLoopContext {
             self.workspace,
         ));
         let h_cron = tokio::spawn(Gateway::run_cron_tick(
-            self.cron_store,
+            self.cron_store.clone(),
             self.agent.clone(),
             self.config.tools.cron.exec_timeout_minutes,
         ));
@@ -111,6 +115,12 @@ impl EventLoopContext {
                 self.inbound_rx,
                 InboundProcessorContext {
                     agent: self.agent,
+                    agent_builder: Some(Arc::new(services::InboundAgentBuilder {
+                        config: self.config.clone(),
+                        base_dir: self.base_dir.clone(),
+                        provider: self.provider_for_inbound.clone(),
+                        cron_store: self.cron_store.clone(),
+                    })),
                     session_store: self.session_store,
                     outbound_tx: self.outbound_tx,
                     max_session_messages,
@@ -170,10 +180,11 @@ impl Gateway {
             );
         }
 
-        let provider = Arc::new(self.build_fallback_provider(&creds)?);
+        let provider_impl = Arc::new(self.build_fallback_provider(&creds)?);
+        let provider: Arc<dyn LlmProvider> = provider_impl.clone();
         let cron_store = Arc::new(FileCronStore::new(&self.base_dir));
         let (agent_impl, mut bus) =
-            self.build_agent(workspace.clone(), provider, cron_store.clone());
+            self.build_agent(workspace.clone(), provider.clone(), cron_store.clone());
         let agent: Arc<dyn AgentLoop> = Arc::new(agent_impl);
 
         let info = agent.info();
@@ -200,8 +211,10 @@ impl Gateway {
             outbound_channel: telegram.clone(),
             telegram_poller: telegram,
             config: self.config.clone(),
+            base_dir: self.base_dir.clone(),
             workspace: workspace.clone(),
             cron_store,
+            provider_for_inbound: provider,
             allow_insecure_voice,
         };
         ctx.run().await;
@@ -293,7 +306,7 @@ impl Gateway {
     fn build_agent(
         &self,
         workspace: PathBuf,
-        provider: Arc<FallbackProvider>,
+        provider: Arc<dyn LlmProvider>,
         cron_store: Arc<FileCronStore>,
     ) -> (AgentLoopImpl, MessageBus) {
         let sandbox = Sandbox::new(
@@ -316,6 +329,14 @@ impl Gateway {
             self.config.agents.defaults.restrict_to_workspace,
             self.base_dir.clone(),
         )));
+        let spill_store = Arc::new(FileContextSpillStore::new(self.base_dir.clone()));
+        // Shared agent handles cron/heartbeat tasks, not per-user Telegram messages.
+        // Per-user messages use InboundAgentBuilder with session-scoped spill stores.
+        let session_key = "gateway:cron-heartbeat".to_string();
+        registry.register(Arc::new(RecallTool::new(
+            spill_store.clone(),
+            session_key.clone(),
+        )));
 
         let agent = AgentLoopImpl::new(AgentLoopConfig {
             provider,
@@ -323,6 +344,10 @@ impl Gateway {
             model: self.config.agents.defaults.model.clone(),
             max_tokens: self.config.agents.defaults.max_tokens,
             temperature: self.config.agents.defaults.temperature,
+            spill_store: Some(spill_store),
+            session_key,
+            context_collapse_after_turns: self.config.agents.defaults.context_collapse_after_turns,
+            max_context_tokens: self.config.agents.defaults.max_context_tokens,
         })
         .with_max_tool_iterations(self.config.agents.defaults.max_tool_iterations);
 

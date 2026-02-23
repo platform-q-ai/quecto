@@ -215,6 +215,10 @@ mod tests {
             model: "test-model".to_string(),
             max_tokens: 100,
             temperature: 0.0,
+            spill_store: None,
+            session_key: String::new(),
+            context_collapse_after_turns: 3,
+            max_context_tokens: 100_000,
         });
 
         let session = super::super::ReplSession {

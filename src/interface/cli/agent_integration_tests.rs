@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use super::*;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-use crate::domain::message::{Message, Role};
+use crate::domain::message::Message;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
@@ -49,6 +49,10 @@ fn make_test_agent(base_dir: &std::path::Path) -> AgentLoopImpl {
         model: "test-model".to_string(),
         max_tokens: 100,
         temperature: 0.0,
+        spill_store: None,
+        session_key: String::new(),
+        context_collapse_after_turns: 3,
+        max_context_tokens: 100_000,
     })
     .with_max_tool_iterations(1)
 }
@@ -458,16 +462,15 @@ fn test_run_with_deadline_completes_before_timeout() {
         model: "test-model".to_string(),
         max_tokens: 100,
         temperature: 0.0,
+        spill_store: None,
+        session_key: String::new(),
+        context_collapse_after_turns: 3,
+        max_context_tokens: 100_000,
     })
     .with_max_tool_iterations(1);
 
     let rt = crate::interface::cli::build_tokio_runtime().unwrap();
-    let mut messages = vec![Message {
-        role: Role::User,
-        content: "test".to_string(),
-        tool_calls: vec![],
-        tool_call_id: None,
-    }];
+    let mut messages = vec![Message::user("test")];
     let result = run_with_deadline(&rt, &agent, &mut messages, 30);
     match result {
         DeadlineResult::Completed(inner) => {
@@ -484,12 +487,7 @@ fn test_run_with_deadline_exercises_timeout_path() {
     let tmp = tempfile::TempDir::new().unwrap();
     let agent = make_test_agent(tmp.path());
     let rt = crate::interface::cli::build_tokio_runtime().unwrap();
-    let mut messages = vec![Message {
-        role: Role::User,
-        content: "test".to_string(),
-        tool_calls: vec![],
-        tool_call_id: None,
-    }];
+    let mut messages = vec![Message::user("test")];
     let result = run_with_deadline(&rt, &agent, &mut messages, 1);
     match result {
         DeadlineResult::Completed(inner) => {

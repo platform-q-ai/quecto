@@ -388,12 +388,7 @@ mod tests {
             .await;
 
         let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
-        let messages = vec![Message {
-            role: Role::User,
-            content: "Hi".to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        }];
+        let messages = vec![Message::user("Hi")];
         let req = ChatRequest {
             messages: &messages,
             tools: &[],
@@ -434,12 +429,7 @@ mod tests {
             .await;
 
         let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
-        let messages = vec![Message {
-            role: Role::User,
-            content: "list files".to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        }];
+        let messages = vec![Message::user("list files")];
         let tools = vec![ToolDefinition {
             name: "exec".to_string(),
             description: "Execute a command".to_string(),
@@ -472,12 +462,7 @@ mod tests {
             .await;
 
         let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
-        let messages = vec![Message {
-            role: Role::User,
-            content: "Hi".to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        }];
+        let messages = vec![Message::user("Hi")];
         let req = ChatRequest {
             messages: &messages,
             tools: &[],
@@ -555,12 +540,7 @@ data: {}\n\n";
             .await;
 
         let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
-        let messages = vec![Message {
-            role: Role::User,
-            content: "Hi".to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        }];
+        let messages = vec![Message::user("Hi")];
         let req = ChatRequest {
             messages: &messages,
             tools: &[],
@@ -593,20 +573,7 @@ data: {}\n\n";
             .await;
 
         let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
-        let messages = vec![
-            Message {
-                role: Role::System,
-                content: "You are helpful.".to_string(),
-                tool_calls: vec![],
-                tool_call_id: None,
-            },
-            Message {
-                role: Role::User,
-                content: "Hi".to_string(),
-                tool_calls: vec![],
-                tool_call_id: None,
-            },
-        ];
+        let messages = vec![Message::system("You are helpful."), Message::user("Hi")];
         let req = ChatRequest {
             messages: &messages,
             tools: &[],

@@ -5,26 +5,97 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
+use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::cron_executor;
 use crate::application::heartbeat;
 use crate::domain::agent::AgentLoop;
 use crate::domain::channel::{Channel, ChannelTarget};
 use crate::domain::message::{Message, Role};
+use crate::domain::provider::LlmProvider;
 use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::bus::{InboundMessage, OutboundMessage};
-use crate::infrastructure::config::HealthConfig;
+use crate::infrastructure::config::{Config, HealthConfig};
 use crate::infrastructure::health::server::{HealthServer, StaticReadiness};
 use crate::infrastructure::logging::redact_api_keys;
+use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 use crate::infrastructure::persistence::cron_store::FileCronStore;
 use crate::infrastructure::persistence::workspace_store::FileHeartbeatTaskSource;
+use crate::infrastructure::security::sandbox::Sandbox;
+use crate::infrastructure::tools::cron_tool::CronTool;
+use crate::infrastructure::tools::message::MessageTool;
+use crate::infrastructure::tools::recall::RecallTool;
+use crate::infrastructure::tools::registry::ToolRegistryImpl;
+use crate::infrastructure::tools::spawn::SpawnTool;
+use crate::infrastructure::tools::web_search::WebSearchTool;
 
 use super::Gateway;
 
 pub(super) struct InboundProcessorContext {
     pub(super) agent: Arc<dyn AgentLoop>,
+    pub(super) agent_builder: Option<Arc<InboundAgentBuilder>>,
     pub(super) session_store: Arc<dyn SessionStore>,
     pub(super) outbound_tx: mpsc::Sender<OutboundMessage>,
     pub(super) max_session_messages: usize,
+}
+
+pub(super) struct InboundAgentBuilder {
+    pub(super) config: Config,
+    pub(super) base_dir: PathBuf,
+    pub(super) provider: Arc<dyn LlmProvider>,
+    pub(super) cron_store: Arc<FileCronStore>,
+}
+
+impl InboundAgentBuilder {
+    pub(super) fn build(
+        &self,
+        session_key: &str,
+        outbound_tx: mpsc::Sender<OutboundMessage>,
+    ) -> AgentLoopImpl {
+        let workspace = PathBuf::from(self.config.workspace_path());
+        let sandbox = Sandbox::new(
+            Some(workspace.clone()),
+            self.config.agents.defaults.restrict_to_workspace,
+        );
+        let mut registry = ToolRegistryImpl::with_core_tools_and_exec_capture_bytes(
+            workspace,
+            sandbox,
+            self.config.agents.defaults.exec_max_capture_bytes,
+        );
+
+        registry.register(Arc::new(MessageTool::new(outbound_tx, None)));
+        let brave = &self.config.tools.web.brave;
+        let brave_api_key = if brave.enabled && !brave.api_key.is_empty() {
+            Some(brave.api_key.clone())
+        } else {
+            None
+        };
+        registry.register(Arc::new(WebSearchTool::new(brave_api_key)));
+        registry.register(Arc::new(CronTool::new(self.cron_store.clone())));
+        registry.register(Arc::new(SpawnTool::with_base_dir(
+            vec![],
+            self.config.agents.defaults.restrict_to_workspace,
+            self.base_dir.clone(),
+        )));
+
+        let spill_store = Arc::new(FileContextSpillStore::new(self.base_dir.clone()));
+        registry.register(Arc::new(RecallTool::new(
+            spill_store.clone(),
+            session_key.to_string(),
+        )));
+
+        AgentLoopImpl::new(AgentLoopConfig {
+            provider: self.provider.clone(),
+            tool_registry: Box::new(registry),
+            model: self.config.agents.defaults.model.clone(),
+            max_tokens: self.config.agents.defaults.max_tokens,
+            temperature: self.config.agents.defaults.temperature,
+            spill_store: Some(spill_store),
+            session_key: session_key.to_string(),
+            context_collapse_after_turns: self.config.agents.defaults.context_collapse_after_turns,
+            max_context_tokens: self.config.agents.defaults.max_context_tokens,
+        })
+        .with_max_tool_iterations(self.config.agents.defaults.max_tool_iterations)
+    }
 }
 
 impl Gateway {
@@ -36,12 +107,7 @@ impl Gateway {
         while let Some(msg) = inbound_rx.recv().await {
             let mut messages = Self::load_session(&ctx.session_store, &msg).await;
 
-            messages.push(Message {
-                role: Role::User,
-                content: msg.text.clone(),
-                tool_calls: vec![],
-                tool_call_id: None,
-            });
+            messages.push(Message::user(msg.text.clone()));
 
             trim_session_messages(&mut messages, ctx.max_session_messages);
 
@@ -81,7 +147,13 @@ impl Gateway {
         messages: &mut Vec<Message>,
     ) -> String {
         let session_key = Session::build_key("telegram", &msg.source);
-        match ctx.agent.process(messages).await {
+        let result = if let Some(ref builder) = ctx.agent_builder {
+            let per_session_agent = builder.build(&session_key, ctx.outbound_tx.clone());
+            per_session_agent.process(messages).await
+        } else {
+            ctx.agent.process(messages).await
+        };
+        match result {
             Ok(result) => {
                 trim_session_messages(messages, ctx.max_session_messages);
                 let session = Session {
@@ -339,24 +411,9 @@ mod tests {
     #[test]
     fn test_trim_messages_keeps_latest_non_system() {
         let mut messages = vec![
-            Message {
-                role: Role::User,
-                content: "u1".to_string(),
-                tool_calls: vec![],
-                tool_call_id: None,
-            },
-            Message {
-                role: Role::Assistant,
-                content: "a1".to_string(),
-                tool_calls: vec![],
-                tool_call_id: None,
-            },
-            Message {
-                role: Role::User,
-                content: "u2".to_string(),
-                tool_calls: vec![],
-                tool_call_id: None,
-            },
+            Message::user("u1"),
+            Message::assistant("a1", vec![]),
+            Message::user("u2"),
         ];
 
         trim_session_messages(&mut messages, 2);
@@ -369,24 +426,9 @@ mod tests {
     #[test]
     fn test_trim_messages_preserves_system_messages() {
         let mut messages = vec![
-            Message {
-                role: Role::System,
-                content: "sys".to_string(),
-                tool_calls: vec![],
-                tool_call_id: None,
-            },
-            Message {
-                role: Role::User,
-                content: "u1".to_string(),
-                tool_calls: vec![],
-                tool_call_id: None,
-            },
-            Message {
-                role: Role::Assistant,
-                content: "a1".to_string(),
-                tool_calls: vec![],
-                tool_call_id: None,
-            },
+            Message::system("sys"),
+            Message::user("u1"),
+            Message::assistant("a1", vec![]),
         ];
 
         trim_session_messages(&mut messages, 1);
@@ -399,34 +441,17 @@ mod tests {
     #[test]
     fn test_trim_messages_does_not_start_with_tool_message() {
         let mut messages = vec![
-            Message {
-                role: Role::User,
-                content: "u1".to_string(),
-                tool_calls: vec![],
-                tool_call_id: None,
-            },
-            Message {
-                role: Role::Assistant,
-                content: "calling tool".to_string(),
-                tool_calls: vec![crate::domain::message::ToolCall {
+            Message::user("u1"),
+            Message::assistant(
+                "calling tool",
+                vec![crate::domain::message::ToolCall {
                     id: "t1".to_string(),
                     name: "read_file".to_string(),
                     arguments: "{}".to_string(),
                 }],
-                tool_call_id: None,
-            },
-            Message {
-                role: Role::Tool,
-                content: "tool result".to_string(),
-                tool_calls: vec![],
-                tool_call_id: Some("t1".to_string()),
-            },
-            Message {
-                role: Role::User,
-                content: "u2".to_string(),
-                tool_calls: vec![],
-                tool_call_id: None,
-            },
+            ),
+            Message::tool("t1", "tool result"),
+            Message::user("u2"),
         ];
 
         trim_session_messages(&mut messages, 2);
@@ -440,6 +465,7 @@ mod tests {
     async fn test_process_and_save_redacts_secret_in_error_response() {
         let ctx = InboundProcessorContext {
             agent: Arc::new(FailingAgent),
+            agent_builder: None,
             session_store: Arc::new(NoopSessionStore),
             outbound_tx: tokio::sync::mpsc::channel(1).0,
             max_session_messages: 50,

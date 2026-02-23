@@ -243,6 +243,8 @@ Config file: `~/.quecto/config.json`
       "max_tokens": 8192,
       "max_tool_iterations": 20,
       "max_session_messages": 200,
+      "context_collapse_after_turns": 3,
+      "max_context_tokens": 100000,
       "restrict_to_workspace": true
     }
   },
@@ -305,6 +307,7 @@ Set `providers.<name>.api_base` only when you need a non-default endpoint (for e
 | `QUECTO_AGENTS_DEFAULTS_TEMPERATURE` | `agents.defaults.temperature` |
 | `QUECTO_AGENTS_DEFAULTS_WORKSPACE` | `agents.defaults.workspace` |
 | `QUECTO_AGENTS_DEFAULTS_MAX_SESSION_MESSAGES` | `agents.defaults.max_session_messages` |
+| `QUECTO_MAX_CONTEXT_TOKENS` | `agents.defaults.max_context_tokens` |
 | `QUECTO_PROVIDERS_OPENAI_API_KEY` | `providers.openai.api_key` |
 | `QUECTO_PROVIDERS_ANTHROPIC_API_KEY` | `providers.anthropic.api_key` |
 
@@ -324,6 +327,7 @@ Tool definitions are cached in the registry at registration time (sorted once, r
 | `edit_file` | Replace a substring in a file |
 | `append_file` | Append content to a file |
 | `list_dir` | List directory contents |
+| `recall` | Retrieve a previously collapsed tool output by its spill ID (e.g. `turn20:bash:0`). Use `recall("list")` for the full index |
 
 Filesystem tools (`read_file`, `write_file`, `edit_file`, `append_file`, `list_dir`) run on async `tokio::fs` adapters.
 

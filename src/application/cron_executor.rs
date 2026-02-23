@@ -7,7 +7,7 @@ use crate::domain::cron::{
     CronJob, CronJobResult, CronStore, is_job_due, unsupported_schedule_reason,
 };
 use crate::domain::error::DomainError;
-use crate::domain::message::{Message, Role};
+use crate::domain::message::Message;
 
 /// Execute a single cron tick: list all jobs and run those that are due.
 ///
@@ -104,12 +104,7 @@ async fn execute_single_job(
     job: &crate::domain::cron::CronJob,
     timeout: Duration,
 ) -> CronJobResult {
-    let mut messages = vec![Message {
-        role: Role::User,
-        content: job.message.clone(),
-        tool_calls: vec![],
-        tool_call_id: None,
-    }];
+    let mut messages = vec![Message::user(job.message.clone())];
 
     let result = tokio::time::timeout(timeout, agent.process(&mut messages)).await;
 

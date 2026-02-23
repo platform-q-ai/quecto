@@ -2,7 +2,7 @@
 
 use crate::domain::agent::AgentLoop;
 use crate::domain::error::DomainError;
-use crate::domain::message::{Message, Role};
+use crate::domain::message::Message;
 use crate::domain::voice::{TranscriptionError, VoiceTranscriber};
 
 /// Maximum audio size in bytes (25 MB — Whisper API limit).
@@ -46,12 +46,7 @@ pub async fn process_voice_message(
             }
         })?;
 
-    let mut messages = vec![Message {
-        role: Role::User,
-        content: transcription.text.clone(),
-        tool_calls: vec![],
-        tool_call_id: None,
-    }];
+    let mut messages = vec![Message::user(transcription.text.clone())];
 
     let result = agent.process(&mut messages).await?;
 

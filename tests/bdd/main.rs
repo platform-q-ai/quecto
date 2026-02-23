@@ -11,7 +11,7 @@ use quecto::domain::cron::{CronJob, CronJobResult, CronSchedule, CronStore};
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, Role, ToolCall};
 use quecto::domain::provider::LlmProvider;
-use quecto::domain::session::{Session, SessionStore};
+use quecto::domain::session::{ContextSpillStore, Session, SessionStore};
 use quecto::domain::skill::{Skill, SkillLoader};
 use quecto::domain::tool::{Tool, ToolDefinition, ToolResult};
 use quecto::infrastructure::auth::credential_store::{
@@ -280,6 +280,24 @@ impl AgentLoop for SlowMockAgent {
 // Wrapper for Arc<dyn AgentLoop> that implements Debug (opaque).
 struct DebugAgent(Arc<dyn AgentLoop>);
 
+// Wrapper for Arc<dyn ContextSpillStore> that implements Debug (opaque).
+#[derive(Clone)]
+struct DebugSpillStore(Arc<dyn ContextSpillStore>);
+
+impl std::fmt::Debug for DebugSpillStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<SpillStore>")
+    }
+}
+
+impl std::ops::Deref for DebugSpillStore {
+    type Target = Arc<dyn ContextSpillStore>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 impl std::fmt::Debug for DebugAgent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("<MockAgent>")
@@ -497,6 +515,20 @@ pub struct QuectoWorld {
     pub captured_log_output: Option<Arc<Mutex<String>>>,
     /// Streaming response from provider streaming scenarios
     pub streaming_response: Option<LlmResponse>,
+    /// Context pruning: in-memory spill store
+    pub context_spill_store: Option<DebugSpillStore>,
+    /// Context pruning: messages under test
+    pub context_messages: Option<Vec<Message>>,
+    /// Context pruning: current turn counter
+    pub context_current_turn: Option<u32>,
+    /// Context pruning: saved original tool content
+    pub context_original_tool_content: Option<String>,
+    /// Context pruning: last recall tool result
+    pub context_recall_result: Option<ToolResult>,
+    /// Context pruning: repeated recall count
+    pub context_recall_count: Option<u32>,
+    /// Context pruning: max context token budget for tests
+    pub context_max_tokens: Option<usize>,
     /// Gateway subprocess child process handle (for long-running gateway tests)
     pub gateway_child: Option<std::process::Child>,
     /// Health server port assigned for gateway health e2e tests
@@ -752,6 +784,7 @@ mod agent_tools_steps;
 mod architecture_steps;
 mod auth_steps;
 mod config_steps;
+mod context_pruning_steps;
 mod cron_steps;
 mod e2e_steps;
 mod gateway_steps;

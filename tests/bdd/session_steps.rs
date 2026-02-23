@@ -37,16 +37,12 @@ fn given_session_with_messages(world: &mut QuectoWorld, key: String, count: usiz
 
     let mut session = Session::new(&key);
     for i in 0..count {
-        session.messages.push(Message {
-            role: if i % 2 == 0 {
-                Role::User
-            } else {
-                Role::Assistant
-            },
-            content: format!("Message {}", i + 1),
-            tool_calls: vec![],
-            tool_call_id: None,
-        });
+        let content = format!("Message {}", i + 1);
+        if i % 2 == 0 {
+            session.messages.push(Message::user(content));
+        } else {
+            session.messages.push(Message::assistant(content, vec![]));
+        }
     }
 
     tokio::runtime::Runtime::new()

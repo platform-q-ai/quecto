@@ -113,12 +113,7 @@ async fn dispatch_task(
         task.message.clone()
     };
 
-    let mut messages = vec![crate::domain::message::Message {
-        role: crate::domain::message::Role::User,
-        content,
-        tool_calls: vec![],
-        tool_call_id: None,
-    }];
+    let mut messages = vec![crate::domain::message::Message::user(content)];
 
     let result = tokio::time::timeout(timeout, agent.process(&mut messages)).await;
 

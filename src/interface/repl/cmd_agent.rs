@@ -4,7 +4,7 @@ use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
 use crate::domain::agent::AgentLoop;
-use crate::domain::message::{Message, Role};
+use crate::domain::message::Message;
 
 use super::parsers::{is_valid_agent_name, parse_agent_args};
 use super::{CMD_AGENT, ReplLoop};
@@ -262,31 +262,18 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
         let mut run_messages = Vec::new();
 
         if !system.is_empty() {
-            run_messages.push(Message {
-                role: Role::System,
-                content: system,
-                tool_calls: vec![],
-                tool_call_id: None,
-            });
+            run_messages.push(Message::system(system));
         }
 
-        run_messages.push(Message {
-            role: Role::User,
-            content: task.to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        });
+        run_messages.push(Message::user(task.to_string()));
 
         let result = rt.block_on(self.session.agent.process(&mut run_messages));
 
         match result {
             Ok(r) => {
-                self.session.messages.push(Message {
-                    role: Role::Assistant,
-                    content: r.response.clone(),
-                    tool_calls: vec![],
-                    tool_call_id: None,
-                });
+                self.session
+                    .messages
+                    .push(Message::assistant(r.response.clone(), vec![]));
                 let _ = writeln!(self.writer, "{}", r.response);
             }
             Err(e) => {

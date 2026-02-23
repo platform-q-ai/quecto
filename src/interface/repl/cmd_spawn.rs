@@ -3,7 +3,7 @@
 use std::io::{BufRead, Write};
 
 use crate::domain::agent::AgentLoop;
-use crate::domain::message::{Message, Role};
+use crate::domain::message::Message;
 
 use super::parsers::parse_spawn_args;
 use super::{CMD_SPAWN, ReplLoop};
@@ -70,20 +70,10 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
         let mut spawn_messages = Vec::new();
 
         if let Some(ref prompt) = system {
-            spawn_messages.push(Message {
-                role: Role::System,
-                content: prompt.clone(),
-                tool_calls: vec![],
-                tool_call_id: None,
-            });
+            spawn_messages.push(Message::system(prompt.clone()));
         }
 
-        spawn_messages.push(Message {
-            role: Role::User,
-            content: parsed.task.clone(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        });
+        spawn_messages.push(Message::user(parsed.task.clone()));
 
         // Run with optional timeout
         let result = if let Some(max_secs) = parsed.max_time {
@@ -104,12 +94,9 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
 
         match result {
             Ok(r) => {
-                self.session.messages.push(Message {
-                    role: Role::Assistant,
-                    content: r.response.clone(),
-                    tool_calls: vec![],
-                    tool_call_id: None,
-                });
+                self.session
+                    .messages
+                    .push(Message::assistant(r.response.clone(), vec![]));
                 let _ = writeln!(self.writer, "{}", r.response);
             }
             Err(e) => {
@@ -186,6 +173,10 @@ mod tests {
             model: "test-model".to_string(),
             max_tokens: 1024,
             temperature: 0.7,
+            spill_store: None,
+            session_key: String::new(),
+            context_collapse_after_turns: 3,
+            max_context_tokens: 100_000,
         });
         let session_store = FileSessionStore::new(tmp.path());
         let session = ReplSession {
