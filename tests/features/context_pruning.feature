@@ -117,3 +117,32 @@ Feature: Context pruning via 3-turn collapse
     When the agent accumulates 800 tokens across 5 user messages
     Then the first user message remains in context
     And later user messages may be dropped
+
+  # --- Manifest persistence across save/load ---
+
+  Scenario: Pruning metadata survives session save and load
+    When the agent executes a bash tool on turn 1
+    And the agent completes turn 4
+    Then the tool result from turn 1 is replaced with a collapse stub
+    When the session is saved and reloaded from disk
+    Then the tool result from turn 1 still has is_collapsed true
+    And the tool result from turn 1 still has turn 1
+    And the tool result from turn 1 still has tool_name "bash"
+    And the tool result from turn 1 still has spill_id "turn1:bash:0"
+
+  Scenario: Manifest is not duplicated after session save and reload
+    When the agent executes tools on turns 1 through 5
+    Then only one manifest message exists in context
+    When the session is saved and reloaded from disk
+    And the spill manifest is updated
+    Then only one manifest message exists in context
+    And exactly one system message contains "spilled entries via recall()"
+
+  Scenario: Collapsed stubs remain collapsed after session round-trip
+    When the agent executes a bash tool on turn 1
+    And the agent completes turn 4
+    Then the tool result from turn 1 is replaced with a collapse stub
+    When the session is saved and reloaded from disk
+    And the agent completes turn 5
+    Then the collapse stub from turn 1 appears exactly once
+    And its content has not been modified since turn 4

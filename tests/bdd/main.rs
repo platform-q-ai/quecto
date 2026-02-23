@@ -529,6 +529,8 @@ pub struct QuectoWorld {
     pub context_recall_count: Option<u32>,
     /// Context pruning: max context token budget for tests
     pub context_max_tokens: Option<usize>,
+    /// Context pruning: temp dir for session persistence round-trip tests
+    pub context_temp_dir: Option<TempDir>,
     /// Gateway subprocess child process handle (for long-running gateway tests)
     pub gateway_child: Option<std::process::Child>,
     /// Health server port assigned for gateway health e2e tests
