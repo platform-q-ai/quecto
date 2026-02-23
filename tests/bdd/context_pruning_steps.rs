@@ -1,7 +1,8 @@
 use super::agent_loop_steps::ensure_mock_llm;
 use super::*;
 use quecto::application::context_pruning;
-use quecto::domain::session::{ContextSpillStore, SpillEntry, SpillIndex};
+use quecto::domain::session::{ContextSpillStore, Session, SessionStore, SpillEntry, SpillIndex};
+use quecto::infrastructure::persistence::session_store::FileSessionStore;
 
 // ===========================================================================
 // In-memory ContextSpillStore for BDD tests
@@ -935,4 +936,106 @@ fn then_later_user_messages_may_be_dropped(world: &mut QuectoWorld) {
     let max_tokens = world.context_max_tokens.unwrap_or(100_000);
     let total = context_pruning::estimate_total_tokens(messages);
     assert!(total <= max_tokens, "context should be under budget");
+}
+
+// --- Session persistence round-trip steps ---
+
+#[when("the session is saved and reloaded from disk")]
+fn when_session_saved_and_reloaded(world: &mut QuectoWorld) {
+    let messages = world.context_messages.take().unwrap();
+    let session = Session {
+        key: "test:persistence".to_string(),
+        messages,
+    };
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+
+    let reloaded = tokio::runtime::Runtime::new().unwrap().block_on(async {
+        store.save(&session).await.unwrap();
+        store.load("test:persistence").await.unwrap().unwrap()
+    });
+
+    world.context_messages = Some(reloaded.messages);
+    // Keep temp dir alive for the scenario duration
+    world.context_temp_dir = Some(tmp);
+}
+
+#[when("the spill manifest is updated")]
+fn when_spill_manifest_updated(world: &mut QuectoWorld) {
+    let store = world.context_spill_store.as_ref().unwrap().clone();
+    let messages = world.context_messages.as_mut().unwrap();
+
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(context_pruning::update_spill_manifest(
+            messages,
+            store.as_ref(),
+            "test-session",
+        ));
+}
+
+/// Find the collapsed tool result from turn 1 by structural criteria.
+fn find_collapsed_tool(messages: &[Message]) -> &Message {
+    messages
+        .iter()
+        .find(|m| m.role == Role::Tool && m.is_collapsed)
+        .expect("should find a collapsed tool result")
+}
+
+#[then("the tool result from turn 1 still has is_collapsed true")]
+fn then_tool_result_turn1_still_collapsed(world: &mut QuectoWorld) {
+    let messages = world.context_messages.as_ref().unwrap();
+    let tool_msg = find_collapsed_tool(messages);
+    assert!(
+        tool_msg.is_collapsed,
+        "is_collapsed should survive save/load round-trip"
+    );
+}
+
+#[then(expr = "the tool result from turn 1 still has turn {int}")]
+fn then_tool_result_turn1_still_has_turn(world: &mut QuectoWorld, expected: u32) {
+    let messages = world.context_messages.as_ref().unwrap();
+    let tool_msg = find_collapsed_tool(messages);
+    assert_eq!(
+        tool_msg.turn,
+        Some(expected),
+        "turn should survive save/load round-trip"
+    );
+}
+
+#[then(expr = "the tool result from turn 1 still has tool_name {string}")]
+fn then_tool_result_turn1_still_has_tool_name(world: &mut QuectoWorld, expected: String) {
+    let messages = world.context_messages.as_ref().unwrap();
+    let tool_msg = find_collapsed_tool(messages);
+    assert_eq!(
+        tool_msg.tool_name.as_deref(),
+        Some(expected.as_str()),
+        "tool_name should survive save/load round-trip"
+    );
+}
+
+#[then(expr = "exactly one system message contains {string}")]
+fn then_exactly_one_system_msg_contains(world: &mut QuectoWorld, needle: String) {
+    let messages = world.context_messages.as_ref().unwrap();
+    let count = messages
+        .iter()
+        .filter(|m| m.role == Role::System && m.content.contains(&needle))
+        .count();
+    assert_eq!(
+        count, 1,
+        "expected exactly 1 system message containing '{}', got {}",
+        needle, count
+    );
+}
+
+#[then(expr = "the tool result from turn 1 still has spill_id {string}")]
+fn then_tool_result_turn1_still_has_spill_id(world: &mut QuectoWorld, expected: String) {
+    let messages = world.context_messages.as_ref().unwrap();
+    let tool_msg = find_collapsed_tool(messages);
+    assert_eq!(
+        tool_msg.spill_id.as_deref(),
+        Some(expected.as_str()),
+        "spill_id should survive save/load round-trip"
+    );
 }

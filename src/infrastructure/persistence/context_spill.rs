@@ -192,6 +192,10 @@ impl ContextSpillStore for FileContextSpillStore {
                 .await
                 .map_err(|e| DomainError::Session(format!("failed to write spill entry: {}", e)))?;
 
+            file.flush()
+                .await
+                .map_err(|e| DomainError::Session(format!("failed to flush spill file: {}", e)))?;
+
             Ok(())
         })
     }

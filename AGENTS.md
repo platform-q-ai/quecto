@@ -70,7 +70,7 @@ Implements the domain traits with real I/O. This is where serde, reqwest, tokio,
 | `config.rs` | `Config` struct with serde deserialization, env var overrides, workspace path expansion |
 | `providers/` | `OpenAiProvider`, `AnthropicProvider` (real HTTP, SSE streaming via `chat_stream()`), `FallbackProvider` (cooldown + provider-scoped error classification using extracted status codes and semantic matching), `ErrorClass`. `create_provider()` validates `api_base` (https for non-local hosts; http allowed only on loopback) and rejects unsafe URLs |
 | `tools/` | `ExecTool` (shell; drains stdout/stderr while running and caps captured output to 1 MiB per stream), `ReadFileTool`/`WriteFileTool`/`EditFileTool`/`AppendFileTool`/`ListDirTool` (filesystem, async via `tokio::fs`), `SpawnTool` (subagent), `CronTool`, `MessageTool`, `WebSearchTool` (Brave + DDG), `RecallTool` (retrieves spilled tool outputs by ID, supports `"list"` for full index, tracks repeated recalls with diagnostic warnings), `ToolRegistryImpl` (caches sorted tool definitions at registration time) |
-| `persistence/` | `FileSessionStore`, `MemoryStore`, `FileCronStore`, `FileSkillLoader`, `workspace_store.rs` (`FileHeartbeatTaskSource`, `FileOnboardStore`), `context_spill.rs` (`FileContextSpillStore` — JSONL append-only spill file for context pruning, implements `ContextSpillStore`) |
+| `persistence/` | `FileSessionStore` (round-trips all `Message` fields including context-pruning metadata: `turn`, `is_pinned`, `is_manifest`, `is_collapsed`, `tool_name`, `input_preview`, `spill_id`; backward-compatible with older session files via serde defaults), `MemoryStore`, `FileCronStore`, `FileSkillLoader`, `workspace_store.rs` (`FileHeartbeatTaskSource`, `FileOnboardStore`), `context_spill.rs` (`FileContextSpillStore` — JSONL append-only spill file for context pruning, implements `ContextSpillStore`) |
 | `security/` | `Sandbox` — workspace path validation and command filtering |
 | `auth/` | `CredentialStore` (file-based token CRUD), `oauth.rs` (`OAuthConfig`, `DeviceCodeResponse`, `request_device_code()` — OAuth browser flow and device code flow for headless environments) |
 | `channels/` | `TelegramChannel` — `send_message()`, `get_updates()`, user allowlist, configurable `api_base` (defaults to `https://api.telegram.org`) |
@@ -186,7 +186,7 @@ scripts/check-quality.sh       Work markers, lint bypasses, unsafe, ignored test
 scripts/check-bdd-quality.sh   BDD anti-pattern detection (tests/bdd/)
 cargo fmt --check              Formatting
 cargo clippy -- -D warnings    Lints (zero warnings policy)
-cargo test --lib               721 unit tests
+cargo test --lib               786 unit tests
 cargo test --test architecture Clean Architecture boundary enforcement
 cargo test --test bdd          BDD scenarios in `@done`/`@wip` features (`@real-llm` gated unless `QUECTO_REAL_LLM=1`)
 ```

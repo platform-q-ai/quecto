@@ -32,6 +32,27 @@ struct MessageRecord {
     tool_calls: Vec<ToolCallRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tool_call_id: Option<String>,
+    // Context-pruning metadata (all optional for backward compat)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    turn: Option<u32>,
+    /// `None` = absent in old files (use constructor default);
+    /// `Some(true/false)` = explicitly persisted value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    is_pinned: Option<bool>,
+    #[serde(default, skip_serializing_if = "skip_if_false")]
+    is_manifest: bool,
+    #[serde(default, skip_serializing_if = "skip_if_false")]
+    is_collapsed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tool_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    input_preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    spill_id: Option<String>,
+}
+
+fn skip_if_false(v: &bool) -> bool {
+    !v
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -172,6 +193,13 @@ fn message_to_record(msg: &Message) -> MessageRecord {
             })
             .collect(),
         tool_call_id: msg.tool_call_id.clone(),
+        turn: msg.turn,
+        is_pinned: Some(msg.is_pinned),
+        is_manifest: msg.is_manifest,
+        is_collapsed: msg.is_collapsed,
+        tool_name: msg.tool_name.clone(),
+        input_preview: msg.input_preview.clone(),
+        spill_id: msg.spill_id.clone(),
     }
 }
 
@@ -186,12 +214,25 @@ fn record_to_message(rec: MessageRecord) -> Message {
             arguments: tc.arguments,
         })
         .collect();
-    match role {
+    let mut msg = match role {
         Role::System => Message::system(rec.content),
         Role::User => Message::user(rec.content),
         Role::Assistant => Message::assistant(rec.content, tool_calls),
         Role::Tool => Message::tool(rec.tool_call_id.unwrap_or_default(), rec.content),
+    };
+    msg.turn = rec.turn;
+    msg.is_manifest = rec.is_manifest;
+    msg.is_collapsed = rec.is_collapsed;
+    msg.tool_name = rec.tool_name;
+    msg.input_preview = rec.input_preview;
+    msg.spill_id = rec.spill_id;
+    // is_pinned: `Some(v)` = explicitly persisted, use it.
+    // `None` = absent (old session file), keep constructor default
+    // (true for System, false for others).
+    if let Some(pinned) = rec.is_pinned {
+        msg.is_pinned = pinned;
     }
+    msg
 }
 
 #[cfg(test)]
@@ -353,5 +394,172 @@ mod tests {
         let loaded = store2.load("telegram:persist").await.unwrap();
         assert!(loaded.is_some());
         assert_eq!(loaded.unwrap().messages[0].content, "persisted message");
+    }
+
+    // --- Pruning metadata round-trip tests ---
+
+    #[tokio::test]
+    async fn test_turn_field_survives_round_trip() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileSessionStore::new(tmp.path());
+
+        let mut tool_msg = Message::tool("call_1", "tool output");
+        tool_msg.turn = Some(3);
+
+        let session = Session {
+            key: "test:turn".to_string(),
+            messages: vec![tool_msg],
+        };
+        store.save(&session).await.unwrap();
+        let loaded = store.load("test:turn").await.unwrap().unwrap();
+        assert_eq!(
+            loaded.messages[0].turn,
+            Some(3),
+            "turn field should survive save/load"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_is_collapsed_survives_round_trip() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileSessionStore::new(tmp.path());
+
+        let mut tool_msg = Message::tool("call_1", "[bash: echo hello (100 tokens)]");
+        tool_msg.is_collapsed = true;
+
+        let session = Session {
+            key: "test:collapsed".to_string(),
+            messages: vec![tool_msg],
+        };
+        store.save(&session).await.unwrap();
+        let loaded = store.load("test:collapsed").await.unwrap().unwrap();
+        assert!(
+            loaded.messages[0].is_collapsed,
+            "is_collapsed should survive save/load"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_is_manifest_survives_round_trip() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileSessionStore::new(tmp.path());
+
+        let mut manifest = Message::system("[Session memory: 5 spilled entries]");
+        manifest.is_manifest = true;
+        manifest.is_pinned = true;
+
+        let session = Session {
+            key: "test:manifest".to_string(),
+            messages: vec![manifest],
+        };
+        store.save(&session).await.unwrap();
+        let loaded = store.load("test:manifest").await.unwrap().unwrap();
+        assert!(
+            loaded.messages[0].is_manifest,
+            "is_manifest should survive save/load"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_is_pinned_survives_round_trip() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileSessionStore::new(tmp.path());
+
+        let mut user_msg = Message::user("first message");
+        user_msg.is_pinned = true;
+
+        let session = Session {
+            key: "test:pinned".to_string(),
+            messages: vec![user_msg],
+        };
+        store.save(&session).await.unwrap();
+        let loaded = store.load("test:pinned").await.unwrap().unwrap();
+        assert!(
+            loaded.messages[0].is_pinned,
+            "is_pinned should survive save/load for non-system messages"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tool_name_survives_round_trip() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileSessionStore::new(tmp.path());
+
+        let mut tool_msg = Message::tool("call_1", "output");
+        tool_msg.tool_name = Some("exec".to_string());
+
+        let session = Session {
+            key: "test:toolname".to_string(),
+            messages: vec![tool_msg],
+        };
+        store.save(&session).await.unwrap();
+        let loaded = store.load("test:toolname").await.unwrap().unwrap();
+        assert_eq!(
+            loaded.messages[0].tool_name.as_deref(),
+            Some("exec"),
+            "tool_name should survive save/load"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_input_preview_survives_round_trip() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileSessionStore::new(tmp.path());
+
+        let mut tool_msg = Message::tool("call_1", "output");
+        tool_msg.input_preview = Some("echo hello".to_string());
+
+        let session = Session {
+            key: "test:preview".to_string(),
+            messages: vec![tool_msg],
+        };
+        store.save(&session).await.unwrap();
+        let loaded = store.load("test:preview").await.unwrap().unwrap();
+        assert_eq!(
+            loaded.messages[0].input_preview.as_deref(),
+            Some("echo hello"),
+            "input_preview should survive save/load"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_spill_id_survives_round_trip() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileSessionStore::new(tmp.path());
+
+        let mut tool_msg = Message::tool("call_1", "output");
+        tool_msg.spill_id = Some("turn1:bash:0".to_string());
+
+        let session = Session {
+            key: "test:spillid".to_string(),
+            messages: vec![tool_msg],
+        };
+        store.save(&session).await.unwrap();
+        let loaded = store.load("test:spillid").await.unwrap().unwrap();
+        assert_eq!(
+            loaded.messages[0].spill_id.as_deref(),
+            Some("turn1:bash:0"),
+            "spill_id should survive save/load"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_system_is_pinned_default_survives_round_trip() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileSessionStore::new(tmp.path());
+
+        let session = Session {
+            key: "test:sys_pinned".to_string(),
+            messages: vec![Message::system("system prompt")],
+        };
+        store.save(&session).await.unwrap();
+        let loaded = store.load("test:sys_pinned").await.unwrap().unwrap();
+        // System messages are pinned by default in constructor,
+        // so this should pass even without explicit persistence —
+        // but user messages marked as pinned would fail.
+        assert!(
+            loaded.messages[0].is_pinned,
+            "system message should remain pinned after round-trip"
+        );
     }
 }
