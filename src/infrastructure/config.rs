@@ -131,6 +131,57 @@ pub struct ToolsConfig {
     pub web: WebToolConfig,
     #[serde(default)]
     pub cron: CronToolConfig,
+    #[serde(default)]
+    pub exec: ExecToolConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecToolConfig {
+    #[serde(default)]
+    pub isolation: ExecIsolationConfig,
+    #[serde(default = "default_nsjail_binary")]
+    pub nsjail_binary: String,
+    #[serde(default)]
+    pub allow_native_fallback: bool,
+    #[serde(default)]
+    pub network_passthrough: bool,
+    #[serde(default = "default_nsjail_memory_limit_mb")]
+    pub memory_limit_mb: u64,
+    #[serde(default = "default_nsjail_pid_limit")]
+    pub pid_limit: u64,
+    #[serde(default = "default_nsjail_cpu_time_limit_secs")]
+    pub cpu_time_limit_secs: u64,
+    #[serde(default = "default_nsjail_wall_time_limit_secs")]
+    pub wall_time_limit_secs: u64,
+    #[serde(default = "default_true")]
+    pub die_with_parent: bool,
+    #[serde(default)]
+    pub allow_without_die_with_parent: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ExecIsolationConfig {
+    Native,
+    #[default]
+    Nsjail,
+}
+
+impl Default for ExecToolConfig {
+    fn default() -> Self {
+        Self {
+            isolation: ExecIsolationConfig::Nsjail,
+            nsjail_binary: default_nsjail_binary(),
+            allow_native_fallback: false,
+            network_passthrough: false,
+            memory_limit_mb: default_nsjail_memory_limit_mb(),
+            pid_limit: default_nsjail_pid_limit(),
+            cpu_time_limit_secs: default_nsjail_cpu_time_limit_secs(),
+            wall_time_limit_secs: default_nsjail_wall_time_limit_secs(),
+            die_with_parent: true,
+            allow_without_die_with_parent: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -293,6 +344,21 @@ fn default_max_results() -> u32 {
 fn default_cron_timeout() -> u32 {
     5
 }
+fn default_nsjail_binary() -> String {
+    "nsjail".to_string()
+}
+fn default_nsjail_memory_limit_mb() -> u64 {
+    512
+}
+fn default_nsjail_pid_limit() -> u64 {
+    256
+}
+fn default_nsjail_cpu_time_limit_secs() -> u64 {
+    30
+}
+fn default_nsjail_wall_time_limit_secs() -> u64 {
+    30
+}
 fn default_heartbeat_interval() -> u32 {
     30
 }
@@ -440,6 +506,51 @@ mod tests {
         assert_eq!(config.agents.defaults.workspace, "~/.quecto/workspace");
         assert_eq!(config.agents.defaults.max_tool_iterations, 20);
         assert!(config.agents.defaults.restrict_to_workspace);
+    }
+
+    #[test]
+    fn test_deserialize_empty_uses_exec_defaults() {
+        let config: Config = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.tools.exec.isolation, ExecIsolationConfig::Nsjail);
+        assert_eq!(config.tools.exec.nsjail_binary, "nsjail");
+        assert!(!config.tools.exec.allow_native_fallback);
+        assert_eq!(config.tools.exec.memory_limit_mb, 512);
+        assert_eq!(config.tools.exec.pid_limit, 256);
+        assert_eq!(config.tools.exec.cpu_time_limit_secs, 30);
+        assert_eq!(config.tools.exec.wall_time_limit_secs, 30);
+        assert!(config.tools.exec.die_with_parent);
+        assert!(!config.tools.exec.allow_without_die_with_parent);
+    }
+
+    #[test]
+    fn test_deserialize_exec_tool_config() {
+        let json = r#"{
+            "tools": {
+                "exec": {
+                    "isolation": "nsjail",
+                    "nsjail_binary": "/usr/bin/nsjail",
+                    "allow_native_fallback": true,
+                    "network_passthrough": true,
+                    "memory_limit_mb": 1024,
+                    "pid_limit": 128,
+                    "cpu_time_limit_secs": 20,
+                    "wall_time_limit_secs": 25,
+                    "die_with_parent": false,
+                    "allow_without_die_with_parent": true
+                }
+            }
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.tools.exec.isolation, ExecIsolationConfig::Nsjail);
+        assert_eq!(config.tools.exec.nsjail_binary, "/usr/bin/nsjail");
+        assert!(config.tools.exec.allow_native_fallback);
+        assert!(config.tools.exec.network_passthrough);
+        assert_eq!(config.tools.exec.memory_limit_mb, 1024);
+        assert_eq!(config.tools.exec.pid_limit, 128);
+        assert_eq!(config.tools.exec.cpu_time_limit_secs, 20);
+        assert_eq!(config.tools.exec.wall_time_limit_secs, 25);
+        assert!(!config.tools.exec.die_with_parent);
+        assert!(config.tools.exec.allow_without_die_with_parent);
     }
 
     #[test]

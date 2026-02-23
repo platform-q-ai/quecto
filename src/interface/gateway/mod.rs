@@ -313,11 +313,9 @@ impl Gateway {
             Some(workspace.clone()),
             self.config.agents.defaults.restrict_to_workspace,
         );
-        let mut registry = ToolRegistryImpl::with_core_tools_and_exec_capture_bytes(
-            workspace,
-            sandbox,
-            self.config.agents.defaults.exec_max_capture_bytes,
-        );
+        let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&self.config);
+        let mut registry =
+            ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
         let bus = MessageBus::new(256);
         let outbound_tx = bus.outbound_sender();
 

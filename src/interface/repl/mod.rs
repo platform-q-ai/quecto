@@ -302,11 +302,9 @@ pub fn run_repl<R: BufRead, W: Write>(
         Some(workspace.clone()),
         ctx.config.agents.defaults.restrict_to_workspace,
     );
-    let mut registry = ToolRegistryImpl::with_core_tools_and_exec_capture_bytes(
-        workspace,
-        sandbox,
-        ctx.config.agents.defaults.exec_max_capture_bytes,
-    );
+    let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(ctx.config);
+    let mut registry =
+        ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
     let ephemeral = ctx.flags.session_name.as_deref() == Some("-");
     let session_key = if ephemeral {
         String::new()

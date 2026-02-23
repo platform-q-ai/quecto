@@ -227,11 +227,9 @@ pub(crate) fn build_agent_from_config(
         Some(workspace.clone()),
         config.agents.defaults.restrict_to_workspace,
     );
-    let registry = ToolRegistryImpl::with_core_tools_and_exec_capture_bytes(
-        workspace,
-        sandbox,
-        config.agents.defaults.exec_max_capture_bytes,
-    );
+    let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
+    let registry =
+        ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
     let mut registry = registry;
     let session_key = if flags.session_name.as_deref() == Some("-") {
         String::new()
