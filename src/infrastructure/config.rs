@@ -131,6 +131,33 @@ pub struct ToolsConfig {
     pub web: WebToolConfig,
     #[serde(default)]
     pub cron: CronToolConfig,
+    #[serde(default)]
+    pub exec: ExecToolConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecToolConfig {
+    #[serde(default)]
+    pub isolation: ExecIsolationConfig,
+    #[serde(default = "default_nsjail_binary")]
+    pub nsjail_binary: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ExecIsolationConfig {
+    #[default]
+    Native,
+    Nsjail,
+}
+
+impl Default for ExecToolConfig {
+    fn default() -> Self {
+        Self {
+            isolation: ExecIsolationConfig::Native,
+            nsjail_binary: default_nsjail_binary(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -293,6 +320,9 @@ fn default_max_results() -> u32 {
 fn default_cron_timeout() -> u32 {
     5
 }
+fn default_nsjail_binary() -> String {
+    "nsjail".to_string()
+}
 fn default_heartbeat_interval() -> u32 {
     30
 }
@@ -440,6 +470,23 @@ mod tests {
         assert_eq!(config.agents.defaults.workspace, "~/.quecto/workspace");
         assert_eq!(config.agents.defaults.max_tool_iterations, 20);
         assert!(config.agents.defaults.restrict_to_workspace);
+        assert_eq!(config.tools.exec.isolation, ExecIsolationConfig::Native);
+        assert_eq!(config.tools.exec.nsjail_binary, "nsjail");
+    }
+
+    #[test]
+    fn test_deserialize_exec_tool_config() {
+        let json = r#"{
+            "tools": {
+                "exec": {
+                    "isolation": "nsjail",
+                    "nsjail_binary": "/usr/bin/nsjail"
+                }
+            }
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.tools.exec.isolation, ExecIsolationConfig::Nsjail);
+        assert_eq!(config.tools.exec.nsjail_binary, "/usr/bin/nsjail");
     }
 
     #[test]

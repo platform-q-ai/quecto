@@ -267,6 +267,10 @@ Config file: `~/.quecto/config.json`
     }
   },
   "tools": {
+    "exec": {
+      "isolation": "native",
+      "nsjail_binary": "nsjail"
+    },
     "web": {
       "brave": {
         "enabled": true,
@@ -296,6 +300,12 @@ Set `providers.<name>.api_base` only when you need a non-default endpoint (for e
 - `https://` is required for non-local hosts.
 - `http://` is allowed only for loopback hosts: `localhost`, `127.0.0.1`, or `::1`.
 - Invalid `api_base` values cause that provider to be rejected during startup.
+
+### Exec isolation settings
+
+- `tools.exec.isolation`: `native` (default) or `nsjail`
+- `tools.exec.nsjail_binary`: binary name or absolute path used when `isolation` is `nsjail` (default `nsjail`)
+- If `isolation` is `nsjail` but the binary is unavailable at startup, Quecto logs a warning and falls back to native exec mode.
 
 ### Environment variable overrides
 
@@ -366,6 +376,7 @@ The agent operates inside a sandbox:
 
 - **Workspace restriction**: When `restrict_to_workspace` is `true` (default), all file operations are confined to the workspace directory. Symlinks pointing outside are blocked. Path traversal (`../`) is caught.
 - **Dangerous commands blocked**: `rm -rf /`, `rm -r -f /`, `mkfs`, `dd`, `shutdown`, `reboot`, `chmod -R 777 /`, fork bombs, and pipe-to-shell patterns (`curl|sh`) are always blocked regardless of other settings. Command checks normalize whitespace/casing, so equivalent variants like `rm  -rf /` are also blocked.
+- **Exec runtime isolation**: The `exec` tool runs in `native` mode by default (Sandbox filtering only) or in `nsjail` mode when configured via `tools.exec.isolation`.
 - **Environment isolation**: `QUECTO_*` environment variables (including API keys) are stripped from child processes spawned by the `exec` tool.
 - **Secret redaction**: Log/status output redacts OpenAI/Anthropic (`sk-*`), Groq (`gsk_*`/`gsk-*`), and Telegram bot token values.
 

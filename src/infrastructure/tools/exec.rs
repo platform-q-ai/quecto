@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,12 +21,66 @@ const SECRET_ENV_PREFIX: &str = "QUECTO_";
 const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
 const STREAM_DRAIN_TIMEOUT_ON_KILL: Duration = Duration::from_millis(250);
 
+/// Runtime isolation mode for the exec tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecIsolationMode {
+    Native,
+    Nsjail,
+}
+
+/// Configuration for nsjail execution.
+#[derive(Debug, Clone)]
+pub struct NsjailOptions {
+    pub binary: String,
+    pub network_passthrough: bool,
+    pub memory_limit_mb: Option<u64>,
+    pub pid_limit: Option<u64>,
+    pub cpu_time_limit_secs: Option<u64>,
+    pub wall_time_limit_secs: Option<u64>,
+}
+
+impl Default for NsjailOptions {
+    fn default() -> Self {
+        Self {
+            binary: "nsjail".to_string(),
+            network_passthrough: false,
+            memory_limit_mb: None,
+            pid_limit: None,
+            cpu_time_limit_secs: None,
+            wall_time_limit_secs: None,
+        }
+    }
+}
+
+/// Runtime options for ExecTool.
+#[derive(Debug, Clone)]
+pub struct ExecOptions {
+    pub timeout: Duration,
+    pub max_capture_bytes: usize,
+    pub isolation_mode: ExecIsolationMode,
+    pub nsjail: NsjailOptions,
+}
+
+impl Default for ExecOptions {
+    fn default() -> Self {
+        Self {
+            timeout: DEFAULT_EXEC_TIMEOUT,
+            max_capture_bytes: MAX_CAPTURE_BYTES,
+            isolation_mode: ExecIsolationMode::Native,
+            nsjail: NsjailOptions::default(),
+        }
+    }
+}
+
 /// Tool that executes shell commands within the workspace.
 pub struct ExecTool {
     workspace: Arc<PathBuf>,
     sandbox: Arc<Sandbox>,
     timeout: Duration,
     max_capture_bytes: usize,
+    mode: ExecIsolationMode,
+    nsjail: NsjailOptions,
+    startup_warning: Option<String>,
 }
 
 impl std::fmt::Debug for ExecTool {
@@ -35,6 +89,7 @@ impl std::fmt::Debug for ExecTool {
             .field("workspace", &self.workspace)
             .field("timeout", &self.timeout)
             .field("max_capture_bytes", &self.max_capture_bytes)
+            .field("mode", &self.mode)
             .finish()
     }
 }
@@ -42,22 +97,16 @@ impl std::fmt::Debug for ExecTool {
 impl ExecTool {
     /// Create a new exec tool with default timeout.
     pub fn new(workspace: Arc<PathBuf>, sandbox: Arc<Sandbox>) -> Self {
-        Self {
-            workspace,
-            sandbox,
-            timeout: DEFAULT_EXEC_TIMEOUT,
-            max_capture_bytes: MAX_CAPTURE_BYTES,
-        }
+        Self::with_options(workspace, sandbox, ExecOptions::default())
     }
 
     /// Create a new exec tool with a custom timeout.
     pub fn with_timeout(workspace: Arc<PathBuf>, sandbox: Arc<Sandbox>, timeout: Duration) -> Self {
-        Self {
-            workspace,
-            sandbox,
+        let opts = ExecOptions {
             timeout,
-            max_capture_bytes: MAX_CAPTURE_BYTES,
-        }
+            ..ExecOptions::default()
+        };
+        Self::with_options(workspace, sandbox, opts)
     }
 
     /// Create a new exec tool with custom timeout and output capture cap.
@@ -67,17 +116,54 @@ impl ExecTool {
         timeout: Duration,
         max_capture_bytes: usize,
     ) -> Self {
+        let opts = ExecOptions {
+            timeout,
+            max_capture_bytes,
+            ..ExecOptions::default()
+        };
+        Self::with_options(workspace, sandbox, opts)
+    }
+
+    /// Create a new exec tool with explicit options.
+    pub fn with_options(
+        workspace: Arc<PathBuf>,
+        sandbox: Arc<Sandbox>,
+        options: ExecOptions,
+    ) -> Self {
+        let mut warning = None;
+        let mut mode = options.isolation_mode;
+        if mode == ExecIsolationMode::Nsjail && !binary_exists(&options.nsjail.binary) {
+            mode = ExecIsolationMode::Native;
+            warning = Some(format!(
+                "nsjail binary '{}' not found; falling back to native exec",
+                options.nsjail.binary
+            ));
+            tracing::warn!(target: "exec", "{}", warning.as_deref().unwrap_or_default());
+        }
         Self {
             workspace,
             sandbox,
-            timeout,
-            max_capture_bytes,
+            timeout: options.timeout,
+            max_capture_bytes: options.max_capture_bytes,
+            mode,
+            nsjail: options.nsjail,
+            startup_warning: warning,
         }
     }
 
     /// Get the configured timeout duration.
     pub fn timeout(&self) -> Duration {
         self.timeout
+    }
+
+    /// Current runtime mode (may differ from requested mode after fallback).
+    pub fn mode(&self) -> ExecIsolationMode {
+        self.mode
+    }
+
+    /// Startup warning set when fallback occurred.
+    pub fn startup_warning(&self) -> Option<&str> {
+        self.startup_warning.as_deref()
     }
 
     /// Execute a command with custom environment variables.
@@ -114,7 +200,7 @@ impl ExecTool {
             .map_err(|e| DomainError::Security(e.to_string()))?;
 
         let source_env = build_source_env(env_overrides);
-        let mut cmd = build_shell_command(self.workspace.as_ref(), &command, &source_env);
+        let mut cmd = build_command(self, &command, &source_env);
 
         // Spawn the child process so we can kill it on timeout.
         // We use spawn + wait (not output) so we retain a handle to kill the process.
@@ -183,6 +269,86 @@ fn build_shell_command(
     }
 
     cmd
+}
+
+fn build_command(
+    tool: &ExecTool,
+    command: &str,
+    source_env: &HashMap<String, String>,
+) -> tokio::process::Command {
+    if tool.mode == ExecIsolationMode::Nsjail {
+        return build_nsjail_command(&tool.workspace, command, source_env, &tool.nsjail);
+    }
+    build_shell_command(&tool.workspace, command, source_env)
+}
+
+fn build_nsjail_command(
+    workspace: &Path,
+    command: &str,
+    source_env: &HashMap<String, String>,
+    options: &NsjailOptions,
+) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new(&options.binary);
+    cmd.arg("--quiet")
+        .arg("--mode")
+        .arg("o")
+        .arg("--cwd")
+        .arg("/workspace")
+        .arg("--bindmount")
+        .arg(format!("{}:/workspace", workspace.display()));
+
+    if !options.network_passthrough {
+        cmd.arg("--clone_newnet");
+    }
+    if let Some(mem) = options.memory_limit_mb {
+        cmd.arg("--cgroup_mem_max")
+            .arg((mem * 1024 * 1024).to_string());
+    }
+    if let Some(pid) = options.pid_limit {
+        cmd.arg("--cgroup_pids_max").arg(pid.to_string());
+    }
+    if let Some(cpu) = options.cpu_time_limit_secs {
+        cmd.arg("--rlimit_cpu").arg(cpu.to_string());
+    }
+    if let Some(wall) = options.wall_time_limit_secs {
+        cmd.arg("--time_limit").arg(wall.to_string());
+    }
+
+    cmd.arg("--")
+        .arg("/bin/sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(workspace)
+        .env_clear();
+
+    for (k, v) in source_env {
+        if !k.starts_with(SECRET_ENV_PREFIX) {
+            cmd.env(k, v);
+        }
+    }
+    if !source_env.contains_key("PATH")
+        && let Ok(path) = std::env::var("PATH")
+    {
+        cmd.env("PATH", path);
+    }
+    cmd
+}
+
+fn binary_exists(binary: &str) -> bool {
+    let path = Path::new(binary);
+    if path.components().count() > 1 {
+        return path.exists();
+    }
+
+    if let Ok(path_var) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            let candidate = dir.join(binary);
+            if candidate.exists() {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 async fn run_child_with_timeout(
@@ -478,5 +644,45 @@ mod tests {
         let tool = ExecTool::new(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox));
         let debug = format!("{:?}", tool);
         assert!(debug.contains("ExecTool"));
+    }
+
+    #[test]
+    fn test_nsjail_mode_selected_when_binary_exists() {
+        let tmp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
+        let opts = ExecOptions {
+            isolation_mode: ExecIsolationMode::Nsjail,
+            nsjail: NsjailOptions {
+                binary: "sh".to_string(),
+                ..NsjailOptions::default()
+            },
+            ..ExecOptions::default()
+        };
+        let tool =
+            ExecTool::with_options(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox), opts);
+        assert_eq!(tool.mode(), ExecIsolationMode::Nsjail);
+        assert!(tool.startup_warning().is_none());
+    }
+
+    #[test]
+    fn test_nsjail_falls_back_when_binary_missing() {
+        let tmp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
+        let opts = ExecOptions {
+            isolation_mode: ExecIsolationMode::Nsjail,
+            nsjail: NsjailOptions {
+                binary: "definitely-not-a-real-binary".to_string(),
+                ..NsjailOptions::default()
+            },
+            ..ExecOptions::default()
+        };
+        let tool =
+            ExecTool::with_options(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox), opts);
+        assert_eq!(tool.mode(), ExecIsolationMode::Native);
+        assert!(
+            tool.startup_warning()
+                .unwrap_or_default()
+                .contains("falling back to native")
+        );
     }
 }

@@ -10,7 +10,14 @@ use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolRegistry, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
 
-use super::exec::ExecTool;
+use super::exec::{ExecIsolationMode, ExecOptions, ExecTool, NsjailOptions};
+
+#[derive(Debug, Clone)]
+pub struct ExecRegistrySettings {
+    pub max_capture_bytes: usize,
+    pub isolation_mode: ExecIsolationMode,
+    pub nsjail_binary: String,
+}
 use super::filesystem::{AppendFileTool, EditFileTool, ListDirTool, ReadFileTool, WriteFileTool};
 
 /// Registry of all available tools, keyed by name.
@@ -53,15 +60,45 @@ impl ToolRegistryImpl {
         sandbox: Sandbox,
         exec_max_capture_bytes: usize,
     ) -> Self {
+        let exec_options = ExecOptions {
+            max_capture_bytes: exec_max_capture_bytes,
+            ..ExecOptions::default()
+        };
+        Self::with_core_tools_and_exec_options(workspace, sandbox, exec_options)
+    }
+
+    /// Create a registry with core tools and exec isolation mode settings.
+    pub fn with_core_tools_and_exec_settings(
+        workspace: PathBuf,
+        sandbox: Sandbox,
+        settings: ExecRegistrySettings,
+    ) -> Self {
+        let exec_options = ExecOptions {
+            max_capture_bytes: settings.max_capture_bytes,
+            isolation_mode: settings.isolation_mode,
+            nsjail: NsjailOptions {
+                binary: settings.nsjail_binary,
+                ..NsjailOptions::default()
+            },
+            ..ExecOptions::default()
+        };
+        Self::with_core_tools_and_exec_options(workspace, sandbox, exec_options)
+    }
+
+    /// Create a registry with core tools and explicit exec options.
+    pub fn with_core_tools_and_exec_options(
+        workspace: PathBuf,
+        sandbox: Sandbox,
+        exec_options: ExecOptions,
+    ) -> Self {
         let sandbox = Arc::new(sandbox);
         let workspace = Arc::new(workspace);
         let mut reg = Self::new();
 
-        reg.register(Arc::new(ExecTool::with_limits(
+        reg.register(Arc::new(ExecTool::with_options(
             workspace.clone(),
             sandbox.clone(),
-            std::time::Duration::from_secs(30),
-            exec_max_capture_bytes,
+            exec_options,
         )));
         reg.register(Arc::new(ReadFileTool::new(
             workspace.clone(),

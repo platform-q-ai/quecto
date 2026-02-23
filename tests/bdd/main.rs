@@ -33,7 +33,7 @@ use quecto::infrastructure::providers;
 use quecto::infrastructure::providers::error::ErrorClass;
 use quecto::infrastructure::providers::fallback::FallbackProvider;
 use quecto::infrastructure::security::sandbox::Sandbox;
-use quecto::infrastructure::tools::exec::ExecTool;
+use quecto::infrastructure::tools::exec::{ExecIsolationMode, ExecTool};
 use quecto::infrastructure::tools::message::MessageTool;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 use quecto::infrastructure::tools::spawn::SpawnTool;
@@ -447,6 +447,18 @@ pub struct QuectoWorld {
     pub exec_tool: Option<Arc<ExecTool>>,
     /// Environment variable overrides for exec tool env sanitization tests
     pub exec_env_vars: HashMap<String, String>,
+    /// nsjail BDD: whether nsjail availability was declared by scenario
+    pub nsjail_available: Option<bool>,
+    /// nsjail BDD: selected binary path used to construct ExecTool in nsjail mode
+    pub nsjail_binary: Option<String>,
+    /// nsjail BDD: startup warning from exec tool fallback
+    pub nsjail_startup_warning: Option<String>,
+    /// nsjail BDD: measured execution elapsed milliseconds
+    pub nsjail_elapsed_ms: Option<u128>,
+    /// nsjail BDD: marker file written by fake nsjail script on invocation
+    pub nsjail_invocation_marker: Option<PathBuf>,
+    /// nsjail BDD: requested exec mode after registry construction
+    pub nsjail_registry_mode: Option<ExecIsolationMode>,
     /// Gateway provider wiring: resolved API key for a provider
     pub gateway_resolved_api_key: Option<String>,
     /// Gateway provider readiness report
@@ -845,6 +857,7 @@ mod cron_steps;
 mod e2e_steps;
 mod gateway_steps;
 mod heartbeat_steps;
+mod nsjail_steps;
 mod observability_steps;
 mod provider_steps;
 mod repl_steps;
