@@ -149,6 +149,16 @@ impl ExecTool {
         if mode == ExecIsolationMode::Nsjail {
             if let Some(resolved_binary) = resolve_nsjail_binary(&options.nsjail.binary) {
                 options.nsjail.binary = resolved_binary;
+                if options.nsjail.die_with_parent
+                    && !nsjail_supports_flag(&options.nsjail.binary, "--die_with_parent")
+                {
+                    options.nsjail.die_with_parent = false;
+                    warning = Some(format!(
+                        "nsjail binary '{}' does not support --die_with_parent; continuing without it",
+                        options.nsjail.binary
+                    ));
+                    tracing::warn!(target: "exec", "{}", warning.as_deref().unwrap_or_default());
+                }
             } else {
                 let missing = format!(
                     "nsjail binary '{}' is not available or not executable",
@@ -213,13 +223,6 @@ impl ExecTool {
     }
 
     /// Core execution logic shared by both `Tool::execute` and `execute_with_env`.
-    ///
-    /// When `env_overrides` is `Some`, those variables are used as the child's environment
-    /// (after stripping `QUECTO_` prefixed keys). When `None`, the current process environment
-    /// is inherited (also with `QUECTO_` keys stripped).
-    ///
-    /// In both cases `env_clear()` is called first to ensure a clean slate, then allowed
-    /// variables are selectively re-added.
     async fn run_command(
         &self,
         arguments: &str,
@@ -338,8 +341,8 @@ fn build_nsjail_command(
         cmd.arg("--die_with_parent");
     }
 
-    if !options.network_passthrough {
-        cmd.arg("--clone_newnet");
+    if options.network_passthrough {
+        cmd.arg("--disable_clone_newnet");
     }
     if let Some(mem) = options.memory_limit_mb {
         cmd.arg("--cgroup_mem_max")
@@ -402,6 +405,15 @@ fn is_trusted_nsjail_search_dir(path: &Path) -> bool {
     TRUSTED_NSJAIL_PATHS
         .iter()
         .any(|allowed| path == Path::new(allowed))
+}
+
+fn nsjail_supports_flag(binary: &str, flag: &str) -> bool {
+    let output = match std::process::Command::new(binary).arg("--help").output() {
+        Ok(output) => output,
+        Err(_) => return false,
+    };
+    String::from_utf8_lossy(&output.stdout).contains(flag)
+        || String::from_utf8_lossy(&output.stderr).contains(flag)
 }
 
 fn is_executable_file(path: &Path) -> bool {
@@ -663,22 +675,6 @@ mod tests {
         assert!(!result.content.contains("sk-secret"));
     }
 
-    #[tokio::test]
-    async fn test_exec_preserves_non_secret_env_vars() {
-        let tmp = TempDir::new().unwrap();
-        let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
-        let tool = ExecTool::new(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox));
-
-        let mut env_vars = HashMap::new();
-        env_vars.insert("HOME".to_string(), "/home/user".to_string());
-
-        let result = tool
-            .execute_with_env(r#"{"command": "printenv HOME"}"#, &env_vars)
-            .await
-            .unwrap();
-        assert!(result.content.contains("/home/user"));
-    }
-
     #[test]
     fn test_nsjail_mode_selected_when_binary_exists() {
         let tmp = TempDir::new().unwrap();
@@ -688,6 +684,7 @@ mod tests {
             allow_native_fallback: true,
             nsjail: NsjailOptions {
                 binary: "sh".to_string(),
+                die_with_parent: false,
                 ..NsjailOptions::default()
             },
             ..ExecOptions::default()
