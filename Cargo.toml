@@ -25,6 +25,10 @@ tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 dirs = "6"
 thiserror = "2"
 
+# WASM tool isolation
+wasmtime = { version = "28", features = ["component-model"] }
+wasmtime-wasi = "28"
+
 [dev-dependencies]
 cucumber = "0.21"
 futures = "0.3"
@@ -32,6 +36,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tempfile = "3"
 wiremock = "0.6"
 regex = "1"
+wat = "1"
 
 [[test]]
 name = "bdd"

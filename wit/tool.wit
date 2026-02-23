@@ -1,0 +1,52 @@
+package quecto:tools;
+
+/// Host-provided capabilities for sandboxed WASM tools.
+///
+/// Each function mediates access to a host resource. The WASM module
+/// never touches the filesystem, network, or channels directly.
+interface host {
+    /// Read a file from the workspace (path-validated on host side).
+    workspace-read: func(path: string) -> result<string, string>;
+
+    /// Write content to a workspace file (creates parent dirs).
+    workspace-write: func(path: string, content: string) -> result<string, string>;
+
+    /// Append content to a workspace file (creates if absent).
+    workspace-append: func(path: string, content: string) -> result<string, string>;
+
+    /// List entries in a workspace directory.
+    workspace-list-dir: func(path: string) -> result<string, string>;
+
+    /// Make an HTTP request (allowlisted on host side).
+    http-request: func(method: string, url: string, headers-json: string, body: string) -> result<string, string>;
+
+    /// Send a message to a user via their channel.
+    send-message: func(target: string, text: string) -> result<string, string>;
+
+    /// Perform a cron store operation (JSON-serialized action + payload).
+    cron-store-op: func(action: string, payload: string) -> result<string, string>;
+
+    /// Perform a spill store operation (JSON-serialized action + payload).
+    spill-store-op: func(action: string, payload: string) -> result<string, string>;
+
+    /// Structured logging (rate-limited on host side).
+    log: func(level: string, message: string);
+}
+
+/// Tool contract — mirrors the domain::Tool trait.
+interface tool {
+    /// Execute the tool with JSON-encoded parameters.
+    execute: func(params: string) -> result<string, string>;
+
+    /// Return the JSON Schema for the tool's parameters.
+    schema: func() -> string;
+
+    /// Return a human-readable description for the LLM.
+    description: func() -> string;
+}
+
+/// A sandboxed tool imports host capabilities and exports the tool interface.
+world sandboxed-tool {
+    import host;
+    export tool;
+}
