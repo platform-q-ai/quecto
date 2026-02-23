@@ -13,6 +13,16 @@ fn given_telegram_enabled(world: &mut QuectoWorld, token: String) {
     });
 }
 
+#[given(expr = "a config with Telegram enabled and token {string} and allow_from {string}")]
+fn given_telegram_enabled_with_allow_from(world: &mut QuectoWorld, token: String, user_id: String) {
+    world.telegram_config = Some(TelegramConfig {
+        enabled: true,
+        token,
+        api_base: String::new(),
+        allow_from: vec![user_id],
+    });
+}
+
 #[given("a config with Telegram disabled")]
 fn given_telegram_disabled(world: &mut QuectoWorld) {
     world.telegram_config = Some(TelegramConfig {

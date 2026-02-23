@@ -1618,7 +1618,7 @@ fn setup_real_llm_gateway_workspace(
 )]
 fn given_real_llm_gateway_one_update(world: &mut QuectoWorld, chat_id: String, message: String) {
     let chat: i64 = chat_id.parse().expect("chat_id must be integer");
-    setup_real_llm_gateway_workspace(world, vec![(1, chat, chat, message)], vec![]);
+    setup_real_llm_gateway_workspace(world, vec![(1, chat, chat, message)], vec![chat_id]);
 }
 
 #[given(
@@ -1634,7 +1634,7 @@ fn given_real_llm_gateway_two_updates(
     setup_real_llm_gateway_workspace(
         world,
         vec![(1, chat, chat, first), (2, chat, chat, second)],
-        vec![],
+        vec![chat_id],
     );
 }
 
@@ -1957,7 +1957,7 @@ fn given_mock_telegram_one_update(world: &mut QuectoWorld, user_id: String, text
                 "enabled": true,
                 "token": token,
                 "api_base": api_base,
-                "allow_from": []
+                "allow_from": [user.to_string()]
             }
         });
         let updated = serde_json::to_string_pretty(&config).expect("serialize config");
@@ -2303,6 +2303,7 @@ fn given_mock_telegram_with_voice(world: &mut QuectoWorld) {
             .await;
 
         // Write Telegram config
+        // Allow user "12345" — the user ID used by voice/spawn gateway test scenarios.
         let base = base_path(world);
         let config_path = base.join("config.json");
         let content = std::fs::read_to_string(&config_path).expect("read config");
@@ -2312,7 +2313,7 @@ fn given_mock_telegram_with_voice(world: &mut QuectoWorld) {
                 "enabled": true,
                 "token": token,
                 "api_base": api_base,
-                "allow_from": []
+                "allow_from": ["12345"]
             }
         });
         // Disable heartbeat and health to reduce noise
