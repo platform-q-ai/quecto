@@ -14,8 +14,10 @@ use crate::domain::message::{Message, Role};
 use crate::domain::provider::LlmProvider;
 use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::config::Config;
+use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::security::sandbox::Sandbox;
+use crate::infrastructure::tools::recall::RecallTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
 use std::path::PathBuf;
@@ -205,12 +207,7 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
     fn process_input(&mut self, rt: &tokio::runtime::Runtime, input: &str) {
         let system_idx = self.inject_system_prompt();
 
-        self.session.messages.push(Message {
-            role: Role::User,
-            content: input.to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        });
+        self.session.messages.push(Message::user(input.to_string()));
 
         let result = rt.block_on(self.session.agent.process(&mut self.session.messages));
 
@@ -231,12 +228,7 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
     fn inject_system_prompt(&mut self) -> Option<usize> {
         self.session.system_prompt.as_ref().map(|prompt| {
             let idx = self.session.messages.len();
-            self.session.messages.push(Message {
-                role: Role::System,
-                content: prompt.clone(),
-                tool_calls: vec![],
-                tool_call_id: None,
-            });
+            self.session.messages.push(Message::system(prompt.clone()));
             idx
         })
     }
@@ -310,19 +302,11 @@ pub fn run_repl<R: BufRead, W: Write>(
         Some(workspace.clone()),
         ctx.config.agents.defaults.restrict_to_workspace,
     );
-    let registry = ToolRegistryImpl::with_core_tools_and_exec_capture_bytes(
+    let mut registry = ToolRegistryImpl::with_core_tools_and_exec_capture_bytes(
         workspace,
         sandbox,
         ctx.config.agents.defaults.exec_max_capture_bytes,
     );
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
-        provider: ctx.provider.clone(),
-        tool_registry: Box::new(registry),
-        model,
-        max_tokens: ctx.config.agents.defaults.max_tokens,
-        temperature: ctx.config.agents.defaults.temperature,
-    });
-
     let ephemeral = ctx.flags.session_name.as_deref() == Some("-");
     let session_key = if ephemeral {
         String::new()
@@ -330,6 +314,22 @@ pub fn run_repl<R: BufRead, W: Write>(
         let name = ctx.flags.session_name.as_deref().unwrap_or("repl_default");
         Session::build_key("repl", name)
     };
+    let spill_store = Arc::new(FileContextSpillStore::new(ctx.base_dir.to_path_buf()));
+    registry.register(Arc::new(RecallTool::new(
+        spill_store.clone(),
+        session_key.clone(),
+    )));
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider: ctx.provider.clone(),
+        tool_registry: Box::new(registry),
+        model,
+        max_tokens: ctx.config.agents.defaults.max_tokens,
+        temperature: ctx.config.agents.defaults.temperature,
+        spill_store: Some(spill_store),
+        session_key: session_key.clone(),
+        context_collapse_after_turns: ctx.config.agents.defaults.context_collapse_after_turns,
+        max_context_tokens: ctx.config.agents.defaults.max_context_tokens,
+    });
 
     let session_store = FileSessionStore::new(ctx.base_dir);
 

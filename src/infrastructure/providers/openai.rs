@@ -361,12 +361,7 @@ mod tests {
             .await;
 
         let provider = OpenAiProvider::new("sk-test".to_string(), Some(server.uri()));
-        let messages = vec![Message {
-            role: Role::User,
-            content: "Hi".to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        }];
+        let messages = vec![Message::user("Hi")];
         let req = ChatRequest {
             messages: &messages,
             tools: &[],
@@ -416,12 +411,7 @@ mod tests {
             .await;
 
         let provider = OpenAiProvider::new("sk-test".to_string(), Some(server.uri()));
-        let messages = vec![Message {
-            role: Role::User,
-            content: "list files".to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        }];
+        let messages = vec![Message::user("list files")];
         let tools = vec![ToolDefinition {
             name: "exec".to_string(),
             description: "Execute a command".to_string(),
@@ -454,12 +444,7 @@ mod tests {
             .await;
 
         let provider = OpenAiProvider::new("sk-test".to_string(), Some(server.uri()));
-        let messages = vec![Message {
-            role: Role::User,
-            content: "Hi".to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        }];
+        let messages = vec![Message::user("Hi")];
         let req = ChatRequest {
             messages: &messages,
             tools: &[],
@@ -525,12 +510,7 @@ data: [DONE]\n\n";
             .await;
 
         let provider = OpenAiProvider::new("sk-test".to_string(), Some(server.uri()));
-        let messages = vec![Message {
-            role: Role::User,
-            content: "Hi".to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        }];
+        let messages = vec![Message::user("Hi")];
         let req = ChatRequest {
             messages: &messages,
             tools: &[],
@@ -563,12 +543,7 @@ data: [DONE]\n\n";
             .await;
 
         let provider = OpenAiProvider::new("sk-test".to_string(), Some(server.uri()));
-        let messages = vec![Message {
-            role: Role::User,
-            content: "test".to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        }];
+        let messages = vec![Message::user("test")];
         let tools = vec![ToolDefinition {
             name: "read_file".to_string(),
             description: "Read a file".to_string(),

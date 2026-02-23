@@ -45,6 +45,10 @@ pub struct AgentDefaults {
     pub exec_max_capture_bytes: usize,
     #[serde(default = "default_max_session_messages")]
     pub max_session_messages: usize,
+    #[serde(default = "default_context_collapse_after_turns")]
+    pub context_collapse_after_turns: u32,
+    #[serde(default = "default_max_context_tokens")]
+    pub max_context_tokens: usize,
 }
 
 impl Default for AgentDefaults {
@@ -58,6 +62,8 @@ impl Default for AgentDefaults {
             restrict_to_workspace: true,
             exec_max_capture_bytes: default_exec_max_capture_bytes(),
             max_session_messages: default_max_session_messages(),
+            context_collapse_after_turns: default_context_collapse_after_turns(),
+            max_context_tokens: default_max_context_tokens(),
         }
     }
 }
@@ -272,6 +278,12 @@ fn default_exec_max_capture_bytes() -> usize {
 fn default_max_session_messages() -> usize {
     200
 }
+fn default_context_collapse_after_turns() -> u32 {
+    3
+}
+fn default_max_context_tokens() -> usize {
+    100_000
+}
 fn default_true() -> bool {
     true
 }
@@ -324,6 +336,7 @@ impl Config {
     /// - `QUECTO_AGENTS_DEFAULTS_TEMPERATURE` → agents.defaults.temperature
     /// - `QUECTO_AGENTS_DEFAULTS_WORKSPACE` → agents.defaults.workspace
     /// - `QUECTO_AGENTS_DEFAULTS_MAX_SESSION_MESSAGES` → agents.defaults.max_session_messages
+    /// - `QUECTO_MAX_CONTEXT_TOKENS` → agents.defaults.max_context_tokens
     /// - `QUECTO_PROVIDERS_OPENAI_API_KEY` → providers.openai.api_key
     /// - `QUECTO_PROVIDERS_ANTHROPIC_API_KEY` → providers.anthropic.api_key
     fn apply_env_overrides(config: &mut Config, env: &HashMap<String, String>) {
@@ -347,6 +360,11 @@ impl Config {
             && let Ok(n) = v.parse::<usize>()
         {
             config.agents.defaults.max_session_messages = n;
+        }
+        if let Some(v) = env.get("QUECTO_MAX_CONTEXT_TOKENS")
+            && let Ok(n) = v.parse::<usize>()
+        {
+            config.agents.defaults.max_context_tokens = n;
         }
         if let Some(v) = env.get("QUECTO_PROVIDERS_OPENAI_API_KEY") {
             config.providers.openai.api_key = v.clone();

@@ -4,10 +4,12 @@
 use std::pin::Pin;
 use std::sync::Arc;
 
+use crate::application::context_pruning;
 use crate::domain::agent::{AgentInfo, AgentLoop, AgentResult};
 use crate::domain::error::DomainError;
-use crate::domain::message::{Message, Role};
+use crate::domain::message::{LlmResponse, Message, ToolCall};
 use crate::domain::provider::{ChatRequest, LlmProvider};
+use crate::domain::session::{ContextSpillStore, SpillEntry};
 use crate::domain::tool::ToolRegistry;
 
 /// Default maximum tool iterations before the loop is forcibly stopped.
@@ -20,6 +22,10 @@ pub struct AgentLoopConfig {
     pub model: String,
     pub max_tokens: u32,
     pub temperature: f32,
+    pub spill_store: Option<Arc<dyn ContextSpillStore>>,
+    pub session_key: String,
+    pub context_collapse_after_turns: u32,
+    pub max_context_tokens: usize,
 }
 
 /// Concrete implementation of the agent loop.
@@ -31,6 +37,10 @@ pub struct AgentLoopImpl {
     temperature: f32,
     max_tool_iterations: u32,
     skill_count: usize,
+    spill_store: Option<Arc<dyn ContextSpillStore>>,
+    session_key: String,
+    context_collapse_after_turns: u32,
+    max_context_tokens: usize,
 }
 
 impl std::fmt::Debug for AgentLoopImpl {
@@ -53,6 +63,10 @@ impl AgentLoopImpl {
             temperature: config.temperature,
             max_tool_iterations: DEFAULT_MAX_TOOL_ITERATIONS,
             skill_count: 0,
+            spill_store: config.spill_store,
+            session_key: config.session_key,
+            context_collapse_after_turns: config.context_collapse_after_turns,
+            max_context_tokens: config.max_context_tokens,
         }
     }
 
@@ -68,95 +82,163 @@ impl AgentLoopImpl {
         self
     }
 
+    async fn apply_context_pruning(&self, messages: &mut Vec<Message>, current_turn: u32) {
+        let collapsed = context_pruning::collapse_old_tool_results(
+            messages,
+            current_turn,
+            self.context_collapse_after_turns,
+        );
+        let dropped = context_pruning::enforce_context_ceiling(messages, self.max_context_tokens);
+        if let Some(ref spill_store) = self.spill_store {
+            context_pruning::update_spill_manifest(
+                messages,
+                spill_store.as_ref(),
+                &self.session_key,
+            )
+            .await;
+        }
+        if collapsed > 0 || dropped > 0 {
+            tracing::info!(
+                target: "context_prune",
+                collapsed,
+                dropped,
+                turn = current_turn,
+                total_tokens = context_pruning::estimate_total_tokens(messages),
+                "context pruned"
+            );
+        }
+    }
+
+    fn build_chat_request<'a>(
+        &'a self,
+        messages: &'a Vec<Message>,
+        tool_defs: &'a [crate::domain::tool::ToolDefinition],
+    ) -> ChatRequest<'a> {
+        ChatRequest {
+            messages,
+            tools: tool_defs,
+            model: &self.model,
+            max_tokens: self.max_tokens,
+            temperature: self.temperature,
+        }
+    }
+
+    async fn execute_tool_calls_for_response(
+        &self,
+        messages: &mut Vec<Message>,
+        current_turn: u32,
+        response: &LlmResponse,
+    ) {
+        messages.push(Message::assistant(
+            response.content.clone().unwrap_or_default(),
+            response.tool_calls.clone(),
+        ));
+
+        for (idx, tc) in response.tool_calls.iter().enumerate() {
+            let content = self.execute_single_tool_call(tc).await;
+            let spill_id = format!("turn{}:{}:{}", current_turn, tc.name, idx);
+            let mut tool_msg = self.build_tool_message(tc, content, spill_id);
+            tool_msg.turn = Some(current_turn);
+            self.spill_tool_message(&mut tool_msg).await;
+            messages.push(tool_msg);
+        }
+    }
+
+    async fn execute_single_tool_call(&self, tc: &ToolCall) -> String {
+        let start = std::time::Instant::now();
+        let tool_result = self.tool_registry.execute(&tc.name, &tc.arguments).await;
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        let is_err = tool_result.is_err();
+        let content = match tool_result {
+            Ok(tr) => tr.content,
+            Err(e) => format!("Error: {}", e),
+        };
+
+        tracing::info!(
+            target: "tool_exec",
+            tool_name = tc.name.as_str(),
+            duration_ms,
+            is_error = is_err,
+            "tool executed"
+        );
+        content
+    }
+
+    fn build_tool_message(&self, tc: &ToolCall, content: String, spill_id: String) -> Message {
+        let mut tool_msg = Message::tool(tc.id.clone(), content);
+        tool_msg.tool_name = Some(tc.name.clone());
+        tool_msg.input_preview = Some(context_pruning::truncate_utf8_safe(&tc.arguments, 100));
+        tool_msg.spill_id = Some(spill_id);
+        tool_msg
+    }
+
+    async fn spill_tool_message(&self, tool_msg: &mut Message) {
+        let Some(ref spill_store) = self.spill_store else {
+            return;
+        };
+
+        let entry = SpillEntry {
+            id: tool_msg.spill_id.clone().unwrap_or_default(),
+            tool: tool_msg
+                .tool_name
+                .clone()
+                .unwrap_or_else(|| "tool".to_string()),
+            input_preview: tool_msg.input_preview.clone().unwrap_or_default(),
+            tokens: context_pruning::estimate_tokens(&tool_msg.content),
+            content: tool_msg.content.clone(),
+        };
+        if let Err(e) = spill_store.append(&self.session_key, &entry).await {
+            tracing::warn!(target: "context_prune", error = %e, "failed to spill tool output");
+        }
+    }
+
+    fn finalize_text_response(
+        &self,
+        messages: &mut Vec<Message>,
+        response: LlmResponse,
+        iterations: u32,
+    ) -> AgentResult {
+        let text = response.content.unwrap_or_default();
+        messages.push(Message::assistant(text.clone(), vec![]));
+        AgentResult {
+            response: text,
+            tool_iterations: iterations,
+            iteration_limit_reached: false,
+        }
+    }
+
     /// Run the LLM-tool loop.
     async fn run_loop(&self, messages: &mut Vec<Message>) -> Result<AgentResult, DomainError> {
         let tool_defs = self.tool_registry.definitions();
         let mut iterations: u32 = 0;
+        let mut current_turn: u32 = 1;
 
         loop {
-            // Call the LLM
-            let request = ChatRequest {
-                messages,
-                tools: &tool_defs,
-                model: &self.model,
-                max_tokens: self.max_tokens,
-                temperature: self.temperature,
-            };
+            self.apply_context_pruning(messages, current_turn).await;
+
+            let request = self.build_chat_request(messages, &tool_defs);
             let response = self.provider.chat(request).await?;
 
-            // If the LLM returned tool calls, execute them
-            if !response.tool_calls.is_empty() {
-                // Append the assistant message with tool calls
-                messages.push(Message {
-                    role: Role::Assistant,
-                    content: response.content.clone().unwrap_or_default(),
-                    tool_calls: response.tool_calls.clone(),
-                    tool_call_id: None,
-                });
-
-                // Execute each tool call
-                for tc in &response.tool_calls {
-                    let start = std::time::Instant::now();
-                    let tool_result = self.tool_registry.execute(&tc.name, &tc.arguments).await;
-                    let duration_ms = start.elapsed().as_millis() as u64;
-
-                    let is_err = tool_result.is_err();
-                    let (content, _is_error) = match tool_result {
-                        Ok(tr) => (tr.content, tr.is_error),
-                        Err(e) => (format!("Error: {}", e), true),
-                    };
-
-                    tracing::info!(
-                        target: "tool_exec",
-                        tool_name = tc.name.as_str(),
-                        duration_ms,
-                        is_error = is_err,
-                        "tool executed"
-                    );
-
-                    // Append tool result message
-                    messages.push(Message {
-                        role: Role::Tool,
-                        content,
-                        tool_calls: vec![],
-                        tool_call_id: Some(tc.id.clone()),
-                    });
-                }
-
-                iterations += 1;
-
-                // Check iteration limit
-                if iterations >= self.max_tool_iterations {
-                    return Ok(AgentResult {
-                        response: format!(
-                            "Tool iteration limit ({}) reached. Stopping.",
-                            self.max_tool_iterations
-                        ),
-                        tool_iterations: iterations,
-                        iteration_limit_reached: true,
-                    });
-                }
-
-                // Continue the loop — send tool results back to LLM
-                continue;
+            if response.tool_calls.is_empty() {
+                return Ok(self.finalize_text_response(messages, response, iterations));
             }
 
-            // No tool calls — we have the final response
-            let text = response.content.unwrap_or_default();
+            self.execute_tool_calls_for_response(messages, current_turn, &response)
+                .await;
+            iterations += 1;
+            current_turn += 1;
 
-            // Append the final assistant message
-            messages.push(Message {
-                role: Role::Assistant,
-                content: text.clone(),
-                tool_calls: vec![],
-                tool_call_id: None,
-            });
-
-            return Ok(AgentResult {
-                response: text,
-                tool_iterations: iterations,
-                iteration_limit_reached: false,
-            });
+            if iterations >= self.max_tool_iterations {
+                return Ok(AgentResult {
+                    response: format!(
+                        "Tool iteration limit ({}) reached. Stopping.",
+                        self.max_tool_iterations
+                    ),
+                    tool_iterations: iterations,
+                    iteration_limit_reached: true,
+                });
+            }
         }
     }
 }
@@ -181,7 +263,7 @@ impl AgentLoop for AgentLoopImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::message::{LlmResponse, ToolCall, UsageInfo};
+    use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
     use crate::domain::tool::{ToolDefinition, ToolResult};
     use crate::infrastructure::tools::registry::ToolRegistryImpl;
     use std::sync::Mutex;
@@ -310,6 +392,10 @@ mod tests {
             model: "test-model".to_string(),
             max_tokens: 1024,
             temperature: 0.7,
+            spill_store: None,
+            session_key: String::new(),
+            context_collapse_after_turns: 3,
+            max_context_tokens: 100_000,
         });
         (agent, provider)
     }
@@ -344,12 +430,7 @@ mod tests {
     #[tokio::test]
     async fn test_simple_text_response() {
         let (agent, _) = make_agent(vec![text_response("Hello, world!")], vec![]);
-        let mut messages = vec![Message {
-            role: Role::User,
-            content: "Hi".to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        }];
+        let mut messages = vec![Message::user("Hi")];
         let result = agent.run_loop(&mut messages).await.unwrap();
         assert_eq!(result.response, "Hello, world!");
         assert_eq!(result.tool_iterations, 0);
@@ -365,12 +446,7 @@ mod tests {
             ],
             vec![("read_file", "Buy groceries")],
         );
-        let mut messages = vec![Message {
-            role: Role::User,
-            content: "What are my notes?".to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        }];
+        let mut messages = vec![Message::user("What are my notes?")];
         let result = agent.run_loop(&mut messages).await.unwrap();
         assert_eq!(result.response, "Your notes say: Buy groceries");
         assert_eq!(result.tool_iterations, 1);
@@ -386,12 +462,7 @@ mod tests {
             ],
             vec![("read_file", "file content"), ("write_file", "ok")],
         );
-        let mut messages = vec![Message {
-            role: Role::User,
-            content: "Copy files".to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        }];
+        let mut messages = vec![Message::user("Copy files")];
         let result = agent.run_loop(&mut messages).await.unwrap();
         assert_eq!(result.response, "Done copying");
         assert_eq!(result.tool_iterations, 2);
@@ -406,12 +477,7 @@ mod tests {
         let (agent, _) = make_agent(responses, vec![("exec", "output")]);
         let agent = agent.with_max_tool_iterations(3);
 
-        let mut messages = vec![Message {
-            role: Role::User,
-            content: "Loop forever".to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        }];
+        let mut messages = vec![Message::user("Loop forever")];
         let result = agent.run_loop(&mut messages).await.unwrap();
         assert!(result.iteration_limit_reached);
         assert_eq!(result.tool_iterations, 3);
@@ -424,12 +490,7 @@ mod tests {
             vec![text_response("ok")],
             vec![("exec", ""), ("read_file", "")],
         );
-        let mut messages = vec![Message {
-            role: Role::User,
-            content: "test".to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        }];
+        let mut messages = vec![Message::user("test")];
         let _ = agent.run_loop(&mut messages).await.unwrap();
         let defs = provider.last_tool_defs();
         assert_eq!(defs.len(), 2);
@@ -459,12 +520,7 @@ mod tests {
             ],
             vec![("read_file", "content")],
         );
-        let mut messages = vec![Message {
-            role: Role::User,
-            content: "read".to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        }];
+        let mut messages = vec![Message::user("read")];
         let _ = agent.run_loop(&mut messages).await.unwrap();
         // Should have: User, Assistant(tool_call), Tool(result), Assistant(final)
         assert_eq!(messages.len(), 4);
@@ -497,13 +553,12 @@ mod tests {
             model: "test-model".to_string(),
             max_tokens: 1024,
             temperature: 0.7,
+            spill_store: None,
+            session_key: String::new(),
+            context_collapse_after_turns: 3,
+            max_context_tokens: 100_000,
         });
-        let mut messages = vec![Message {
-            role: Role::User,
-            content: "use a tool".to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        }];
+        let mut messages = vec![Message::user("use a tool")];
         let result = agent.run_loop(&mut messages).await.unwrap();
         assert_eq!(result.response, "I got an error");
         // The tool result message should contain the error

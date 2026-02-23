@@ -62,6 +62,10 @@ fn make_repl(base_dir: &std::path::Path) -> ReplLoop<Cursor<Vec<u8>>, Vec<u8>> {
         model: "test-model".to_string(),
         max_tokens: 1024,
         temperature: 0.0,
+        spill_store: None,
+        session_key: String::new(),
+        context_collapse_after_turns: 3,
+        max_context_tokens: 100_000,
     });
     let session_store = FileSessionStore::new(base_dir);
     let session = ReplSession {
@@ -579,12 +583,7 @@ fn test_agent_run_injects_into_session() {
     let mut repl = make_repl(tmp.path());
 
     // Pre-populate session with a message
-    repl.session.messages.push(Message {
-        role: Role::User,
-        content: "earlier message".to_string(),
-        tool_calls: vec![],
-        tool_call_id: None,
-    });
+    repl.session.messages.push(Message::user("earlier message"));
 
     repl.handle_agent("/agent create helper --system You help", &build_rt());
     repl.writer.clear();

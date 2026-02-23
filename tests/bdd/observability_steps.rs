@@ -137,6 +137,10 @@ fn when_agent_processes_tool_call(world: &mut QuectoWorld) {
         model: "test-model".to_string(),
         max_tokens: 1024,
         temperature: 0.7,
+        spill_store: None,
+        session_key: String::new(),
+        context_collapse_after_turns: 3,
+        max_context_tokens: 100_000,
     });
 
     // Capture tracing output
@@ -158,12 +162,7 @@ fn when_agent_processes_tool_call(world: &mut QuectoWorld) {
 
         let _guard = tracing::subscriber::set_default(subscriber);
 
-        let mut messages = vec![Message {
-            role: Role::User,
-            content: "run a command".to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        }];
+        let mut messages = vec![Message::user("run a command")];
         let result = agent.process(&mut messages).await;
         assert!(result.is_ok(), "agent should succeed: {:?}", result);
     });

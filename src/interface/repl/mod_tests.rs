@@ -72,12 +72,7 @@ fn test_load_session_messages_existing_session() {
     // Save a session first
     let session = Session {
         key: "test:key".to_string(),
-        messages: vec![Message {
-            role: Role::User,
-            content: "hello".to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        }],
+        messages: vec![Message::user("hello")],
     };
     rt.block_on(store.save(&session)).unwrap();
     let messages = load_session_messages_with_rt(&rt, &store, "test:key", false);
@@ -202,6 +197,10 @@ fn make_repl_loop(
         model: "test-model".to_string(),
         max_tokens: 1024,
         temperature: 0.0,
+        spill_store: None,
+        session_key: String::new(),
+        context_collapse_after_turns: 3,
+        max_context_tokens: 100_000,
     });
     let session_store = FileSessionStore::new(base_dir);
     let session = ReplSession {
@@ -390,12 +389,7 @@ fn test_inject_system_prompt_appends_at_end() {
         },
     );
     // Pre-populate some messages
-    repl.session.messages.push(Message {
-        role: Role::User,
-        content: "first".to_string(),
-        tool_calls: vec![],
-        tool_call_id: None,
-    });
+    repl.session.messages.push(Message::user("first"));
     let idx = repl.inject_system_prompt();
     assert_eq!(idx, Some(1));
     assert_eq!(repl.session.messages.len(), 2);
@@ -423,12 +417,7 @@ fn test_remove_system_prompt_fast_path() {
 fn test_remove_system_prompt_none_idx() {
     let tmp = tempfile::TempDir::new().unwrap();
     let mut repl = make_repl_loop(tmp.path(), "", TestReplOpts::default());
-    repl.session.messages.push(Message {
-        role: Role::User,
-        content: "keep me".to_string(),
-        tool_calls: vec![],
-        tool_call_id: None,
-    });
+    repl.session.messages.push(Message::user("keep me"));
     repl.remove_system_prompt(None);
     assert_eq!(repl.session.messages.len(), 1);
     assert_eq!(repl.session.messages[0].content, "keep me");
@@ -449,15 +438,7 @@ fn test_remove_system_prompt_fallback_scan() {
     let idx = repl.inject_system_prompt();
     assert_eq!(idx, Some(0));
     // Insert a message before the system prompt to shift indices
-    repl.session.messages.insert(
-        0,
-        Message {
-            role: Role::User,
-            content: "inserted".to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        },
-    );
+    repl.session.messages.insert(0, Message::user("inserted"));
     // Now idx=0 points to the user message, not the system prompt.
     // The fallback scan should find and remove the system prompt at index 1.
     repl.remove_system_prompt(idx);
@@ -471,12 +452,7 @@ fn test_remove_system_prompt_no_system_prompt_configured() {
     // system_prompt is None, but we pass Some(idx) — should be a no-op
     // because the second guard (system_prompt.is_none()) triggers.
     let mut repl = make_repl_loop(tmp.path(), "", TestReplOpts::default());
-    repl.session.messages.push(Message {
-        role: Role::System,
-        content: "something".to_string(),
-        tool_calls: vec![],
-        tool_call_id: None,
-    });
+    repl.session.messages.push(Message::system("something"));
     repl.remove_system_prompt(Some(0));
     // Message should remain — no system_prompt configured so removal is skipped.
     assert_eq!(repl.session.messages.len(), 1);
@@ -490,12 +466,7 @@ fn test_remove_system_prompt_no_system_prompt_configured() {
 fn test_save_session_ephemeral_skipped() {
     let tmp = tempfile::TempDir::new().unwrap();
     let mut repl = make_repl_loop(tmp.path(), "", TestReplOpts::default());
-    repl.session.messages.push(Message {
-        role: Role::User,
-        content: "hello".to_string(),
-        tool_calls: vec![],
-        tool_call_id: None,
-    });
+    repl.session.messages.push(Message::user("hello"));
     let rt = build_repl_runtime().unwrap();
     repl.save_session_on_exit(&rt);
     // Verify nothing was saved (ephemeral=true)
@@ -517,12 +488,7 @@ fn test_save_session_persists_messages() {
             ..TestReplOpts::default()
         },
     );
-    repl.session.messages.push(Message {
-        role: Role::User,
-        content: "persist me".to_string(),
-        tool_calls: vec![],
-        tool_call_id: None,
-    });
+    repl.session.messages.push(Message::user("persist me"));
     let rt = build_repl_runtime().unwrap();
     repl.save_session_on_exit(&rt);
     let loaded = rt
@@ -541,12 +507,7 @@ fn test_save_session_persists_messages() {
 fn test_handle_clear_ephemeral_skips_save() {
     let tmp = tempfile::TempDir::new().unwrap();
     let mut repl = make_repl_loop(tmp.path(), "", TestReplOpts::default());
-    repl.session.messages.push(Message {
-        role: Role::User,
-        content: "hello".to_string(),
-        tool_calls: vec![],
-        tool_call_id: None,
-    });
+    repl.session.messages.push(Message::user("hello"));
     let rt = build_repl_runtime().unwrap();
     repl.handle_clear(&rt);
     assert!(repl.session.messages.is_empty());
@@ -568,12 +529,7 @@ fn test_handle_clear_non_ephemeral_saves_empty() {
             ..TestReplOpts::default()
         },
     );
-    repl.session.messages.push(Message {
-        role: Role::User,
-        content: "hello".to_string(),
-        tool_calls: vec![],
-        tool_call_id: None,
-    });
+    repl.session.messages.push(Message::user("hello"));
     let rt = build_repl_runtime().unwrap();
     repl.handle_clear(&rt);
     assert!(repl.session.messages.is_empty());

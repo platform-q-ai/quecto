@@ -176,19 +176,21 @@ fn message_to_record(msg: &Message) -> MessageRecord {
 }
 
 fn record_to_message(rec: MessageRecord) -> Message {
-    Message {
-        role: str_to_role(&rec.role),
-        content: rec.content,
-        tool_calls: rec
-            .tool_calls
-            .into_iter()
-            .map(|tc| ToolCall {
-                id: tc.id,
-                name: tc.name,
-                arguments: tc.arguments,
-            })
-            .collect(),
-        tool_call_id: rec.tool_call_id,
+    let role = str_to_role(&rec.role);
+    let tool_calls = rec
+        .tool_calls
+        .into_iter()
+        .map(|tc| ToolCall {
+            id: tc.id,
+            name: tc.name,
+            arguments: tc.arguments,
+        })
+        .collect();
+    match role {
+        Role::System => Message::system(rec.content),
+        Role::User => Message::user(rec.content),
+        Role::Assistant => Message::assistant(rec.content, tool_calls),
+        Role::Tool => Message::tool(rec.tool_call_id.unwrap_or_default(), rec.content),
     }
 }
 
@@ -198,11 +200,11 @@ mod tests {
     use tempfile::TempDir;
 
     fn make_message(role: Role, content: &str) -> Message {
-        Message {
-            role,
-            content: content.to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
+        match role {
+            Role::System => Message::system(content),
+            Role::User => Message::user(content),
+            Role::Assistant => Message::assistant(content, vec![]),
+            Role::Tool => Message::tool("call", content),
         }
     }
 
@@ -290,22 +292,15 @@ mod tests {
             key: "test:tools".to_string(),
             messages: vec![
                 make_message(Role::User, "run a command"),
-                Message {
-                    role: Role::Assistant,
-                    content: String::new(),
-                    tool_calls: vec![ToolCall {
+                Message::assistant(
+                    String::new(),
+                    vec![ToolCall {
                         id: "call_1".to_string(),
                         name: "exec".to_string(),
                         arguments: r#"{"command":"ls"}"#.to_string(),
                     }],
-                    tool_call_id: None,
-                },
-                Message {
-                    role: Role::Tool,
-                    content: "file1.txt\nfile2.txt".to_string(),
-                    tool_calls: vec![],
-                    tool_call_id: Some("call_1".to_string()),
-                },
+                ),
+                Message::tool("call_1", "file1.txt\nfile2.txt"),
             ],
         };
 

@@ -6,6 +6,86 @@ pub struct Message {
     pub tool_calls: Vec<ToolCall>,
     /// When role is Tool, this holds the tool_call id being responded to.
     pub tool_call_id: Option<String>,
+    /// Agent-loop turn number when this message was appended.
+    pub turn: Option<u32>,
+    /// Whether this message is pinned (never dropped by sliding window).
+    pub is_pinned: bool,
+    /// Whether this message is the spill manifest.
+    pub is_manifest: bool,
+    /// Whether this tool result has already been collapsed.
+    pub is_collapsed: bool,
+    /// Tool name for tool result messages.
+    pub tool_name: Option<String>,
+    /// First chars of tool input (for collapse preview).
+    pub input_preview: Option<String>,
+    /// Spill ID for recall() lookup.
+    pub spill_id: Option<String>,
+}
+
+impl Message {
+    pub fn system(content: impl Into<String>) -> Self {
+        Self {
+            role: Role::System,
+            content: content.into(),
+            tool_calls: vec![],
+            tool_call_id: None,
+            turn: None,
+            is_pinned: true,
+            is_manifest: false,
+            is_collapsed: false,
+            tool_name: None,
+            input_preview: None,
+            spill_id: None,
+        }
+    }
+
+    pub fn user(content: impl Into<String>) -> Self {
+        Self {
+            role: Role::User,
+            content: content.into(),
+            tool_calls: vec![],
+            tool_call_id: None,
+            turn: None,
+            is_pinned: false,
+            is_manifest: false,
+            is_collapsed: false,
+            tool_name: None,
+            input_preview: None,
+            spill_id: None,
+        }
+    }
+
+    pub fn assistant(content: impl Into<String>, tool_calls: Vec<ToolCall>) -> Self {
+        Self {
+            role: Role::Assistant,
+            content: content.into(),
+            tool_calls,
+            tool_call_id: None,
+            turn: None,
+            is_pinned: false,
+            is_manifest: false,
+            is_collapsed: false,
+            tool_name: None,
+            input_preview: None,
+            spill_id: None,
+        }
+    }
+
+    pub fn tool(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: Role::Tool,
+            content: content.into(),
+            tool_calls: vec![],
+            tool_call_id: Some(tool_call_id.into()),
+            turn: None,
+            is_pinned: false,
+            is_manifest: false,
+            is_collapsed: false,
+            tool_name: None,
+            input_preview: None,
+            spill_id: None,
+        }
+    }
 }
 
 /// The role of a message sender.

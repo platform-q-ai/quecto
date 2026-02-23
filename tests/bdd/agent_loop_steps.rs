@@ -5,7 +5,7 @@ use super::*;
 
 /// Helper: ensure a mock LLM provider is created and a basic agent loop
 /// can be built. Returns the mock provider (for queuing responses).
-fn ensure_mock_llm(world: &mut QuectoWorld) -> Arc<MockLlmProvider> {
+pub(super) fn ensure_mock_llm(world: &mut QuectoWorld) -> Arc<MockLlmProvider> {
     if world.mock_llm.is_none() {
         world.mock_llm = Some(Arc::new(MockLlmProvider::new()));
     }
@@ -38,6 +38,10 @@ fn build_agent_loop(world: &QuectoWorld, max_iterations: Option<u32>) -> AgentLo
         model: "test-model".to_string(),
         max_tokens: 1024,
         temperature: 0.7,
+        spill_store: None,
+        session_key: String::new(),
+        context_collapse_after_turns: 3,
+        max_context_tokens: 100_000,
     });
 
     if let Some(max) = max_iterations {
@@ -209,12 +213,7 @@ fn when_agent_processes_message(world: &mut QuectoWorld, message: String) {
         .and_then(|v| v.parse::<u32>().ok());
     let agent = build_agent_loop(world, max_iter);
 
-    let mut messages = vec![Message {
-        role: Role::User,
-        content: message,
-        tool_calls: vec![],
-        tool_call_id: None,
-    }];
+    let mut messages = vec![Message::user(message)];
 
     let result = tokio::runtime::Runtime::new()
         .unwrap()
@@ -235,12 +234,7 @@ fn when_agent_sends_request(world: &mut QuectoWorld) {
         usage: None,
     });
 
-    let mut messages = vec![Message {
-        role: Role::User,
-        content: "test".to_string(),
-        tool_calls: vec![],
-        tool_call_id: None,
-    }];
+    let mut messages = vec![Message::user("test")];
 
     tokio::runtime::Runtime::new()
         .unwrap()

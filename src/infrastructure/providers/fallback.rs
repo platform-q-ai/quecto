@@ -236,7 +236,7 @@ impl LlmProvider for FallbackProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::message::{Message, Role};
+    use crate::domain::message::Message;
     use std::sync::Mutex;
 
     /// Test provider that either succeeds or fails with a configurable error.
@@ -286,12 +286,7 @@ mod tests {
     }
 
     fn test_messages() -> Vec<Message> {
-        vec![Message {
-            role: Role::User,
-            content: "Hi".to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        }]
+        vec![Message::user("Hi")]
     }
 
     fn test_request(messages: &[Message]) -> ChatRequest<'_> {

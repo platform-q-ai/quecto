@@ -5,15 +5,17 @@ use std::sync::Arc;
 use super::CliContext;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::agent::AgentLoop;
-use crate::domain::message::{Message, Role};
+use crate::domain::message::Message;
 use crate::domain::provider::LlmProvider;
 use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::auth::credential_store::CredentialStore;
 use crate::infrastructure::config::Config;
+use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::providers;
 use crate::infrastructure::providers::fallback::FallbackProvider;
 use crate::infrastructure::security::sandbox::Sandbox;
+use crate::infrastructure::tools::recall::RecallTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
 use crate::interface::shared::resolve_api_key;
@@ -230,12 +232,28 @@ pub(crate) fn build_agent_from_config(
         sandbox,
         config.agents.defaults.exec_max_capture_bytes,
     );
+    let mut registry = registry;
+    let session_key = if flags.session_name.as_deref() == Some("-") {
+        String::new()
+    } else {
+        let name = flags.session_name.as_deref().unwrap_or("default");
+        Session::build_key("cli", name)
+    };
+    let spill_store = Arc::new(FileContextSpillStore::new(base_dir.to_path_buf()));
+    registry.register(Arc::new(RecallTool::new(
+        spill_store.clone(),
+        session_key.clone(),
+    )));
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),
         model,
         max_tokens: config.agents.defaults.max_tokens,
         temperature: config.agents.defaults.temperature,
+        spill_store: Some(spill_store),
+        session_key,
+        context_collapse_after_turns: config.agents.defaults.context_collapse_after_turns,
+        max_context_tokens: config.agents.defaults.max_context_tokens,
     })
     .with_max_tool_iterations(
         flags
@@ -289,24 +307,16 @@ pub(crate) fn run_agent_session(
     // Track its index so we can remove exactly this message before saving.
     let system_prompt_idx = if flags.system_prompt.is_some() {
         let idx = messages.len();
-        messages.push(Message {
-            role: Role::System,
-            content: flags.system_prompt.as_deref().unwrap_or("").to_string(),
-            tool_calls: vec![],
-            tool_call_id: None,
-        });
+        messages.push(Message::system(
+            flags.system_prompt.as_deref().unwrap_or("").to_string(),
+        ));
         Some(idx)
     } else {
         None
     };
 
     let message = flags.message.as_deref().unwrap_or("");
-    messages.push(Message {
-        role: Role::User,
-        content: message.to_string(),
-        tool_calls: vec![],
-        tool_call_id: None,
-    });
+    messages.push(Message::user(message.to_string()));
 
     let agent_result = if let Some(secs) = flags.max_time {
         match run_with_deadline(&rt, &agent, &mut messages, secs) {
