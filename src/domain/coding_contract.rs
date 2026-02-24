@@ -6,6 +6,16 @@ use super::coding_event::{
     EventEnvelope, EventPayload, EventSource, is_compatible_version, is_known_event_type,
 };
 
+const MAX_ID_LEN: usize = 128;
+
+fn is_valid_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_ID_LEN
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SeqScope {
     pub source: EventSource,
@@ -41,6 +51,8 @@ pub enum CodingContractError {
     InvalidPayload { event_type: String, reason: String },
     #[error("scope mismatch between envelope and tracker key")]
     ScopeMismatch,
+    #[error("invalid identifier for field {field}")]
+    InvalidIdentifier { field: &'static str },
 }
 
 fn validate_event_envelope(envelope: &EventEnvelope) -> Result<(), CodingContractError> {
@@ -55,11 +67,11 @@ fn validate_event_envelope(envelope: &EventEnvelope) -> Result<(), CodingContrac
     if envelope.ts.is_empty() {
         return Err(CodingContractError::MissingEnvelopeField("ts"));
     }
-    if envelope.run_id.is_empty() {
-        return Err(CodingContractError::MissingEnvelopeField("run_id"));
+    if !is_valid_id(&envelope.run_id) {
+        return Err(CodingContractError::InvalidIdentifier { field: "run_id" });
     }
-    if envelope.job_id.is_empty() {
-        return Err(CodingContractError::MissingEnvelopeField("job_id"));
+    if !is_valid_id(&envelope.job_id) {
+        return Err(CodingContractError::InvalidIdentifier { field: "job_id" });
     }
     if !envelope.payload.is_object() {
         return Err(CodingContractError::InvalidPayload {
@@ -267,6 +279,38 @@ mod tests {
         assert_eq!(
             validate_and_track_event_with_scope(&env, wrong_scope, &mut seq),
             Err(CodingContractError::ScopeMismatch)
+        );
+    }
+
+    #[test]
+    fn test_rejects_invalid_run_id_characters() {
+        let mut seq = HashMap::new();
+        let mut env = event(
+            "tool.start",
+            1,
+            EventSource::Worker,
+            serde_json::json!({"tool":"read_file","call_id":"c1"}),
+        );
+        env.run_id = "run/1".to_string();
+        assert_eq!(
+            validate_and_track_event(&env, &mut seq),
+            Err(CodingContractError::InvalidIdentifier { field: "run_id" })
+        );
+    }
+
+    #[test]
+    fn test_rejects_invalid_job_id_length() {
+        let mut seq = HashMap::new();
+        let mut env = event(
+            "tool.start",
+            1,
+            EventSource::Worker,
+            serde_json::json!({"tool":"read_file","call_id":"c1"}),
+        );
+        env.job_id = "a".repeat(MAX_ID_LEN + 1);
+        assert_eq!(
+            validate_and_track_event(&env, &mut seq),
+            Err(CodingContractError::InvalidIdentifier { field: "job_id" })
         );
     }
 }

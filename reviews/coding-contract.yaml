@@ -31,7 +31,7 @@ transport:
     durability:
       event_log: jobs/<run-id>/<job-id>/events.jsonl
       index: jobs/index.json  # rebuilt from event logs on startup; periodic snapshots only
-    seq_scope: per-source-per-job  # each (source, job_id) pair has its own monotonic counter starting at 1
+    seq_scope: per-source-per-run-per-job  # each (source, run_id, job_id) tuple has its own monotonic counter starting at 1
 
 roles:
   main_agent:
@@ -199,8 +199,8 @@ events:
     properties:
       v: { type: string, pattern: "^1\\.[0-9]+$" }
       ts: { type: string, format: date-time }
-      run_id: { type: string }
-      job_id: { type: string }
+      run_id: { type: string, pattern: "^[A-Za-z0-9_-]+$", minLength: 1, maxLength: 128 }
+      job_id: { type: string, pattern: "^[A-Za-z0-9_-]+$", minLength: 1, maxLength: 128 }
       source:
         type: string
         enum: [main_agent, coordinator, worker, child_agent]
@@ -209,7 +209,7 @@ events:
         type: integer
         minimum: 1
         description: >
-          Monotonically increasing counter scoped per (source, job_id) pair.
+          Monotonically increasing counter scoped per (source, run_id, job_id) tuple.
           Each source starts its own counter at 1 for each job. Coordinator
           events for job X have seq 1,2,3... and worker events for the same
           job X independently start at 1,2,3...
