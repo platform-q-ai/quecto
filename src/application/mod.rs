@@ -1,5 +1,6 @@
 pub mod agent_loop;
 pub mod coding_coordinator;
+pub mod coding_todos;
 pub mod context_pruning;
 pub mod cron_executor;
 pub mod heartbeat;

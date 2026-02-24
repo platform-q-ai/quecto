@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 
+use super::coding_todos::TodoTracker;
 use crate::domain::coding_command::{
     CancelResponse, CleanupResponse, CommandError, ListJobEntry, ListRequest, ListResponse,
     RunRequest, RunResponse, StatusResponse,
@@ -90,6 +91,7 @@ pub struct CodingCoordinator<R: RepoValidator, S: SkillResolver> {
     repo_validator: R,
     skill_resolver: S,
     id_counter: u64,
+    todo_tracker: TodoTracker,
 }
 
 impl<R: RepoValidator, S: SkillResolver> std::fmt::Debug for CodingCoordinator<R, S> {
@@ -112,7 +114,16 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
             repo_validator,
             skill_resolver,
             id_counter: 0,
+            todo_tracker: TodoTracker::new(),
         }
+    }
+
+    pub fn todo_tracker(&self) -> &TodoTracker {
+        &self.todo_tracker
+    }
+
+    pub fn todo_tracker_mut(&mut self) -> &mut TodoTracker {
+        &mut self.todo_tracker
     }
 
     pub fn events(&self) -> &[EventEnvelope] {
@@ -208,23 +219,23 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
 
     pub fn status_by_job_id(&self, job_id: &str) -> Result<StatusResponse, CommandError> {
         let job = self.jobs.get(job_id).ok_or(CommandError::NotFound)?;
-        Ok(Self::build_status(job))
+        Ok(self.build_status(job))
     }
 
     pub fn status_by_run_id(&self, run_id: &str) -> Result<StatusResponse, CommandError> {
         let job_id = self.jobs_by_run.get(run_id).ok_or(CommandError::NotFound)?;
         let job = self.jobs.get(job_id).ok_or(CommandError::NotFound)?;
-        Ok(Self::build_status(job))
+        Ok(self.build_status(job))
     }
 
-    fn build_status(job: &CodingJob) -> StatusResponse {
+    fn build_status(&self, job: &CodingJob) -> StatusResponse {
         StatusResponse {
             job_id: job.job_id.clone(),
             run_id: job.run_id.clone(),
             state: job.state,
             summary: job.summary.clone().or_else(|| Some("status".to_string())),
             progress: job.progress,
-            todos: vec![],
+            todos: self.todo_tracker.todos_for_job(&job.job_id).to_vec(),
             artifacts: job.artifacts.clone(),
             error_code: job.error_code,
             error_detail: job.error_detail.clone(),
@@ -258,6 +269,7 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
         let state = job.state;
         let jid = job.job_id.clone();
         let rid = job.run_id.clone();
+        self.todo_tracker.cancel_all(&jid);
         self.emit(
             &rid,
             &jid,
@@ -288,6 +300,7 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
         // A future PR will implement selective artifact preservation.
         let _ = keep_artifacts;
         let run_id = job.run_id.clone();
+        self.todo_tracker.remove_job(job_id);
         self.jobs.remove(job_id);
         self.jobs_by_run.remove(&run_id);
         Ok(CleanupResponse {

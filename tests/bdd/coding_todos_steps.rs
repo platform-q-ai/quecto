@@ -1,8 +1,9 @@
 use super::*;
 
-use quecto::domain::coding_command::{StatusResponse, TodoItem};
-use quecto::domain::coding_event::EventSource;
-use quecto::domain::coding_job::JobState;
+use quecto::application::coding_todos::{
+    TodoBlockedParams, TodoCompleteParams, TodoCreateParams, TodoError, TodoUpdateParams,
+};
+use quecto::domain::coding_command::TodoItem;
 
 fn parse_list_literal(s: &str) -> Vec<String> {
     s.trim_matches(|c| c == '[' || c == ']')
@@ -27,252 +28,124 @@ fn parse_kv_table(step: &gherkin::Step) -> serde_json::Map<String, serde_json::V
         .collect()
 }
 
-fn ensure_status_response(world: &mut QuectoWorld) {
-    if world.coding_status_response.is_none() {
-        let (job_id, run_id, state) = if let Some(j) = &world.coding_job {
-            (j.job_id.clone(), j.run_id.clone(), j.state)
-        } else {
-            (
-                "job_abc123".to_string(),
-                "run_abc123".to_string(),
-                JobState::Running,
-            )
-        };
-        world.coding_status_response = Some(StatusResponse {
-            job_id,
-            run_id,
-            state,
-            summary: Some("status".to_string()),
-            progress: None,
-            todos: vec![],
-            artifacts: vec![],
-            error_code: None,
-            error_detail: None,
-            cancel_reason: None,
-        });
-    }
-}
-
-fn todos_mut(world: &mut QuectoWorld) -> &mut Vec<TodoItem> {
-    ensure_status_response(world);
-    &mut world
-        .coding_status_response
-        .as_mut()
-        .expect("status response")
-        .todos
-}
-
-fn find_todo<'a>(world: &'a QuectoWorld, todo_id: &str) -> &'a TodoItem {
+/// Return the current job_id from the coordinator world state.
+fn current_job_id(world: &QuectoWorld) -> String {
     world
-        .coding_status_response
-        .as_ref()
-        .expect("status response")
-        .todos
+        .coding_current_job_id
+        .clone()
+        .expect("no current job_id — did Background run?")
+}
+
+/// Look up a todo item from the coordinator's tracker.
+fn find_todo_in_tracker(world: &QuectoWorld, todo_id: &str) -> TodoItem {
+    let jid = current_job_id(world);
+    let coord = world.coding_coordinator.as_ref().expect("coordinator");
+    coord
+        .todo_tracker()
+        .todos_for_job(&jid)
         .iter()
         .find(|t| t.todo_id == todo_id)
-        .expect("todo not found")
+        .cloned()
+        .expect("todo not found in tracker")
 }
 
-fn can_transition(from: &str, to: &str) -> bool {
-    if from == to {
-        return true;
-    }
-    match from {
-        "pending" => matches!(to, "in_progress" | "blocked" | "canceled"),
-        "in_progress" => matches!(to, "blocked" | "completed" | "failed" | "canceled"),
-        "blocked" => matches!(to, "in_progress" | "failed" | "canceled"),
-        "completed" | "failed" | "canceled" => false,
-        _ => false,
-    }
-}
-
-fn emit(world: &mut QuectoWorld, event_type: &str, payload: serde_json::Value) {
-    push_coding_event(world, EventSource::Worker, event_type, payload);
-}
-
-fn apply_todo_create(world: &mut QuectoWorld, fields: &serde_json::Map<String, serde_json::Value>) {
-    world.coding_todo_create_rejected = false;
-    ensure_status_response(world);
-
-    let todo_id = fields
-        .get("todo_id")
-        .and_then(|v| v.as_str())
-        .expect("todo_id required")
-        .to_string();
-    let title = fields
-        .get("title")
-        .and_then(|v| v.as_str())
-        .expect("title required")
-        .to_string();
-    let status = fields
-        .get("status")
-        .and_then(|v| v.as_str())
-        .expect("status required")
-        .to_string();
-
-    if status != "pending" {
-        world.coding_todo_create_rejected = true;
-        return;
-    }
-
-    let max_items = world.coding_todo_max_items_per_job;
-    let todos = todos_mut(world);
-    if todos.iter().any(|t| t.todo_id == todo_id) {
-        world.coding_todo_create_rejected = true;
-        return;
-    }
-    if let Some(limit) = max_items
-        && todos.len() >= limit
-    {
-        world.coding_todo_create_rejected = true;
-        return;
-    }
-
-    let owner = fields
-        .get("owner")
-        .and_then(|v| v.as_str())
-        .map(ToString::to_string);
-    let depends_on = fields
-        .get("depends_on")
-        .and_then(|v| v.as_str())
-        .map(parse_list_literal)
-        .unwrap_or_default();
-
-    todos.push(TodoItem {
-        todo_id: todo_id.clone(),
-        title: title.clone(),
-        status: "pending".to_string(),
-        owner: owner.clone(),
-        depends_on: depends_on.clone(),
-        artifact_refs: vec![],
-    });
-
-    let mut payload = serde_json::json!({"todo_id": todo_id, "title": title, "status": "pending"});
-    if let Some(owner) = owner {
-        payload["owner"] = serde_json::Value::String(owner);
-    }
-    if !depends_on.is_empty() {
-        payload["depends_on"] = serde_json::json!(depends_on);
-    }
-    emit(world, "todo.create", payload);
-}
-
-fn apply_todo_update(world: &mut QuectoWorld, todo_id: &str, status: &str, note: Option<String>) {
-    world.coding_todo_transition_rejected = false;
-    let todos = todos_mut(world);
-    let todo = todos
-        .iter_mut()
-        .find(|t| t.todo_id == todo_id)
-        .expect("todo not found");
-
-    if !can_transition(&todo.status, status) {
-        world.coding_todo_transition_rejected = true;
-        return;
-    }
-
-    todo.status = status.to_string();
-    if let Some(note_text) = note.clone() {
-        world
-            .coding_todo_notes
-            .insert(todo_id.to_string(), note_text.clone());
-    }
-
-    let mut payload = serde_json::json!({"todo_id": todo_id, "status": status});
-    if let Some(note_text) = note {
-        payload["note"] = serde_json::Value::String(note_text);
-    }
-    emit(world, "todo.update", payload);
-}
-
-fn apply_todo_complete(
-    world: &mut QuectoWorld,
-    todo_id: &str,
-    result: Option<String>,
-    artifact_refs: Option<Vec<String>>,
-) {
-    world.coding_todo_transition_rejected = false;
-    let todos = todos_mut(world);
-    let todo = todos
-        .iter_mut()
-        .find(|t| t.todo_id == todo_id)
-        .expect("todo not found");
-
-    if !can_transition(&todo.status, "completed") {
-        world.coding_todo_transition_rejected = true;
-        return;
-    }
-
-    todo.status = "completed".to_string();
-    if let Some(refs) = artifact_refs.clone() {
-        todo.artifact_refs = refs.clone();
-    }
-    if let Some(res) = result.clone() {
-        world
-            .coding_todo_results
-            .insert(todo_id.to_string(), res.clone());
-    }
-
-    let mut payload = serde_json::json!({"todo_id": todo_id, "result": ""});
-    if let Some(res) = result {
-        payload["result"] = serde_json::Value::String(res);
-    }
-    if let Some(refs) = artifact_refs {
-        payload["artifact_refs"] = serde_json::json!(refs);
-    }
-    emit(world, "todo.complete", payload);
-}
-
-fn apply_todo_blocked(world: &mut QuectoWorld, todo_id: &str, reason: &str, needs: Option<String>) {
-    world.coding_todo_transition_rejected = false;
-    let todos = todos_mut(world);
-    let todo = todos
-        .iter_mut()
-        .find(|t| t.todo_id == todo_id)
-        .expect("todo not found");
-
-    if !can_transition(&todo.status, "blocked") {
-        world.coding_todo_transition_rejected = true;
-        return;
-    }
-
-    todo.status = "blocked".to_string();
-    world
-        .coding_todo_blocked_reasons
-        .insert(todo_id.to_string(), reason.to_string());
-    if let Some(needs_text) = needs.clone() {
-        world
-            .coding_todo_blocked_needs
-            .insert(todo_id.to_string(), needs_text.clone());
-    }
-
-    let mut payload = serde_json::json!({"todo_id": todo_id, "reason": reason});
-    if let Some(needs_text) = needs {
-        payload["needs"] = serde_json::Value::String(needs_text);
-    }
-    emit(world, "todo.blocked", payload);
-}
+// ── Given steps ─────────────────────────────────────────────────────────
 
 #[given(expr = "the job has todo {string} with status {string}")]
 fn given_job_has_todo(world: &mut QuectoWorld, todo_id: String, status: String) {
-    let todos = todos_mut(world);
-    if todos.iter().any(|t| t.todo_id == todo_id) {
+    let jid = current_job_id(world);
+    let coord = world.coding_coordinator.as_mut().expect("coordinator");
+    let tracker = coord.todo_tracker_mut();
+
+    // Don't duplicate if already present (idempotent for Background reuse).
+    if tracker
+        .todos_for_job(&jid)
+        .iter()
+        .any(|t| t.todo_id == todo_id)
+    {
         return;
     }
-    todos.push(TodoItem {
-        todo_id,
-        title: "test todo".to_string(),
-        status,
-        owner: None,
-        depends_on: vec![],
-        artifact_refs: vec![],
-    });
+
+    tracker
+        .create_todo(
+            &jid,
+            TodoCreateParams {
+                todo_id: todo_id.clone(),
+                title: "test todo".to_string(),
+                owner: None,
+                depends_on: vec![],
+            },
+        )
+        .expect("create_todo in Given");
+
+    // Advance through valid transitions to reach the target status.
+    let to_ip = || TodoUpdateParams {
+        todo_id: &todo_id,
+        new_status: "in_progress",
+        note: None,
+    };
+    match status.as_str() {
+        "pending" => {}
+        "in_progress" => {
+            tracker
+                .update_status(&jid, to_ip())
+                .expect("transition to in_progress");
+        }
+        "completed" => {
+            tracker
+                .update_status(&jid, to_ip())
+                .expect("transition to in_progress");
+            tracker
+                .complete_todo(
+                    &jid,
+                    TodoCompleteParams {
+                        todo_id: &todo_id,
+                        result: None,
+                        artifact_refs: vec![],
+                    },
+                )
+                .expect("complete_todo in Given");
+        }
+        "blocked" => {
+            tracker
+                .update_status(&jid, to_ip())
+                .expect("transition to in_progress");
+            tracker
+                .block_todo(
+                    &jid,
+                    TodoBlockedParams {
+                        todo_id: &todo_id,
+                        reason: "setup".to_string(),
+                        needs: None,
+                    },
+                )
+                .expect("block_todo in Given");
+        }
+        "failed" => {
+            tracker
+                .update_status(&jid, to_ip())
+                .expect("transition to in_progress");
+            tracker
+                .update_status(
+                    &jid,
+                    TodoUpdateParams {
+                        todo_id: &todo_id,
+                        new_status: "failed",
+                        note: None,
+                    },
+                )
+                .expect("transition to failed");
+        }
+        other => panic!("unsupported Given status: {other}"),
+    }
 }
 
 #[given("the job has todos:")]
 fn given_job_has_todos(world: &mut QuectoWorld, step: &gherkin::Step) {
     let table = step.table.as_ref().expect("table expected");
-    let todos = todos_mut(world);
-    todos.clear();
+    let jid = current_job_id(world);
+    let coord = world.coding_coordinator.as_mut().expect("coordinator");
+    let tracker = coord.todo_tracker_mut();
 
     for row in table.rows.iter().skip(1) {
         if row.len() < 3 {
@@ -287,37 +160,108 @@ fn given_job_has_todos(world: &mut QuectoWorld, step: &gherkin::Step) {
             vec![]
         };
 
-        todos.push(TodoItem {
-            todo_id,
-            title,
-            status,
-            owner: None,
-            depends_on,
-            artifact_refs: vec![],
-        });
+        tracker
+            .create_todo(
+                &jid,
+                TodoCreateParams {
+                    todo_id: todo_id.clone(),
+                    title,
+                    owner: None,
+                    depends_on,
+                },
+            )
+            .expect("create_todo in Given table");
+
+        // Advance through valid transitions to reach the target status.
+        let to_ip = || TodoUpdateParams {
+            todo_id: &todo_id,
+            new_status: "in_progress",
+            note: None,
+        };
+        match status.as_str() {
+            "pending" => {}
+            "in_progress" => {
+                tracker
+                    .update_status(&jid, to_ip())
+                    .expect("transition to in_progress");
+            }
+            "completed" => {
+                tracker
+                    .update_status(&jid, to_ip())
+                    .expect("transition to in_progress");
+                tracker
+                    .complete_todo(
+                        &jid,
+                        TodoCompleteParams {
+                            todo_id: &todo_id,
+                            result: None,
+                            artifact_refs: vec![],
+                        },
+                    )
+                    .expect("complete_todo");
+            }
+            "blocked" => {
+                tracker
+                    .update_status(&jid, to_ip())
+                    .expect("transition to in_progress");
+                tracker
+                    .block_todo(
+                        &jid,
+                        TodoBlockedParams {
+                            todo_id: &todo_id,
+                            reason: "setup".to_string(),
+                            needs: None,
+                        },
+                    )
+                    .expect("block_todo");
+            }
+            "failed" => {
+                tracker
+                    .update_status(&jid, to_ip())
+                    .expect("transition to in_progress");
+                tracker
+                    .update_status(
+                        &jid,
+                        TodoUpdateParams {
+                            todo_id: &todo_id,
+                            new_status: "failed",
+                            note: None,
+                        },
+                    )
+                    .expect("transition to failed");
+            }
+            other => panic!("unsupported Given status: {other}"),
+        }
     }
 }
 
 #[given(expr = "the coordinator is configured with max_items_per_job {int}")]
 fn given_max_items(world: &mut QuectoWorld, max_items: usize) {
-    world.coding_todo_max_items_per_job = Some(max_items);
+    let coord = world.coding_coordinator.as_mut().expect("coordinator");
+    coord.todo_tracker_mut().set_max_items_per_job(max_items);
 }
 
 #[given(expr = "the job already has {int} todo items")]
 fn given_job_already_has_n_todos(world: &mut QuectoWorld, count: usize) {
-    let todos = todos_mut(world);
-    todos.clear();
+    let jid = current_job_id(world);
+    let coord = world.coding_coordinator.as_mut().expect("coordinator");
+    let tracker = coord.todo_tracker_mut();
     for i in 0..count {
-        todos.push(TodoItem {
-            todo_id: format!("t{}", i + 1),
-            title: format!("Todo {}", i + 1),
-            status: "pending".to_string(),
-            owner: None,
-            depends_on: vec![],
-            artifact_refs: vec![],
-        });
+        tracker
+            .create_todo(
+                &jid,
+                TodoCreateParams {
+                    todo_id: format!("t{}", i + 1),
+                    title: format!("Todo {}", i + 1),
+                    owner: None,
+                    depends_on: vec![],
+                },
+            )
+            .expect("create_todo in Given N todos");
     }
 }
+
+// ── When steps ──────────────────────────────────────────────────────────
 
 #[when(regex = r#"^the worker emits a \"(todo\.[^\"]+)\" event with:$"#)]
 fn when_worker_emits_todo_event_with_table(
@@ -327,7 +271,7 @@ fn when_worker_emits_todo_event_with_table(
 ) {
     let fields = parse_kv_table(step);
     if event_type == "todo.create" {
-        apply_todo_create(world, &fields);
+        do_todo_create(world, &fields);
     }
 }
 
@@ -339,7 +283,7 @@ fn when_worker_emits_update_status(
     status: String,
 ) {
     if event_type == "todo.update" {
-        apply_todo_update(world, &todo_id, &status, None);
+        do_todo_update(world, &todo_id, &status, None);
     }
 }
 
@@ -351,7 +295,7 @@ fn when_worker_emits_complete_result(
     result: String,
 ) {
     if event_type == "todo.complete" {
-        apply_todo_complete(world, &todo_id, Some(result), None);
+        do_todo_complete(world, &todo_id, Some(result), None);
     }
 }
 
@@ -363,7 +307,7 @@ fn when_worker_emits_complete_artifacts(
     refs: String,
 ) {
     if event_type == "todo.complete" {
-        apply_todo_complete(world, &todo_id, None, Some(parse_list_literal(&refs)));
+        do_todo_complete(world, &todo_id, None, Some(parse_list_literal(&refs)));
     }
 }
 
@@ -387,7 +331,7 @@ fn when_worker_emits_blocked_reason(
     reason: String,
 ) {
     if event_type == "todo.blocked" {
-        apply_todo_blocked(world, &todo_id, &reason, None);
+        do_todo_blocked(world, &todo_id, &reason, None);
     }
 }
 
@@ -395,7 +339,7 @@ fn when_worker_emits_blocked_reason(
 fn when_worker_emits_todo_event_for_with_table(
     world: &mut QuectoWorld,
     event_type: String,
-    todo_id: String,
+    _todo_id: String,
     step: &gherkin::Step,
 ) {
     let fields = parse_kv_table(step);
@@ -408,7 +352,7 @@ fn when_worker_emits_todo_event_for_with_table(
             .get("needs")
             .and_then(|v| v.as_str())
             .map(ToString::to_string);
-        apply_todo_blocked(world, &todo_id, reason, needs);
+        do_todo_blocked(world, &_todo_id, reason, needs);
     } else if event_type == "todo.update" {
         let status = fields
             .get("status")
@@ -418,7 +362,7 @@ fn when_worker_emits_todo_event_for_with_table(
             .get("note")
             .and_then(|v| v.as_str())
             .map(ToString::to_string);
-        apply_todo_update(world, &todo_id, status, note);
+        do_todo_update(world, &_todo_id, status, note);
     }
 }
 
@@ -440,7 +384,7 @@ fn when_worker_emits_create_duplicate(
                 serde_json::Value::String("pending".to_string()),
             ),
         ]);
-        apply_todo_create(world, &fields);
+        do_todo_create(world, &fields);
     }
 }
 
@@ -460,12 +404,12 @@ fn when_worker_emits_51st_todo(world: &mut QuectoWorld) {
             serde_json::Value::String("pending".to_string()),
         ),
     ]);
-    apply_todo_create(world, &fields);
+    do_todo_create(world, &fields);
 }
 
 #[when("the worker creates and completes a todo")]
 fn when_worker_creates_and_completes_todo(world: &mut QuectoWorld) {
-    let create = serde_json::Map::from_iter(vec![
+    let create_fields = serde_json::Map::from_iter(vec![
         (
             "todo_id".to_string(),
             serde_json::Value::String("t1".to_string()),
@@ -479,74 +423,261 @@ fn when_worker_creates_and_completes_todo(world: &mut QuectoWorld) {
             serde_json::Value::String("pending".to_string()),
         ),
     ]);
-    apply_todo_create(world, &create);
-    apply_todo_update(world, "t1", "in_progress", None);
-    apply_todo_complete(world, "t1", Some("done".to_string()), None);
+    do_todo_create(world, &create_fields);
+    do_todo_update(world, "t1", "in_progress", None);
+    do_todo_complete(world, "t1", Some("done".to_string()), None);
 }
 
 #[when("the parent job is canceled")]
 fn when_parent_job_canceled(world: &mut QuectoWorld) {
-    let todos = todos_mut(world);
-    for todo in todos.iter_mut() {
-        if matches!(todo.status.as_str(), "pending" | "in_progress" | "blocked") {
-            todo.status = "canceled".to_string();
+    let jid = current_job_id(world);
+    let coord = world.coding_coordinator.as_mut().expect("coordinator");
+    coord.cancel(&jid).expect("cancel job");
+}
+
+// ── Production-calling helper functions ─────────────────────────────────
+
+fn do_todo_create(world: &mut QuectoWorld, fields: &serde_json::Map<String, serde_json::Value>) {
+    world.coding_todo_create_rejected = false;
+    let jid = current_job_id(world);
+
+    let todo_id = fields
+        .get("todo_id")
+        .and_then(|v| v.as_str())
+        .expect("todo_id required")
+        .to_string();
+    let title = fields
+        .get("title")
+        .and_then(|v| v.as_str())
+        .expect("title required")
+        .to_string();
+    let status = fields
+        .get("status")
+        .and_then(|v| v.as_str())
+        .expect("status required");
+
+    // Production code: todos always start as "pending".
+    if status != "pending" {
+        world.coding_todo_create_rejected = true;
+        return;
+    }
+
+    let owner = fields
+        .get("owner")
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string);
+    let depends_on = fields
+        .get("depends_on")
+        .and_then(|v| v.as_str())
+        .map(parse_list_literal)
+        .unwrap_or_default();
+
+    let coord = world.coding_coordinator.as_mut().expect("coordinator");
+    let result = coord.todo_tracker_mut().create_todo(
+        &jid,
+        TodoCreateParams {
+            todo_id: todo_id.clone(),
+            title: title.clone(),
+            owner: owner.clone(),
+            depends_on: depends_on.clone(),
+        },
+    );
+
+    match result {
+        Ok(()) => {
+            // Emit event via coordinator for event-log scenarios.
+            let mut payload =
+                serde_json::json!({"todo_id": todo_id, "title": title, "status": "pending"});
+            if let Some(o) = owner {
+                payload["owner"] = serde_json::Value::String(o);
+            }
+            if !depends_on.is_empty() {
+                payload["depends_on"] = serde_json::json!(depends_on);
+            }
+            coord
+                .emit_worker_event(&jid, "todo.create", payload)
+                .expect("emit_worker_event");
         }
+        Err(TodoError::DuplicateId | TodoError::LimitReached) => {
+            world.coding_todo_create_rejected = true;
+        }
+        Err(e) => panic!("unexpected todo create error: {e}"),
     }
 }
 
+fn do_todo_update(world: &mut QuectoWorld, todo_id: &str, status: &str, note: Option<String>) {
+    world.coding_todo_transition_rejected = false;
+    let jid = current_job_id(world);
+    let coord = world.coding_coordinator.as_mut().expect("coordinator");
+    let result = coord.todo_tracker_mut().update_status(
+        &jid,
+        TodoUpdateParams {
+            todo_id,
+            new_status: status,
+            note: note.clone(),
+        },
+    );
+
+    match result {
+        Ok(()) => {
+            let mut payload = serde_json::json!({"todo_id": todo_id, "status": status});
+            if let Some(n) = note {
+                payload["note"] = serde_json::Value::String(n);
+            }
+            coord
+                .emit_worker_event(&jid, "todo.update", payload)
+                .expect("emit_worker_event");
+        }
+        Err(TodoError::InvalidTransition) => {
+            world.coding_todo_transition_rejected = true;
+        }
+        Err(e) => panic!("unexpected todo update error: {e}"),
+    }
+}
+
+fn do_todo_complete(
+    world: &mut QuectoWorld,
+    todo_id: &str,
+    result: Option<String>,
+    artifact_refs: Option<Vec<String>>,
+) {
+    world.coding_todo_transition_rejected = false;
+    let jid = current_job_id(world);
+    let coord = world.coding_coordinator.as_mut().expect("coordinator");
+    let outcome = coord.todo_tracker_mut().complete_todo(
+        &jid,
+        TodoCompleteParams {
+            todo_id,
+            result: result.clone(),
+            artifact_refs: artifact_refs.clone().unwrap_or_default(),
+        },
+    );
+
+    match outcome {
+        Ok(()) => {
+            let mut payload = serde_json::json!({"todo_id": todo_id, "result": ""});
+            if let Some(res) = &result {
+                payload["result"] = serde_json::Value::String(res.clone());
+            }
+            if let Some(refs) = &artifact_refs {
+                payload["artifact_refs"] = serde_json::json!(refs);
+            }
+            coord
+                .emit_worker_event(&jid, "todo.complete", payload)
+                .expect("emit_worker_event");
+        }
+        Err(TodoError::InvalidTransition) => {
+            world.coding_todo_transition_rejected = true;
+        }
+        Err(e) => panic!("unexpected todo complete error: {e}"),
+    }
+}
+
+fn do_todo_blocked(world: &mut QuectoWorld, todo_id: &str, reason: &str, needs: Option<String>) {
+    world.coding_todo_transition_rejected = false;
+    let jid = current_job_id(world);
+    let coord = world.coding_coordinator.as_mut().expect("coordinator");
+    let result = coord.todo_tracker_mut().block_todo(
+        &jid,
+        TodoBlockedParams {
+            todo_id,
+            reason: reason.to_string(),
+            needs: needs.clone(),
+        },
+    );
+
+    match result {
+        Ok(()) => {
+            let mut payload = serde_json::json!({"todo_id": todo_id, "reason": reason});
+            if let Some(n) = needs {
+                payload["needs"] = serde_json::Value::String(n);
+            }
+            coord
+                .emit_worker_event(&jid, "todo.blocked", payload)
+                .expect("emit_worker_event");
+        }
+        Err(TodoError::InvalidTransition) => {
+            world.coding_todo_transition_rejected = true;
+        }
+        Err(e) => panic!("unexpected todo blocked error: {e}"),
+    }
+}
+
+// ── Then steps ──────────────────────────────────────────────────────────
+
 #[then(expr = "the coordinator should record todo {string} with status {string}")]
 fn then_recorded_todo_status(world: &mut QuectoWorld, todo_id: String, status: String) {
-    let todo = find_todo(world, &todo_id);
+    let todo = find_todo_in_tracker(world, &todo_id);
     assert_eq!(todo.status, status);
 }
 
 #[then(expr = "the job's todo list should contain {int} item")]
 fn then_todo_list_contains_one(world: &mut QuectoWorld, count: usize) {
-    let todos = &world
-        .coding_status_response
-        .as_ref()
-        .expect("status response")
-        .todos;
+    let jid = current_job_id(world);
+    let coord = world.coding_coordinator.as_ref().expect("coordinator");
+    let todos = coord.todo_tracker().todos_for_job(&jid);
     assert_eq!(todos.len(), count);
 }
 
 #[then(expr = "todo {string} should have depends_on containing {string}")]
 fn then_todo_depends_on(world: &mut QuectoWorld, todo_id: String, dep: String) {
-    let todo = find_todo(world, &todo_id);
-    assert!(todo.depends_on.contains(&dep));
+    let todo = find_todo_in_tracker(world, &todo_id);
+    assert!(
+        todo.depends_on.contains(&dep),
+        "todo {} depends_on {:?} does not contain {}",
+        todo_id,
+        todo.depends_on,
+        dep
+    );
 }
 
 #[then(expr = "todo {string} should have status {string}")]
 fn then_todo_has_status(world: &mut QuectoWorld, todo_id: String, status: String) {
-    let todo = find_todo(world, &todo_id);
+    let todo = find_todo_in_tracker(world, &todo_id);
     assert_eq!(todo.status, status);
 }
 
 #[then(expr = "the completion result should be {string}")]
 fn then_completion_result(world: &mut QuectoWorld, result: String) {
-    assert!(world.coding_todo_results.values().any(|r| r == &result));
+    let jid = current_job_id(world);
+    let coord = world.coding_coordinator.as_ref().expect("coordinator");
+    let tracker = coord.todo_tracker();
+    let todos = tracker.todos_for_job(&jid);
+    let found = todos
+        .iter()
+        .any(|t| tracker.todo_result(&jid, &t.todo_id) == Some(result.as_str()));
+    assert!(found, "no todo has completion result '{result}'");
 }
 
 #[then(expr = "todo {string} should have artifact_refs containing {string}")]
 fn then_todo_has_artifact_ref(world: &mut QuectoWorld, todo_id: String, artifact: String) {
-    let todo = find_todo(world, &todo_id);
-    assert!(todo.artifact_refs.contains(&artifact));
+    let todo = find_todo_in_tracker(world, &todo_id);
+    assert!(
+        todo.artifact_refs.contains(&artifact),
+        "todo {} artifact_refs {:?} does not contain {}",
+        todo_id,
+        todo.artifact_refs,
+        artifact
+    );
 }
 
 #[then(expr = "the blocked reason should be {string}")]
 fn then_blocked_reason(world: &mut QuectoWorld, reason: String) {
-    assert!(
-        world
-            .coding_todo_blocked_reasons
-            .values()
-            .any(|r| r == &reason)
-    );
+    let jid = current_job_id(world);
+    let coord = world.coding_coordinator.as_ref().expect("coordinator");
+    let tracker = coord.todo_tracker();
+    let todos = tracker.todos_for_job(&jid);
+    let found = todos
+        .iter()
+        .any(|t| tracker.blocked_reason(&jid, &t.todo_id) == Some(reason.as_str()));
+    assert!(found, "no todo has blocked reason '{reason}'");
 }
 
 #[then(expr = "the blocked event should include needs {string}")]
 fn then_blocked_event_needs(world: &mut QuectoWorld, needs: String) {
-    let event = world
-        .coding_events
+    let coord = world.coding_coordinator.as_ref().expect("coordinator");
+    let event = coord
+        .events()
         .iter()
         .rev()
         .find(|e| e.event_type == "todo.blocked")
@@ -559,7 +690,7 @@ fn then_status_response_count(world: &mut QuectoWorld, count: usize) {
     let todos = &world
         .coding_status_response
         .as_ref()
-        .expect("status response")
+        .expect("status response — did you call 'When the main agent queries job status'?")
         .todos;
     assert_eq!(todos.len(), count);
 }
@@ -586,43 +717,44 @@ fn then_reject_create(world: &mut QuectoWorld) {
 
 #[then(expr = "the job should still have {int} todo items")]
 fn then_job_still_has_todo_count(world: &mut QuectoWorld, count: usize) {
-    let todos = &world
-        .coding_status_response
-        .as_ref()
-        .expect("status response")
-        .todos;
+    let jid = current_job_id(world);
+    let coord = world.coding_coordinator.as_ref().expect("coordinator");
+    let todos = coord.todo_tracker().todos_for_job(&jid);
     assert_eq!(todos.len(), count);
 }
 
 #[then(expr = "the job should still have {int} todo item")]
 fn then_job_still_has_todo_count_singular(world: &mut QuectoWorld, count: usize) {
-    let todos = &world
-        .coding_status_response
-        .as_ref()
-        .expect("status response")
-        .todos;
+    let jid = current_job_id(world);
+    let coord = world.coding_coordinator.as_ref().expect("coordinator");
+    let todos = coord.todo_tracker().todos_for_job(&jid);
     assert_eq!(todos.len(), count);
 }
 
 #[then("the event log should contain both \"todo.create\" and \"todo.complete\" events")]
 fn then_event_log_contains_create_and_complete(world: &mut QuectoWorld) {
+    let coord = world.coding_coordinator.as_ref().expect("coordinator");
+    let events = coord.events();
     assert!(
-        world
-            .coding_events
-            .iter()
-            .any(|e| e.event_type == "todo.create")
+        events.iter().any(|e| e.event_type == "todo.create"),
+        "no todo.create event found"
     );
     assert!(
-        world
-            .coding_events
-            .iter()
-            .any(|e| e.event_type == "todo.complete")
+        events.iter().any(|e| e.event_type == "todo.complete"),
+        "no todo.complete event found"
     );
 }
 
 #[then("the events should have correct envelope fields")]
 fn then_events_have_envelope_fields(world: &mut QuectoWorld) {
-    for e in &world.coding_events {
+    let coord = world.coding_coordinator.as_ref().expect("coordinator");
+    let events = coord.events();
+    let todo_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.event_type.starts_with("todo."))
+        .collect();
+    assert!(!todo_events.is_empty(), "no todo events found");
+    for e in todo_events {
         assert!(!e.v.is_empty());
         assert!(!e.ts.is_empty());
         assert!(!e.run_id.is_empty());
@@ -635,27 +767,33 @@ fn then_events_have_envelope_fields(world: &mut QuectoWorld) {
 
 #[then("all non-terminal todos should transition to \"canceled\"")]
 fn then_non_terminal_todos_canceled(world: &mut QuectoWorld) {
-    let todos = &world
-        .coding_status_response
-        .as_ref()
-        .expect("status response")
-        .todos;
+    let jid = current_job_id(world);
+    let coord = world.coding_coordinator.as_ref().expect("coordinator");
+    let todos = coord.todo_tracker().todos_for_job(&jid);
     for todo in todos {
-        if matches!(todo.status.as_str(), "pending" | "in_progress" | "blocked") {
-            panic!("todo {} should have been canceled", todo.todo_id);
-        }
+        assert!(
+            matches!(todo.status.as_str(), "completed" | "failed" | "canceled"),
+            "todo {} has status '{}' — expected terminal or canceled",
+            todo.todo_id,
+            todo.status
+        );
     }
 }
 
 #[then(expr = "todo {string} should have owner {string}")]
 fn then_todo_owner(world: &mut QuectoWorld, todo_id: String, owner: String) {
-    let todo = find_todo(world, &todo_id);
+    let todo = find_todo_in_tracker(world, &todo_id);
     assert_eq!(todo.owner.as_deref(), Some(owner.as_str()));
 }
 
 #[then(expr = "todo {string} should have the note {string}")]
 fn then_todo_note(world: &mut QuectoWorld, todo_id: String, note: String) {
-    assert_eq!(world.coding_todo_notes.get(&todo_id), Some(&note));
+    let jid = current_job_id(world);
+    let coord = world.coding_coordinator.as_ref().expect("coordinator");
+    assert_eq!(
+        coord.todo_tracker().note(&jid, &todo_id),
+        Some(note.as_str())
+    );
 }
 
 #[then("the coordinator should reject the transition")]
@@ -665,7 +803,7 @@ fn then_transition_rejected(world: &mut QuectoWorld) {
 
 #[then(expr = "todo {string} should remain in status {string}")]
 fn then_todo_remains_status(world: &mut QuectoWorld, todo_id: String, status: String) {
-    let todo = find_todo(world, &todo_id);
+    let todo = find_todo_in_tracker(world, &todo_id);
     assert_eq!(todo.status, status);
 }
 
