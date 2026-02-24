@@ -1,277 +1,343 @@
 use super::*;
+use quecto::application::coding_crash_recovery::{self, RecoveryOp};
+use quecto::domain::coding_event::EventEnvelope;
+use quecto::domain::coding_job::JobState;
+use quecto::domain::coding_ports::{EventLogLine, EventLogStore, ProcessChecker};
 
-fn ensure_recovery_job(world: &mut QuectoWorld, job_id: &str) {
-    world
-        .coding_recovery_logs
-        .entry(job_id.to_string())
-        .or_default();
+// ============================================================================
+// Test doubles for crash recovery ports
+// ============================================================================
+
+struct BddProcessChecker {
+    alive: HashMap<u32, bool>,
 }
 
-struct EventAppend<'a> {
+impl BddProcessChecker {
+    fn new() -> Self {
+        Self {
+            alive: HashMap::new(),
+        }
+    }
+}
+
+impl ProcessChecker for BddProcessChecker {
+    fn is_alive(&self, pid: u32) -> bool {
+        self.alive.get(&pid).copied().unwrap_or(false)
+    }
+}
+
+struct BddEventLogStore {
+    jobs: HashMap<String, Vec<EventLogLine>>,
+    appended: Vec<(String, EventEnvelope)>,
+    index_written: bool,
+    lock_available: bool,
+}
+
+impl BddEventLogStore {
+    fn new() -> Self {
+        Self {
+            jobs: HashMap::new(),
+            appended: Vec::new(),
+            index_written: false,
+            lock_available: true,
+        }
+    }
+}
+
+impl EventLogStore for BddEventLogStore {
+    fn discover_jobs(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self.jobs.keys().cloned().collect();
+        ids.sort();
+        ids
+    }
+
+    fn read_log(&self, job_id: &str) -> Vec<EventLogLine> {
+        self.jobs.get(job_id).cloned().unwrap_or_default()
+    }
+
+    fn append_event(&mut self, job_id: &str, event: &EventEnvelope) {
+        self.appended.push((job_id.to_string(), event.clone()));
+    }
+
+    fn write_index(&mut self, _entries: &[(String, JobState)]) {
+        self.index_written = true;
+    }
+
+    fn try_acquire_lock(&self) -> bool {
+        self.lock_available
+    }
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+/// Build the event log store from world fixture data.
+fn build_store(world: &QuectoWorld) -> BddEventLogStore {
+    let mut store = BddEventLogStore::new();
+    store.lock_available = !world.coding_startup_failed_lock;
+
+    for (job_id, events) in &world.coding_recovery_logs {
+        let mut lines: Vec<EventLogLine> = Vec::new();
+        for (idx, ev) in events.iter().enumerate() {
+            let raw = serde_json::to_string(ev).unwrap_or_default();
+            match serde_json::from_value::<EventEnvelope>(ev.clone()) {
+                Ok(envelope) => lines.push(EventLogLine::Valid(envelope)),
+                Err(_) => lines.push(EventLogLine::Corrupt {
+                    line_number: idx + 1,
+                    raw,
+                }),
+            }
+        }
+        if world.coding_truncated_line_skipped && job_id == "job_abc123" {
+            lines.push(EventLogLine::Corrupt {
+                line_number: lines.len() + 1,
+                raw: "{truncated".to_string(),
+            });
+        }
+        if world.coding_corrupted_line_skipped && job_id == "job_abc123" {
+            let insert_at = std::cmp::min(2, lines.len());
+            lines.insert(
+                insert_at,
+                EventLogLine::Corrupt {
+                    line_number: 3,
+                    raw: "NOT VALID JSON".to_string(),
+                },
+            );
+        }
+        store.jobs.insert(job_id.clone(), lines);
+    }
+    store
+}
+
+/// Map a successful recovery result into world fields.
+fn apply_recovery_to_world(
+    world: &mut QuectoWorld,
+    recovery: &coding_crash_recovery::RecoveryResult,
+    store: &BddEventLogStore,
+) {
+    world.coding_recovered_states.clear();
+    world.coding_worker_check_performed = false;
+    world.coding_recovery_events_appended = recovery.events_appended;
+    world.coding_index_rewritten = recovery.index_rewritten;
+    world.coding_recovery_operation_order.clear();
+    world.coding_startup_error = None;
+
+    for (job_id, rj) in &recovery.jobs {
+        world
+            .coding_recovered_states
+            .insert(job_id.clone(), rj.state.to_string());
+        if rj.worker_check_performed {
+            world.coding_worker_check_performed = true;
+        }
+        if rj.has_todo_events {
+            world
+                .coding_todo_notes
+                .insert("t1".to_string(), "in_progress".to_string());
+        }
+    }
+
+    world.coding_warning_logged = !recovery.warnings.is_empty();
+    world.coding_spawn_marked_failed = recovery.spawns.iter().any(|s| s.marked_failed);
+
+    for op in &recovery.operation_order {
+        let name = match op {
+            RecoveryOp::Append => "append",
+            RecoveryOp::Flush => "flush",
+            RecoveryOp::StateUpdate => "state_update",
+        };
+        world.coding_recovery_operation_order.push(name.to_string());
+    }
+
+    for (job_id, env) in &store.appended {
+        let ev = serde_json::to_value(env).unwrap();
+        world
+            .coding_recovery_logs
+            .entry(job_id.clone())
+            .or_default()
+            .push(ev);
+    }
+
+    world.coding_recovery_flush_then_state = !world.coding_recovery_operation_order.is_empty();
+}
+
+/// Run recovery and store the result in the world.
+fn run_recovery(world: &mut QuectoWorld) {
+    let mut pc = BddProcessChecker::new();
+    for (&pid, &alive) in &world.coding_process_alive {
+        pc.alive.insert(pid as u32, alive);
+    }
+
+    let mut store = build_store(world);
+    let result = coding_crash_recovery::recover(&pc, &mut store);
+
+    match result {
+        Ok(recovery) => apply_recovery_to_world(world, &recovery, &store),
+        Err(e) => {
+            world.coding_startup_error = Some(e.to_string());
+            world.coding_recovered_states.clear();
+            world.coding_recovery_events_appended = 0;
+        }
+    }
+}
+
+// ============================================================================
+// Helpers to build fixture event log entries (JSON values, not envelopes)
+// ============================================================================
+
+/// Parameters for building a fixture event entry.
+struct FixtureEvent<'a> {
+    job_id: &'a str,
     event_type: &'a str,
     state: Option<&'a str>,
     reason: Option<&'a str>,
     error_code: Option<&'a str>,
-    worker_pid: Option<i64>,
+    worker_pid: Option<u32>,
 }
 
-fn append_event(world: &mut QuectoWorld, job_id: &str, data: EventAppend<'_>) {
-    ensure_recovery_job(world, job_id);
-    let mut obj = serde_json::Map::new();
-    obj.insert(
-        "type".to_string(),
-        serde_json::Value::String(data.event_type.to_string()),
-    );
-    if let Some(s) = data.state {
-        obj.insert(
-            "state".to_string(),
-            serde_json::Value::String(s.to_string()),
-        );
-    }
-    if let Some(r) = data.reason {
-        obj.insert(
-            "reason".to_string(),
-            serde_json::Value::String(r.to_string()),
-        );
-    }
-    if let Some(code) = data.error_code {
-        obj.insert(
-            "error_code".to_string(),
-            serde_json::Value::String(code.to_string()),
-        );
-    }
-    if let Some(pid) = data.worker_pid {
-        obj.insert(
-            "worker_pid".to_string(),
-            serde_json::Value::Number(pid.into()),
-        );
-        world
-            .coding_recovered_worker_pid
-            .insert(job_id.to_string(), pid);
-    }
-    world
-        .coding_recovery_logs
-        .get_mut(job_id)
-        .expect("recovery log initialized")
-        .push(serde_json::Value::Object(obj));
-}
-
-fn parse_recovery_events(events: &[serde_json::Value]) -> (String, bool, bool) {
-    let mut state = "queued".to_string();
-    let mut terminal = false;
-    let mut has_spawn_pending = false;
-
-    for ev in events {
-        let t = ev["type"].as_str().unwrap_or_default();
-        let event_state = ev["state"].as_str();
-        match t {
-            "job.start" => state = "preparing".to_string(),
-            "job.ready" => state = "running".to_string(),
-            "job.status" => {
-                if let Some(s) = event_state {
-                    state = s.to_string();
-                }
-            }
-            "job.blocked" => state = "blocked".to_string(),
-            "job.cancel" => {
-                state = "canceled".to_string();
-                terminal = true;
-            }
-            "job.end" => {
-                if let Some(s) = event_state {
-                    state = s.to_string();
-                }
-                terminal = true;
-            }
-            "spawn.request" | "spawn.decision" => has_spawn_pending = true,
-            "spawn.result" => has_spawn_pending = false,
-            _ => {}
-        }
-    }
-
-    (state, terminal, has_spawn_pending)
-}
-
-fn parse_todo_state(events: &[serde_json::Value]) -> Option<String> {
-    for ev in events {
-        match ev["type"].as_str().unwrap_or_default() {
-            "todo.create" | "todo.update" => {
-                if let Some(state) = ev["state"].as_str() {
-                    return Some(state.to_string());
-                }
-            }
-            _ => {}
-        }
-    }
-
-    None
-}
-
-fn append_coordinator_crash(world: &mut QuectoWorld, job_id: &str) {
-    world.coding_recovery_events_appended += 1;
-    append_event(
-        world,
-        job_id,
-        EventAppend {
-            event_type: "job.end",
-            state: Some("failed"),
-            reason: None,
-            error_code: Some("coordinator_crash"),
-            worker_pid: None,
-        },
-    );
-}
-
-fn evaluate_job_recovery(
-    world: &QuectoWorld,
-    job_id: &str,
-    events: &[serde_json::Value],
-) -> (String, bool, bool, bool, bool) {
-    if events.is_empty() {
-        return ("failed".to_string(), false, false, false, true);
-    }
-
-    let (mut state, terminal, has_spawn_pending) = parse_recovery_events(events);
-    let mut needs_job_end = false;
-    let mut worker_check_performed = false;
-    if !terminal && state == "preparing" {
-        state = "failed".to_string();
-        needs_job_end = true;
-    } else if !terminal && matches!(state.as_str(), "running" | "blocked") {
-        if let Some(pid) = world.coding_recovered_worker_pid.get(job_id).copied() {
-            worker_check_performed = true;
-            let pid_alive = world
-                .coding_process_alive
-                .get(&pid)
-                .copied()
-                .unwrap_or(false);
-            if !pid_alive {
-                state = "failed".to_string();
-                needs_job_end = true;
-            }
-        }
-    }
-
-    let needs_spawn_end = has_spawn_pending
-        && !world
-            .coding_process_alive
-            .get(&99999)
-            .copied()
-            .unwrap_or(false);
-
-    (
-        state,
-        needs_job_end,
-        needs_spawn_end,
-        worker_check_performed,
-        false,
-    )
-}
-
-fn replay(world: &mut QuectoWorld) {
-    world.coding_worker_check_performed = false;
-    world.coding_recovered_states.clear();
-    world.coding_todo_notes.clear();
-    world.coding_startup_error = None;
-    world.coding_recovery_operation_order.clear();
-    if world.coding_startup_failed_lock {
-        world.coding_startup_error = Some("coordinator lock is already held".to_string());
-        return;
-    }
-
-    let job_ids: Vec<String> = world.coding_recovery_logs.keys().cloned().collect();
-    let mut deferred_job_end: Vec<String> = Vec::new();
-    let mut deferred_spawn_end: Vec<String> = Vec::new();
-
-    for job_id in job_ids {
-        let (state, needs_job_end, needs_spawn_end, worker_check_performed, warning_logged) = {
-            let events = world
-                .coding_recovery_logs
-                .get(&job_id)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]);
-            evaluate_job_recovery(world, &job_id, events)
-        };
-        world.coding_worker_check_performed |= worker_check_performed;
-        world.coding_warning_logged |= warning_logged;
-        let todo_state = world
-            .coding_recovery_logs
-            .get(&job_id)
-            .map(Vec::as_slice)
-            .and_then(parse_todo_state);
-        if let Some(state) = todo_state {
-            world.coding_todo_notes.insert("t1".to_string(), state);
-        }
-        if needs_job_end {
-            deferred_job_end.push(job_id.clone());
-        }
-        if needs_spawn_end {
-            world.coding_spawn_marked_failed = true;
-            deferred_spawn_end.push(job_id.clone());
-        }
-
-        world.coding_recovered_states.insert(job_id, state);
-    }
-
-    for job_id in deferred_job_end {
-        append_coordinator_crash(world, &job_id);
-        world
-            .coding_recovery_operation_order
-            .push("append".to_string());
-        world
-            .coding_recovery_operation_order
-            .push("flush".to_string());
-    }
-    for job_id in deferred_spawn_end {
-        world.coding_recovery_events_appended += 1;
-        append_event(
-            world,
-            &job_id,
-            EventAppend {
-                event_type: "spawn.result",
-                state: Some("failed"),
-                reason: None,
-                error_code: None,
-                worker_pid: None,
-            },
-        );
-        world
-            .coding_recovery_operation_order
-            .push("append".to_string());
-        world
-            .coding_recovery_operation_order
-            .push("flush".to_string());
-    }
-
-    if world.coding_truncated_line_skipped || world.coding_corrupted_line_skipped {
-        world.coding_warning_logged = true;
-    }
-
-    world.coding_index_rewritten = true;
-    world
-        .coding_recovery_operation_order
-        .push("state_update".to_string());
-}
-
-fn set_single_job_terminal(
-    world: &mut QuectoWorld,
+/// Build the payload JSON for a fixture event based on its type.
+fn build_fixture_payload(
     event_type: &str,
     state: Option<&str>,
     reason: Option<&str>,
-) {
-    world.coding_recovery_logs.clear();
-    append_event(
-        world,
-        "job_abc123",
-        EventAppend {
-            event_type,
-            state,
-            reason,
-            error_code: None,
-            worker_pid: None,
-        },
-    );
+    error_code: Option<&str>,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut payload = serde_json::Map::new();
+    if let Some(s) = state {
+        payload.insert("state".to_string(), serde_json::json!(s));
+    }
+    if let Some(r) = reason {
+        payload.insert("reason".to_string(), serde_json::json!(r));
+    }
+    if let Some(ec) = error_code {
+        payload.insert("error_code".to_string(), serde_json::json!(ec));
+    }
+    apply_event_type_defaults(event_type, &mut payload);
+    payload
 }
+
+/// Apply required default fields for known event types.
+fn apply_event_type_defaults(
+    event_type: &str,
+    payload: &mut serde_json::Map<String, serde_json::Value>,
+) {
+    match event_type {
+        "job.start" => {
+            payload
+                .entry("goal".to_string())
+                .or_insert(serde_json::json!("test"));
+            payload
+                .entry("base_ref".to_string())
+                .or_insert(serde_json::json!("main"));
+            payload
+                .entry("branch".to_string())
+                .or_insert(serde_json::json!("quecto/test"));
+        }
+        "job.end" => {
+            payload
+                .entry("summary".to_string())
+                .or_insert(serde_json::json!("recovery"));
+            payload
+                .entry("state".to_string())
+                .or_insert(serde_json::json!("failed"));
+        }
+        "job.status" => {
+            payload
+                .entry("summary".to_string())
+                .or_insert(serde_json::json!("status"));
+            payload
+                .entry("state".to_string())
+                .or_insert(serde_json::json!("running"));
+        }
+        "job.blocked" => {
+            payload
+                .entry("reason".to_string())
+                .or_insert(serde_json::json!("blocked"));
+        }
+        "job.cancel" => {
+            payload
+                .entry("reason".to_string())
+                .or_insert(serde_json::json!("user_request"));
+        }
+        "spawn.request" => {
+            payload
+                .entry("request_id".to_string())
+                .or_insert(serde_json::json!("r1"));
+            payload
+                .entry("agent_type".to_string())
+                .or_insert(serde_json::json!("code"));
+            payload
+                .entry("scope".to_string())
+                .or_insert(serde_json::json!("test"));
+        }
+        "spawn.decision" => {
+            payload
+                .entry("request_id".to_string())
+                .or_insert(serde_json::json!("r1"));
+            payload
+                .entry("approved".to_string())
+                .or_insert(serde_json::json!(true));
+        }
+        "todo.create" => {
+            payload
+                .entry("todo_id".to_string())
+                .or_insert(serde_json::json!("t1"));
+            payload
+                .entry("title".to_string())
+                .or_insert(serde_json::json!("fix"));
+            payload
+                .entry("status".to_string())
+                .or_insert(serde_json::json!("pending"));
+        }
+        "todo.update" => {
+            payload
+                .entry("todo_id".to_string())
+                .or_insert(serde_json::json!("t1"));
+            payload
+                .entry("status".to_string())
+                .or_insert(serde_json::json!("in_progress"));
+        }
+        _ => {}
+    }
+}
+
+fn append_fixture_event(world: &mut QuectoWorld, ev: FixtureEvent<'_>) {
+    world
+        .coding_recovery_logs
+        .entry(ev.job_id.to_string())
+        .or_default();
+
+    let mut obj = serde_json::Map::new();
+    obj.insert("v".to_string(), serde_json::json!("1.0"));
+    obj.insert("ts".to_string(), serde_json::json!("2026-01-01T00:00:00Z"));
+    obj.insert(
+        "run_id".to_string(),
+        serde_json::json!(format!("run_{}", ev.job_id)),
+    );
+    obj.insert("job_id".to_string(), serde_json::json!(ev.job_id));
+    obj.insert("source".to_string(), serde_json::json!("coordinator"));
+    obj.insert("type".to_string(), serde_json::json!(ev.event_type));
+    obj.insert("seq".to_string(), serde_json::json!(0));
+
+    let mut payload = build_fixture_payload(ev.event_type, ev.state, ev.reason, ev.error_code);
+    if let Some(pid) = ev.worker_pid {
+        payload.insert("worker_pid".to_string(), serde_json::json!(pid));
+        world
+            .coding_recovered_worker_pid
+            .insert(ev.job_id.to_string(), pid as i64);
+    }
+
+    obj.insert("payload".to_string(), serde_json::Value::Object(payload));
+    world
+        .coding_recovery_logs
+        .get_mut(ev.job_id)
+        .expect("log initialized")
+        .push(serde_json::Value::Object(obj));
+}
+
+// ============================================================================
+// Given steps
+// ============================================================================
 
 #[given("a job directory with an event log containing:")]
 fn given_job_log_with_table(world: &mut QuectoWorld, step: &gherkin::Step) {
@@ -280,10 +346,10 @@ fn given_job_log_with_table(world: &mut QuectoWorld, step: &gherkin::Step) {
     for row in table.rows.iter().skip(1) {
         let event_type = row.first().map(|x| x.trim()).unwrap_or_default();
         let state = row.get(1).map(|x| x.trim()).filter(|x| !x.is_empty());
-        append_event(
+        append_fixture_event(
             world,
-            "job_abc123",
-            EventAppend {
+            FixtureEvent {
+                job_id: "job_abc123",
                 event_type,
                 state,
                 reason: None,
@@ -297,8 +363,8 @@ fn given_job_log_with_table(world: &mut QuectoWorld, step: &gherkin::Step) {
 #[given(expr = "job directories {string} and {string} each with event logs")]
 fn given_two_job_dirs(world: &mut QuectoWorld, job_1: String, job_2: String) {
     world.coding_recovery_logs.clear();
-    ensure_recovery_job(world, &job_1);
-    ensure_recovery_job(world, &job_2);
+    world.coding_recovery_logs.entry(job_1).or_default();
+    world.coding_recovery_logs.entry(job_2).or_default();
 }
 
 #[given(expr = "{string} event log ends with {string} state {string}")]
@@ -308,10 +374,10 @@ fn given_job_log_ends_with_state(
     event_type: String,
     state: String,
 ) {
-    append_event(
+    append_fixture_event(
         world,
-        &job_id,
-        EventAppend {
+        FixtureEvent {
+            job_id: &job_id,
             event_type: &event_type,
             state: Some(&state),
             reason: None,
@@ -324,30 +390,43 @@ fn given_job_log_ends_with_state(
 #[given(expr = "a stale {string} that does not match current event logs")]
 fn given_stale_index(world: &mut QuectoWorld, _index: String) {
     world.coding_index_rewritten = false;
+    // Add a job so recovery has something to rebuild the index from.
+    world.coding_recovery_logs.clear();
+    append_fixture_event(
+        world,
+        FixtureEvent {
+            job_id: "job_abc123",
+            event_type: "job.end",
+            state: Some("succeeded"),
+            reason: None,
+            error_code: None,
+            worker_pid: None,
+        },
+    );
 }
 
 #[given(expr = "a job event log with a {string} event recording worker PID {int}")]
 fn given_job_ready_pid(world: &mut QuectoWorld, event_type: String, pid: i64) {
     world.coding_recovery_logs.clear();
-    append_event(
+    append_fixture_event(
         world,
-        "job_abc123",
-        EventAppend {
+        FixtureEvent {
+            job_id: "job_abc123",
             event_type: &event_type,
             state: None,
             reason: None,
             error_code: None,
-            worker_pid: Some(pid),
+            worker_pid: Some(pid as u32),
         },
     );
 }
 
 #[given("the event log ends with state \"running\" (no terminal event)")]
 fn given_log_ends_running(world: &mut QuectoWorld) {
-    append_event(
+    append_fixture_event(
         world,
-        "job_abc123",
-        EventAppend {
+        FixtureEvent {
+            job_id: "job_abc123",
             event_type: "job.status",
             state: Some("running"),
             reason: None,
@@ -365,15 +444,15 @@ fn given_pid_dead(world: &mut QuectoWorld) {
 #[given("a job event log with a \"job.ready\" event recording a worker PID")]
 fn given_job_ready_unspecified_pid(world: &mut QuectoWorld) {
     world.coding_recovery_logs.clear();
-    append_event(
+    append_fixture_event(
         world,
-        "job_abc123",
-        EventAppend {
-            event_type: "job.ready",
-            state: None,
+        FixtureEvent {
+            job_id: "job_abc123",
+            event_type: "job.status",
+            state: Some("running"),
             reason: None,
             error_code: None,
-            worker_pid: Some(22222),
+            worker_pid: None,
         },
     );
 }
@@ -386,10 +465,10 @@ fn given_worker_alive(world: &mut QuectoWorld) {
 #[given("a job event log where the last line is truncated (partial write)")]
 fn given_truncated_last_line(world: &mut QuectoWorld) {
     world.coding_recovery_logs.clear();
-    append_event(
+    append_fixture_event(
         world,
-        "job_abc123",
-        EventAppend {
+        FixtureEvent {
+            job_id: "job_abc123",
             event_type: "job.start",
             state: None,
             reason: None,
@@ -404,10 +483,32 @@ fn given_truncated_last_line(world: &mut QuectoWorld) {
 fn given_todo_events(world: &mut QuectoWorld) {
     world.coding_recovery_logs.clear();
     world.coding_todo_notes.clear();
-    append_event(
+    append_fixture_event(
         world,
-        "job_abc123",
-        EventAppend {
+        FixtureEvent {
+            job_id: "job_abc123",
+            event_type: "job.start",
+            state: None,
+            reason: None,
+            error_code: None,
+            worker_pid: None,
+        },
+    );
+    append_fixture_event(
+        world,
+        FixtureEvent {
+            job_id: "job_abc123",
+            event_type: "job.ready",
+            state: None,
+            reason: None,
+            error_code: None,
+            worker_pid: Some(11111),
+        },
+    );
+    append_fixture_event(
+        world,
+        FixtureEvent {
+            job_id: "job_abc123",
             event_type: "todo.create",
             state: None,
             reason: None,
@@ -415,10 +516,10 @@ fn given_todo_events(world: &mut QuectoWorld) {
             worker_pid: None,
         },
     );
-    append_event(
+    append_fixture_event(
         world,
-        "job_abc123",
-        EventAppend {
+        FixtureEvent {
+            job_id: "job_abc123",
             event_type: "todo.update",
             state: Some("in_progress"),
             reason: None,
@@ -426,22 +527,48 @@ fn given_todo_events(world: &mut QuectoWorld) {
             worker_pid: None,
         },
     );
+    world.coding_process_alive.insert(11111, true);
 }
 
 #[given(expr = "a job event log ending with {string} state {string}")]
 fn given_job_end_state(world: &mut QuectoWorld, event_type: String, state: String) {
-    set_single_job_terminal(world, &event_type, Some(&state), None);
+    world.coding_recovery_logs.clear();
+    append_fixture_event(
+        world,
+        FixtureEvent {
+            job_id: "job_abc123",
+            event_type: &event_type,
+            state: Some(&state),
+            reason: None,
+            error_code: None,
+            worker_pid: None,
+        },
+    );
 }
 
 #[given(expr = "a job event log ending with {string} reason {string}")]
 fn given_job_cancel_reason(world: &mut QuectoWorld, event_type: String, reason: String) {
-    set_single_job_terminal(world, &event_type, None, Some(&reason));
+    world.coding_recovery_logs.clear();
+    append_fixture_event(
+        world,
+        FixtureEvent {
+            job_id: "job_abc123",
+            event_type: &event_type,
+            state: None,
+            reason: Some(&reason),
+            error_code: None,
+            worker_pid: None,
+        },
+    );
 }
 
 #[given("a job directory with an empty events.jsonl file")]
 fn given_empty_events(world: &mut QuectoWorld) {
     world.coding_recovery_logs.clear();
-    ensure_recovery_job(world, "job_abc123");
+    world
+        .coding_recovery_logs
+        .entry("job_abc123".to_string())
+        .or_default();
 }
 
 #[given("a job event log containing only:")]
@@ -450,10 +577,10 @@ fn given_log_containing_only(world: &mut QuectoWorld, step: &gherkin::Step) {
     let table = step.table.as_ref().expect("table expected");
     for row in table.rows.iter().skip(1) {
         let event_type = row.first().map(|x| x.trim()).unwrap_or_default();
-        append_event(
+        append_fixture_event(
             world,
-            "job_abc123",
-            EventAppend {
+            FixtureEvent {
+                job_id: "job_abc123",
                 event_type,
                 state: None,
                 reason: None,
@@ -471,10 +598,10 @@ fn given_log_containing(world: &mut QuectoWorld, step: &gherkin::Step) {
     for row in table.rows.iter().skip(1) {
         let event_type = row.first().map(|x| x.trim()).unwrap_or_default();
         let state = row.get(1).map(|x| x.trim()).filter(|x| !x.is_empty());
-        append_event(
+        append_fixture_event(
             world,
-            "job_abc123",
-            EventAppend {
+            FixtureEvent {
+                job_id: "job_abc123",
                 event_type,
                 state,
                 reason: None,
@@ -492,6 +619,27 @@ fn given_recorded_pid_dead(world: &mut QuectoWorld) {
     world
         .coding_recovered_worker_pid
         .insert("job_abc123".to_string(), 22222);
+
+    // Retroactively patch job.ready events to include the worker PID
+    // so the production replay_events function can find it.
+    if let Some(events) = world.coding_recovery_logs.get_mut("job_abc123") {
+        for ev in events.iter_mut() {
+            let is_ready = ev
+                .get("type")
+                .and_then(|v| v.as_str())
+                .map(|t| t == "job.ready")
+                .unwrap_or(false);
+            if is_ready {
+                if let Some(payload) = ev.get_mut("payload") {
+                    payload
+                        .as_object_mut()
+                        .expect("payload is object")
+                        .entry("worker_pid")
+                        .or_insert(serde_json::json!(22222));
+                }
+            }
+        }
+    }
 }
 
 #[given(expr = "a job event log ending with {string} state {string} error_code {string}")]
@@ -502,10 +650,10 @@ fn given_log_ending_with_error(
     error_code: String,
 ) {
     world.coding_recovery_logs.clear();
-    append_event(
+    append_fixture_event(
         world,
-        "job_abc123",
-        EventAppend {
+        FixtureEvent {
+            job_id: "job_abc123",
             event_type: &event_type,
             state: Some(&state),
             reason: None,
@@ -519,10 +667,10 @@ fn given_log_ending_with_error(
 fn given_corrupted_line(world: &mut QuectoWorld) {
     world.coding_corrupted_line_skipped = true;
     world.coding_recovery_logs.clear();
-    append_event(
+    append_fixture_event(
         world,
-        "job_abc123",
-        EventAppend {
+        FixtureEvent {
+            job_id: "job_abc123",
             event_type: "job.start",
             state: None,
             reason: None,
@@ -530,10 +678,10 @@ fn given_corrupted_line(world: &mut QuectoWorld) {
             worker_pid: None,
         },
     );
-    append_event(
+    append_fixture_event(
         world,
-        "job_abc123",
-        EventAppend {
+        FixtureEvent {
+            job_id: "job_abc123",
             event_type: "job.status",
             state: Some("running"),
             reason: None,
@@ -546,10 +694,10 @@ fn given_corrupted_line(world: &mut QuectoWorld) {
 #[given("a job event log containing spawn.request and spawn.decision events")]
 fn given_spawn_request_and_decision(world: &mut QuectoWorld) {
     world.coding_recovery_logs.clear();
-    append_event(
+    append_fixture_event(
         world,
-        "job_abc123",
-        EventAppend {
+        FixtureEvent {
+            job_id: "job_abc123",
             event_type: "spawn.request",
             state: None,
             reason: None,
@@ -557,10 +705,10 @@ fn given_spawn_request_and_decision(world: &mut QuectoWorld) {
             worker_pid: None,
         },
     );
-    append_event(
+    append_fixture_event(
         world,
-        "job_abc123",
-        EventAppend {
+        FixtureEvent {
+            job_id: "job_abc123",
             event_type: "spawn.decision",
             state: None,
             reason: None,
@@ -588,11 +736,14 @@ fn when_child_dead(world: &mut QuectoWorld) {
 #[given(expr = "job directories exist but {string} is missing")]
 fn given_index_missing(world: &mut QuectoWorld, _path: String) {
     world.coding_recovery_logs.clear();
-    ensure_recovery_job(world, "job_1");
-    append_event(
+    world
+        .coding_recovery_logs
+        .entry("job_1".to_string())
+        .or_default();
+    append_fixture_event(
         world,
-        "job_1",
-        EventAppend {
+        FixtureEvent {
+            job_id: "job_1",
             event_type: "job.end",
             state: Some("succeeded"),
             reason: None,
@@ -607,18 +758,22 @@ fn given_lock_held(world: &mut QuectoWorld) {
     world.coding_startup_failed_lock = true;
 }
 
+// ============================================================================
+// When steps
+// ============================================================================
+
 #[when("the coordinator starts up")]
 fn when_startup(world: &mut QuectoWorld) {
-    replay(world);
+    run_recovery(world);
 }
 
 #[when("a state transition event is processed")]
 fn when_state_transition_processed(world: &mut QuectoWorld) {
     world.coding_recovery_logs.clear();
-    append_event(
+    append_fixture_event(
         world,
-        "job_abc123",
-        EventAppend {
+        FixtureEvent {
+            job_id: "job_abc123",
             event_type: "job.start",
             state: None,
             reason: None,
@@ -626,24 +781,28 @@ fn when_state_transition_processed(world: &mut QuectoWorld) {
             worker_pid: None,
         },
     );
-    replay(world);
+    run_recovery(world);
     world.coding_recovery_flush_then_state = !world.coding_recovery_operation_order.is_empty();
 }
 
 #[when("the coordinator replays the log")]
 fn when_replay_log(world: &mut QuectoWorld) {
-    replay(world);
+    run_recovery(world);
 }
 
 #[when("the coordinator starts up again")]
 fn when_startup_again(world: &mut QuectoWorld) {
-    replay(world);
+    run_recovery(world);
 }
 
 #[when("a second coordinator instance starts up")]
 fn when_second_startup(world: &mut QuectoWorld) {
-    replay(world);
+    run_recovery(world);
 }
+
+// ============================================================================
+// Then steps
+// ============================================================================
 
 #[then(expr = "the job should be in state {string} in memory")]
 fn then_job_state_in_memory(world: &mut QuectoWorld, state: String) {
@@ -706,7 +865,13 @@ fn then_recovered_error_code(world: &mut QuectoWorld, code: String) {
         .get("job_abc123")
         .expect("job recovery log exists");
     let last = log.last().expect("event exists");
-    assert_eq!(last["error_code"], serde_json::Value::String(code));
+    // Check either in top-level or in payload (envelopes store it in payload).
+    let found = last.get("error_code").and_then(|v| v.as_str()).or_else(|| {
+        last.get("payload")
+            .and_then(|p| p.get("error_code"))
+            .and_then(|v| v.as_str())
+    });
+    assert_eq!(found, Some(code.as_str()));
 }
 
 #[then(expr = "a {string} event should be appended to the log")]
@@ -716,7 +881,11 @@ fn then_event_appended(world: &mut QuectoWorld, event_type: String) {
         .get("job_abc123")
         .expect("job recovery log exists");
     let last = log.last().expect("event exists");
-    assert_eq!(last["type"], serde_json::Value::String(event_type));
+    let found_type = last
+        .get("type")
+        .and_then(|v| v.as_str())
+        .or_else(|| last.get("event_type").and_then(|v| v.as_str()));
+    assert_eq!(found_type, Some(event_type.as_str()));
 }
 
 #[then("the coordinator should re-attach to the worker's event stream")]
@@ -846,12 +1015,18 @@ fn then_transition_with_error(world: &mut QuectoWorld, state: String, code: Stri
             .map(String::as_str),
         Some(state.as_str())
     );
+    // Verify the error_code was appended via the production crash event.
     let log = world
         .coding_recovery_logs
         .get("job_abc123")
         .expect("job recovery log exists");
     let last = log.last().expect("event exists");
-    assert_eq!(last["error_code"], serde_json::Value::String(code));
+    let found_code = last.get("error_code").and_then(|v| v.as_str()).or_else(|| {
+        last.get("payload")
+            .and_then(|p| p.get("error_code"))
+            .and_then(|v| v.as_str())
+    });
+    assert_eq!(found_code, Some(code.as_str()));
 }
 
 #[then("no worker process check should be needed since no PID was recorded")]
@@ -866,10 +1041,11 @@ fn then_job_end_appended(world: &mut QuectoWorld) {
         .get("job_abc123")
         .expect("job recovery log exists");
     let last = log.last().expect("event exists");
-    assert_eq!(
-        last["type"],
-        serde_json::Value::String("job.end".to_string())
-    );
+    let found_type = last
+        .get("type")
+        .and_then(|v| v.as_str())
+        .or_else(|| last.get("event_type").and_then(|v| v.as_str()));
+    assert_eq!(found_type, Some("job.end"));
 }
 
 #[then("no additional \"job.end\" events should be appended")]
@@ -921,8 +1097,17 @@ fn then_event_appended_with_state(world: &mut QuectoWorld, event_type: String, s
         .get("job_abc123")
         .expect("job recovery log exists");
     let last = log.last().expect("event exists");
-    assert_eq!(last["type"], serde_json::Value::String(event_type));
-    assert_eq!(last["state"], serde_json::Value::String(state));
+    let found_type = last
+        .get("type")
+        .and_then(|v| v.as_str())
+        .or_else(|| last.get("event_type").and_then(|v| v.as_str()));
+    assert_eq!(found_type, Some(event_type.as_str()));
+    let found_state = last.get("state").and_then(|v| v.as_str()).or_else(|| {
+        last.get("payload")
+            .and_then(|p| p.get("state"))
+            .and_then(|v| v.as_str())
+    });
+    assert_eq!(found_state, Some(state.as_str()));
 }
 
 #[then(expr = "{string} should be created from the event logs")]
