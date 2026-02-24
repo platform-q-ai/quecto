@@ -175,6 +175,10 @@ fn replay(world: &mut QuectoWorld) {
         world.coding_recovered_states.insert(job_id, state);
     }
 
+    if world.coding_truncated_line_skipped || world.coding_corrupted_line_skipped {
+        world.coding_warning_logged = true;
+    }
+
     world.coding_index_rewritten = true;
 }
 
@@ -247,7 +251,9 @@ fn given_job_log_ends_with_state(
 }
 
 #[given(expr = "a stale {string} that does not match current event logs")]
-fn given_stale_index(_world: &mut QuectoWorld, _index: String) {}
+fn given_stale_index(world: &mut QuectoWorld, _index: String) {
+    world.coding_index_rewritten = false;
+}
 
 #[given(expr = "a job event log with a {string} event recording worker PID {int}")]
 fn given_job_ready_pid(world: &mut QuectoWorld, event_type: String, pid: i64) {
@@ -496,7 +502,9 @@ fn given_spawn_request_and_decision(world: &mut QuectoWorld) {
 }
 
 #[given("no spawn.result event")]
-fn given_no_spawn_result(_world: &mut QuectoWorld) {}
+fn given_no_spawn_result(world: &mut QuectoWorld) {
+    world.coding_spawn_marked_failed = false;
+}
 
 #[given("the child agent process is no longer alive")]
 fn given_child_dead(world: &mut QuectoWorld) {
@@ -669,7 +677,6 @@ fn then_recovery_proceeds(world: &mut QuectoWorld) {
 
 #[then("a warning should be logged about the truncated line")]
 fn then_warn_truncated(world: &mut QuectoWorld) {
-    world.coding_warning_logged = true;
     assert!(world.coding_warning_logged);
 }
 
@@ -777,7 +784,6 @@ fn then_recovery_after_corruption(world: &mut QuectoWorld) {
 
 #[then("a warning should be logged about the corrupted line")]
 fn then_warn_corrupted(world: &mut QuectoWorld) {
-    world.coding_warning_logged = true;
     assert!(world.coding_warning_logged);
 }
 
