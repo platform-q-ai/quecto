@@ -6,6 +6,9 @@
 
 use std::collections::HashMap;
 
+use super::coding_spawn_manager::{
+    SpawnDecision, SpawnError, SpawnManager, SpawnPolicy, SpawnRequest, SpawnResult,
+};
 use super::coding_todos::TodoTracker;
 use crate::domain::coding_command::{
     CancelResponse, CleanupResponse, CommandError, ListJobEntry, ListRequest, ListResponse,
@@ -92,6 +95,7 @@ pub struct CodingCoordinator<R: RepoValidator, S: SkillResolver> {
     skill_resolver: S,
     id_counter: u64,
     todo_tracker: TodoTracker,
+    spawn_managers: HashMap<String, SpawnManager>,
 }
 
 impl<R: RepoValidator, S: SkillResolver> std::fmt::Debug for CodingCoordinator<R, S> {
@@ -115,6 +119,7 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
             skill_resolver,
             id_counter: 0,
             todo_tracker: TodoTracker::new(),
+            spawn_managers: HashMap::new(),
         }
     }
 
@@ -564,6 +569,130 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
             },
         );
         Ok(())
+    }
+
+    // ── spawn management ─────────────────────────────────────────────────
+
+    /// Initialize a spawn manager for a job with the given policy.
+    pub fn init_spawn_manager(&mut self, job_id: &str, policy: SpawnPolicy) {
+        self.spawn_managers
+            .insert(job_id.to_string(), SpawnManager::new(policy));
+    }
+
+    /// Get a reference to the spawn manager for a job.
+    pub fn spawn_manager(&self, job_id: &str) -> Option<&SpawnManager> {
+        self.spawn_managers.get(job_id)
+    }
+
+    /// Get a mutable reference to the spawn manager for a job.
+    pub fn spawn_manager_mut(&mut self, job_id: &str) -> Option<&mut SpawnManager> {
+        self.spawn_managers.get_mut(job_id)
+    }
+
+    /// Evaluate a spawn request and emit the decision event.
+    pub fn evaluate_spawn(
+        &mut self,
+        job_id: &str,
+        req: &SpawnRequest,
+    ) -> Result<SpawnDecision, CommandError> {
+        let job = self.jobs.get(job_id).ok_or(CommandError::NotFound)?;
+        let rid = job.run_id.clone();
+
+        // Emit spawn.request event from worker
+        self.emit(
+            &rid,
+            job_id,
+            EventMeta {
+                source: EventSource::Worker,
+                event_type: "spawn.request".to_string(),
+                payload: serde_json::json!({
+                    "request_id": req.request_id,
+                    "agent_type": req.agent_type,
+                    "scope": req.scope,
+                    "expected_output": req.expected_output,
+                }),
+            },
+        );
+
+        let mgr = self
+            .spawn_managers
+            .get_mut(job_id)
+            .ok_or(CommandError::NotFound)?;
+        let decision = mgr.evaluate(req);
+
+        // Emit spawn.decision event from coordinator
+        let mut payload = serde_json::json!({
+            "request_id": decision.request_id,
+            "agent_type": decision.agent_type,
+            "approved": decision.approved,
+        });
+        if let Some(reason) = &decision.reason {
+            payload["reason"] = serde_json::json!(reason);
+        }
+        self.emit(
+            &rid,
+            job_id,
+            EventMeta {
+                source: EventSource::Coordinator,
+                event_type: "spawn.decision".to_string(),
+                payload,
+            },
+        );
+
+        Ok(decision)
+    }
+
+    /// Record a spawn result and emit the result event.
+    pub fn record_spawn_result(
+        &mut self,
+        job_id: &str,
+        result: SpawnResult,
+    ) -> Result<(), CommandError> {
+        let job = self.jobs.get(job_id).ok_or(CommandError::NotFound)?;
+        let rid = job.run_id.clone();
+
+        let mgr = self
+            .spawn_managers
+            .get_mut(job_id)
+            .ok_or(CommandError::NotFound)?;
+        mgr.record_result(result.clone())
+            .map_err(|_| CommandError::NotFound)?;
+
+        let mut payload = serde_json::json!({
+            "request_id": result.request_id,
+            "state": result.state,
+        });
+        if let Some(summary) = &result.summary {
+            payload["summary"] = serde_json::json!(summary);
+        }
+        if !result.artifact_refs.is_empty() {
+            payload["artifact_refs"] = serde_json::json!(result.artifact_refs);
+        }
+        self.emit(
+            &rid,
+            job_id,
+            EventMeta {
+                source: EventSource::Coordinator,
+                event_type: "spawn.result".to_string(),
+                payload,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Try recording a result for an unknown request_id. Returns error
+    /// indicating the result should be discarded.
+    pub fn try_record_spawn_result(
+        &mut self,
+        job_id: &str,
+        result: SpawnResult,
+    ) -> Result<(), SpawnError> {
+        let mgr = self
+            .spawn_managers
+            .get_mut(job_id)
+            .ok_or(SpawnError::UnknownRequestId)?;
+        mgr.record_result(result)
     }
 }
 

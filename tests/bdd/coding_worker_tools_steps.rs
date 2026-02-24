@@ -627,11 +627,19 @@ fn then_artifact_file_exists(world: &mut QuectoWorld) {
 
 #[then(expr = "an {string} event should be emitted with artifact_type {string}")]
 fn then_event_with_artifact_type(world: &mut QuectoWorld, event: String, artifact_type: String) {
-    let e = world
-        .coding_events
-        .iter()
-        .rev()
-        .find(|e| e.event_type == event)
+    // Check coordinator events first, fall back to world.coding_events.
+    let coord_match = world
+        .coding_coordinator
+        .as_ref()
+        .and_then(|c| c.events().iter().rev().find(|e| e.event_type == event));
+    let e = coord_match
+        .or_else(|| {
+            world
+                .coding_events
+                .iter()
+                .rev()
+                .find(|e| e.event_type == event)
+        })
         .unwrap_or_else(|| panic!("missing {event}"));
     assert_eq!(e.payload["artifact_type"], artifact_type);
 }
