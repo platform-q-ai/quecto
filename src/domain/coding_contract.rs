@@ -43,10 +43,7 @@ pub enum CodingContractError {
     ScopeMismatch,
 }
 
-pub fn validate_and_track_event(
-    envelope: &EventEnvelope,
-    seq_by_scope: &mut HashMap<SeqScope, u64>,
-) -> Result<(), CodingContractError> {
+fn validate_event_envelope(envelope: &EventEnvelope) -> Result<(), CodingContractError> {
     if !is_compatible_version(&envelope.v) {
         return Err(CodingContractError::IncompatibleVersion(envelope.v.clone()));
     }
@@ -88,8 +85,17 @@ pub fn validate_and_track_event(
         });
     }
 
+    Ok(())
+}
+
+pub fn validate_and_track_event(
+    envelope: &EventEnvelope,
+    seq_by_scope: &mut HashMap<SeqScope, u64>,
+) -> Result<(), CodingContractError> {
+    validate_event_envelope(envelope)?;
+
     let scope = SeqScope::new(envelope.source, &envelope.run_id, &envelope.job_id);
-    validate_and_track_event_with_scope(envelope, scope, seq_by_scope)
+    track_event_seq(envelope, scope, seq_by_scope)
 }
 
 pub fn validate_and_track_event_with_scope(
@@ -97,11 +103,21 @@ pub fn validate_and_track_event_with_scope(
     scope: SeqScope,
     seq_by_scope: &mut HashMap<SeqScope, u64>,
 ) -> Result<(), CodingContractError> {
+    validate_event_envelope(envelope)?;
+
     let derived = SeqScope::new(envelope.source, &envelope.run_id, &envelope.job_id);
     if scope != derived {
         return Err(CodingContractError::ScopeMismatch);
     }
 
+    track_event_seq(envelope, scope, seq_by_scope)
+}
+
+fn track_event_seq(
+    envelope: &EventEnvelope,
+    scope: SeqScope,
+    seq_by_scope: &mut HashMap<SeqScope, u64>,
+) -> Result<(), CodingContractError> {
     let prev = seq_by_scope.get(&scope).copied().unwrap_or(0);
     if envelope.seq <= prev {
         return Err(CodingContractError::InvalidSeq {

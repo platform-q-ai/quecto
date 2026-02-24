@@ -62,7 +62,7 @@ pub struct EventEnvelope {
     /// Event type string (e.g. "job.start", "tool.result").
     #[serde(rename = "type")]
     pub event_type: String,
-    /// Monotonically increasing sequence number, scoped per (source, job_id).
+    /// Monotonically increasing sequence number, scoped per (source, run_id, job_id).
     pub seq: u64,
     /// Event-type-specific payload.
     pub payload: serde_json::Value,
