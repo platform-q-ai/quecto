@@ -39,6 +39,8 @@ pub enum CodingContractError {
     InvalidSeq { expected_prev: u64, actual: u64 },
     #[error("invalid payload for event type {event_type}: {reason}")]
     InvalidPayload { event_type: String, reason: String },
+    #[error("scope mismatch between envelope and tracker key")]
+    ScopeMismatch,
 }
 
 pub fn validate_and_track_event(
@@ -95,6 +97,11 @@ pub fn validate_and_track_event_with_scope(
     scope: SeqScope,
     seq_by_scope: &mut HashMap<SeqScope, u64>,
 ) -> Result<(), CodingContractError> {
+    let derived = SeqScope::new(envelope.source, &envelope.run_id, &envelope.job_id);
+    if scope != derived {
+        return Err(CodingContractError::ScopeMismatch);
+    }
+
     let prev = seq_by_scope.get(&scope).copied().unwrap_or(0);
     if envelope.seq <= prev {
         return Err(CodingContractError::InvalidSeq {
@@ -228,6 +235,22 @@ mod tests {
         assert_eq!(
             validate_and_track_event(&second_other_run, &mut seq),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn test_validate_with_scope_rejects_mismatch() {
+        let mut seq = HashMap::new();
+        let env = event(
+            "tool.start",
+            1,
+            EventSource::Worker,
+            serde_json::json!({"tool":"read_file","call_id":"c1"}),
+        );
+        let wrong_scope = SeqScope::new(EventSource::Worker, "run_other", "job_1");
+        assert_eq!(
+            validate_and_track_event_with_scope(&env, wrong_scope, &mut seq),
+            Err(CodingContractError::ScopeMismatch)
         );
     }
 }

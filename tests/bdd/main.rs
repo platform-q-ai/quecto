@@ -615,7 +615,7 @@ pub struct QuectoWorld {
     pub coding_jobs: Vec<quecto::domain::coding_job::CodingJob>,
     /// Emitted coding events during the current scenario
     pub coding_events: Vec<quecto::domain::coding_event::EventEnvelope>,
-    /// Last seen event seq per `(source, job_id)`
+    /// Last seen event seq per `(source, run_id, job_id)`
     pub coding_event_seq_by_source_job: HashMap<SeqScope, u64>,
     /// Last command error from a coding command
     pub coding_command_error: Option<quecto::domain::coding_command::CommandError>,
