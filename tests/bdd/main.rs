@@ -632,6 +632,36 @@ pub struct QuectoWorld {
     pub coding_skill_allowlist: Vec<String>,
     /// Skill policy: denylist
     pub coding_skill_denylist: Vec<String>,
+    /// Skill policy: whether coordinator injects skills
+    pub coding_skill_injection_enabled: bool,
+    /// Skill policy: default skills merged into each job
+    pub coding_skill_defaults: Vec<String>,
+    /// Profile to skills mapping
+    pub coding_profile_skills: HashMap<String, Vec<String>>,
+    /// Profile-specific allowlist overrides
+    pub coding_profile_allowlist: HashMap<String, Vec<String>>,
+    /// Profile-specific denylist overrides
+    pub coding_profile_denylist: HashMap<String, Vec<String>>,
+    /// Skills marked as missing from disk for scenario simulation
+    pub coding_missing_skill_files: Vec<String>,
+    /// Effective applied skills for the current job
+    pub coding_effective_skills: Vec<String>,
+    /// Last requested skills in run invocation
+    pub coding_requested_skills: Vec<String>,
+    /// Snapshot reference produced by skills injection
+    pub coding_skills_snapshot_ref: Option<String>,
+    /// skills_applied artifact path produced at job start
+    pub coding_skills_applied_artifact: Option<PathBuf>,
+    /// Last profile selected for skill resolution
+    pub coding_selected_profile: Option<String>,
+    /// Whether worker context includes injected skill content
+    pub coding_worker_context_has_skill_content: bool,
+    /// Whether worker skill directory access was denied
+    pub coding_worker_skill_access_denied: bool,
+    /// Recorded skill suggestions from worker events
+    pub coding_skill_suggestions: Vec<serde_json::Value>,
+    /// Whether latest suggestion was policy denied
+    pub coding_suggestion_policy_denied: bool,
     /// Last cleanup keep_artifacts flag used by scenario
     pub coding_keep_artifacts: bool,
     /// Whether a warning was logged in scenario simulation
@@ -899,6 +929,7 @@ mod agent_tools_steps;
 mod architecture_steps;
 mod auth_steps;
 mod coding_job_lifecycle_steps;
+mod coding_skills_steps;
 mod coding_todos_steps;
 mod coding_worker_tools_steps;
 mod config_steps;
