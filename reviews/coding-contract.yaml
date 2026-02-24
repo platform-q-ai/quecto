@@ -1,0 +1,324 @@
+version: "1.0"
+name: coding-runtime-contract
+owner: quecto
+status: draft
+
+# --- Identity model ---
+#
+# run_id:  A coordinator execution scope. One `run` command produces exactly
+#          one run_id. A run always contains exactly one primary job_id.
+#          Future: a run may fan out to multiple jobs (e.g. parallel sub-tasks).
+# job_id:  A single unit of isolated coding work (one nsjail worker, one repo
+#          clone, one branch, one event log). Job IDs are globally unique.
+# Relationship: run 1:N jobs (MVP: 1:1).
+
+transport:
+  command_api:
+    format: json
+    channel: in-memory-or-cli
+  event_stream:
+    format: jsonl
+    channel: stdio
+    max_event_size_bytes: 1048576  # 1 MiB hard cap per event line
+    durability:
+      event_log: jobs/<run-id>/<job-id>/events.jsonl
+      index: jobs/index.json  # rebuilt from event logs on startup; periodic snapshots only
+    seq_scope: per-job-monotonic  # seq counter is scoped per source+job_id
+
+roles:
+  main_agent:
+    responsibilities:
+      - set_goals
+      - select_next_action
+      - remain_responsive_to_user
+  coordinator:
+    responsibilities:
+      - manage_job_lifecycle
+      - enforce_policy
+      - aggregate_results
+      - manage_github_side_effects
+      - persist_events_artifacts
+      - enforce_network_policy
+      - enforce_secrets_policy
+      - enforce_skill_allowlist_denylist
+  worker:
+    responsibilities:
+      - execute_coding_tasks
+      - emit_structured_events
+    restrictions:
+      - no_direct_github_api
+      - no_direct_child_process_spawning_without_request
+
+commands:
+  run:
+    description: Start a new coding job.
+    request:
+      required: [goal, repo, base_ref]
+      properties:
+        goal: { type: string }
+        repo: { type: string, description: "repo identifier or local path" }
+        base_ref: { type: string }
+        priority: { type: string, enum: [low, medium, high], default: medium }
+        profile: { type: string, default: default }
+        max_wall_seconds: { type: integer, minimum: 1 }
+        labels:
+          type: array
+          items: { type: string }
+        skills:
+          type: array
+          items: { type: string }
+    response:
+      required: [run_id, job_id, state]
+      properties:
+        run_id: { type: string }
+        job_id: { type: string }
+        state: { $ref: "#/types/job_state" }
+    errors:
+      - code: invalid_repo
+        description: Repo identifier could not be resolved
+      - code: invalid_base_ref
+        description: Base ref does not exist in repo
+      - code: policy_denied
+        description: Job rejected by policy (skill denylist, resource limit, etc.)
+
+  status:
+    description: Query job or run status.
+    request:
+      one_of:
+        - required: [job_id]
+        - required: [run_id]
+    response:
+      required: [state]
+      properties:
+        state: { $ref: "#/types/job_state" }
+        summary: { type: string }
+        progress: { type: integer, minimum: 0, maximum: 100 }
+        todos:
+          type: array
+          items: { $ref: "#/types/todo_item" }
+        artifacts:
+          type: array
+          items: { type: string }
+        error_code: { type: string, description: "present when state is failed" }
+        error_detail: { type: string }
+
+  cancel:
+    description: Cancel a running or queued job.
+    request:
+      required: [job_id]
+    response:
+      required: [job_id, state]
+      properties:
+        job_id: { type: string }
+        state: { $ref: "#/types/job_state" }
+
+  cleanup:
+    description: Remove job directory and optionally artifacts.
+    request:
+      required: [job_id]
+      properties:
+        keep_artifacts: { type: boolean, default: true }
+    response:
+      required: [job_id, cleaned]
+      properties:
+        job_id: { type: string }
+        cleaned: { type: boolean }
+
+events:
+  envelope:
+    required: [v, ts, run_id, job_id, source, type, seq, payload]
+    properties:
+      v: { type: string, pattern: "^1\\.[0-9]+$" }
+      ts: { type: string, format: date-time }
+      run_id: { type: string }
+      job_id: { type: string }
+      source:
+        type: string
+        enum: [main_agent, coordinator, worker, child_agent]
+      type: { type: string }
+      seq: { type: integer, minimum: 1, description: "monotonic per source+job_id" }
+      payload: { type: object }
+
+  allowed_types:
+    # job lifecycle
+    - job.start        # emitted at queued -> preparing
+    - job.ready        # emitted at preparing -> running (clone done, worker starting)
+    - job.status       # periodic progress update
+    - job.blocked      # emitted at running -> blocked
+    - job.resumed      # emitted at blocked -> running
+    - job.cancel       # emitted on cancellation (by user or timeout)
+    - job.end          # terminal state reached
+    # todo tracking
+    - todo.create
+    - todo.update
+    - todo.blocked
+    - todo.complete
+    # tool execution
+    - tool.start
+    - tool.result
+    # child agents
+    - spawn.request
+    - spawn.decision
+    - spawn.result
+    # skills
+    - skills.applied
+    - skills.suggested
+    # github / publish
+    - publish.request
+    - publish.result
+    # artifacts and logging
+    - artifact.created
+    - log.message
+
+  payload_contracts:
+    job.start:
+      required: [goal, base_ref, branch]
+    job.ready:
+      required: [worker_pid]
+      optional: [clone_duration_ms]
+    job.status:
+      required: [state, summary]
+      optional: [progress]
+    job.blocked:
+      required: [reason]
+      optional: [needs]
+    job.resumed:
+      required: [reason]
+    job.cancel:
+      required: [reason]
+      optional: [initiated_by]
+      description: "reason values include: user_request, wall_timeout, resource_limit, coordinator_policy"
+    job.end:
+      required: [state, summary]
+      optional: [error_code, error_detail, is_retriable, artifacts, duration_ms]
+      description: "error_code present when state is failed. Values include: timeout, oom, seccomp_violation, tool_error, llm_refusal, internal"
+    todo.create:
+      required: [todo_id, title, status]
+      optional: [owner, depends_on]
+    todo.update:
+      required: [todo_id, status]
+      optional: [note]
+    todo.blocked:
+      required: [todo_id, reason]
+      optional: [needs]
+    todo.complete:
+      required: [todo_id, result]
+      optional: [artifact_refs]
+    tool.start:
+      required: [tool, call_id]
+      optional: [args_preview]
+    tool.result:
+      required: [tool, call_id, ok]
+      optional: [duration_ms, diff_ref, stderr_ref, stdout_ref, truncated]
+    spawn.request:
+      required: [request_id, agent_type, scope]
+      optional: [expected_output]
+    spawn.decision:
+      required: [request_id, approved]
+      optional: [reason]
+    spawn.result:
+      required: [request_id, state]
+      optional: [summary, artifact_refs]
+      description: "state uses job_state enum (succeeded/failed/canceled)"
+    skills.applied:
+      required: [skills, snapshot_ref]
+      optional: [profile]
+    skills.suggested:
+      required: [skills, reason]
+      optional: [by]
+    publish.request:
+      required: [action]
+      optional: [title, base, head, body, labels, reviewers]
+      description: "action values: push_branch, create_pr, update_pr, request_review, add_labels"
+    publish.result:
+      required: [action, ok]
+      optional: [pr_number, url, error]
+    artifact.created:
+      required: [artifact_id, artifact_type, path]
+      optional: [size_bytes, description]
+      description: "artifact_type values: patch, log, summary, review, test_output, snapshot"
+    log.message:
+      required: [level, message]
+      optional: [context]
+      description: "level values: debug, info, warn, error"
+
+types:
+  job_state:
+    type: string
+    enum:
+      - queued
+      - preparing
+      - running
+      - blocked
+      - failed
+      - succeeded
+      - canceled
+
+  todo_status:
+    type: string
+    enum:
+      - pending
+      - in_progress
+      - blocked
+      - completed
+      - failed
+      - canceled
+
+  todo_item:
+    type: object
+    required: [todo_id, title, status]
+    properties:
+      todo_id: { type: string }
+      title: { type: string }
+      status: { $ref: "#/types/todo_status" }
+      owner: { type: string }
+      depends_on:
+        type: array
+        items: { type: string }
+      artifact_refs:
+        type: array
+        items: { type: string }
+
+state_machine:
+  transitions:
+    queued: [preparing, failed, canceled]
+    preparing: [running, blocked, failed, canceled]
+    running: [blocked, failed, succeeded, canceled]
+    blocked: [running, failed, canceled]
+    failed: []
+    succeeded: []
+    canceled: []
+  notes:
+    - "queued -> failed covers validation rejection (bad repo, bad ref, policy denial)"
+    - "preparing -> blocked covers transient clone/mirror failures that may be retried"
+    - "All non-terminal states can transition to canceled"
+    - "failed and succeeded are terminal; cleanup is a separate command, not a state transition"
+
+policy:
+  child_agents:
+    allow_types:
+      - security-reviewer
+      - performance-reviewer
+      - architecture-reviewer
+      - documentation-updater
+    max_depth: 1
+    max_spawns_per_job: 3
+  github:
+    side_effects_owner: coordinator
+    force_push_default: deny
+    destructive_reset_default: deny
+  network:
+    default: deny
+    description: "All worker egress denied by default. Coordinator manages per-job allowlist via nsjail config."
+  secrets:
+    inject_policy: minimal_scope
+    redaction: required_in_logs_and_artifacts
+    storage_in_artifacts: never
+  skills:
+    injection_owner: coordinator
+    description: "Coordinator resolves and snapshots skills. Workers cannot load skills directly."
+
+compatibility:
+  unknown_event_type: ignore_and_log
+  unknown_payload_field: ignore
+  major_version_mismatch: reject
