@@ -144,7 +144,10 @@ fn persist_skill_artifacts(world: &mut QuectoWorld, profile: Option<String>) {
     perms.set_readonly(true);
     std::fs::set_permissions(&snapshot_path, perms).expect("set snapshot readonly");
 
-    let artifact_dir = base.join("coding-jobs").join("job_abc123");
+    let artifact_dir = base
+        .join("coding-jobs")
+        .join("job_abc123")
+        .join(format!("run_{nonce}"));
     std::fs::create_dir_all(&artifact_dir).expect("create artifact dir");
     let artifact_path = artifact_dir.join("skills_applied.json");
     let artifact_json = serde_json::json!({
