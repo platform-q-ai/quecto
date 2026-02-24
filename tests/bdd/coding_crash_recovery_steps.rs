@@ -614,17 +614,20 @@ fn when_startup(world: &mut QuectoWorld) {
 
 #[when("a state transition event is processed")]
 fn when_state_transition_processed(world: &mut QuectoWorld) {
-    world.coding_recovery_operation_order.clear();
-    world
-        .coding_recovery_operation_order
-        .push("append".to_string());
-    world
-        .coding_recovery_operation_order
-        .push("flush".to_string());
-    world
-        .coding_recovery_operation_order
-        .push("state_update".to_string());
-    world.coding_recovery_flush_then_state = true;
+    world.coding_recovery_logs.clear();
+    append_event(
+        world,
+        "job_abc123",
+        EventAppend {
+            event_type: "job.start",
+            state: None,
+            reason: None,
+            error_code: None,
+            worker_pid: None,
+        },
+    );
+    replay(world);
+    world.coding_recovery_flush_then_state = !world.coding_recovery_operation_order.is_empty();
 }
 
 #[when("the coordinator replays the log")]
@@ -655,18 +658,12 @@ fn then_job_state_in_memory(world: &mut QuectoWorld, state: String) {
 
 #[then("the recovered state should match what the events describe")]
 fn then_recovered_matches(world: &mut QuectoWorld) {
-    let events = world
-        .coding_recovery_logs
-        .get("job_abc123")
-        .map(Vec::as_slice)
-        .unwrap_or(&[]);
-    let (expected, _, _) = parse_recovery_events(events);
     assert_eq!(
         world
             .coding_recovered_states
             .get("job_abc123")
             .map(String::as_str),
-        Some(expected.as_str())
+        Some("running")
     );
 }
 
@@ -718,10 +715,8 @@ fn then_event_appended(world: &mut QuectoWorld, event_type: String) {
         .coding_recovery_logs
         .get("job_abc123")
         .expect("job recovery log exists");
-    assert!(
-        log.iter()
-            .any(|e| e["type"] == serde_json::Value::String(event_type.clone()))
-    );
+    let last = log.last().expect("event exists");
+    assert_eq!(last["type"], serde_json::Value::String(event_type));
 }
 
 #[then("the coordinator should re-attach to the worker's event stream")]
@@ -778,7 +773,13 @@ fn then_flush_then_state(world: &mut QuectoWorld) {
 
 #[then("the truncated line should be skipped")]
 fn then_truncated_skipped(world: &mut QuectoWorld) {
-    assert!(world.coding_truncated_line_skipped);
+    assert_eq!(
+        world
+            .coding_recovered_states
+            .get("job_abc123")
+            .map(String::as_str),
+        Some("failed")
+    );
 }
 
 #[then("recovery should proceed with the last complete event")]
@@ -864,15 +865,16 @@ fn then_job_end_appended(world: &mut QuectoWorld) {
         .coding_recovery_logs
         .get("job_abc123")
         .expect("job recovery log exists");
-    assert!(
-        log.iter()
-            .any(|e| e["type"] == serde_json::Value::String("job.end".to_string()))
+    let last = log.last().expect("event exists");
+    assert_eq!(
+        last["type"],
+        serde_json::Value::String("job.end".to_string())
     );
 }
 
 #[then("no additional \"job.end\" events should be appended")]
 fn then_no_extra_job_end(world: &mut QuectoWorld) {
-    assert!(world.coding_recovery_events_appended <= 1);
+    assert_eq!(world.coding_recovery_events_appended, 0);
 }
 
 #[then(expr = "the job should be in state {string}")]
@@ -888,7 +890,13 @@ fn then_job_state_short(world: &mut QuectoWorld, state: String) {
 
 #[then("the corrupted line should be skipped")]
 fn then_corrupted_skipped(world: &mut QuectoWorld) {
-    assert!(world.coding_corrupted_line_skipped);
+    assert_eq!(
+        world
+            .coding_recovered_states
+            .get("job_abc123")
+            .map(String::as_str),
+        Some("running")
+    );
 }
 
 #[then("recovery should proceed with subsequent valid events")]
@@ -912,10 +920,9 @@ fn then_event_appended_with_state(world: &mut QuectoWorld, event_type: String, s
         .coding_recovery_logs
         .get("job_abc123")
         .expect("job recovery log exists");
-    assert!(log.iter().any(|e| {
-        e["type"] == serde_json::Value::String(event_type.clone())
-            && e["state"] == serde_json::Value::String(state.clone())
-    }));
+    let last = log.last().expect("event exists");
+    assert_eq!(last["type"], serde_json::Value::String(event_type));
+    assert_eq!(last["state"], serde_json::Value::String(state));
 }
 
 #[then(expr = "{string} should be created from the event logs")]
