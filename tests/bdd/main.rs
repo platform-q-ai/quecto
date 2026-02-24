@@ -7,7 +7,9 @@ use quecto::application::heartbeat::{self, HeartbeatResult, HeartbeatTask, Heart
 use quecto::application::subagent::{SubagentConfig, SubagentContext, validate_agent_id};
 use quecto::application::voice as app_voice;
 use quecto::domain::agent::{AgentInfo, AgentLoop, AgentResult};
-use quecto::domain::coding_contract::{SeqScope, next_seq_for, validate_and_track_event};
+use quecto::domain::coding_contract::{
+    SeqScope, next_seq_for, validate_and_track_event_with_scope,
+};
 use quecto::domain::cron::{CronJob, CronJobResult, CronSchedule, CronStore};
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, Role, ToolCall};
@@ -613,7 +615,7 @@ pub struct QuectoWorld {
     pub coding_jobs: Vec<quecto::domain::coding_job::CodingJob>,
     /// Emitted coding events during the current scenario
     pub coding_events: Vec<quecto::domain::coding_event::EventEnvelope>,
-    /// Last seen event seq per `(source, job_id)`
+    /// Last seen event seq per `(source, run_id, job_id)`
     pub coding_event_seq_by_source_job: HashMap<SeqScope, u64>,
     /// Last command error from a coding command
     pub coding_command_error: Option<quecto::domain::coding_command::CommandError>,
@@ -698,7 +700,7 @@ fn push_coding_event(
     } else {
         ("run_abc123".to_string(), "job_abc123".to_string())
     };
-    let scope = SeqScope::new(source, job_id.clone());
+    let scope = SeqScope::new(source, run_id.clone(), job_id.clone());
     let seq = next_seq_for(&scope, &world.coding_event_seq_by_source_job);
     let event = quecto::domain::coding_event::EventEnvelope {
         v: "1.0".to_string(),
@@ -710,7 +712,7 @@ fn push_coding_event(
         seq,
         payload,
     };
-    validate_and_track_event(&event, &mut world.coding_event_seq_by_source_job)
+    validate_and_track_event_with_scope(&event, scope, &mut world.coding_event_seq_by_source_job)
         .expect("coding event should satisfy contract");
     world.coding_events.push(event);
 }
