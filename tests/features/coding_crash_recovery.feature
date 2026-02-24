@@ -86,7 +86,7 @@ Feature: Crash Recovery and Event Replay
     And no worker process check should be performed
 
   Scenario: Coordinator does not attempt recovery for canceled jobs
-    Given a job event log ending with "job.end" state "canceled"
+    Given a job event log ending with "job.cancel" reason "user_request"
     When the coordinator starts up
     Then the job should be in state "canceled"
     And no recovery action should be taken

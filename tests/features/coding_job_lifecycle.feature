@@ -4,7 +4,7 @@ Feature: Coding Job Lifecycle
   I want to manage coding jobs through a well-defined state machine
   So that jobs are started, tracked, and cleaned up reliably
 
-  The coordinator exposes a command API (run/status/cancel/cleanup) and
+  The coordinator exposes a command API (run/status/cancel/cleanup/list) and
   emits JSONL events for every state transition. Jobs follow the state
   machine: queued -> preparing -> running -> succeeded/failed/canceled.
   The main agent calls the coding_job tool; all execution is async.
@@ -334,11 +334,11 @@ Feature: Coding Job Lifecycle
     When the main agent requests cleanup
     Then the job directory should be removed
 
-  Scenario: Cleanup a running job is rejected
+  Scenario: Cleanup a running job is rejected with job_not_terminal error
     Given a coding coordinator with a mock worker
     And a coding job in state "running"
     When the main agent requests cleanup
-    Then the cleanup command should be rejected
+    Then the cleanup command should fail with error code "job_not_terminal"
     And the job directory should still exist
 
   Scenario: Cleanup a non-existent job returns error

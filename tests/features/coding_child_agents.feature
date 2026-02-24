@@ -93,9 +93,11 @@ Feature: Child Agent Spawn Flow
     Then the event log should contain "spawn.request", "spawn.decision", and "spawn.result" events
     And an "artifact.created" event should be emitted with artifact_type "spawn_log"
 
-  # --- Deduplication ---
+  # --- Deduplication (SHOULD-level per contract; not a hard requirement) ---
 
-  Scenario: Coordinator deduplicates equivalent spawn requests
+  Scenario: Coordinator deduplicates equivalent spawn requests (SHOULD)
+    # Contract says SHOULD deduplicate, not MUST. Implementations that skip
+    # dedup are still conformant but may waste resources on redundant spawns.
     When the worker emits two "spawn.request" events with identical agent_type and scope
     Then only one child agent should be launched
     And the second request should receive the result of the first
