@@ -334,7 +334,7 @@ fn given_job_already_has_n_todos(world: &mut QuectoWorld, count: usize) {
     }
 }
 
-#[when(expr = "the worker emits a {string} event with:")]
+#[when(regex = r#"^the worker emits a \"(todo\.[^\"]+)\" event with:$"#)]
 fn when_worker_emits_todo_event_with_table(
     world: &mut QuectoWorld,
     event_type: String,

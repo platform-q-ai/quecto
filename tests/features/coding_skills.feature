@@ -1,4 +1,4 @@
-@pending
+@wip
 Feature: Skill Injection Policy
   As the coding runtime coordinator
   I want to inject skills into worker jobs under policy control
@@ -140,5 +140,6 @@ Feature: Skill Injection Policy
     Given a coding coordinator with profile "fullstack" that includes skills ["rust-style", "api-design", "frontend-guide"]
     And the allowlist includes "api-design" and "frontend-guide"
     When a coding job starts with profile "fullstack"
-    Then the effective skill set should include "rust-style", "test-first", "api-design", and "frontend-guide"
+    Then the skills list should include "rust-style", "test-first", and "api-design"
+    And the effective skill set should include "frontend-guide" plus defaults
     And "rust-style" should appear only once despite being in both defaults and profile
