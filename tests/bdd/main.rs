@@ -605,6 +605,39 @@ pub struct QuectoWorld {
     pub wasm_parity_workspace: Option<PathBuf>,
     /// WASM tool port: temp dir for parity tests
     pub _wasm_parity_temp_dir: Option<TempDir>,
+    // --- Coding job lifecycle BDD fields ---
+    /// Current coding job under test
+    pub coding_job: Option<quecto::domain::coding_job::CodingJob>,
+    /// Multiple coding jobs (for list command scenarios)
+    pub coding_jobs: Vec<quecto::domain::coding_job::CodingJob>,
+    /// Emitted coding events during the current scenario
+    pub coding_events: Vec<quecto::domain::coding_event::EventEnvelope>,
+    /// Last command error from a coding command
+    pub coding_command_error: Option<quecto::domain::coding_command::CommandError>,
+    /// Last run response
+    pub coding_run_response: Option<quecto::domain::coding_command::RunResponse>,
+    /// Last status response
+    pub coding_status_response: Option<quecto::domain::coding_command::StatusResponse>,
+    /// Last cancel response
+    pub coding_cancel_response: Option<quecto::domain::coding_command::CancelResponse>,
+    /// Last cleanup response
+    pub coding_cleanup_response: Option<quecto::domain::coding_command::CleanupResponse>,
+    /// Last list response
+    pub coding_list_response: Option<quecto::domain::coding_command::ListResponse>,
+    /// Coding job temp directory (for cleanup assertions)
+    pub coding_job_dir: Option<PathBuf>,
+    /// Coding job temp dir handle (kept alive)
+    pub _coding_temp_dir: Option<TempDir>,
+    /// Skill policy: allowlist
+    pub coding_skill_allowlist: Vec<String>,
+    /// Skill policy: denylist
+    pub coding_skill_denylist: Vec<String>,
+    /// Last cleanup keep_artifacts flag used by scenario
+    pub coding_keep_artifacts: bool,
+    /// Whether a warning was logged in scenario simulation
+    pub coding_warning_logged: bool,
+    /// Whether a version mismatch error was logged in scenario simulation
+    pub coding_version_error_logged: bool,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
@@ -851,6 +884,7 @@ mod agent_msg_steps;
 mod agent_tools_steps;
 mod architecture_steps;
 mod auth_steps;
+mod coding_job_lifecycle_steps;
 mod config_steps;
 mod context_pruning_steps;
 mod cron_steps;
