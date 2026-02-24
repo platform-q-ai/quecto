@@ -235,6 +235,8 @@ pub enum CommandError {
     NotFound,
     /// Job is not in a terminal state (for cleanup).
     JobNotTerminal,
+    /// Job cannot transition from its current state.
+    InvalidTransition,
 }
 
 impl std::fmt::Display for CommandError {
@@ -246,6 +248,7 @@ impl std::fmt::Display for CommandError {
             Self::SkillNotFound => "skill_not_found",
             Self::NotFound => "not_found",
             Self::JobNotTerminal => "job_not_terminal",
+            Self::InvalidTransition => "invalid_transition",
         };
         f.write_str(s)
     }
@@ -262,6 +265,7 @@ impl std::str::FromStr for CommandError {
             "skill_not_found" => Ok(Self::SkillNotFound),
             "not_found" => Ok(Self::NotFound),
             "job_not_terminal" => Ok(Self::JobNotTerminal),
+            "invalid_transition" => Ok(Self::InvalidTransition),
             _ => Err(format!("unknown command error: {s}")),
         }
     }
@@ -280,6 +284,7 @@ mod tests {
             CommandError::SkillNotFound,
             CommandError::NotFound,
             CommandError::JobNotTerminal,
+            CommandError::InvalidTransition,
         ] {
             let s = err.to_string();
             let parsed: CommandError = s.parse().unwrap();

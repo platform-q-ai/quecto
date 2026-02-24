@@ -28,6 +28,41 @@ use quecto::infrastructure::channels::telegram::{
 use quecto::infrastructure::config::{Config, TelegramConfig};
 use quecto::infrastructure::health::server::StaticReadiness;
 
+use quecto::application::coding_coordinator::{
+    CodingCoordinator, CoordinatorPolicy, FailureInfo, RepoValidator, SkillResolver, SuccessInfo,
+};
+
+// ===========================================================================
+// BDD mock implementations for CodingCoordinator ports
+// ===========================================================================
+
+#[derive(Debug, Clone, Default)]
+struct BddRepoValidator {
+    valid_repos: Vec<String>,
+    valid_refs: Vec<(String, String)>,
+}
+
+impl RepoValidator for BddRepoValidator {
+    fn repo_exists(&self, repo: &str) -> bool {
+        self.valid_repos.iter().any(|r| r == repo)
+    }
+    fn ref_exists(&self, repo: &str, base_ref: &str) -> bool {
+        self.valid_refs
+            .iter()
+            .any(|(r, b)| r == repo && b == base_ref)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct BddSkillResolver {
+    available: Vec<String>,
+}
+
+impl SkillResolver for BddSkillResolver {
+    fn skill_exists(&self, name: &str) -> bool {
+        self.available.iter().any(|s| s == name)
+    }
+}
 use quecto::infrastructure::persistence::cron_store::FileCronStore;
 use quecto::infrastructure::persistence::memory_store::{self, MemoryStore};
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
@@ -609,6 +644,10 @@ pub struct QuectoWorld {
     /// WASM tool port: temp dir for parity tests
     pub _wasm_parity_temp_dir: Option<TempDir>,
     // --- Coding job lifecycle BDD fields ---
+    /// Coding coordinator (application layer) for lifecycle scenarios
+    pub coding_coordinator: Option<CodingCoordinator<BddRepoValidator, BddSkillResolver>>,
+    /// Last job_id returned by run() — used to reference the current job
+    pub coding_current_job_id: Option<String>,
     /// Current coding job under test
     pub coding_job: Option<quecto::domain::coding_job::CodingJob>,
     /// Multiple coding jobs (for list command scenarios)
@@ -669,6 +708,8 @@ pub struct QuectoWorld {
     pub coding_suggestion_policy_denied: bool,
     /// Last cleanup keep_artifacts flag used by scenario
     pub coding_keep_artifacts: bool,
+    /// Last known state before cleanup removed the job.
+    pub coding_last_cleaned_state: Option<quecto::domain::coding_job::JobState>,
     /// Whether a warning was logged in scenario simulation
     pub coding_warning_logged: bool,
     /// Whether a version mismatch error was logged in scenario simulation
