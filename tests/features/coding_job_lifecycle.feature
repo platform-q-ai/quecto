@@ -1,4 +1,4 @@
-@pending
+@wip
 Feature: Coding Job Lifecycle
   As the coding runtime coordinator
   I want to manage coding jobs through a well-defined state machine
@@ -6,7 +6,8 @@ Feature: Coding Job Lifecycle
 
   The coordinator exposes a command API (run/status/cancel/cleanup/list) and
   emits JSONL events for every state transition. Jobs follow the state
-  machine: queued -> preparing -> running -> succeeded/failed/canceled.
+  machine: queued -> preparing -> running -> succeeded/failed/canceled,
+  with blocked as a holding state reachable from running or preparing.
   The main agent calls the coding_job tool; all execution is async.
 
   # --- Run command ---
@@ -42,6 +43,11 @@ Feature: Coding Job Lifecycle
     When the main agent requests a coding job with skills including "forbidden-skill"
     Then the run command should fail with error code "policy_denied"
 
+  Scenario: Run command rejects when requested skill is not found on disk
+    Given a coding coordinator with skill allowlist containing "nonexistent-skill"
+    When the main agent requests a coding job with skills ["nonexistent-skill"]
+    Then the run command should fail with error code "skill_not_found"
+
   Scenario: Run command accepts priority and labels
     Given a coding coordinator with a mock worker
     When the main agent requests a coding job with priority "high" and labels ["urgent", "bugfix"]
@@ -53,11 +59,10 @@ Feature: Coding Job Lifecycle
   Scenario: Job transitions from queued to preparing to running
     Given a coding coordinator with a mock worker
     And a coding job in state "queued"
-    When the coordinator begins preparation
-    Then the job state should transition to "preparing"
-    And when the clone completes and worker starts
-    Then a "job.ready" event should be emitted with the worker PID
-    And the job state should transition to "running"
+    When the coordinator begins preparation and clone completes and worker starts
+    Then the job should have transitioned through "preparing" to "running"
+    And a "job.start" event should have been emitted
+    And a "job.ready" event should have been emitted with the worker PID
 
   Scenario: Job transitions from running to succeeded
     Given a coding coordinator with a mock worker
@@ -71,7 +76,7 @@ Feature: Coding Job Lifecycle
     And a coding job in state "running"
     When the worker fails with a tool error
     Then a "job.end" event should be emitted with state "failed"
-    And the event should include error_code "tool_error" and is_retriable
+    And the event should include error_code "tool_error" and error_detail and is_retriable
 
   Scenario: Job transitions from running to blocked
     Given a coding coordinator with a mock worker
@@ -91,15 +96,15 @@ Feature: Coding Job Lifecycle
     Given a coding coordinator with a mock worker
     And a coding job in state "queued"
     When validation fails before preparation begins
-    Then the job state should transition to "failed"
-    And the error_code should indicate the validation failure
+    Then a "job.end" event should be emitted with state "failed"
+    And the error_code should be "internal"
 
   Scenario: Preparing job can transition to blocked on transient clone failure
     Given a coding coordinator with a mock worker
     And a coding job in state "preparing"
     When the mirror clone fails transiently
-    Then the job state should transition to "blocked"
-    And the reason should describe the clone failure
+    Then a "job.blocked" event should be emitted with the reason
+    And the job state should be "blocked"
 
   Scenario: Preparing job transitions to failed on unrecoverable clone error
     Given a coding coordinator with a mock worker
@@ -120,7 +125,7 @@ Feature: Coding Job Lifecycle
     And a coding job in state "blocked"
     When the blocking condition is determined to be permanent
     Then a "job.end" event should be emitted with state "failed"
-    And the error_code should indicate the unresolvable condition
+    And the error_code should be "internal"
 
   Scenario: Cancel a blocked job
     Given a coding coordinator with a mock worker
@@ -174,6 +179,11 @@ Feature: Coding Job Lifecycle
     Then the cancel response should return state "succeeded"
     And no "job.cancel" event should be emitted
 
+  Scenario: Cancel a non-existent job returns error
+    Given a coding coordinator with a mock worker
+    When the main agent cancels job_id "nonexistent"
+    Then the cancel command should return an error indicating job not found
+
   # --- Error codes ---
 
   Scenario: Job fails due to OOM kill
@@ -212,6 +222,13 @@ Feature: Coding Job Lifecycle
     And the error_code should be "timeout"
     And the event should include duration_ms
 
+  Scenario: Job fails due to coordinator crash recovery
+    Given a coding coordinator with a mock worker
+    And a coding job in state "running"
+    When the coordinator crashes and recovers with the worker dead
+    Then a "job.end" event should be emitted with state "failed"
+    And the error_code should be "coordinator_crash"
+
   Scenario: Job is canceled due to coordinator policy violation
     Given a coding coordinator with a mock worker
     And a coding job in state "running"
@@ -233,11 +250,23 @@ Feature: Coding Job Lifecycle
     When the worker encounters an ambiguous requirement
     Then a "job.blocked" event should be emitted with reason and needs "main-agent decision"
 
-  Scenario: Job cancel event includes initiated_by field
+  Scenario: Job cancel event includes initiated_by "user" for user-initiated cancel
     Given a coding coordinator with a mock worker
     And a coding job in state "running"
     When the main agent cancels the job
     Then a "job.cancel" event should be emitted with reason "user_request" and initiated_by "user"
+
+  Scenario: Job cancel event includes initiated_by "system" for wall timeout
+    Given a coding coordinator with a mock worker
+    And a coding job with max_wall_seconds 5
+    When the job exceeds the wall timeout
+    Then a "job.cancel" event should be emitted with reason "wall_timeout" and initiated_by "system"
+
+  Scenario: Job cancel event includes initiated_by "coordinator" for policy violation
+    Given a coding coordinator with a mock worker
+    And a coding job in state "running"
+    When the coordinator detects a policy violation during execution
+    Then a "job.cancel" event should be emitted with reason "coordinator_policy" and initiated_by "coordinator"
 
   Scenario: Job end event includes duration_ms
     Given a coding coordinator with a mock worker
@@ -300,6 +329,12 @@ Feature: Coding Job Lifecycle
     When the main agent queries job status
     Then the response should include artifacts ["patch_001", "test_output_001"]
 
+  Scenario: Query status of a canceled job includes cancel_reason
+    Given a coding coordinator with a mock worker
+    And a coding job in state "canceled" with cancel reason "wall_timeout"
+    When the main agent queries job status
+    Then the response should include state "canceled" and cancel_reason "wall_timeout"
+
   Scenario: Query status of a non-existent job returns error
     Given a coding coordinator with a mock worker
     When the main agent queries status for job_id "nonexistent"
@@ -351,6 +386,32 @@ Feature: Coding Job Lifecycle
     And a coding job in state "succeeded" that has been cleaned up
     When the main agent queries job status
     Then the response should include state "succeeded" from the event log
+
+  # --- List command ---
+
+  Scenario: List all jobs returns complete list
+    Given a coding coordinator with a mock worker
+    And jobs exist in states "running", "failed", "succeeded"
+    When the main agent lists all jobs
+    Then the response should include all 3 jobs with job_id, run_id, and state
+
+  Scenario: List jobs filtered by state
+    Given a coding coordinator with a mock worker
+    And jobs exist in states "running", "failed", "succeeded"
+    When the main agent lists jobs filtered by state ["running"]
+    Then the response should include only jobs in state "running"
+
+  Scenario: List jobs when no jobs exist returns empty list
+    Given a coding coordinator with a mock worker
+    And no jobs exist
+    When the main agent lists all jobs
+    Then the response should include an empty jobs array
+
+  Scenario: List jobs filtered by multiple states
+    Given a coding coordinator with a mock worker
+    And jobs exist in states "running", "failed", "succeeded", "canceled"
+    When the main agent lists jobs filtered by state ["failed", "canceled"]
+    Then the response should include only jobs in states "failed" and "canceled"
 
   # --- Event envelope ---
 
