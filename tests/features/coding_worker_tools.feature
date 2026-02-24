@@ -93,13 +93,15 @@ Feature: Coding Worker Tool Execution Events
     Then an "artifact.created" event should be emitted with artifact_type "test_output"
     And the payload should include size_bytes
 
-  Scenario: Worker creates review artifact from child agent
+  Scenario: Child agent creates review artifact
     When a child agent produces a review document
     Then an "artifact.created" event should be emitted with artifact_type "review"
+    And the event source should be "child_agent"
 
-  Scenario: Worker creates snapshot artifact for skill content
+  Scenario: Coordinator creates snapshot artifact for skill content
     When the coordinator snapshots injected skills at job start
     Then an "artifact.created" event should be emitted with artifact_type "snapshot"
+    And the event source should be "coordinator"
 
   # --- Edge cases ---
 
@@ -130,6 +132,10 @@ Feature: Coding Worker Tool Execution Events
     When the worker logs an error message "compilation failed with 3 errors"
     Then a "log.message" event should be emitted with level "error"
 
+  Scenario: Worker emits warn-level log message
+    When the worker logs a warn message "deprecated API usage detected"
+    Then a "log.message" event should be emitted with level "warn"
+
   Scenario: Worker emits debug-level log message
     When the worker logs a debug message "entering parse_expression"
     Then a "log.message" event should be emitted with level "debug"
@@ -139,3 +145,25 @@ Feature: Coding Worker Tool Execution Events
   Scenario: Artifact event includes optional description
     When the worker creates an artifact with description "final patch for parser refactor"
     Then the "artifact.created" payload should include description "final patch for parser refactor"
+
+  # --- Network policy enforcement ---
+
+  Scenario: Worker cannot make outbound network requests by default
+    When the worker attempts to make an HTTP request to an external host
+    Then the request should be blocked by network policy
+    And a "log.message" event should be emitted with level "warn"
+
+  # --- Secrets policy enforcement ---
+
+  Scenario: Secrets are redacted in tool result output
+    When the worker executes a command that outputs an API key in stderr
+    Then the tool.result stderr_ref artifact should have the key redacted
+    And the raw secret should not appear in the event payload
+
+  Scenario: Secrets are redacted in log message events
+    When the worker logs a message containing an API key
+    Then the "log.message" event should have the key redacted in the message field
+
+  Scenario: Secrets are never stored in artifact files
+    When the worker creates an artifact that would contain credential material
+    Then the coordinator should redact the credential before persisting the artifact

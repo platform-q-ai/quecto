@@ -60,10 +60,11 @@ Feature: GitHub Publish Boundary
 
   # --- Status and checks ---
 
-  Scenario: Coordinator fetches PR status and reports to main agent
+  Scenario: Coordinator fetches PR status and returns decision-ready summary
     Given a PR exists for the job branch
-    When the main agent queries the PR status
-    Then the coordinator should return the check status and review state
+    When the main agent requests publish action "get_pr_status"
+    Then a "publish.request" event should be emitted with action "get_pr_status"
+    And a "publish.result" event should be emitted with ok true
     And the main agent should receive a decision-ready summary
 
   # --- Safety gates ---
@@ -107,11 +108,10 @@ Feature: GitHub Publish Boundary
     Then the "publish.result" event should include action "create_pr"
     And the action should match the original publish.request action
 
-  Scenario: Coordinator fetches PR status using get_pr_status action
-    Given a PR exists for the job branch
+  Scenario: get_pr_status is allowed on non-succeeded jobs
+    Given a coding job in state "running"
     When the main agent requests publish action "get_pr_status"
-    Then a "publish.request" event should be emitted with action "get_pr_status"
-    And a "publish.result" event should be emitted with ok true
+    Then a "publish.result" event should be emitted with ok true
     And the result should include the current PR check and review state
 
   # --- Repo allowlist ---
@@ -144,8 +144,9 @@ Feature: GitHub Publish Boundary
     Then a "publish.result" event should be emitted with ok false
     And the error should reference branch protection rules
 
-  # --- Multi-job aggregation ---
+  # --- Multi-job aggregation (future — MVP is 1:1 run-to-job) ---
 
+  @future
   Scenario: Coordinator aggregates artifacts from multiple jobs into single PR
     Given two coding jobs have completed successfully for the same repo
     When the main agent requests a combined PR for both jobs

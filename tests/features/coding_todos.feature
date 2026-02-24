@@ -135,7 +135,7 @@ Feature: Coordinator Todo Tracking Per Worker
 
   Scenario: Coordinator rejects invalid transition from pending to completed
     Given the job has todo "t1" with status "pending"
-    When the worker emits a "todo.complete" event for "t1"
+    When the worker emits a "todo.complete" event for "t1" with result "done"
     Then the coordinator should reject the transition
     And todo "t1" should remain in status "pending"
 
@@ -161,23 +161,23 @@ Feature: Coordinator Todo Tracking Per Worker
 
   # --- Dependency board visibility ---
 
-  Scenario: Status response includes dependency information
+  Scenario: Status response includes direct dependency information
     Given the job has todos:
       | todo_id | title       | status    | depends_on |
       | t1      | Write tests | completed |            |
       | t2      | Run tests   | pending   | ["t1"]     |
       | t3      | Deploy      | pending   | ["t2"]     |
     When the main agent queries job status
-    Then the todo list should include dependency chains
-    And todo "t3" should show transitive dependency on "t1"
+    Then todo "t2" should have depends_on containing "t1"
+    And todo "t3" should have depends_on containing "t2"
 
-  Scenario: Blocked todo with unmet dependency shows blocking todo
+  Scenario: Status response shows pending dependency relationships
     Given the job has todos:
       | todo_id | title       | status    | depends_on |
       | t1      | Write tests | pending   |            |
       | t2      | Run tests   | pending   | ["t1"]     |
     When the main agent queries job status
-    Then todo "t2" should indicate it is waiting on "t1"
+    Then todo "t2" should have depends_on containing "t1"
 
   # --- Blocked todo resume ---
 
@@ -185,3 +185,15 @@ Feature: Coordinator Todo Tracking Per Worker
     Given the job has todo "t1" with status "blocked"
     When the worker emits a "todo.update" event for "t1" with status "in_progress"
     Then todo "t1" should have status "in_progress"
+
+  # --- Missing state transitions ---
+
+  Scenario: Pending todo transitions directly to blocked for dependency wait
+    Given the job has todo "t1" with status "pending"
+    When the worker emits a "todo.blocked" event for "t1" with reason "waiting on upstream dependency"
+    Then todo "t1" should have status "blocked"
+
+  Scenario: Blocked todo transitions to failed on unrecoverable condition
+    Given the job has todo "t1" with status "blocked"
+    When the worker emits a "todo.update" event for "t1" with status "failed"
+    Then todo "t1" should have status "failed"

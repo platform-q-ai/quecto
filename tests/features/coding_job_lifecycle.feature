@@ -17,7 +17,14 @@ Feature: Coding Job Lifecycle
     And repo "test-repo" at base ref "main"
     Then the coordinator should return a run_id and job_id
     And the job state should be "queued"
-    And a "job.start" event should be emitted with the goal and branch
+    And no events should be emitted yet
+
+  Scenario: Job start event is emitted when preparation begins
+    Given a coding coordinator with a mock worker
+    And a coding job in state "queued"
+    When the coordinator begins preparation
+    Then a "job.start" event should be emitted with the goal, base_ref, and branch
+    And the job state should transition to "preparing"
 
   Scenario: Run command rejects invalid repo
     Given a coding coordinator with a mock worker
@@ -135,7 +142,8 @@ Feature: Coding Job Lifecycle
     Given a coding coordinator with a mock worker
     And a coding job in state "queued"
     When the main agent cancels the job
-    Then the job state should be "canceled"
+    Then a "job.cancel" event should be emitted with reason "user_request"
+    And the job state should be "canceled"
     And no worker process should have been launched
 
   Scenario: Job is canceled on wall timeout
@@ -196,6 +204,75 @@ Feature: Coding Job Lifecycle
     Then a "job.end" event should be emitted with state "failed"
     And the error_code should be "internal"
 
+  Scenario: Job fails due to tool-level timeout
+    Given a coding coordinator with a mock worker
+    And a coding job in state "running"
+    When the worker's tool execution exceeds its own timeout repeatedly
+    Then a "job.end" event should be emitted with state "failed"
+    And the error_code should be "timeout"
+    And the event should include duration_ms
+
+  Scenario: Job is canceled due to coordinator policy violation
+    Given a coding coordinator with a mock worker
+    And a coding job in state "running"
+    When the coordinator detects a policy violation during execution
+    Then a "job.cancel" event should be emitted with reason "coordinator_policy"
+    And the job state should be "canceled"
+
+  # --- Optional payload field coverage ---
+
+  Scenario: Job ready event includes clone duration
+    Given a coding coordinator with a mock worker
+    And a coding job in state "preparing"
+    When the clone completes in 1200 milliseconds and the worker starts
+    Then a "job.ready" event should be emitted with clone_duration_ms 1200
+
+  Scenario: Job blocked event includes needs field for main-agent action
+    Given a coding coordinator with a mock worker
+    And a coding job in state "running"
+    When the worker encounters an ambiguous requirement
+    Then a "job.blocked" event should be emitted with reason and needs "main-agent decision"
+
+  Scenario: Job cancel event includes initiated_by field
+    Given a coding coordinator with a mock worker
+    And a coding job in state "running"
+    When the main agent cancels the job
+    Then a "job.cancel" event should be emitted with reason "user_request" and initiated_by "user"
+
+  Scenario: Job end event includes duration_ms
+    Given a coding coordinator with a mock worker
+    And a coding job in state "running"
+    When the worker completes successfully after 45000 milliseconds
+    Then a "job.end" event should be emitted with state "succeeded"
+    And the event should include duration_ms
+
+  # --- Run command optional field coverage ---
+
+  Scenario: Run command accepts profile parameter
+    Given a coding coordinator with a mock worker
+    When the main agent requests a coding job with profile "backend"
+    Then the coordinator should accept the job
+    And the job metadata should reflect profile "backend"
+
+  Scenario: Run command accepts low priority
+    Given a coding coordinator with a mock worker
+    When the main agent requests a coding job with priority "low"
+    Then the coordinator should accept the job
+    And the job metadata should reflect priority "low"
+
+  Scenario: Run command uses medium priority by default
+    Given a coding coordinator with a mock worker
+    When the main agent requests a coding job without specifying priority
+    Then the coordinator should accept the job
+    And the job metadata should reflect priority "medium"
+
+  Scenario: Run command with skills parameter on successful job
+    Given a coding coordinator with a mock worker
+    And skill policy allows ["rust-style", "test-first"]
+    When the main agent requests a coding job with skills ["rust-style"]
+    Then the coordinator should accept the job
+    And the skills should be applied to the worker context
+
   # --- Status command ---
 
   Scenario: Query status of a running job
@@ -217,6 +294,12 @@ Feature: Coding Job Lifecycle
     When the main agent queries status by run_id
     Then the response should include the job state and summary
 
+  Scenario: Query status includes artifacts list for completed job
+    Given a coding coordinator with a mock worker
+    And a coding job in state "succeeded" with artifacts ["patch_001", "test_output_001"]
+    When the main agent queries job status
+    Then the response should include artifacts ["patch_001", "test_output_001"]
+
   Scenario: Query status of a non-existent job returns error
     Given a coding coordinator with a mock worker
     When the main agent queries status for job_id "nonexistent"
@@ -229,7 +312,7 @@ Feature: Coding Job Lifecycle
     And a coding job in state "succeeded"
     When the main agent requests cleanup with keep_artifacts false
     Then the job directory should be removed
-    And the response should indicate cleaned is true
+    And the response should include job_id and cleaned is true
 
   Scenario: Cleanup with keep_artifacts preserves artifact directory
     Given a coding coordinator with a mock worker
@@ -302,6 +385,12 @@ Feature: Coding Job Lifecycle
     When the coordinator receives an event with type "unknown.future_event"
     Then the coordinator should log a warning
     And processing should continue normally
+
+  Scenario: Unknown payload fields are silently ignored
+    Given a coding coordinator with a mock worker
+    When the coordinator receives a "job.status" event with an extra field "future_field"
+    Then the coordinator should process the event normally
+    And the unknown field should be ignored
 
   Scenario: Major version mismatch in event is rejected
     Given a coding coordinator with a mock worker

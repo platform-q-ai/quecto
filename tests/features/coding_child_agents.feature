@@ -91,7 +91,7 @@ Feature: Child Agent Spawn Flow
   Scenario: All spawn events are persisted in event log
     When a worker requests a child agent and it completes
     Then the event log should contain "spawn.request", "spawn.decision", and "spawn.result" events
-    And a "spawn_log.json" artifact should be created for the job
+    And an "artifact.created" event should be emitted with artifact_type "spawn_log"
 
   # --- Deduplication ---
 

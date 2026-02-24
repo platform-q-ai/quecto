@@ -78,6 +78,7 @@ Feature: Skill Injection Policy
 
   Scenario: Skills are resolved based on job profile
     Given a coding coordinator with profile "backend" that includes skills ["api-design"]
+    And the profile implicitly allowlists its skills
     When a coding job starts with profile "backend"
     Then the effective skill set should include "api-design" plus defaults
 
@@ -111,8 +112,7 @@ Feature: Skill Injection Policy
   Scenario: Coordinator handles skill that exists in allowlist but not on filesystem
     When a coding job starts with skills ["security-checklist"]
     And the skill file for "security-checklist" does not exist on disk
-    Then the run command should fail with a descriptive error
-    And the error should indicate the skill could not be resolved
+    Then the run command should fail with error code "skill_not_found"
 
   Scenario: Duplicate skills in request are deduplicated
     When a coding job starts with skills ["rust-style", "rust-style"]

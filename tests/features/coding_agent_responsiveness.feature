@@ -109,16 +109,16 @@ Feature: Main Agent Responsiveness During Coding Jobs
     When the job exceeds the 10-second wall timeout
     Then the coordinator should cancel the job with reason "wall_timeout"
     And the next time the agent checks status it should see state "canceled"
-    And the error detail should mention the timeout duration
+    And the cancel_reason should be "wall_timeout"
 
   Scenario: Main agent starts job with explicit wall timeout
     When the user asks the agent to start a coding job with a 5-minute limit
     And the agent calls the coding_job tool with action "run" and max_wall_seconds 300
     Then the coordinator should accept the job with max_wall_seconds 300
 
-  # --- Tighter run response assertions ---
+  # --- Run response shape ---
 
-  Scenario: Run response includes repo and base_ref from request
+  Scenario: Run response includes run_id, job_id, and queued state
     When the user asks the agent to start a coding job on repo "org/myrepo" at ref "develop"
     And the agent calls the coding_job tool with action "run"
     Then the run response should include run_id and job_id
@@ -153,8 +153,9 @@ Feature: Main Agent Responsiveness During Coding Jobs
   Scenario: Main agent lists all active coding jobs
     Given 2 coding jobs are running and 1 is queued
     When the user asks "what coding jobs are running?"
-    Then the agent should query status for all active jobs
-    And report their states and progress to the user
+    And the agent calls the coding_job tool with action "list" and state_filter ["queued", "preparing", "running", "blocked"]
+    Then the response should include 3 jobs with their states
+    And the agent should report their states and progress to the user
 
   # --- Completion notification mid-conversation ---
 

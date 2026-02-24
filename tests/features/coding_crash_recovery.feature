@@ -115,7 +115,7 @@ Feature: Crash Recovery and Event Replay
 
   # --- Preparing and blocked state recovery ---
 
-  Scenario: Coordinator recovers job stuck in preparing state
+  Scenario: Coordinator recovers job stuck in running state with dead worker
     Given a job event log containing:
       | type       |
       | job.start  |
