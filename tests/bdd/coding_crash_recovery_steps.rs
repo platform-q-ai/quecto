@@ -107,10 +107,21 @@ fn append_coordinator_crash(world: &mut QuectoWorld, job_id: &str) {
     );
 }
 
-fn apply_recovery(world: &mut QuectoWorld, job_id: &str, state: &mut String, terminal: bool) {
-    if !terminal && *state == "preparing" {
-        *state = "failed".to_string();
-        append_coordinator_crash(world, job_id);
+fn evaluate_job_recovery(
+    world: &mut QuectoWorld,
+    job_id: &str,
+    events: &[serde_json::Value],
+) -> (String, bool, bool) {
+    if events.is_empty() {
+        world.coding_warning_logged = true;
+        return ("failed".to_string(), false, false);
+    }
+
+    let (mut state, terminal, has_spawn_pending) = parse_recovery_events(events);
+    let mut needs_job_end = false;
+    if !terminal && state == "preparing" {
+        state = "failed".to_string();
+        needs_job_end = true;
     } else if !terminal && matches!(state.as_str(), "running" | "blocked") {
         if let Some(pid) = world.coding_recovered_worker_pid.get(job_id).copied() {
             world.coding_worker_check_performed = true;
@@ -120,36 +131,20 @@ fn apply_recovery(world: &mut QuectoWorld, job_id: &str, state: &mut String, ter
                 .copied()
                 .unwrap_or(false);
             if !pid_alive {
-                *state = "failed".to_string();
-                append_coordinator_crash(world, job_id);
+                state = "failed".to_string();
+                needs_job_end = true;
             }
         }
     }
-}
 
-fn apply_spawn_recovery(world: &mut QuectoWorld, job_id: &str, has_spawn_pending: bool) {
-    if has_spawn_pending {
-        let child_alive = world
+    let needs_spawn_end = has_spawn_pending
+        && !world
             .coding_process_alive
             .get(&99999)
             .copied()
             .unwrap_or(false);
-        if !child_alive {
-            world.coding_spawn_marked_failed = true;
-            world.coding_recovery_events_appended += 1;
-            append_event(
-                world,
-                job_id,
-                EventAppend {
-                    event_type: "spawn.result",
-                    state: Some("failed"),
-                    reason: None,
-                    error_code: None,
-                    worker_pid: None,
-                },
-            );
-        }
-    }
+
+    (state, needs_job_end, needs_spawn_end)
 }
 
 fn replay(world: &mut QuectoWorld) {
@@ -159,20 +154,46 @@ fn replay(world: &mut QuectoWorld) {
         return;
     }
 
-    for (job_id, events) in world.coding_recovery_logs.clone() {
-        if events.is_empty() {
-            world
-                .coding_recovered_states
-                .insert(job_id.clone(), "failed".to_string());
-            world.coding_warning_logged = true;
-            continue;
+    let job_ids: Vec<String> = world.coding_recovery_logs.keys().cloned().collect();
+    let mut deferred_job_end: Vec<String> = Vec::new();
+    let mut deferred_spawn_end: Vec<String> = Vec::new();
+
+    for job_id in job_ids {
+        let events = world
+            .coding_recovery_logs
+            .get(&job_id)
+            .cloned()
+            .unwrap_or_default();
+
+        let (state, needs_job_end, needs_spawn_end) =
+            evaluate_job_recovery(world, &job_id, &events);
+        if needs_job_end {
+            deferred_job_end.push(job_id.clone());
+        }
+        if needs_spawn_end {
+            world.coding_spawn_marked_failed = true;
+            deferred_spawn_end.push(job_id.clone());
         }
 
-        let (mut state, terminal, has_spawn_pending) = parse_recovery_events(&events);
-        apply_recovery(world, &job_id, &mut state, terminal);
-        apply_spawn_recovery(world, &job_id, has_spawn_pending);
-
         world.coding_recovered_states.insert(job_id, state);
+    }
+
+    for job_id in deferred_job_end {
+        append_coordinator_crash(world, &job_id);
+    }
+    for job_id in deferred_spawn_end {
+        world.coding_recovery_events_appended += 1;
+        append_event(
+            world,
+            &job_id,
+            EventAppend {
+                event_type: "spawn.result",
+                state: Some("failed"),
+                reason: None,
+                error_code: None,
+                worker_pid: None,
+            },
+        );
     }
 
     if world.coding_truncated_line_skipped || world.coding_corrupted_line_skipped {
