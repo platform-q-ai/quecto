@@ -8,11 +8,12 @@ struct MockRepoValidator {
 
 impl RepoValidator for MockRepoValidator {
     fn repo_exists(&self, repo: &str) -> bool {
-        self.valid_repos.contains(&repo.to_string())
+        self.valid_repos.iter().any(|r| r == repo)
     }
     fn ref_exists(&self, repo: &str, base_ref: &str) -> bool {
         self.valid_refs
-            .contains(&(repo.to_string(), base_ref.to_string()))
+            .iter()
+            .any(|(r, b)| r == repo && b == base_ref)
     }
 }
 
@@ -22,7 +23,7 @@ struct MockSkillResolver {
 
 impl SkillResolver for MockSkillResolver {
     fn skill_exists(&self, name: &str) -> bool {
-        self.available.contains(&name.to_string())
+        self.available.iter().any(|s| s == name)
     }
 }
 
@@ -253,6 +254,26 @@ fn test_cleanup_succeeded() {
         .unwrap();
     let cleanup = coord.cleanup(&resp.job_id, false).unwrap();
     assert!(cleanup.cleaned);
+    // cleanup should remove the job from the coordinator
+    assert!(coord.job(&resp.job_id).is_none());
+}
+
+#[test]
+fn test_cleanup_removes_from_run_index() {
+    let mut coord = test_coordinator();
+    let resp = run_default(&mut coord);
+    coord.begin_preparation(&resp.job_id).unwrap();
+    coord.mark_ready(&resp.job_id, 42, None).unwrap();
+    coord
+        .mark_succeeded(SuccessInfo {
+            job_id: &resp.job_id,
+            summary: "ok",
+            artifacts: vec![],
+            duration_ms: None,
+        })
+        .unwrap();
+    coord.cleanup(&resp.job_id, false).unwrap();
+    assert!(coord.status_by_run_id(&resp.run_id).is_err());
 }
 
 #[test]
@@ -302,6 +323,14 @@ fn test_status_nonexistent() {
 }
 
 #[test]
+fn test_status_returns_empty_todos() {
+    let mut coord = test_coordinator();
+    let resp = run_default(&mut coord);
+    let status = coord.status_by_job_id(&resp.job_id).unwrap();
+    assert!(status.todos.is_empty());
+}
+
+#[test]
 fn test_mark_blocked_and_resume() {
     let mut coord = test_coordinator();
     let resp = run_default(&mut coord);
@@ -328,6 +357,46 @@ fn test_worker_progress() {
         .unwrap();
     let job = coord.job(&resp.job_id).unwrap();
     assert_eq!(job.progress, Some(50));
+}
+
+#[test]
+fn test_worker_progress_rejects_terminal_state() {
+    let mut coord = test_coordinator();
+    let resp = run_default(&mut coord);
+    coord.begin_preparation(&resp.job_id).unwrap();
+    coord.mark_ready(&resp.job_id, 42, None).unwrap();
+    coord
+        .mark_succeeded(SuccessInfo {
+            job_id: &resp.job_id,
+            summary: "done",
+            artifacts: vec![],
+            duration_ms: None,
+        })
+        .unwrap();
+    let err = coord
+        .record_worker_progress(&resp.job_id, 50, "late update")
+        .unwrap_err();
+    assert_eq!(err, CommandError::InvalidTransition);
+}
+
+#[test]
+fn test_emit_worker_event_rejects_terminal_state() {
+    let mut coord = test_coordinator();
+    let resp = run_default(&mut coord);
+    coord.begin_preparation(&resp.job_id).unwrap();
+    coord.mark_ready(&resp.job_id, 42, None).unwrap();
+    coord
+        .mark_succeeded(SuccessInfo {
+            job_id: &resp.job_id,
+            summary: "done",
+            artifacts: vec![],
+            duration_ms: None,
+        })
+        .unwrap();
+    let err = coord
+        .emit_worker_event(&resp.job_id, "tool.result", serde_json::json!({"ok": true}))
+        .unwrap_err();
+    assert_eq!(err, CommandError::InvalidTransition);
 }
 
 #[test]
@@ -428,4 +497,13 @@ fn test_seq_numbers_monotonic() {
         assert!(e.seq > prev);
         prev = e.seq;
     }
+}
+
+#[test]
+fn test_invalid_transition_returns_distinct_error() {
+    let mut coord = test_coordinator();
+    let resp = run_default(&mut coord);
+    // Queued -> Running is invalid (must go through Preparing first)
+    let err = coord.mark_ready(&resp.job_id, 42, None).unwrap_err();
+    assert_eq!(err, CommandError::InvalidTransition);
 }

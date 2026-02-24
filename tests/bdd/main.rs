@@ -44,11 +44,12 @@ struct BddRepoValidator {
 
 impl RepoValidator for BddRepoValidator {
     fn repo_exists(&self, repo: &str) -> bool {
-        self.valid_repos.contains(&repo.to_string())
+        self.valid_repos.iter().any(|r| r == repo)
     }
     fn ref_exists(&self, repo: &str, base_ref: &str) -> bool {
         self.valid_refs
-            .contains(&(repo.to_string(), base_ref.to_string()))
+            .iter()
+            .any(|(r, b)| r == repo && b == base_ref)
     }
 }
 
@@ -59,7 +60,7 @@ struct BddSkillResolver {
 
 impl SkillResolver for BddSkillResolver {
     fn skill_exists(&self, name: &str) -> bool {
-        self.available.contains(&name.to_string())
+        self.available.iter().any(|s| s == name)
     }
 }
 use quecto::infrastructure::persistence::cron_store::FileCronStore;
@@ -707,6 +708,8 @@ pub struct QuectoWorld {
     pub coding_suggestion_policy_denied: bool,
     /// Last cleanup keep_artifacts flag used by scenario
     pub coding_keep_artifacts: bool,
+    /// Last known state before cleanup removed the job.
+    pub coding_last_cleaned_state: Option<quecto::domain::coding_job::JobState>,
     /// Whether a warning was logged in scenario simulation
     pub coding_warning_logged: bool,
     /// Whether a version mismatch error was logged in scenario simulation
