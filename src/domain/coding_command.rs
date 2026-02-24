@@ -32,6 +32,7 @@ where
 
 /// Request to start a new coding job.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RunRequest {
     pub goal: String,
     pub repo: String,
@@ -68,13 +69,36 @@ pub struct RunResponse {
 
 /// Request to query job or run status.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "RawStatusRequest")]
 pub struct StatusRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default, deserialize_with = "deserialize_optional_runtime_id")]
     pub job_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(default, deserialize_with = "deserialize_optional_runtime_id")]
     pub run_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawStatusRequest {
+    #[serde(default, deserialize_with = "deserialize_optional_runtime_id")]
+    job_id: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_runtime_id")]
+    run_id: Option<String>,
+}
+
+impl TryFrom<RawStatusRequest> for StatusRequest {
+    type Error = String;
+
+    fn try_from(value: RawStatusRequest) -> Result<Self, Self::Error> {
+        match (&value.job_id, &value.run_id) {
+            (Some(_), Some(_)) => Err("exactly one of job_id or run_id is required".to_string()),
+            (None, None) => Err("exactly one of job_id or run_id is required".to_string()),
+            _ => Ok(Self {
+                job_id: value.job_id,
+                run_id: value.run_id,
+            }),
+        }
+    }
 }
 
 /// Response from a `status` command.
@@ -121,6 +145,7 @@ pub struct TodoItem {
 
 /// Request to cancel a job.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CancelRequest {
     #[serde(deserialize_with = "deserialize_runtime_id")]
     pub job_id: String,
@@ -140,6 +165,7 @@ pub struct CancelResponse {
 
 /// Request to clean up a job's filesystem artifacts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CleanupRequest {
     #[serde(deserialize_with = "deserialize_runtime_id")]
     pub job_id: String,
@@ -165,6 +191,7 @@ pub struct CleanupResponse {
 
 /// Request to list jobs, optionally filtered by state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ListRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state_filter: Option<Vec<JobState>>,
@@ -304,5 +331,60 @@ mod tests {
         let json = r#"{"run_id":"run.1"}"#;
         let err = serde_json::from_str::<StatusRequest>(json).unwrap_err();
         assert!(err.to_string().contains("invalid runtime id"));
+    }
+
+    #[test]
+    fn test_status_request_rejects_missing_both_ids() {
+        let json = r#"{}"#;
+        let err = serde_json::from_str::<StatusRequest>(json).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("exactly one of job_id or run_id is required")
+        );
+    }
+
+    #[test]
+    fn test_status_request_rejects_when_both_ids_present() {
+        let json = r#"{"job_id":"job_1","run_id":"run_1"}"#;
+        let err = serde_json::from_str::<StatusRequest>(json).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("exactly one of job_id or run_id is required")
+        );
+    }
+
+    #[test]
+    fn test_status_request_rejects_unknown_field() {
+        let json = r#"{"job_id":"job_1","extra":true}"#;
+        let err = serde_json::from_str::<StatusRequest>(json).unwrap_err();
+        assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn test_run_request_rejects_unknown_field() {
+        let json = r#"{"goal":"g","repo":"r","base_ref":"main","extra":"x"}"#;
+        let err = serde_json::from_str::<RunRequest>(json).unwrap_err();
+        assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn test_cancel_request_rejects_unknown_field() {
+        let json = r#"{"job_id":"job_1","extra":true}"#;
+        let err = serde_json::from_str::<CancelRequest>(json).unwrap_err();
+        assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn test_cleanup_request_rejects_unknown_field() {
+        let json = r#"{"job_id":"job_1","extra":true}"#;
+        let err = serde_json::from_str::<CleanupRequest>(json).unwrap_err();
+        assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn test_list_request_rejects_unknown_field() {
+        let json = r#"{"state_filter":["running"],"extra":true}"#;
+        let err = serde_json::from_str::<ListRequest>(json).unwrap_err();
+        assert!(err.to_string().contains("unknown field"));
     }
 }

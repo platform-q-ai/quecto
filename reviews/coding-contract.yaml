@@ -112,6 +112,9 @@ commands:
       one_of:
         - required: [job_id]
         - required: [run_id]
+      properties:
+        job_id: { $ref: "#/types/runtime_id" }
+        run_id: { $ref: "#/types/runtime_id" }
     response:
       required: [job_id, run_id, state]
       properties:
@@ -139,6 +142,8 @@ commands:
       the response returns the current state and no event is emitted.
     request:
       required: [job_id]
+      properties:
+        job_id: { $ref: "#/types/runtime_id" }
     response:
       required: [job_id, state]
       properties:
@@ -156,6 +161,7 @@ commands:
     request:
       required: [job_id]
       properties:
+        job_id: { $ref: "#/types/runtime_id" }
         keep_artifacts: { type: boolean, default: true }
     response:
       required: [job_id, cleaned]
