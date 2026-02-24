@@ -236,20 +236,18 @@ fn when_agent_calls_action(world: &mut QuectoWorld, action: String) {
         }
         "cancel" => {
             if let Some(job) = &mut world.coding_job {
+                let was_queued = job.state == JobState::Queued;
                 job.state = JobState::Canceled;
                 if job.cancel_reason.is_none() {
                     job.cancel_reason = Some(CancelReason::UserRequest);
+                }
+                if was_queued {
+                    world.coding_agent_no_worker_launched = true;
                 }
                 world.coding_cancel_response = Some(CancelResponse {
                     job_id: job.job_id.clone(),
                     state: JobState::Canceled,
                 });
-            }
-            if matches!(
-                world.coding_job.as_ref().map(|j| j.state),
-                Some(JobState::Queued)
-            ) {
-                world.coding_agent_no_worker_launched = true;
             }
         }
         "cleanup" => {
@@ -291,6 +289,8 @@ fn when_user_asks_what_happened(world: &mut QuectoWorld) {
 fn when_user_asks_blocked_status(world: &mut QuectoWorld) {
     world.coding_agent_user_response_count += 1;
     world.coding_agent_reported_blocked = true;
+    world.coding_agent_guidance_captured = true;
+    world.coding_agent_unblock_relayed = true;
 }
 
 #[when(expr = "the user says {string}")]
@@ -383,6 +383,7 @@ fn when_agent_calls_list(world: &mut QuectoWorld, action: String, state_filter: 
             summary: j.summary.clone(),
         })
         .collect::<Vec<_>>();
+    world.coding_agent_reported_active_jobs = !jobs.is_empty();
     world.coding_list_response = Some(ListResponse { jobs });
 }
 
@@ -515,13 +516,11 @@ fn then_reports_blocked_state(world: &mut QuectoWorld) {
 
 #[then("the user can provide guidance through the agent")]
 fn then_user_can_provide_guidance(world: &mut QuectoWorld) {
-    world.coding_agent_guidance_captured = true;
     assert!(world.coding_agent_guidance_captured);
 }
 
 #[then("the agent can relay the decision to unblock the job")]
 fn then_agent_relays_unblock(world: &mut QuectoWorld) {
-    world.coding_agent_unblock_relayed = true;
     assert!(world.coding_agent_unblock_relayed);
 }
 
@@ -551,7 +550,6 @@ fn then_cancel_response_state(world: &mut QuectoWorld, state: String) {
 
 #[then("no worker should have been launched")]
 fn then_no_worker_launched(world: &mut QuectoWorld) {
-    world.coding_agent_no_worker_launched = true;
     assert!(world.coding_agent_no_worker_launched);
 }
 
@@ -645,7 +643,6 @@ fn then_list_includes_jobs(world: &mut QuectoWorld, count: usize) {
 
 #[then("the agent should report their states and progress to the user")]
 fn then_report_states_progress(world: &mut QuectoWorld) {
-    world.coding_agent_reported_active_jobs = true;
     assert!(world.coding_agent_reported_active_jobs);
 }
 
