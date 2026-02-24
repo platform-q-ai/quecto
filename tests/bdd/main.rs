@@ -709,8 +709,12 @@ pub struct QuectoWorld {
     pub coding_recovery_events_appended: usize,
     /// Whether state update happened after durable event flush
     pub coding_recovery_flush_then_state: bool,
+    /// Observed operation order for recovery durability checks
+    pub coding_recovery_operation_order: Vec<String>,
     /// Whether child spawn was marked failed during recovery
     pub coding_spawn_marked_failed: bool,
+    /// Startup error message captured when replay cannot begin
+    pub coding_startup_error: Option<String>,
 }
 
 fn push_coding_event(

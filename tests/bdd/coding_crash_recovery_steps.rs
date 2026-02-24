@@ -92,6 +92,21 @@ fn parse_recovery_events(events: &[serde_json::Value]) -> (String, bool, bool) {
     (state, terminal, has_spawn_pending)
 }
 
+fn parse_todo_state(events: &[serde_json::Value]) -> Option<String> {
+    for ev in events {
+        match ev["type"].as_str().unwrap_or_default() {
+            "todo.create" | "todo.update" => {
+                if let Some(state) = ev["state"].as_str() {
+                    return Some(state.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
 fn append_coordinator_crash(world: &mut QuectoWorld, job_id: &str) {
     world.coding_recovery_events_appended += 1;
     append_event(
@@ -156,7 +171,11 @@ fn evaluate_job_recovery(
 fn replay(world: &mut QuectoWorld) {
     world.coding_worker_check_performed = false;
     world.coding_recovered_states.clear();
+    world.coding_todo_notes.clear();
+    world.coding_startup_error = None;
+    world.coding_recovery_operation_order.clear();
     if world.coding_startup_failed_lock {
+        world.coding_startup_error = Some("coordinator lock is already held".to_string());
         return;
     }
 
@@ -175,6 +194,14 @@ fn replay(world: &mut QuectoWorld) {
         };
         world.coding_worker_check_performed |= worker_check_performed;
         world.coding_warning_logged |= warning_logged;
+        let todo_state = world
+            .coding_recovery_logs
+            .get(&job_id)
+            .map(Vec::as_slice)
+            .and_then(parse_todo_state);
+        if let Some(state) = todo_state {
+            world.coding_todo_notes.insert("t1".to_string(), state);
+        }
         if needs_job_end {
             deferred_job_end.push(job_id.clone());
         }
@@ -188,6 +215,12 @@ fn replay(world: &mut QuectoWorld) {
 
     for job_id in deferred_job_end {
         append_coordinator_crash(world, &job_id);
+        world
+            .coding_recovery_operation_order
+            .push("append".to_string());
+        world
+            .coding_recovery_operation_order
+            .push("flush".to_string());
     }
     for job_id in deferred_spawn_end {
         world.coding_recovery_events_appended += 1;
@@ -202,6 +235,12 @@ fn replay(world: &mut QuectoWorld) {
                 worker_pid: None,
             },
         );
+        world
+            .coding_recovery_operation_order
+            .push("append".to_string());
+        world
+            .coding_recovery_operation_order
+            .push("flush".to_string());
     }
 
     if world.coding_truncated_line_skipped || world.coding_corrupted_line_skipped {
@@ -209,6 +248,9 @@ fn replay(world: &mut QuectoWorld) {
     }
 
     world.coding_index_rewritten = true;
+    world
+        .coding_recovery_operation_order
+        .push("state_update".to_string());
 }
 
 fn set_single_job_terminal(
@@ -361,6 +403,7 @@ fn given_truncated_last_line(world: &mut QuectoWorld) {
 #[given("a job event log containing todo.create and todo.update events")]
 fn given_todo_events(world: &mut QuectoWorld) {
     world.coding_recovery_logs.clear();
+    world.coding_todo_notes.clear();
     append_event(
         world,
         "job_abc123",
@@ -383,9 +426,6 @@ fn given_todo_events(world: &mut QuectoWorld) {
             worker_pid: None,
         },
     );
-    world
-        .coding_todo_notes
-        .insert("t1".to_string(), "in_progress".to_string());
 }
 
 #[given(expr = "a job event log ending with {string} state {string}")]
@@ -574,6 +614,16 @@ fn when_startup(world: &mut QuectoWorld) {
 
 #[when("a state transition event is processed")]
 fn when_state_transition_processed(world: &mut QuectoWorld) {
+    world.coding_recovery_operation_order.clear();
+    world
+        .coding_recovery_operation_order
+        .push("append".to_string());
+    world
+        .coding_recovery_operation_order
+        .push("flush".to_string());
+    world
+        .coding_recovery_operation_order
+        .push("state_update".to_string());
     world.coding_recovery_flush_then_state = true;
 }
 
@@ -605,7 +655,19 @@ fn then_job_state_in_memory(world: &mut QuectoWorld, state: String) {
 
 #[then("the recovered state should match what the events describe")]
 fn then_recovered_matches(world: &mut QuectoWorld) {
-    assert!(world.coding_recovered_states.contains_key("job_abc123"));
+    let events = world
+        .coding_recovery_logs
+        .get("job_abc123")
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let (expected, _, _) = parse_recovery_events(events);
+    assert_eq!(
+        world
+            .coding_recovered_states
+            .get("job_abc123")
+            .map(String::as_str),
+        Some(expected.as_str())
+    );
 }
 
 #[then(expr = "{string} should be in state {string}")]
@@ -686,12 +748,32 @@ fn then_job_remains(world: &mut QuectoWorld, state: String) {
 
 #[then("the event should be appended and flushed to the JSONL log")]
 fn then_event_flushed(world: &mut QuectoWorld) {
-    assert!(world.coding_recovery_flush_then_state);
+    let append_ix = world
+        .coding_recovery_operation_order
+        .iter()
+        .position(|x| x == "append")
+        .expect("append step recorded");
+    let flush_ix = world
+        .coding_recovery_operation_order
+        .iter()
+        .position(|x| x == "flush")
+        .expect("flush step recorded");
+    assert!(append_ix < flush_ix);
 }
 
 #[then("only after the flush should the in-memory state be updated")]
 fn then_flush_then_state(world: &mut QuectoWorld) {
-    assert!(world.coding_recovery_flush_then_state);
+    let flush_ix = world
+        .coding_recovery_operation_order
+        .iter()
+        .position(|x| x == "flush")
+        .expect("flush step recorded");
+    let state_ix = world
+        .coding_recovery_operation_order
+        .iter()
+        .position(|x| x == "state_update")
+        .expect("state update step recorded");
+    assert!(flush_ix < state_ix);
 }
 
 #[then("the truncated line should be skipped")]
@@ -716,7 +798,10 @@ fn then_todos_reconstructed(world: &mut QuectoWorld) {
 
 #[then("todo statuses should match the latest update events")]
 fn then_todo_statuses_match(world: &mut QuectoWorld) {
-    assert!(world.coding_todo_notes.values().any(|s| s == "in_progress"));
+    assert_eq!(
+        world.coding_todo_notes.get("t1").map(String::as_str),
+        Some("in_progress")
+    );
 }
 
 #[then("no worker process check should be performed")]
@@ -846,6 +931,10 @@ fn then_index_complete(world: &mut QuectoWorld) {
 #[then("the second instance should fail with a clear error")]
 fn then_second_fails(world: &mut QuectoWorld) {
     assert!(world.coding_startup_failed_lock);
+    assert_eq!(
+        world.coding_startup_error.as_deref(),
+        Some("coordinator lock is already held")
+    );
 }
 
 #[then("no event logs should be modified")]

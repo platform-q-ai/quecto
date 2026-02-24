@@ -158,8 +158,8 @@ Feature: Crash Recovery and Event Replay
   Scenario: Coordinator recovers child agent state from spawn events
     Given a job event log containing spawn.request and spawn.decision events
     But no spawn.result event
-    When the coordinator starts up
     And the child agent process is no longer alive
+    When the coordinator starts up
     Then the spawn should be marked as failed
     And a "spawn.result" event should be appended with state "failed"
 
