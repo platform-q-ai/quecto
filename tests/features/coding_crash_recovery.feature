@@ -1,4 +1,4 @@
-@pending
+@wip
 Feature: Crash Recovery and Event Replay
   As the coding runtime coordinator
   I want to recover state from event logs after a crash
@@ -43,7 +43,7 @@ Feature: Crash Recovery and Event Replay
     And process 12345 is no longer alive
     When the coordinator starts up
     Then the job should transition to "failed"
-    And the error_code should be "coordinator_crash"
+    And the recovered error_code should be "coordinator_crash"
     And a "job.end" event should be appended to the log
 
   Scenario: Coordinator re-attaches to still-alive worker after crash
@@ -158,8 +158,8 @@ Feature: Crash Recovery and Event Replay
   Scenario: Coordinator recovers child agent state from spawn events
     Given a job event log containing spawn.request and spawn.decision events
     But no spawn.result event
-    When the coordinator starts up
     And the child agent process is no longer alive
+    When the coordinator starts up
     Then the spawn should be marked as failed
     And a "spawn.result" event should be appended with state "failed"
 

@@ -687,6 +687,34 @@ pub struct QuectoWorld {
     pub coding_todo_transition_rejected: bool,
     /// Whether latest todo create was rejected
     pub coding_todo_create_rejected: bool,
+    /// Recovery fixture event logs by job_id
+    pub coding_recovery_logs: HashMap<String, Vec<serde_json::Value>>,
+    /// Recovered states after coordinator startup replay
+    pub coding_recovered_states: HashMap<String, String>,
+    /// Recovered worker pid by job_id (if any)
+    pub coding_recovered_worker_pid: HashMap<String, i64>,
+    /// Simulated process liveness map for recovery checks
+    pub coding_process_alive: HashMap<i64, bool>,
+    /// Whether replay encountered truncated line and skipped it
+    pub coding_truncated_line_skipped: bool,
+    /// Whether replay encountered corrupted JSON and skipped it
+    pub coding_corrupted_line_skipped: bool,
+    /// Whether jobs index rewrite was performed
+    pub coding_index_rewritten: bool,
+    /// Whether worker recovery check was performed
+    pub coding_worker_check_performed: bool,
+    /// Whether coordinator startup failed due to lock
+    pub coding_startup_failed_lock: bool,
+    /// Number of appended recovery events
+    pub coding_recovery_events_appended: usize,
+    /// Whether state update happened after durable event flush
+    pub coding_recovery_flush_then_state: bool,
+    /// Observed operation order for recovery durability checks
+    pub coding_recovery_operation_order: Vec<String>,
+    /// Whether child spawn was marked failed during recovery
+    pub coding_spawn_marked_failed: bool,
+    /// Startup error message captured when replay cannot begin
+    pub coding_startup_error: Option<String>,
 }
 
 fn push_coding_event(
@@ -961,6 +989,7 @@ mod agent_msg_steps;
 mod agent_tools_steps;
 mod architecture_steps;
 mod auth_steps;
+mod coding_crash_recovery_steps;
 mod coding_job_lifecycle_steps;
 mod coding_skills_steps;
 mod coding_todos_steps;
