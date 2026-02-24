@@ -339,7 +339,7 @@ fn when_worker_emits_blocked_reason(
 fn when_worker_emits_todo_event_for_with_table(
     world: &mut QuectoWorld,
     event_type: String,
-    _todo_id: String,
+    todo_id: String,
     step: &gherkin::Step,
 ) {
     let fields = parse_kv_table(step);
@@ -352,7 +352,7 @@ fn when_worker_emits_todo_event_for_with_table(
             .get("needs")
             .and_then(|v| v.as_str())
             .map(ToString::to_string);
-        do_todo_blocked(world, &_todo_id, reason, needs);
+        do_todo_blocked(world, &todo_id, reason, needs);
     } else if event_type == "todo.update" {
         let status = fields
             .get("status")
@@ -362,7 +362,7 @@ fn when_worker_emits_todo_event_for_with_table(
             .get("note")
             .and_then(|v| v.as_str())
             .map(ToString::to_string);
-        do_todo_update(world, &_todo_id, status, note);
+        do_todo_update(world, &todo_id, status, note);
     }
 }
 

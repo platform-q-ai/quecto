@@ -10,6 +10,9 @@ use crate::domain::coding_command::TodoItem;
 /// Default maximum todo items per job when not configured.
 const DEFAULT_MAX_ITEMS: usize = 200;
 
+/// Maximum byte length for todo_id, title, owner, and depends_on entries.
+const MAX_FIELD_LEN: usize = 512;
+
 /// Errors from todo operations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TodoError {
@@ -23,6 +26,8 @@ pub enum TodoError {
     TodoNotFound,
     /// Invalid state transition.
     InvalidTransition,
+    /// A field exceeds the maximum allowed length.
+    InvalidField,
 }
 
 impl std::fmt::Display for TodoError {
@@ -33,6 +38,7 @@ impl std::fmt::Display for TodoError {
             Self::LimitReached => write!(f, "limit_reached"),
             Self::TodoNotFound => write!(f, "todo_not_found"),
             Self::InvalidTransition => write!(f, "invalid_transition"),
+            Self::InvalidField => write!(f, "invalid_field"),
         }
     }
 }
@@ -95,8 +101,11 @@ impl TodoTracker {
         }
     }
 
+    /// Maximum allowed value for per-job item limit.
+    const MAX_LIMIT: usize = 10_000;
+
     pub fn set_max_items_per_job(&mut self, limit: usize) {
-        self.max_items_per_job = limit;
+        self.max_items_per_job = limit.clamp(1, Self::MAX_LIMIT);
     }
 
     pub fn todos_for_job(&self, job_id: &str) -> &[TodoItem] {
@@ -131,6 +140,7 @@ impl TodoTracker {
     }
 
     pub fn create_todo(&mut self, job_id: &str, params: TodoCreateParams) -> Result<(), TodoError> {
+        validate_field_lengths(&params)?;
         let todos = self.todos_by_job.entry(job_id.to_string()).or_default();
         if todos.iter().any(|t| t.todo_id == params.todo_id) {
             return Err(TodoError::DuplicateId);
@@ -245,6 +255,20 @@ impl TodoTracker {
         self.blocked_needs.retain(|(jid, _), _| jid != job_id);
         self.notes.retain(|(jid, _), _| jid != job_id);
     }
+}
+
+fn validate_field_lengths(params: &TodoCreateParams) -> Result<(), TodoError> {
+    if params.todo_id.len() > MAX_FIELD_LEN
+        || params.title.len() > MAX_FIELD_LEN
+        || params
+            .owner
+            .as_ref()
+            .is_some_and(|o| o.len() > MAX_FIELD_LEN)
+        || params.depends_on.iter().any(|d| d.len() > MAX_FIELD_LEN)
+    {
+        return Err(TodoError::InvalidField);
+    }
+    Ok(())
 }
 
 fn can_transition(from: &str, to: &str) -> bool {
@@ -595,5 +619,31 @@ mod tests {
     fn test_empty_job_returns_empty_slice() {
         let t = tracker();
         assert!(t.todos_for_job("nonexistent").is_empty());
+    }
+
+    #[test]
+    fn test_oversized_todo_id_rejected() {
+        let mut t = tracker();
+        let err = t
+            .create_todo(
+                "j1",
+                TodoCreateParams {
+                    todo_id: "x".repeat(513),
+                    title: "ok".to_string(),
+                    owner: None,
+                    depends_on: vec![],
+                },
+            )
+            .unwrap_err();
+        assert_eq!(err, TodoError::InvalidField);
+    }
+
+    #[test]
+    fn test_set_max_items_clamped() {
+        let mut t = tracker();
+        t.set_max_items_per_job(0);
+        // Should clamp to 1, so creating one todo succeeds
+        create_default(&mut t, "j1", "t1");
+        assert_eq!(t.todos_for_job("j1").len(), 1);
     }
 }
