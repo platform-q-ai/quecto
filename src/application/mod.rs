@@ -3,6 +3,7 @@ pub mod coding_coordinator;
 pub mod coding_crash_recovery;
 pub mod coding_skill_injector;
 pub mod coding_todos;
+pub mod coding_worker_events;
 pub mod context_pruning;
 pub mod cron_executor;
 pub mod heartbeat;
