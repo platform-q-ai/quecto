@@ -22,7 +22,11 @@ mod tests {
     #[test]
     fn test_add_to_linker_compiles() {
         fn wire(linker: &mut Linker<HostState>) {
-            SandboxedTool::add_to_linker(linker, |s| s).unwrap();
+            SandboxedTool::add_to_linker::<HostState, wasmtime::component::HasSelf<HostState>>(
+                linker,
+                |s| s,
+            )
+            .unwrap();
         }
         // Just prove the function compiles; don't call it.
         let _ = wire;

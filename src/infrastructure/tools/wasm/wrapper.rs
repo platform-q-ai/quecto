@@ -104,12 +104,15 @@ impl WasmToolWrapper {
 
         // Link WASI host imports (required by wasm32-wasip2 components).
         let mut linker: Linker<HostState> = Linker::new(self.runtime.engine());
-        wasmtime_wasi::add_to_linker_sync(&mut linker)
+        wasmtime_wasi::p2::add_to_linker_sync(&mut linker)
             .map_err(|e| DomainError::Tool(format!("link wasi: {e}")))?;
 
         // Link our custom host functions from the WIT interface.
-        SandboxedTool::add_to_linker(&mut linker, |state| state)
-            .map_err(|e| DomainError::Tool(format!("link host: {e}")))?;
+        SandboxedTool::add_to_linker::<HostState, wasmtime::component::HasSelf<HostState>>(
+            &mut linker,
+            |state: &mut HostState| state,
+        )
+        .map_err(|e| DomainError::Tool(format!("link host: {e}")))?;
 
         // Instantiate the WASM component.
         let instance = SandboxedTool::instantiate(&mut store, &self.module.component, &linker)
