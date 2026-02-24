@@ -38,6 +38,7 @@ impl std::fmt::Display for RecoveryError {
 #[derive(Debug, Clone)]
 pub struct RecoveredJob {
     pub job_id: String,
+    pub run_id: String,
     pub state: JobState,
     pub worker_pid: Option<u32>,
     pub error_code: Option<String>,
@@ -68,7 +69,6 @@ pub struct RecoveryResult {
 #[derive(Debug, Clone)]
 pub enum RecoveryWarning {
     EmptyEventLog { job_id: String },
-    TruncatedLine { job_id: String, line_number: usize },
     CorruptedLine { job_id: String, line_number: usize },
 }
 
@@ -208,7 +208,10 @@ fn recover_single_job<P: ProcessChecker>(
     let mut spawn = None;
     let mut deferred_spawn_end = false;
     if replayed.has_pending_spawn {
-        let child_alive = replayed.worker_pid.map(|_| false).unwrap_or(false);
+        let child_alive = replayed
+            .worker_pid
+            .map(|pid| process_checker.is_alive(pid))
+            .unwrap_or(false);
         if !child_alive {
             deferred_spawn_end = true;
             spawn = Some(RecoveredSpawn {
@@ -218,9 +221,11 @@ fn recover_single_job<P: ProcessChecker>(
         }
     }
 
+    let run_id = get_run_id(valid_events, job_id);
     JobRecoveryOutcome {
         recovered: RecoveredJob {
             job_id: job_id.to_string(),
+            run_id,
             state: final_state,
             worker_pid: replayed.worker_pid,
             error_code: job_error_code,
@@ -252,7 +257,10 @@ fn apply_deferred_writes<E: EventLogStore>(
     }
 
     for job_id in deferred_spawn_ends {
-        let run_id = jobs.get(job_id).map(|_| job_id.clone()).unwrap_or_default();
+        let run_id = jobs
+            .get(job_id)
+            .map(|j| j.run_id.clone())
+            .unwrap_or_default();
         let envelope = make_spawn_fail_event(job_id, &run_id);
         event_log_store.append_event(job_id, &envelope);
         events_appended += 1;
@@ -296,7 +304,7 @@ pub fn recover<P: ProcessChecker, E: EventLogStore>(
 
     for job_id in &job_ids {
         let lines = event_log_store.read_log(job_id);
-        let valid_events = extract_valid_events(job_id, &lines, &mut warnings);
+        let valid_events = extract_valid_events(job_id, lines, &mut warnings);
 
         if valid_events.is_empty() {
             warnings.push(RecoveryWarning::EmptyEventLog {
@@ -331,7 +339,7 @@ pub fn recover<P: ProcessChecker, E: EventLogStore>(
         spawns,
         warnings,
         events_appended,
-        index_rewritten: true,
+        index_rewritten: !job_ids.is_empty(),
         operation_order,
     })
 }
@@ -343,17 +351,17 @@ pub fn recover<P: ProcessChecker, E: EventLogStore>(
 /// Extract valid events from log lines, collecting warnings for corrupt ones.
 fn extract_valid_events(
     job_id: &str,
-    lines: &[EventLogLine],
+    lines: Vec<EventLogLine>,
     warnings: &mut Vec<RecoveryWarning>,
 ) -> Vec<EventEnvelope> {
-    let mut valid = Vec::new();
+    let mut valid = Vec::with_capacity(lines.len());
     for line in lines {
         match line {
-            EventLogLine::Valid(env) => valid.push(env.clone()),
+            EventLogLine::Valid(env) => valid.push(env),
             EventLogLine::Corrupt { line_number, .. } => {
                 warnings.push(RecoveryWarning::CorruptedLine {
                     job_id: job_id.to_string(),
-                    line_number: *line_number,
+                    line_number,
                 });
             }
         }
@@ -365,6 +373,7 @@ fn extract_valid_events(
 fn empty_failed_job(job_id: &str) -> RecoveredJob {
     RecoveredJob {
         job_id: job_id.to_string(),
+        run_id: job_id.to_string(),
         state: JobState::Failed,
         worker_pid: None,
         error_code: None,

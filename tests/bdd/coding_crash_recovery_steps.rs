@@ -390,6 +390,19 @@ fn given_job_log_ends_with_state(
 #[given(expr = "a stale {string} that does not match current event logs")]
 fn given_stale_index(world: &mut QuectoWorld, _index: String) {
     world.coding_index_rewritten = false;
+    // Add a job so recovery has something to rebuild the index from.
+    world.coding_recovery_logs.clear();
+    append_fixture_event(
+        world,
+        FixtureEvent {
+            job_id: "job_abc123",
+            event_type: "job.end",
+            state: Some("succeeded"),
+            reason: None,
+            error_code: None,
+            worker_pid: None,
+        },
+    );
 }
 
 #[given(expr = "a job event log with a {string} event recording worker PID {int}")]
