@@ -885,6 +885,7 @@ mod agent_tools_steps;
 mod architecture_steps;
 mod auth_steps;
 mod coding_job_lifecycle_steps;
+mod coding_worker_tools_steps;
 mod config_steps;
 mod context_pruning_steps;
 mod cron_steps;
