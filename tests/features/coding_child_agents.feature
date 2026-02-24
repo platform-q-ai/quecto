@@ -1,4 +1,4 @@
-@pending
+@wip
 Feature: Child Agent Spawn Flow
   As the coding runtime coordinator
   I want to manage child agent spawning requested by workers
@@ -78,7 +78,7 @@ Feature: Child Agent Spawn Flow
   Scenario: Child agent cannot call GitHub APIs directly
     Given a child agent "security-reviewer" is running
     When the child agent attempts to emit a "publish.request" event
-    Then the coordinator should reject the event
+    Then the publish request should be rejected by the coordinator
     And the child agent should receive an error
 
   Scenario: Child agent follows same nsjail isolation as parent worker
@@ -159,7 +159,7 @@ Feature: Child Agent Spawn Flow
 
   Scenario: Spawn result with unknown request_id is rejected
     When a "spawn.result" event arrives with request_id "unknown_req"
-    Then the coordinator should log a warning
+    Then a warning should be logged for unknown request_id
     And the event should be discarded
 
   # --- Allowlist coverage ---
