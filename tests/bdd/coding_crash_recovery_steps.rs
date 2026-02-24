@@ -108,23 +108,23 @@ fn append_coordinator_crash(world: &mut QuectoWorld, job_id: &str) {
 }
 
 fn evaluate_job_recovery(
-    world: &mut QuectoWorld,
+    world: &QuectoWorld,
     job_id: &str,
     events: &[serde_json::Value],
-) -> (String, bool, bool) {
+) -> (String, bool, bool, bool, bool) {
     if events.is_empty() {
-        world.coding_warning_logged = true;
-        return ("failed".to_string(), false, false);
+        return ("failed".to_string(), false, false, false, true);
     }
 
     let (mut state, terminal, has_spawn_pending) = parse_recovery_events(events);
     let mut needs_job_end = false;
+    let mut worker_check_performed = false;
     if !terminal && state == "preparing" {
         state = "failed".to_string();
         needs_job_end = true;
     } else if !terminal && matches!(state.as_str(), "running" | "blocked") {
         if let Some(pid) = world.coding_recovered_worker_pid.get(job_id).copied() {
-            world.coding_worker_check_performed = true;
+            worker_check_performed = true;
             let pid_alive = world
                 .coding_process_alive
                 .get(&pid)
@@ -144,7 +144,13 @@ fn evaluate_job_recovery(
             .copied()
             .unwrap_or(false);
 
-    (state, needs_job_end, needs_spawn_end)
+    (
+        state,
+        needs_job_end,
+        needs_spawn_end,
+        worker_check_performed,
+        false,
+    )
 }
 
 fn replay(world: &mut QuectoWorld) {
@@ -159,14 +165,16 @@ fn replay(world: &mut QuectoWorld) {
     let mut deferred_spawn_end: Vec<String> = Vec::new();
 
     for job_id in job_ids {
-        let events = world
-            .coding_recovery_logs
-            .get(&job_id)
-            .cloned()
-            .unwrap_or_default();
-
-        let (state, needs_job_end, needs_spawn_end) =
-            evaluate_job_recovery(world, &job_id, &events);
+        let (state, needs_job_end, needs_spawn_end, worker_check_performed, warning_logged) = {
+            let events = world
+                .coding_recovery_logs
+                .get(&job_id)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            evaluate_job_recovery(world, &job_id, events)
+        };
+        world.coding_worker_check_performed |= worker_check_performed;
+        world.coding_warning_logged |= warning_logged;
         if needs_job_end {
             deferred_job_end.push(job_id.clone());
         }
