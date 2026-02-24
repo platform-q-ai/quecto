@@ -405,8 +405,15 @@ fn when_worker_suggests_with_table(world: &mut QuectoWorld, step: &gherkin::Step
     }
 
     let policy = build_policy(world);
-    let suggestion =
-        coding_skill_injector::evaluate_suggestion(&policy, skills, reason.clone(), by);
+    let suggestion = coding_skill_injector::evaluate_suggestion(
+        &policy,
+        coding_skill_injector::SuggestionInput {
+            skills,
+            reason: reason.clone(),
+            by,
+            profile: world.coding_selected_profile.clone(),
+        },
+    );
     world.coding_suggestion_policy_denied = suggestion.policy_denied;
     world
         .coding_skill_suggestions
@@ -433,9 +440,12 @@ fn when_worker_emits_skills_event_short(
     let policy = build_policy(world);
     let suggestion = coding_skill_injector::evaluate_suggestion(
         &policy,
-        parsed,
-        "suggested by worker".into(),
-        None,
+        coding_skill_injector::SuggestionInput {
+            skills: parsed,
+            reason: "suggested by worker".into(),
+            by: None,
+            profile: world.coding_selected_profile.clone(),
+        },
     );
     world.coding_suggestion_policy_denied = suggestion.policy_denied;
     world

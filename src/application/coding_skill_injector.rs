@@ -7,8 +7,9 @@
 
 use crate::domain::coding_command::CommandError;
 use crate::domain::coding_ports::SkillResolver;
+use crate::domain::skill::is_valid_skill_name;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 // ============================================================================
 // Policy configuration
@@ -100,6 +101,13 @@ pub fn resolve_skills<S: SkillResolver>(
         });
     }
 
+    // Validate skill name format for all requested skills.
+    for skill in requested {
+        if !is_valid_skill_name(skill) {
+            return Err(CommandError::PolicyDenied);
+        }
+    }
+
     let profile_name = profile.unwrap_or("default");
     let profile_skills = policy
         .profile_skills
@@ -110,20 +118,30 @@ pub fn resolve_skills<S: SkillResolver>(
     let (effective_allowlist, effective_denylist) =
         resolve_policy_lists(policy, profile_name, &profile_skills);
 
+    let deny_set: HashSet<&str> = effective_denylist.iter().map(String::as_str).collect();
+    let allow_set: HashSet<&str> = effective_allowlist.iter().map(String::as_str).collect();
+
     // Check requested skills against policy.
     for skill in requested {
-        check_policy(skill, &effective_allowlist, &effective_denylist)?;
+        check_policy(skill, &allow_set, &deny_set)?;
     }
 
     // Merge defaults + profile + requested, deduplicate.
-    let merged: Vec<String> = policy
-        .defaults
-        .iter()
-        .cloned()
-        .chain(profile_skills)
-        .chain(requested.iter().cloned())
-        .collect();
-    let effective = dedupe(merged);
+    let effective = dedupe(
+        policy
+            .defaults
+            .iter()
+            .cloned()
+            .chain(profile_skills)
+            .chain(requested.iter().cloned()),
+    );
+
+    // Check defaults and profile skills against denylist too.
+    for skill in &effective {
+        if deny_set.contains(skill.as_str()) {
+            return Err(CommandError::PolicyDenied);
+        }
+    }
 
     // Validate all effective skills exist on disk.
     for skill in &effective {
@@ -139,18 +157,34 @@ pub fn resolve_skills<S: SkillResolver>(
     })
 }
 
+/// Input for evaluating a worker's skill suggestion.
+pub struct SuggestionInput {
+    /// Suggested skill names.
+    pub skills: Vec<String>,
+    /// Reason for the suggestion.
+    pub reason: String,
+    /// Who suggested it (e.g. "worker").
+    pub by: Option<String>,
+    /// Active profile for effective denylist resolution.
+    pub profile: Option<String>,
+}
+
 /// Evaluate a worker's skill suggestion against policy.
-pub fn evaluate_suggestion(
-    policy: &SkillPolicy,
-    skills: Vec<String>,
-    reason: String,
-    by: Option<String>,
-) -> SkillSuggestion {
-    let policy_denied = skills.iter().any(|s| policy.denylist.contains(s));
+///
+/// Uses the effective denylist (profile-overridden if `profile` is
+/// specified) so that profile-scoped denylists are respected.
+pub fn evaluate_suggestion(policy: &SkillPolicy, input: SuggestionInput) -> SkillSuggestion {
+    let profile_name = input.profile.as_deref().unwrap_or("default");
+    let effective_denylist = policy
+        .profile_denylist
+        .get(profile_name)
+        .unwrap_or(&policy.denylist);
+    let deny_set: HashSet<&str> = effective_denylist.iter().map(String::as_str).collect();
+    let policy_denied = input.skills.iter().any(|s| deny_set.contains(s.as_str()));
     SkillSuggestion {
-        skills,
-        reason,
-        by,
+        skills: input.skills,
+        reason: input.reason,
+        by: input.by,
         policy_denied,
     }
 }
@@ -190,30 +224,31 @@ fn resolve_policy_lists(
     (allowlist, denylist)
 }
 
-/// Check a single skill against effective allow/deny lists.
+/// Check a single skill against effective allow/deny sets.
 fn check_policy(
     skill: &str,
-    allowlist: &[String],
-    denylist: &[String],
+    allow_set: &HashSet<&str>,
+    deny_set: &HashSet<&str>,
 ) -> Result<(), CommandError> {
-    if denylist.iter().any(|s| s == skill) {
+    if deny_set.contains(skill) {
         return Err(CommandError::PolicyDenied);
     }
-    if !allowlist.is_empty() && !allowlist.iter().any(|s| s == skill) {
+    if !allow_set.is_empty() && !allow_set.contains(skill) {
         return Err(CommandError::PolicyDenied);
     }
     Ok(())
 }
 
-/// Remove duplicates while preserving order.
-fn dedupe(items: Vec<String>) -> Vec<String> {
-    let mut seen = Vec::new();
+/// Remove duplicates while preserving insertion order.
+fn dedupe(items: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut seen_set = HashSet::new();
+    let mut result = Vec::new();
     for item in items {
-        if !seen.contains(&item) {
-            seen.push(item);
+        if seen_set.insert(item.clone()) {
+            result.push(item);
         }
     }
-    seen
+    result
 }
 
 #[cfg(test)]

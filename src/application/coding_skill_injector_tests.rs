@@ -204,9 +204,12 @@ fn test_evaluate_suggestion_allowed() {
     let policy = default_policy();
     let suggestion = evaluate_suggestion(
         &policy,
-        vec!["security-checklist".into()],
-        "touches auth".into(),
-        Some("worker".into()),
+        SuggestionInput {
+            skills: vec!["security-checklist".into()],
+            reason: "touches auth".into(),
+            by: Some("worker".into()),
+            profile: None,
+        },
     );
     assert!(!suggestion.policy_denied);
     assert_eq!(suggestion.by.as_deref(), Some("worker"));
@@ -217,11 +220,51 @@ fn test_evaluate_suggestion_denied() {
     let policy = default_policy();
     let suggestion = evaluate_suggestion(
         &policy,
-        vec!["forbidden-skill".into()],
-        "wanted it".into(),
-        None,
+        SuggestionInput {
+            skills: vec!["forbidden-skill".into()],
+            reason: "wanted it".into(),
+            by: None,
+            profile: None,
+        },
     );
     assert!(suggestion.policy_denied);
+}
+
+#[test]
+fn test_evaluate_suggestion_profile_denylist() {
+    let mut policy = default_policy();
+    policy
+        .profile_denylist
+        .insert("strict".into(), vec!["security-checklist".into()]);
+    let suggestion = evaluate_suggestion(
+        &policy,
+        SuggestionInput {
+            skills: vec!["security-checklist".into()],
+            reason: "reason".into(),
+            by: None,
+            profile: Some("strict".into()),
+        },
+    );
+    assert!(suggestion.policy_denied);
+    // Same skill allowed under default profile
+    let suggestion2 = evaluate_suggestion(
+        &policy,
+        SuggestionInput {
+            skills: vec!["security-checklist".into()],
+            reason: "reason".into(),
+            by: None,
+            profile: None,
+        },
+    );
+    assert!(!suggestion2.policy_denied);
+}
+
+#[test]
+fn test_resolve_rejects_invalid_skill_name() {
+    let policy = default_policy();
+    let resolver = MockResolver::all_known();
+    let result = resolve_skills(&policy, &["../traversal".into()], None, &resolver);
+    assert_eq!(result.unwrap_err(), CommandError::PolicyDenied);
 }
 
 #[test]
@@ -234,8 +277,8 @@ fn test_dedupe_preserves_order() {
 #[test]
 fn test_check_policy_denylist_first() {
     // Skill in both allow and deny → denied
-    let allow = vec!["x".to_string()];
-    let deny = vec!["x".to_string()];
+    let allow: HashSet<&str> = ["x"].into();
+    let deny: HashSet<&str> = ["x"].into();
     assert_eq!(
         check_policy("x", &allow, &deny),
         Err(CommandError::PolicyDenied)
@@ -244,8 +287,8 @@ fn test_check_policy_denylist_first() {
 
 #[test]
 fn test_check_policy_empty_allowlist_allows_all() {
-    let allow: Vec<String> = vec![];
-    let deny: Vec<String> = vec![];
+    let allow: HashSet<&str> = HashSet::new();
+    let deny: HashSet<&str> = HashSet::new();
     assert!(check_policy("anything", &allow, &deny).is_ok());
 }
 
