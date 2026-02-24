@@ -1,7 +1,7 @@
 use super::*;
 
 use quecto::domain::coding_command::{StatusResponse, TodoItem};
-use quecto::domain::coding_event::{EventEnvelope, EventSource};
+use quecto::domain::coding_event::EventSource;
 use quecto::domain::coding_job::JobState;
 
 fn parse_list_literal(s: &str) -> Vec<String> {
@@ -87,22 +87,7 @@ fn can_transition(from: &str, to: &str) -> bool {
 }
 
 fn emit(world: &mut QuectoWorld, event_type: &str, payload: serde_json::Value) {
-    let seq = world.coding_events.len() as u64 + 1;
-    let (run_id, job_id) = if let Some(j) = &world.coding_job {
-        (j.run_id.clone(), j.job_id.clone())
-    } else {
-        ("run_abc123".to_string(), "job_abc123".to_string())
-    };
-    world.coding_events.push(EventEnvelope {
-        v: "1.0".to_string(),
-        ts: "2026-01-01T00:00:00Z".to_string(),
-        run_id,
-        job_id,
-        source: EventSource::Worker,
-        event_type: event_type.to_string(),
-        seq,
-        payload,
-    });
+    push_coding_event(world, EventSource::Worker, event_type, payload);
 }
 
 fn apply_todo_create(world: &mut QuectoWorld, fields: &serde_json::Map<String, serde_json::Value>) {
@@ -227,7 +212,7 @@ fn apply_todo_complete(
             .insert(todo_id.to_string(), res.clone());
     }
 
-    let mut payload = serde_json::json!({"todo_id": todo_id});
+    let mut payload = serde_json::json!({"todo_id": todo_id, "result": ""});
     if let Some(res) = result {
         payload["result"] = serde_json::Value::String(res);
     }

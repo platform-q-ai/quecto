@@ -54,28 +54,14 @@ fn emit(
     event_type: &str,
     payload: serde_json::Value,
 ) {
-    let seq = world.coding_events.len() as u64 + 1;
-    let (run_id, job_id) = if let Some(j) = &world.coding_job {
-        (j.run_id.clone(), j.job_id.clone())
-    } else {
-        ("run_abc123".to_string(), "job_abc123".to_string())
-    };
-    world.coding_events.push(EventEnvelope {
-        v: "1.0".to_string(),
-        ts: "2026-01-01T00:00:00Z".to_string(),
-        run_id,
-        job_id,
-        source,
-        event_type: event_type.to_string(),
-        seq,
-        payload,
-    });
+    push_coding_event(world, source, event_type, payload);
 }
 
 #[given("a coding coordinator with a mock worker")]
 fn given_coding_coordinator_with_mock_worker(world: &mut QuectoWorld) {
     ensure_base(world);
     world.coding_events.clear();
+    world.coding_event_seq_by_source_job.clear();
     world.coding_command_error = None;
     world.coding_run_response = None;
     world.coding_status_response = None;
@@ -1400,7 +1386,16 @@ fn then_source_allowed(world: &mut QuectoWorld) {
 
 #[when(expr = "the coordinator receives an event with type {string}")]
 fn when_receive_unknown_event_type(world: &mut QuectoWorld, ty: String) {
-    emit(world, EventSource::Worker, &ty, serde_json::json!({"x":1}));
+    world.coding_events.push(EventEnvelope {
+        v: "1.0".to_string(),
+        ts: "2026-01-01T00:00:00Z".to_string(),
+        run_id: "run_abc123".to_string(),
+        job_id: "job_abc123".to_string(),
+        source: EventSource::Worker,
+        event_type: ty,
+        seq: 1,
+        payload: serde_json::json!({"x":1}),
+    });
     world.coding_warning_logged = true;
 }
 
