@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod channel;
 pub mod coding_command;
+pub mod coding_contract;
 pub mod coding_event;
 pub mod coding_job;
 pub mod cron;

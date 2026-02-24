@@ -2,24 +2,27 @@ use std::collections::HashMap;
 
 use thiserror::Error;
 
-use crate::domain::coding_event::{
+use super::coding_event::{
     EventEnvelope, EventPayload, EventSource, is_compatible_version, is_known_event_type,
 };
 
-fn seq_key(source: EventSource, job_id: &str) -> String {
-    format!("{source}:{job_id}")
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SeqScope {
+    pub source: EventSource,
+    pub job_id: String,
 }
 
-pub fn next_seq_for(
-    source: EventSource,
-    job_id: &str,
-    seq_by_source_job: &HashMap<String, u64>,
-) -> u64 {
-    seq_by_source_job
-        .get(&seq_key(source, job_id))
-        .copied()
-        .unwrap_or(0)
-        + 1
+impl SeqScope {
+    pub fn new(source: EventSource, job_id: impl Into<String>) -> Self {
+        Self {
+            source,
+            job_id: job_id.into(),
+        }
+    }
+}
+
+pub fn next_seq_for(scope: &SeqScope, seq_by_scope: &HashMap<SeqScope, u64>) -> u64 {
+    seq_by_scope.get(scope).copied().unwrap_or(0) + 1
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -38,7 +41,7 @@ pub enum CodingContractError {
 
 pub fn validate_and_track_event(
     envelope: &EventEnvelope,
-    seq_by_source_job: &mut HashMap<String, u64>,
+    seq_by_scope: &mut HashMap<SeqScope, u64>,
 ) -> Result<(), CodingContractError> {
     if !is_compatible_version(&envelope.v) {
         return Err(CodingContractError::IncompatibleVersion(envelope.v.clone()));
@@ -81,15 +84,15 @@ pub fn validate_and_track_event(
         });
     }
 
-    let key = seq_key(envelope.source, &envelope.job_id);
-    let prev = seq_by_source_job.get(&key).copied().unwrap_or(0);
+    let scope = SeqScope::new(envelope.source, envelope.job_id.clone());
+    let prev = seq_by_scope.get(&scope).copied().unwrap_or(0);
     if envelope.seq <= prev {
         return Err(CodingContractError::InvalidSeq {
             expected_prev: prev,
             actual: envelope.seq,
         });
     }
-    seq_by_source_job.insert(key, envelope.seq);
+    seq_by_scope.insert(scope, envelope.seq);
     Ok(())
 }
 
@@ -117,8 +120,9 @@ mod tests {
 
     #[test]
     fn test_next_seq_for_starts_at_one() {
+        let scope = SeqScope::new(EventSource::Worker, "job_1");
         let m = HashMap::new();
-        assert_eq!(next_seq_for(EventSource::Worker, "job_1", &m), 1);
+        assert_eq!(next_seq_for(&scope, &m), 1);
     }
 
     #[test]
