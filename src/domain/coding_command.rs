@@ -32,6 +32,7 @@ where
 
 /// Request to start a new coding job.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RunRequest {
     pub goal: String,
     pub repo: String,
@@ -68,6 +69,7 @@ pub struct RunResponse {
 
 /// Request to query job or run status.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StatusRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(default, deserialize_with = "deserialize_optional_runtime_id")]
@@ -121,6 +123,7 @@ pub struct TodoItem {
 
 /// Request to cancel a job.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CancelRequest {
     #[serde(deserialize_with = "deserialize_runtime_id")]
     pub job_id: String,
@@ -140,6 +143,7 @@ pub struct CancelResponse {
 
 /// Request to clean up a job's filesystem artifacts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CleanupRequest {
     #[serde(deserialize_with = "deserialize_runtime_id")]
     pub job_id: String,
@@ -165,6 +169,7 @@ pub struct CleanupResponse {
 
 /// Request to list jobs, optionally filtered by state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ListRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state_filter: Option<Vec<JobState>>,
@@ -304,5 +309,19 @@ mod tests {
         let json = r#"{"run_id":"run.1"}"#;
         let err = serde_json::from_str::<StatusRequest>(json).unwrap_err();
         assert!(err.to_string().contains("invalid runtime id"));
+    }
+
+    #[test]
+    fn test_status_request_rejects_unknown_field() {
+        let json = r#"{"job_id":"job_1","extra":true}"#;
+        let err = serde_json::from_str::<StatusRequest>(json).unwrap_err();
+        assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn test_run_request_rejects_unknown_field() {
+        let json = r#"{"goal":"g","repo":"r","base_ref":"main","extra":"x"}"#;
+        let err = serde_json::from_str::<RunRequest>(json).unwrap_err();
+        assert!(err.to_string().contains("unknown field"));
     }
 }
