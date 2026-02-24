@@ -306,6 +306,7 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
         let _ = keep_artifacts;
         let run_id = job.run_id.clone();
         self.todo_tracker.remove_job(job_id);
+        self.spawn_managers.remove(job_id);
         self.jobs.remove(job_id);
         self.jobs_by_run.remove(&run_id);
         Ok(CleanupResponse {
@@ -596,6 +597,9 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
         req: &SpawnRequest,
     ) -> Result<SpawnDecision, CommandError> {
         let job = self.jobs.get(job_id).ok_or(CommandError::NotFound)?;
+        if job.state != JobState::Running && job.state != JobState::Blocked {
+            return Err(CommandError::InvalidTransition);
+        }
         let rid = job.run_id.clone();
 
         // Emit spawn.request event from worker
@@ -651,23 +655,25 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
         let job = self.jobs.get(job_id).ok_or(CommandError::NotFound)?;
         let rid = job.run_id.clone();
 
-        let mgr = self
-            .spawn_managers
-            .get_mut(job_id)
-            .ok_or(CommandError::NotFound)?;
-        mgr.record_result(result.clone())
-            .map_err(|_| CommandError::NotFound)?;
-
+        // Build event payload before moving result into the manager.
         let mut payload = serde_json::json!({
             "request_id": result.request_id,
             "state": result.state,
         });
-        if let Some(summary) = &result.summary {
+        if let Some(ref summary) = result.summary {
             payload["summary"] = serde_json::json!(summary);
         }
         if !result.artifact_refs.is_empty() {
             payload["artifact_refs"] = serde_json::json!(result.artifact_refs);
         }
+
+        let mgr = self
+            .spawn_managers
+            .get_mut(job_id)
+            .ok_or(CommandError::NotFound)?;
+        mgr.record_result(result)
+            .map_err(|_| CommandError::NotFound)?;
+
         self.emit(
             &rid,
             job_id,
@@ -693,6 +699,34 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
             .get_mut(job_id)
             .ok_or(SpawnError::UnknownRequestId)?;
         mgr.record_result(result)
+    }
+
+    /// Cancel all active child spawns for a job and emit spawn.result
+    /// events for each canceled spawn.
+    pub fn cancel_child_spawns(&mut self, job_id: &str) -> Result<Vec<String>, CommandError> {
+        let job = self.jobs.get(job_id).ok_or(CommandError::NotFound)?;
+        let rid = job.run_id.clone();
+        let mgr = self
+            .spawn_managers
+            .get_mut(job_id)
+            .ok_or(CommandError::NotFound)?;
+        let canceled = mgr.cancel_all();
+        for request_id in &canceled {
+            self.emit(
+                &rid,
+                job_id,
+                EventMeta {
+                    source: EventSource::Coordinator,
+                    event_type: "spawn.result".to_string(),
+                    payload: serde_json::json!({
+                        "request_id": request_id,
+                        "state": "canceled",
+                        "summary": "parent canceled",
+                    }),
+                },
+            );
+        }
+        Ok(canceled)
     }
 }
 

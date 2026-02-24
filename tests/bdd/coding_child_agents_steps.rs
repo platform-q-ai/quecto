@@ -312,24 +312,12 @@ fn when_child_attempts_publish(world: &mut QuectoWorld) {
 
 #[when("cancel propagation to child agents is processed")]
 fn when_cancel_propagation_processed(world: &mut QuectoWorld) {
+    ensure_spawn_manager(world);
     let job_id = jid(world);
     let coord = world.coding_coordinator.as_mut().unwrap();
-    let mgr = coord
-        .spawn_manager_mut(&job_id)
-        .expect("spawn manager exists");
-    let canceled = mgr.cancel_all();
-    // Record each canceled spawn as a spawn.result event
-    for request_id in canceled {
-        let result = SpawnResult {
-            request_id,
-            state: "canceled".to_string(),
-            summary: Some("parent canceled".to_string()),
-            artifact_refs: vec![],
-        };
-        coord
-            .record_spawn_result(&job_id, result)
-            .expect("record cancel result");
-    }
+    coord
+        .cancel_child_spawns(&job_id)
+        .expect("cancel_child_spawns");
 }
 
 #[when("a worker requests a child agent and it completes")]
@@ -485,7 +473,7 @@ fn when_unknown_spawn_result_arrives(world: &mut QuectoWorld, request_id: String
     let outcome = coord.try_record_spawn_result(&job_id, result);
     // Store the error for Then step assertions
     world.coding_command_error = match outcome {
-        Err(SpawnError::UnknownRequestId) => {
+        Err(SpawnError::UnknownRequestId | SpawnError::AlreadyTerminal) => {
             Some(quecto::domain::coding_command::CommandError::NotFound)
         }
         Ok(()) => None,

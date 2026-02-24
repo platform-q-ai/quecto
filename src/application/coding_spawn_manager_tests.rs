@@ -159,9 +159,35 @@ fn test_is_known_request() {
 }
 
 #[test]
-fn test_spawn_decision_display() {
-    let err = SpawnError::UnknownRequestId;
-    assert_eq!(err.to_string(), "unknown request_id");
+fn test_spawn_error_display() {
+    assert_eq!(
+        SpawnError::UnknownRequestId.to_string(),
+        "unknown request_id"
+    );
+    assert_eq!(
+        SpawnError::AlreadyTerminal.to_string(),
+        "spawn already terminal"
+    );
+}
+
+#[test]
+fn test_double_record_rejected() {
+    let mut mgr = SpawnManager::new(test_policy());
+    mgr.evaluate(&test_request("s1", "security-reviewer"));
+    mgr.record_result(SpawnResult {
+        request_id: "s1".to_string(),
+        state: "succeeded".to_string(),
+        summary: None,
+        artifact_refs: vec![],
+    })
+    .unwrap();
+    let result = mgr.record_result(SpawnResult {
+        request_id: "s1".to_string(),
+        state: "failed".to_string(),
+        summary: None,
+        artifact_refs: vec![],
+    });
+    assert_eq!(result, Err(SpawnError::AlreadyTerminal));
 }
 
 #[test]

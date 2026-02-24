@@ -53,12 +53,14 @@ struct ActiveSpawn {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpawnError {
     UnknownRequestId,
+    AlreadyTerminal,
 }
 
 impl std::fmt::Display for SpawnError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::UnknownRequestId => f.write_str("unknown request_id"),
+            Self::AlreadyTerminal => f.write_str("spawn already terminal"),
         }
     }
 }
@@ -188,13 +190,17 @@ impl SpawnManager {
         }
     }
 
-    /// Record a spawn result. Returns error if request_id is unknown.
+    /// Record a spawn result. Returns error if request_id is unknown
+    /// or if the spawn is already in a terminal state.
     pub fn record_result(&mut self, result: SpawnResult) -> Result<(), SpawnError> {
         let spawn = self
             .spawns
             .iter_mut()
             .find(|s| s.request_id == result.request_id)
             .ok_or(SpawnError::UnknownRequestId)?;
+        if spawn.terminal {
+            return Err(SpawnError::AlreadyTerminal);
+        }
         spawn.terminal = true;
         self.results.push(result);
         Ok(())
