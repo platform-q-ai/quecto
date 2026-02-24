@@ -754,53 +754,8 @@ pub struct QuectoWorld {
     pub coding_recovery_operation_order: Vec<String>,
     /// Whether child spawn was marked failed during recovery
     pub coding_spawn_marked_failed: bool,
-    /// Child-agent policy allowlist for coding spawn scenarios
-    pub coding_child_allow_types: Vec<String>,
-    /// Maximum child-agent spawn depth
-    pub coding_child_max_depth: u32,
-    /// Maximum spawn requests allowed per job
-    pub coding_child_max_spawns_per_job: usize,
-    /// Current spawn depth of active worker
-    pub coding_child_current_depth: u32,
-    /// Number of launched child agents for current job
-    pub coding_child_spawn_count: usize,
-    /// Request IDs for launched child agents
-    pub coding_child_launched_request_ids: Vec<String>,
-    /// Active request id by agent type for child scenarios
-    pub coding_child_active_by_type: HashMap<String, String>,
-    /// Latest spawn decision denial reason
-    pub coding_child_last_decision_reason: Option<String>,
-    /// Parent worker received child result
-    pub coding_child_parent_notified: bool,
-    /// Main agent summary was updated from child result
-    pub coding_child_main_summary_updated: bool,
-    /// Child expected_output forwarded to launcher
-    pub coding_child_expected_output: Option<String>,
-    /// Child artifact references tracked on parent job
-    pub coding_child_artifacts: Vec<String>,
-    /// Child publish request rejected flag
-    pub coding_child_publish_rejected: bool,
-    /// Child error propagated after rejection
-    pub coding_child_error_returned: bool,
-    /// Child process termination observed
-    pub coding_child_terminated: bool,
-    /// Unknown child request warning logged
-    pub coding_child_unknown_request_warning: bool,
-    /// Unknown child result event discarded
-    pub coding_child_result_discarded: bool,
-    /// Second duplicate spawn request reuses first result
-    pub coding_child_second_reused_first: bool,
-    /// Child is running inside nsjail-equivalent isolation
-    pub coding_child_isolation_nsjail: bool,
-    /// Child mount scope is restricted to own job dir
-    pub coding_child_mount_restricted: bool,
-    /// Child canceled state treated as terminal
-    pub coding_child_canceled_terminal: bool,
-    /// Whether child emitted extra events after terminal state
-    pub coding_child_extra_events_after_terminal: bool,
-    /// Event count captured when child reaches terminal state
-    pub coding_child_terminal_event_count: Option<usize>,
-
+    /// Pending spawn policy to be applied after job creation (child agent scenarios)
+    pub coding_pending_spawn_policy: Option<quecto::application::coding_spawn_manager::SpawnPolicy>,
     /// Publish policy owner for side effects
     pub coding_publish_side_effects_owner: Option<String>,
     /// Publish policy force push default
