@@ -6,9 +6,9 @@ use super::coding_event::{
     EventEnvelope, EventPayload, EventSource, is_compatible_version, is_known_event_type,
 };
 
-const MAX_ID_LEN: usize = 128;
+pub const MAX_ID_LEN: usize = 128;
 
-fn is_valid_id(value: &str) -> bool {
+pub fn is_valid_runtime_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= MAX_ID_LEN
         && value
@@ -67,10 +67,10 @@ fn validate_event_envelope(envelope: &EventEnvelope) -> Result<(), CodingContrac
     if envelope.ts.is_empty() {
         return Err(CodingContractError::MissingEnvelopeField("ts"));
     }
-    if !is_valid_id(&envelope.run_id) {
+    if !is_valid_runtime_id(&envelope.run_id) {
         return Err(CodingContractError::InvalidIdentifier { field: "run_id" });
     }
-    if !is_valid_id(&envelope.job_id) {
+    if !is_valid_runtime_id(&envelope.job_id) {
         return Err(CodingContractError::InvalidIdentifier { field: "job_id" });
     }
     if !envelope.payload.is_object() {

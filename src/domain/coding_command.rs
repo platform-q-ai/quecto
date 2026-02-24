@@ -1,6 +1,30 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
+use super::coding_contract::is_valid_runtime_id;
 use super::coding_job::{CancelReason, ErrorCode, JobState, Priority};
+
+fn deserialize_runtime_id<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    if !is_valid_runtime_id(&value) {
+        return Err(D::Error::custom("invalid runtime id"));
+    }
+    Ok(value)
+}
+
+fn deserialize_optional_runtime_id<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<String>::deserialize(deserializer)?;
+    match value {
+        Some(id) if is_valid_runtime_id(&id) => Ok(Some(id)),
+        Some(_) => Err(D::Error::custom("invalid runtime id")),
+        None => Ok(None),
+    }
+}
 
 // ============================================================================
 // Run command
@@ -31,7 +55,9 @@ fn default_profile() -> String {
 /// Response from a successful `run` command.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunResponse {
+    #[serde(deserialize_with = "deserialize_runtime_id")]
     pub run_id: String,
+    #[serde(deserialize_with = "deserialize_runtime_id")]
     pub job_id: String,
     pub state: JobState,
 }
@@ -44,15 +70,19 @@ pub struct RunResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "deserialize_optional_runtime_id")]
     pub job_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "deserialize_optional_runtime_id")]
     pub run_id: Option<String>,
 }
 
 /// Response from a `status` command.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusResponse {
+    #[serde(deserialize_with = "deserialize_runtime_id")]
     pub job_id: String,
+    #[serde(deserialize_with = "deserialize_runtime_id")]
     pub run_id: String,
     pub state: JobState,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -92,12 +122,14 @@ pub struct TodoItem {
 /// Request to cancel a job.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CancelRequest {
+    #[serde(deserialize_with = "deserialize_runtime_id")]
     pub job_id: String,
 }
 
 /// Response from a `cancel` command.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CancelResponse {
+    #[serde(deserialize_with = "deserialize_runtime_id")]
     pub job_id: String,
     pub state: JobState,
 }
@@ -109,6 +141,7 @@ pub struct CancelResponse {
 /// Request to clean up a job's filesystem artifacts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CleanupRequest {
+    #[serde(deserialize_with = "deserialize_runtime_id")]
     pub job_id: String,
     #[serde(default = "default_keep_artifacts")]
     pub keep_artifacts: bool,
@@ -121,6 +154,7 @@ fn default_keep_artifacts() -> bool {
 /// Response from a `cleanup` command.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CleanupResponse {
+    #[serde(deserialize_with = "deserialize_runtime_id")]
     pub job_id: String,
     pub cleaned: bool,
 }
@@ -145,7 +179,9 @@ pub struct ListResponse {
 /// A single job entry in a list response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListJobEntry {
+    #[serde(deserialize_with = "deserialize_runtime_id")]
     pub job_id: String,
+    #[serde(deserialize_with = "deserialize_runtime_id")]
     pub run_id: String,
     pub state: JobState,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -254,5 +290,19 @@ mod tests {
         assert_eq!(filter.len(), 2);
         assert_eq!(filter[0], JobState::Running);
         assert_eq!(filter[1], JobState::Failed);
+    }
+
+    #[test]
+    fn test_cancel_request_rejects_invalid_job_id() {
+        let json = r#"{"job_id":"job/1"}"#;
+        let err = serde_json::from_str::<CancelRequest>(json).unwrap_err();
+        assert!(err.to_string().contains("invalid runtime id"));
+    }
+
+    #[test]
+    fn test_status_request_rejects_invalid_run_id() {
+        let json = r#"{"run_id":"run.1"}"#;
+        let err = serde_json::from_str::<StatusRequest>(json).unwrap_err();
+        assert!(err.to_string().contains("invalid runtime id"));
     }
 }

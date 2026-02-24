@@ -93,8 +93,8 @@ commands:
     response:
       required: [run_id, job_id, state]
       properties:
-        run_id: { type: string }
-        job_id: { type: string }
+        run_id: { $ref: "#/types/runtime_id" }
+        job_id: { $ref: "#/types/runtime_id" }
         state: { $ref: "#/types/job_state", description: "always 'queued' on success" }
     errors:
       - code: invalid_repo
@@ -115,8 +115,8 @@ commands:
     response:
       required: [job_id, run_id, state]
       properties:
-        job_id: { type: string }
-        run_id: { type: string }
+        job_id: { $ref: "#/types/runtime_id" }
+        run_id: { $ref: "#/types/runtime_id" }
         state: { $ref: "#/types/job_state" }
         summary: { type: string }
         progress: { type: integer, minimum: 0, maximum: 100 }
@@ -142,7 +142,7 @@ commands:
     response:
       required: [job_id, state]
       properties:
-        job_id: { type: string }
+        job_id: { $ref: "#/types/runtime_id" }
         state: { $ref: "#/types/job_state" }
     errors:
       - code: not_found
@@ -160,7 +160,7 @@ commands:
     response:
       required: [job_id, cleaned]
       properties:
-        job_id: { type: string }
+        job_id: { $ref: "#/types/runtime_id" }
         cleaned: { type: boolean }
     errors:
       - code: not_found
@@ -188,8 +188,8 @@ commands:
             type: object
             required: [job_id, run_id, state]
             properties:
-              job_id: { type: string }
-              run_id: { type: string }
+              job_id: { $ref: "#/types/runtime_id" }
+              run_id: { $ref: "#/types/runtime_id" }
               state: { $ref: "#/types/job_state" }
               summary: { type: string }
 
@@ -199,8 +199,8 @@ events:
     properties:
       v: { type: string, pattern: "^1\\.[0-9]+$" }
       ts: { type: string, format: date-time }
-      run_id: { type: string, pattern: "^[A-Za-z0-9_-]+$", minLength: 1, maxLength: 128 }
-      job_id: { type: string, pattern: "^[A-Za-z0-9_-]+$", minLength: 1, maxLength: 128 }
+      run_id: { $ref: "#/types/runtime_id" }
+      job_id: { $ref: "#/types/runtime_id" }
       source:
         type: string
         enum: [main_agent, coordinator, worker, child_agent]
@@ -464,6 +464,12 @@ events:
         context: { type: object, description: "structured context (e.g. file path, line number)" }
 
 types:
+  runtime_id:
+    type: string
+    pattern: "^[A-Za-z0-9_-]+$"
+    minLength: 1
+    maxLength: 128
+
   job_state:
     type: string
     enum:
