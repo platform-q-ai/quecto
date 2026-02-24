@@ -180,7 +180,7 @@ Feature: GitHub Publish Boundary
 
     # --- Multi-job aggregation (future — MVP is 1:1 run-to-job) ---
 
-    @future
+    @pending @future
     Scenario: Coordinator aggregates artifacts from multiple jobs into single PR
       Given two coding jobs have completed successfully for the same repo
       When the main agent requests a combined PR for both jobs

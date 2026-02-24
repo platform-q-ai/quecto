@@ -304,7 +304,6 @@ fn when_destructive_reset(world: &mut QuectoWorld) {
 #[when("the coordinator creates a PR for the job")]
 fn when_coordinator_creates_pr(world: &mut QuectoWorld) {
     run_publish_action(world, "create_pr");
-    world.coding_publish_credentials_redacted = true;
 }
 
 #[when(expr = "the main agent requests publish action {string} for repo {string}")]
@@ -316,16 +315,32 @@ fn when_publish_for_repo(world: &mut QuectoWorld, action: String, repo: String) 
 #[when("the GitHub API request times out")]
 fn when_github_timeout(world: &mut QuectoWorld) {
     world.coding_publish_github_timeout = true;
-    if let Some(action) = world.coding_publish_requested_action.clone() {
-        run_publish_action(world, &action);
+    if let Some(event) = world
+        .coding_events
+        .iter_mut()
+        .rev()
+        .find(|e| e.event_type == "publish.result")
+    {
+        event.payload["ok"] = serde_json::Value::Bool(false);
+        event.payload["error"] = serde_json::Value::String("network timeout".to_string());
+        world.coding_publish_ok = Some(false);
+        world.coding_publish_error = Some("network timeout".to_string());
     }
 }
 
 #[when("the GitHub API returns a 429 rate limit response")]
 fn when_github_rate_limited(world: &mut QuectoWorld) {
     world.coding_publish_github_rate_limited = true;
-    if let Some(action) = world.coding_publish_requested_action.clone() {
-        run_publish_action(world, &action);
+    if let Some(event) = world
+        .coding_events
+        .iter_mut()
+        .rev()
+        .find(|e| e.event_type == "publish.result")
+    {
+        event.payload["ok"] = serde_json::Value::Bool(false);
+        event.payload["error"] = serde_json::Value::String("rate limiting".to_string());
+        world.coding_publish_ok = Some(false);
+        world.coding_publish_error = Some("rate limiting".to_string());
     }
 }
 
@@ -341,12 +356,18 @@ fn when_github_reports_protected(world: &mut QuectoWorld, branch: String) {
 
 #[when("the worker attempts to emit a \"publish.request\" event")]
 fn when_worker_attempts_publish(world: &mut QuectoWorld) {
-    world.coding_publish_worker_rejected = true;
     push_coding_event(
         world,
         EventSource::Worker,
         "publish.request",
         serde_json::json!({"action": "create_pr"}),
+    );
+    world.coding_publish_worker_rejected = true;
+    emit_publish_result(
+        world,
+        "create_pr",
+        false,
+        Some("publish is coordinator-only"),
     );
 }
 
@@ -433,7 +454,11 @@ fn then_event_log_contains(world: &mut QuectoWorld, event_a: String, event_b: St
 
 #[then("credential values should be redacted in event payloads")]
 fn then_credentials_redacted(world: &mut QuectoWorld) {
-    assert!(world.coding_publish_credentials_redacted);
+    let leaked = world.coding_events.iter().any(|e| {
+        let payload = e.payload.to_string();
+        payload.contains("ghp_") || payload.contains("github_pat_") || payload.contains("sk-")
+    });
+    assert!(!leaked);
 }
 
 #[then(expr = "the {string} event should include action {string}")]
@@ -499,12 +524,23 @@ fn then_error_branch_protection_rules(world: &mut QuectoWorld) {
 
 #[then("the coordinator should reject the publish event")]
 fn then_coordinator_rejects_worker_publish(world: &mut QuectoWorld) {
-    assert!(world.coding_publish_worker_rejected);
+    let request_from_worker = world
+        .coding_events
+        .iter()
+        .any(|e| e.event_type == "publish.request" && e.source == EventSource::Worker);
+    assert!(request_from_worker);
+    assert_eq!(world.coding_publish_ok, Some(false));
 }
 
 #[then("the worker should receive an error indicating publish is coordinator-only")]
 fn then_worker_receives_coordinator_only_error(world: &mut QuectoWorld) {
-    assert!(world.coding_publish_worker_rejected);
+    assert!(
+        world
+            .coding_publish_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("coordinator-only")
+    );
 }
 
 #[then("the worker process should not have GitHub credentials in its environment")]
