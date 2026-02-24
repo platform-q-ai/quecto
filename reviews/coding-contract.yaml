@@ -1,0 +1,641 @@
+version: "1.0"
+name: coding-runtime-contract
+owner: quecto
+status: draft
+
+# --- Identity model ---
+#
+# run_id:  A coordinator execution scope. One `run` command produces exactly
+#          one run_id. A run always contains exactly one primary job_id.
+#          Future: a run may fan out to multiple jobs (e.g. parallel sub-tasks).
+# job_id:  A single unit of isolated coding work (one nsjail worker, one repo
+#          clone, one branch, one event log). Job IDs are globally unique.
+# Relationship: run 1:N jobs (MVP: 1:1).
+
+transport:
+  command_api:
+    format: json
+    channel: in-memory-or-cli
+  event_stream:
+    format: jsonl
+    channel: stdio
+    max_event_size_bytes: 1048576  # 1 MiB hard cap per event line
+    max_event_size_enforcement:
+      action: truncate_payload
+      description: >
+        When an event exceeds 1 MiB, the emitter MUST truncate the payload
+        (e.g. tool output) to fit. The `truncated` field (where applicable)
+        MUST be set to true, and the full content MUST be spilled to an
+        artifact referenced by the appropriate *_ref field. The envelope
+        itself is never split across multiple lines.
+    durability:
+      event_log: jobs/<run-id>/<job-id>/events.jsonl
+      index: jobs/index.json  # rebuilt from event logs on startup; periodic snapshots only
+    seq_scope: per-source-per-job  # each (source, job_id) pair has its own monotonic counter starting at 1
+
+roles:
+  main_agent:
+    responsibilities:
+      - set_goals
+      - select_next_action
+      - remain_responsive_to_user
+  coordinator:
+    responsibilities:
+      - manage_job_lifecycle
+      - enforce_policy
+      - aggregate_results
+      - manage_github_side_effects
+      - persist_events_artifacts
+      - enforce_network_policy
+      - enforce_secrets_policy
+      - enforce_skill_allowlist_denylist
+  worker:
+    responsibilities:
+      - execute_coding_tasks
+      - emit_structured_events
+    restrictions:
+      - no_direct_github_api
+      - no_direct_child_process_spawning_without_request
+      - no_direct_skill_loading
+      - no_outbound_network_by_default
+  child_agent:
+    responsibilities:
+      - execute_specialized_review_or_update_task
+      - emit_structured_events
+    restrictions:
+      - no_direct_github_api
+      - no_direct_child_process_spawning_without_request
+      - no_direct_skill_loading
+      - no_outbound_network_by_default
+    description: >
+      Child agents are spawned by the coordinator on behalf of a worker.
+      They follow the same isolation model as workers. Their events use
+      source "child_agent" in the envelope.
+
+commands:
+  run:
+    description: Start a new coding job.
+    request:
+      required: [goal, repo, base_ref]
+      properties:
+        goal: { type: string }
+        repo: { type: string, description: "repo identifier or local path" }
+        base_ref: { type: string }
+        priority: { type: string, enum: [low, medium, high], default: medium }
+        profile: { type: string, default: default }
+        max_wall_seconds: { type: integer, minimum: 1 }
+        labels:
+          type: array
+          items: { type: string }
+        skills:
+          type: array
+          items: { type: string }
+    response:
+      required: [run_id, job_id, state]
+      properties:
+        run_id: { type: string }
+        job_id: { type: string }
+        state: { $ref: "#/types/job_state", description: "always 'queued' on success" }
+    errors:
+      - code: invalid_repo
+        description: Repo identifier could not be resolved
+      - code: invalid_base_ref
+        description: Base ref does not exist in repo
+      - code: policy_denied
+        description: Job rejected by policy (skill denylist, resource limit, etc.)
+      - code: skill_not_found
+        description: A requested skill is in the allowlist but could not be resolved from disk
+
+  status:
+    description: Query job or run status.
+    request:
+      one_of:
+        - required: [job_id]
+        - required: [run_id]
+    response:
+      required: [job_id, run_id, state]
+      properties:
+        job_id: { type: string }
+        run_id: { type: string }
+        state: { $ref: "#/types/job_state" }
+        summary: { type: string }
+        progress: { type: integer, minimum: 0, maximum: 100 }
+        todos:
+          type: array
+          items: { $ref: "#/types/todo_item" }
+        artifacts:
+          type: array
+          items: { type: string, description: "artifact_id references from artifact.created events" }
+        error_code: { type: string, description: "present when state is failed" }
+        error_detail: { type: string, description: "present when state is failed" }
+        cancel_reason: { type: string, description: "present when state is canceled; echoes job.cancel reason" }
+    errors:
+      - code: not_found
+        description: No job or run exists with the given ID
+
+  cancel:
+    description: >
+      Cancel a running or queued job. If the job is already in a terminal state,
+      the response returns the current state and no event is emitted.
+    request:
+      required: [job_id]
+    response:
+      required: [job_id, state]
+      properties:
+        job_id: { type: string }
+        state: { $ref: "#/types/job_state" }
+    errors:
+      - code: not_found
+        description: No job exists with the given ID
+
+  cleanup:
+    description: >
+      Remove job directory and optionally artifacts. Cleanup is only allowed
+      when the job is in a terminal state (failed, succeeded, canceled).
+      Non-terminal jobs MUST be canceled before cleanup.
+    request:
+      required: [job_id]
+      properties:
+        keep_artifacts: { type: boolean, default: true }
+    response:
+      required: [job_id, cleaned]
+      properties:
+        job_id: { type: string }
+        cleaned: { type: boolean }
+    errors:
+      - code: not_found
+        description: No job exists with the given ID
+      - code: job_not_terminal
+        description: Job is not in a terminal state; cancel it first
+    notes:
+      - "After cleanup, status queries still return the terminal state from the event log"
+      - "Cleanup does not change the job state — it removes filesystem artifacts only"
+
+  list:
+    description: List jobs, optionally filtered by state.
+    request:
+      properties:
+        state_filter:
+          type: array
+          items: { $ref: "#/types/job_state" }
+          description: "If provided, only return jobs in these states. If omitted, return all."
+    response:
+      required: [jobs]
+      properties:
+        jobs:
+          type: array
+          items:
+            type: object
+            required: [job_id, run_id, state]
+            properties:
+              job_id: { type: string }
+              run_id: { type: string }
+              state: { $ref: "#/types/job_state" }
+              summary: { type: string }
+
+events:
+  envelope:
+    required: [v, ts, run_id, job_id, source, type, seq, payload]
+    properties:
+      v: { type: string, pattern: "^1\\.[0-9]+$" }
+      ts: { type: string, format: date-time }
+      run_id: { type: string }
+      job_id: { type: string }
+      source:
+        type: string
+        enum: [main_agent, coordinator, worker, child_agent]
+      type: { type: string }
+      seq:
+        type: integer
+        minimum: 1
+        description: >
+          Monotonically increasing counter scoped per (source, job_id) pair.
+          Each source starts its own counter at 1 for each job. Coordinator
+          events for job X have seq 1,2,3... and worker events for the same
+          job X independently start at 1,2,3...
+      payload: { type: object }
+
+  # 22 allowed event types
+  allowed_types:
+    # job lifecycle (7)
+    - job.start        # emitted when coordinator begins preparation (queued -> preparing)
+    - job.ready        # emitted when clone done and worker starts (preparing -> running)
+    - job.status       # periodic progress update (no state change)
+    - job.blocked      # emitted when job becomes blocked (running -> blocked OR preparing -> blocked)
+    - job.resumed      # emitted when blocked job resumes (blocked -> running)
+    - job.cancel       # emitted on any cancellation (any non-terminal -> canceled)
+    - job.end          # emitted when terminal state reached (-> failed or -> succeeded)
+    # todo tracking (4)
+    - todo.create
+    - todo.update
+    - todo.blocked
+    - todo.complete
+    # tool execution (2)
+    - tool.start
+    - tool.result
+    # child agents (3)
+    - spawn.request
+    - spawn.decision
+    - spawn.result
+    # skills (2)
+    - skills.applied
+    - skills.suggested
+    # github / publish (2)
+    - publish.request
+    - publish.result
+    # artifacts and logging (2)
+    - artifact.created
+    - log.message
+
+  # --- Event-to-transition mapping ---
+  # Events are RECORDS of transitions, not causes. The coordinator validates and
+  # applies the state transition first, then emits the event as a durable record.
+  # The run command returns synchronously with state "queued" before any events.
+  event_transition_mapping:
+    job.start:
+      transition: queued -> preparing
+      source: coordinator
+      notes: "Emitted when coordinator begins preparation. Not emitted at creation time."
+    job.ready:
+      transition: preparing -> running
+      source: coordinator
+      notes: "Emitted after clone completes and worker process starts."
+    job.blocked:
+      transitions:
+        - running -> blocked
+        - preparing -> blocked
+      source: coordinator
+      notes: "preparing -> blocked covers transient clone/mirror failures."
+    job.resumed:
+      transition: blocked -> running
+      source: coordinator
+    job.cancel:
+      transitions:
+        - queued -> canceled
+        - preparing -> canceled
+        - running -> canceled
+        - blocked -> canceled
+      source: coordinator
+      notes: "Emitted for ALL cancellations including queued jobs that never started."
+    job.end:
+      transitions:
+        - queued -> failed
+        - preparing -> failed
+        - running -> failed
+        - running -> succeeded
+        - blocked -> failed
+      source: coordinator
+      notes: >
+        queued -> failed may occur without a preceding job.start (e.g. async
+        validation failure after run command returned). preparing -> failed
+        may occur without a preceding job.ready.
+    job.status:
+      transition: none
+      source: worker
+      notes: "Periodic progress report. Does not change job state."
+
+  payload_contracts:
+    job.start:
+      required: [goal, base_ref, branch]
+    job.ready:
+      required: [worker_pid]
+      optional: [clone_duration_ms]
+      field_types:
+        worker_pid: { type: integer }
+        clone_duration_ms: { type: integer }
+    job.status:
+      required: [state, summary]
+      optional: [progress]
+      field_types:
+        state: { $ref: "#/types/job_state" }
+        summary: { type: string }
+        progress: { type: integer, minimum: 0, maximum: 100 }
+    job.blocked:
+      required: [reason]
+      optional: [needs]
+      field_types:
+        reason: { type: string }
+        needs: { type: string, description: "what is needed to unblock, e.g. 'main-agent decision'" }
+    job.resumed:
+      required: [reason]
+      field_types:
+        reason: { type: string }
+    job.cancel:
+      required: [reason]
+      optional: [initiated_by]
+      field_types:
+        reason: { $ref: "#/types/cancel_reason" }
+        initiated_by: { type: string, enum: [user, coordinator, system], description: "who initiated the cancel" }
+    job.end:
+      required: [state, summary]
+      optional: [error_code, error_detail, is_retriable, artifacts, duration_ms]
+      field_types:
+        state: { $ref: "#/types/job_state", description: "one of: failed, succeeded" }
+        summary: { type: string }
+        error_code: { $ref: "#/types/error_code", description: "present when state is failed" }
+        error_detail: { type: string }
+        is_retriable: { type: boolean }
+        artifacts: { type: array, items: { type: string }, description: "artifact_id references from artifact.created events emitted during the job" }
+        duration_ms: { type: integer, description: "wall-clock duration of the entire job in milliseconds" }
+    todo.create:
+      required: [todo_id, title, status]
+      optional: [owner, depends_on]
+      field_types:
+        todo_id: { type: string }
+        title: { type: string }
+        status: { type: string, enum: [pending], description: "MUST be 'pending' on creation" }
+        owner: { type: string }
+        depends_on: { type: array, items: { type: string, description: "todo_id references" } }
+    todo.update:
+      required: [todo_id, status]
+      optional: [note]
+      field_types:
+        todo_id: { type: string }
+        status: { $ref: "#/types/todo_status" }
+        note: { type: string }
+    todo.blocked:
+      required: [todo_id, reason]
+      optional: [needs]
+      field_types:
+        todo_id: { type: string }
+        reason: { type: string }
+        needs: { type: string }
+    todo.complete:
+      required: [todo_id, result]
+      optional: [artifact_refs]
+      field_types:
+        todo_id: { type: string }
+        result: { type: string }
+        artifact_refs: { type: array, items: { type: string } }
+    tool.start:
+      required: [tool, call_id]
+      optional: [args_preview]
+      field_types:
+        tool: { type: string }
+        call_id: { type: string }
+        args_preview: { type: string }
+    tool.result:
+      required: [tool, call_id, ok]
+      optional: [duration_ms, diff_ref, stderr_ref, stdout_ref, truncated]
+      field_types:
+        tool: { type: string }
+        call_id: { type: string }
+        ok: { type: boolean }
+        duration_ms: { type: integer }
+        diff_ref: { type: string, description: "artifact_id of the diff artifact" }
+        stderr_ref: { type: string, description: "artifact_id of the stderr artifact" }
+        stdout_ref: { type: string, description: "artifact_id of the stdout artifact" }
+        truncated: { type: boolean }
+    spawn.request:
+      required: [request_id, agent_type, scope]
+      optional: [expected_output]
+      field_types:
+        request_id: { type: string }
+        agent_type: { type: string, description: "must be in policy.child_agents.allow_types" }
+        scope: { type: string }
+        expected_output: { type: string, description: "expected output filename or format" }
+    spawn.decision:
+      required: [request_id, approved]
+      optional: [reason]
+      field_types:
+        request_id: { type: string }
+        approved: { type: boolean }
+        reason: { type: string }
+    spawn.result:
+      required: [request_id, state]
+      optional: [summary, artifact_refs]
+      field_types:
+        request_id: { type: string }
+        state: { $ref: "#/types/job_state", description: "one of: succeeded, failed, canceled" }
+        summary: { type: string }
+        artifact_refs: { type: array, items: { type: string } }
+    skills.applied:
+      required: [skills, snapshot_ref]
+      optional: [profile]
+      field_types:
+        skills: { type: array, items: { type: string } }
+        snapshot_ref: { type: string, description: "path to the immutable skills snapshot file" }
+        profile: { type: string }
+    skills.suggested:
+      required: [skills, reason]
+      optional: [by]
+      field_types:
+        skills: { type: array, items: { type: string } }
+        reason: { type: string }
+        by: { type: string, description: "source entity that made the suggestion, e.g. 'worker'" }
+    publish.request:
+      required: [action]
+      optional: [title, base, head, body, labels, reviewers]
+      field_types:
+        action: { $ref: "#/types/publish_action" }
+        title: { type: string }
+        base: { type: string }
+        head: { type: string }
+        body: { type: string }
+        labels: { type: array, items: { type: string } }
+        reviewers: { type: array, items: { type: string } }
+      preconditions:
+        - "Job MUST be in state 'succeeded' for push_branch, create_pr, update_pr, request_review, add_labels"
+        - "Job may be in any state for get_pr_status (read-only query)"
+    publish.result:
+      required: [action, ok]
+      optional: [pr_number, url, error]
+      field_types:
+        action: { $ref: "#/types/publish_action" }
+        ok: { type: boolean }
+        pr_number: { type: integer }
+        url: { type: string }
+        error: { type: string }
+    artifact.created:
+      required: [artifact_id, artifact_type, path]
+      optional: [size_bytes, description]
+      field_types:
+        artifact_id: { type: string }
+        artifact_type: { $ref: "#/types/artifact_type" }
+        path: { type: string }
+        size_bytes: { type: integer }
+        description: { type: string }
+    log.message:
+      required: [level, message]
+      optional: [context]
+      field_types:
+        level: { $ref: "#/types/log_level" }
+        message: { type: string }
+        context: { type: object, description: "structured context (e.g. file path, line number)" }
+
+types:
+  job_state:
+    type: string
+    enum:
+      - queued
+      - preparing
+      - running
+      - blocked
+      - failed
+      - succeeded
+      - canceled
+
+  todo_status:
+    type: string
+    enum:
+      - pending
+      - in_progress
+      - blocked
+      - completed
+      - failed
+      - canceled
+
+  todo_item:
+    type: object
+    required: [todo_id, title, status]
+    properties:
+      todo_id: { type: string }
+      title: { type: string }
+      status: { $ref: "#/types/todo_status" }
+      owner: { type: string }
+      depends_on:
+        type: array
+        items: { type: string }
+      artifact_refs:
+        type: array
+        items: { type: string }
+
+  cancel_reason:
+    type: string
+    enum:
+      - user_request
+      - wall_timeout
+      - resource_limit
+      - coordinator_policy
+    description: "Why a job was canceled"
+
+  error_code:
+    type: string
+    enum:
+      - timeout
+      - oom
+      - seccomp_violation
+      - tool_error
+      - llm_refusal
+      - internal
+      - coordinator_crash
+    description: "Error classification for failed jobs"
+
+  publish_action:
+    type: string
+    enum:
+      - push_branch
+      - create_pr
+      - update_pr
+      - request_review
+      - add_labels
+      - get_pr_status
+
+  artifact_type:
+    type: string
+    enum:
+      - patch
+      - log
+      - summary
+      - review
+      - test_output
+      - snapshot
+      - spawn_log
+
+  log_level:
+    type: string
+    enum:
+      - debug
+      - info
+      - warn
+      - error
+
+state_machine:
+  job_transitions:
+    queued: [preparing, failed, canceled]
+    preparing: [running, blocked, failed, canceled]
+    running: [blocked, failed, succeeded, canceled]
+    blocked: [running, failed, canceled]
+    failed: []
+    succeeded: []
+    canceled: []
+  job_notes:
+    - "queued -> failed covers async validation rejection (post-creation discovery of bad repo, bad ref, etc.)"
+    - "preparing -> blocked covers transient clone/mirror failures that may be retried"
+    - "All non-terminal states can transition to canceled"
+    - "failed and succeeded are terminal; cleanup is a separate command, not a state transition"
+    - "queued -> failed and queued -> canceled may not have a preceding job.start event"
+  todo_transitions:
+    pending: [in_progress, blocked, canceled]
+    in_progress: [blocked, completed, failed, canceled]
+    blocked: [in_progress, failed, canceled]
+    completed: []
+    failed: []
+    canceled: []
+  todo_notes:
+    - "pending -> in_progress is the normal start; pending -> blocked for dependency waits"
+    - "in_progress -> failed for unrecoverable task errors"
+    - "canceled is set when parent job is canceled (bulk transition)"
+    - "completed and failed are terminal"
+    - "Coordinator rejects transitions not in this table"
+    - "todo.create MUST use status 'pending'; other initial values are rejected"
+
+policy:
+  child_agents:
+    allow_types:
+      - security-reviewer
+      - performance-reviewer
+      - architecture-reviewer
+      - documentation-updater
+    max_depth: 1
+    max_spawns_per_job: 3
+    deduplication:
+      description: >
+        Coordinator SHOULD deduplicate equivalent spawn requests (same agent_type
+        and scope within the same job). The second request receives the result of
+        the first. Equivalence is determined by (agent_type, scope) tuple.
+  github:
+    side_effects_owner: coordinator
+    force_push_default: deny
+    destructive_reset_default: deny
+    repo_allowlist:
+      description: >
+        Optional list of repo identifiers allowed for publish operations.
+        If configured, publish actions targeting repos not in the list are
+        denied with an error. If not configured, all repos are allowed.
+  network:
+    default: deny
+    scope: worker_and_child_agent
+    description: >
+      All worker and child_agent egress denied by default. Coordinator
+      manages per-job allowlist via nsjail config. The coordinator itself
+      is NOT subject to this policy (it needs GitHub API access).
+  secrets:
+    inject_policy: minimal_scope
+    redaction: required_in_logs_and_artifacts
+    storage_in_artifacts: never
+    enforcement:
+      responsible_party: coordinator
+      description: >
+        Coordinator is responsible for redacting secrets before persisting
+        events and artifacts. This applies to ALL event types (tool.result
+        stderr/stdout, log.message, artifact content). Workers SHOULD also
+        avoid emitting secrets, but the coordinator is the enforcement point.
+  skills:
+    injection_owner: coordinator
+    description: "Coordinator resolves and snapshots skills. Workers cannot load skills directly."
+    profile_interaction: >
+      Profile skills are merged with global defaults. If a profile defines
+      its own allowlist or denylist, those override global lists for that
+      profile. Skills in a profile's skill list are implicitly allowlisted
+      for jobs using that profile.
+
+compatibility:
+  unknown_event_type: ignore_and_log
+  unknown_payload_field: ignore
+  major_version_mismatch: reject
+  minor_version_handling: >
+    Minor version differences (e.g. v "1.3" event processed by a "1.0" consumer)
+    are handled via the unknown_payload_field and unknown_event_type rules.
+    New minor versions may add fields and event types but MUST NOT remove or
+    change the semantics of existing ones.
