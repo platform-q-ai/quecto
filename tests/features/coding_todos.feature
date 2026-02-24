@@ -1,4 +1,4 @@
-@pending
+@wip
 Feature: Coordinator Todo Tracking Per Worker
   As the coding runtime coordinator
   I want to maintain a todo list per coding job

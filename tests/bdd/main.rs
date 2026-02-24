@@ -638,6 +638,20 @@ pub struct QuectoWorld {
     pub coding_warning_logged: bool,
     /// Whether a version mismatch error was logged in scenario simulation
     pub coding_version_error_logged: bool,
+    /// Todo metadata: completion result by todo_id
+    pub coding_todo_results: HashMap<String, String>,
+    /// Todo metadata: blocked reason by todo_id
+    pub coding_todo_blocked_reasons: HashMap<String, String>,
+    /// Todo metadata: blocked needs by todo_id
+    pub coding_todo_blocked_needs: HashMap<String, String>,
+    /// Todo metadata: note by todo_id
+    pub coding_todo_notes: HashMap<String, String>,
+    /// Configured todo limit for current scenario
+    pub coding_todo_max_items_per_job: Option<usize>,
+    /// Whether latest todo transition was rejected
+    pub coding_todo_transition_rejected: bool,
+    /// Whether latest todo create was rejected
+    pub coding_todo_create_rejected: bool,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
@@ -885,6 +899,7 @@ mod agent_tools_steps;
 mod architecture_steps;
 mod auth_steps;
 mod coding_job_lifecycle_steps;
+mod coding_todos_steps;
 mod coding_worker_tools_steps;
 mod config_steps;
 mod context_pruning_steps;

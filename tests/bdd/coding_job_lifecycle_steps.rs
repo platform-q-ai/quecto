@@ -983,20 +983,27 @@ fn then_cancel_not_found(world: &mut QuectoWorld) {
 #[when("the main agent queries job status")]
 fn when_query_status(world: &mut QuectoWorld) {
     if let Some(j) = &world.coding_job {
+        let existing_todos = world
+            .coding_status_response
+            .as_ref()
+            .map(|r| r.todos.clone())
+            .unwrap_or_else(|| {
+                vec![TodoItem {
+                    todo_id: "todo_1".to_string(),
+                    title: "do thing".to_string(),
+                    status: "pending".to_string(),
+                    owner: None,
+                    depends_on: vec![],
+                    artifact_refs: vec![],
+                }]
+            });
         world.coding_status_response = Some(StatusResponse {
             job_id: j.job_id.clone(),
             run_id: j.run_id.clone(),
             state: j.state,
             summary: j.summary.clone().or_else(|| Some("status".to_string())),
             progress: j.progress,
-            todos: vec![TodoItem {
-                todo_id: "todo_1".to_string(),
-                title: "do thing".to_string(),
-                status: "pending".to_string(),
-                owner: None,
-                depends_on: vec![],
-                artifact_refs: vec![],
-            }],
+            todos: existing_todos,
             artifacts: j.artifacts.clone(),
             error_code: j.error_code,
             error_detail: j.error_detail.clone(),
