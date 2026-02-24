@@ -63,6 +63,99 @@ impl SkillResolver for BddSkillResolver {
         self.available.iter().any(|s| s == name)
     }
 }
+
+use quecto::domain::coding_ports::{
+    CreatePrParams, GitHubPort, GitPrMutationResult, GitPrResult, GitPrStatusSummary, GitPushResult,
+};
+
+/// BDD mock for GitHub API operations (publish scenarios).
+#[derive(Debug, Clone)]
+struct BddGitHubPort {
+    push_ok: bool,
+    push_error: Option<String>,
+    branch_protected: bool,
+    branch_protected_err: Option<String>,
+    create_pr_ok: bool,
+    create_pr_number: Option<u64>,
+    create_pr_url: Option<String>,
+    create_pr_error: Option<String>,
+    mutation_ok: bool,
+    pr_status_ok: bool,
+}
+
+impl Default for BddGitHubPort {
+    fn default() -> Self {
+        Self {
+            push_ok: true,
+            push_error: None,
+            branch_protected: false,
+            branch_protected_err: None,
+            create_pr_ok: true,
+            create_pr_number: Some(123),
+            create_pr_url: Some("https://github.com/org/repo/pull/123".to_string()),
+            create_pr_error: None,
+            mutation_ok: true,
+            pr_status_ok: true,
+        }
+    }
+}
+
+impl GitHubPort for BddGitHubPort {
+    fn push_branch(&self, _repo: &str, _branch: &str, _force: bool) -> GitPushResult {
+        GitPushResult {
+            ok: self.push_ok,
+            error: self.push_error.clone(),
+        }
+    }
+
+    fn is_branch_protected(&self, _repo: &str, _branch: &str) -> Result<bool, String> {
+        if let Some(err) = &self.branch_protected_err {
+            return Err(err.clone());
+        }
+        Ok(self.branch_protected)
+    }
+
+    fn create_pr(&self, _params: &CreatePrParams) -> GitPrResult {
+        GitPrResult {
+            ok: self.create_pr_ok,
+            pr_number: self.create_pr_number,
+            url: self.create_pr_url.clone(),
+            error: self.create_pr_error.clone(),
+        }
+    }
+
+    fn update_pr(&self, _repo: &str, _pr: u64, _body: Option<&str>) -> GitPrMutationResult {
+        GitPrMutationResult {
+            ok: self.mutation_ok,
+            error: None,
+        }
+    }
+
+    fn request_review(&self, _repo: &str, _pr: u64, _reviewers: &[String]) -> GitPrMutationResult {
+        GitPrMutationResult {
+            ok: self.mutation_ok,
+            error: None,
+        }
+    }
+
+    fn add_labels(&self, _repo: &str, _pr: u64, _labels: &[String]) -> GitPrMutationResult {
+        GitPrMutationResult {
+            ok: self.mutation_ok,
+            error: None,
+        }
+    }
+
+    fn get_pr_status(&self, _repo: &str, _pr: u64) -> GitPrStatusSummary {
+        GitPrStatusSummary {
+            ok: self.pr_status_ok,
+            state: Some("open".to_string()),
+            review_state: Some("approved".to_string()),
+            checks_passed: Some(true),
+            error: None,
+        }
+    }
+}
+
 use quecto::infrastructure::persistence::cron_store::FileCronStore;
 use quecto::infrastructure::persistence::memory_store::{self, MemoryStore};
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
@@ -756,60 +849,11 @@ pub struct QuectoWorld {
     pub coding_spawn_marked_failed: bool,
     /// Pending spawn policy to be applied after job creation (child agent scenarios)
     pub coding_pending_spawn_policy: Option<quecto::application::coding_spawn_manager::SpawnPolicy>,
-    /// Publish policy owner for side effects
-    pub coding_publish_side_effects_owner: Option<String>,
-    /// Publish policy force push default
-    pub coding_publish_force_push_default: Option<String>,
-    /// Publish policy destructive reset default
-    pub coding_publish_destructive_reset_default: Option<String>,
-    /// Publish repo allowlist
-    pub coding_publish_repo_allowlist: Vec<String>,
-    /// Requested publish action currently under evaluation
-    pub coding_publish_requested_action: Option<String>,
-    /// Action echoed in latest publish.result
-    pub coding_publish_result_action: Option<String>,
-    /// Latest publish result status
-    pub coding_publish_ok: Option<bool>,
-    /// Latest publish error text
-    pub coding_publish_error: Option<String>,
-    /// Whether coordinator performed branch push
-    pub coding_publish_branch_pushed: bool,
-    /// Whether PR already exists for job branch
-    pub coding_publish_pr_exists: bool,
-    /// Created or existing PR number
-    pub coding_publish_pr_number: Option<u64>,
-    /// Created or existing PR url
-    pub coding_publish_pr_url: Option<String>,
-    /// Whether result summary is decision-ready
-    pub coding_publish_decision_ready_summary: bool,
-    /// Whether result includes check/review state
-    pub coding_publish_has_check_review_state: bool,
-    /// Requested reviewers in latest request_review action
-    pub coding_publish_reviewers: Vec<String>,
-    /// Requested labels in latest add_labels action
-    pub coding_publish_labels: Vec<String>,
-    /// Whether force push was requested
-    pub coding_publish_force: bool,
-    /// Target branch used for push action
-    pub coding_publish_target_branch: Option<String>,
-    /// PR head branch used for create/update actions
-    pub coding_publish_head_branch: Option<String>,
-    /// Target repo used for publish action
-    pub coding_publish_target_repo: Option<String>,
-    /// Simulated GitHub API timeout flag
-    pub coding_publish_github_timeout: bool,
-    /// Simulated GitHub API rate limit flag
-    pub coding_publish_github_rate_limited: bool,
-    /// Simulated protected-branch API result
-    pub coding_publish_protected_branch_from_api: bool,
-    /// Whether worker-side publish was rejected
-    pub coding_publish_worker_rejected: bool,
-    /// Whether worker environment has GitHub credentials
-    pub coding_publish_worker_has_credentials: bool,
-    /// Whether coordinator holds GitHub token
-    pub coding_publish_coordinator_has_token: bool,
-    /// Whether sensitive values were redacted in publish events
-    pub coding_publish_credentials_redacted: bool,
+    /// Publish coordinator (application layer) for GitHub publish scenarios
+    pub coding_publish_coordinator:
+        Option<quecto::application::coding_publish::PublishCoordinator<BddGitHubPort>>,
+    /// Last publish result from a publish operation
+    pub coding_publish_last_result: Option<quecto::application::coding_publish::PublishResult>,
     /// Startup error message captured when replay cannot begin
     pub coding_startup_error: Option<String>,
 }
