@@ -190,44 +190,14 @@ fn test_build_log_levels() {
 }
 
 #[test]
-fn test_redact_secrets_openai() {
-    let input = "token=sk-abc123456789012345678901234567890123";
-    let result = redact_secrets(input);
-    assert!(result.contains("[REDACTED]"));
-    assert!(!result.contains("sk-abc"));
-}
-
-#[test]
-fn test_redact_secrets_groq() {
-    let input = "key is gsk_abcdefghijklmnopqrstuvwx";
-    let result = redact_secrets(input);
-    assert!(result.contains("[REDACTED]"));
-    assert!(!result.contains("gsk_"));
-}
-
-#[test]
-fn test_redact_secrets_no_match() {
-    let input = "normal log message without secrets";
-    let result = redact_secrets(input);
-    assert_eq!(result, input);
-}
-
-#[test]
-fn test_check_payload_size_within_limit() {
+fn test_is_payload_oversized_within_limit() {
     let payload = build_log(LogInput {
         level: "info".into(),
         message: "small".into(),
         context: None,
     });
-    let (_, truncated) = check_payload_size(&payload);
-    assert!(!truncated);
-}
-
-#[test]
-fn test_source_label() {
-    assert_eq!(source_label(EventSource::Worker), "worker");
-    assert_eq!(source_label(EventSource::Coordinator), "coordinator");
-    assert_eq!(source_label(EventSource::ChildAgent), "child_agent");
+    let (_, oversized) = is_payload_oversized(&payload);
+    assert!(!oversized);
 }
 
 #[test]

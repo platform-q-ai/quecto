@@ -4,6 +4,7 @@ use quecto::application::coding_worker_events::{
     self, ArtifactInput, LogInput, ToolResultInput, ToolStartInput,
 };
 use quecto::domain::coding_event::EventSource;
+use quecto::infrastructure::logging::redact_api_keys;
 
 // ============================================================================
 // Helpers
@@ -83,6 +84,7 @@ fn when_worker_tool_success(world: &mut QuectoWorld, tool: String, call_id: Stri
 
 #[when(expr = "the worker fails tool {string} with call_id {string}")]
 fn when_worker_tool_fail(world: &mut QuectoWorld, tool: String, call_id: String) {
+    let stderr_ref = format!("artifact:stderr-{}", call_id);
     emit_tool_result(
         world,
         ToolResultInput {
@@ -91,7 +93,7 @@ fn when_worker_tool_fail(world: &mut QuectoWorld, tool: String, call_id: String)
             ok: false,
             duration_ms: None,
             diff_ref: None,
-            stderr_ref: Some(format!("artifact:stderr-{}", "c2")),
+            stderr_ref: Some(stderr_ref),
             stdout_ref: None,
             truncated: None,
         },
@@ -388,7 +390,7 @@ fn when_worker_http_attempt(world: &mut QuectoWorld) {
 #[when("the worker executes a command that outputs an API key in stderr")]
 fn when_stderr_contains_secret(world: &mut QuectoWorld) {
     let raw_preview = "error: sk-abc123456789012345678901234567890123";
-    let redacted = coding_worker_events::redact_secrets(raw_preview);
+    let redacted = redact_api_keys(raw_preview);
     emit_tool_result(
         world,
         ToolResultInput {
@@ -416,7 +418,7 @@ fn when_stderr_contains_secret(world: &mut QuectoWorld) {
 #[when("the worker logs a message containing an API key")]
 fn when_log_contains_secret(world: &mut QuectoWorld) {
     let raw = "token=sk-abc123456789012345678901234567890123";
-    let redacted = coding_worker_events::redact_secrets(raw);
+    let redacted = redact_api_keys(raw);
     emit_log(world, "warn", &redacted, None);
 }
 
@@ -693,8 +695,7 @@ fn then_artifact_size(world: &mut QuectoWorld) {
 #[then(expr = "the event source should be {string}")]
 fn then_event_source(world: &mut QuectoWorld, source: String) {
     let e = world.coding_events.last().expect("event");
-    let label = coding_worker_events::source_label(e.source);
-    assert_eq!(label, source);
+    assert_eq!(e.source.to_string(), source);
 }
 
 #[then(expr = "a {string} event should be emitted with tool {string}")]
@@ -797,8 +798,13 @@ fn then_stderr_redacted(world: &mut QuectoWorld) {
         .expect("tool.result");
     let preview = e.payload["stderr_preview"].as_str().unwrap_or_default();
     assert!(
-        preview.contains("[REDACTED]"),
-        "stderr_preview should contain [REDACTED], got: {}",
+        preview.contains("***"),
+        "stderr_preview should contain redacted marker, got: {}",
+        preview
+    );
+    assert!(
+        !preview.contains("sk-abc"),
+        "stderr_preview should not contain raw key, got: {}",
         preview
     );
 }
@@ -823,8 +829,13 @@ fn then_log_redacted(world: &mut QuectoWorld) {
         .expect("log.message");
     let msg = e.payload["message"].as_str().unwrap_or_default();
     assert!(
-        msg.contains("[REDACTED]"),
-        "message should contain [REDACTED], got: {}",
+        msg.contains("***"),
+        "message should contain redacted marker, got: {}",
+        msg
+    );
+    assert!(
+        !msg.contains("sk-abc"),
+        "message should not contain raw key, got: {}",
         msg
     );
 }
