@@ -2,12 +2,12 @@
 
 use cucumber::{World, gherkin, given, then, when};
 use quecto::application::agent_loop::AgentLoopImpl;
-use quecto::application::coding_contract::{next_seq_for, validate_and_track_event};
 use quecto::application::cron_executor;
 use quecto::application::heartbeat::{self, HeartbeatResult, HeartbeatTask, HeartbeatTaskResult};
 use quecto::application::subagent::{SubagentConfig, SubagentContext, validate_agent_id};
 use quecto::application::voice as app_voice;
 use quecto::domain::agent::{AgentInfo, AgentLoop, AgentResult};
+use quecto::domain::coding_contract::{SeqScope, next_seq_for, validate_and_track_event};
 use quecto::domain::cron::{CronJob, CronJobResult, CronSchedule, CronStore};
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, Role, ToolCall};
@@ -614,7 +614,7 @@ pub struct QuectoWorld {
     /// Emitted coding events during the current scenario
     pub coding_events: Vec<quecto::domain::coding_event::EventEnvelope>,
     /// Last seen event seq per `(source, job_id)`
-    pub coding_event_seq_by_source_job: HashMap<String, u64>,
+    pub coding_event_seq_by_source_job: HashMap<SeqScope, u64>,
     /// Last command error from a coding command
     pub coding_command_error: Option<quecto::domain::coding_command::CommandError>,
     /// Last run response
@@ -698,7 +698,8 @@ fn push_coding_event(
     } else {
         ("run_abc123".to_string(), "job_abc123".to_string())
     };
-    let seq = next_seq_for(source, &job_id, &world.coding_event_seq_by_source_job);
+    let scope = SeqScope::new(source, job_id.clone());
+    let seq = next_seq_for(&scope, &world.coding_event_seq_by_source_job);
     let event = quecto::domain::coding_event::EventEnvelope {
         v: "1.0".to_string(),
         ts: "2026-01-01T00:00:00Z".to_string(),
