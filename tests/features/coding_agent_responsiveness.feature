@@ -85,3 +85,81 @@ Feature: Main Agent Responsiveness During Coding Jobs
     Then the agent should report the blocked state and reason
     And the user can provide guidance through the agent
     And the agent can relay the decision to unblock the job
+
+  # --- Cancel from conversation ---
+
+  Scenario: User cancels a running job through conversation
+    Given a coding job is running in the background
+    When the user says "cancel that coding job"
+    And the agent calls the coding_job tool with action "cancel"
+    Then the cancel response should include the job_id and state "canceled"
+    And the agent should confirm the cancellation to the user
+
+  Scenario: User cancels a queued job before it starts
+    Given a coding job is queued
+    When the user says "never mind, cancel the job"
+    And the agent calls the coding_job tool with action "cancel"
+    Then the cancel response should include state "canceled"
+    And no worker should have been launched
+
+  # --- Wall timeout ---
+
+  Scenario: Coding job is auto-canceled when wall timeout expires
+    Given the user starts a coding job with max_wall_seconds 10
+    When the job exceeds the 10-second wall timeout
+    Then the coordinator should cancel the job with reason "wall_timeout"
+    And the next time the agent checks status it should see state "canceled"
+    And the error detail should mention the timeout duration
+
+  Scenario: Main agent starts job with explicit wall timeout
+    When the user asks the agent to start a coding job with a 5-minute limit
+    And the agent calls the coding_job tool with action "run" and max_wall_seconds 300
+    Then the coordinator should accept the job with max_wall_seconds 300
+
+  # --- Tighter run response assertions ---
+
+  Scenario: Run response includes repo and base_ref from request
+    When the user asks the agent to start a coding job on repo "org/myrepo" at ref "develop"
+    And the agent calls the coding_job tool with action "run"
+    Then the run response should include run_id and job_id
+    And the initial state should be "queued"
+
+  # --- Job resumed after unblock ---
+
+  Scenario: Blocked job emits job.resumed after main agent provides decision
+    Given a coding job transitions to "blocked" with reason "needs clarification"
+    When the main agent provides a decision to unblock the job
+    Then a "job.resumed" event should be emitted with reason describing the resolution
+    And the job state should transition back to "running"
+
+  # --- Cleanup from conversation ---
+
+  Scenario: User requests cleanup of a completed job
+    Given a coding job completed with state "succeeded"
+    When the user says "clean up that coding job"
+    And the agent calls the coding_job tool with action "cleanup"
+    Then the cleanup response should indicate cleaned is true
+    And the agent should confirm the cleanup to the user
+
+  Scenario: User requests cleanup with artifact preservation
+    Given a coding job completed with state "succeeded"
+    When the user says "clean up the job but keep the artifacts"
+    And the agent calls the coding_job tool with action "cleanup" and keep_artifacts true
+    Then the repo directory should be removed
+    But the artifact directory should be preserved
+
+  # --- List active jobs ---
+
+  Scenario: Main agent lists all active coding jobs
+    Given 2 coding jobs are running and 1 is queued
+    When the user asks "what coding jobs are running?"
+    Then the agent should query status for all active jobs
+    And report their states and progress to the user
+
+  # --- Completion notification mid-conversation ---
+
+  Scenario: Agent incorporates job completion into next response
+    Given a coding job completes while the user is asking an unrelated question
+    When the agent processes the user's message
+    Then the agent should answer the user's question
+    And mention that the coding job has completed

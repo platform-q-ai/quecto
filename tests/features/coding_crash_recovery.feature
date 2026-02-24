@@ -90,3 +90,91 @@ Feature: Crash Recovery and Event Replay
     When the coordinator starts up
     Then the job should be in state "canceled"
     And no recovery action should be taken
+
+  Scenario: Coordinator does not attempt recovery for failed jobs
+    Given a job event log ending with "job.end" state "failed"
+    When the coordinator starts up
+    Then the job should be in state "failed"
+    And no worker process check should be performed
+
+  # --- Empty and minimal event logs ---
+
+  Scenario: Coordinator handles empty event log gracefully
+    Given a job directory with an empty events.jsonl file
+    When the coordinator starts up
+    Then the job should be discarded or marked as "failed"
+    And a warning should be logged about the empty event log
+
+  Scenario: Coordinator recovers job that was preparing when crash occurred
+    Given a job event log containing only:
+      | type      |
+      | job.start |
+    When the coordinator starts up
+    Then the job should be transitioned to "failed" with error_code "coordinator_crash"
+    And no worker process check should be needed since no PID was recorded
+
+  # --- Preparing and blocked state recovery ---
+
+  Scenario: Coordinator recovers job stuck in preparing state
+    Given a job event log containing:
+      | type       |
+      | job.start  |
+      | job.ready  |
+    And the recorded worker PID is no longer alive
+    When the coordinator starts up
+    Then the job should be transitioned to "failed" with error_code "coordinator_crash"
+
+  Scenario: Coordinator recovers blocked job after crash
+    Given a job event log containing:
+      | type        | state   |
+      | job.start   |         |
+      | job.ready   |         |
+      | job.status  | running |
+      | job.blocked |         |
+    And the recorded worker PID is no longer alive
+    When the coordinator starts up
+    Then the job should be transitioned to "failed" with error_code "coordinator_crash"
+    And a "job.end" event should be appended
+
+  # --- Idempotent recovery ---
+
+  Scenario: Coordinator handles double crash recovery idempotently
+    Given a job event log ending with "job.end" state "failed" error_code "coordinator_crash"
+    When the coordinator starts up again
+    Then the job should remain in state "failed"
+    And no additional "job.end" events should be appended
+
+  # --- Event log corruption ---
+
+  Scenario: Coordinator handles corrupted JSON line in event log
+    Given a job event log where line 3 contains invalid JSON (not just truncated)
+    When the coordinator replays the log
+    Then the corrupted line should be skipped
+    And recovery should proceed with subsequent valid events
+    And a warning should be logged about the corrupted line
+
+  # --- Child agent recovery ---
+
+  Scenario: Coordinator recovers child agent state from spawn events
+    Given a job event log containing spawn.request and spawn.decision events
+    But no spawn.result event
+    When the coordinator starts up
+    And the child agent process is no longer alive
+    Then the spawn should be marked as failed
+    And a "spawn.result" event should be appended with state "failed"
+
+  # --- Index rebuild from scratch ---
+
+  Scenario: Coordinator creates index when jobs/index.json does not exist
+    Given job directories exist but "jobs/index.json" is missing
+    When the coordinator starts up
+    Then "jobs/index.json" should be created from the event logs
+    And the index should be complete and correct
+
+  # --- Concurrent startup protection ---
+
+  Scenario: Coordinator detects another instance already running
+    Given a coordinator lock file exists and is held by another process
+    When a second coordinator instance starts up
+    Then the second instance should fail with a clear error
+    And no event logs should be modified

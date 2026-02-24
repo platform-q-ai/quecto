@@ -191,7 +191,7 @@ events:
     job.end:
       required: [state, summary]
       optional: [error_code, error_detail, is_retriable, artifacts, duration_ms]
-      description: "error_code present when state is failed. Values include: timeout, oom, seccomp_violation, tool_error, llm_refusal, internal"
+      description: "error_code present when state is failed. Values include: timeout, oom, seccomp_violation, tool_error, llm_refusal, internal, coordinator_crash"
     todo.create:
       required: [todo_id, title, status]
       optional: [owner, depends_on]
@@ -229,7 +229,7 @@ events:
     publish.request:
       required: [action]
       optional: [title, base, head, body, labels, reviewers]
-      description: "action values: push_branch, create_pr, update_pr, request_review, add_labels"
+      description: "action values: push_branch, create_pr, update_pr, request_review, add_labels, get_pr_status"
     publish.result:
       required: [action, ok]
       optional: [pr_number, url, error]
@@ -280,7 +280,7 @@ types:
         items: { type: string }
 
 state_machine:
-  transitions:
+  job_transitions:
     queued: [preparing, failed, canceled]
     preparing: [running, blocked, failed, canceled]
     running: [blocked, failed, succeeded, canceled]
@@ -288,11 +288,24 @@ state_machine:
     failed: []
     succeeded: []
     canceled: []
-  notes:
+  job_notes:
     - "queued -> failed covers validation rejection (bad repo, bad ref, policy denial)"
     - "preparing -> blocked covers transient clone/mirror failures that may be retried"
     - "All non-terminal states can transition to canceled"
     - "failed and succeeded are terminal; cleanup is a separate command, not a state transition"
+  todo_transitions:
+    pending: [in_progress, blocked, canceled]
+    in_progress: [blocked, completed, failed, canceled]
+    blocked: [in_progress, failed, canceled]
+    completed: []
+    failed: []
+    canceled: []
+  todo_notes:
+    - "pending -> in_progress is the normal start; pending -> blocked for dependency waits"
+    - "in_progress -> failed for unrecoverable task errors"
+    - "canceled is set when parent job is canceled (bulk transition)"
+    - "completed and failed are terminal"
+    - "Coordinator rejects transitions not in this table"
 
 policy:
   child_agents:

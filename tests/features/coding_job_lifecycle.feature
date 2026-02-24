@@ -35,6 +35,12 @@ Feature: Coding Job Lifecycle
     When the main agent requests a coding job with skills including "forbidden-skill"
     Then the run command should fail with error code "policy_denied"
 
+  Scenario: Run command accepts priority and labels
+    Given a coding coordinator with a mock worker
+    When the main agent requests a coding job with priority "high" and labels ["urgent", "bugfix"]
+    Then the coordinator should accept the job
+    And the job metadata should reflect priority "high" and labels ["urgent", "bugfix"]
+
   # --- State machine transitions ---
 
   Scenario: Job transitions from queued to preparing to running
@@ -71,7 +77,7 @@ Feature: Coding Job Lifecycle
     Given a coding coordinator with a mock worker
     And a coding job in state "blocked"
     When the main agent provides a decision
-    Then a "job.resumed" event should be emitted
+    Then a "job.resumed" event should be emitted with the reason
     And the job state should transition to "running"
 
   Scenario: Queued job can transition directly to failed on validation error
@@ -87,6 +93,34 @@ Feature: Coding Job Lifecycle
     When the mirror clone fails transiently
     Then the job state should transition to "blocked"
     And the reason should describe the clone failure
+
+  Scenario: Preparing job transitions to failed on unrecoverable clone error
+    Given a coding coordinator with a mock worker
+    And a coding job in state "preparing"
+    When the mirror clone fails with disk full error
+    Then a "job.end" event should be emitted with state "failed"
+    And the error_code should be "internal"
+
+  Scenario: Cancel a job while it is preparing
+    Given a coding coordinator with a mock worker
+    And a coding job in state "preparing"
+    When the main agent cancels the job
+    Then a "job.cancel" event should be emitted with reason "user_request"
+    And the job state should be "canceled"
+
+  Scenario: Blocked job transitions to failed on unresolvable condition
+    Given a coding coordinator with a mock worker
+    And a coding job in state "blocked"
+    When the blocking condition is determined to be permanent
+    Then a "job.end" event should be emitted with state "failed"
+    And the error_code should indicate the unresolvable condition
+
+  Scenario: Cancel a blocked job
+    Given a coding coordinator with a mock worker
+    And a coding job in state "blocked"
+    When the main agent cancels the job
+    Then a "job.cancel" event should be emitted with reason "user_request"
+    And the job state should be "canceled"
 
   # --- Cancel command ---
 
@@ -111,6 +145,57 @@ Feature: Coding Job Lifecycle
     Then a "job.cancel" event should be emitted with reason "wall_timeout"
     And the job state should be "canceled"
 
+  Scenario: Job is canceled due to resource limit violation
+    Given a coding coordinator with a mock worker
+    And a coding job in state "running"
+    When the worker exceeds the cgroup memory limit
+    Then a "job.cancel" event should be emitted with reason "resource_limit"
+    And the job state should be "canceled"
+
+  Scenario: Cancel an already-canceled job is idempotent
+    Given a coding coordinator with a mock worker
+    And a coding job in state "canceled"
+    When the main agent cancels the job
+    Then the job state should remain "canceled"
+    And no additional events should be emitted
+
+  Scenario: Cancel a succeeded job returns current state
+    Given a coding coordinator with a mock worker
+    And a coding job in state "succeeded"
+    When the main agent cancels the job
+    Then the cancel response should return state "succeeded"
+    And no "job.cancel" event should be emitted
+
+  # --- Error codes ---
+
+  Scenario: Job fails due to OOM kill
+    Given a coding coordinator with a mock worker
+    And a coding job in state "running"
+    When the worker is killed by cgroup memory limit
+    Then a "job.end" event should be emitted with state "failed"
+    And the error_code should be "oom"
+
+  Scenario: Job fails due to seccomp violation
+    Given a coding coordinator with a mock worker
+    And a coding job in state "running"
+    When the worker attempts a blocked syscall
+    Then a "job.end" event should be emitted with state "failed"
+    And the error_code should be "seccomp_violation"
+
+  Scenario: Job fails due to LLM refusal
+    Given a coding coordinator with a mock worker
+    And a coding job in state "running"
+    When the LLM provider refuses to generate code
+    Then a "job.end" event should be emitted with state "failed"
+    And the error_code should be "llm_refusal"
+
+  Scenario: Job fails due to internal coordinator error
+    Given a coding coordinator with a mock worker
+    And a coding job in state "running"
+    When the coordinator encounters an unexpected internal error
+    Then a "job.end" event should be emitted with state "failed"
+    And the error_code should be "internal"
+
   # --- Status command ---
 
   Scenario: Query status of a running job
@@ -132,12 +217,17 @@ Feature: Coding Job Lifecycle
     When the main agent queries status by run_id
     Then the response should include the job state and summary
 
+  Scenario: Query status of a non-existent job returns error
+    Given a coding coordinator with a mock worker
+    When the main agent queries status for job_id "nonexistent"
+    Then the status command should return an error indicating job not found
+
   # --- Cleanup command ---
 
   Scenario: Cleanup a succeeded job removes directory
     Given a coding coordinator with a mock worker
     And a coding job in state "succeeded"
-    When the main agent requests cleanup
+    When the main agent requests cleanup with keep_artifacts false
     Then the job directory should be removed
     And the response should indicate cleaned is true
 
@@ -147,6 +237,37 @@ Feature: Coding Job Lifecycle
     When the main agent requests cleanup with keep_artifacts true
     Then the job repo directory should be removed
     But the artifact directory should be preserved
+
+  Scenario: Cleanup a failed job removes directory
+    Given a coding coordinator with a mock worker
+    And a coding job in state "failed"
+    When the main agent requests cleanup
+    Then the job directory should be removed
+    And the response should indicate cleaned is true
+
+  Scenario: Cleanup a canceled job removes directory
+    Given a coding coordinator with a mock worker
+    And a coding job in state "canceled"
+    When the main agent requests cleanup
+    Then the job directory should be removed
+
+  Scenario: Cleanup a running job is rejected
+    Given a coding coordinator with a mock worker
+    And a coding job in state "running"
+    When the main agent requests cleanup
+    Then the cleanup command should be rejected
+    And the job directory should still exist
+
+  Scenario: Cleanup a non-existent job returns error
+    Given a coding coordinator with a mock worker
+    When the main agent requests cleanup for job_id "nonexistent"
+    Then the cleanup command should return an error indicating job not found
+
+  Scenario: Status of a cleaned-up job returns terminal state
+    Given a coding coordinator with a mock worker
+    And a coding job in state "succeeded" that has been cleaned up
+    When the main agent queries job status
+    Then the response should include state "succeeded" from the event log
 
   # --- Event envelope ---
 
@@ -163,3 +284,34 @@ Feature: Coding Job Lifecycle
     When the event is emitted
     Then the event payload should be truncated to fit the 1 MiB limit
     And a truncation indicator should be set
+
+  Scenario: Event envelope v field matches version pattern
+    Given a coding coordinator with a mock worker
+    And a coding job that emits events
+    When I inspect the event log
+    Then every event v field should match the pattern "^1\.[0-9]+$"
+
+  Scenario: Event envelope source field uses allowed values
+    Given a coding coordinator with a mock worker
+    And a coding job that runs to completion
+    When I inspect the event log
+    Then every event source should be one of "main_agent", "coordinator", "worker", "child_agent"
+
+  Scenario: Unknown event types are ignored and logged
+    Given a coding coordinator with a mock worker
+    When the coordinator receives an event with type "unknown.future_event"
+    Then the coordinator should log a warning
+    And processing should continue normally
+
+  Scenario: Major version mismatch in event is rejected
+    Given a coding coordinator with a mock worker
+    When the coordinator receives an event with v "2.0"
+    Then the coordinator should reject the event
+    And an error should be logged about version mismatch
+
+  Scenario: Worker emits periodic job.status events during execution
+    Given a coding coordinator with a mock worker
+    And a coding job in state "running"
+    When the worker reports progress periodically
+    Then "job.status" events should be emitted with state "running" and progress values
+    And each status event should include a summary

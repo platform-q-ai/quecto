@@ -99,3 +99,69 @@ Feature: GitHub Publish Boundary
     When the coordinator creates a PR for the job
     Then the event log should contain "publish.request" and "publish.result" events
     And credential values should be redacted in event payloads
+
+  # --- Contract fidelity ---
+
+  Scenario: Publish result always includes the action that was requested
+    When the main agent requests publish action "create_pr" with valid parameters
+    Then the "publish.result" event should include action "create_pr"
+    And the action should match the original publish.request action
+
+  Scenario: Coordinator fetches PR status using get_pr_status action
+    Given a PR exists for the job branch
+    When the main agent requests publish action "get_pr_status"
+    Then a "publish.request" event should be emitted with action "get_pr_status"
+    And a "publish.result" event should be emitted with ok true
+    And the result should include the current PR check and review state
+
+  # --- Repo allowlist ---
+
+  Scenario: Coordinator denies publish to non-allowlisted repo
+    Given a coding coordinator with GitHub repo allowlist ["org/approved-repo"]
+    When the main agent requests publish action "push_branch" for repo "org/forbidden-repo"
+    Then a "publish.result" event should be emitted with ok false
+    And the error should indicate the repo is not in the allowlist
+
+  # --- Network failure handling ---
+
+  Scenario: Coordinator handles GitHub API timeout gracefully
+    When the main agent requests publish action "create_pr"
+    And the GitHub API request times out
+    Then a "publish.result" event should be emitted with ok false
+    And the error should indicate a network timeout
+
+  Scenario: Coordinator handles GitHub API rate limit
+    When the main agent requests publish action "push_branch"
+    And the GitHub API returns a 429 rate limit response
+    Then a "publish.result" event should be emitted with ok false
+    And the error should indicate rate limiting
+
+  # --- Protected branch detection ---
+
+  Scenario: Coordinator detects protected branch from GitHub API
+    When the main agent requests publish action "push_branch" to branch "main"
+    And the GitHub API reports "main" as a protected branch
+    Then a "publish.result" event should be emitted with ok false
+    And the error should reference branch protection rules
+
+  # --- Multi-job aggregation ---
+
+  Scenario: Coordinator aggregates artifacts from multiple jobs into single PR
+    Given two coding jobs have completed successfully for the same repo
+    When the main agent requests a combined PR for both jobs
+    Then the coordinator should merge the branches or patches
+    And a single "publish.result" event should indicate the combined PR
+
+  # --- Job state validation ---
+
+  Scenario: Coordinator rejects publish for a failed job
+    Given a coding job in state "failed"
+    When the main agent requests publish action "create_pr" for the failed job
+    Then a "publish.result" event should be emitted with ok false
+    And the error should indicate the job did not succeed
+
+  Scenario: Coordinator rejects publish for a canceled job
+    Given a coding job in state "canceled"
+    When the main agent requests publish action "push_branch" for the canceled job
+    Then a "publish.result" event should be emitted with ok false
+    And the error should indicate the job was canceled

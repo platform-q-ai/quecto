@@ -80,3 +80,65 @@ Feature: Skill Injection Policy
     Given a coding coordinator with profile "backend" that includes skills ["api-design"]
     When a coding job starts with profile "backend"
     Then the effective skill set should include "api-design" plus defaults
+
+  # --- Contract optional fields ---
+
+  Scenario: Skills applied event includes profile when job specifies one
+    Given a coding coordinator with profile "backend" that includes skills ["api-design"]
+    When a coding job starts with profile "backend"
+    Then the "skills.applied" event payload should include profile "backend"
+
+  Scenario: Skill suggestion includes the suggesting entity
+    Given a coding job in state "running"
+    When the worker emits a "skills.suggested" event with:
+      | skills | ["security-checklist"]    |
+      | reason | touches auth module       |
+      | by     | worker                    |
+    Then the suggestion should include by "worker"
+
+  # --- Edge cases ---
+
+  Scenario: Job starts with no default skills and no requested skills
+    Given a coding coordinator with skill policy:
+      | enable_injection | true |
+      | default          | []   |
+      | allowlist        | []   |
+      | denylist         | []   |
+    When a coding job starts with no skills requested
+    Then a "skills.applied" event should be emitted with an empty skills list
+    And the snapshot_ref should still be created
+
+  Scenario: Coordinator handles skill that exists in allowlist but not on filesystem
+    When a coding job starts with skills ["security-checklist"]
+    And the skill file for "security-checklist" does not exist on disk
+    Then the run command should fail with a descriptive error
+    And the error should indicate the skill could not be resolved
+
+  Scenario: Duplicate skills in request are deduplicated
+    When a coding job starts with skills ["rust-style", "rust-style"]
+    Then a "skills.applied" event should be emitted
+    And the skills list should contain "rust-style" only once
+
+  # --- Profile policy interactions ---
+
+  Scenario: Profile-specific denylist overrides global allowlist
+    Given a coding coordinator with profile "restricted" that denylists ["security-checklist"]
+    When a coding job starts with profile "restricted" and skills ["security-checklist"]
+    Then the run command should fail with error code "policy_denied"
+
+  # --- Denylisted skill suggestions ---
+
+  Scenario: Worker suggests a denylisted skill and coordinator records but flags it
+    Given a coding job in state "running"
+    When the worker emits a "skills.suggested" event with skills ["forbidden-skill"]
+    Then the coordinator should record the suggestion
+    And the suggestion should be flagged as policy-denied for main-agent review
+
+  # --- Multi-profile skill merging ---
+
+  Scenario: Multiple profile skills are merged with defaults without duplicates
+    Given a coding coordinator with profile "fullstack" that includes skills ["rust-style", "api-design", "frontend-guide"]
+    And the allowlist includes "api-design" and "frontend-guide"
+    When a coding job starts with profile "fullstack"
+    Then the effective skill set should include "rust-style", "test-first", "api-design", and "frontend-guide"
+    And "rust-style" should appear only once despite being in both defaults and profile

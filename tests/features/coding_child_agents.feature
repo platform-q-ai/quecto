@@ -99,3 +99,72 @@ Feature: Child Agent Spawn Flow
     When the worker emits two "spawn.request" events with identical agent_type and scope
     Then only one child agent should be launched
     And the second request should receive the result of the first
+
+  # --- Expected output routing ---
+
+  Scenario: Spawn request includes expected_output for result routing
+    When the worker emits a "spawn.request" event with:
+      | request_id      | s3                        |
+      | agent_type      | security-reviewer         |
+      | scope           | current diff              |
+      | expected_output | security_findings.json    |
+    Then a "spawn.decision" event should be emitted with approved true
+    And the child agent should receive the expected_output specification
+
+  # --- Timeout handling ---
+
+  Scenario: Child agent that exceeds timeout is terminated
+    Given a child agent "architecture-reviewer" was approved and launched
+    When the child agent exceeds the configured timeout
+    Then the child agent should be terminated
+    And a "spawn.result" event should be emitted with state "failed"
+    And the summary should indicate timeout
+
+  # --- Cancel propagation ---
+
+  Scenario: Canceling parent job cancels running child agents
+    Given a child agent "security-reviewer" is running
+    When the parent job is canceled
+    Then the child agent should be terminated
+    And a "spawn.result" event should be emitted with state "canceled"
+
+  Scenario: Child agent canceled state is terminal
+    Given a child agent "security-reviewer" was canceled
+    When the coordinator checks the spawn result
+    Then the spawn.result state should be "canceled"
+    And no further events should be emitted for this child agent
+
+  # --- Concurrent spawns ---
+
+  Scenario: Multiple child agents can run concurrently within limits
+    When the worker emits "spawn.request" events for:
+      | request_id | agent_type             |
+      | s1         | security-reviewer      |
+      | s2         | performance-reviewer   |
+      | s3         | architecture-reviewer  |
+    Then all 3 spawn.decision events should have approved true
+    And all 3 child agents should be launched concurrently
+
+  # --- Depth chain enforcement ---
+
+  Scenario: Child agent spawn request is denied when it would create depth 2
+    Given a child agent "security-reviewer" is running at depth 1
+    When the child agent emits a "spawn.request" for another child agent
+    Then a "spawn.decision" event should be emitted with approved false
+    And the reason should indicate max depth 1 would be exceeded
+
+  # --- Unknown request_id handling ---
+
+  Scenario: Spawn result with unknown request_id is rejected
+    When a "spawn.result" event arrives with request_id "unknown_req"
+    Then the coordinator should log a warning
+    And the event should be discarded
+
+  # --- Allowlist coverage ---
+
+  Scenario: documentation-updater is approved as allowlisted type
+    When the worker emits a "spawn.request" event with:
+      | request_id | s4                    |
+      | agent_type | documentation-updater |
+      | scope      | changed files         |
+    Then a "spawn.decision" event should be emitted with approved true
