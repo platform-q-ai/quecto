@@ -2,6 +2,7 @@
 
 use cucumber::{World, gherkin, given, then, when};
 use quecto::application::agent_loop::AgentLoopImpl;
+use quecto::application::coding_contract::{next_seq_for, validate_and_track_event};
 use quecto::application::cron_executor;
 use quecto::application::heartbeat::{self, HeartbeatResult, HeartbeatTask, HeartbeatTaskResult};
 use quecto::application::subagent::{SubagentConfig, SubagentContext, validate_agent_id};
@@ -612,6 +613,8 @@ pub struct QuectoWorld {
     pub coding_jobs: Vec<quecto::domain::coding_job::CodingJob>,
     /// Emitted coding events during the current scenario
     pub coding_events: Vec<quecto::domain::coding_event::EventEnvelope>,
+    /// Last seen event seq per `(source, job_id)`
+    pub coding_event_seq_by_source_job: HashMap<String, u64>,
     /// Last command error from a coding command
     pub coding_command_error: Option<quecto::domain::coding_command::CommandError>,
     /// Last run response
@@ -682,6 +685,33 @@ pub struct QuectoWorld {
     pub coding_todo_transition_rejected: bool,
     /// Whether latest todo create was rejected
     pub coding_todo_create_rejected: bool,
+}
+
+fn push_coding_event(
+    world: &mut QuectoWorld,
+    source: quecto::domain::coding_event::EventSource,
+    event_type: &str,
+    payload: serde_json::Value,
+) {
+    let (run_id, job_id) = if let Some(j) = &world.coding_job {
+        (j.run_id.clone(), j.job_id.clone())
+    } else {
+        ("run_abc123".to_string(), "job_abc123".to_string())
+    };
+    let seq = next_seq_for(source, &job_id, &world.coding_event_seq_by_source_job);
+    let event = quecto::domain::coding_event::EventEnvelope {
+        v: "1.0".to_string(),
+        ts: "2026-01-01T00:00:00Z".to_string(),
+        run_id,
+        job_id,
+        source,
+        event_type: event_type.to_string(),
+        seq,
+        payload,
+    };
+    validate_and_track_event(&event, &mut world.coding_event_seq_by_source_job)
+        .expect("coding event should satisfy contract");
+    world.coding_events.push(event);
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.

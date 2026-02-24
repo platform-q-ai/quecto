@@ -1,7 +1,7 @@
 use super::*;
 
 use quecto::domain::coding_command::{CommandError, RunResponse};
-use quecto::domain::coding_event::{EventEnvelope, EventSource};
+use quecto::domain::coding_event::EventSource;
 use quecto::domain::coding_job::{CodingJob, CodingJobInit, JobState};
 
 fn parse_list_literal(s: &str) -> Vec<String> {
@@ -41,22 +41,7 @@ fn emit(
     event_type: &str,
     payload: serde_json::Value,
 ) {
-    let seq = world.coding_events.len() as u64 + 1;
-    let (run_id, job_id) = if let Some(j) = &world.coding_job {
-        (j.run_id.clone(), j.job_id.clone())
-    } else {
-        ("run_abc123".to_string(), "job_abc123".to_string())
-    };
-    world.coding_events.push(EventEnvelope {
-        v: "1.0".to_string(),
-        ts: "2026-01-01T00:00:00Z".to_string(),
-        run_id,
-        job_id,
-        source,
-        event_type: event_type.to_string(),
-        seq,
-        payload,
-    });
+    push_coding_event(world, source, event_type, payload);
 }
 
 fn skill_text(name: &str) -> Option<String> {
@@ -253,6 +238,7 @@ fn apply_skill_resolution(
 fn given_skill_policy(world: &mut QuectoWorld, step: &gherkin::Step) {
     ensure_base(world);
     world.coding_events.clear();
+    world.coding_event_seq_by_source_job.clear();
     world.coding_command_error = None;
     world.coding_run_response = None;
     world.coding_job = None;

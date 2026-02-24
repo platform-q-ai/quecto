@@ -1,6 +1,6 @@
 use super::*;
 
-use quecto::domain::coding_event::{EventEnvelope, EventSource};
+use quecto::domain::coding_event::EventSource;
 
 fn emit(
     world: &mut QuectoWorld,
@@ -8,17 +8,7 @@ fn emit(
     event_type: &str,
     payload: serde_json::Value,
 ) {
-    let seq = world.coding_events.len() as u64 + 1;
-    world.coding_events.push(EventEnvelope {
-        v: "1.0".to_string(),
-        ts: "2026-01-01T00:00:00Z".to_string(),
-        run_id: "run_abc123".to_string(),
-        job_id: "job_abc123".to_string(),
-        source,
-        event_type: event_type.to_string(),
-        seq,
-        payload,
-    });
+    push_coding_event(world, source, event_type, payload);
 }
 
 #[when(expr = "the worker begins executing tool {string} with call_id {string}")]
