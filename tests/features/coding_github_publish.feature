@@ -1,4 +1,4 @@
-@pending
+@wip
 Feature: GitHub Publish Boundary
   As the coding runtime coordinator
   I want to manage all GitHub/PR operations under policy control
@@ -146,7 +146,7 @@ Feature: GitHub Publish Boundary
     Scenario: Worker cannot emit publish events directly
       Given a coding job in state "running"
       When the worker attempts to emit a "publish.request" event
-      Then the coordinator should reject the event
+      Then the coordinator should reject the publish event
       And the worker should receive an error indicating publish is coordinator-only
 
     # --- Credential scoping ---
@@ -180,7 +180,7 @@ Feature: GitHub Publish Boundary
 
     # --- Multi-job aggregation (future — MVP is 1:1 run-to-job) ---
 
-    @future
+    @pending @future
     Scenario: Coordinator aggregates artifacts from multiple jobs into single PR
       Given two coding jobs have completed successfully for the same repo
       When the main agent requests a combined PR for both jobs
