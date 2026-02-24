@@ -1,4 +1,4 @@
-@pending
+@wip
 Feature: Main Agent Responsiveness During Coding Jobs
   As a user interacting with the main agent
   I want the agent to remain conversational while coding jobs run in background
