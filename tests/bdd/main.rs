@@ -783,6 +783,60 @@ pub struct QuectoWorld {
     pub coding_agent_reported_active_jobs: bool,
     /// Whether no worker has been launched for queued cancellation
     pub coding_agent_no_worker_launched: bool,
+    /// Publish policy owner for side effects
+    pub coding_publish_side_effects_owner: Option<String>,
+    /// Publish policy force push default
+    pub coding_publish_force_push_default: Option<String>,
+    /// Publish policy destructive reset default
+    pub coding_publish_destructive_reset_default: Option<String>,
+    /// Publish repo allowlist
+    pub coding_publish_repo_allowlist: Vec<String>,
+    /// Requested publish action currently under evaluation
+    pub coding_publish_requested_action: Option<String>,
+    /// Action echoed in latest publish.result
+    pub coding_publish_result_action: Option<String>,
+    /// Latest publish result status
+    pub coding_publish_ok: Option<bool>,
+    /// Latest publish error text
+    pub coding_publish_error: Option<String>,
+    /// Whether coordinator performed branch push
+    pub coding_publish_branch_pushed: bool,
+    /// Whether PR already exists for job branch
+    pub coding_publish_pr_exists: bool,
+    /// Created or existing PR number
+    pub coding_publish_pr_number: Option<u64>,
+    /// Created or existing PR url
+    pub coding_publish_pr_url: Option<String>,
+    /// Whether result summary is decision-ready
+    pub coding_publish_decision_ready_summary: bool,
+    /// Whether result includes check/review state
+    pub coding_publish_has_check_review_state: bool,
+    /// Requested reviewers in latest request_review action
+    pub coding_publish_reviewers: Vec<String>,
+    /// Requested labels in latest add_labels action
+    pub coding_publish_labels: Vec<String>,
+    /// Whether force push was requested
+    pub coding_publish_force: bool,
+    /// Target branch used for push action
+    pub coding_publish_target_branch: Option<String>,
+    /// PR head branch used for create/update actions
+    pub coding_publish_head_branch: Option<String>,
+    /// Target repo used for publish action
+    pub coding_publish_target_repo: Option<String>,
+    /// Simulated GitHub API timeout flag
+    pub coding_publish_github_timeout: bool,
+    /// Simulated GitHub API rate limit flag
+    pub coding_publish_github_rate_limited: bool,
+    /// Simulated protected-branch API result
+    pub coding_publish_protected_branch_from_api: bool,
+    /// Whether worker-side publish was rejected
+    pub coding_publish_worker_rejected: bool,
+    /// Whether worker environment has GitHub credentials
+    pub coding_publish_worker_has_credentials: bool,
+    /// Whether coordinator holds GitHub token
+    pub coding_publish_coordinator_has_token: bool,
+    /// Whether sensitive values were redacted in publish events
+    pub coding_publish_credentials_redacted: bool,
     /// Startup error message captured when replay cannot begin
     pub coding_startup_error: Option<String>,
 }
@@ -1062,6 +1116,7 @@ mod auth_steps;
 mod coding_agent_responsiveness_steps;
 mod coding_child_agents_steps;
 mod coding_crash_recovery_steps;
+mod coding_github_publish_steps;
 mod coding_job_lifecycle_steps;
 mod coding_skills_steps;
 mod coding_todos_steps;
