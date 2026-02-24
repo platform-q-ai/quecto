@@ -49,3 +49,82 @@ pub trait EventLogStore {
     /// acquired, `false` if already held by another process.
     fn try_acquire_lock(&self) -> bool;
 }
+
+// ============================================================================
+// GitHub publish ports
+// ============================================================================
+
+/// Result of a GitHub push operation.
+#[derive(Debug, Clone)]
+pub struct GitPushResult {
+    pub ok: bool,
+    pub error: Option<String>,
+}
+
+/// Result of a GitHub PR creation operation.
+#[derive(Debug, Clone)]
+pub struct GitPrResult {
+    pub ok: bool,
+    pub pr_number: Option<u64>,
+    pub url: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Result of a generic GitHub PR mutation (update, add labels, request review).
+#[derive(Debug, Clone)]
+pub struct GitPrMutationResult {
+    pub ok: bool,
+    pub error: Option<String>,
+}
+
+/// PR status summary returned by the GitHub port.
+#[derive(Debug, Clone)]
+pub struct GitPrStatusSummary {
+    pub ok: bool,
+    pub state: Option<String>,
+    pub review_state: Option<String>,
+    pub checks_passed: Option<bool>,
+    pub error: Option<String>,
+}
+
+/// Port for GitHub API operations used by publish coordination.
+///
+/// All methods are synchronous for simplicity — the application layer
+/// is synchronous; real I/O adapters can block internally.
+pub trait GitHubPort {
+    /// Push a branch to the remote. `force` indicates force-push.
+    fn push_branch(&self, repo: &str, branch: &str, force: bool) -> GitPushResult;
+
+    /// Check if a branch is protected on the remote.
+    fn is_branch_protected(&self, repo: &str, branch: &str) -> Result<bool, String>;
+
+    /// Create a pull request.
+    fn create_pr(&self, params: &CreatePrParams) -> GitPrResult;
+
+    /// Update an existing pull request body or title.
+    fn update_pr(&self, repo: &str, pr_number: u64, body: Option<&str>) -> GitPrMutationResult;
+
+    /// Request reviewers on a pull request.
+    fn request_review(
+        &self,
+        repo: &str,
+        pr_number: u64,
+        reviewers: &[String],
+    ) -> GitPrMutationResult;
+
+    /// Add labels to a pull request.
+    fn add_labels(&self, repo: &str, pr_number: u64, labels: &[String]) -> GitPrMutationResult;
+
+    /// Get status and review summary for a pull request.
+    fn get_pr_status(&self, repo: &str, pr_number: u64) -> GitPrStatusSummary;
+}
+
+/// Parameters for creating a pull request via `GitHubPort`.
+#[derive(Debug, Clone)]
+pub struct CreatePrParams {
+    pub repo: String,
+    pub title: String,
+    pub base: String,
+    pub head: String,
+    pub body: Option<String>,
+}
