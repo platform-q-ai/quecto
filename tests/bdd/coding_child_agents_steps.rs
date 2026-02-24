@@ -284,6 +284,7 @@ fn given_child_canceled(world: &mut QuectoWorld, agent_type: String) {
     given_child_approved_launched(world, agent_type);
     append_spawn_result(world, "s1", "canceled", Some("canceled"));
     world.coding_child_canceled_terminal = true;
+    world.coding_child_terminal_event_count = Some(world.coding_events.len());
 }
 
 #[given(expr = "a child agent {string} is running at depth 1")]
@@ -345,8 +346,27 @@ fn when_child_creates_artifact(world: &mut QuectoWorld, artifact: String) {
 
 #[when("the child agent attempts to emit a \"publish.request\" event")]
 fn when_child_attempts_publish(world: &mut QuectoWorld) {
+    push_event(
+        world,
+        EventSource::ChildAgent,
+        "log.message",
+        serde_json::json!({"level": "error", "message": "publish.request denied for child agent"}),
+    );
     world.coding_child_publish_rejected = true;
     world.coding_child_error_returned = true;
+}
+
+#[when("cancel propagation to child agents is processed")]
+fn when_cancel_propagation_processed(world: &mut QuectoWorld) {
+    if has_parent_cancel_signal(world) {
+        world.coding_child_terminated = true;
+        if !world.coding_events.iter().any(|e| {
+            e.event_type == "spawn.result"
+                && e.payload["state"] == serde_json::Value::String("canceled".to_string())
+        }) {
+            append_spawn_result(world, "s1", "canceled", Some("parent canceled"));
+        }
+    }
 }
 
 #[when("a worker requests a child agent and it completes")]
@@ -535,7 +555,12 @@ fn then_spawn_result_has_artifact(world: &mut QuectoWorld, artifact: String) {
 
 #[then("the artifact should be accessible in the parent job's artifact directory")]
 fn then_artifact_accessible(world: &mut QuectoWorld) {
-    assert!(!world.coding_child_artifacts.is_empty());
+    assert!(
+        world
+            .coding_child_artifacts
+            .iter()
+            .any(|a| a == "security_review.md")
+    );
 }
 
 #[then("the publish request should be rejected by the coordinator")]
@@ -599,15 +624,6 @@ fn then_expected_output_forwarded(world: &mut QuectoWorld) {
 
 #[then("the child agent should be terminated")]
 fn then_child_terminated(world: &mut QuectoWorld) {
-    if has_parent_cancel_signal(world) {
-        world.coding_child_terminated = true;
-        if !world.coding_events.iter().any(|e| {
-            e.event_type == "spawn.result"
-                && e.payload["state"] == serde_json::Value::String("canceled".to_string())
-        }) {
-            append_spawn_result(world, "s1", "canceled", Some("parent canceled"));
-        }
-    }
     assert!(world.coding_child_terminated);
 }
 
@@ -629,13 +645,15 @@ fn then_spawn_result_canceled(world: &mut QuectoWorld) {
         event.payload["state"],
         serde_json::Value::String("canceled".to_string())
     );
-    world.coding_child_canceled_terminal = true;
 }
 
 #[then("no further events should be emitted for this child agent")]
 fn then_no_further_events_for_canceled_child(world: &mut QuectoWorld) {
     assert!(world.coding_child_canceled_terminal);
-    assert!(!world.coding_child_extra_events_after_terminal);
+    assert_eq!(
+        world.coding_child_terminal_event_count,
+        Some(world.coding_events.len())
+    );
 }
 
 #[then("all 3 spawn.decision events should have approved true")]
@@ -669,7 +687,7 @@ fn then_reason_max_depth_one(world: &mut QuectoWorld) {
 
 #[then("a warning should be logged for unknown request_id")]
 fn then_unknown_request_warning(world: &mut QuectoWorld) {
-    assert!(world.coding_child_unknown_request_warning || world.coding_warning_logged);
+    assert!(world.coding_child_unknown_request_warning);
 }
 
 #[then("the event should be discarded")]

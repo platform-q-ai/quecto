@@ -757,6 +757,8 @@ pub struct QuectoWorld {
     pub coding_child_canceled_terminal: bool,
     /// Whether child emitted extra events after terminal state
     pub coding_child_extra_events_after_terminal: bool,
+    /// Event count captured when child reaches terminal state
+    pub coding_child_terminal_event_count: Option<usize>,
     /// Startup error message captured when replay cannot begin
     pub coding_startup_error: Option<String>,
 }

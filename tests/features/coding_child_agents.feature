@@ -127,6 +127,7 @@ Feature: Child Agent Spawn Flow
   Scenario: Canceling parent job cancels running child agents
     Given a child agent "security-reviewer" is running
     When the parent job is canceled
+    And cancel propagation to child agents is processed
     Then the child agent should be terminated
     And a "spawn.result" event should be emitted with state "canceled"
 
