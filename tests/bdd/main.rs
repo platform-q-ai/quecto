@@ -800,30 +800,7 @@ pub struct QuectoWorld {
     pub coding_child_extra_events_after_terminal: bool,
     /// Event count captured when child reaches terminal state
     pub coding_child_terminal_event_count: Option<usize>,
-    /// Number of background coding jobs currently tracked
-    pub coding_agent_background_jobs: usize,
-    /// Number of user-facing responses produced by agent
-    pub coding_agent_user_response_count: usize,
-    /// Whether latest user-facing response was prompt
-    pub coding_agent_prompt_response: bool,
-    /// Whether completion result was exposed to agent loop
-    pub coding_agent_completion_available: bool,
-    /// Whether agent incorporated completion into a response
-    pub coding_agent_completion_mentioned: bool,
-    /// Whether agent executed non-coding read_file while jobs run
-    pub coding_agent_read_file_used: bool,
-    /// Whether agent reported blocked status to user
-    pub coding_agent_reported_blocked: bool,
-    /// Whether user guidance was captured for blocked job
-    pub coding_agent_guidance_captured: bool,
-    /// Whether unblock decision was relayed to coordinator
-    pub coding_agent_unblock_relayed: bool,
-    /// Whether agent confirmed cancellation/cleanup actions
-    pub coding_agent_action_confirmed: bool,
-    /// Whether agent reported active job states/progress to user
-    pub coding_agent_reported_active_jobs: bool,
-    /// Whether no worker has been launched for queued cancellation
-    pub coding_agent_no_worker_launched: bool,
+
     /// Publish policy owner for side effects
     pub coding_publish_side_effects_owner: Option<String>,
     /// Publish policy force push default
