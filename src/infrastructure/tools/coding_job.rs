@@ -7,9 +7,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-use crate::domain::coding_command::{
-    CancelRequest, CleanupRequest, CommandError, ListRequest, RunRequest,
-};
+use crate::domain::coding_command::{CommandError, ListRequest, RunRequest};
 use crate::domain::coding_ports::CodingJobService;
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
@@ -18,7 +16,16 @@ use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 ///
 /// The tool holds a shared reference to the service behind a mutex,
 /// since `Tool::execute` takes `&self` but service methods need `&mut self`.
+///
+/// NOTE: The underlying service's job maps grow until `cleanup()` is called.
+/// Callers (the LLM agent) must call cleanup on terminal jobs to reclaim
+/// memory. A max-jobs policy or auto-eviction is planned for a future PR.
 pub struct CodingJobTool {
+    // NOTE: std::sync::Mutex is intentional — all operations under the lock
+    // are synchronous (HashMap lookups, state transitions, event emission).
+    // If this service is ever shared across concurrent agent loops, switch
+    // to tokio::sync::Mutex or acquire-compute-release to avoid blocking
+    // the tokio worker thread.
     service: Arc<Mutex<dyn CodingJobService>>,
 }
 
@@ -43,24 +50,18 @@ impl CodingJobTool {
             .ok_or("missing required field: action")?;
 
         match action {
-            "run" => self.handle_run(&args),
+            "run" => self.handle_run(arguments),
             "status" => self.handle_status(&args),
             "cancel" => self.handle_cancel(&args),
             "cleanup" => self.handle_cleanup(&args),
-            "list" => self.handle_list(&args),
+            "list" => self.handle_list(arguments),
             other => Err(format!("unknown action: {other}")),
         }
     }
 
-    fn handle_run(&self, args: &serde_json::Value) -> Result<String, String> {
-        let mut run_value = args.clone();
-        // Remove the "action" field so serde can deserialize into RunRequest
-        // which uses deny_unknown_fields.
-        if let Some(obj) = run_value.as_object_mut() {
-            obj.remove("action");
-        }
+    fn handle_run(&self, raw: &str) -> Result<String, String> {
         let req: RunRequest =
-            serde_json::from_value(run_value).map_err(|e| format!("invalid run request: {e}"))?;
+            deserialize_stripping_action(raw).map_err(|e| format!("invalid run request: {e}"))?;
         let mut svc = self.service.lock().map_err(|e| format!("lock: {e}"))?;
         let resp = svc.run(req).map_err(|e| format_command_error(&e))?;
         serde_json::to_string(&resp).map_err(|e| format!("serialize: {e}"))
@@ -83,48 +84,56 @@ impl CodingJobTool {
     }
 
     fn handle_cancel(&self, args: &serde_json::Value) -> Result<String, String> {
-        let mut cancel_value = args.clone();
-        if let Some(obj) = cancel_value.as_object_mut() {
-            obj.remove("action");
-        }
-        let req: CancelRequest = serde_json::from_value(cancel_value)
-            .map_err(|e| format!("invalid cancel request: {e}"))?;
+        let job_id = args
+            .get("job_id")
+            .and_then(|v| v.as_str())
+            .ok_or("cancel requires job_id")?;
         let mut svc = self.service.lock().map_err(|e| format!("lock: {e}"))?;
-        let resp = svc
-            .cancel(&req.job_id)
-            .map_err(|e| format_command_error(&e))?;
+        let resp = svc.cancel(job_id).map_err(|e| format_command_error(&e))?;
         serde_json::to_string(&resp).map_err(|e| format!("serialize: {e}"))
     }
 
     fn handle_cleanup(&self, args: &serde_json::Value) -> Result<String, String> {
-        let mut cleanup_value = args.clone();
-        if let Some(obj) = cleanup_value.as_object_mut() {
-            obj.remove("action");
-        }
-        let req: CleanupRequest = serde_json::from_value(cleanup_value)
-            .map_err(|e| format!("invalid cleanup request: {e}"))?;
+        let job_id = args
+            .get("job_id")
+            .and_then(|v| v.as_str())
+            .ok_or("cleanup requires job_id")?;
+        let keep_artifacts = args
+            .get("keep_artifacts")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
         let mut svc = self.service.lock().map_err(|e| format!("lock: {e}"))?;
         let resp = svc
-            .cleanup(&req.job_id, req.keep_artifacts)
+            .cleanup(job_id, keep_artifacts)
             .map_err(|e| format_command_error(&e))?;
         serde_json::to_string(&resp).map_err(|e| format!("serialize: {e}"))
     }
 
-    fn handle_list(&self, args: &serde_json::Value) -> Result<String, String> {
-        let mut list_value = args.clone();
-        if let Some(obj) = list_value.as_object_mut() {
-            obj.remove("action");
-        }
+    fn handle_list(&self, raw: &str) -> Result<String, String> {
         let req: ListRequest =
-            serde_json::from_value(list_value).map_err(|e| format!("invalid list request: {e}"))?;
+            deserialize_stripping_action(raw).map_err(|e| format!("invalid list request: {e}"))?;
         let svc = self.service.lock().map_err(|e| format!("lock: {e}"))?;
         let resp = svc.list(&req);
         serde_json::to_string(&resp).map_err(|e| format!("serialize: {e}"))
     }
 }
 
+/// Deserialize `T` from a JSON string, first stripping the `"action"` key.
+///
+/// This avoids cloning the entire `serde_json::Value` tree — we parse once
+/// into a `Value`, remove the key in-place, then deserialize into `T`.
+fn deserialize_stripping_action<T: serde::de::DeserializeOwned>(
+    raw: &str,
+) -> Result<T, serde_json::Error> {
+    let mut val: serde_json::Value = serde_json::from_str(raw)?;
+    if let Some(obj) = val.as_object_mut() {
+        obj.remove("action");
+    }
+    serde_json::from_value(val)
+}
+
 fn format_command_error(err: &CommandError) -> String {
-    serde_json::json!({ "error": err.to_string() }).to_string()
+    format!("error: {err}")
 }
 
 impl Tool for CodingJobTool {
