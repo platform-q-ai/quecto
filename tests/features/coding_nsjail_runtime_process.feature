@@ -4,7 +4,7 @@ Feature: NsjailWorkerRuntime Real Process Spawn
   I need NsjailWorkerRuntime to spawn real OS processes with piped I/O
   So that coding workers actually execute and communicate via JSON Lines IPC
 
-  The runtime must replace mock PID assignment with real tokio::process::Command
+  The runtime must replace mock PID assignment with real std::process::Command
   spawning, pipe stdin/stdout/stderr, and track process lifecycle. These tests
   use a helper script instead of real nsjail to validate the spawn/IPC/lifecycle
   mechanics without requiring nsjail capabilities.

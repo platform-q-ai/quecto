@@ -25,9 +25,8 @@ use crate::domain::coding_ports::{
 /// Maximum captured stderr size (1 MiB), matching ExecTool's limit.
 const MAX_STDERR_BYTES: usize = 1024 * 1024;
 
-/// Maximum events buffered per worker before oldest are drained.
-/// Used when wiring real stdout event ingestion (future phase).
-const _MAX_WORKER_EVENTS: usize = 5_000;
+/// Maximum events buffered per worker before oldest are dropped.
+const MAX_WORKER_EVENTS: usize = 5_000;
 
 /// Minimal PATH for the worker environment.
 const WORKER_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
@@ -428,10 +427,14 @@ impl WorkerRuntime for NsjailWorkerRuntime {
             Some(w) => w,
             None => return String::new(),
         };
-        // Drain from shared stderr buffer (real spawn mode)
+        // Drain from shared stderr buffer (real spawn mode), respecting cap
         if let Some(ref shared) = w.shared_stderr {
             if let Ok(mut b) = shared.lock() {
-                w.stderr_buf.push_str(&b);
+                let remaining = MAX_STDERR_BYTES.saturating_sub(w.stderr_buf.len());
+                if remaining > 0 && !b.is_empty() {
+                    let safe = floor_char_boundary(&b, remaining);
+                    w.stderr_buf.push_str(&b[..safe]);
+                }
                 b.clear();
             }
         }
@@ -538,13 +541,17 @@ impl NsjailWorkerRuntime {
             .split_first()
             .ok_or_else(|| "command_override is empty".to_string())?;
 
-        let mut child = Command::new(program)
-            .args(args)
+        let worker_env = build_worker_env(config);
+        let mut cmd = Command::new(program);
+        cmd.args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("spawn failed: {e}"))?;
+            .env_clear();
+        for var in &worker_env {
+            cmd.env(&var.name, &var.value);
+        }
+        let mut child = cmd.spawn().map_err(|e| format!("spawn failed: {e}"))?;
 
         let pid = child.id();
         let run_id = format!("run_{pid}");
@@ -651,6 +658,9 @@ fn read_stdout_lines(stdout: std::process::ChildStdout, events: &Mutex<VecDeque<
             Err(_) => WorkerEvent::Malformed { raw: trimmed },
         };
         if let Ok(mut q) = events.lock() {
+            if q.len() >= MAX_WORKER_EVENTS {
+                q.pop_front(); // drop oldest to stay within cap
+            }
             q.push_back(event);
         }
     }
@@ -660,6 +670,20 @@ fn read_stdout_lines(stdout: std::process::ChildStdout, events: &Mutex<VecDeque<
 fn read_stderr_to_buffer(mut stderr: std::process::ChildStderr, buf: &Mutex<String>) {
     let mut tmp = [0u8; 8192];
     loop {
+        // Check cap before reading to avoid unnecessary I/O
+        let at_cap = buf
+            .lock()
+            .map(|b| b.len() >= MAX_STDERR_BYTES)
+            .unwrap_or(true);
+        if at_cap {
+            // Cap reached — drain remaining stderr to prevent pipe blocking
+            loop {
+                match stderr.read(&mut tmp) {
+                    Ok(0) | Err(_) => return,
+                    Ok(_) => continue,
+                }
+            }
+        }
         match stderr.read(&mut tmp) {
             Ok(0) => break,
             Ok(n) => {
