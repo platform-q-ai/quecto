@@ -993,6 +993,47 @@ pub struct QuectoWorld {
         Option<Arc<quecto::infrastructure::tools::coding_job::CodingJobTool>>,
     pub coding_operational_last_result: Option<quecto::domain::tool::ToolResult>,
     pub coding_operational_last_job_id: Option<String>,
+    // --- Worker tool wrappers BDD fields ---
+    pub wtw_job_dir: Option<PathBuf>,
+    pub _wtw_temp_dir: Option<TempDir>,
+    pub wtw_registry: Option<ToolRegistryImpl>,
+    pub wtw_last_result: Option<Result<quecto::domain::tool::ToolResult, String>>,
+    // --- Worker event emitter BDD fields ---
+    pub wee_emitter:
+        Option<quecto::infrastructure::coding::worker_event_emitter::WorkerEventEmitter<Vec<u8>>>,
+    pub wee_last_emit_result: Option<Result<u64, String>>,
+    // --- Worker entrypoint BDD fields ---
+    pub cwe_parsed_args: Option<Result<quecto::interface::cli::worker::WorkerArgs, String>>,
+    pub cwe_job_dir: Option<PathBuf>,
+    pub _cwe_temp_dir: Option<TempDir>,
+    pub cwe_validation_result: Option<Result<(), String>>,
+    pub cwe_registry: Option<ToolRegistryImpl>,
+    pub cwe_emitter:
+        Option<quecto::infrastructure::coding::worker_event_emitter::WorkerEventEmitter<Vec<u8>>>,
+    pub cwe_cli_stdout: Option<String>,
+    pub cwe_cli_stderr: Option<String>,
+    pub cwe_cli_exit_code: Option<i32>,
+    // --- Real NsjailWorkerRuntime BDD fields ---
+    pub nrt_runtime: Option<quecto::infrastructure::coding::nsjail_runtime::NsjailWorkerRuntime>,
+    pub nrt_launch_config: Option<quecto::domain::coding_ports::WorkerLaunchConfig>,
+    pub nrt_last_args: Option<Vec<String>>,
+    pub nrt_last_worker_args: Option<Vec<String>>,
+    pub nrt_run_id: Option<String>,
+    pub nrt_job_id: Option<String>,
+    pub nrt_pid: Option<u32>,
+    pub nrt_resolved_binary: Option<String>,
+    // --- Coordinator-Worker Lifecycle BDD fields ---
+    pub cwl_coordinator: Option<
+        quecto::application::coding_coordinator::CodingCoordinator<
+            BddRepoValidator,
+            BddSkillResolver,
+        >,
+    >,
+    pub cwl_worker_runtime:
+        Option<quecto::infrastructure::coding::worker_runtime::MockWorkerRuntime>,
+    pub cwl_job_ids: Vec<String>,
+    pub cwl_worker_pids: Vec<u32>,
+    pub cwl_clone_error: Option<String>,
 }
 
 fn push_coding_event(
@@ -1270,6 +1311,7 @@ mod auth_steps;
 mod coding_agent_responsiveness_steps;
 mod coding_artifact_export_steps;
 mod coding_child_agents_steps;
+mod coding_coordinator_worker_lifecycle_steps;
 mod coding_crash_recovery_steps;
 mod coding_event_persistence_steps;
 mod coding_github_publish_steps;
@@ -1277,11 +1319,15 @@ mod coding_job_lifecycle_steps;
 mod coding_job_operational_steps;
 mod coding_job_tool_steps;
 mod coding_nonblocking_coordinator_steps;
+mod coding_nsjail_runtime_steps;
 mod coding_repo_mirror_steps;
 mod coding_skills_steps;
 mod coding_todos_steps;
 mod coding_worker_coding_tools_steps;
+mod coding_worker_entrypoint_steps;
+mod coding_worker_event_emitter_steps;
 mod coding_worker_runtime_steps;
+mod coding_worker_tool_wrappers_steps;
 mod coding_worker_tools_steps;
 mod config_steps;
 mod context_pruning_steps;
