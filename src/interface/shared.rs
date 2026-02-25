@@ -74,8 +74,16 @@ pub fn check_provider_readiness(creds: &HashMap<String, Credential>) -> Vec<Stri
 pub fn register_coding_job_tool(registry: &mut ToolRegistryImpl, workspace: &Path) {
     let repo_validator = WorkspaceRepoValidator::new(workspace.to_path_buf());
     let skill_resolver = WorkspaceSkillResolver::new(workspace.to_path_buf());
-    let coordinator =
-        CodingCoordinator::new(repo_validator, skill_resolver, CoordinatorPolicy::default());
+    let coordinator = CodingCoordinator::new(
+        repo_validator,
+        skill_resolver,
+        CoordinatorPolicy {
+            skill_denylist: Vec::new(),
+            skill_allowlist: Vec::new(),
+            // Bound in-memory job retention per coordinator instance.
+            max_retained_jobs: Some(512),
+        },
+    );
     let service: Arc<Mutex<dyn CodingJobService>> = Arc::new(Mutex::new(coordinator));
     registry.register(Arc::new(CodingJobTool::new(service)));
 }

@@ -32,6 +32,11 @@ pub use crate::domain::coding_ports::{RepoValidator, SkillResolver};
 pub struct CoordinatorPolicy {
     pub skill_denylist: Vec<String>,
     pub skill_allowlist: Vec<String>,
+    /// Optional cap on retained jobs in coordinator memory.
+    ///
+    /// `None` means no cap. When set, `run()` returns `policy_denied`
+    /// once the cap is reached until older jobs are cleaned up.
+    pub max_retained_jobs: Option<usize>,
 }
 
 impl CoordinatorPolicy {
@@ -177,6 +182,11 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
     // ── run ──────────────────────────────────────────────────────────────
 
     pub fn run(&mut self, req: RunRequest) -> Result<RunResponse, CommandError> {
+        if let Some(max_jobs) = self.policy.max_retained_jobs {
+            if self.jobs.len() >= max_jobs {
+                return Err(CommandError::PolicyDenied);
+            }
+        }
         if !self.repo_validator.ref_exists(&req.repo, &req.base_ref) {
             if !self.repo_validator.repo_exists(&req.repo) {
                 return Err(CommandError::InvalidRepo);

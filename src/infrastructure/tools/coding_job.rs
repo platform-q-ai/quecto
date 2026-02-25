@@ -169,8 +169,8 @@ impl Tool for CodingJobTool {
                     content: e,
                     is_error: true,
                 }),
-                Err(e) => Ok(ToolResult {
-                    content: format!("coding_job task join error: {e}"),
+                Err(_) => Ok(ToolResult {
+                    content: "coding_job task failed".to_string(),
                     is_error: true,
                 }),
             }
