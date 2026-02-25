@@ -1002,6 +1002,17 @@ pub struct QuectoWorld {
     pub wee_emitter:
         Option<quecto::infrastructure::coding::worker_event_emitter::WorkerEventEmitter<Vec<u8>>>,
     pub wee_last_emit_result: Option<Result<u64, String>>,
+    // --- Worker entrypoint BDD fields ---
+    pub cwe_parsed_args: Option<Result<quecto::interface::cli::worker::WorkerArgs, String>>,
+    pub cwe_job_dir: Option<PathBuf>,
+    pub _cwe_temp_dir: Option<TempDir>,
+    pub cwe_validation_result: Option<Result<(), String>>,
+    pub cwe_registry: Option<ToolRegistryImpl>,
+    pub cwe_emitter:
+        Option<quecto::infrastructure::coding::worker_event_emitter::WorkerEventEmitter<Vec<u8>>>,
+    pub cwe_cli_stdout: Option<String>,
+    pub cwe_cli_stderr: Option<String>,
+    pub cwe_cli_exit_code: Option<i32>,
 }
 
 fn push_coding_event(
@@ -1290,6 +1301,7 @@ mod coding_repo_mirror_steps;
 mod coding_skills_steps;
 mod coding_todos_steps;
 mod coding_worker_coding_tools_steps;
+mod coding_worker_entrypoint_steps;
 mod coding_worker_event_emitter_steps;
 mod coding_worker_runtime_steps;
 mod coding_worker_tool_wrappers_steps;
