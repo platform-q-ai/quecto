@@ -998,6 +998,10 @@ pub struct QuectoWorld {
     pub _wtw_temp_dir: Option<TempDir>,
     pub wtw_registry: Option<ToolRegistryImpl>,
     pub wtw_last_result: Option<Result<quecto::domain::tool::ToolResult, String>>,
+    // --- Worker event emitter BDD fields ---
+    pub wee_emitter:
+        Option<quecto::infrastructure::coding::worker_event_emitter::WorkerEventEmitter<Vec<u8>>>,
+    pub wee_last_emit_result: Option<Result<u64, String>>,
 }
 
 fn push_coding_event(
@@ -1286,6 +1290,7 @@ mod coding_repo_mirror_steps;
 mod coding_skills_steps;
 mod coding_todos_steps;
 mod coding_worker_coding_tools_steps;
+mod coding_worker_event_emitter_steps;
 mod coding_worker_runtime_steps;
 mod coding_worker_tool_wrappers_steps;
 mod coding_worker_tools_steps;
