@@ -866,6 +866,121 @@ pub struct QuectoWorld {
     pub coding_job_tool_last_job_id: Option<String>,
     /// Last ToolResult from a CodingJobTool execution
     pub coding_job_tool_last_result: Option<quecto::domain::tool::ToolResult>,
+    // --- Coding event persistence BDD fields ---
+    pub coding_event_store:
+        Option<quecto::infrastructure::persistence::coding_events::FileEventLogStore>,
+    pub coding_event_store_dir: Option<PathBuf>,
+    pub _coding_event_temp_dir: Option<TempDir>,
+    pub coding_event_job_id: Option<String>,
+    pub coding_event_n_jobs: Option<usize>,
+    pub coding_event_last_appended: bool,
+    pub coding_event_index_written: bool,
+    pub coding_event_recovered_jobs: Option<Vec<(String, String)>>,
+    pub coding_event_replayed_state: Option<String>,
+    pub coding_event_replayed_progress: Option<u32>,
+    pub coding_event_replayed_worker_pid: Option<u32>,
+    pub coding_event_replayed_summary: Option<String>,
+    pub coding_event_replay_had_corrupt: bool,
+    pub coding_event_replay_had_truncated: bool,
+    pub coding_event_truncated_present: bool,
+    pub coding_event_corrupted_present: bool,
+    pub coding_event_oversized_attempted: bool,
+    pub coding_event_discovered_jobs: Option<Vec<String>>,
+    pub coding_event_discovery_dirs: Option<Vec<String>>,
+    pub coding_event_lock_acquired: Option<bool>,
+    pub coding_event_read_lines: Option<Vec<quecto::domain::coding_ports::EventLogLine>>,
+    // --- Coding repo mirror BDD fields ---
+    pub coding_mirror_store:
+        Option<quecto::infrastructure::coding::repo_mirror::FileRepoMirrorStore>,
+    pub coding_mirror_cache_dir: Option<PathBuf>,
+    pub _coding_mirror_temp_dir: Option<TempDir>,
+    pub _coding_mirror_origin_dir: Option<TempDir>,
+    pub coding_mirror_origin_path: Option<PathBuf>,
+    pub coding_mirror_repo: Option<String>,
+    pub coding_mirror_job_id: Option<String>,
+    pub coding_mirror_last_result: Option<quecto::domain::coding_ports::RepoOpResult>,
+    pub coding_mirror_created: bool,
+    pub coding_mirror_fetched: bool,
+    pub coding_mirror_cloned: bool,
+    pub coding_mirror_clone_waited: bool,
+    pub coding_mirror_fetch_waited: bool,
+    pub coding_mirror_stale_lock_released: bool,
+    // --- Coding worker runtime BDD fields ---
+    pub coding_worker_runtime:
+        Option<quecto::infrastructure::coding::worker_runtime::MockWorkerRuntime>,
+    pub coding_worker_launch_config: Option<quecto::domain::coding_ports::WorkerLaunchConfig>,
+    pub coding_worker_pid: Option<u32>,
+    pub coding_worker_pids: Option<Vec<u32>>,
+    pub coding_worker_job_state: Option<String>,
+    pub coding_worker_exit_status: Option<i32>,
+    pub coding_worker_last_event: Option<quecto::domain::coding_ports::WorkerEvent>,
+    pub coding_worker_command_sent: bool,
+    pub coding_worker_malformed_detected: bool,
+    pub coding_worker_timeout_fired: bool,
+    pub coding_worker_user_canceled: bool,
+    pub coding_worker_last_exec_cmd: Option<String>,
+    pub coding_worker_max_parallel: Option<usize>,
+    pub coding_worker_queued_count: Option<usize>,
+    pub coding_worker_third_job_queued: bool,
+    // --- Nonblocking coordinator BDD fields ---
+    pub nb_coord_bus: Option<quecto::infrastructure::coding::coordinator_bus::CoordinatorBus>,
+    pub nb_coord_sender: Option<
+        tokio::sync::mpsc::Sender<
+            quecto::infrastructure::coding::coordinator_bus::CoordinatorCommand,
+        >,
+    >,
+    pub nb_coord_handle: Option<quecto::infrastructure::coding::coordinator_bus::CoordinatorHandle>,
+    pub nb_coord_last_cmd:
+        Option<quecto::infrastructure::coding::coordinator_bus::CoordinatorCommand>,
+    pub nb_coord_last_response:
+        Option<quecto::infrastructure::coding::coordinator_bus::CoordinatorResponse>,
+    pub nb_coord_reply_rx: Option<
+        tokio::sync::oneshot::Receiver<
+            quecto::infrastructure::coding::coordinator_bus::CoordinatorResponse,
+        >,
+    >,
+    pub nb_coord_reply_rxs: Option<
+        Vec<
+            tokio::sync::oneshot::Receiver<
+                quecto::infrastructure::coding::coordinator_bus::CoordinatorResponse,
+            >,
+        >,
+    >,
+    pub nb_coord_responses:
+        Option<Vec<quecto::infrastructure::coding::coordinator_bus::CoordinatorResponse>>,
+    pub nb_coord_dropped_reply_rx: Option<
+        tokio::sync::oneshot::Receiver<
+            quecto::infrastructure::coding::coordinator_bus::CoordinatorResponse,
+        >,
+    >,
+    pub nb_coord_dispatch_mode:
+        Option<quecto::infrastructure::coding::coordinator_bus::DispatchMode>,
+    pub nb_coord_second_sent: bool,
+    pub nb_coord_in_flight: bool,
+    pub nb_coord_independent_done: bool,
+    pub nb_coord_buffered_count: Option<usize>,
+    // --- Worker coding tools BDD fields ---
+    pub wct_job_dir: Option<PathBuf>,
+    pub _wct_temp_dir: Option<TempDir>,
+    pub wct_edit_result: Option<quecto::infrastructure::coding::worker_tools::EditResult>,
+    pub wct_grep_result: Option<quecto::infrastructure::coding::worker_tools::GrepResult>,
+    pub wct_find_result: Option<quecto::infrastructure::coding::worker_tools::FindResult>,
+    pub wct_read_result: Option<quecto::infrastructure::coding::worker_tools::ReadResult>,
+    pub wct_git_result: Option<quecto::infrastructure::coding::worker_tools::GitOpResult>,
+    pub wct_preview_before: Option<String>,
+    pub wct_blocked_command: Option<String>,
+    pub wct_command_blocked: bool,
+    pub wct_write_blocked: bool,
+    pub wct_exec_ran: bool,
+    pub wct_git_branch_name: Option<String>,
+    // --- Coding artifact export BDD fields ---
+    pub ae_job_dir: Option<PathBuf>,
+    pub ae_artifacts_dir: Option<PathBuf>,
+    pub ae_events: Vec<quecto::domain::coding_event::EventEnvelope>,
+    pub _ae_temp_dir: Option<TempDir>,
+    pub ae_export_result: Option<quecto::infrastructure::coding::artifact_export::ExportResult>,
+    pub ae_status_artifacts: Option<Vec<String>>,
+    pub ae_job_id: Option<String>,
     // --- Coding job operational BDD fields ---
     pub coding_operational_workspace: Option<PathBuf>,
     pub coding_operational_repo_ok: bool,
@@ -1153,14 +1268,20 @@ mod agent_tools_steps;
 mod architecture_steps;
 mod auth_steps;
 mod coding_agent_responsiveness_steps;
+mod coding_artifact_export_steps;
 mod coding_child_agents_steps;
 mod coding_crash_recovery_steps;
+mod coding_event_persistence_steps;
 mod coding_github_publish_steps;
 mod coding_job_lifecycle_steps;
 mod coding_job_operational_steps;
 mod coding_job_tool_steps;
+mod coding_nonblocking_coordinator_steps;
+mod coding_repo_mirror_steps;
 mod coding_skills_steps;
 mod coding_todos_steps;
+mod coding_worker_coding_tools_steps;
+mod coding_worker_runtime_steps;
 mod coding_worker_tools_steps;
 mod config_steps;
 mod context_pruning_steps;

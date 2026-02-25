@@ -1,3 +1,4 @@
+pub mod coding_events;
 pub mod context_spill;
 pub mod cron_store;
 pub mod memory_store;

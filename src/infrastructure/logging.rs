@@ -57,28 +57,30 @@ fn contains_telegram_candidate(s: &str) -> bool {
         .any(|w| w[0].is_ascii_digit() && w[1] == b':')
 }
 
-/// Detect an API key starting at the given position, return its length.
+/// Detect an API key starting at the given position, return its byte length.
 fn detect_api_key(s: &str) -> Option<usize> {
     // Match sk- followed by at least 8 alphanumeric/dash/underscore chars
     if !s.starts_with("sk-") {
         return None;
     }
-    let key_len = s
-        .chars()
-        .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+    let byte_len = s
+        .as_bytes()
+        .iter()
+        .take_while(|b| b.is_ascii_alphanumeric() || **b == b'-' || **b == b'_')
         .count();
-    if key_len >= 8 { Some(key_len) } else { None }
+    if byte_len >= 8 { Some(byte_len) } else { None }
 }
 
 fn detect_groq_key(s: &str) -> Option<usize> {
     if !s.starts_with("gsk_") && !s.starts_with("gsk-") {
         return None;
     }
-    let key_len = s
-        .chars()
-        .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+    let byte_len = s
+        .as_bytes()
+        .iter()
+        .take_while(|b| b.is_ascii_alphanumeric() || **b == b'-' || **b == b'_')
         .count();
-    if key_len >= 12 { Some(key_len) } else { None }
+    if byte_len >= 12 { Some(byte_len) } else { None }
 }
 
 fn detect_telegram_token(s: &str) -> Option<usize> {

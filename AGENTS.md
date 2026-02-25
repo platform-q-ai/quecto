@@ -185,6 +185,12 @@ cargo test --lib            PASS (green)
 cargo test --test bdd       PASS (green)
 Refactor
 @wip -> @done       Tag the feature
+Commit
+Dispatch 3 reviewer subagents to assess changes on branch
+Fix valid reviewer issues
+Push and create PR
+Merge
+Begin next PR
 ```
 
 The BDD runner (`tests/bdd/main.rs`) uses `.fail_on_skipped()` and runs features tagged `@wip` or `@done`. This means all completed features are regression-tested on every run. Scenarios tagged `@pending` are always excluded. Scenarios tagged `@real-llm` are excluded unless `QUECTO_REAL_LLM=1` is set (requires `OPENAI_API_KEY` via env var or `.env` file). Set `QUECTO_TAG=<tag>` to run only scenarios matching a specific tag (e.g. smoke: `timeout 5m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm-smoke cargo test --test bdd`, full: `timeout 5m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm cargo test --test bdd`). Step definitions live in `tests/bdd/` split across 24 module files (~10k+ lines total).
