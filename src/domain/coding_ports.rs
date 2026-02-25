@@ -3,6 +3,18 @@
 //! These define what the application layer needs from the outside world.
 //! Infrastructure adapters implement these traits.
 
+/// Port for emitting structured worker events.
+///
+/// The application layer calls `emit()` to produce events. Infrastructure
+/// provides a concrete implementation (e.g. JSON Lines to stdout).
+/// Uses `&self` (not `&mut self`) following the project's port-trait
+/// convention — implementations handle interior mutability.
+pub trait WorkerEventSink: Send + Sync {
+    /// Emit an event with the given type and JSON payload.
+    /// Returns the sequence number on success.
+    fn emit(&self, event_type: &str, payload: serde_json::Value) -> Result<u64, String>;
+}
+
 /// Port for validating repository and ref existence.
 pub trait RepoValidator {
     fn repo_exists(&self, repo: &str) -> bool;

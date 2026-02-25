@@ -12,3 +12,4 @@ pub mod heartbeat;
 pub mod onboard;
 pub mod subagent;
 pub mod voice;
+pub mod worker_loop;
