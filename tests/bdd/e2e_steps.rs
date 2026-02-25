@@ -200,6 +200,17 @@ fn then_stdout_contains(world: &mut QuectoWorld, expected: String) {
     );
 }
 
+/// Sentinel-style assertion that avoids printing full stdout on failure.
+#[then(expr = "stdout should include sentinel {string}")]
+fn then_stdout_includes_sentinel(world: &mut QuectoWorld, expected: String) {
+    assert!(
+        world.stdout.contains(&expected),
+        "expected sentinel '{}' in stdout (len={})",
+        expected,
+        world.stdout.len()
+    );
+}
+
 #[then(expr = "stderr should contain {string}")]
 fn then_stderr_contains_e2e(world: &mut QuectoWorld, expected: String) {
     assert!(
@@ -1421,6 +1432,10 @@ fn resolve_openai_api_key() -> String {
     panic!("OPENAI_API_KEY must be set (via env var or .env file)");
 }
 
+fn real_llm_workspace_root(world: &QuectoWorld) -> std::path::PathBuf {
+    base_path(world).join("workspace")
+}
+
 /// Set up a workspace configured to use a real OpenAI endpoint.
 /// Reads OPENAI_API_KEY from the environment or from `.env` file at repo root.
 /// Uses serde_json to avoid JSON injection from special chars in the key.
@@ -1428,7 +1443,7 @@ fn resolve_openai_api_key() -> String {
 fn given_real_llm_workspace(world: &mut QuectoWorld) {
     ensure_temp_dir(world);
     let base = base_path(world);
-    let workspace = base.join("workspace");
+    let workspace = real_llm_workspace_root(world);
     std::fs::create_dir_all(&workspace).expect("create workspace");
 
     let api_key = resolve_openai_api_key();
@@ -1448,38 +1463,115 @@ fn given_real_llm_workspace(world: &mut QuectoWorld) {
 }
 
 /// Create a real git repository under the configured real-LLM workspace.
-#[given(expr = "a git repo {string} in the real LLM workspace with base ref {string}")]
-fn given_real_llm_workspace_git_repo(world: &mut QuectoWorld, repo_name: String, base_ref: String) {
-    ensure_temp_dir(world);
-    let base = base_path(world);
-    let repo_path = base.join("workspace").join(&repo_name);
-    std::fs::create_dir_all(&repo_path).expect("create repo directory");
-
-    let init = std::process::Command::new("git")
-        .arg("init")
-        .arg(&repo_path)
-        .status()
-        .expect("run git init");
+fn validate_real_llm_repo_inputs(repo_name: &str, base_ref: &str) {
+    let repo_component_ok =
+        std::path::Path::new(repo_name)
+            .components()
+            .eq([std::path::Component::Normal(std::ffi::OsStr::new(
+                repo_name,
+            ))]);
     assert!(
-        init.success(),
-        "git init failed for {}",
-        repo_path.display()
+        repo_component_ok,
+        "repo name must be a single path component: {}",
+        repo_name
     );
 
+    assert!(
+        !base_ref.starts_with('-'),
+        "base ref must not start with '-': {}",
+        base_ref
+    );
+    let check_ref = std::process::Command::new("git")
+        .arg("check-ref-format")
+        .arg("--branch")
+        .arg(base_ref)
+        .status()
+        .expect("run git check-ref-format --branch");
+    assert!(check_ref.success(), "invalid git base ref: {}", base_ref);
+}
+
+fn prepare_real_llm_repo_path(workspace: &std::path::Path, repo_name: &str) -> std::path::PathBuf {
+    let repo_path = workspace.join(repo_name);
+    std::fs::create_dir_all(&repo_path).expect("create repo directory");
+
+    let workspace_canon = workspace.canonicalize().expect("canonical workspace path");
+    let repo_canon = repo_path.canonicalize().expect("canonical repo path");
+    assert!(
+        repo_canon.starts_with(&workspace_canon),
+        "repo path escaped workspace: {}",
+        repo_canon.display()
+    );
+    repo_path
+}
+
+fn init_real_llm_git_repo(repo_path: &std::path::Path, base_ref: &str) {
+    let init = std::process::Command::new("git")
+        .arg("init")
+        .arg("-b")
+        .arg(base_ref)
+        .arg(repo_path)
+        .status()
+        .expect("run git init");
+    if init.success() {
+        return;
+    }
+
+    let fallback = std::process::Command::new("git")
+        .arg("init")
+        .arg(repo_path)
+        .status()
+        .expect("run git init fallback");
+    assert!(
+        fallback.success(),
+        "git init fallback failed for {}",
+        repo_path.display()
+    );
+    let rename = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .arg("branch")
+        .arg("-M")
+        .arg(base_ref)
+        .status()
+        .expect("run git branch -M fallback");
+    assert!(
+        rename.success(),
+        "git branch -M fallback failed for {}",
+        repo_path.display()
+    );
+}
+
+fn ensure_real_llm_repo_seed_commit(repo_path: &std::path::Path) {
     std::fs::write(repo_path.join("README.md"), "real llm coding repo\n").expect("write README");
 
     let add = std::process::Command::new("git")
         .arg("-C")
-        .arg(&repo_path)
+        .arg(repo_path)
         .arg("add")
         .arg("README.md")
         .status()
         .expect("run git add");
     assert!(add.success(), "git add failed for {}", repo_path.display());
 
+    let porcelain = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .arg("status")
+        .arg("--porcelain")
+        .output()
+        .expect("run git status --porcelain");
+    assert!(
+        porcelain.status.success(),
+        "git status --porcelain failed for {}",
+        repo_path.display()
+    );
+    if String::from_utf8_lossy(&porcelain.stdout).trim().is_empty() {
+        return;
+    }
+
     let commit = std::process::Command::new("git")
         .arg("-C")
-        .arg(&repo_path)
+        .arg(repo_path)
         .arg("-c")
         .arg("user.email=real-llm@example.com")
         .arg("-c")
@@ -1494,20 +1586,18 @@ fn given_real_llm_workspace_git_repo(world: &mut QuectoWorld, repo_name: String,
         "git commit failed for {}",
         repo_path.display()
     );
+}
 
-    let rename = std::process::Command::new("git")
-        .arg("-C")
-        .arg(&repo_path)
-        .arg("branch")
-        .arg("-M")
-        .arg(&base_ref)
-        .status()
-        .expect("run git branch -M");
-    assert!(
-        rename.success(),
-        "git branch -M failed for {}",
-        repo_path.display()
-    );
+#[given(expr = "a git repo {string} in the real LLM workspace with base ref {string}")]
+fn given_real_llm_workspace_git_repo(world: &mut QuectoWorld, repo_name: String, base_ref: String) {
+    ensure_temp_dir(world);
+    let workspace = real_llm_workspace_root(world);
+    std::fs::create_dir_all(&workspace).expect("create workspace");
+
+    validate_real_llm_repo_inputs(&repo_name, &base_ref);
+    let repo_path = prepare_real_llm_repo_path(&workspace, &repo_name);
+    init_real_llm_git_repo(&repo_path, &base_ref);
+    ensure_real_llm_repo_seed_commit(&repo_path);
 }
 
 /// Run the agent against the real OpenAI endpoint with a cheap model, bounded iterations,
@@ -1590,7 +1680,7 @@ fn setup_real_llm_gateway_workspace(
 ) {
     ensure_temp_dir(world);
     let base = base_path(world);
-    let workspace = base.join("workspace");
+    let workspace = real_llm_workspace_root(world);
     std::fs::create_dir_all(&workspace).expect("create workspace");
 
     let api_key = resolve_openai_api_key();
