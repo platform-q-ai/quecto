@@ -860,6 +860,19 @@ fn given_restrict_to_workspace_enabled(world: &mut QuectoWorld) {
     .expect("rewrite config");
 }
 
+#[given("exec isolation is set to native in the config")]
+fn given_exec_isolation_native(world: &mut QuectoWorld) {
+    let base = base_path(world);
+    let config_str = std::fs::read_to_string(base.join("config.json")).expect("read config");
+    let mut config: serde_json::Value = serde_json::from_str(&config_str).expect("parse config");
+    config["tools"]["exec"]["isolation"] = serde_json::json!("native");
+    std::fs::write(
+        base.join("config.json"),
+        serde_json::to_string_pretty(&config).unwrap(),
+    )
+    .expect("rewrite config");
+}
+
 #[given(expr = "the config sets max_tool_iterations to {int}")]
 fn given_config_max_tool_iterations(world: &mut QuectoWorld, max_iterations: u32) {
     let base = base_path(world);

@@ -45,6 +45,10 @@ pub struct NsjailOptions {
     pub wall_time_limit_secs: Option<u64>,
     pub die_with_parent: bool,
     pub allow_without_die_with_parent: bool,
+    /// Additional directories whose binaries are trusted for nsjail resolution.
+    /// Production code leaves this empty. Tests add temp directories here so that
+    /// fake nsjail scripts in non-standard locations can pass validation.
+    pub additional_trusted_paths: Vec<PathBuf>,
 }
 
 impl Default for NsjailOptions {
@@ -58,6 +62,7 @@ impl Default for NsjailOptions {
             wall_time_limit_secs: Some(DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS),
             die_with_parent: true,
             allow_without_die_with_parent: false,
+            additional_trusted_paths: Vec::new(),
         }
     }
 }
@@ -141,7 +146,10 @@ impl ExecTool {
         let mut startup_error = None;
         let mut mode = options.isolation_mode;
         if mode == ExecIsolationMode::Nsjail {
-            if let Some(resolved_binary) = resolve_nsjail_binary(&options.nsjail.binary) {
+            if let Some(resolved_binary) = resolve_nsjail_binary(
+                &options.nsjail.binary,
+                &options.nsjail.additional_trusted_paths,
+            ) {
                 options.nsjail.binary = resolved_binary;
                 if options.nsjail.die_with_parent
                     && !nsjail_supports_flag(&options.nsjail.binary, "--die_with_parent")
@@ -375,14 +383,25 @@ fn build_nsjail_command(
     cmd
 }
 
-fn resolve_nsjail_binary(binary: &str) -> Option<String> {
+fn resolve_nsjail_binary(binary: &str, extra_trusted: &[PathBuf]) -> Option<String> {
+    let is_extra_trusted_path = |p: &Path| extra_trusted.iter().any(|root| p.starts_with(root));
+    let is_extra_trusted_dir = |p: &Path| extra_trusted.iter().any(|root| p == root);
     let path = Path::new(binary);
     if path.components().count() > 1 {
         if !path.is_absolute() {
             return None;
         }
         let canonical = std::fs::canonicalize(path).ok()?;
-        if is_trusted_nsjail_binary_path(&canonical) && is_executable_file(&canonical) {
+        let trusted =
+            is_trusted_nsjail_binary_path(&canonical) || is_extra_trusted_path(&canonical);
+        if trusted && is_executable_file(&canonical) {
+            if !extra_trusted.is_empty() {
+                tracing::debug!(
+                    target: "exec",
+                    binary = %canonical.display(),
+                    "nsjail binary resolved via additional trusted path"
+                );
+            }
             return Some(canonical.to_string_lossy().to_string());
         }
         return None;
@@ -390,15 +409,22 @@ fn resolve_nsjail_binary(binary: &str) -> Option<String> {
 
     if let Ok(path_var) = std::env::var("PATH") {
         for dir in std::env::split_paths(&path_var) {
-            if !is_trusted_nsjail_search_dir(&dir) {
+            if !is_trusted_nsjail_search_dir(&dir) && !is_extra_trusted_dir(&dir) {
                 continue;
             }
             let candidate = dir.join(binary);
             let canonical = std::fs::canonicalize(&candidate).ok();
             if let Some(canonical) = canonical
-                && is_trusted_nsjail_binary_path(&canonical)
+                && (is_trusted_nsjail_binary_path(&canonical) || is_extra_trusted_path(&canonical))
                 && is_executable_file(&canonical)
             {
+                if !extra_trusted.is_empty() {
+                    tracing::debug!(
+                        target: "exec",
+                        binary = %canonical.display(),
+                        "nsjail binary resolved via additional trusted path"
+                    );
+                }
                 return Some(canonical.to_string_lossy().to_string());
             }
         }
@@ -627,123 +653,5 @@ impl Tool for ExecTool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    fn test_exec(restrict: bool) -> (ExecTool, TempDir) {
-        let tmp = TempDir::new().unwrap();
-        let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), restrict);
-        let tool = ExecTool::new(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox));
-        (tool, tmp)
-    }
-
-    #[tokio::test]
-    async fn test_exec_echo() {
-        let (tool, _tmp) = test_exec(false);
-        let result = tool.execute(r#"{"command": "echo hello"}"#).await.unwrap();
-        assert!(!result.is_error);
-        assert!(result.content.contains("hello"));
-    }
-
-    #[tokio::test]
-    async fn test_exec_dangerous_command_blocked() {
-        let (tool, _tmp) = test_exec(false);
-        let result = tool.execute(r#"{"command": "rm -rf /"}"#).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_exec_missing_command_arg() {
-        let (tool, _tmp) = test_exec(false);
-        let result = tool.execute(r#"{}"#).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_exec_timeout_kills_long_command() {
-        let tmp = TempDir::new().unwrap();
-        let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
-        let tool = ExecTool::with_timeout(
-            Arc::new(tmp.path().to_path_buf()),
-            Arc::new(sandbox),
-            Duration::from_secs(1),
-        );
-
-        let result = tool.execute(r#"{"command": "sleep 60"}"#).await.unwrap();
-        assert!(result.is_error);
-        assert!(result.content.contains("timed out"));
-    }
-
-    #[tokio::test]
-    async fn test_exec_strips_quecto_env_vars() {
-        let tmp = TempDir::new().unwrap();
-        let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
-        let tool = ExecTool::new(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox));
-
-        let mut env_vars = HashMap::new();
-        env_vars.insert(
-            "QUECTO_PROVIDERS_OPENAI_API_KEY".to_string(),
-            "sk-secret".to_string(),
-        );
-        env_vars.insert("HOME".to_string(), "/home/testuser".to_string());
-
-        let result = tool
-            .execute_with_env(
-                r#"{"command": "printenv QUECTO_PROVIDERS_OPENAI_API_KEY"}"#,
-                &env_vars,
-            )
-            .await
-            .unwrap();
-        assert!(!result.content.contains("sk-secret"));
-    }
-
-    #[test]
-    fn test_nsjail_falls_back_when_binary_missing() {
-        let tmp = TempDir::new().unwrap();
-        let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
-        let opts = ExecOptions {
-            isolation_mode: ExecIsolationMode::Nsjail,
-            allow_native_fallback: true,
-            nsjail: NsjailOptions {
-                binary: "definitely-not-a-real-binary".to_string(),
-                ..NsjailOptions::default()
-            },
-            ..ExecOptions::default()
-        };
-        let tool =
-            ExecTool::with_options(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox), opts);
-        assert_eq!(tool.mode(), ExecIsolationMode::Native);
-        assert!(
-            tool.startup_warning()
-                .unwrap_or_default()
-                .contains("falling back to native")
-        );
-        assert!(tool.startup_error().is_none());
-    }
-
-    #[tokio::test]
-    async fn test_nsjail_missing_without_fallback_returns_config_error() {
-        let tmp = TempDir::new().unwrap();
-        let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
-        let opts = ExecOptions {
-            isolation_mode: ExecIsolationMode::Nsjail,
-            nsjail: NsjailOptions {
-                binary: "definitely-not-a-real-binary".to_string(),
-                ..NsjailOptions::default()
-            },
-            ..ExecOptions::default()
-        };
-        let tool =
-            ExecTool::with_options(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox), opts);
-
-        let result = tool.execute(r#"{"command":"echo hi"}"#).await;
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("allow_native_fallback")
-        );
-    }
-}
+#[path = "exec_tests.rs"]
+mod tests;

@@ -47,6 +47,7 @@ fn setup_nsjail_exec_tool(world: &mut QuectoWorld, setup: NsjailSetup) {
             wall_time_limit_secs: setup.wall_time_limit_secs,
             die_with_parent: true,
             allow_without_die_with_parent: true,
+            additional_trusted_paths: vec![ws.clone()],
         },
     };
 
@@ -73,6 +74,8 @@ fn create_fake_nsjail_binary(workspace: &Path, marker: &Path, network_passthroug
     let net = if network_passthrough { "on" } else { "off" };
     let contents = format!(
         "#!/bin/sh\n\
+# Skip marker creation for --help probe (used by nsjail_supports_flag)\n\
+case \"$1\" in --help) exit 0;; esac\n\
 touch '{}'\n\
 last=\"\"\n\
 for arg in \"$@\"; do last=\"$arg\"; done\n\
@@ -316,7 +319,7 @@ fn when_registry_constructed(world: &mut QuectoWorld) {
     let _registry =
         ToolRegistryImpl::with_core_tools_and_exec_settings(ws.clone(), sandbox, settings.clone());
     let exec = ExecTool::with_options(
-        Arc::new(ws),
+        Arc::new(ws.clone()),
         Arc::new(Sandbox::new(None, false)),
         ExecOptions {
             isolation_mode: settings.isolation_mode,
@@ -330,6 +333,7 @@ fn when_registry_constructed(world: &mut QuectoWorld) {
                 wall_time_limit_secs: Some(settings.wall_time_limit_secs),
                 die_with_parent: settings.die_with_parent,
                 allow_without_die_with_parent: settings.allow_without_die_with_parent,
+                additional_trusted_paths: vec![ws],
             },
             ..ExecOptions::default()
         },

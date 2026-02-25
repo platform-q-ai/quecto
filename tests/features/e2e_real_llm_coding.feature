@@ -11,31 +11,31 @@ Feature: E2E Real LLM Coding Integration
     Then the exit code should be 0
     And stdout should include sentinel "CODING_RUN_STATUS_OK"
 
-  @done @real-llm-nightly
+  @done @real-llm @real-llm-nightly
   Scenario: Real LLM can cancel and cleanup a coding job in one request
     When I run the real LLM agent with message "Use coding_job to run a new job for repo test-repo base_ref main. Then cancel it, then cleanup it with keep_artifacts true. If both cancel and cleanup succeed reply exactly CODING_CANCEL_CLEANUP_OK, otherwise reply CODING_CANCEL_CLEANUP_FAIL."
     Then the exit code should be 0
     And stdout should include sentinel "CODING_CANCEL_CLEANUP_OK"
 
-  @done @real-llm-nightly
+  @done @real-llm @real-llm-nightly
   Scenario: Real LLM gets invalid_repo for unknown repository
     When I run the real LLM agent with message "Call coding_job run with goal 'x', repo 'missing-repo', base_ref 'main'. If tool returns invalid_repo, reply exactly CODING_INVALID_REPO_OK. Otherwise reply CODING_INVALID_REPO_FAIL."
     Then the exit code should be 0
     And stdout should include sentinel "CODING_INVALID_REPO_OK"
 
-  @done @real-llm-nightly
+  @done @real-llm @real-llm-nightly
   Scenario: Real LLM gets invalid_base_ref for bad branch
     When I run the real LLM agent with message "Call coding_job run with goal 'x', repo 'test-repo', base_ref 'does-not-exist'. If tool returns invalid_base_ref, reply exactly CODING_INVALID_REF_OK. Otherwise reply CODING_INVALID_REF_FAIL."
     Then the exit code should be 0
     And stdout should include sentinel "CODING_INVALID_REF_OK"
 
-  @done @real-llm-nightly
+  @done @real-llm @real-llm-nightly
   Scenario: Real LLM gets skill_not_found for missing coding skill
     When I run the real LLM agent with message "Call coding_job run with goal 'x', repo 'test-repo', base_ref 'main', and skills ['missing-skill']. If tool returns skill_not_found, reply exactly CODING_MISSING_SKILL_OK. Otherwise reply CODING_MISSING_SKILL_FAIL."
     Then the exit code should be 0
     And stdout should include sentinel "CODING_MISSING_SKILL_OK"
 
-  @done @real-llm-nightly
+  @done @real-llm @real-llm-nightly
   Scenario: Real LLM can persist coding context across named session turns
     When I run the real LLM agent with session codingmemo and message "Use coding_job run with repo test-repo base_ref main and goal 'session memory test'. Reply exactly SESSION_JOB_CREATED once done."
     Then the exit code should be 0
@@ -44,7 +44,7 @@ Feature: E2E Real LLM Coding Integration
     Then the exit code should be 0
     And stdout should include sentinel "SESSION_STATUS_OK"
 
-  @done @real-llm-nightly
+  @done @real-llm @real-llm-nightly
   Scenario: Real LLM gateway can invoke coding_job from Telegram message flow
     Given a real LLM gateway workspace is configured for chat "1001" with message "Use coding_job to run a job for repo test-repo base_ref main and then report the state. Reply with exactly GATEWAY_CODING_OK if queued else GATEWAY_CODING_FAIL"
     When I run quecto gateway until at least 1 Telegram replies are sent
