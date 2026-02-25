@@ -17,6 +17,23 @@ use crate::domain::coding_ports::{EventLogLine, EventLogStore};
 /// Maximum event line size in bytes (1 MiB).
 const MAX_EVENT_LINE_BYTES: usize = 1024 * 1024;
 
+/// Sanitize a job_id to prevent path traversal. Returns the basename only.
+fn sanitize_job_id(job_id: &str) -> &str {
+    // Extract the last path component and reject traversal
+    let base = job_id
+        .rsplit('/')
+        .next()
+        .unwrap_or(job_id)
+        .rsplit('\\')
+        .next()
+        .unwrap_or(job_id);
+    if base == ".." || base == "." || base.is_empty() {
+        "invalid_job_id"
+    } else {
+        base
+    }
+}
+
 /// File-backed JSONL event log store.
 ///
 /// Layout:
@@ -39,8 +56,10 @@ impl FileEventLogStore {
     }
 
     /// Returns the path to the event log for a job.
+    /// Validates job_id to prevent path traversal.
     fn log_path(&self, job_id: &str) -> PathBuf {
-        self.jobs_dir.join(job_id).join("events.jsonl")
+        let safe_id = sanitize_job_id(job_id);
+        self.jobs_dir.join(safe_id).join("events.jsonl")
     }
 
     /// Returns the path to the jobs index snapshot.
@@ -452,5 +471,19 @@ mod tests {
         let content = fs::read_to_string(dir.path().join("index.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(parsed["job_001"], "succeeded");
+    }
+
+    #[test]
+    fn test_sanitize_job_id_safe() {
+        assert_eq!(sanitize_job_id("job_001"), "job_001");
+        assert_eq!(sanitize_job_id("my-job"), "my-job");
+    }
+
+    #[test]
+    fn test_sanitize_job_id_traversal() {
+        assert_eq!(sanitize_job_id("../../etc"), "etc");
+        assert_eq!(sanitize_job_id("foo/bar"), "bar");
+        assert_eq!(sanitize_job_id(".."), "invalid_job_id");
+        assert_eq!(sanitize_job_id(""), "invalid_job_id");
     }
 }

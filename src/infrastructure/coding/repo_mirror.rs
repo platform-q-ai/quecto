@@ -392,6 +392,10 @@ impl RepoMirrorStore for FileRepoMirrorStore {
     }
 
     fn clone_for_job(&self, params: &CloneJobParams<'_>) -> RepoOpResult {
+        // Reject refs that start with '-' to prevent git option injection
+        if params.base_ref.starts_with('-') || params.job_branch.starts_with('-') {
+            return repo_err(0, "ref must not start with '-'", "invalid_ref");
+        }
         let mirror_dir = match self.mirror_dir_for(params.repo) {
             Some(d) if d.is_dir() => d,
             _ => return repo_err(0, "mirror does not exist", "no_mirror"),

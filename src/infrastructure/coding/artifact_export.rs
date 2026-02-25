@@ -447,12 +447,16 @@ fn key_len(s: &str, min_chars: usize) -> Option<usize> {
 }
 
 /// Redact Telegram bot tokens: pattern is `<digits>:<alphanum-dash-underscore>` (40+ chars).
+/// Fast path: skip allocation entirely if no colon is present.
 fn redact_telegram_tokens(input: &str) -> String {
+    // Fast path — no colon means no possible Telegram token
+    if !input.contains(':') {
+        return input.to_string();
+    }
     let mut result = String::with_capacity(input.len());
     let bytes = input.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        // Look for a digit sequence followed by ':'
         if bytes[i].is_ascii_digit() {
             let digit_start = i;
             while i < bytes.len() && bytes[i].is_ascii_digit() {
@@ -461,32 +465,30 @@ fn redact_telegram_tokens(input: &str) -> String {
             let digit_len = i - digit_start;
             if digit_len >= 6 && i < bytes.len() && bytes[i] == b':' {
                 let colon = i;
-                i += 1; // skip ':'
+                i += 1;
                 let token_start = i;
                 while i < bytes.len()
                     && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'-' || bytes[i] == b'_')
                 {
                     i += 1;
                 }
-                let total = i - digit_start;
-                if total >= 40 {
-                    // Redact: keep first 4 digits, replace rest with ***
+                if (i - digit_start) >= 40 {
                     let keep = &input[digit_start..digit_start + 4.min(digit_len)];
                     result.push_str(keep);
                     result.push_str("***");
                     continue;
                 }
-                // Not a Telegram token — emit everything we scanned
                 result.push_str(&input[digit_start..colon + 1]);
                 result.push_str(&input[token_start..i]);
                 continue;
             }
-            // Not followed by ':', emit the digits
             result.push_str(&input[digit_start..i]);
             continue;
         }
-        result.push(bytes[i] as char);
-        i += 1;
+        // UTF-8 safe: use chars() to get the next character
+        let ch = input[i..].chars().next().unwrap_or('\0');
+        result.push(ch);
+        i += ch.len_utf8();
     }
     result
 }
