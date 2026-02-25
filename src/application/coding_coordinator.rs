@@ -177,10 +177,10 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
     // ── run ──────────────────────────────────────────────────────────────
 
     pub fn run(&mut self, req: RunRequest) -> Result<RunResponse, CommandError> {
-        if !self.repo_validator.repo_exists(&req.repo) {
-            return Err(CommandError::InvalidRepo);
-        }
         if !self.repo_validator.ref_exists(&req.repo, &req.base_ref) {
+            if !self.repo_validator.repo_exists(&req.repo) {
+                return Err(CommandError::InvalidRepo);
+            }
             return Err(CommandError::InvalidBaseRef);
         }
         for skill in &req.skills {
