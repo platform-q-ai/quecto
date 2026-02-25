@@ -4,6 +4,7 @@
 //! Each worker communicates via JSON Lines over stdin/stdout.
 
 use std::collections::{HashMap, VecDeque};
+use std::mem;
 
 use crate::domain::coding_ports::{
     WorkerEnvVar, WorkerEvent, WorkerLaunchConfig, WorkerRuntime, WorkerStatus,
@@ -64,7 +65,8 @@ impl MockWorkerRuntime {
             let remaining = MAX_STDERR_BYTES.saturating_sub(w.stderr.len());
             if remaining > 0 {
                 let take = output.len().min(remaining);
-                w.stderr.push_str(&output[..take]);
+                let safe = floor_char_boundary(output, take);
+                w.stderr.push_str(&output[..safe]);
             }
         }
     }
@@ -126,9 +128,9 @@ impl MockWorkerRuntime {
         // Resource limits
         args.push("--rlimit_as".to_string());
         args.push(config.max_memory_mb.to_string());
-        args.push("--time_limit".to_string());
+        args.push("--rlimit_cpu".to_string());
         args.push(config.max_cpu_seconds.to_string());
-        args.push("--max_cpus".to_string());
+        args.push("--time_limit".to_string());
         args.push(config.max_wall_seconds.to_string());
         args.push("--cgroup_pids_max".to_string());
         args.push(config.max_pids.to_string());
@@ -228,11 +230,7 @@ impl WorkerRuntime for MockWorkerRuntime {
     fn read_stderr(&mut self, pid: u32) -> String {
         self.workers
             .get_mut(&pid)
-            .map(|w| {
-                let out = w.stderr.clone();
-                w.stderr.clear();
-                out
-            })
+            .map(|w| mem::take(&mut w.stderr))
             .unwrap_or_default()
     }
 
@@ -284,6 +282,18 @@ pub fn is_blocked_env(name: &str) -> bool {
         return true;
     }
     BLOCKED_ENV_PREFIXES.iter().any(|p| name.starts_with(p))
+}
+
+/// Find the largest byte index `<= index` that is a UTF-8 char boundary.
+fn floor_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        return s.len();
+    }
+    let mut i = index;
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
 }
 
 #[cfg(test)]

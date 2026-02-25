@@ -149,7 +149,15 @@ fn given_die_with_parent_disabled(world: &mut QuectoWorld) {
 fn when_build_nsjail_args(world: &mut QuectoWorld) {
     let rt_config = nrt_runtime_config(world);
     let launch = nrt_launch_config(world).clone();
-    let parts = build_nsjail_worker_args(&rt_config, &launch);
+    let run_id = world
+        .nrt_run_id
+        .clone()
+        .unwrap_or_else(|| "run-default".to_string());
+    let job_id = world
+        .nrt_job_id
+        .clone()
+        .unwrap_or_else(|| "job-default".to_string());
+    let parts = build_nsjail_worker_args(&rt_config, &launch, &run_id, &job_id);
     let mut all = parts.nsjail_args;
     all.extend(parts.worker_args);
     world.nrt_last_args = Some(all);
@@ -365,8 +373,8 @@ fn then_cpu_limit(world: &mut QuectoWorld, limit: u32) {
         .expect("nsjail args should be built");
     let idx = args
         .iter()
-        .position(|a| a == "--time_limit")
-        .expect("--time_limit in args");
+        .position(|a| a == "--rlimit_cpu")
+        .expect("--rlimit_cpu in args");
     let actual: u32 = args[idx + 1].parse().expect("cpu limit value");
     assert_eq!(actual, limit, "cpu time limit should be {limit}");
 }
@@ -379,8 +387,8 @@ fn then_wall_limit(world: &mut QuectoWorld, limit: u32) {
         .expect("nsjail args should be built");
     let idx = args
         .iter()
-        .position(|a| a == "--max_cpus")
-        .expect("--max_cpus in args");
+        .position(|a| a == "--time_limit")
+        .expect("--time_limit in args");
     let actual: u32 = args[idx + 1].parse().expect("wall limit value");
     assert_eq!(actual, limit, "wall time limit should be {limit}");
 }

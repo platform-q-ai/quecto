@@ -234,8 +234,8 @@ fn then_cpu_limit(world: &mut QuectoWorld, limit: u32) {
     let args = rt.nsjail_args_for(pid);
     let idx = args
         .iter()
-        .position(|a| a == "--time_limit")
-        .expect("--time_limit in args");
+        .position(|a| a == "--rlimit_cpu")
+        .expect("--rlimit_cpu in args");
     let actual: u32 = args[idx + 1].parse().expect("cpu limit value");
     assert_eq!(actual, limit, "CPU time limit should be {limit} seconds");
 }
@@ -247,8 +247,8 @@ fn then_wall_limit(world: &mut QuectoWorld, limit: u32) {
     let args = rt.nsjail_args_for(pid);
     let idx = args
         .iter()
-        .position(|a| a == "--max_cpus")
-        .expect("--max_cpus in args");
+        .position(|a| a == "--time_limit")
+        .expect("--time_limit in args");
     let actual: u32 = args[idx + 1].parse().expect("wall limit value");
     assert_eq!(actual, limit, "wall time limit should be {limit} seconds");
 }

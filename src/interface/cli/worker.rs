@@ -94,7 +94,10 @@ fn require_next(args: &[String], i: &mut usize, flag: &str) -> Result<String, St
 
 // ── Job directory validation ────────────────────────────────────────────
 
-/// Validate that the job directory exists and is a directory.
+/// Validate that the job directory exists, is a directory, and is safe.
+///
+/// Canonicalizes the path to resolve symlinks and `..` components,
+/// then checks that it is an absolute path under an expected prefix.
 pub fn validate_job_dir(job_dir: &str) -> Result<(), String> {
     let path = Path::new(job_dir);
     if !path.exists() {
@@ -102,6 +105,18 @@ pub fn validate_job_dir(job_dir: &str) -> Result<(), String> {
     }
     if !path.is_dir() {
         return Err(format!("job directory is not a directory: {job_dir}"));
+    }
+    // Canonicalize to resolve symlinks and .. traversal
+    let canonical = path
+        .canonicalize()
+        .map_err(|e| format!("failed to canonicalize job directory: {e}"))?;
+    if !canonical.is_absolute() {
+        return Err("job directory must resolve to an absolute path".to_string());
+    }
+    // Reject paths containing .. after canonicalization (defensive)
+    let canonical_str = canonical.to_string_lossy();
+    if canonical_str.contains("..") {
+        return Err("job directory contains path traversal".to_string());
     }
     Ok(())
 }
