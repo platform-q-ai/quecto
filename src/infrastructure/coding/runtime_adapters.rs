@@ -34,6 +34,32 @@ impl WorkspaceRepoValidator {
         };
         candidate.starts_with(ws)
     }
+
+    fn git_path_within_workspace(&self, repo_path: &Path, arg: &str) -> bool {
+        let output = match Command::new("git")
+            .arg("-C")
+            .arg(repo_path)
+            .arg("rev-parse")
+            .arg(arg)
+            .output()
+        {
+            Ok(o) if o.status.success() => o,
+            _ => return false,
+        };
+
+        let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if raw.is_empty() {
+            return false;
+        }
+
+        let p = PathBuf::from(&raw);
+        let resolved = if p.is_absolute() {
+            p
+        } else {
+            repo_path.join(p)
+        };
+        self.is_within_workspace(&resolved)
+    }
 }
 
 impl RepoValidator for WorkspaceRepoValidator {
@@ -42,12 +68,20 @@ impl RepoValidator for WorkspaceRepoValidator {
         if !self.is_within_workspace(&repo_path) {
             return false;
         }
-        repo_path.is_dir() && repo_path.join(".git").exists()
+        if !(repo_path.is_dir() && repo_path.join(".git").exists()) {
+            return false;
+        }
+
+        self.git_path_within_workspace(&repo_path, "--git-dir")
+            && self.git_path_within_workspace(&repo_path, "--show-toplevel")
     }
 
     fn ref_exists(&self, repo: &str, base_ref: &str) -> bool {
         let repo_path = self.resolve_repo_path(repo);
         if !self.repo_exists(repo) {
+            return false;
+        }
+        if base_ref.starts_with('-') {
             return false;
         }
 
@@ -82,7 +116,19 @@ impl SkillResolver for WorkspaceSkillResolver {
             return false;
         }
         let p = self.workspace.join("skills").join(name).join("SKILL.md");
-        p.is_file()
+        if !p.is_file() {
+            return false;
+        }
+
+        let ws = match self.workspace.canonicalize() {
+            Ok(p) => p,
+            Err(_) => return false,
+        };
+        let skill = match p.canonicalize() {
+            Ok(p) => p,
+            Err(_) => return false,
+        };
+        skill.starts_with(ws)
     }
 }
 
@@ -158,6 +204,35 @@ mod tests {
     }
 
     #[test]
+    fn test_repo_with_gitdir_outside_workspace_rejected() {
+        let ws = tempfile::TempDir::new().unwrap();
+        let outside = tempfile::TempDir::new().unwrap();
+        let outside_repo = outside.path().join("outside-repo");
+        init_git_repo(&outside_repo);
+
+        let fake_repo = ws.path().join("fake-repo");
+        std::fs::create_dir_all(&fake_repo).unwrap();
+        std::fs::write(
+            fake_repo.join(".git"),
+            format!("gitdir: {}\n", outside_repo.join(".git").display()),
+        )
+        .unwrap();
+
+        let v = WorkspaceRepoValidator::new(ws.path().to_path_buf());
+        assert!(!v.repo_exists("fake-repo"));
+    }
+
+    #[test]
+    fn test_ref_with_option_like_prefix_rejected() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let repo = tmp.path().join("repo-a");
+        init_git_repo(&repo);
+
+        let v = WorkspaceRepoValidator::new(tmp.path().to_path_buf());
+        assert!(!v.ref_exists("repo-a", "--help"));
+    }
+
+    #[test]
     fn test_skill_exists_checks_skill_md() {
         let tmp = tempfile::TempDir::new().unwrap();
         let skill_dir = tmp.path().join("skills").join("default-skill");
@@ -178,5 +253,25 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let r = WorkspaceSkillResolver::new(tmp.path().to_path_buf());
         assert!(!r.skill_exists("../escape"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_skill_symlink_outside_workspace_rejected() {
+        use std::os::unix::fs::symlink;
+
+        let ws = tempfile::TempDir::new().unwrap();
+        let outside = tempfile::TempDir::new().unwrap();
+
+        let outside_skill = outside.path().join("outside-skill");
+        std::fs::create_dir_all(&outside_skill).unwrap();
+        std::fs::write(outside_skill.join("SKILL.md"), "x").unwrap();
+
+        let skills_dir = ws.path().join("skills");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+        symlink(&outside_skill, skills_dir.join("default-skill")).unwrap();
+
+        let r = WorkspaceSkillResolver::new(ws.path().to_path_buf());
+        assert!(!r.skill_exists("default-skill"));
     }
 }

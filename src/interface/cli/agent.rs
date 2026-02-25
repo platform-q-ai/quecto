@@ -18,7 +18,10 @@ use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::recall::RecallTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
-use crate::interface::shared::{register_coding_job_tool, resolve_api_key};
+use crate::interface::shared::{
+    CodingCoordinatorScopePolicy, cli_coding_coordinator_scope, register_coding_job_tool,
+    resolve_api_key,
+};
 
 /// Parsed flags for the `agent` subcommand.
 pub(crate) struct AgentFlags {
@@ -234,7 +237,9 @@ pub(crate) fn build_agent_from_config(
         exec_settings,
     );
     let mut registry = registry;
-    register_coding_job_tool(&mut registry, &workspace);
+    if cli_coding_coordinator_scope() == CodingCoordinatorScopePolicy::PerSession {
+        register_coding_job_tool(&mut registry, &workspace);
+    }
     let session_key = if flags.session_name.as_deref() == Some("-") {
         String::new()
     } else {

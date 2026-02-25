@@ -31,7 +31,10 @@ use crate::infrastructure::tools::recall::RecallTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use crate::infrastructure::tools::spawn::SpawnTool;
 use crate::infrastructure::tools::web_search::WebSearchTool;
-use crate::interface::shared::register_coding_job_tool;
+use crate::interface::shared::{
+    CodingCoordinatorScopePolicy, gateway_background_coding_coordinator_scope,
+    register_coding_job_tool,
+};
 
 use tokio::sync::mpsc;
 
@@ -331,7 +334,9 @@ impl Gateway {
             self.config.agents.defaults.restrict_to_workspace,
             self.base_dir.clone(),
         )));
-        register_coding_job_tool(&mut registry, &workspace);
+        if gateway_background_coding_coordinator_scope() == CodingCoordinatorScopePolicy::Shared {
+            register_coding_job_tool(&mut registry, &workspace);
+        }
         let spill_store = Arc::new(FileContextSpillStore::new(self.base_dir.clone()));
         // Shared agent handles cron/heartbeat tasks, not per-user Telegram messages.
         // Per-user messages use InboundAgentBuilder with session-scoped spill stores.

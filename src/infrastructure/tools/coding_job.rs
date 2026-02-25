@@ -152,14 +152,25 @@ impl Tool for CodingJobTool {
         arguments: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
         let args = arguments.to_string();
+        let service = self.service.clone();
         Box::pin(async move {
-            match self.handle_action(&args) {
-                Ok(content) => Ok(ToolResult {
+            let outcome = tokio::task::spawn_blocking(move || {
+                let tool = CodingJobTool { service };
+                tool.handle_action(&args)
+            })
+            .await;
+
+            match outcome {
+                Ok(Ok(content)) => Ok(ToolResult {
                     content,
                     is_error: false,
                 }),
-                Err(e) => Ok(ToolResult {
+                Ok(Err(e)) => Ok(ToolResult {
                     content: e,
+                    is_error: true,
+                }),
+                Err(e) => Ok(ToolResult {
+                    content: format!("coding_job task join error: {e}"),
                     is_error: true,
                 }),
             }
@@ -205,7 +216,8 @@ mod tests {
     }
 
     fn exec(tool: &CodingJobTool, input: &str) -> crate::domain::tool::ToolResult {
-        futures::executor::block_on(tool.execute(input)).expect("should not panic")
+        let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+        rt.block_on(tool.execute(input)).expect("should not panic")
     }
 
     fn create_job(tool: &CodingJobTool) -> String {

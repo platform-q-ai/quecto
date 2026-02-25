@@ -1,5 +1,6 @@
 // Background services: inbound processor, outbound dispatcher, health, heartbeat, cron.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -27,7 +28,10 @@ use crate::infrastructure::tools::recall::RecallTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use crate::infrastructure::tools::spawn::SpawnTool;
 use crate::infrastructure::tools::web_search::WebSearchTool;
-use crate::interface::shared::register_coding_job_tool;
+use crate::interface::shared::{
+    CodingCoordinatorScopePolicy, gateway_inbound_coding_coordinator_scope,
+    register_coding_job_tool,
+};
 
 use super::Gateway;
 
@@ -78,7 +82,9 @@ impl InboundAgentBuilder {
             self.config.agents.defaults.restrict_to_workspace,
             self.base_dir.clone(),
         )));
-        register_coding_job_tool(&mut registry, &workspace);
+        if gateway_inbound_coding_coordinator_scope() == CodingCoordinatorScopePolicy::PerSession {
+            register_coding_job_tool(&mut registry, &workspace);
+        }
 
         let spill_store = Arc::new(FileContextSpillStore::new(self.base_dir.clone()));
         registry.register(Arc::new(RecallTool::new(
@@ -107,6 +113,7 @@ impl Gateway {
         mut inbound_rx: mpsc::Receiver<InboundMessage>,
         ctx: InboundProcessorContext,
     ) {
+        let mut session_agents: HashMap<String, Arc<dyn AgentLoop>> = HashMap::new();
         while let Some(msg) = inbound_rx.recv().await {
             let mut messages = Self::load_session(&ctx.session_store, &msg).await;
 
@@ -114,7 +121,8 @@ impl Gateway {
 
             trim_session_messages(&mut messages, ctx.max_session_messages);
 
-            let response_text = Self::process_and_save(&ctx, &msg, &mut messages).await;
+            let response_text =
+                Self::process_and_save(&ctx, &msg, &mut messages, &mut session_agents).await;
 
             let outbound = OutboundMessage {
                 target: msg.source.clone(),
@@ -148,10 +156,18 @@ impl Gateway {
         ctx: &InboundProcessorContext,
         msg: &InboundMessage,
         messages: &mut Vec<Message>,
+        session_agents: &mut HashMap<String, Arc<dyn AgentLoop>>,
     ) -> String {
         let session_key = Session::build_key("telegram", &msg.source);
         let result = if let Some(ref builder) = ctx.agent_builder {
-            let per_session_agent = builder.build(&session_key, ctx.outbound_tx.clone());
+            let per_session_agent = if let Some(agent) = session_agents.get(&session_key) {
+                agent.clone()
+            } else {
+                let built: Arc<dyn AgentLoop> =
+                    Arc::new(builder.build(&session_key, ctx.outbound_tx.clone()));
+                session_agents.insert(session_key.clone(), built.clone());
+                built
+            };
             per_session_agent.process(messages).await
         } else {
             ctx.agent.process(messages).await
@@ -480,8 +496,10 @@ mod tests {
             text: "hello".to_string(),
         };
         let mut messages = vec![];
+        let mut session_agents = HashMap::new();
 
-        let response = Gateway::process_and_save(&ctx, &msg, &mut messages).await;
+        let response =
+            Gateway::process_and_save(&ctx, &msg, &mut messages, &mut session_agents).await;
 
         assert!(response.starts_with("Error:"));
         assert!(!response.contains("sk-secret-key-12345"));
