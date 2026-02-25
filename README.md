@@ -1,6 +1,6 @@
 # Quecto
 
-A single-binary personal AI assistant that runs on minimal Linux systems. Quecto receives messages via Telegram or the command line, routes them through an LLM (OpenAI or Anthropic), executes tools (shell commands, file operations, web search, scheduled tasks), and persists conversations to disk.
+A single-binary personal AI assistant that runs on minimal Linux systems. Quecto receives messages via Telegram or the command line, routes them through an LLM (OpenAI or Anthropic), executes tools (shell commands, file operations, web search, scheduled tasks, coding job orchestration), and persists conversations to disk.
 
 Built in Rust. No runtime dependencies. Runs on a VPS, Raspberry Pi, or container.
 
@@ -61,6 +61,12 @@ Piped input is supported for scripting: `echo "hello" | quecto`.
 
 ```bash
 quecto agent -m "Write a Python script that generates primes"
+```
+
+Coding-oriented workflow example:
+
+```bash
+quecto agent -m "Use coding_job to run a job for repo 'my-repo' and base_ref 'main' with goal 'add retry logic to HTTP client', then report the returned job_id and state."
 ```
 
 | Flag | Required | Description |
@@ -351,6 +357,7 @@ Tool definitions are cached in the registry at registration time (sorted once, r
 | `edit_file` | Replace a substring in a file |
 | `append_file` | Append content to a file |
 | `list_dir` | List directory contents |
+| `coding_job` | Manage coding jobs (`run`, `status`, `cancel`, `cleanup`, `list`). Available in `quecto agent` and `quecto gateway` (not REPL) |
 | `recall` | Retrieve a previously collapsed tool output by its spill ID (e.g. `turn20:bash:0`). Use `recall("list")` for the full index |
 
 Filesystem tools (`read_file`, `write_file`, `edit_file`, `append_file`, `list_dir`) run on async `tokio::fs` adapters.
@@ -365,6 +372,19 @@ These are available when running `quecto gateway` but not in CLI or REPL mode:
 | `cron` | Manage scheduled tasks (add, remove, list, enable, disable). Interval schedules execute; cron-expression schedules are currently skipped and marked with `last_error` |
 | `spawn` | Spawn a background subagent for long-running tasks |
 | `message` | Send a message to the user's channel |
+
+### Coding job tool details
+
+The `coding_job` tool is designed for asynchronous coding task orchestration from natural-language prompts.
+
+- Actions: `run`, `status`, `cancel`, `cleanup`, `list`
+- `run` requires `goal`, `repo`, and `base_ref`
+- `repo` and `base_ref` are validated against a real git repository in the workspace
+- Optional `skills` are validated against installed workspace skills (`workspace/skills/<name>/SKILL.md`)
+- `status` accepts either `job_id` or `run_id`
+- `cleanup` only succeeds for terminal jobs (for example `failed`, `succeeded`, or `canceled`)
+
+The tool currently manages job lifecycle state and coordination metadata. Worker execution and code-application flow remain incremental and are being expanded in follow-up PRs.
 
 ### WASM tool ports
 
@@ -383,6 +403,29 @@ cargo build --manifest-path guest/Cargo.toml --target wasm32-wasip2 --release
 ```
 
 This produces `guest/target/wasm32-wasip2/release/quecto_wasm_guest.wasm`.
+
+## Tool Isolation Model
+
+Quecto uses a two-tier isolation strategy for tool execution:
+
+- **WASM components** for built-in tools (`read_file`, `write_file`, `edit_file`, `append_file`, `list_dir`, `cron`, `recall`, `message`, `web_search`)
+- **nsjail** for `exec` shell commands
+- **spawn** launches child `quecto agent` processes, which inherit the same tool isolation model
+
+### Why this design
+
+| Layer | Primary benefit | Key controls |
+|---|---|---|
+| WASM component runtime | Per-call isolation for tool logic with explicit host mediation | Fresh store per call, fuel metering, memory limits, epoch interruption, host-import allowlist |
+| nsjail exec runtime | Kernel-enforced process isolation for shell commands | Namespaces, cgroups v2 limits (memory/PID/CPU/wall), seccomp filtering, parent-death cleanup |
+
+### Security notes and boundaries
+
+- WASM tools run as constrained components and can only perform actions exposed by host imports; this reduces ambient authority for built-in tools.
+- nsjail hardens shell execution with Linux primitives and bounded resources; risky command patterns are additionally blocked at command-validation level.
+- `tools.exec.allow_native_fallback=false` keeps fail-closed behavior when nsjail is missing or not executable.
+- `tools.exec.allow_without_die_with_parent=false` keeps fail-closed behavior if local nsjail lacks `--die_with_parent` support.
+- Isolation reduces blast radius and improves predictable failure modes, but it is not a substitute for least-privilege host deployment and workspace access controls.
 
 ## Security
 

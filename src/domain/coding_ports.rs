@@ -51,6 +51,146 @@ pub trait EventLogStore {
 }
 
 // ============================================================================
+// Repo mirror and per-job clone port
+// ============================================================================
+
+/// Result of a mirror-fetch or clone operation.
+#[derive(Debug, Clone)]
+pub struct RepoOpResult {
+    /// Whether the operation succeeded.
+    pub ok: bool,
+    /// Duration of the operation in milliseconds.
+    pub duration_ms: u64,
+    /// Error message on failure.
+    pub error: Option<String>,
+    /// Error classification for coordinator state transitions.
+    pub error_code: Option<String>,
+}
+
+/// Parameters for cloning a repo for a specific job.
+#[derive(Debug, Clone)]
+pub struct CloneJobParams<'a> {
+    pub repo: &'a str,
+    pub job_id: &'a str,
+    pub base_ref: &'a str,
+    pub job_branch: &'a str,
+}
+
+/// Port for bare mirror cache and per-job clone operations.
+///
+/// The coordinator uses this trait to create/update mirrors and clone
+/// repositories for coding jobs. Each implementation handles git operations,
+/// flock coordination, and path safety.
+pub trait RepoMirrorStore {
+    /// Check whether a bare mirror exists for the given repo identifier.
+    fn mirror_exists(&self, repo: &str) -> bool;
+
+    /// Create a new bare mirror for the repo. Returns error if invalid path.
+    fn create_mirror(&mut self, repo: &str, remote_url: &str) -> RepoOpResult;
+
+    /// Fetch latest refs into an existing mirror (acquires exclusive flock).
+    fn fetch_mirror(&self, repo: &str) -> RepoOpResult;
+
+    /// Clone from the local mirror into a job directory (acquires shared flock).
+    fn clone_for_job(&self, params: &CloneJobParams<'_>) -> RepoOpResult;
+
+    /// Convert a repo identifier to a safe mirror directory name.
+    /// Returns `None` if the repo contains path traversal or invalid characters.
+    fn mirror_path_for_repo(&self, repo: &str) -> Option<String>;
+
+    /// Remove a job's cloned repo directory.
+    fn remove_job_repo(&self, job_id: &str) -> bool;
+
+    /// Remove a job's repo directory but preserve its artifact directory.
+    fn remove_job_repo_keep_artifacts(&self, job_id: &str) -> bool;
+}
+
+// ============================================================================
+// Worker runtime port
+// ============================================================================
+
+/// Configuration for launching an nsjail worker process.
+#[derive(Debug, Clone)]
+pub struct WorkerLaunchConfig {
+    /// Path to the job directory (sole writable mount).
+    pub job_dir: String,
+    /// Goal description for the worker.
+    pub goal: String,
+    /// Resource limits.
+    pub max_memory_mb: u32,
+    pub max_cpu_seconds: u32,
+    pub max_wall_seconds: u32,
+    pub max_pids: u32,
+    /// Network policy: "deny" (default) or list of allowed hosts.
+    pub network_allowed_hosts: Vec<String>,
+    /// Whether die-with-parent is enabled.
+    pub die_with_parent: bool,
+}
+
+/// A parsed event from the worker's stdout.
+#[derive(Debug, Clone)]
+pub enum WorkerEvent {
+    /// Valid event envelope parsed from JSON Lines.
+    Valid(super::coding_event::EventEnvelope),
+    /// Malformed line that could not be parsed.
+    Malformed { raw: String },
+}
+
+/// Status of a running worker process.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkerStatus {
+    /// Worker is running.
+    Running,
+    /// Worker exited with a status code.
+    Exited { status: i32 },
+    /// Worker was killed (by signal or timeout).
+    Killed { reason: String },
+}
+
+/// Environment variable allowed in the worker.
+#[derive(Debug, Clone)]
+pub struct WorkerEnvVar {
+    pub name: String,
+    pub value: String,
+}
+
+/// Port for managing nsjail coding worker processes.
+///
+/// The coordinator uses this trait to launch, monitor, communicate with,
+/// and tear down worker processes.
+pub trait WorkerRuntime {
+    /// Launch a new worker process inside nsjail.
+    fn launch(&mut self, config: &WorkerLaunchConfig) -> Result<u32, String>;
+
+    /// Send a JSON command to the worker via stdin.
+    fn send_command(&mut self, pid: u32, command: &str) -> Result<(), String>;
+
+    /// Read the next event from the worker's stdout (non-blocking).
+    fn read_event(&mut self, pid: u32) -> Option<WorkerEvent>;
+
+    /// Read accumulated stderr output for diagnostics.
+    fn read_stderr(&mut self, pid: u32) -> String;
+
+    /// Check the current status of the worker process.
+    fn status(&self, pid: u32) -> WorkerStatus;
+
+    /// Send SIGTERM to the worker, then SIGKILL after timeout.
+    fn kill(&mut self, pid: u32) -> Result<(), String>;
+
+    /// Check if the worker is still running.
+    fn is_alive(&self, pid: u32) -> bool;
+
+    /// Return the nsjail arguments that would be used for the given config.
+    fn nsjail_args(&self, config: &WorkerLaunchConfig) -> Vec<String>;
+
+    /// Return the environment variables the worker would receive.
+    fn worker_env(&self, config: &WorkerLaunchConfig) -> Vec<WorkerEnvVar>;
+
+    /// Clean up all resources for the given worker PID.
+    fn cleanup(&mut self, pid: u32);
+}
+
+// ============================================================================
 // Coding job service port (used by tool layer)
 // ============================================================================
 
