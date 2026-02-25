@@ -19,6 +19,9 @@ const BLOCKED_ENV_PREFIXES: &[&str] = &["QUECTO_", "GITHUB_", "GH_", "OPENAI_", 
 /// Blocked individual env var names.
 const BLOCKED_ENV_NAMES: &[&str] = &["GITHUB_TOKEN", "GH_TOKEN"];
 
+/// Maximum captured stderr size (1 MiB), matching ExecTool's limit.
+const MAX_STDERR_BYTES: usize = 1024 * 1024;
+
 /// State of a tracked worker process.
 #[derive(Debug)]
 struct WorkerState {
@@ -55,10 +58,14 @@ impl MockWorkerRuntime {
         }
     }
 
-    /// Simulate the worker writing to stderr.
+    /// Simulate the worker writing to stderr, capped at 1 MiB.
     pub fn inject_stderr(&mut self, pid: u32, output: &str) {
         if let Some(w) = self.workers.get_mut(&pid) {
-            w.stderr.push_str(output);
+            let remaining = MAX_STDERR_BYTES.saturating_sub(w.stderr.len());
+            if remaining > 0 {
+                let take = output.len().min(remaining);
+                w.stderr.push_str(&output[..take]);
+            }
         }
     }
 

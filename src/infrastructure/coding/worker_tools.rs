@@ -178,7 +178,6 @@ fn read_and_normalize(full_path: &Path, old_string: &str) -> Result<FileContent,
         old_string.to_string()
     };
     Ok(FileContent {
-        _raw: content,
         normalized,
         search,
         has_crlf,
@@ -187,7 +186,6 @@ fn read_and_normalize(full_path: &Path, old_string: &str) -> Result<FileContent,
 }
 
 struct FileContent {
-    _raw: String,
     normalized: String,
     search: String,
     has_crlf: bool,
@@ -425,10 +423,17 @@ pub fn grep_content(job_dir: &Path, pattern: &str, gitignore: bool) -> GrepResul
         vec![]
     };
 
+    const MAX_MATCHES: usize = 1000;
     let mut matches = Vec::new();
     visit_files(job_dir, job_dir, &gitignore_patterns, &mut |rel_path| {
+        if matches.len() >= MAX_MATCHES {
+            return;
+        }
         if let Ok(content) = std::fs::read_to_string(job_dir.join(rel_path)) {
             for (line_num, line) in content.lines().enumerate() {
+                if matches.len() >= MAX_MATCHES {
+                    break;
+                }
                 if line.contains(pattern) {
                     matches.push(GrepMatch {
                         file: rel_path.to_string(),

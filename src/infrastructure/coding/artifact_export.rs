@@ -301,6 +301,24 @@ struct RecordInfo<'a> {
 
 // ── Git helpers ─────────────────────────────────────────────────────────
 
+/// Maximum git stdout capture (10 MiB) to prevent OOM on large diffs.
+const MAX_GIT_STDOUT: usize = 10 * 1024 * 1024;
+
+/// Capture git stdout, truncated to `MAX_GIT_STDOUT` bytes.
+fn cap_git_stdout(output: &[u8]) -> String {
+    if output.len() <= MAX_GIT_STDOUT {
+        String::from_utf8_lossy(output).to_string()
+    } else {
+        let cut = safe_utf8_cut(
+            &String::from_utf8_lossy(&output[..MAX_GIT_STDOUT]),
+            MAX_GIT_STDOUT,
+        );
+        let mut s = String::from_utf8_lossy(&output[..cut]).to_string();
+        s.push_str("\n[truncated]");
+        s
+    }
+}
+
 fn run_git_diff(repo_dir: &Path) -> String {
     let output = std::process::Command::new("git")
         .arg("-C")
@@ -308,16 +326,15 @@ fn run_git_diff(repo_dir: &Path) -> String {
         .args(["diff", "HEAD~1..HEAD"])
         .output();
     match output {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+        Ok(o) if o.status.success() => cap_git_stdout(&o.stdout),
         _ => {
-            // Fallback: diff against empty tree for initial commits
             let output2 = std::process::Command::new("git")
                 .arg("-C")
                 .arg(repo_dir)
                 .args(["diff", "--cached"])
                 .output();
             match output2 {
-                Ok(o2) => String::from_utf8_lossy(&o2.stdout).to_string(),
+                Ok(o2) => cap_git_stdout(&o2.stdout),
                 Err(_) => String::new(),
             }
         }
@@ -340,7 +357,7 @@ fn collect_commits(repo_dir: &Path) -> Vec<CommitEntry> {
         .args(["log", "--format=%H%n%s%n%an%n%ai", "--reverse"])
         .output();
     let stdout = match output {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+        Ok(o) if o.status.success() => cap_git_stdout(&o.stdout),
         _ => return Vec::new(),
     };
     parse_commit_log(&stdout)
@@ -390,107 +407,10 @@ fn safe_utf8_cut(s: &str, max_bytes: usize) -> usize {
 
 /// Redact API keys from artifact content.
 ///
-/// Matches the same patterns as `infrastructure::logging::redact_api_keys`:
-/// - `sk-...` (OpenAI / Anthropic)
-/// - `gsk_...` / `gsk-...` (Groq)
-/// - Telegram bot tokens (`<digits>:<alphanumeric>`)
+/// Delegates to the single canonical implementation in `infrastructure::logging`.
+/// Covers `sk-*` (OpenAI/Anthropic), `gsk_*`/`gsk-*` (Groq), and Telegram bot tokens.
 pub fn redact_api_keys(input: &str) -> String {
-    // First pass: redact Telegram bot tokens (digits:alphanum, 40+ chars)
-    let input = redact_telegram_tokens(input);
-    if !input.contains("sk-") && !input.contains("gsk_") && !input.contains("gsk-") {
-        return input;
-    }
-    let mut result = String::with_capacity(input.len());
-    let mut i = 0;
-    while i < input.len() {
-        if let Some((len, prefix)) = detect_key(&input[i..]) {
-            result.push_str(prefix);
-            result.push_str("***");
-            i += len;
-        } else {
-            let ch = input[i..].chars().next().unwrap_or_default();
-            result.push(ch);
-            i += ch.len_utf8();
-        }
-    }
-    result
-}
-
-fn detect_key(s: &str) -> Option<(usize, &'static str)> {
-    if s.starts_with("sk-ant-") {
-        key_len(s, 8).map(|l| (l, "sk-ant-"))
-    } else if s.starts_with("sk-") {
-        key_len(s, 8).map(|l| (l, "sk-"))
-    } else if s.starts_with("gsk_") {
-        key_len(s, 12).map(|l| (l, "gsk_"))
-    } else if s.starts_with("gsk-") {
-        key_len(s, 12).map(|l| (l, "gsk-"))
-    } else {
-        None
-    }
-}
-
-fn key_len(s: &str, min_chars: usize) -> Option<usize> {
-    // Count byte length of contiguous key characters (safe for slicing)
-    let byte_len = s
-        .as_bytes()
-        .iter()
-        .take_while(|b| b.is_ascii_alphanumeric() || **b == b'-' || **b == b'_')
-        .count();
-    // Also count chars for the minimum threshold check
-    let char_count = s[..byte_len].chars().count();
-    if char_count >= min_chars {
-        Some(byte_len)
-    } else {
-        None
-    }
-}
-
-/// Redact Telegram bot tokens: pattern is `<digits>:<alphanum-dash-underscore>` (40+ chars).
-/// Fast path: skip allocation entirely if no colon is present.
-fn redact_telegram_tokens(input: &str) -> String {
-    // Fast path — no colon means no possible Telegram token
-    if !input.contains(':') {
-        return input.to_string();
-    }
-    let mut result = String::with_capacity(input.len());
-    let bytes = input.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i].is_ascii_digit() {
-            let digit_start = i;
-            while i < bytes.len() && bytes[i].is_ascii_digit() {
-                i += 1;
-            }
-            let digit_len = i - digit_start;
-            if digit_len >= 6 && i < bytes.len() && bytes[i] == b':' {
-                let colon = i;
-                i += 1;
-                let token_start = i;
-                while i < bytes.len()
-                    && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'-' || bytes[i] == b'_')
-                {
-                    i += 1;
-                }
-                if (i - digit_start) >= 40 {
-                    let keep = &input[digit_start..digit_start + 4.min(digit_len)];
-                    result.push_str(keep);
-                    result.push_str("***");
-                    continue;
-                }
-                result.push_str(&input[digit_start..colon + 1]);
-                result.push_str(&input[token_start..i]);
-                continue;
-            }
-            result.push_str(&input[digit_start..i]);
-            continue;
-        }
-        // UTF-8 safe: use chars() to get the next character
-        let ch = input[i..].chars().next().unwrap_or('\0');
-        result.push(ch);
-        i += ch.len_utf8();
-    }
-    result
+    crate::infrastructure::logging::redact_api_keys(input)
 }
 
 // ── Summary builder ─────────────────────────────────────────────────────
@@ -668,15 +588,5 @@ mod tests {
         let input = "token=1234567890:ABCdefGhIjKlMnOpQrStUvWxYz-1234567890ab end";
         let result = redact_api_keys(input);
         assert!(!result.contains("ABCdefGh"), "telegram token not redacted");
-        assert!(result.contains("1234***"), "redacted prefix");
-    }
-
-    #[test]
-    fn test_key_len_byte_safe() {
-        // ASCII key: byte len == char len
-        let result = key_len("sk-abcdefghijk", 8);
-        assert!(result.is_some());
-        let len = result.unwrap();
-        assert!("sk-abcdefghijk".is_char_boundary(len));
     }
 }
