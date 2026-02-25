@@ -27,6 +27,7 @@ use crate::infrastructure::tools::recall::RecallTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use crate::infrastructure::tools::spawn::SpawnTool;
 use crate::infrastructure::tools::web_search::WebSearchTool;
+use crate::interface::shared::register_coding_job_tool;
 
 use super::Gateway;
 
@@ -57,8 +58,11 @@ impl InboundAgentBuilder {
             self.config.agents.defaults.restrict_to_workspace,
         );
         let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&self.config);
-        let mut registry =
-            ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
+        let mut registry = ToolRegistryImpl::with_core_tools_and_exec_settings(
+            workspace.clone(),
+            sandbox,
+            exec_settings,
+        );
 
         registry.register(Arc::new(MessageTool::new(outbound_tx, None)));
         let brave = &self.config.tools.web.brave;
@@ -74,6 +78,7 @@ impl InboundAgentBuilder {
             self.config.agents.defaults.restrict_to_workspace,
             self.base_dir.clone(),
         )));
+        register_coding_job_tool(&mut registry, &workspace);
 
         let spill_store = Arc::new(FileContextSpillStore::new(self.base_dir.clone()));
         registry.register(Arc::new(RecallTool::new(

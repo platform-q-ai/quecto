@@ -2,10 +2,18 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
+use crate::application::coding_coordinator::{CodingCoordinator, CoordinatorPolicy};
+use crate::domain::coding_ports::CodingJobService;
 use crate::domain::skill::SkillLoader;
 use crate::infrastructure::auth::credential_store::Credential;
+use crate::infrastructure::coding::runtime_adapters::{
+    WorkspaceRepoValidator, WorkspaceSkillResolver,
+};
 use crate::infrastructure::persistence::skill_loader::FileSkillLoader;
+use crate::infrastructure::tools::coding_job::CodingJobTool;
+use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
 /// Load all workspace skills and concatenate their non-empty body content.
 ///
@@ -62,9 +70,40 @@ pub fn check_provider_readiness(creds: &HashMap<String, Credential>) -> Vec<Stri
         .collect()
 }
 
+/// Register the `coding_job` tool using real workspace-backed adapters.
+pub fn register_coding_job_tool(registry: &mut ToolRegistryImpl, workspace: &Path) {
+    let repo_validator = WorkspaceRepoValidator::new(workspace.to_path_buf());
+    let skill_resolver = WorkspaceSkillResolver::new(workspace.to_path_buf());
+    let coordinator =
+        CodingCoordinator::new(repo_validator, skill_resolver, CoordinatorPolicy::default());
+    let service: Arc<Mutex<dyn CodingJobService>> = Arc::new(Mutex::new(coordinator));
+    registry.register(Arc::new(CodingJobTool::new(service)));
+}
+
+/// Coordinator scope policy used by current runtimes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodingCoordinatorScopePolicy {
+    PerSession,
+    Shared,
+}
+
+pub fn cli_coding_coordinator_scope() -> CodingCoordinatorScopePolicy {
+    CodingCoordinatorScopePolicy::PerSession
+}
+
+pub fn gateway_inbound_coding_coordinator_scope() -> CodingCoordinatorScopePolicy {
+    CodingCoordinatorScopePolicy::PerSession
+}
+
+pub fn gateway_background_coding_coordinator_scope() -> CodingCoordinatorScopePolicy {
+    CodingCoordinatorScopePolicy::Shared
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::infrastructure::security::sandbox::Sandbox;
+    use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
     fn frontmatter(name: &str, desc: &str, body: &str) -> String {
         format!("---\nname: {}\ndescription: {}\n---\n{}", name, desc, body)
@@ -117,5 +156,39 @@ mod tests {
     fn test_merge_prompts_skill_with_empty_user() {
         let result = merge_prompts("Skill content", &Some(String::new()));
         assert_eq!(result, "Skill content");
+    }
+
+    #[test]
+    fn test_register_coding_job_tool_adds_definition() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let workspace = tmp.path().to_path_buf();
+        std::fs::create_dir_all(workspace.join("skills")).unwrap();
+
+        let sandbox = Sandbox::new(Some(workspace.clone()), true);
+        let mut registry = ToolRegistryImpl::with_core_tools(workspace.clone(), sandbox);
+        register_coding_job_tool(&mut registry, &workspace);
+
+        assert!(
+            registry
+                .definitions()
+                .iter()
+                .any(|d| d.name == "coding_job")
+        );
+    }
+
+    #[test]
+    fn test_coding_scope_policy_values() {
+        assert_eq!(
+            cli_coding_coordinator_scope(),
+            CodingCoordinatorScopePolicy::PerSession
+        );
+        assert_eq!(
+            gateway_inbound_coding_coordinator_scope(),
+            CodingCoordinatorScopePolicy::PerSession
+        );
+        assert_eq!(
+            gateway_background_coding_coordinator_scope(),
+            CodingCoordinatorScopePolicy::Shared
+        );
     }
 }
