@@ -51,6 +51,45 @@ pub trait EventLogStore {
 }
 
 // ============================================================================
+// Coding job service port (used by tool layer)
+// ============================================================================
+
+use super::coding_command::{
+    CancelResponse, CleanupResponse, CommandError, ListRequest, ListResponse, RunRequest,
+    RunResponse, StatusResponse,
+};
+
+/// Port for coding job management operations.
+///
+/// The agent's coding_job tool depends on this trait rather than importing
+/// the application-layer coordinator directly. The coordinator implements
+/// this trait so the tool stays in infrastructure without violating the
+/// dependency rule (infrastructure → domain only, never → application).
+pub trait CodingJobService: Send {
+    /// Start a new coding job.
+    fn run(&mut self, req: RunRequest) -> Result<RunResponse, CommandError>;
+
+    /// Query status by job ID.
+    fn status_by_job_id(&self, job_id: &str) -> Result<StatusResponse, CommandError>;
+
+    /// Query status by run ID.
+    fn status_by_run_id(&self, run_id: &str) -> Result<StatusResponse, CommandError>;
+
+    /// Cancel a job.
+    fn cancel(&mut self, job_id: &str) -> Result<CancelResponse, CommandError>;
+
+    /// Clean up a terminated job's artifacts.
+    fn cleanup(
+        &mut self,
+        job_id: &str,
+        keep_artifacts: bool,
+    ) -> Result<CleanupResponse, CommandError>;
+
+    /// List jobs, optionally filtered by state.
+    fn list(&self, req: &ListRequest) -> ListResponse;
+}
+
+// ============================================================================
 // GitHub publish ports
 // ============================================================================
 

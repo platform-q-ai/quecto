@@ -856,6 +856,16 @@ pub struct QuectoWorld {
     pub coding_publish_last_result: Option<quecto::application::coding_publish::PublishResult>,
     /// Startup error message captured when replay cannot begin
     pub coding_startup_error: Option<String>,
+    // --- Coding job tool BDD fields ---
+    /// CodingJobTool instance for tool-level BDD scenarios
+    pub coding_job_tool: Option<Arc<quecto::infrastructure::tools::coding_job::CodingJobTool>>,
+    /// Shared coordinator behind the CodingJobTool (for direct state manipulation)
+    pub coding_job_tool_coordinator:
+        Option<Arc<Mutex<CodingCoordinator<BddRepoValidator, BddSkillResolver>>>>,
+    /// Last job_id from a CodingJobTool run action
+    pub coding_job_tool_last_job_id: Option<String>,
+    /// Last ToolResult from a CodingJobTool execution
+    pub coding_job_tool_last_result: Option<quecto::domain::tool::ToolResult>,
 }
 
 fn push_coding_event(
@@ -1135,6 +1145,7 @@ mod coding_child_agents_steps;
 mod coding_crash_recovery_steps;
 mod coding_github_publish_steps;
 mod coding_job_lifecycle_steps;
+mod coding_job_tool_steps;
 mod coding_skills_steps;
 mod coding_todos_steps;
 mod coding_worker_tools_steps;

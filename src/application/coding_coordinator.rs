@@ -730,6 +730,9 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
     }
 }
 
+#[path = "coding_coordinator_service.rs"]
+mod service_impl;
+
 #[cfg(test)]
 #[path = "coding_coordinator_tests.rs"]
 mod tests;
