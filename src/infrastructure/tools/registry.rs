@@ -117,6 +117,7 @@ impl ToolRegistryImpl {
                 wall_time_limit_secs: Some(settings.wall_time_limit_secs),
                 die_with_parent: settings.die_with_parent,
                 allow_without_die_with_parent: settings.allow_without_die_with_parent,
+                trust_binary: false,
             },
             ..ExecOptions::default()
         };
