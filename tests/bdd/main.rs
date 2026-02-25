@@ -993,6 +993,11 @@ pub struct QuectoWorld {
         Option<Arc<quecto::infrastructure::tools::coding_job::CodingJobTool>>,
     pub coding_operational_last_result: Option<quecto::domain::tool::ToolResult>,
     pub coding_operational_last_job_id: Option<String>,
+    // --- Worker tool wrappers BDD fields ---
+    pub wtw_job_dir: Option<PathBuf>,
+    pub _wtw_temp_dir: Option<TempDir>,
+    pub wtw_registry: Option<ToolRegistryImpl>,
+    pub wtw_last_result: Option<Result<quecto::domain::tool::ToolResult, String>>,
 }
 
 fn push_coding_event(
@@ -1282,6 +1287,7 @@ mod coding_skills_steps;
 mod coding_todos_steps;
 mod coding_worker_coding_tools_steps;
 mod coding_worker_runtime_steps;
+mod coding_worker_tool_wrappers_steps;
 mod coding_worker_tools_steps;
 mod config_steps;
 mod context_pruning_steps;
