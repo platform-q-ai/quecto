@@ -973,6 +973,14 @@ pub struct QuectoWorld {
     pub wct_write_blocked: bool,
     pub wct_exec_ran: bool,
     pub wct_git_branch_name: Option<String>,
+    // --- Coding artifact export BDD fields ---
+    pub ae_job_dir: Option<PathBuf>,
+    pub ae_artifacts_dir: Option<PathBuf>,
+    pub ae_events: Vec<quecto::domain::coding_event::EventEnvelope>,
+    pub _ae_temp_dir: Option<TempDir>,
+    pub ae_export_result: Option<quecto::infrastructure::coding::artifact_export::ExportResult>,
+    pub ae_status_artifacts: Option<Vec<String>>,
+    pub ae_job_id: Option<String>,
     // --- Coding job operational BDD fields ---
     pub coding_operational_workspace: Option<PathBuf>,
     pub coding_operational_repo_ok: bool,
@@ -1260,6 +1268,7 @@ mod agent_tools_steps;
 mod architecture_steps;
 mod auth_steps;
 mod coding_agent_responsiveness_steps;
+mod coding_artifact_export_steps;
 mod coding_child_agents_steps;
 mod coding_crash_recovery_steps;
 mod coding_event_persistence_steps;

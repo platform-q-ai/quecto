@@ -1,4 +1,4 @@
-@pending
+@done
 Feature: Artifact Export and Retrieval
   As the coding runtime coordinator
   I want to capture and persist job artifacts (patches, logs, summaries)
@@ -20,7 +20,7 @@ Feature: Artifact Export and Retrieval
     When the coordinator exports artifacts for the job
     Then a "patch.diff" artifact should exist in "jobs/job_000001/artifacts/"
     And the patch should contain a valid unified diff
-    And an "artifact.created" event should be emitted with artifact_type "patch"
+    And an artifact export event should be emitted for artifact_type "patch"
 
   Scenario: Patch artifact is empty when worker made no changes
     Given the worker made no code changes
@@ -35,7 +35,7 @@ Feature: Artifact Export and Retrieval
     When the coordinator exports artifacts
     Then a "commits.json" artifact should exist
     And it should contain 3 entries with hash, message, author, and timestamp
-    And an "artifact.created" event should be emitted with artifact_type "commits"
+    And an artifact export event should be emitted for artifact_type "commits"
 
   # --- Run log ---
 
@@ -44,7 +44,7 @@ Feature: Artifact Export and Retrieval
     When the coordinator exports artifacts
     Then a "run.log" artifact should exist
     And it should contain the worker's stderr and diagnostic output
-    And an "artifact.created" event should be emitted with artifact_type "log"
+    And an artifact export event should be emitted for artifact_type "log"
 
   Scenario: Run log is truncated when it exceeds size limit
     Given the worker produced 10 MB of diagnostic output
@@ -59,7 +59,7 @@ Feature: Artifact Export and Retrieval
     When the coordinator exports artifacts
     Then a "summary.json" artifact should exist
     And it should include the goal, state "succeeded", summary text, and artifact list
-    And an "artifact.created" event should be emitted with artifact_type "summary"
+    And an artifact export event should be emitted for artifact_type "summary"
 
   Scenario: Coordinator captures structured summary on failure
     Given the worker failed with error_code "tool_error" and detail "edit ambiguity"
@@ -73,7 +73,7 @@ Feature: Artifact Export and Retrieval
     Given the worker ran tests and produced stdout/stderr
     When the coordinator exports artifacts
     Then a "test_output.log" artifact should exist
-    And an "artifact.created" event should be emitted with artifact_type "test_output"
+    And an artifact export event should be emitted for artifact_type "test_output"
 
   Scenario: No test output artifact when no tests were run
     Given the worker did not run any test commands
@@ -84,12 +84,12 @@ Feature: Artifact Export and Retrieval
 
   Scenario: Status response includes artifact list after export
     Given the coordinator has exported artifacts for a succeeded job
-    When the main agent queries job status
+    When the main agent queries artifact export status
     Then the status response should include artifacts ["patch.diff", "commits.json", "summary.json", "run.log"]
 
   Scenario: Artifact list is empty for jobs that have not exported yet
     Given a coding job is still running
-    When the main agent queries job status
+    When the main agent queries artifact export status
     Then the artifacts list should be empty
 
   # --- Artifact directory structure ---
