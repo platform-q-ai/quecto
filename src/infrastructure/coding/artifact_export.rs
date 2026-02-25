@@ -157,11 +157,12 @@ impl ArtifactExporter {
     }
 
     /// Export a run log, truncating if it exceeds the configured limit.
+    /// Truncates first to bound memory, then redacts secrets from the smaller buffer.
     pub fn export_run_log(&mut self, log_content: &str) -> std::io::Result<()> {
-        let redacted = redact_api_keys(log_content);
         let max = self.params.config.max_log_bytes;
         let marker = &self.params.config.truncation_marker;
-        let content = truncate_log(&redacted, max, marker);
+        let truncated = truncate_log(log_content, max, marker);
+        let content = redact_api_keys(&truncated);
         let path = self.params.artifacts_dir.join("run.log");
         std::fs::write(&path, &content)?;
         let size = content.len() as u64;
@@ -392,9 +393,12 @@ fn safe_utf8_cut(s: &str, max_bytes: usize) -> usize {
 /// Matches the same patterns as `infrastructure::logging::redact_api_keys`:
 /// - `sk-...` (OpenAI / Anthropic)
 /// - `gsk_...` / `gsk-...` (Groq)
+/// - Telegram bot tokens (`<digits>:<alphanumeric>`)
 pub fn redact_api_keys(input: &str) -> String {
+    // First pass: redact Telegram bot tokens (digits:alphanum, 40+ chars)
+    let input = redact_telegram_tokens(input);
     if !input.contains("sk-") && !input.contains("gsk_") && !input.contains("gsk-") {
-        return input.to_string();
+        return input;
     }
     let mut result = String::with_capacity(input.len());
     let mut i = 0;
@@ -426,12 +430,65 @@ fn detect_key(s: &str) -> Option<(usize, &'static str)> {
     }
 }
 
-fn key_len(s: &str, min: usize) -> Option<usize> {
-    let len = s
-        .chars()
-        .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+fn key_len(s: &str, min_chars: usize) -> Option<usize> {
+    // Count byte length of contiguous key characters (safe for slicing)
+    let byte_len = s
+        .as_bytes()
+        .iter()
+        .take_while(|b| b.is_ascii_alphanumeric() || **b == b'-' || **b == b'_')
         .count();
-    if len >= min { Some(len) } else { None }
+    // Also count chars for the minimum threshold check
+    let char_count = s[..byte_len].chars().count();
+    if char_count >= min_chars {
+        Some(byte_len)
+    } else {
+        None
+    }
+}
+
+/// Redact Telegram bot tokens: pattern is `<digits>:<alphanum-dash-underscore>` (40+ chars).
+fn redact_telegram_tokens(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        // Look for a digit sequence followed by ':'
+        if bytes[i].is_ascii_digit() {
+            let digit_start = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            let digit_len = i - digit_start;
+            if digit_len >= 6 && i < bytes.len() && bytes[i] == b':' {
+                let colon = i;
+                i += 1; // skip ':'
+                let token_start = i;
+                while i < bytes.len()
+                    && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'-' || bytes[i] == b'_')
+                {
+                    i += 1;
+                }
+                let total = i - digit_start;
+                if total >= 40 {
+                    // Redact: keep first 4 digits, replace rest with ***
+                    let keep = &input[digit_start..digit_start + 4.min(digit_len)];
+                    result.push_str(keep);
+                    result.push_str("***");
+                    continue;
+                }
+                // Not a Telegram token — emit everything we scanned
+                result.push_str(&input[digit_start..colon + 1]);
+                result.push_str(&input[token_start..i]);
+                continue;
+            }
+            // Not followed by ':', emit the digits
+            result.push_str(&input[digit_start..i]);
+            continue;
+        }
+        result.push(bytes[i] as char);
+        i += 1;
+    }
+    result
 }
 
 // ── Summary builder ─────────────────────────────────────────────────────
@@ -602,5 +659,22 @@ mod tests {
         let file = PathBuf::from("/tmp/jobs/j1/artifacts/patch.diff");
         let rel = relative_to_job(&file, &artifacts, "patch.diff");
         assert_eq!(rel, "artifacts/patch.diff");
+    }
+
+    #[test]
+    fn test_redact_telegram_token() {
+        let input = "token=1234567890:ABCdefGhIjKlMnOpQrStUvWxYz-1234567890ab end";
+        let result = redact_api_keys(input);
+        assert!(!result.contains("ABCdefGh"), "telegram token not redacted");
+        assert!(result.contains("1234***"), "redacted prefix");
+    }
+
+    #[test]
+    fn test_key_len_byte_safe() {
+        // ASCII key: byte len == char len
+        let result = key_len("sk-abcdefghijk", 8);
+        assert!(result.is_some());
+        let len = result.unwrap();
+        assert!("sk-abcdefghijk".is_char_boundary(len));
     }
 }

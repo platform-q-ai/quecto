@@ -3,7 +3,7 @@
 //! Manages the lifecycle of coding worker processes inside nsjail containers.
 //! Each worker communicates via JSON Lines over stdin/stdout.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use crate::domain::coding_ports::{
     WorkerEnvVar, WorkerEvent, WorkerLaunchConfig, WorkerRuntime, WorkerStatus,
@@ -23,7 +23,7 @@ const BLOCKED_ENV_NAMES: &[&str] = &["GITHUB_TOKEN", "GH_TOKEN"];
 #[derive(Debug)]
 struct WorkerState {
     status: WorkerStatus,
-    events: Vec<WorkerEvent>,
+    events: VecDeque<WorkerEvent>,
     stderr: String,
     env: Vec<WorkerEnvVar>,
     nsjail_args: Vec<String>,
@@ -51,7 +51,7 @@ impl MockWorkerRuntime {
     /// Simulate the worker emitting an event on stdout.
     pub fn inject_event(&mut self, pid: u32, event: WorkerEvent) {
         if let Some(w) = self.workers.get_mut(&pid) {
-            w.events.push(event);
+            w.events.push_back(event);
         }
     }
 
@@ -191,7 +191,7 @@ impl WorkerRuntime for MockWorkerRuntime {
             pid,
             WorkerState {
                 status: WorkerStatus::Running,
-                events: Vec::new(),
+                events: VecDeque::new(),
                 stderr: String::new(),
                 env,
                 nsjail_args,
@@ -213,13 +213,9 @@ impl WorkerRuntime for MockWorkerRuntime {
     }
 
     fn read_event(&mut self, pid: u32) -> Option<WorkerEvent> {
-        self.workers.get_mut(&pid).and_then(|w| {
-            if w.events.is_empty() {
-                None
-            } else {
-                Some(w.events.remove(0))
-            }
-        })
+        self.workers
+            .get_mut(&pid)
+            .and_then(|w| w.events.pop_front())
     }
 
     fn read_stderr(&mut self, pid: u32) -> String {

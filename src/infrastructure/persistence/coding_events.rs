@@ -166,22 +166,33 @@ impl EventLogStore for FileEventLogStore {
         let path = self.lock_path();
         let _ = fs::create_dir_all(&self.jobs_dir);
 
-        // Check if lock file exists with a PID
+        // Remove stale lock from a dead process
         if let Ok(contents) = fs::read_to_string(&path) {
             let pid_str = contents.trim();
             if let Ok(pid) = pid_str.parse::<u32>() {
-                // Check if process is still alive
                 let proc_path = format!("/proc/{}", pid);
                 if Path::new(&proc_path).exists() {
                     return false; // Lock held by a live process
                 }
-                // Stale lock — fall through to acquire
+                // Stale lock — remove before attempting atomic create
+                let _ = fs::remove_file(&path);
             }
         }
 
-        // Write our PID
+        // Atomic create via O_CREAT|O_EXCL — avoids TOCTOU race
         let pid = std::process::id();
-        fs::write(&path, pid.to_string()).is_ok()
+        let result = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path);
+        match result {
+            Ok(mut f) => {
+                use std::io::Write;
+                let _ = write!(f, "{}", pid);
+                true
+            }
+            Err(_) => false, // Another process won the race
+        }
     }
 }
 

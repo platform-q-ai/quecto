@@ -91,7 +91,7 @@ impl FileRepoMirrorStore {
             let _ = fs::create_dir_all(parent);
         }
 
-        // Check for stale lock
+        // Remove stale lock from a dead process before attempting atomic create
         if let Ok(contents) = fs::read_to_string(&lock_path) {
             let pid_str = contents.trim();
             if let Ok(pid) = pid_str.parse::<u32>() {
@@ -99,15 +99,24 @@ impl FileRepoMirrorStore {
                 if Path::new(&proc_path).exists() {
                     return Err("mirror fetch lock is held by another process".to_string());
                 }
-                // Stale lock — remove it
                 let _ = fs::remove_file(&lock_path);
             }
         }
 
-        // Write our PID
+        // Atomic create via O_CREAT|O_EXCL — avoids TOCTOU race
         let pid = std::process::id();
-        fs::write(&lock_path, pid.to_string()).map_err(|e| format!("lock write: {e}"))?;
-        Ok(LockGuard { path: lock_path })
+        let result = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path);
+        match result {
+            Ok(mut f) => {
+                use std::io::Write;
+                write!(f, "{}", pid).map_err(|e| format!("lock write: {e}"))?;
+                Ok(LockGuard { path: lock_path })
+            }
+            Err(_) => Err("mirror fetch lock race — another process acquired it".to_string()),
+        }
     }
 
     fn acquire_shared_lock(&self, mirror_dir: &Path) -> Result<LockGuard, String> {
@@ -174,6 +183,34 @@ impl Drop for LockGuard {
     }
 }
 
+/// Validate that a git URL is safe (no ext:: or other dangerous transports).
+fn is_safe_git_url(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    // Block git ext:: transport (arbitrary command execution)
+    if lower.starts_with("ext::") {
+        return false;
+    }
+    // Allow https://, ssh://, git://, file://, local paths, and shorthand user@host:path
+    lower.starts_with("https://")
+        || lower.starts_with("ssh://")
+        || lower.starts_with("git://")
+        || lower.starts_with("git@")
+        || lower.starts_with("http://")
+        || lower.starts_with("file://")
+        || url.starts_with('/') // absolute local path
+}
+
+/// Validate that a job_id contains no path traversal characters.
+fn is_safe_job_id(job_id: &str) -> bool {
+    !job_id.is_empty()
+        && !job_id.contains('/')
+        && !job_id.contains('\\')
+        && !job_id.contains("..")
+        && job_id
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+}
+
 fn repo_err(duration_ms: u64, error: &str, code: &str) -> RepoOpResult {
     RepoOpResult {
         ok: false,
@@ -212,6 +249,16 @@ impl RepoMirrorStore for FileRepoMirrorStore {
     }
 
     fn create_mirror(&mut self, repo: &str, remote_url: &str) -> RepoOpResult {
+        // Validate URL scheme to prevent git ext:: command execution
+        if !is_safe_git_url(remote_url) {
+            return RepoOpResult {
+                ok: false,
+                duration_ms: 0,
+                error: Some("rejected: unsafe git URL scheme".to_string()),
+                error_code: Some("invalid_url".to_string()),
+            };
+        }
+
         let mirror_dir = match self.mirror_dir_for(repo) {
             Some(d) => d,
             None => {
@@ -429,6 +476,9 @@ impl RepoMirrorStore for FileRepoMirrorStore {
     }
 
     fn remove_job_repo(&self, job_id: &str) -> bool {
+        if !is_safe_job_id(job_id) {
+            return false;
+        }
         let job_dir = self.job_dir(job_id);
         if job_dir.exists() {
             fs::remove_dir_all(&job_dir).is_ok()
@@ -438,6 +488,9 @@ impl RepoMirrorStore for FileRepoMirrorStore {
     }
 
     fn remove_job_repo_keep_artifacts(&self, job_id: &str) -> bool {
+        if !is_safe_job_id(job_id) {
+            return false;
+        }
         let repo_dir = self.job_repo_dir(job_id);
         let artifacts_dir = self.job_artifacts_dir(job_id);
 
@@ -488,15 +541,7 @@ mod tests {
 
     fn init_origin(path: &Path) {
         fs::create_dir_all(path).unwrap();
-        assert!(
-            Command::new("git")
-                .arg("init")
-                .arg("--quiet")
-                .arg(path)
-                .status()
-                .unwrap()
-                .success()
-        );
+        assert!(git(path, &["init", "--quiet", "."]));
         fs::write(path.join("README.md"), "hello\n").unwrap();
         assert!(git(path, &["add", "."]));
         assert!(git(
@@ -665,5 +710,35 @@ mod tests {
         assert!(store.job_dir("j1").starts_with(ws.path()));
         let (_td, store2) = setup();
         assert!(!store2.job_dir("j1").to_string_lossy().contains(".."));
+    }
+
+    #[test]
+    fn test_safe_git_url_accepts_valid() {
+        assert!(is_safe_git_url("https://github.com/org/repo.git"));
+        assert!(is_safe_git_url("ssh://git@github.com/org/repo.git"));
+        assert!(is_safe_git_url("git@github.com:org/repo.git"));
+        assert!(is_safe_git_url("git://host/repo"));
+        assert!(is_safe_git_url("file:///tmp/repo"));
+        assert!(is_safe_git_url("/tmp/repo"));
+    }
+
+    #[test]
+    fn test_safe_git_url_rejects_ext() {
+        assert!(!is_safe_git_url("ext::sh -c evil"));
+        assert!(!is_safe_git_url("EXT::cmd"));
+    }
+
+    #[test]
+    fn test_safe_job_id_valid() {
+        assert!(is_safe_job_id("job_000001"));
+        assert!(is_safe_job_id("my-job-123"));
+    }
+
+    #[test]
+    fn test_safe_job_id_rejects_traversal() {
+        assert!(!is_safe_job_id("../../etc"));
+        assert!(!is_safe_job_id("foo/bar"));
+        assert!(!is_safe_job_id(""));
+        assert!(!is_safe_job_id("foo\\bar"));
     }
 }

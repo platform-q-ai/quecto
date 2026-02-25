@@ -74,15 +74,17 @@ pub struct ReadResult {
 // ── Path boundary enforcement ───────────────────────────────────────────
 
 /// Check if a path is within the allowed job directory.
+/// Fails closed: if either path cannot be resolved, allows only when the
+/// target path does not exist yet (new file creation) and lexical check passes.
 pub fn is_within_job_dir(path: &Path, job_dir: &Path) -> bool {
     match (path.canonicalize(), job_dir.canonicalize()) {
         (Ok(p), Ok(j)) => p.starts_with(j),
-        _ => {
-            // Fallback: lexical check for non-existent paths
+        (Err(_), Ok(j)) if !path.exists() => {
+            // Target doesn't exist yet (new file) — lexical check only
             let p = normalize_path(path);
-            let j = normalize_path(job_dir);
             p.starts_with(j)
         }
+        _ => false, // Fail closed: cannot resolve => deny
     }
 }
 
