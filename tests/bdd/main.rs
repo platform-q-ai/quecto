@@ -1036,6 +1036,18 @@ pub struct QuectoWorld {
     pub cwl_job_ids: Vec<String>,
     pub cwl_worker_pids: Vec<u32>,
     pub cwl_clone_error: Option<String>,
+    // --- Worker agent loop BDD fields ---
+    pub wl_config: Option<quecto::application::worker_loop::WorkerLoopConfig>,
+    pub wl_job_dir: Option<PathBuf>,
+    pub wl_temp_dir: Option<TempDir>,
+    pub wl_provider: Option<Arc<dyn LlmProvider>>,
+    pub wl_result: Option<quecto::application::worker_loop::WorkerLoopResult>,
+    pub wl_emitted_events: Vec<serde_json::Value>,
+    pub wl_registry_names: Option<Vec<String>>,
+    pub wl_emitter_run_id: Option<String>,
+    pub wl_emitter_job_id: Option<String>,
+    pub wl_system_prompt: Option<String>,
+    pub wl_captured_messages: Arc<Mutex<Vec<Vec<Message>>>>,
 }
 
 fn push_coding_event(
@@ -1329,6 +1341,7 @@ mod coding_todos_steps;
 mod coding_worker_coding_tools_steps;
 mod coding_worker_entrypoint_steps;
 mod coding_worker_event_emitter_steps;
+mod coding_worker_loop_steps;
 mod coding_worker_runtime_steps;
 mod coding_worker_tool_wrappers_steps;
 mod coding_worker_tools_steps;
