@@ -1447,6 +1447,69 @@ fn given_real_llm_workspace(world: &mut QuectoWorld) {
     std::fs::write(base.join("config.json"), config_json).expect("write real LLM config");
 }
 
+/// Create a real git repository under the configured real-LLM workspace.
+#[given(expr = "a git repo {string} in the real LLM workspace with base ref {string}")]
+fn given_real_llm_workspace_git_repo(world: &mut QuectoWorld, repo_name: String, base_ref: String) {
+    ensure_temp_dir(world);
+    let base = base_path(world);
+    let repo_path = base.join("workspace").join(&repo_name);
+    std::fs::create_dir_all(&repo_path).expect("create repo directory");
+
+    let init = std::process::Command::new("git")
+        .arg("init")
+        .arg(&repo_path)
+        .status()
+        .expect("run git init");
+    assert!(
+        init.success(),
+        "git init failed for {}",
+        repo_path.display()
+    );
+
+    std::fs::write(repo_path.join("README.md"), "real llm coding repo\n").expect("write README");
+
+    let add = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo_path)
+        .arg("add")
+        .arg("README.md")
+        .status()
+        .expect("run git add");
+    assert!(add.success(), "git add failed for {}", repo_path.display());
+
+    let commit = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo_path)
+        .arg("-c")
+        .arg("user.email=real-llm@example.com")
+        .arg("-c")
+        .arg("user.name=real-llm")
+        .arg("commit")
+        .arg("-m")
+        .arg("init")
+        .status()
+        .expect("run git commit");
+    assert!(
+        commit.success(),
+        "git commit failed for {}",
+        repo_path.display()
+    );
+
+    let rename = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo_path)
+        .arg("branch")
+        .arg("-M")
+        .arg(&base_ref)
+        .status()
+        .expect("run git branch -M");
+    assert!(
+        rename.success(),
+        "git branch -M failed for {}",
+        repo_path.display()
+    );
+}
+
 /// Run the agent against the real OpenAI endpoint with a cheap model, bounded iterations,
 /// and a wall-clock timeout to prevent hung HTTP requests from blocking the suite.
 #[when(expr = "I run the real LLM agent with message {string}")]
