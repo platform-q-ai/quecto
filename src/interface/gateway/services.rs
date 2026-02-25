@@ -1,5 +1,6 @@
 // Background services: inbound processor, outbound dispatcher, health, heartbeat, cron.
 
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -27,6 +28,10 @@ use crate::infrastructure::tools::recall::RecallTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use crate::infrastructure::tools::spawn::SpawnTool;
 use crate::infrastructure::tools::web_search::WebSearchTool;
+use crate::interface::shared::{
+    CodingCoordinatorScopePolicy, gateway_inbound_coding_coordinator_scope,
+    register_coding_job_tool,
+};
 
 use super::Gateway;
 
@@ -45,6 +50,12 @@ pub(super) struct InboundAgentBuilder {
     pub(super) cron_store: Arc<FileCronStore>,
 }
 
+#[derive(Default)]
+struct SessionAgentCache {
+    agents: HashMap<String, Arc<dyn AgentLoop>>,
+    order: VecDeque<String>,
+}
+
 impl InboundAgentBuilder {
     pub(super) fn build(
         &self,
@@ -57,8 +68,11 @@ impl InboundAgentBuilder {
             self.config.agents.defaults.restrict_to_workspace,
         );
         let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&self.config);
-        let mut registry =
-            ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
+        let mut registry = ToolRegistryImpl::with_core_tools_and_exec_settings(
+            workspace.clone(),
+            sandbox,
+            exec_settings,
+        );
 
         registry.register(Arc::new(MessageTool::new(outbound_tx, None)));
         let brave = &self.config.tools.web.brave;
@@ -74,6 +88,9 @@ impl InboundAgentBuilder {
             self.config.agents.defaults.restrict_to_workspace,
             self.base_dir.clone(),
         )));
+        if gateway_inbound_coding_coordinator_scope() == CodingCoordinatorScopePolicy::PerSession {
+            register_coding_job_tool(&mut registry, &workspace);
+        }
 
         let spill_store = Arc::new(FileContextSpillStore::new(self.base_dir.clone()));
         registry.register(Arc::new(RecallTool::new(
@@ -97,11 +114,14 @@ impl InboundAgentBuilder {
 }
 
 impl Gateway {
+    const MAX_CACHED_SESSION_AGENTS: usize = 256;
+
     /// Inbound message processing task.
     pub(super) async fn run_inbound_processor(
         mut inbound_rx: mpsc::Receiver<InboundMessage>,
         ctx: InboundProcessorContext,
     ) {
+        let mut session_cache = SessionAgentCache::default();
         while let Some(msg) = inbound_rx.recv().await {
             let mut messages = Self::load_session(&ctx.session_store, &msg).await;
 
@@ -109,7 +129,8 @@ impl Gateway {
 
             trim_session_messages(&mut messages, ctx.max_session_messages);
 
-            let response_text = Self::process_and_save(&ctx, &msg, &mut messages).await;
+            let response_text =
+                Self::process_and_save(&ctx, &msg, &mut messages, &mut session_cache).await;
 
             let outbound = OutboundMessage {
                 target: msg.source.clone(),
@@ -143,10 +164,27 @@ impl Gateway {
         ctx: &InboundProcessorContext,
         msg: &InboundMessage,
         messages: &mut Vec<Message>,
+        session_cache: &mut SessionAgentCache,
     ) -> String {
         let session_key = Session::build_key("telegram", &msg.source);
         let result = if let Some(ref builder) = ctx.agent_builder {
-            let per_session_agent = builder.build(&session_key, ctx.outbound_tx.clone());
+            let per_session_agent = if let Some(agent) = session_cache.agents.get(&session_key) {
+                touch_session_agent_key(&mut session_cache.order, &session_key);
+                agent.clone()
+            } else {
+                if session_cache.agents.len() >= Self::MAX_CACHED_SESSION_AGENTS {
+                    if let Some(evicted) = session_cache.order.pop_front() {
+                        session_cache.agents.remove(&evicted);
+                    }
+                }
+                let built: Arc<dyn AgentLoop> =
+                    Arc::new(builder.build(&session_key, ctx.outbound_tx.clone()));
+                session_cache
+                    .agents
+                    .insert(session_key.clone(), built.clone());
+                session_cache.order.push_back(session_key.clone());
+                built
+            };
             per_session_agent.process(messages).await
         } else {
             ctx.agent.process(messages).await
@@ -301,6 +339,13 @@ impl Gateway {
             }
         }
     }
+}
+
+fn touch_session_agent_key(order: &mut VecDeque<String>, key: &str) {
+    if let Some(pos) = order.iter().position(|k| k == key) {
+        order.remove(pos);
+    }
+    order.push_back(key.to_string());
 }
 
 fn trim_session_messages(messages: &mut Vec<Message>, max_non_system_messages: usize) {
@@ -475,11 +520,20 @@ mod tests {
             text: "hello".to_string(),
         };
         let mut messages = vec![];
+        let mut session_cache = SessionAgentCache::default();
 
-        let response = Gateway::process_and_save(&ctx, &msg, &mut messages).await;
+        let response =
+            Gateway::process_and_save(&ctx, &msg, &mut messages, &mut session_cache).await;
 
         assert!(response.starts_with("Error:"));
         assert!(!response.contains("sk-secret-key-12345"));
         assert!(response.contains("sk-***"));
+    }
+
+    #[test]
+    fn test_touch_session_agent_key_moves_to_back() {
+        let mut order = VecDeque::from(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+        touch_session_agent_key(&mut order, "b");
+        assert_eq!(order.into_iter().collect::<Vec<_>>(), vec!["a", "c", "b"]);
     }
 }

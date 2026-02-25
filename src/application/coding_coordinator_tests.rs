@@ -112,6 +112,7 @@ fn test_run_rejects_denied_skill() {
         CoordinatorPolicy {
             skill_denylist: vec!["forbidden-skill".to_string()],
             skill_allowlist: vec![],
+            max_retained_jobs: None,
         },
     );
     let err = coord
@@ -140,6 +141,7 @@ fn test_run_rejects_missing_skill() {
         CoordinatorPolicy {
             skill_denylist: vec![],
             skill_allowlist: vec!["nonexistent-skill".to_string()],
+            max_retained_jobs: None,
         },
     );
     let err = coord
@@ -155,6 +157,48 @@ fn test_run_rejects_missing_skill() {
         })
         .unwrap_err();
     assert_eq!(err, CommandError::SkillNotFound);
+}
+
+#[test]
+fn test_run_rejects_when_max_retained_jobs_reached() {
+    let mut coord = CodingCoordinator::new(
+        MockRepoValidator {
+            valid_repos: vec!["test-repo".to_string()],
+            valid_refs: vec![("test-repo".to_string(), "main".to_string())],
+        },
+        MockSkillResolver {
+            available: vec!["rust-style".to_string()],
+        },
+        CoordinatorPolicy {
+            skill_denylist: vec![],
+            skill_allowlist: vec![],
+            max_retained_jobs: Some(1),
+        },
+    );
+
+    let first = coord.run(RunRequest {
+        goal: "g1".to_string(),
+        repo: "test-repo".to_string(),
+        base_ref: "main".to_string(),
+        priority: Priority::default(),
+        profile: "default".to_string(),
+        max_wall_seconds: None,
+        labels: vec![],
+        skills: vec![],
+    });
+    assert!(first.is_ok());
+
+    let second = coord.run(RunRequest {
+        goal: "g2".to_string(),
+        repo: "test-repo".to_string(),
+        base_ref: "main".to_string(),
+        priority: Priority::default(),
+        profile: "default".to_string(),
+        max_wall_seconds: None,
+        labels: vec![],
+        skills: vec![],
+    });
+    assert_eq!(second.unwrap_err(), CommandError::PolicyDenied);
 }
 
 #[test]

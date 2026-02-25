@@ -29,6 +29,7 @@ fn build_coordinator(world: &mut QuectoWorld) {
     let policy = CoordinatorPolicy {
         skill_denylist: world.coding_skill_denylist.clone(),
         skill_allowlist: world.coding_skill_allowlist.clone(),
+        max_retained_jobs: None,
     };
     let coord = CodingCoordinator::new(
         BddRepoValidator {

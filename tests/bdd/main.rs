@@ -866,6 +866,18 @@ pub struct QuectoWorld {
     pub coding_job_tool_last_job_id: Option<String>,
     /// Last ToolResult from a CodingJobTool execution
     pub coding_job_tool_last_result: Option<quecto::domain::tool::ToolResult>,
+    // --- Coding job operational BDD fields ---
+    pub coding_operational_workspace: Option<PathBuf>,
+    pub coding_operational_repo_ok: bool,
+    pub coding_operational_ref_ok: bool,
+    pub coding_operational_skill_ok: bool,
+    pub coding_operational_registry:
+        Option<quecto::infrastructure::tools::registry::ToolRegistryImpl>,
+    pub coding_operational_definitions: Vec<quecto::domain::tool::ToolDefinition>,
+    pub coding_operational_tool:
+        Option<Arc<quecto::infrastructure::tools::coding_job::CodingJobTool>>,
+    pub coding_operational_last_result: Option<quecto::domain::tool::ToolResult>,
+    pub coding_operational_last_job_id: Option<String>,
 }
 
 fn push_coding_event(
@@ -1145,6 +1157,7 @@ mod coding_child_agents_steps;
 mod coding_crash_recovery_steps;
 mod coding_github_publish_steps;
 mod coding_job_lifecycle_steps;
+mod coding_job_operational_steps;
 mod coding_job_tool_steps;
 mod coding_skills_steps;
 mod coding_todos_steps;

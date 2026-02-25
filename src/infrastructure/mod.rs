@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod bus;
 pub mod channels;
+pub mod coding;
 pub mod config;
 pub mod health;
 pub mod logging;
