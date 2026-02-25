@@ -1022,6 +1022,8 @@ pub struct QuectoWorld {
     pub nrt_job_id: Option<String>,
     pub nrt_pid: Option<u32>,
     pub nrt_resolved_binary: Option<String>,
+    pub nrt_pids: Vec<u32>,
+    pub nrt_last_error: Option<String>,
     // --- Coordinator-Worker Lifecycle BDD fields ---
     pub cwl_coordinator: Option<
         quecto::application::coding_coordinator::CodingCoordinator<
@@ -1319,6 +1321,7 @@ mod coding_job_lifecycle_steps;
 mod coding_job_operational_steps;
 mod coding_job_tool_steps;
 mod coding_nonblocking_coordinator_steps;
+mod coding_nsjail_runtime_process_steps;
 mod coding_nsjail_runtime_steps;
 mod coding_repo_mirror_steps;
 mod coding_skills_steps;

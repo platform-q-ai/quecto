@@ -395,7 +395,7 @@ fn resolve_nsjail_binary(binary: &str, extra_trusted: &[PathBuf]) -> Option<Stri
         let trusted =
             is_trusted_nsjail_binary_path(&canonical) || is_extra_trusted_path(&canonical);
         if trusted && is_executable_file(&canonical) {
-            if !extra_trusted.is_empty() {
+            if is_extra_trusted_path(&canonical) {
                 tracing::debug!(
                     target: "exec",
                     binary = %canonical.display(),
@@ -418,7 +418,7 @@ fn resolve_nsjail_binary(binary: &str, extra_trusted: &[PathBuf]) -> Option<Stri
                 && (is_trusted_nsjail_binary_path(&canonical) || is_extra_trusted_path(&canonical))
                 && is_executable_file(&canonical)
             {
-                if !extra_trusted.is_empty() {
+                if is_extra_trusted_path(&canonical) {
                     tracing::debug!(
                         target: "exec",
                         binary = %canonical.display(),
