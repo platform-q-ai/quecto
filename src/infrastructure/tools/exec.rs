@@ -45,9 +45,10 @@ pub struct NsjailOptions {
     pub wall_time_limit_secs: Option<u64>,
     pub die_with_parent: bool,
     pub allow_without_die_with_parent: bool,
-    /// When true, skip trusted-path validation for the nsjail binary.
-    /// Only intended for testing with fake nsjail scripts in temp directories.
-    pub trust_binary: bool,
+    /// Additional directories whose binaries are trusted for nsjail resolution.
+    /// Production code leaves this empty. Tests add temp directories here so that
+    /// fake nsjail scripts in non-standard locations can pass validation.
+    pub additional_trusted_paths: Vec<PathBuf>,
 }
 
 impl Default for NsjailOptions {
@@ -61,7 +62,7 @@ impl Default for NsjailOptions {
             wall_time_limit_secs: Some(DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS),
             die_with_parent: true,
             allow_without_die_with_parent: false,
-            trust_binary: false,
+            additional_trusted_paths: Vec::new(),
         }
     }
 }
@@ -145,9 +146,10 @@ impl ExecTool {
         let mut startup_error = None;
         let mut mode = options.isolation_mode;
         if mode == ExecIsolationMode::Nsjail {
-            if let Some(resolved_binary) =
-                resolve_nsjail_binary(&options.nsjail.binary, options.nsjail.trust_binary)
-            {
+            if let Some(resolved_binary) = resolve_nsjail_binary(
+                &options.nsjail.binary,
+                &options.nsjail.additional_trusted_paths,
+            ) {
                 options.nsjail.binary = resolved_binary;
                 if options.nsjail.die_with_parent
                     && !nsjail_supports_flag(&options.nsjail.binary, "--die_with_parent")
@@ -381,21 +383,25 @@ fn build_nsjail_command(
     cmd
 }
 
-fn resolve_nsjail_binary(binary: &str, trust_binary: bool) -> Option<String> {
+fn resolve_nsjail_binary(binary: &str, extra_trusted: &[PathBuf]) -> Option<String> {
+    let is_extra_trusted_path = |p: &Path| extra_trusted.iter().any(|root| p.starts_with(root));
+    let is_extra_trusted_dir = |p: &Path| extra_trusted.iter().any(|root| p == root);
     let path = Path::new(binary);
     if path.components().count() > 1 {
         if !path.is_absolute() {
             return None;
         }
         let canonical = std::fs::canonicalize(path).ok()?;
-        if trust_binary {
-            // Skip trusted-path check — only verify executability.
-            if is_executable_file(&canonical) {
-                return Some(canonical.to_string_lossy().to_string());
+        let trusted =
+            is_trusted_nsjail_binary_path(&canonical) || is_extra_trusted_path(&canonical);
+        if trusted && is_executable_file(&canonical) {
+            if !extra_trusted.is_empty() {
+                tracing::debug!(
+                    target: "exec",
+                    binary = %canonical.display(),
+                    "nsjail binary resolved via additional trusted path"
+                );
             }
-            return None;
-        }
-        if is_trusted_nsjail_binary_path(&canonical) && is_executable_file(&canonical) {
             return Some(canonical.to_string_lossy().to_string());
         }
         return None;
@@ -403,15 +409,22 @@ fn resolve_nsjail_binary(binary: &str, trust_binary: bool) -> Option<String> {
 
     if let Ok(path_var) = std::env::var("PATH") {
         for dir in std::env::split_paths(&path_var) {
-            if !trust_binary && !is_trusted_nsjail_search_dir(&dir) {
+            if !is_trusted_nsjail_search_dir(&dir) && !is_extra_trusted_dir(&dir) {
                 continue;
             }
             let candidate = dir.join(binary);
             let canonical = std::fs::canonicalize(&candidate).ok();
             if let Some(canonical) = canonical
-                && (trust_binary || is_trusted_nsjail_binary_path(&canonical))
+                && (is_trusted_nsjail_binary_path(&canonical) || is_extra_trusted_path(&canonical))
                 && is_executable_file(&canonical)
             {
+                if !extra_trusted.is_empty() {
+                    tracing::debug!(
+                        target: "exec",
+                        binary = %canonical.display(),
+                        "nsjail binary resolved via additional trusted path"
+                    );
+                }
                 return Some(canonical.to_string_lossy().to_string());
             }
         }
