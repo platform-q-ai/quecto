@@ -1013,6 +1013,27 @@ pub struct QuectoWorld {
     pub cwe_cli_stdout: Option<String>,
     pub cwe_cli_stderr: Option<String>,
     pub cwe_cli_exit_code: Option<i32>,
+    // --- Real NsjailWorkerRuntime BDD fields ---
+    pub nrt_runtime: Option<quecto::infrastructure::coding::nsjail_runtime::NsjailWorkerRuntime>,
+    pub nrt_launch_config: Option<quecto::domain::coding_ports::WorkerLaunchConfig>,
+    pub nrt_last_args: Option<Vec<String>>,
+    pub nrt_last_worker_args: Option<Vec<String>>,
+    pub nrt_run_id: Option<String>,
+    pub nrt_job_id: Option<String>,
+    pub nrt_pid: Option<u32>,
+    pub nrt_resolved_binary: Option<String>,
+    // --- Coordinator-Worker Lifecycle BDD fields ---
+    pub cwl_coordinator: Option<
+        quecto::application::coding_coordinator::CodingCoordinator<
+            BddRepoValidator,
+            BddSkillResolver,
+        >,
+    >,
+    pub cwl_worker_runtime:
+        Option<quecto::infrastructure::coding::worker_runtime::MockWorkerRuntime>,
+    pub cwl_job_ids: Vec<String>,
+    pub cwl_worker_pids: Vec<u32>,
+    pub cwl_clone_error: Option<String>,
 }
 
 fn push_coding_event(
@@ -1290,6 +1311,7 @@ mod auth_steps;
 mod coding_agent_responsiveness_steps;
 mod coding_artifact_export_steps;
 mod coding_child_agents_steps;
+mod coding_coordinator_worker_lifecycle_steps;
 mod coding_crash_recovery_steps;
 mod coding_event_persistence_steps;
 mod coding_github_publish_steps;
@@ -1297,6 +1319,7 @@ mod coding_job_lifecycle_steps;
 mod coding_job_operational_steps;
 mod coding_job_tool_steps;
 mod coding_nonblocking_coordinator_steps;
+mod coding_nsjail_runtime_steps;
 mod coding_repo_mirror_steps;
 mod coding_skills_steps;
 mod coding_todos_steps;
