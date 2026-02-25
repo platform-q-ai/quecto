@@ -9,26 +9,24 @@
 //! types. Infrastructure concerns (concrete emitters, tool registries)
 //! are injected by the caller.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::context_pruning::truncate_utf8_safe;
 use crate::domain::agent::AgentLoop;
+use crate::domain::coding_ports::WorkerEventSink;
 use crate::domain::error::DomainError;
 use crate::domain::message::Message;
 use crate::domain::provider::LlmProvider;
 use crate::domain::tool::{ToolDefinition, ToolRegistry, ToolResult};
 
-// ── Event sink trait ───────────────────────────────────────────────────
-
-/// Port for emitting structured worker events.
-///
-/// The application layer calls `emit()` to produce events. Infrastructure
-/// provides a concrete implementation (e.g. JSON Lines to stdout).
-pub trait WorkerEventSink: Send {
-    /// Emit an event with the given type and JSON payload.
-    /// Returns the sequence number on success.
-    fn emit(&mut self, event_type: &str, payload: serde_json::Value) -> Result<u64, String>;
-}
+/// Maximum characters for response text in event payloads.
+const MAX_EVENT_RESPONSE_CHARS: usize = 500;
+/// Maximum characters for error messages in event payloads.
+const MAX_EVENT_ERROR_CHARS: usize = 300;
+/// Maximum characters for tool argument previews.
+const MAX_ARGS_PREVIEW_CHARS: usize = 200;
 
 // ── Worker loop context ────────────────────────────────────────────────
 
@@ -74,17 +72,23 @@ pub struct WorkerLoopResult {
 // ── System prompt builder ──────────────────────────────────────────────
 
 /// Build the system prompt for the worker agent loop.
-pub fn build_worker_system_prompt(goal: &str) -> String {
+///
+/// Accepts tool definitions so the prompt stays in sync with the actual
+/// registry — no hard-coded tool names.
+pub fn build_worker_system_prompt(goal: &str, tools: &[ToolDefinition]) -> String {
+    let tool_list: String = tools
+        .iter()
+        .map(|t| format!("- {}: {}", t.name, t.description))
+        .collect::<Vec<_>>()
+        .join("\n");
+
     format!(
         "You are a coding worker executing a task inside a sandboxed environment.\n\
          \n\
          Your goal: {goal}\n\
          \n\
          You have the following tools available:\n\
-         - worker_read: Read files with pagination\n\
-         - worker_edit: Edit files by exact string replacement\n\
-         - worker_grep: Search for patterns in files\n\
-         - worker_find: Find files by glob pattern\n\
+         {tool_list}\n\
          \n\
          Work autonomously to complete the goal. Read files before editing. \
          Prefer targeted edits over full rewrites. When done, provide a \
@@ -98,7 +102,8 @@ pub fn build_worker_system_prompt(goal: &str) -> String {
 /// events around each tool execution via a `WorkerEventSink`.
 pub struct EventEmittingRegistry {
     inner: Box<dyn ToolRegistry>,
-    sink: Arc<Mutex<dyn WorkerEventSink>>,
+    sink: Arc<dyn WorkerEventSink>,
+    call_counter: AtomicU64,
 }
 
 impl std::fmt::Debug for EventEmittingRegistry {
@@ -108,8 +113,17 @@ impl std::fmt::Debug for EventEmittingRegistry {
 }
 
 impl EventEmittingRegistry {
-    pub fn new(inner: Box<dyn ToolRegistry>, sink: Arc<Mutex<dyn WorkerEventSink>>) -> Self {
-        Self { inner, sink }
+    pub fn new(inner: Box<dyn ToolRegistry>, sink: Arc<dyn WorkerEventSink>) -> Self {
+        Self {
+            inner,
+            sink,
+            call_counter: AtomicU64::new(1),
+        }
+    }
+
+    fn next_call_id(&self, tool_name: &str) -> String {
+        let n = self.call_counter.fetch_add(1, Ordering::Relaxed);
+        format!("wc_{tool_name}_{n}")
     }
 }
 
@@ -126,13 +140,12 @@ impl ToolRegistry for EventEmittingRegistry {
         Box<dyn std::future::Future<Output = Result<ToolResult, DomainError>> + Send + '_>,
     > {
         let tool_name = name.to_string();
-        let args_preview = truncate_args_preview(arguments);
-        let args_owned = arguments.to_string();
-        let call_id = generate_call_id(&tool_name);
+        let args_preview = truncate_utf8_safe(arguments, MAX_ARGS_PREVIEW_CHARS);
+        let call_id = self.next_call_id(&tool_name);
 
         // Emit tool.start synchronously before the async block
         emit_event(
-            &self.sink,
+            self.sink.as_ref(),
             "tool.start",
             serde_json::json!({
                 "tool": &tool_name,
@@ -141,15 +154,18 @@ impl ToolRegistry for EventEmittingRegistry {
             }),
         );
 
+        // Pass arguments directly to inner — avoid double allocation
+        let args_for_inner = arguments.to_string();
+
         Box::pin(async move {
             let start = std::time::Instant::now();
-            let result = self.inner.execute(&tool_name, &args_owned).await;
+            let result = self.inner.execute(&tool_name, &args_for_inner).await;
             let duration_ms = start.elapsed().as_millis() as u64;
 
             // Emit tool.result
             let ok = result.as_ref().map(|r| !r.is_error).unwrap_or(false);
             emit_event(
-                &self.sink,
+                self.sink.as_ref(),
                 "tool.result",
                 serde_json::json!({
                     "tool": &tool_name,
@@ -164,29 +180,14 @@ impl ToolRegistry for EventEmittingRegistry {
     }
 }
 
-/// Truncate tool arguments for the `args_preview` field (max 200 chars).
-fn truncate_args_preview(args: &str) -> String {
-    if args.len() <= 200 {
-        args.to_string()
-    } else {
-        let mut s = args[..200].to_string();
-        s.push_str("...");
-        s
-    }
-}
-
-/// Generate a unique call ID for a tool invocation.
-fn generate_call_id(tool_name: &str) -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(1);
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("wc_{tool_name}_{n}")
-}
-
-/// Emit an event through the sink, ignoring errors.
-fn emit_event(sink: &Mutex<dyn WorkerEventSink>, event_type: &str, payload: serde_json::Value) {
-    if let Ok(mut s) = sink.lock() {
-        let _ = s.emit(event_type, payload);
+/// Emit an event through the sink, logging on failure.
+fn emit_event(sink: &dyn WorkerEventSink, event_type: &str, payload: serde_json::Value) {
+    if let Err(e) = sink.emit(event_type, payload) {
+        tracing::warn!(
+            event_type = event_type,
+            error = %e,
+            "failed to emit worker event"
+        );
     }
 }
 
@@ -196,7 +197,7 @@ fn emit_event(sink: &Mutex<dyn WorkerEventSink>, event_type: &str, payload: serd
 pub struct WorkerLoopParams {
     pub config: WorkerLoopConfig,
     pub provider: Arc<dyn LlmProvider>,
-    pub sink: Arc<Mutex<dyn WorkerEventSink>>,
+    pub sink: Arc<dyn WorkerEventSink>,
 }
 
 /// Run the worker agent loop.
@@ -216,15 +217,17 @@ pub async fn run_worker_loop(
 
     // Emit ready event
     emit_event(
-        sink,
+        sink.as_ref(),
         "log.message",
         serde_json::json!({"level": "info", "message": "worker ready"}),
     );
 
-    // Build system prompt
-    let system_prompt = build_worker_system_prompt(&config.goal);
+    // Build system prompt from actual tool definitions
+    let tool_defs = registry.definitions();
+    let system_prompt = build_worker_system_prompt(&config.goal, &tool_defs);
 
     // Build agent loop
+    let session_key = format!("worker:{}:{}", config.run_id, config.job_id);
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: params.provider.clone(),
         tool_registry: Box::new(registry),
@@ -232,7 +235,7 @@ pub async fn run_worker_loop(
         max_tokens: config.max_tokens,
         temperature: config.temperature,
         spill_store: None,
-        session_key: String::new(),
+        session_key,
         context_collapse_after_turns: 3,
         max_context_tokens: 100_000,
     })
@@ -244,13 +247,14 @@ pub async fn run_worker_loop(
     // Run the agent loop
     match agent.process(&mut messages).await {
         Ok(result) => {
+            let preview = truncate_utf8_safe(&result.response, MAX_EVENT_RESPONSE_CHARS);
             let msg = if result.iteration_limit_reached {
-                format!("worker done (iteration limit reached): {}", result.response)
+                format!("worker done (iteration limit reached): {preview}")
             } else {
-                format!("worker done: {}", result.response)
+                format!("worker done: {preview}")
             };
             emit_event(
-                sink,
+                sink.as_ref(),
                 "log.message",
                 serde_json::json!({"level": "info", "message": msg}),
             );
@@ -262,9 +266,10 @@ pub async fn run_worker_loop(
             }
         }
         Err(e) => {
-            let msg = format!("worker error: provider returned: {e}");
+            let err_text = truncate_utf8_safe(&e.to_string(), MAX_EVENT_ERROR_CHARS);
+            let msg = format!("worker error: {err_text}");
             emit_event(
-                sink,
+                sink.as_ref(),
                 "log.message",
                 serde_json::json!({"level": "error", "message": msg}),
             );

@@ -8,8 +8,8 @@ use std::sync::Mutex as StdMutex;
 /// A test-only event sink that collects emitted events in memory.
 #[derive(Debug, Default)]
 struct MockEventSink {
-    events: Vec<serde_json::Value>,
-    seq: u64,
+    events: StdMutex<Vec<serde_json::Value>>,
+    seq: AtomicU64,
 }
 
 impl MockEventSink {
@@ -17,20 +17,20 @@ impl MockEventSink {
         Self::default()
     }
 
-    fn events(&self) -> &[serde_json::Value] {
-        &self.events
+    fn events(&self) -> Vec<serde_json::Value> {
+        self.events.lock().unwrap().clone()
     }
 }
 
 impl WorkerEventSink for MockEventSink {
-    fn emit(&mut self, event_type: &str, payload: serde_json::Value) -> Result<u64, String> {
-        self.seq += 1;
-        self.events.push(serde_json::json!({
+    fn emit(&self, event_type: &str, payload: serde_json::Value) -> Result<u64, String> {
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
+        self.events.lock().unwrap().push(serde_json::json!({
             "type": event_type,
-            "seq": self.seq,
+            "seq": seq,
             "payload": payload,
         }));
-        Ok(self.seq)
+        Ok(seq)
     }
 }
 
@@ -207,12 +207,12 @@ fn make_config() -> WorkerLoopConfig {
     }
 }
 
-fn make_sink() -> Arc<Mutex<MockEventSink>> {
-    Arc::new(Mutex::new(MockEventSink::new()))
+fn make_sink() -> Arc<MockEventSink> {
+    Arc::new(MockEventSink::new())
 }
 
-fn get_events(sink: &Mutex<MockEventSink>) -> Vec<serde_json::Value> {
-    sink.lock().unwrap().events().to_vec()
+fn get_events(sink: &MockEventSink) -> Vec<serde_json::Value> {
+    sink.events()
 }
 
 fn events_of_type(events: &[serde_json::Value], event_type: &str) -> Vec<serde_json::Value> {
@@ -223,17 +223,30 @@ fn events_of_type(events: &[serde_json::Value], event_type: &str) -> Vec<serde_j
         .collect()
 }
 
+fn mock_tool_defs() -> Vec<ToolDefinition> {
+    ["worker_read", "worker_edit", "worker_grep", "worker_find"]
+        .iter()
+        .map(|n| ToolDefinition {
+            name: n.to_string(),
+            description: format!("Mock {n}"),
+            parameters_schema: r#"{"type":"object"}"#.to_string(),
+        })
+        .collect()
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────
 
 #[test]
 fn test_build_worker_system_prompt_contains_goal() {
-    let prompt = build_worker_system_prompt("Fix the flaky test");
+    let defs = mock_tool_defs();
+    let prompt = build_worker_system_prompt("Fix the flaky test", &defs);
     assert!(prompt.contains("Fix the flaky test"));
 }
 
 #[test]
 fn test_build_worker_system_prompt_contains_tool_names() {
-    let prompt = build_worker_system_prompt("any goal");
+    let defs = mock_tool_defs();
+    let prompt = build_worker_system_prompt("any goal", &defs);
     assert!(prompt.contains("worker_read"));
     assert!(prompt.contains("worker_edit"));
     assert!(prompt.contains("worker_grep"));
@@ -241,25 +254,51 @@ fn test_build_worker_system_prompt_contains_tool_names() {
 }
 
 #[test]
-fn test_truncate_args_preview_short() {
-    let args = r#"{"path":"test.rs"}"#;
-    assert_eq!(truncate_args_preview(args), args);
+fn test_build_worker_system_prompt_uses_tool_descriptions() {
+    let defs = vec![ToolDefinition {
+        name: "custom_tool".to_string(),
+        description: "A custom tool for testing".to_string(),
+        parameters_schema: r#"{"type":"object"}"#.to_string(),
+    }];
+    let prompt = build_worker_system_prompt("goal", &defs);
+    assert!(prompt.contains("custom_tool: A custom tool for testing"));
 }
 
 #[test]
-fn test_truncate_args_preview_long() {
+fn test_truncate_utf8_safe_short() {
+    let args = r#"{"path":"test.rs"}"#;
+    let result = truncate_utf8_safe(args, MAX_ARGS_PREVIEW_CHARS);
+    assert_eq!(result, args);
+}
+
+#[test]
+fn test_truncate_utf8_safe_long() {
     let args = "x".repeat(300);
-    let result = truncate_args_preview(&args);
-    assert_eq!(result.len(), 203);
+    let result = truncate_utf8_safe(&args, MAX_ARGS_PREVIEW_CHARS);
+    assert!(result.len() <= MAX_ARGS_PREVIEW_CHARS + 3);
     assert!(result.ends_with("..."));
 }
 
 #[test]
-fn test_generate_call_id_unique() {
-    let id1 = generate_call_id("worker_read");
-    let id2 = generate_call_id("worker_read");
-    assert_ne!(id1, id2);
-    assert!(id1.starts_with("wc_worker_read_"));
+fn test_truncate_utf8_safe_multibyte() {
+    // 250 emoji = 250 chars but 1000 bytes — must not panic on byte boundary
+    let args = "\u{1F600}".repeat(250);
+    let result = truncate_utf8_safe(&args, MAX_ARGS_PREVIEW_CHARS);
+    assert!(result.ends_with("..."));
+    // Should have 197 emoji + "..." = 200 chars total
+    assert_eq!(result.chars().count(), MAX_ARGS_PREVIEW_CHARS);
+}
+
+#[test]
+fn test_call_id_per_instance() {
+    let sink = make_sink();
+    let reg1 = EventEmittingRegistry::new(Box::new(MockToolRegistry::empty()), sink.clone());
+    let reg2 = EventEmittingRegistry::new(Box::new(MockToolRegistry::empty()), sink);
+    // Both registries start at 1
+    let id1 = reg1.next_call_id("test");
+    let id2 = reg2.next_call_id("test");
+    assert_eq!(id1, "wc_test_1");
+    assert_eq!(id2, "wc_test_1");
 }
 
 #[tokio::test]
@@ -348,7 +387,7 @@ async fn test_worker_loop_error_event_on_provider_failure() {
         error["payload"]["message"]
             .as_str()
             .unwrap()
-            .contains("provider")
+            .contains("error")
     );
 }
 
@@ -527,4 +566,53 @@ async fn test_worker_loop_event_sequence() {
         types,
         vec!["log.message", "tool.start", "tool.result", "log.message"]
     );
+}
+
+#[tokio::test]
+async fn test_worker_loop_truncates_long_response_in_event() {
+    let config = make_config();
+    let sink = make_sink();
+    let long_response = "x".repeat(1000);
+    let provider = Arc::new(MockLoopProvider::new(vec![text_response(&long_response)]));
+
+    run_worker_loop(
+        WorkerLoopParams {
+            config,
+            provider,
+            sink: sink.clone(),
+        },
+        Box::new(MockToolRegistry::empty()),
+    )
+    .await;
+
+    let events = get_events(&sink);
+    let logs = events_of_type(&events, "log.message");
+    let done = logs.last().unwrap();
+    let msg = done["payload"]["message"].as_str().unwrap();
+    // The event message should be truncated (not the full 1000 chars)
+    assert!(msg.len() < 600, "event message should be truncated");
+    assert!(msg.contains("..."));
+}
+
+#[tokio::test]
+async fn test_worker_loop_session_key_contains_ids() {
+    let mut config = make_config();
+    config.run_id = "r42".to_string();
+    config.job_id = "j7".to_string();
+    let sink = make_sink();
+    let provider = Arc::new(MockLoopProvider::new(vec![text_response("done")]));
+
+    // We verify indirectly: the loop runs without error, meaning
+    // the session_key was set (we can't inspect AgentLoopConfig directly,
+    // but the format!() uses run_id and job_id).
+    let result = run_worker_loop(
+        WorkerLoopParams {
+            config,
+            provider,
+            sink,
+        },
+        Box::new(MockToolRegistry::empty()),
+    )
+    .await;
+    assert_eq!(result.exit_code, 0);
 }

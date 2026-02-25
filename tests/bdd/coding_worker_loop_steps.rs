@@ -1,12 +1,13 @@
 //! Step definitions for the worker agent loop feature.
 
 use cucumber::then;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use quecto::application::worker_loop::{
-    WorkerEventSink, WorkerLoopConfig, WorkerLoopParams, build_worker_system_prompt,
-    run_worker_loop,
+    WorkerLoopConfig, WorkerLoopParams, build_worker_system_prompt, run_worker_loop,
 };
+use quecto::domain::coding_ports::WorkerEventSink;
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, ToolCall, UsageInfo};
 use quecto::domain::provider::{ChatRequest, LlmProvider};
@@ -17,10 +18,11 @@ use crate::QuectoWorld;
 // ── BddEventSink ──────────────────────────────────────────────────────
 
 /// A test-only event sink that collects emitted events in memory.
+/// Uses interior mutability (`Mutex`) so `emit(&self, ...)` works.
 #[derive(Debug, Default)]
 struct BddEventSink {
-    events: Vec<serde_json::Value>,
-    seq: u64,
+    events: Mutex<Vec<serde_json::Value>>,
+    seq: AtomicU64,
 }
 
 impl BddEventSink {
@@ -29,19 +31,19 @@ impl BddEventSink {
     }
 
     fn events(&self) -> Vec<serde_json::Value> {
-        self.events.clone()
+        self.events.lock().unwrap().clone()
     }
 }
 
 impl WorkerEventSink for BddEventSink {
-    fn emit(&mut self, event_type: &str, payload: serde_json::Value) -> Result<u64, String> {
-        self.seq += 1;
-        self.events.push(serde_json::json!({
+    fn emit(&self, event_type: &str, payload: serde_json::Value) -> Result<u64, String> {
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
+        self.events.lock().unwrap().push(serde_json::json!({
             "type": event_type,
-            "seq": self.seq,
+            "seq": seq,
             "payload": payload,
         }));
-        Ok(self.seq)
+        Ok(seq)
     }
 }
 
@@ -396,18 +398,21 @@ fn when_build_registry(world: &mut QuectoWorld) {
 #[cucumber::when("the worker loop builds the event emitter")]
 fn when_build_emitter(world: &mut QuectoWorld) {
     let cfg = world.wl_config.as_ref().unwrap();
-    // Verify that we can construct a BddEventSink with the right IDs
+    // Verify that we can construct a BddEventSink
     let sink = BddEventSink::new();
     world.wl_emitter_run_id = Some(cfg.run_id.clone());
     world.wl_emitter_job_id = Some(cfg.job_id.clone());
     // Verify construction succeeds — seq starts at 0
-    assert_eq!(sink.seq, 0);
+    assert_eq!(sink.seq.load(Ordering::Relaxed), 0);
 }
 
 #[cucumber::when("the worker loop builds the system prompt")]
 fn when_build_system_prompt(world: &mut QuectoWorld) {
     let cfg = world.wl_config.as_ref().unwrap();
-    world.wl_system_prompt = Some(build_worker_system_prompt(&cfg.goal));
+    let job_dir = world.wl_job_dir.as_ref().unwrap().clone();
+    let registry = build_worker_tool_registry(job_dir);
+    let defs = registry.definitions();
+    world.wl_system_prompt = Some(build_worker_system_prompt(&cfg.goal, &defs));
 }
 
 #[cucumber::when("the worker loop runs to completion")]
@@ -418,11 +423,11 @@ fn when_run_loop(world: &mut QuectoWorld) {
         .take()
         .expect("mock provider must be set before running the loop");
 
-    let sink = Arc::new(Mutex::new(BddEventSink::new()));
+    let sink = Arc::new(BddEventSink::new());
     let job_dir = world.wl_job_dir.as_ref().unwrap().clone();
     let tool_registry = build_worker_tool_registry(job_dir);
 
-    let sink_clone = sink.clone();
+    let sink_clone: Arc<BddEventSink> = sink.clone();
     let result = tokio::runtime::Runtime::new().unwrap().block_on(async {
         run_worker_loop(
             WorkerLoopParams {
@@ -437,7 +442,7 @@ fn when_run_loop(world: &mut QuectoWorld) {
 
     world.wl_result = Some(result);
     // Extract events from the sink into the world for Then steps
-    world.wl_emitted_events = sink.lock().unwrap().events();
+    world.wl_emitted_events = sink.events();
 }
 
 // ── Then steps ─────────────────────────────────────────────────────────
