@@ -200,6 +200,11 @@ pub fn cmd_worker_from_config(
     let config_path = base_dir.join("config.json");
     if !config_path.exists() {
         // Fall back to stub mode when running outside a configured environment.
+        // Log a warning so operators can detect misconfiguration.
+        tracing::warn!(
+            config_path = %config_path.display(),
+            "worker: config not found, falling back to stub mode"
+        );
         return cmd_worker(args, stdout, stderr);
     }
 

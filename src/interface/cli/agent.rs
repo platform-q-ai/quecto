@@ -401,6 +401,15 @@ pub(crate) fn run_agent_session(params: AgentSessionParams<'_>) -> i32 {
 /// Uses `LocalSet` + `spawn_local` so the ticker can hold a `!Send`-compatible
 /// lifecycle driver. On the single-threaded tokio runtime the ticker task
 /// gets polled whenever the agent future yields (e.g. during LLM HTTP calls).
+///
+/// **Blocking note:** `tick()` runs synchronous I/O (git clone, process spawn)
+/// while holding `std::sync::Mutex`. During heavy operations the agent's async
+/// future won't be polled (cooperative scheduling on a single thread). This is
+/// acceptable for CLI one-shot mode where latency spikes are tolerable. The
+/// idle short-circuit in `tick()` avoids overhead when no jobs are active.
+///
+/// The spawned ticker has no explicit cancellation — it relies on `LocalSet`
+/// drop when `run_until` returns, which is safe for the CLI one-shot pattern.
 fn run_with_lifecycle_tick(
     rt: &tokio::runtime::Runtime,
     agent: &AgentLoopImpl,

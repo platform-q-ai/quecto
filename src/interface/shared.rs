@@ -109,7 +109,12 @@ pub fn build_coding_lifecycle(
         workspace.to_path_buf(),
     ));
     let mut nsjail_config = NsjailRuntimeConfig::default();
-    // Set command_override to spawn `quecto worker` directly as a subprocess.
+    // TEMPORARY: command_override bypasses nsjail and spawns the worker as a
+    // direct subprocess with the same privileges as the parent. This is safe
+    // because launch_real() calls env_clear() (preventing API key leakage)
+    // and the worker loads config from disk via cmd_worker_from_config().
+    // Production deployments should use nsjail wrapping once the worker's
+    // filesystem access patterns are fully characterized.
     // launch() appends --run-id, --job-id, --job-dir, --goal from WorkerLaunchConfig.
     nsjail_config.command_override = Some(vec![
         nsjail_config.quecto_binary.clone(),
@@ -136,9 +141,18 @@ struct DriverJobService<R: RepoValidator, S: SkillResolver> {
     driver: Arc<Mutex<CodingLifecycleDriver<R, S>>>,
 }
 
+/// Acquire the driver lock, converting poison errors to `CommandError::Internal`.
+fn lock_driver<R: RepoValidator, S: SkillResolver>(
+    driver: &Arc<Mutex<CodingLifecycleDriver<R, S>>>,
+) -> Result<std::sync::MutexGuard<'_, CodingLifecycleDriver<R, S>>, CommandError> {
+    driver
+        .lock()
+        .map_err(|e| CommandError::Internal(format!("driver lock poisoned: {e}")))
+}
+
 impl<R: RepoValidator + Send, S: SkillResolver + Send> CodingJobService for DriverJobService<R, S> {
     fn run(&mut self, req: RunRequest) -> Result<RunResponse, CommandError> {
-        let mut guard = self.driver.lock().unwrap();
+        let mut guard = lock_driver(&self.driver)?;
         let resp = guard.coordinator_mut().run(req)?;
         // Tick immediately so the job starts advancing (queued -> preparing).
         guard.tick();
@@ -146,20 +160,24 @@ impl<R: RepoValidator + Send, S: SkillResolver + Send> CodingJobService for Driv
     }
 
     fn status_by_job_id(&self, job_id: &str) -> Result<StatusResponse, CommandError> {
-        let mut guard = self.driver.lock().unwrap();
+        let mut guard = lock_driver(&self.driver)?;
         // Tick before reporting status so the caller sees the latest state.
         guard.tick();
         guard.coordinator().status_by_job_id(job_id)
     }
 
     fn status_by_run_id(&self, run_id: &str) -> Result<StatusResponse, CommandError> {
-        let mut guard = self.driver.lock().unwrap();
+        let mut guard = lock_driver(&self.driver)?;
         guard.tick();
         guard.coordinator().status_by_run_id(run_id)
     }
 
     fn cancel(&mut self, job_id: &str) -> Result<CancelResponse, CommandError> {
-        self.driver.lock().unwrap().coordinator_mut().cancel(job_id)
+        let mut guard = lock_driver(&self.driver)?;
+        let resp = guard.coordinator_mut().cancel(job_id)?;
+        // Tick after cancel so the worker kill happens immediately.
+        guard.tick();
+        Ok(resp)
     }
 
     fn cleanup(
@@ -167,15 +185,19 @@ impl<R: RepoValidator + Send, S: SkillResolver + Send> CodingJobService for Driv
         job_id: &str,
         keep_artifacts: bool,
     ) -> Result<CleanupResponse, CommandError> {
-        self.driver
-            .lock()
-            .unwrap()
-            .coordinator_mut()
-            .cleanup(job_id, keep_artifacts)
+        let mut guard = lock_driver(&self.driver)?;
+        let resp = guard.coordinator_mut().cleanup(job_id, keep_artifacts)?;
+        // Remove tracking state so killed_workers/running_workers don't grow
+        // unboundedly for cleaned-up jobs.
+        guard.forget_job(job_id);
+        Ok(resp)
     }
 
     fn list(&self, req: &ListRequest) -> ListResponse {
-        self.driver.lock().unwrap().coordinator().list(req)
+        match lock_driver(&self.driver) {
+            Ok(guard) => guard.coordinator().list(req),
+            Err(_) => ListResponse { jobs: vec![] },
+        }
     }
 }
 

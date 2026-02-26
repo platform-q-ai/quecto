@@ -335,6 +335,10 @@ impl Gateway {
             self.base_dir.clone(),
         )));
         if gateway_background_coding_coordinator_scope() == CodingCoordinatorScopePolicy::Shared {
+            // Driver handle intentionally discarded — the gateway background agent
+            // relies on tick-on-access via DriverJobService (run/status calls).
+            // A periodic background ticker will be added when the gateway needs
+            // to poll running workers independently of tool calls.
             let _ = build_coding_lifecycle(&mut registry, &workspace, &self.base_dir);
         }
         let spill_store = Arc::new(FileContextSpillStore::new(self.base_dir.clone()));

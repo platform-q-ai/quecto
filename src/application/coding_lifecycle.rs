@@ -122,6 +122,11 @@ impl<R: RepoValidator, S: SkillResolver> CodingLifecycleDriver<R, S> {
     /// one phase per tick: queued → preparing, preparing → running,
     /// running → poll events/exit, canceled → kill worker.
     pub fn tick(&mut self) {
+        // Short-circuit: skip expensive scans when there's nothing to do.
+        if !self.coordinator.has_active_jobs() && self.running_workers.is_empty() {
+            return;
+        }
+
         // Snapshot all phase-specific job IDs at tick start so a job
         // that transitions in one phase isn't re-processed in the next.
         let canceled_ids = self.job_ids_in_state(JobState::Canceled);
