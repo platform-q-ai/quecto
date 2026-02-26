@@ -16,6 +16,14 @@ use crate::domain::coding_ports::{
     WorkerRuntime, WorkerStatus,
 };
 
+/// Arguments for `fail_job()` helper (keeps argument count within clippy limit).
+struct FailArgs<'a> {
+    job_id: &'a str,
+    detail: &'a str,
+    retriable: Option<bool>,
+    duration_ms: Option<u64>,
+}
+
 /// Default resource limits for worker launch.
 const DEFAULT_MAX_MEMORY_MB: u32 = 512;
 const DEFAULT_MAX_CPU_SECONDS: u32 = 120;
@@ -154,6 +162,51 @@ impl<R: RepoValidator, S: SkillResolver> CodingLifecycleDriver<R, S> {
         }
     }
 
+    /// Ensure a mirror exists for the repo. Returns `false` if creation failed
+    /// (the job is marked as failed in that case).
+    fn ensure_mirror(&mut self, job_id: &str, repo: &str) -> bool {
+        if self.mirror.mirror_exists(repo) {
+            return true;
+        }
+        if let Some(remote_url) = self.mirror.resolve_local_remote(repo) {
+            let result = self.mirror.create_mirror(repo, &remote_url);
+            if result.ok {
+                return true;
+            }
+            let detail = result
+                .error
+                .unwrap_or_else(|| "mirror creation failed".to_string());
+            self.fail_job(FailArgs {
+                job_id,
+                detail: &detail,
+                retriable: Some(true),
+                duration_ms: Some(result.duration_ms),
+            });
+            return false;
+        }
+        let detail = format!("no mirror for repo '{repo}' and cannot resolve local path");
+        self.fail_job(FailArgs {
+            job_id,
+            detail: &detail,
+            retriable: Some(false),
+            duration_ms: None,
+        });
+        false
+    }
+
+    /// Mark a job as failed with the given details.
+    fn fail_job(&mut self, args: FailArgs<'_>) {
+        if let Err(e) = self.coordinator.mark_failed(FailureInfo {
+            job_id: args.job_id,
+            error_code: ErrorCode::Internal,
+            error_detail: args.detail,
+            is_retriable: args.retriable,
+            duration_ms: args.duration_ms,
+        }) {
+            tracing::warn!(args.job_id, error = %e, "failed to mark job as failed");
+        }
+    }
+
     /// Clone repo and launch worker for a preparing job.
     fn prepare_job(&mut self, job_id: &str) {
         let job = match self.coordinator.job(job_id) {
@@ -164,6 +217,7 @@ impl<R: RepoValidator, S: SkillResolver> CodingLifecycleDriver<R, S> {
         // Extract only the fields we need to avoid cloning the full job.
         let repo = job.repo.clone();
         let jid = job.job_id.clone();
+        let rid = job.run_id.clone();
         let base_ref = job.base_ref.clone();
         let branch = job.branch.clone();
         let goal = job.goal.clone();
@@ -171,6 +225,11 @@ impl<R: RepoValidator, S: SkillResolver> CodingLifecycleDriver<R, S> {
             .max_wall_seconds
             .map(|s| s as u32)
             .unwrap_or(DEFAULT_MAX_WALL_SECONDS);
+
+        // Ensure a mirror exists before cloning.
+        if !self.ensure_mirror(job_id, &repo) {
+            return;
+        }
 
         // Clone the repo
         let clone_params = CloneJobParams {
@@ -185,21 +244,20 @@ impl<R: RepoValidator, S: SkillResolver> CodingLifecycleDriver<R, S> {
             let detail = clone_result
                 .error
                 .unwrap_or_else(|| "clone failed".to_string());
-            if let Err(e) = self.coordinator.mark_failed(FailureInfo {
+            self.fail_job(FailArgs {
                 job_id,
-                error_code: ErrorCode::Internal,
-                error_detail: &detail,
-                is_retriable: Some(true),
+                detail: &detail,
+                retriable: Some(true),
                 duration_ms: Some(clone_result.duration_ms),
-            }) {
-                tracing::warn!(job_id, error = %e, "failed to mark job as failed after clone error");
-            }
+            });
             return;
         }
 
         // Get the job directory from the mirror store (not hardcoded).
         let job_dir = self.mirror.job_repo_path(job_id);
         let config = WorkerLaunchConfig {
+            run_id: rid,
+            job_id: jid,
             job_dir,
             goal,
             max_memory_mb: DEFAULT_MAX_MEMORY_MB,
@@ -222,15 +280,12 @@ impl<R: RepoValidator, S: SkillResolver> CodingLifecycleDriver<R, S> {
             }
             Err(err) => {
                 let detail = format!("launch failed: {err}");
-                if let Err(e) = self.coordinator.mark_failed(FailureInfo {
+                self.fail_job(FailArgs {
                     job_id,
-                    error_code: ErrorCode::Internal,
-                    error_detail: &detail,
-                    is_retriable: Some(true),
+                    detail: &detail,
+                    retriable: Some(true),
                     duration_ms: Some(clone_result.duration_ms),
-                }) {
-                    tracing::warn!(job_id, error = %e, "failed to mark job as failed after launch error");
-                }
+                });
             }
         }
     }

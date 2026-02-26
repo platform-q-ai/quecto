@@ -24,6 +24,8 @@ fn runtime(world: &mut QuectoWorld) -> &mut MockWorkerRuntime {
 
 fn default_config() -> WorkerLaunchConfig {
     WorkerLaunchConfig {
+        run_id: "run_000001".to_string(),
+        job_id: "job_000001".to_string(),
         job_dir: "/tmp/jobs/job_000001/repo".to_string(),
         goal: "fix tests".to_string(),
         max_memory_mb: 512,

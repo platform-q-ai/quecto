@@ -185,6 +185,50 @@ pub fn cmd_worker(args: &[String], stdout: &mut String, stderr: &mut String) -> 
     0
 }
 
+/// Handle the `quecto worker` subcommand with a provider built from config.
+///
+/// This is the production entry point called from `cli/mod.rs`. It loads
+/// config, builds a provider, and delegates to `cmd_worker_with_deps` for
+/// the full worker agent loop.
+pub fn cmd_worker_from_config(
+    ctx: &super::CliContext,
+    args: &[String],
+    stdout: &mut String,
+    stderr: &mut String,
+) -> i32 {
+    let base_dir = ctx.base_dir();
+    let config_path = base_dir.join("config.json");
+    if !config_path.exists() {
+        // Fall back to stub mode when running outside a configured environment.
+        return cmd_worker(args, stdout, stderr);
+    }
+
+    let env_overrides: std::collections::HashMap<String, String> = std::env::vars()
+        .filter(|(k, _)| k.starts_with("QUECTO_"))
+        .collect();
+
+    let config = match crate::infrastructure::config::Config::load_with_env(
+        config_path.to_str().unwrap_or(""),
+        &env_overrides,
+    ) {
+        Ok(c) => c,
+        Err(e) => {
+            stderr.push_str(&format!("worker: failed to load config: {e}\n"));
+            return 1;
+        }
+    };
+
+    let provider = match super::build_agent_provider(&config, &base_dir) {
+        Ok(p) => p,
+        Err(msg) => {
+            stderr.push_str(&format!("worker: {msg}\n"));
+            return 1;
+        }
+    };
+
+    cmd_worker_with_deps(args, WorkerDeps { provider }, stdout, stderr)
+}
+
 /// Handle `quecto worker` with injected dependencies — runs the full
 /// agent loop and writes JSON Lines to `stdout`.
 pub fn cmd_worker_with_deps(

@@ -93,7 +93,7 @@ pub struct CloneJobParams<'a> {
 /// The coordinator uses this trait to create/update mirrors and clone
 /// repositories for coding jobs. Each implementation handles git operations,
 /// flock coordination, and path safety.
-pub trait RepoMirrorStore {
+pub trait RepoMirrorStore: Send {
     /// Check whether a bare mirror exists for the given repo identifier.
     fn mirror_exists(&self, repo: &str) -> bool;
 
@@ -121,6 +121,12 @@ pub trait RepoMirrorStore {
     /// This allows the application layer to pass the correct `job_dir`
     /// to `WorkerLaunchConfig` without hardcoding filesystem paths.
     fn job_repo_path(&self, job_id: &str) -> String;
+
+    /// Resolve a repo identifier to a remote URL suitable for `create_mirror`.
+    ///
+    /// For workspace-local repos, returns the absolute path.
+    /// For remote repos, returns `None` (the caller must provide the URL).
+    fn resolve_local_remote(&self, repo: &str) -> Option<String>;
 }
 
 // ============================================================================
@@ -130,6 +136,10 @@ pub trait RepoMirrorStore {
 /// Configuration for launching an nsjail worker process.
 #[derive(Debug, Clone)]
 pub struct WorkerLaunchConfig {
+    /// Unique run identifier for the worker process.
+    pub run_id: String,
+    /// Job identifier that this worker is executing.
+    pub job_id: String,
     /// Path to the job directory (sole writable mount).
     pub job_dir: String,
     /// Goal description for the worker.
@@ -179,7 +189,7 @@ pub struct WorkerEnvVar {
 ///
 /// Includes `as_any_mut()` to support safe downcasting in test code
 /// (e.g. to access `MockWorkerRuntime`-specific injection methods).
-pub trait WorkerRuntime {
+pub trait WorkerRuntime: Send {
     /// Launch a new worker process inside nsjail.
     fn launch(&mut self, config: &WorkerLaunchConfig) -> Result<u32, String>;
 

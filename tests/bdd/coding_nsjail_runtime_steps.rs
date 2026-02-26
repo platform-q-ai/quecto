@@ -11,6 +11,8 @@ use crate::QuectoWorld;
 
 fn default_nrt_config() -> WorkerLaunchConfig {
     WorkerLaunchConfig {
+        run_id: "run_001".to_string(),
+        job_id: "job-001".to_string(),
         job_dir: "/tmp/jobs/job-001/repo".to_string(),
         goal: "fix tests".to_string(),
         max_memory_mb: 512,

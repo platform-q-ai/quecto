@@ -54,13 +54,16 @@ impl RepoMirrorStore for BddSucceedingMirror {
     fn job_repo_path(&self, job_id: &str) -> String {
         format!("/tmp/test-jobs/{job_id}/repo")
     }
+    fn resolve_local_remote(&self, _repo: &str) -> Option<String> {
+        Some("/tmp/fake-workspace/test-repo".to_string())
+    }
 }
 
 struct BddFailingMirror;
 
 impl RepoMirrorStore for BddFailingMirror {
     fn mirror_exists(&self, _repo: &str) -> bool {
-        false
+        true // Mirror "exists" but all operations fail
     }
     fn create_mirror(&mut self, _repo: &str, _url: &str) -> RepoOpResult {
         RepoOpResult {
@@ -97,6 +100,9 @@ impl RepoMirrorStore for BddFailingMirror {
     }
     fn job_repo_path(&self, job_id: &str) -> String {
         format!("/tmp/test-jobs/{job_id}/repo")
+    }
+    fn resolve_local_remote(&self, _repo: &str) -> Option<String> {
+        None
     }
 }
 

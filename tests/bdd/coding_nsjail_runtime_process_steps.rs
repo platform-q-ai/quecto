@@ -14,6 +14,8 @@ fn default_process_launch_config(world: &QuectoWorld) -> WorkerLaunchConfig {
         .nrt_launch_config
         .clone()
         .unwrap_or_else(|| WorkerLaunchConfig {
+            run_id: "run_test".to_string(),
+            job_id: "job_test".to_string(),
             job_dir: "/tmp/test-job".to_string(),
             goal: "test".to_string(),
             max_memory_mb: 512,

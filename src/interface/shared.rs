@@ -4,10 +4,19 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use crate::application::coding_coordinator::{CodingCoordinator, CoordinatorPolicy};
+use crate::application::coding_coordinator::{
+    CodingCoordinator, CoordinatorPolicy, RepoValidator, SkillResolver,
+};
+use crate::application::coding_lifecycle::CodingLifecycleDriver;
+use crate::domain::coding_command::{
+    CancelResponse, CleanupResponse, CommandError, ListRequest, ListResponse, RunRequest,
+    RunResponse, StatusResponse,
+};
 use crate::domain::coding_ports::CodingJobService;
 use crate::domain::skill::SkillLoader;
 use crate::infrastructure::auth::credential_store::Credential;
+use crate::infrastructure::coding::nsjail_runtime::{NsjailRuntimeConfig, NsjailWorkerRuntime};
+use crate::infrastructure::coding::repo_mirror::FileRepoMirrorStore;
 use crate::infrastructure::coding::runtime_adapters::{
     WorkspaceRepoValidator, WorkspaceSkillResolver,
 };
@@ -70,8 +79,18 @@ pub fn check_provider_readiness(creds: &HashMap<String, Credential>) -> Vec<Stri
         .collect()
 }
 
-/// Register the `coding_job` tool using real workspace-backed adapters.
-pub fn register_coding_job_tool(registry: &mut ToolRegistryImpl, workspace: &Path) {
+/// Type alias for the shared lifecycle driver wrapped in `Arc<Mutex<>>`.
+pub type SharedLifecycleDriver =
+    Arc<Mutex<CodingLifecycleDriver<WorkspaceRepoValidator, WorkspaceSkillResolver>>>;
+
+/// Build the full coding lifecycle stack: coordinator + lifecycle driver +
+/// repo mirror store + worker runtime. Registers the `coding_job` tool on
+/// the registry and returns the shared driver handle for ticking.
+pub fn build_coding_lifecycle(
+    registry: &mut ToolRegistryImpl,
+    workspace: &Path,
+    base_dir: &Path,
+) -> SharedLifecycleDriver {
     let repo_validator = WorkspaceRepoValidator::new(workspace.to_path_buf());
     let skill_resolver = WorkspaceSkillResolver::new(workspace.to_path_buf());
     let coordinator = CodingCoordinator::new(
@@ -80,12 +99,84 @@ pub fn register_coding_job_tool(registry: &mut ToolRegistryImpl, workspace: &Pat
         CoordinatorPolicy {
             skill_denylist: Vec::new(),
             skill_allowlist: Vec::new(),
-            // Bound in-memory job retention per coordinator instance.
             max_retained_jobs: Some(512),
         },
     );
-    let service: Arc<Mutex<dyn CodingJobService>> = Arc::new(Mutex::new(coordinator));
+
+    let cache_dir = base_dir.join("coding");
+    let mirror = Box::new(FileRepoMirrorStore::with_workspace(
+        cache_dir,
+        workspace.to_path_buf(),
+    ));
+    let mut nsjail_config = NsjailRuntimeConfig::default();
+    // Set command_override to spawn `quecto worker` directly as a subprocess.
+    // launch() appends --run-id, --job-id, --job-dir, --goal from WorkerLaunchConfig.
+    nsjail_config.command_override = Some(vec![
+        nsjail_config.quecto_binary.clone(),
+        "worker".to_string(),
+    ]);
+    let runtime = Box::new(NsjailWorkerRuntime::new(nsjail_config));
+    let driver = CodingLifecycleDriver::new(coordinator, runtime, mirror);
+    let shared: SharedLifecycleDriver = Arc::new(Mutex::new(driver));
+
+    // Create a CodingJobService adapter that delegates through the driver.
+    let service: Arc<Mutex<dyn CodingJobService>> = Arc::new(Mutex::new(DriverJobService {
+        driver: shared.clone(),
+    }));
     registry.register(Arc::new(CodingJobTool::new(service)));
+
+    shared
+}
+
+/// `CodingJobService` adapter that delegates to a shared `CodingLifecycleDriver`.
+///
+/// Ticks the driver on `run()` and `status_by_*()` calls so jobs advance
+/// immediately when the agent interacts with them.
+struct DriverJobService<R: RepoValidator, S: SkillResolver> {
+    driver: Arc<Mutex<CodingLifecycleDriver<R, S>>>,
+}
+
+impl<R: RepoValidator + Send, S: SkillResolver + Send> CodingJobService for DriverJobService<R, S> {
+    fn run(&mut self, req: RunRequest) -> Result<RunResponse, CommandError> {
+        let mut guard = self.driver.lock().unwrap();
+        let resp = guard.coordinator_mut().run(req)?;
+        // Tick immediately so the job starts advancing (queued -> preparing).
+        guard.tick();
+        Ok(resp)
+    }
+
+    fn status_by_job_id(&self, job_id: &str) -> Result<StatusResponse, CommandError> {
+        let mut guard = self.driver.lock().unwrap();
+        // Tick before reporting status so the caller sees the latest state.
+        guard.tick();
+        guard.coordinator().status_by_job_id(job_id)
+    }
+
+    fn status_by_run_id(&self, run_id: &str) -> Result<StatusResponse, CommandError> {
+        let mut guard = self.driver.lock().unwrap();
+        guard.tick();
+        guard.coordinator().status_by_run_id(run_id)
+    }
+
+    fn cancel(&mut self, job_id: &str) -> Result<CancelResponse, CommandError> {
+        self.driver.lock().unwrap().coordinator_mut().cancel(job_id)
+    }
+
+    fn cleanup(
+        &mut self,
+        job_id: &str,
+        keep_artifacts: bool,
+    ) -> Result<CleanupResponse, CommandError> {
+        self.driver
+            .lock()
+            .unwrap()
+            .coordinator_mut()
+            .cleanup(job_id, keep_artifacts)
+    }
+
+    fn list(&self, req: &ListRequest) -> ListResponse {
+        self.driver.lock().unwrap().coordinator().list(req)
+    }
 }
 
 /// Coordinator scope policy used by current runtimes.
@@ -167,14 +258,14 @@ mod tests {
     }
 
     #[test]
-    fn test_register_coding_job_tool_adds_definition() {
+    fn test_build_coding_lifecycle_adds_definition() {
         let tmp = tempfile::TempDir::new().unwrap();
-        let workspace = tmp.path().to_path_buf();
+        let workspace = tmp.path().join("workspace");
         std::fs::create_dir_all(workspace.join("skills")).unwrap();
 
         let sandbox = Sandbox::new(Some(workspace.clone()), true);
         let mut registry = ToolRegistryImpl::with_core_tools(workspace.clone(), sandbox);
-        register_coding_job_tool(&mut registry, &workspace);
+        let _driver = build_coding_lifecycle(&mut registry, &workspace, tmp.path());
 
         assert!(
             registry

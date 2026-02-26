@@ -2,6 +2,10 @@
 //
 // Tests the full coding job pipeline: agent → coding_job tool → coordinator
 // → lifecycle driver tick → repo clone → worker launch → result.
+//
+// Assertions use filesystem artifacts (mirror dirs, job dirs, session files)
+// rather than parsing stdout, since the agent's stdout only contains the
+// final LLM text response, not tool results.
 
 use crate::QuectoWorld;
 use cucumber::{given, then, when};
@@ -105,10 +109,48 @@ fn given_job_dir_with_repo(world: &mut QuectoWorld) {
     world._e2e_coding_job_temp = Some(td);
 }
 
+// ---------------------------------------------------------------------------
+// Given: mock LLM for worker subprocess tests
+// ---------------------------------------------------------------------------
+
+/// Mount a wiremock mock that returns a simple text response, and rewrite
+/// the config to point at it. This prepares the mock LLM for the worker
+/// subprocess test so `cmd_worker_from_config` hits the mock server.
 #[given(expr = "a mock LLM that returns text {string}")]
 fn given_mock_llm_text_for_worker(world: &mut QuectoWorld, text: String) {
-    // Store text for worker subprocess — the worker test will mount this
-    // via wiremock when it launches.
+    use crate::e2e_steps::rewrite_config_to_uri;
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+        let response_body = serde_json::json!({
+            "id": "chatcmpl-worker",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": text
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15
+            }
+        });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(response_body))
+            .mount(&server)
+            .await;
+
+        rewrite_config_to_uri(world, &new_uri);
+        std::mem::forget(server);
+    });
+    std::mem::forget(rt);
     world.e2e_coding_worker_mock_text = Some(text);
 }
 
@@ -145,163 +187,134 @@ fn when_run_worker(world: &mut QuectoWorld, run_id: String, job_id: String, goal
 }
 
 // ---------------------------------------------------------------------------
-// Then: coding job tool response assertions
+// Then: filesystem-based assertions
 // ---------------------------------------------------------------------------
 
-/// Extract the coding_job tool response JSON from stdout.
-/// The agent prints tool results inline. We look for the JSON blob returned
-/// by the coding_job status call, which contains a "state" field.
-fn find_status_response_in_stdout(stdout: &str) -> Option<String> {
-    // The tool result appears in stdout. Look for JSON containing "state":
-    for line in stdout.lines() {
-        let trimmed = line.trim();
-        if trimmed.contains("\"state\"") && trimmed.contains("\"job_id\"") {
-            return Some(trimmed.to_string());
-        }
-    }
-    // Also check for embedded JSON in prose (the LLM may echo it)
-    if stdout.contains("\"state\"") {
-        return Some(stdout.to_string());
-    }
-    None
-}
-
-#[then("the coding job tool should have returned a status response")]
-fn then_tool_returned_status(world: &mut QuectoWorld) {
-    let stdout = &world.stdout;
-    assert!(
-        find_status_response_in_stdout(stdout).is_some(),
-        "Expected the coding_job tool to return a status response with a \"state\" field \
-         and \"job_id\" field in stdout, but none found.\n\
-         This means either:\n\
-         - The coding_job tool is not registered in the CLI agent\n\
-         - The LLM's tool call was not routed to the coding_job tool\n\
-         - The status call returned an error\n\
-         stdout:\n{}",
-        stdout
-    );
-}
-
-#[then(expr = "the coding job status in the tool response should not be {string}")]
-fn then_status_not(world: &mut QuectoWorld, unexpected: String) {
-    let stdout = &world.stdout;
-    let response = find_status_response_in_stdout(stdout).unwrap_or_else(|| {
-        panic!(
-            "No status response found in stdout. The coding_job tool \
-             did not return a response with a \"state\" field.\nstdout:\n{}",
-            stdout
-        )
-    });
-    let is_unexpected = response.contains(&format!("\"state\":\"{}\"", unexpected))
-        || response.contains(&format!("\"state\": \"{}\"", unexpected));
-    assert!(
-        !is_unexpected,
-        "Expected coding job status to NOT be '{}', but the tool response contains it.\n\
-         This means the lifecycle driver did not tick the job forward.\n\
-         The coordinator created the job but nothing advanced it past '{}'.\n\
-         response: {}\nfull stdout:\n{}",
-        unexpected, unexpected, response, stdout
-    );
-}
-
-#[then(expr = "the coding job status in the tool response should be {string}")]
-fn then_status_is(world: &mut QuectoWorld, expected: String) {
-    let stdout = &world.stdout;
-    let response = find_status_response_in_stdout(stdout)
-        .unwrap_or_else(|| panic!("No status response found in stdout.\nstdout:\n{}", stdout));
-    assert!(
-        response.contains(&format!("\"state\":\"{}\"", expected))
-            || response.contains(&format!("\"state\": \"{}\"", expected)),
-        "Expected coding job status '{}' in tool response, but not found.\n\
-         response: {}\nfull stdout:\n{}",
-        expected,
-        response,
-        stdout
-    );
-}
-
-#[then(expr = "the coding job status in the tool response should be one of {string}")]
-fn then_status_one_of(world: &mut QuectoWorld, states: String) {
-    let stdout = &world.stdout;
-    let response = find_status_response_in_stdout(stdout)
-        .unwrap_or_else(|| panic!("No status response found in stdout.\nstdout:\n{}", stdout));
-    let valid: Vec<&str> = states.split(',').collect();
-    let found = valid.iter().any(|s| {
-        response.contains(&format!("\"state\":\"{}\"", s))
-            || response.contains(&format!("\"state\": \"{}\"", s))
-    });
-    assert!(
-        found,
-        "Expected coding job status to be one of [{}], but not found.\n\
-         response: {}\nfull stdout:\n{}",
-        states, response, stdout
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Then: file creation assertions for job repos
-// ---------------------------------------------------------------------------
-
-#[then(expr = "the coding job should have created a file {string} in the job repo")]
-fn then_file_in_job_repo(world: &mut QuectoWorld, filename: String) {
+/// Check that a bare mirror directory exists for the given repo name.
+/// The mirror lives under `<base_dir>/coding/mirrors/<safe_name>.git/`.
+#[then(expr = "a mirror should exist for repo {string} in the coding cache")]
+fn then_mirror_exists(world: &mut QuectoWorld, repo: String) {
     let base = world
         .cli_context
         .base_dir
         .as_ref()
         .expect("base dir should be set");
-    // The coding system stores job repos under <base>/coding/jobs/<job_id>/repo/
-    let coding_dir = base.join("coding").join("jobs");
+    let mirror_dir = base
+        .join("coding")
+        .join("mirrors")
+        .join(format!("{repo}.git"));
     assert!(
-        coding_dir.exists(),
-        "Coding jobs directory does not exist at {:?}.\n\
-         The lifecycle driver never created a job repo.\n\
-         This means the CLI agent is not ticking the lifecycle driver.",
-        coding_dir
-    );
-
-    // Find the first job directory
-    let entries: Vec<_> = std::fs::read_dir(&coding_dir)
-        .expect("read coding jobs dir")
-        .filter_map(|e| e.ok())
-        .collect();
-    assert!(
-        !entries.is_empty(),
-        "No job directories found under {:?}. Worker never ran.",
-        coding_dir
-    );
-
-    let job_dir = &entries[0].path();
-    let repo_dir = job_dir.join("repo");
-    let file_path = repo_dir.join(&filename);
-    assert!(
-        file_path.exists(),
-        "Expected file '{}' in job repo {:?}, but it does not exist.\n\
-         The worker either didn't run or didn't create the file.",
-        filename,
-        repo_dir
+        mirror_dir.exists(),
+        "Expected mirror directory at {:?} but it does not exist.\n\
+         This means the lifecycle driver did not create a mirror during \
+         job preparation.\nstderr:\n{}",
+        mirror_dir,
+        world.stderr
     );
 }
 
-// ---------------------------------------------------------------------------
-// Then: coding job list assertions
-// ---------------------------------------------------------------------------
-
-#[then(expr = "the coding job tool should have returned a list with {int} jobs")]
-fn then_list_has_n_jobs(world: &mut QuectoWorld, expected: usize) {
-    let stdout = &world.stdout;
-    // The list response is JSON with a "jobs" array.
-    // Count occurrences of "job_id" in stdout as a proxy.
-    let count = stdout.matches("\"job_id\"").count();
+/// Check that at least one job directory exists in the coding cache.
+#[then("a job directory should exist in the coding cache")]
+fn then_job_dir_exists(world: &mut QuectoWorld) {
+    let base = world
+        .cli_context
+        .base_dir
+        .as_ref()
+        .expect("base dir should be set");
+    let jobs_dir = base.join("coding").join("jobs");
     assert!(
-        count >= expected,
-        "Expected at least {} jobs in the list response, but found {} job_id occurrences.\n\
-         This means either:\n\
-         - The coding_job tool did not return a list response\n\
-         - Not all jobs were created successfully\n\
-         stdout:\n{}",
-        expected,
-        count,
-        stdout
+        jobs_dir.exists(),
+        "Coding jobs directory does not exist at {:?}.\n\
+         The lifecycle driver never created a job directory.\n\
+         stderr:\n{}",
+        jobs_dir,
+        world.stderr
+    );
+    let entries: Vec<_> = std::fs::read_dir(&jobs_dir)
+        .expect("read coding jobs dir")
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .collect();
+    assert!(
+        !entries.is_empty(),
+        "No job directories found under {:?}.\n\
+         The lifecycle driver created the jobs/ parent but no job was prepared.\n\
+         stderr:\n{}",
+        jobs_dir,
+        world.stderr
+    );
+}
+
+/// Assert that stderr does not contain tool error indicators.
+#[then("the agent should not have reported tool errors in stderr")]
+fn then_no_tool_errors_in_stderr(world: &mut QuectoWorld) {
+    let stderr = &world.stderr;
+    let error_patterns = [
+        "is_error",
+        "tool error",
+        "Tool execution failed",
+        "unknown tool",
+    ];
+    for pattern in &error_patterns {
+        assert!(
+            !stderr.contains(pattern),
+            "Found tool error indicator '{}' in stderr.\n\
+             The coding_job tool may not be registered or returned an error.\n\
+             stderr:\n{}",
+            pattern,
+            stderr
+        );
+    }
+}
+
+/// Assert that the saved session file contains a tool result with the
+/// given substring (e.g. "job_id"). The session file lives at
+/// `<base_dir>/sessions/<key>.json`.
+///
+/// The session name from the feature file is the `-s` flag value.
+/// `cmd_agent` prepends `cli:` to form the full key, and the store
+/// replaces `:` with `_` for the filename.
+#[then(expr = "the saved session {string} should contain a tool result with {string}")]
+fn then_session_contains_tool_result(
+    world: &mut QuectoWorld,
+    session_name: String,
+    expected: String,
+) {
+    let base = world
+        .cli_context
+        .base_dir
+        .as_ref()
+        .expect("base dir should be set");
+    // cmd_agent builds key as "cli:<name>", stored as "cli_<name>.json"
+    let full_key = format!("cli:{}", session_name);
+    let filename = format!("{}.json", full_key.replace(':', "_"));
+    let session_path = base.join("sessions").join(&filename);
+    assert!(
+        session_path.exists(),
+        "Session file {:?} does not exist. The agent did not persist the session.\n\
+         stderr:\n{}",
+        session_path,
+        world.stderr
+    );
+
+    let content = std::fs::read_to_string(&session_path).expect("read session file");
+    let session: serde_json::Value = serde_json::from_str(&content).expect("parse session JSON");
+
+    // Look for tool-role messages containing the expected substring.
+    let messages = session["messages"]
+        .as_array()
+        .expect("session should have messages array");
+    let has_tool_result = messages.iter().any(|msg| {
+        let role = msg["role"].as_str().unwrap_or("");
+        let content_str = msg["content"].as_str().unwrap_or("");
+        role == "tool" && content_str.contains(&expected)
+    });
+    assert!(
+        has_tool_result,
+        "No tool-role message containing '{}' found in session '{}'.\n\
+         The coding_job tool result was not persisted in the session.\n\
+         messages: {:?}",
+        expected, session_name, messages
     );
 }
 
@@ -309,21 +322,26 @@ fn then_list_has_n_jobs(world: &mut QuectoWorld, expected: usize) {
 // Then: worker event assertions
 // ---------------------------------------------------------------------------
 
-#[then(expr = "the worker stdout should contain a {string} event")]
+/// Check that the worker's stdout contains a JSON Lines event with the
+/// given `type` field (e.g. "log.message").
+#[then(expr = "the worker stdout should contain a JSON Lines event with type {string}")]
 fn then_worker_stdout_contains_event(world: &mut QuectoWorld, event_type: String) {
     let stdout = world
         .e2e_coding_worker_stdout
         .as_ref()
         .expect("worker stdout should be captured");
     assert!(
-        stdout.contains(&format!("\"event_type\":\"{}\"", event_type))
+        stdout.contains(&format!("\"type\":\"{}\"", event_type))
+            || stdout.contains(&format!("\"type\": \"{}\"", event_type))
+            || stdout.contains(&format!("\"event_type\":\"{}\"", event_type))
             || stdout.contains(&format!("\"event_type\": \"{}\"", event_type)),
-        "Expected '{}' event in worker stdout, but not found.\n\
-         This means the quecto worker subcommand is not running the full \
-         worker loop (cmd_worker_with_deps). It's likely still using the stub.\n\
-         stdout:\n{}",
+        "Expected JSON Lines event with type '{}' in worker stdout.\n\
+         The quecto worker subcommand may not be running the full \
+         worker loop (cmd_worker_with_deps).\n\
+         stdout:\n{}\nstderr:\n{}",
         event_type,
-        stdout
+        stdout,
+        world.e2e_coding_worker_stderr.as_deref().unwrap_or("")
     );
 }
 

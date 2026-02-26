@@ -516,6 +516,16 @@ impl RepoMirrorStore for FileRepoMirrorStore {
     fn job_repo_path(&self, job_id: &str) -> String {
         self.job_repo_dir(job_id).to_string_lossy().into_owned()
     }
+
+    fn resolve_local_remote(&self, repo: &str) -> Option<String> {
+        let workspace = self.workspace.as_ref()?;
+        let repo_path = workspace.join(repo);
+        if repo_path.is_dir() && repo_path.join(".git").exists() {
+            Some(repo_path.to_string_lossy().into_owned())
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg(test)]

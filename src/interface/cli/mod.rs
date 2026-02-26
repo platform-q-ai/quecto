@@ -102,7 +102,7 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
                 1
             }
             "skills" => commands::cmd_skills(ctx, &args[2..], &mut stdout, &mut stderr),
-            "worker" => worker::cmd_worker(&args[2..], &mut stdout, &mut stderr),
+            "worker" => worker::cmd_worker_from_config(ctx, &args[2..], &mut stdout, &mut stderr),
             "help" | "--help" | "-h" => {
                 help_text(&mut stdout);
                 0

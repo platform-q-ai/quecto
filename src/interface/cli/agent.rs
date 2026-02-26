@@ -19,8 +19,8 @@ use crate::infrastructure::tools::recall::RecallTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
 use crate::interface::shared::{
-    CodingCoordinatorScopePolicy, cli_coding_coordinator_scope, register_coding_job_tool,
-    resolve_api_key,
+    CodingCoordinatorScopePolicy, SharedLifecycleDriver, build_coding_lifecycle,
+    cli_coding_coordinator_scope, resolve_api_key,
 };
 
 /// Parsed flags for the `agent` subcommand.
@@ -168,8 +168,8 @@ pub(crate) fn cmd_agent(
     }
 
     let base_dir = ctx.base_dir();
-    let agent = match build_agent_from_config(&base_dir, &flags, stderr) {
-        Some(a) => a,
+    let (agent, lifecycle_driver) = match build_agent_from_config(&base_dir, &flags, stderr) {
+        Some(pair) => pair,
         None => return 1,
     };
 
@@ -183,15 +183,24 @@ pub(crate) fn cmd_agent(
     }
 
     let mut out = AgentOutput { stdout, stderr };
-    run_agent_session(&base_dir, agent, &flags, &mut out)
+    run_agent_session(AgentSessionParams {
+        base_dir: &base_dir,
+        agent,
+        lifecycle_driver,
+        flags: &flags,
+        out: &mut out,
+    })
 }
 
 /// Load config, build provider, and construct the agent loop. Returns None on error.
+///
+/// When the coding lifecycle is enabled (per-session scope), the returned
+/// `SharedLifecycleDriver` should be ticked alongside the agent.
 pub(crate) fn build_agent_from_config(
     base_dir: &std::path::Path,
     flags: &AgentFlags,
     stderr: &mut String,
-) -> Option<AgentLoopImpl> {
+) -> Option<(AgentLoopImpl, Option<SharedLifecycleDriver>)> {
     let config_path = base_dir.join("config.json");
     if !config_path.exists() {
         stderr.push_str(&format!(
@@ -237,9 +246,12 @@ pub(crate) fn build_agent_from_config(
         exec_settings,
     );
     let mut registry = registry;
-    if cli_coding_coordinator_scope() == CodingCoordinatorScopePolicy::PerSession {
-        register_coding_job_tool(&mut registry, &workspace);
-    }
+    let lifecycle_driver =
+        if cli_coding_coordinator_scope() == CodingCoordinatorScopePolicy::PerSession {
+            Some(build_coding_lifecycle(&mut registry, &workspace, base_dir))
+        } else {
+            None
+        };
     let session_key = if flags.session_name.as_deref() == Some("-") {
         String::new()
     } else {
@@ -268,16 +280,27 @@ pub(crate) fn build_agent_from_config(
             .unwrap_or(config.agents.defaults.max_tool_iterations),
     );
 
-    Some(agent)
+    Some((agent, lifecycle_driver))
+}
+
+/// Parameters for `run_agent_session`, bundled to avoid too many arguments.
+pub(crate) struct AgentSessionParams<'a> {
+    pub base_dir: &'a std::path::Path,
+    pub agent: AgentLoopImpl,
+    pub lifecycle_driver: Option<SharedLifecycleDriver>,
+    pub flags: &'a AgentFlags,
+    pub out: &'a mut AgentOutput<'a>,
 }
 
 /// Run the agent loop with session load/save. Returns the exit code.
-pub(crate) fn run_agent_session(
-    base_dir: &std::path::Path,
-    agent: AgentLoopImpl,
-    flags: &AgentFlags,
-    out: &mut AgentOutput<'_>,
-) -> i32 {
+pub(crate) fn run_agent_session(params: AgentSessionParams<'_>) -> i32 {
+    let AgentSessionParams {
+        base_dir,
+        agent,
+        lifecycle_driver,
+        flags,
+        out,
+    } = params;
     let ephemeral = flags.session_name.as_deref() == Some("-");
     let session_key = if ephemeral {
         String::new()
@@ -326,7 +349,15 @@ pub(crate) fn run_agent_session(
     messages.push(Message::user(message.to_string()));
 
     let agent_result = if let Some(secs) = flags.max_time {
-        match run_with_deadline(&rt, &agent, &mut messages, secs) {
+        match run_with_deadline(
+            DeadlineParams {
+                rt: &rt,
+                agent: &agent,
+                messages: &mut messages,
+                driver: lifecycle_driver.as_ref(),
+            },
+            secs,
+        ) {
             DeadlineResult::Completed(inner) => inner,
             DeadlineResult::TimedOut => {
                 out.stderr.push_str("max-time exceeded\n");
@@ -334,7 +365,7 @@ pub(crate) fn run_agent_session(
             }
         }
     } else {
-        rt.block_on(agent.process(&mut messages))
+        run_with_lifecycle_tick(&rt, &agent, &mut messages, lifecycle_driver.as_ref())
     };
 
     match agent_result {
@@ -365,6 +396,43 @@ pub(crate) fn run_agent_session(
     }
 }
 
+/// Run the agent loop with a lifecycle ticker running concurrently.
+///
+/// Uses `LocalSet` + `spawn_local` so the ticker can hold a `!Send`-compatible
+/// lifecycle driver. On the single-threaded tokio runtime the ticker task
+/// gets polled whenever the agent future yields (e.g. during LLM HTTP calls).
+fn run_with_lifecycle_tick(
+    rt: &tokio::runtime::Runtime,
+    agent: &AgentLoopImpl,
+    messages: &mut Vec<Message>,
+    driver: Option<&SharedLifecycleDriver>,
+) -> Result<crate::domain::agent::AgentResult, crate::domain::error::DomainError> {
+    match driver {
+        None => rt.block_on(agent.process(messages)),
+        Some(driver) => {
+            let local = tokio::task::LocalSet::new();
+            let driver = driver.clone();
+            local.spawn_local(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                    if let Ok(mut d) = driver.lock() {
+                        d.tick();
+                    }
+                }
+            });
+            rt.block_on(local.run_until(agent.process(messages)))
+        }
+    }
+}
+
+/// Parameters for `run_with_deadline`, bundled to avoid too many arguments.
+pub(crate) struct DeadlineParams<'a> {
+    pub rt: &'a tokio::runtime::Runtime,
+    pub agent: &'a AgentLoopImpl,
+    pub messages: &'a mut Vec<Message>,
+    pub driver: Option<&'a SharedLifecycleDriver>,
+}
+
 /// Run the agent with a wall-clock deadline.
 ///
 /// Uses `thread::scope` + `recv_timeout` so the deadline is enforced without
@@ -372,19 +440,22 @@ pub(crate) fn run_agent_session(
 /// that may conflict with test harness runtimes). After timeout, the scoped
 /// thread still runs until the in-flight LLM/tool call completes (bounded by
 /// per-tool and HTTP client timeouts), then the scope exits.
-pub(crate) fn run_with_deadline(
-    rt: &tokio::runtime::Runtime,
-    agent: &AgentLoopImpl,
-    messages: &mut Vec<Message>,
-    timeout_secs: u64,
-) -> DeadlineResult {
+///
+/// When a lifecycle driver is provided, a local ticker task runs concurrently.
+pub(crate) fn run_with_deadline(params: DeadlineParams<'_>, timeout_secs: u64) -> DeadlineResult {
+    let DeadlineParams {
+        rt,
+        agent,
+        messages,
+        driver,
+    } = params;
     let dur = std::time::Duration::from_secs(timeout_secs);
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     let deadline = std::time::Instant::now() + dur;
 
     std::thread::scope(|s| {
         s.spawn(|| {
-            let result = rt.block_on(agent.process(messages));
+            let result = run_with_lifecycle_tick(rt, agent, messages, driver);
             let _ = tx.send(result);
         });
 
