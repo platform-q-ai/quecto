@@ -51,6 +51,9 @@ impl RepoMirrorStore for BddSucceedingMirror {
     fn remove_job_repo_keep_artifacts(&self, _job_id: &str) -> bool {
         true
     }
+    fn job_repo_path(&self, job_id: &str) -> String {
+        format!("/tmp/test-jobs/{job_id}/repo")
+    }
 }
 
 struct BddFailingMirror;
@@ -91,6 +94,9 @@ impl RepoMirrorStore for BddFailingMirror {
     }
     fn remove_job_repo_keep_artifacts(&self, _job_id: &str) -> bool {
         false
+    }
+    fn job_repo_path(&self, job_id: &str) -> String {
+        format!("/tmp/test-jobs/{job_id}/repo")
     }
 }
 
@@ -151,8 +157,8 @@ fn ld_driver(world: &mut QuectoWorld) -> &mut BddDriver {
 }
 
 fn ld_mock_runtime(world: &mut QuectoWorld) -> &mut MockWorkerRuntime {
-    let rt_box = ld_driver(world).runtime_box_mut();
-    (**rt_box)
+    ld_driver(world)
+        .runtime_mut()
         .as_any_mut()
         .downcast_mut::<MockWorkerRuntime>()
         .expect("runtime should be MockWorkerRuntime")

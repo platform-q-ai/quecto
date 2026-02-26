@@ -71,6 +71,9 @@ impl RepoMirrorStore for SucceedingMirror {
     fn remove_job_repo_keep_artifacts(&self, _job_id: &str) -> bool {
         true
     }
+    fn job_repo_path(&self, job_id: &str) -> String {
+        format!("/tmp/test-jobs/{job_id}/repo")
+    }
 }
 
 struct FailingMirror;
@@ -111,6 +114,9 @@ impl RepoMirrorStore for FailingMirror {
     }
     fn remove_job_repo_keep_artifacts(&self, _job_id: &str) -> bool {
         false
+    }
+    fn job_repo_path(&self, job_id: &str) -> String {
+        format!("/tmp/test-jobs/{job_id}/repo")
     }
 }
 

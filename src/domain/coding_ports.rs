@@ -115,6 +115,12 @@ pub trait RepoMirrorStore {
 
     /// Remove a job's repo directory but preserve its artifact directory.
     fn remove_job_repo_keep_artifacts(&self, job_id: &str) -> bool;
+
+    /// Return the absolute path to the cloned repo directory for a job.
+    ///
+    /// This allows the application layer to pass the correct `job_dir`
+    /// to `WorkerLaunchConfig` without hardcoding filesystem paths.
+    fn job_repo_path(&self, job_id: &str) -> String;
 }
 
 // ============================================================================
