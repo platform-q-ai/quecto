@@ -349,6 +349,10 @@ fn build_nsjail_command(
     if options.network_passthrough {
         cmd.arg("--disable_clone_newnet");
     }
+    let uses_cgroups = options.memory_limit_mb.is_some() || options.pid_limit.is_some();
+    if uses_cgroups {
+        cmd.arg("--detect_cgroupv2");
+    }
     if let Some(mem) = options.memory_limit_mb {
         cmd.arg("--cgroup_mem_max")
             .arg((mem * 1024 * 1024).to_string());

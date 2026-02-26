@@ -230,6 +230,7 @@ pub fn build_nsjail_worker_args(
     nsjail_args.push("/:/host".to_string());
 
     // Resource limits
+    nsjail_args.push("--detect_cgroupv2".to_string());
     nsjail_args.push("--rlimit_as".to_string());
     nsjail_args.push(launch.max_memory_mb.to_string());
     nsjail_args.push("--rlimit_cpu".to_string());
