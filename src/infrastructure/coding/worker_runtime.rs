@@ -9,8 +9,6 @@ use std::mem;
 use crate::domain::coding_ports::{
     WorkerEnvVar, WorkerEvent, WorkerLaunchConfig, WorkerRuntime, WorkerStatus,
 };
-use crate::infrastructure::tools::exec::probe_cgroup_writable;
-
 /// Minimal PATH and locale variables for the worker environment.
 const WORKER_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const WORKER_LANG: &str = "C.UTF-8";
@@ -47,12 +45,11 @@ pub struct MockWorkerRuntime {
 }
 
 impl MockWorkerRuntime {
+    /// Create a mock runtime.  Defaults to `cgroups_available = true` so that
+    /// nsjail arg assertions pass without touching real sysfs.  Use
+    /// `with_cgroups(false)` to simulate a cgroup-less host.
     pub fn new() -> Self {
-        Self {
-            workers: HashMap::new(),
-            next_pid: 10000,
-            cgroups_available: probe_cgroup_writable(),
-        }
+        Self::with_cgroups(true)
     }
 
     /// Create a mock runtime with explicit cgroup availability.
@@ -148,6 +145,10 @@ impl MockWorkerRuntime {
         if cgroups_available {
             args.push("--detect_cgroupv2".to_string());
             args.push("--cgroup_pids_max".to_string());
+            args.push(config.max_pids.to_string());
+        } else {
+            // Fallback: use rlimit for PID limit when cgroups are unavailable.
+            args.push("--rlimit_nproc".to_string());
             args.push(config.max_pids.to_string());
         }
 

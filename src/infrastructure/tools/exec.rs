@@ -289,6 +289,36 @@ fn build_command(
     build_shell_command(&tool.workspace, command, source_env)
 }
 
+/// Append cgroup and/or rlimit resource-limit flags to an nsjail command.
+fn append_resource_limits(cmd: &mut tokio::process::Command, options: &NsjailOptions) {
+    if options.cgroups_available {
+        let uses_cgroups = options.memory_limit_mb.is_some() || options.pid_limit.is_some();
+        if uses_cgroups {
+            cmd.arg("--detect_cgroupv2");
+        }
+        if let Some(mem) = options.memory_limit_mb {
+            cmd.arg("--cgroup_mem_max")
+                .arg((mem * 1024 * 1024).to_string());
+        }
+        if let Some(pid) = options.pid_limit {
+            cmd.arg("--cgroup_pids_max").arg(pid.to_string());
+        }
+    } else if let Some(pid) = options.pid_limit {
+        // Fallback: --rlimit_nproc caps fork count when cgroups are unavailable.
+        cmd.arg("--rlimit_nproc").arg(pid.to_string());
+    }
+    // rlimit-based resource caps always apply (cgroup or not).
+    if let Some(mem) = options.memory_limit_mb {
+        cmd.arg("--rlimit_as").arg(mem.to_string());
+    }
+    if let Some(cpu) = options.cpu_time_limit_secs {
+        cmd.arg("--rlimit_cpu").arg(cpu.to_string());
+    }
+    if let Some(wall) = options.wall_time_limit_secs {
+        cmd.arg("--time_limit").arg(wall.to_string());
+    }
+}
+
 fn build_nsjail_command(
     workspace: &Path,
     command: &str,
@@ -311,25 +341,7 @@ fn build_nsjail_command(
     if options.network_passthrough {
         cmd.arg("--disable_clone_newnet");
     }
-    if options.cgroups_available {
-        let uses_cgroups = options.memory_limit_mb.is_some() || options.pid_limit.is_some();
-        if uses_cgroups {
-            cmd.arg("--detect_cgroupv2");
-        }
-        if let Some(mem) = options.memory_limit_mb {
-            cmd.arg("--cgroup_mem_max")
-                .arg((mem * 1024 * 1024).to_string());
-        }
-        if let Some(pid) = options.pid_limit {
-            cmd.arg("--cgroup_pids_max").arg(pid.to_string());
-        }
-    }
-    if let Some(cpu) = options.cpu_time_limit_secs {
-        cmd.arg("--rlimit_cpu").arg(cpu.to_string());
-    }
-    if let Some(wall) = options.wall_time_limit_secs {
-        cmd.arg("--time_limit").arg(wall.to_string());
-    }
+    append_resource_limits(&mut cmd, options);
 
     cmd.arg("--")
         .arg("/bin/sh")
@@ -526,9 +538,17 @@ fn nsjail_supports_flag(binary: &str, flag: &str) -> bool {
 /// the default cgroupv2 mount (`/sys/fs/cgroup`), which means nsjail will be
 /// able to apply `--cgroup_mem_max` / `--cgroup_pids_max` limits.
 ///
+/// The result is cached for the process lifetime via `OnceLock` — cgroup
+/// writability cannot change while the process is running.
+///
 /// When this returns `false` the caller should omit cgroup flags and rely on
-/// rlimits (`--rlimit_as`, `--rlimit_cpu`) instead.
+/// rlimits (`--rlimit_as`, `--rlimit_cpu`, `--rlimit_nproc`) instead.
 pub(crate) fn probe_cgroup_writable() -> bool {
+    static RESULT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *RESULT.get_or_init(probe_cgroup_writable_inner)
+}
+
+fn probe_cgroup_writable_inner() -> bool {
     let probe_dir = format!(
         "{}/quecto_probe_{}",
         CGROUP_V2_DEFAULT_MOUNT,
@@ -538,7 +558,14 @@ pub(crate) fn probe_cgroup_writable() -> bool {
     if std::fs::create_dir(path).is_err() {
         return false;
     }
-    let _ = std::fs::remove_dir(path);
+    if let Err(e) = std::fs::remove_dir(path) {
+        tracing::warn!(
+            target: "exec",
+            "failed to remove cgroup probe directory {}: {}",
+            probe_dir,
+            e
+        );
+    }
     true
 }
 

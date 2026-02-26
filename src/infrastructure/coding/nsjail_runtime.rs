@@ -245,6 +245,10 @@ pub fn build_nsjail_worker_args(
         nsjail_args.push("--detect_cgroupv2".to_string());
         nsjail_args.push("--cgroup_pids_max".to_string());
         nsjail_args.push(launch.max_pids.to_string());
+    } else {
+        // Fallback: use rlimit for PID limit when cgroups are unavailable.
+        nsjail_args.push("--rlimit_nproc".to_string());
+        nsjail_args.push(launch.max_pids.to_string());
     }
 
     // Security
