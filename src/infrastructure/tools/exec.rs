@@ -61,7 +61,7 @@ impl Default for NsjailOptions {
             cpu_time_limit_secs: Some(DEFAULT_NSJAIL_CPU_TIME_LIMIT_SECS),
             wall_time_limit_secs: Some(DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS),
             die_with_parent: true,
-            allow_without_die_with_parent: false,
+            allow_without_die_with_parent: true,
             additional_trusted_paths: Vec::new(),
         }
     }
