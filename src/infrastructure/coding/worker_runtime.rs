@@ -126,6 +126,7 @@ impl MockWorkerRuntime {
         args.push("/:/host".to_string());
 
         // Resource limits
+        args.push("--detect_cgroupv2".to_string());
         args.push("--rlimit_as".to_string());
         args.push(config.max_memory_mb.to_string());
         args.push("--rlimit_cpu".to_string());
