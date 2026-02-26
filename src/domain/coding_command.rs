@@ -58,6 +58,10 @@ pub struct CreateResponse {
 #[serde(deny_unknown_fields)]
 pub struct ImportRequest {
     /// Remote URL (HTTPS or SSH) to clone from.
+    ///
+    /// URL safety validation (scheme allowlist, SSRF prevention) is deferred
+    /// to the infrastructure layer (`is_safe_import_url`) rather than the
+    /// domain, because the set of safe schemes is an infrastructure concern.
     pub url: String,
     /// Optional local name. Defaults to the repo name derived from the URL.
     #[serde(default)]

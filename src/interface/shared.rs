@@ -156,6 +156,10 @@ fn lock_driver<R: RepoValidator, S: SkillResolver>(
 }
 
 impl<R: RepoValidator + Send, S: SkillResolver + Send> CodingJobService for DriverJobService<R, S> {
+    // SAFETY: exists() → create()/import() is serialized by the std::sync::Mutex
+    // in CodingJobTool (only one thread can call service methods at a time).
+    // Additionally, create() uses create_dir() which fails atomically on
+    // existing directories, providing a second layer of protection.
     fn create_repo(&mut self, req: CreateRequest) -> Result<CreateResponse, CommandError> {
         self.repo_creator.validate_name(&req.name)?;
         if self.repo_creator.exists(&req.name) {

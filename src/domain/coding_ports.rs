@@ -271,8 +271,14 @@ pub trait CodingJobService: Send {
 
 /// Port for creating and importing repositories in the workspace.
 ///
-/// The application layer calls through this trait; infrastructure provides
-/// the concrete git operations.
+/// The composition root (interface layer) calls through this trait;
+/// infrastructure provides the concrete git operations.
+///
+/// SAFETY: `exists()` → `create()`/`import()` has a TOCTOU window.
+/// In production this is serialized by the `std::sync::Mutex` wrapping
+/// `DriverJobService` in `CodingJobTool`. If the locking strategy changes
+/// (e.g. to `tokio::sync::Mutex`), callers must ensure serialization or
+/// make `create()`/`import()` atomic (e.g. exclusive `create_dir`).
 pub trait RepoCreator: Send {
     /// Create a new empty repo with an initial commit.
     fn create(&self, name: &str, description: Option<&str>) -> Result<String, CommandError>;
