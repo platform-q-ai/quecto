@@ -1070,6 +1070,19 @@ pub struct QuectoWorld {
     >,
     /// Job IDs created via the lifecycle driver
     pub ld_job_ids: Vec<String>,
+    // --- E2E coding lifecycle fields ---
+    /// Temp dir for e2e coding job directory (kept alive for test duration)
+    pub _e2e_coding_job_temp: Option<TempDir>,
+    /// Path to the job directory for worker subprocess tests
+    pub e2e_coding_job_dir: Option<PathBuf>,
+    /// Mock text for worker subprocess LLM responses
+    pub e2e_coding_worker_mock_text: Option<String>,
+    /// Worker subprocess exit code
+    pub e2e_coding_worker_exit_code: Option<i32>,
+    /// Worker subprocess stdout
+    pub e2e_coding_worker_stdout: Option<String>,
+    /// Worker subprocess stderr
+    pub e2e_coding_worker_stderr: Option<String>,
 }
 
 fn push_coding_event(
@@ -1372,6 +1385,7 @@ mod coding_worker_tools_steps;
 mod config_steps;
 mod context_pruning_steps;
 mod cron_steps;
+mod e2e_coding_lifecycle_steps;
 mod e2e_steps;
 mod gateway_steps;
 mod heartbeat_steps;
