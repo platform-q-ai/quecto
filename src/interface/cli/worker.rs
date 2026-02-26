@@ -4,7 +4,15 @@
 //! tool registry and event emitter, and runs the coding agent loop.
 //! Designed to run inside nsjail with JSON Lines IPC.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use crate::application::worker_loop::{WorkerLoopConfig, WorkerLoopParams, run_worker_loop};
+use crate::domain::provider::LlmProvider;
+use crate::infrastructure::coding::worker_event_emitter::{
+    EmitterConfig, WorkerEventEmitter, WorkerEventSinkAdapter,
+};
+use crate::infrastructure::coding::worker_tool_wrappers::build_worker_tool_registry;
 
 // ── Parsed arguments ────────────────────────────────────────────────────
 
@@ -123,10 +131,21 @@ pub fn validate_job_dir(job_dir: &str) -> Result<(), String> {
 
 // ── Worker command handler ──────────────────────────────────────────────
 
+/// Default model when none is specified via --model flag.
+const DEFAULT_WORKER_MODEL: &str = "gpt-4o";
+/// Default max iterations when --max-iterations is not specified.
+const DEFAULT_MAX_ITERATIONS: u32 = 25;
+
+/// Injected dependencies for `cmd_worker`. In production the caller
+/// builds a real provider; in tests a mock is injected.
+pub struct WorkerDeps {
+    pub provider: Arc<dyn LlmProvider>,
+}
+
 /// Handle the `quecto worker` subcommand.
 ///
-/// Parses arguments, validates the job directory, and exits.
-/// The full agent loop integration is wired in a later feature.
+/// Parses arguments, validates the job directory, and runs the agent
+/// loop stub. JSON Lines output goes into `stdout`; errors into `stderr`.
 pub fn cmd_worker(args: &[String], stdout: &mut String, stderr: &mut String) -> i32 {
     let worker_args = match parse_worker_args(args) {
         Ok(a) => a,
@@ -141,13 +160,107 @@ pub fn cmd_worker(args: &[String], stdout: &mut String, stderr: &mut String) -> 
         return 1;
     }
 
-    // For now, emit a startup message. Full agent loop is wired in
-    // the coordinator-worker lifecycle feature.
+    // Without injected deps, emit a plain startup message (stub mode).
     stdout.push_str(&format!(
         "worker: ready (run={}, job={}, dir={})\n",
         worker_args.run_id, worker_args.job_id, worker_args.job_dir,
     ));
     0
+}
+
+/// Handle `quecto worker` with injected dependencies — runs the full
+/// agent loop and writes JSON Lines to `stdout`.
+pub fn cmd_worker_with_deps(
+    args: &[String],
+    deps: WorkerDeps,
+    stdout: &mut String,
+    stderr: &mut String,
+) -> i32 {
+    let worker_args = match parse_worker_args(args) {
+        Ok(a) => a,
+        Err(e) => {
+            stderr.push_str(&format!("worker: {e}\n"));
+            return 1;
+        }
+    };
+
+    if let Err(e) = validate_job_dir(&worker_args.job_dir) {
+        stderr.push_str(&format!("worker: {e}\n"));
+        return 1;
+    }
+
+    run_worker_with_args(&worker_args, deps.provider, stdout, stderr)
+}
+
+/// Run the worker agent loop with parsed args and an LLM provider.
+///
+/// Builds the event emitter, tool registry, and worker loop config,
+/// then runs `run_worker_loop` in a tokio runtime. JSON Lines are
+/// captured in `stdout`; fatal startup errors go to `stderr`.
+fn run_worker_with_args(
+    args: &WorkerArgs,
+    provider: Arc<dyn LlmProvider>,
+    stdout: &mut String,
+    stderr: &mut String,
+) -> i32 {
+    // Build event emitter writing to a buffer (we'll copy to stdout)
+    let emitter_buf: Vec<u8> = Vec::new();
+    let emitter = WorkerEventEmitter::new(
+        EmitterConfig {
+            run_id: args.run_id.clone(),
+            job_id: args.job_id.clone(),
+            version: "1.0".to_string(),
+        },
+        emitter_buf,
+    );
+    let sink = Arc::new(WorkerEventSinkAdapter::new(emitter));
+
+    // Build tool registry
+    let job_dir = PathBuf::from(&args.job_dir);
+    let tool_registry = build_worker_tool_registry(job_dir);
+
+    // Build config
+    let config = WorkerLoopConfig {
+        run_id: args.run_id.clone(),
+        job_id: args.job_id.clone(),
+        job_dir: args.job_dir.clone(),
+        goal: args.goal.clone(),
+        model: args
+            .model
+            .clone()
+            .unwrap_or(DEFAULT_WORKER_MODEL.to_string()),
+        max_iterations: args.max_iterations.unwrap_or(DEFAULT_MAX_ITERATIONS),
+        ..WorkerLoopConfig::default()
+    };
+
+    let params = WorkerLoopParams {
+        config,
+        provider,
+        sink: sink.clone(),
+    };
+
+    // Run the agent loop in a tokio runtime
+    let rt = match super::build_tokio_runtime() {
+        Ok(rt) => rt,
+        Err(e) => {
+            stderr.push_str(&format!("worker: failed to build runtime: {e}\n"));
+            return 1;
+        }
+    };
+
+    let result = rt.block_on(run_worker_loop(params, Box::new(tool_registry)));
+
+    // Copy emitter output to stdout
+    if let Some(buf) = sink.writer_snapshot() {
+        match String::from_utf8(buf) {
+            Ok(json_lines) => stdout.push_str(&json_lines),
+            Err(e) => {
+                stderr.push_str(&format!("worker: non-UTF8 output: {e}\n"));
+            }
+        }
+    }
+
+    result.exit_code
 }
 
 /// Help text for the worker subcommand.
@@ -156,136 +269,5 @@ pub fn worker_help_text() -> &'static str {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn args(flags: &[(&str, &str)]) -> Vec<String> {
-        flags
-            .iter()
-            .flat_map(|(k, v)| vec![k.to_string(), v.to_string()])
-            .collect()
-    }
-
-    #[test]
-    fn test_parse_all_required() {
-        let a = args(&[
-            ("--run-id", "r1"),
-            ("--job-id", "j1"),
-            ("--job-dir", "/tmp/x"),
-            ("--goal", "fix"),
-        ]);
-        let result = parse_worker_args(&a).unwrap();
-        assert_eq!(result.run_id, "r1");
-        assert_eq!(result.job_id, "j1");
-        assert_eq!(result.job_dir, "/tmp/x");
-        assert_eq!(result.goal, "fix");
-        assert!(result.model.is_none());
-        assert!(result.max_iterations.is_none());
-    }
-
-    #[test]
-    fn test_parse_with_optional() {
-        let a = args(&[
-            ("--run-id", "r1"),
-            ("--job-id", "j1"),
-            ("--job-dir", "/tmp/x"),
-            ("--goal", "fix"),
-            ("--model", "gpt-4o"),
-            ("--max-iterations", "50"),
-        ]);
-        let result = parse_worker_args(&a).unwrap();
-        assert_eq!(result.model, Some("gpt-4o".to_string()));
-        assert_eq!(result.max_iterations, Some(50));
-    }
-
-    #[test]
-    fn test_missing_run_id() {
-        let a = args(&[
-            ("--job-id", "j1"),
-            ("--job-dir", "/tmp/x"),
-            ("--goal", "fix"),
-        ]);
-        let err = parse_worker_args(&a).unwrap_err();
-        assert!(err.contains("run-id"));
-    }
-
-    #[test]
-    fn test_missing_job_id() {
-        let a = args(&[
-            ("--run-id", "r1"),
-            ("--job-dir", "/tmp/x"),
-            ("--goal", "fix"),
-        ]);
-        let err = parse_worker_args(&a).unwrap_err();
-        assert!(err.contains("job-id"));
-    }
-
-    #[test]
-    fn test_missing_job_dir() {
-        let a = args(&[("--run-id", "r1"), ("--job-id", "j1"), ("--goal", "fix")]);
-        let err = parse_worker_args(&a).unwrap_err();
-        assert!(err.contains("job-dir"));
-    }
-
-    #[test]
-    fn test_missing_goal() {
-        let a = args(&[
-            ("--run-id", "r1"),
-            ("--job-id", "j1"),
-            ("--job-dir", "/tmp/x"),
-        ]);
-        let err = parse_worker_args(&a).unwrap_err();
-        assert!(err.contains("goal"));
-    }
-
-    #[test]
-    fn test_unknown_flag() {
-        let a = args(&[
-            ("--run-id", "r1"),
-            ("--job-id", "j1"),
-            ("--job-dir", "/tmp/x"),
-            ("--goal", "fix"),
-            ("--bad-flag", "oops"),
-        ]);
-        let err = parse_worker_args(&a).unwrap_err();
-        assert!(err.contains("bad-flag"));
-    }
-
-    #[test]
-    fn test_validate_existing_dir() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        assert!(validate_job_dir(tmp.path().to_str().unwrap()).is_ok());
-    }
-
-    #[test]
-    fn test_validate_nonexistent_dir() {
-        let err = validate_job_dir("/tmp/nonexistent-quecto-test-99999").unwrap_err();
-        assert!(err.contains("does not exist"));
-    }
-
-    #[test]
-    fn test_cmd_worker_success() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let a = args(&[
-            ("--run-id", "r1"),
-            ("--job-id", "j1"),
-            ("--job-dir", tmp.path().to_str().unwrap()),
-            ("--goal", "fix"),
-        ]);
-        let mut stdout = String::new();
-        let mut stderr = String::new();
-        let code = cmd_worker(&a, &mut stdout, &mut stderr);
-        assert_eq!(code, 0);
-        assert!(stdout.contains("ready"));
-    }
-
-    #[test]
-    fn test_cmd_worker_bad_args() {
-        let a: Vec<String> = vec![];
-        let mut stdout = String::new();
-        let mut stderr = String::new();
-        let code = cmd_worker(&a, &mut stdout, &mut stderr);
-        assert_eq!(code, 1);
-        assert!(!stderr.is_empty());
-    }
-}
+#[path = "worker_tests.rs"]
+mod tests;
