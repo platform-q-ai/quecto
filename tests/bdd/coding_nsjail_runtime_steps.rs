@@ -28,6 +28,7 @@ fn ensure_nrt_runtime(world: &mut QuectoWorld) {
             nsjail_binary: "nsjail".to_string(),
             quecto_binary: "/usr/local/bin/quecto".to_string(),
             command_override: None,
+            cgroups_available: true,
         };
         world.nrt_runtime = Some(NsjailWorkerRuntime::new(config));
     }
@@ -50,6 +51,7 @@ fn nrt_runtime_config(world: &QuectoWorld) -> NsjailRuntimeConfig {
         nsjail_binary: "nsjail".to_string(),
         quecto_binary: rt.quecto_binary().to_string(),
         command_override: None,
+        cgroups_available: true,
     }
 }
 

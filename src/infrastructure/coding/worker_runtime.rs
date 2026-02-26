@@ -9,7 +9,6 @@ use std::mem;
 use crate::domain::coding_ports::{
     WorkerEnvVar, WorkerEvent, WorkerLaunchConfig, WorkerRuntime, WorkerStatus,
 };
-
 /// Minimal PATH and locale variables for the worker environment.
 const WORKER_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const WORKER_LANG: &str = "C.UTF-8";
@@ -42,13 +41,24 @@ struct WorkerState {
 pub struct MockWorkerRuntime {
     workers: HashMap<u32, WorkerState>,
     next_pid: u32,
+    cgroups_available: bool,
 }
 
 impl MockWorkerRuntime {
+    /// Create a mock runtime.  Defaults to `cgroups_available = true` so that
+    /// nsjail arg assertions pass without touching real sysfs.  Use
+    /// `with_cgroups(false)` to simulate a cgroup-less host.
     pub fn new() -> Self {
+        Self::with_cgroups(true)
+    }
+
+    /// Create a mock runtime with explicit cgroup availability.
+    /// Used by tests and BDD steps that assert on nsjail arg presence.
+    pub fn with_cgroups(cgroups_available: bool) -> Self {
         Self {
             workers: HashMap::new(),
             next_pid: 10000,
+            cgroups_available,
         }
     }
 
@@ -112,7 +122,7 @@ impl MockWorkerRuntime {
     }
 
     /// Build nsjail arguments for the given configuration.
-    fn build_nsjail_args(config: &WorkerLaunchConfig) -> Vec<String> {
+    fn build_nsjail_args(config: &WorkerLaunchConfig, cgroups_available: bool) -> Vec<String> {
         let mut args = Vec::new();
         args.push("--mode".to_string());
         args.push("o".to_string());
@@ -126,15 +136,21 @@ impl MockWorkerRuntime {
         args.push("/:/host".to_string());
 
         // Resource limits
-        args.push("--detect_cgroupv2".to_string());
         args.push("--rlimit_as".to_string());
         args.push(config.max_memory_mb.to_string());
         args.push("--rlimit_cpu".to_string());
         args.push(config.max_cpu_seconds.to_string());
         args.push("--time_limit".to_string());
         args.push(config.max_wall_seconds.to_string());
-        args.push("--cgroup_pids_max".to_string());
-        args.push(config.max_pids.to_string());
+        if cgroups_available {
+            args.push("--detect_cgroupv2".to_string());
+            args.push("--cgroup_pids_max".to_string());
+            args.push(config.max_pids.to_string());
+        } else {
+            // Fallback: use rlimit for PID limit when cgroups are unavailable.
+            args.push("--rlimit_nproc".to_string());
+            args.push(config.max_pids.to_string());
+        }
 
         // Security
         args.push("--no_new_privs".to_string());
@@ -194,7 +210,7 @@ impl WorkerRuntime for MockWorkerRuntime {
         let pid = self.next_pid;
         self.next_pid += 1;
 
-        let nsjail_args = Self::build_nsjail_args(config);
+        let nsjail_args = Self::build_nsjail_args(config, self.cgroups_available);
         let env = Self::build_worker_env(config);
 
         self.workers.insert(
@@ -265,7 +281,7 @@ impl WorkerRuntime for MockWorkerRuntime {
     }
 
     fn nsjail_args(&self, config: &WorkerLaunchConfig) -> Vec<String> {
-        Self::build_nsjail_args(config)
+        Self::build_nsjail_args(config, self.cgroups_available)
     }
 
     fn worker_env(&self, config: &WorkerLaunchConfig) -> Vec<WorkerEnvVar> {
@@ -394,7 +410,7 @@ mod tests {
 
     #[test]
     fn test_nsjail_args() {
-        let rt = MockWorkerRuntime::new();
+        let rt = MockWorkerRuntime::with_cgroups(true);
         let args = rt.nsjail_args(&default_config());
         assert!(args.contains(&"--no_new_privs".to_string()));
         assert!(args.contains(&"--seccomp_string".to_string()));

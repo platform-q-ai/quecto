@@ -25,6 +25,7 @@ const DEFAULT_NSJAIL_CPU_TIME_LIMIT_SECS: u64 = 30;
 const DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS: u64 = 30;
 const TRUSTED_NSJAIL_PATHS: &[&str] = &["/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin"];
 const NSJAIL_HELP_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
+const CGROUP_V2_DEFAULT_MOUNT: &str = "/sys/fs/cgroup";
 const EXEC_ENV_ALLOWLIST: &[&str] = &[
     "HOME", "PATH", "LANG", "TZ", "TERM", "SHELL", "USER", "LOGNAME", "TMPDIR",
 ];
@@ -45,6 +46,10 @@ pub struct NsjailOptions {
     pub wall_time_limit_secs: Option<u64>,
     pub die_with_parent: bool,
     pub allow_without_die_with_parent: bool,
+    /// Whether cgroup-based limits (memory, PIDs) are available.
+    /// Probed at startup by attempting mkdir under the cgroupv2 mount.
+    /// When false, cgroup flags are omitted and only rlimits are used.
+    pub cgroups_available: bool,
     /// Additional directories whose binaries are trusted for nsjail resolution.
     /// Production code leaves this empty. Tests add temp directories here so that
     /// fake nsjail scripts in non-standard locations can pass validation.
@@ -62,6 +67,7 @@ impl Default for NsjailOptions {
             wall_time_limit_secs: Some(DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS),
             die_with_parent: true,
             allow_without_die_with_parent: true,
+            cgroups_available: true,
             additional_trusted_paths: Vec::new(),
         }
     }
@@ -142,51 +148,7 @@ impl ExecTool {
         sandbox: Arc<Sandbox>,
         mut options: ExecOptions,
     ) -> Self {
-        let mut warning = None;
-        let mut startup_error = None;
-        let mut mode = options.isolation_mode;
-        if mode == ExecIsolationMode::Nsjail {
-            if let Some(resolved_binary) = resolve_nsjail_binary(
-                &options.nsjail.binary,
-                &options.nsjail.additional_trusted_paths,
-            ) {
-                options.nsjail.binary = resolved_binary;
-                if options.nsjail.die_with_parent
-                    && !nsjail_supports_flag(&options.nsjail.binary, "--die_with_parent")
-                {
-                    if options.nsjail.allow_without_die_with_parent {
-                        options.nsjail.die_with_parent = false;
-                        warning = Some(format!(
-                            "nsjail binary '{}' does not support --die_with_parent; continuing without it",
-                            options.nsjail.binary
-                        ));
-                        tracing::warn!(target: "exec", "{}", warning.as_deref().unwrap_or_default());
-                    } else {
-                        startup_error = Some(format!(
-                            "nsjail binary '{}' does not support required --die_with_parent; set tools.exec.allow_without_die_with_parent=true to allow downgrade",
-                            options.nsjail.binary
-                        ));
-                        tracing::error!(target: "exec", "{}", startup_error.as_deref().unwrap_or_default());
-                    }
-                }
-            } else {
-                let missing = format!(
-                    "nsjail binary '{}' is not available or not executable",
-                    options.nsjail.binary
-                );
-                if options.allow_native_fallback {
-                    mode = ExecIsolationMode::Native;
-                    warning = Some(format!("{}; falling back to native exec", missing));
-                    tracing::warn!(target: "exec", "{}", warning.as_deref().unwrap_or_default());
-                } else {
-                    startup_error = Some(format!(
-                        "{}; set tools.exec.allow_native_fallback=true to permit native fallback",
-                        missing
-                    ));
-                    tracing::error!(target: "exec", "{}", startup_error.as_deref().unwrap_or_default());
-                }
-            }
-        }
+        let (mode, warning, startup_error) = validate_nsjail_startup(&mut options);
         Self {
             workspace,
             sandbox,
@@ -327,6 +289,36 @@ fn build_command(
     build_shell_command(&tool.workspace, command, source_env)
 }
 
+/// Append cgroup and/or rlimit resource-limit flags to an nsjail command.
+fn append_resource_limits(cmd: &mut tokio::process::Command, options: &NsjailOptions) {
+    if options.cgroups_available {
+        let uses_cgroups = options.memory_limit_mb.is_some() || options.pid_limit.is_some();
+        if uses_cgroups {
+            cmd.arg("--detect_cgroupv2");
+        }
+        if let Some(mem) = options.memory_limit_mb {
+            cmd.arg("--cgroup_mem_max")
+                .arg((mem * 1024 * 1024).to_string());
+        }
+        if let Some(pid) = options.pid_limit {
+            cmd.arg("--cgroup_pids_max").arg(pid.to_string());
+        }
+    } else if let Some(pid) = options.pid_limit {
+        // Fallback: --rlimit_nproc caps fork count when cgroups are unavailable.
+        cmd.arg("--rlimit_nproc").arg(pid.to_string());
+    }
+    // rlimit-based resource caps always apply (cgroup or not).
+    if let Some(mem) = options.memory_limit_mb {
+        cmd.arg("--rlimit_as").arg(mem.to_string());
+    }
+    if let Some(cpu) = options.cpu_time_limit_secs {
+        cmd.arg("--rlimit_cpu").arg(cpu.to_string());
+    }
+    if let Some(wall) = options.wall_time_limit_secs {
+        cmd.arg("--time_limit").arg(wall.to_string());
+    }
+}
+
 fn build_nsjail_command(
     workspace: &Path,
     command: &str,
@@ -349,23 +341,7 @@ fn build_nsjail_command(
     if options.network_passthrough {
         cmd.arg("--disable_clone_newnet");
     }
-    let uses_cgroups = options.memory_limit_mb.is_some() || options.pid_limit.is_some();
-    if uses_cgroups {
-        cmd.arg("--detect_cgroupv2");
-    }
-    if let Some(mem) = options.memory_limit_mb {
-        cmd.arg("--cgroup_mem_max")
-            .arg((mem * 1024 * 1024).to_string());
-    }
-    if let Some(pid) = options.pid_limit {
-        cmd.arg("--cgroup_pids_max").arg(pid.to_string());
-    }
-    if let Some(cpu) = options.cpu_time_limit_secs {
-        cmd.arg("--rlimit_cpu").arg(cpu.to_string());
-    }
-    if let Some(wall) = options.wall_time_limit_secs {
-        cmd.arg("--time_limit").arg(wall.to_string());
-    }
+    append_resource_limits(&mut cmd, options);
 
     cmd.arg("--")
         .arg("/bin/sh")
@@ -385,6 +361,72 @@ fn build_nsjail_command(
         cmd.env("PATH", path);
     }
     cmd
+}
+
+/// Validate nsjail binary, die-with-parent support, and cgroup availability.
+/// Returns the resolved isolation mode, optional warning, and optional error.
+fn validate_nsjail_startup(
+    options: &mut ExecOptions,
+) -> (ExecIsolationMode, Option<String>, Option<String>) {
+    let mut warning = None;
+    let mut startup_error = None;
+    let mut mode = options.isolation_mode;
+    if mode != ExecIsolationMode::Nsjail {
+        return (mode, warning, startup_error);
+    }
+    let resolved = resolve_nsjail_binary(
+        &options.nsjail.binary,
+        &options.nsjail.additional_trusted_paths,
+    );
+    let Some(resolved_binary) = resolved else {
+        let missing = format!(
+            "nsjail binary '{}' is not available or not executable",
+            options.nsjail.binary
+        );
+        if options.allow_native_fallback {
+            mode = ExecIsolationMode::Native;
+            warning = Some(format!("{}; falling back to native exec", missing));
+            tracing::warn!(target: "exec", "{}", warning.as_deref().unwrap_or_default());
+        } else {
+            startup_error = Some(format!(
+                "{}; set tools.exec.allow_native_fallback=true to permit native fallback",
+                missing
+            ));
+            tracing::error!(target: "exec", "{}", startup_error.as_deref().unwrap_or_default());
+        }
+        return (mode, warning, startup_error);
+    };
+    options.nsjail.binary = resolved_binary;
+    if options.nsjail.die_with_parent
+        && !nsjail_supports_flag(&options.nsjail.binary, "--die_with_parent")
+    {
+        if options.nsjail.allow_without_die_with_parent {
+            options.nsjail.die_with_parent = false;
+            warning = Some(format!(
+                "nsjail binary '{}' does not support --die_with_parent; continuing without it",
+                options.nsjail.binary
+            ));
+            tracing::warn!(target: "exec", "{}", warning.as_deref().unwrap_or_default());
+        } else {
+            startup_error = Some(format!(
+                "nsjail binary '{}' does not support required --die_with_parent; set tools.exec.allow_without_die_with_parent=true to allow downgrade",
+                options.nsjail.binary
+            ));
+            tracing::error!(target: "exec", "{}", startup_error.as_deref().unwrap_or_default());
+        }
+    }
+    let wants_cgroups =
+        options.nsjail.memory_limit_mb.is_some() || options.nsjail.pid_limit.is_some();
+    if wants_cgroups && !probe_cgroup_writable() {
+        options.nsjail.cgroups_available = false;
+        let msg =
+            "cgroup directory is not writable; nsjail cgroup limits disabled, using rlimits only";
+        tracing::warn!(target: "exec", "{}", msg);
+        if warning.is_none() {
+            warning = Some(msg.to_string());
+        }
+    }
+    (mode, warning, startup_error)
 }
 
 fn resolve_nsjail_binary(binary: &str, extra_trusted: &[PathBuf]) -> Option<String> {
@@ -489,6 +531,42 @@ fn nsjail_supports_flag(binary: &str, flag: &str) -> bool {
         text.push_str(&buf);
     }
     text.contains(flag)
+}
+
+/// Probe whether the current user can create cgroup directories under the
+/// cgroupv2 mount point.  Returns `true` if `mkdir` + `rmdir` succeed under
+/// the default cgroupv2 mount (`/sys/fs/cgroup`), which means nsjail will be
+/// able to apply `--cgroup_mem_max` / `--cgroup_pids_max` limits.
+///
+/// The result is cached for the process lifetime via `OnceLock` — cgroup
+/// writability cannot change while the process is running.
+///
+/// When this returns `false` the caller should omit cgroup flags and rely on
+/// rlimits (`--rlimit_as`, `--rlimit_cpu`, `--rlimit_nproc`) instead.
+pub(crate) fn probe_cgroup_writable() -> bool {
+    static RESULT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *RESULT.get_or_init(probe_cgroup_writable_inner)
+}
+
+fn probe_cgroup_writable_inner() -> bool {
+    let probe_dir = format!(
+        "{}/quecto_probe_{}",
+        CGROUP_V2_DEFAULT_MOUNT,
+        std::process::id()
+    );
+    let path = Path::new(&probe_dir);
+    if std::fs::create_dir(path).is_err() {
+        return false;
+    }
+    if let Err(e) = std::fs::remove_dir(path) {
+        tracing::warn!(
+            target: "exec",
+            "failed to remove cgroup probe directory {}: {}",
+            probe_dir,
+            e
+        );
+    }
+    true
 }
 
 fn is_executable_file(path: &Path) -> bool {
