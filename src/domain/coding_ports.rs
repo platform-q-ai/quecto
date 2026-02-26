@@ -170,6 +170,9 @@ pub struct WorkerEnvVar {
 ///
 /// The coordinator uses this trait to launch, monitor, communicate with,
 /// and tear down worker processes.
+///
+/// Includes `as_any_mut()` to support safe downcasting in test code
+/// (e.g. to access `MockWorkerRuntime`-specific injection methods).
 pub trait WorkerRuntime {
     /// Launch a new worker process inside nsjail.
     fn launch(&mut self, config: &WorkerLaunchConfig) -> Result<u32, String>;
@@ -200,6 +203,9 @@ pub trait WorkerRuntime {
 
     /// Clean up all resources for the given worker PID.
     fn cleanup(&mut self, pid: u32);
+
+    /// Downcast support for test code. Returns `self` as `&mut dyn Any`.
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }
 
 // ============================================================================
