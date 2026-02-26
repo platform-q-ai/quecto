@@ -57,15 +57,7 @@ fn make_test_agent(base_dir: &std::path::Path) -> AgentLoopImpl {
     .with_max_tool_iterations(1)
 }
 
-// ===================================================================
-// run_agent_session() integration tests (via run_with_output)
-//
-// These tests write a config.json with a fake API key so that the
-// code path through build_agent_from_config -> run_agent_session is
-// exercised.  The LLM call will fail (no real server), but the
-// session setup, system-prompt injection, and error-handling paths
-// are covered.
-// ===================================================================
+// --- run_agent_session() integration tests (via run_with_output) ---
 
 #[test]
 fn test_agent_with_valid_config_provider_error() {
@@ -339,9 +331,7 @@ fn test_agent_with_all_flags_and_config() {
     assert!(!out.stderr.contains("config not found"));
 }
 
-// ===================================================================
-// run_agent_session() direct tests
-// ===================================================================
+// --- run_agent_session() direct tests ---
 
 #[test]
 fn test_run_agent_session_ephemeral_no_save() {
@@ -361,7 +351,13 @@ fn test_run_agent_session_ephemeral_no_save() {
         stdout: &mut stdout,
         stderr: &mut stderr,
     };
-    let code = run_agent_session(tmp.path(), agent, &flags, &mut out);
+    let code = run_agent_session(AgentSessionParams {
+        base_dir: tmp.path(),
+        agent,
+        lifecycle_driver: None,
+        flags: &flags,
+        out: &mut out,
+    });
     assert_eq!(code, 1);
     assert!(stderr.contains("Error:"), "stderr: {stderr}");
     let sessions_dir = tmp.path().join("sessions");
@@ -392,7 +388,13 @@ fn test_run_agent_session_default_session_key() {
         stdout: &mut stdout,
         stderr: &mut stderr,
     };
-    let code = run_agent_session(tmp.path(), agent, &flags, &mut out);
+    let code = run_agent_session(AgentSessionParams {
+        base_dir: tmp.path(),
+        agent,
+        lifecycle_driver: None,
+        flags: &flags,
+        out: &mut out,
+    });
     assert_eq!(code, 1);
     assert!(stderr.contains("Error:"), "stderr: {stderr}");
 }
@@ -415,7 +417,13 @@ fn test_run_agent_session_with_system_prompt_injection() {
         stdout: &mut stdout,
         stderr: &mut stderr,
     };
-    let code = run_agent_session(tmp.path(), agent, &flags, &mut out);
+    let code = run_agent_session(AgentSessionParams {
+        base_dir: tmp.path(),
+        agent,
+        lifecycle_driver: None,
+        flags: &flags,
+        out: &mut out,
+    });
     assert_eq!(code, 1);
     assert!(stderr.contains("Error:"), "stderr: {stderr}");
 }
@@ -438,7 +446,13 @@ fn test_run_agent_session_with_deadline() {
         stdout: &mut stdout,
         stderr: &mut stderr,
     };
-    let code = run_agent_session(tmp.path(), agent, &flags, &mut out);
+    let code = run_agent_session(AgentSessionParams {
+        base_dir: tmp.path(),
+        agent,
+        lifecycle_driver: None,
+        flags: &flags,
+        out: &mut out,
+    });
     assert!(code == 1 || code == 2);
 }
 
@@ -471,7 +485,15 @@ fn test_run_with_deadline_completes_before_timeout() {
 
     let rt = crate::interface::cli::build_tokio_runtime().unwrap();
     let mut messages = vec![Message::user("test")];
-    let result = run_with_deadline(&rt, &agent, &mut messages, 30);
+    let result = run_with_deadline(
+        DeadlineParams {
+            rt: &rt,
+            agent: &agent,
+            messages: &mut messages,
+            driver: None,
+        },
+        30,
+    );
     match result {
         DeadlineResult::Completed(inner) => {
             assert!(inner.is_err(), "expected provider error");
@@ -488,7 +510,15 @@ fn test_run_with_deadline_exercises_timeout_path() {
     let agent = make_test_agent(tmp.path());
     let rt = crate::interface::cli::build_tokio_runtime().unwrap();
     let mut messages = vec![Message::user("test")];
-    let result = run_with_deadline(&rt, &agent, &mut messages, 1);
+    let result = run_with_deadline(
+        DeadlineParams {
+            rt: &rt,
+            agent: &agent,
+            messages: &mut messages,
+            driver: None,
+        },
+        1,
+    );
     match result {
         DeadlineResult::Completed(inner) => {
             assert!(inner.is_err());
@@ -530,7 +560,13 @@ fn test_run_agent_session_loads_existing_session() {
         stdout: &mut stdout,
         stderr: &mut stderr,
     };
-    let code = run_agent_session(tmp.path(), agent, &flags, &mut out);
+    let code = run_agent_session(AgentSessionParams {
+        base_dir: tmp.path(),
+        agent,
+        lifecycle_driver: None,
+        flags: &flags,
+        out: &mut out,
+    });
     assert_eq!(code, 1);
     assert!(stderr.contains("Error:"), "stderr: {stderr}");
 }
@@ -564,7 +600,13 @@ fn test_run_agent_session_loads_existing_with_system_prompt() {
         stdout: &mut stdout,
         stderr: &mut stderr,
     };
-    let code = run_agent_session(tmp.path(), agent, &flags, &mut out);
+    let code = run_agent_session(AgentSessionParams {
+        base_dir: tmp.path(),
+        agent,
+        lifecycle_driver: None,
+        flags: &flags,
+        out: &mut out,
+    });
     assert_eq!(code, 1);
     assert!(stderr.contains("Error:"), "stderr: {stderr}");
 }

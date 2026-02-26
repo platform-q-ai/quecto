@@ -32,8 +32,8 @@ use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use crate::infrastructure::tools::spawn::SpawnTool;
 use crate::infrastructure::tools::web_search::WebSearchTool;
 use crate::interface::shared::{
-    CodingCoordinatorScopePolicy, gateway_background_coding_coordinator_scope,
-    register_coding_job_tool,
+    CodingCoordinatorScopePolicy, build_coding_lifecycle,
+    gateway_background_coding_coordinator_scope,
 };
 
 use tokio::sync::mpsc;
@@ -335,7 +335,11 @@ impl Gateway {
             self.base_dir.clone(),
         )));
         if gateway_background_coding_coordinator_scope() == CodingCoordinatorScopePolicy::Shared {
-            register_coding_job_tool(&mut registry, &workspace);
+            // Driver handle intentionally discarded — the gateway background agent
+            // relies on tick-on-access via DriverJobService (run/status calls).
+            // A periodic background ticker will be added when the gateway needs
+            // to poll running workers independently of tool calls.
+            let _ = build_coding_lifecycle(&mut registry, &workspace, &self.base_dir);
         }
         let spill_store = Arc::new(FileContextSpillStore::new(self.base_dir.clone()));
         // Shared agent handles cron/heartbeat tasks, not per-user Telegram messages.

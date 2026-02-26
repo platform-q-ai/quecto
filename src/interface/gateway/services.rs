@@ -29,8 +29,7 @@ use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use crate::infrastructure::tools::spawn::SpawnTool;
 use crate::infrastructure::tools::web_search::WebSearchTool;
 use crate::interface::shared::{
-    CodingCoordinatorScopePolicy, gateway_inbound_coding_coordinator_scope,
-    register_coding_job_tool,
+    CodingCoordinatorScopePolicy, build_coding_lifecycle, gateway_inbound_coding_coordinator_scope,
 };
 
 use super::Gateway;
@@ -89,7 +88,10 @@ impl InboundAgentBuilder {
             self.base_dir.clone(),
         )));
         if gateway_inbound_coding_coordinator_scope() == CodingCoordinatorScopePolicy::PerSession {
-            register_coding_job_tool(&mut registry, &workspace);
+            // Per-session agents are short-lived (one message → agent run → done).
+            // No background ticker needed — jobs advance via tick-on-access in
+            // DriverJobService when the agent calls run()/status_by_*().
+            let _ = build_coding_lifecycle(&mut registry, &workspace, &self.base_dir);
         }
 
         let spill_store = Arc::new(FileContextSpillStore::new(self.base_dir.clone()));

@@ -392,7 +392,20 @@ impl WorkerRuntime for NsjailWorkerRuntime {
         validate_job_dir_for_nsjail(&config.job_dir)?;
 
         if let Some(cmd_override) = &self.config.command_override {
-            return self.launch_real(config, cmd_override.clone());
+            // command_override provides the base command. Append worker flags
+            // from the launch config so the subprocess receives its identity.
+            let mut full_cmd = cmd_override.clone();
+            full_cmd.extend([
+                "--run-id".to_string(),
+                config.run_id.clone(),
+                "--job-id".to_string(),
+                config.job_id.clone(),
+                "--job-dir".to_string(),
+                config.job_dir.clone(),
+                "--goal".to_string(),
+                config.goal.clone(),
+            ]);
+            return self.launch_real(config, full_cmd);
         }
         self.launch_mock(config)
     }

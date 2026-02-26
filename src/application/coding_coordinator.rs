@@ -23,9 +23,7 @@ use crate::domain::coding_job::{
 };
 pub use crate::domain::coding_ports::{RepoValidator, SkillResolver};
 
-// ============================================================================
-// Coordinator policy
-// ============================================================================
+// --- Coordinator policy ---
 
 /// Policy configuration for the coordinator.
 #[derive(Debug, Clone, Default)]
@@ -52,9 +50,7 @@ impl CoordinatorPolicy {
     }
 }
 
-// ============================================================================
-// Parameter structs (to stay within clippy too-many-arguments threshold)
-// ============================================================================
+// --- Parameter structs (clippy too-many-arguments) ---
 
 /// Parameters for marking a job as succeeded.
 pub struct SuccessInfo<'a> {
@@ -85,9 +81,7 @@ struct EventMeta {
 /// when this limit is reached.
 const MAX_EVENTS: usize = 10_000;
 
-// ============================================================================
-// Coordinator
-// ============================================================================
+// --- Coordinator ---
 
 /// The coding job coordinator — owns all job state and event emission.
 pub struct CodingCoordinator<R: RepoValidator, S: SkillResolver> {
@@ -181,7 +175,13 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
 
     // ── run ──────────────────────────────────────────────────────────────
 
+    /// Max goal length (ARG_MAX safety for worker subprocess args).
+    const MAX_GOAL_BYTES: usize = 4096;
+
     pub fn run(&mut self, req: RunRequest) -> Result<RunResponse, CommandError> {
+        if req.goal.len() > Self::MAX_GOAL_BYTES {
+            return Err(CommandError::PolicyDenied);
+        }
         if let Some(max_jobs) = self.policy.max_retained_jobs {
             if self.jobs.len() >= max_jobs {
                 return Err(CommandError::PolicyDenied);
@@ -311,8 +311,7 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
         if !job.state.is_terminal() {
             return Err(CommandError::JobNotTerminal);
         }
-        // MVP: keep_artifacts is accepted but not yet acted upon.
-        // A future PR will implement selective artifact preservation.
+        // keep_artifacts is accepted but not yet acted upon (future PR).
         let _ = keep_artifacts;
         let run_id = job.run_id.clone();
         self.todo_tracker.remove_job(job_id);
@@ -323,6 +322,11 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
             job_id: job_id.to_string(),
             cleaned: true,
         })
+    }
+
+    /// Lightweight idle check: any non-terminal jobs exist?
+    pub fn has_active_jobs(&self) -> bool {
+        self.jobs.values().any(|j| !j.state.is_terminal())
     }
 
     // ── list ─────────────────────────────────────────────────────────────
@@ -582,7 +586,7 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
         Ok(())
     }
 
-    // ── spawn management ─────────────────────────────────────────────────
+    // ── spawn management ──────────────────────────────────────────────
 
     /// Initialize a spawn manager for a job with the given policy.
     pub fn init_spawn_manager(&mut self, job_id: &str, policy: SpawnPolicy) {
@@ -739,10 +743,8 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
         Ok(canceled)
     }
 }
-
 #[path = "coding_coordinator_service.rs"]
 mod service_impl;
-
 #[cfg(test)]
 #[path = "coding_coordinator_tests.rs"]
 mod tests;

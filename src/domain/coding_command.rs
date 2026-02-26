@@ -237,6 +237,8 @@ pub enum CommandError {
     JobNotTerminal,
     /// Job cannot transition from its current state.
     InvalidTransition,
+    /// Internal error (e.g. poisoned lock, unexpected state).
+    Internal(String),
 }
 
 impl std::fmt::Display for CommandError {
@@ -249,6 +251,7 @@ impl std::fmt::Display for CommandError {
             Self::NotFound => "not_found",
             Self::JobNotTerminal => "job_not_terminal",
             Self::InvalidTransition => "invalid_transition",
+            Self::Internal(msg) => return write!(f, "internal: {msg}"),
         };
         f.write_str(s)
     }
@@ -266,6 +269,9 @@ impl std::str::FromStr for CommandError {
             "not_found" => Ok(Self::NotFound),
             "job_not_terminal" => Ok(Self::JobNotTerminal),
             "invalid_transition" => Ok(Self::InvalidTransition),
+            s if s.starts_with("internal: ") => {
+                Ok(Self::Internal(s["internal: ".len()..].to_string()))
+            }
             _ => Err(format!("unknown command error: {s}")),
         }
     }

@@ -516,6 +516,29 @@ impl RepoMirrorStore for FileRepoMirrorStore {
     fn job_repo_path(&self, job_id: &str) -> String {
         self.job_repo_dir(job_id).to_string_lossy().into_owned()
     }
+
+    fn resolve_local_remote(&self, repo: &str) -> Option<String> {
+        // Reject unsafe repo names before joining onto workspace path.
+        // Uses the same validation as mirror_path_for_repo() to prevent
+        // path traversal (e.g. "../../etc/passwd").
+        self.mirror_path_for_repo(repo)?;
+
+        let workspace = self.workspace.as_ref()?;
+        let repo_path = workspace.join(repo);
+
+        // Canonicalize and verify the resolved path is inside workspace.
+        let canonical = repo_path.canonicalize().ok()?;
+        let ws_canonical = workspace.canonicalize().ok()?;
+        if !canonical.starts_with(&ws_canonical) {
+            return None;
+        }
+
+        if canonical.is_dir() && canonical.join(".git").exists() {
+            Some(canonical.to_string_lossy().into_owned())
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg(test)]

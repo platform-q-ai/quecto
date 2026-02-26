@@ -12,7 +12,7 @@ use quecto::infrastructure::coding::runtime_adapters::{
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::coding_job::CodingJobTool;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
-use quecto::interface::shared::{self, CodingCoordinatorScopePolicy, register_coding_job_tool};
+use quecto::interface::shared::{self, CodingCoordinatorScopePolicy, build_coding_lifecycle};
 
 use super::QuectoWorld;
 
@@ -183,7 +183,9 @@ fn when_cli_wiring_list_defs(world: &mut QuectoWorld) {
         .coding_operational_registry
         .as_mut()
         .expect("registry should exist");
-    register_coding_job_tool(registry, &ws);
+    let base_td = tempfile::TempDir::new().unwrap();
+    let _ = build_coding_lifecycle(registry, &ws, base_td.path());
+    world._extra_temp_dirs.push(base_td);
     world.coding_operational_definitions = registry.definitions();
 }
 

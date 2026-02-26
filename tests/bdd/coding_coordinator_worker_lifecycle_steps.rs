@@ -35,6 +35,8 @@ fn cwl_runtime(world: &mut QuectoWorld) -> &mut MockWorkerRuntime {
 
 fn default_launch_config(job_dir: &str, goal: &str) -> WorkerLaunchConfig {
     WorkerLaunchConfig {
+        run_id: "run_test".to_string(),
+        job_id: "job_test".to_string(),
         job_dir: job_dir.to_string(),
         goal: goal.to_string(),
         max_memory_mb: 512,
