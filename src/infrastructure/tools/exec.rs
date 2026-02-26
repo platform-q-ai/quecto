@@ -329,8 +329,12 @@ fn build_nsjail_command(
     cmd.arg("--quiet")
         .arg("--mode")
         .arg("o")
+        // Host root as jail root (read-only by default).
+        .arg("--chroot")
+        .arg("/")
         .arg("--cwd")
         .arg("/workspace")
+        // Workspace mounted read-write on top of the read-only root.
         .arg("--bindmount")
         .arg(format!("{}:/workspace", workspace.display()));
 
