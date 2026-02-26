@@ -52,6 +52,51 @@ Feature: Coding Job Operational Wiring
     When I list coding jobs
     Then the coding_job tool result should contain "jobs"
 
+  # --- Repo create / import ---
+
+  Scenario: Create a new repo in the workspace via coding_job tool
+    Given a lifecycle-wired coding_job tool
+    When I execute coding_job create with name "fresh-project"
+    Then the coding_job tool result should not be an error
+    And the coding_job tool result should contain "fresh-project"
+    And the coding_job tool result should contain "created"
+
+  Scenario: Create repo rejects invalid name
+    Given a lifecycle-wired coding_job tool
+    When I execute coding_job create with name "../escape"
+    Then the coding_job tool result should be an error
+    And the coding_job tool result should contain "invalid_name"
+
+  Scenario: Create repo rejects duplicate name
+    Given a lifecycle-wired coding_job tool
+    When I execute coding_job create with name "dup-repo"
+    Then the coding_job tool result should not be an error
+    When I execute coding_job create with name "dup-repo"
+    Then the coding_job tool result should be an error
+    And the coding_job tool result should contain "already_exists"
+
+  Scenario: Create then run a job on the new repo
+    Given a lifecycle-wired coding_job tool
+    When I execute coding_job create with name "new-app"
+    Then the coding_job tool result should not be an error
+    When I execute coding_job run for repo "new-app" on the lifecycle tool
+    Then the coding_job tool result should not be an error
+    And the coding_job tool result should contain "job_id"
+
+  Scenario: Import rejects unsafe URL scheme
+    Given a lifecycle-wired coding_job tool
+    When I execute coding_job import with url "ext::sh -c evil"
+    Then the coding_job tool result should be an error
+    And the coding_job tool result should contain "invalid_url"
+
+  Scenario: Import rejects duplicate local name
+    Given a lifecycle-wired coding_job tool
+    When I execute coding_job create with name "taken"
+    Then the coding_job tool result should not be an error
+    When I execute coding_job import with url "https://github.com/org/taken.git" and name "taken"
+    Then the coding_job tool result should be an error
+    And the coding_job tool result should contain "already_exists"
+
   # --- Operational safeguards ---
 
   Scenario: Runtime lifecycle policy defines coordinator scope

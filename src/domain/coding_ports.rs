@@ -229,8 +229,8 @@ pub trait WorkerRuntime: Send {
 // ============================================================================
 
 use super::coding_command::{
-    CancelResponse, CleanupResponse, CommandError, ListRequest, ListResponse, RunRequest,
-    RunResponse, StatusResponse,
+    CancelResponse, CleanupResponse, CommandError, CreateRequest, CreateResponse, ImportRequest,
+    ImportResponse, ListRequest, ListResponse, RunRequest, RunResponse, StatusResponse,
 };
 
 /// Port for coding job management operations.
@@ -240,6 +240,12 @@ use super::coding_command::{
 /// this trait so the tool stays in infrastructure without violating the
 /// dependency rule (infrastructure → domain only, never → application).
 pub trait CodingJobService: Send {
+    /// Create a new repository in the workspace (git init + initial commit).
+    fn create_repo(&mut self, req: CreateRequest) -> Result<CreateResponse, CommandError>;
+
+    /// Import a remote repository into the workspace (git clone).
+    fn import_repo(&mut self, req: ImportRequest) -> Result<ImportResponse, CommandError>;
+
     /// Start a new coding job.
     fn run(&mut self, req: RunRequest) -> Result<RunResponse, CommandError>;
 
@@ -261,6 +267,33 @@ pub trait CodingJobService: Send {
 
     /// List jobs, optionally filtered by state.
     fn list(&self, req: &ListRequest) -> ListResponse;
+}
+
+/// Port for creating and importing repositories in the workspace.
+///
+/// The composition root (interface layer) calls through this trait;
+/// infrastructure provides the concrete git operations.
+///
+/// SAFETY: `exists()` → `create()`/`import()` has a TOCTOU window.
+/// In production this is serialized by the `std::sync::Mutex` wrapping
+/// `DriverJobService` in `CodingJobTool`. If the locking strategy changes
+/// (e.g. to `tokio::sync::Mutex`), callers must ensure serialization or
+/// make `create()`/`import()` atomic (e.g. exclusive `create_dir`).
+pub trait RepoCreator: Send {
+    /// Create a new empty repo with an initial commit.
+    fn create(&self, name: &str, description: Option<&str>) -> Result<String, CommandError>;
+
+    /// Clone a remote URL into the workspace. Returns the local path.
+    fn import(&self, url: &str, name: &str) -> Result<String, CommandError>;
+
+    /// Check if a repo name already exists in the workspace.
+    fn exists(&self, name: &str) -> bool;
+
+    /// Validate that a repo name is safe for filesystem use.
+    fn validate_name(&self, name: &str) -> Result<(), CommandError>;
+
+    /// Derive a local name from a remote URL.
+    fn name_from_url(&self, url: &str) -> Result<String, CommandError>;
 }
 
 // ============================================================================

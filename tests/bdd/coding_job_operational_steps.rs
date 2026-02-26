@@ -356,3 +356,98 @@ fn then_gateway_background_scope(_world: &mut QuectoWorld, expected: String) {
     };
     assert_eq!(got, exp);
 }
+
+// ========================================================================
+// Lifecycle-wired tool (supports create/import via DriverJobService)
+// ========================================================================
+
+#[given("a lifecycle-wired coding_job tool")]
+fn given_lifecycle_wired_tool(world: &mut QuectoWorld) {
+    let ws = tempfile::TempDir::new().unwrap();
+    let ws_path = ws.path().to_path_buf();
+    let base_td = tempfile::TempDir::new().unwrap();
+
+    let sandbox = Sandbox::new(Some(ws_path.clone()), true);
+    let mut registry = ToolRegistryImpl::with_core_tools(ws_path.clone(), sandbox);
+    let _ = build_coding_lifecycle(&mut registry, &ws_path, base_td.path());
+
+    // Verify the coding_job tool is registered
+    let has_tool = registry
+        .definitions()
+        .iter()
+        .any(|d| d.name == "coding_job");
+    assert!(has_tool, "coding_job should be registered");
+
+    world.coding_operational_workspace = Some(ws_path);
+    world.coding_operational_registry = Some(registry);
+    world._extra_temp_dirs.push(ws);
+    world._extra_temp_dirs.push(base_td);
+}
+
+fn exec_registry_tool(
+    registry: &ToolRegistryImpl,
+    input: &str,
+) -> quecto::domain::tool::ToolResult {
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    rt.block_on(registry.execute("coding_job", input))
+        .expect("execute should not fail")
+}
+
+#[when(expr = "I execute coding_job create with name {string}")]
+fn when_create_repo(world: &mut QuectoWorld, name: String) {
+    let registry = world
+        .coding_operational_registry
+        .as_ref()
+        .expect("registry should exist");
+    let input = serde_json::json!({"action": "create", "name": name}).to_string();
+    world.coding_operational_last_result = Some(exec_registry_tool(registry, &input));
+}
+
+#[when(expr = "I execute coding_job import with url {string}")]
+fn when_import_repo_no_name(world: &mut QuectoWorld, url: String) {
+    let registry = world
+        .coding_operational_registry
+        .as_ref()
+        .expect("registry should exist");
+    let input = serde_json::json!({"action": "import", "url": url}).to_string();
+    world.coding_operational_last_result = Some(exec_registry_tool(registry, &input));
+}
+
+#[when(expr = "I execute coding_job import with url {string} and name {string}")]
+fn when_import_repo_with_name(world: &mut QuectoWorld, url: String, name: String) {
+    let registry = world
+        .coding_operational_registry
+        .as_ref()
+        .expect("registry should exist");
+    let input = serde_json::json!({"action": "import", "url": url, "name": name}).to_string();
+    world.coding_operational_last_result = Some(exec_registry_tool(registry, &input));
+}
+
+#[when(expr = "I execute coding_job run for repo {string} on the lifecycle tool")]
+fn when_run_on_lifecycle_tool(world: &mut QuectoWorld, repo: String) {
+    let registry = world
+        .coding_operational_registry
+        .as_ref()
+        .expect("registry should exist");
+    let input = serde_json::json!({
+        "action": "run",
+        "goal": "build something",
+        "repo": repo,
+        "base_ref": "main",
+    })
+    .to_string();
+    world.coding_operational_last_result = Some(exec_registry_tool(registry, &input));
+}
+
+#[then("the coding_job tool result should be an error")]
+fn then_tool_is_error(world: &mut QuectoWorld) {
+    let result = world
+        .coding_operational_last_result
+        .as_ref()
+        .expect("tool result should exist");
+    assert!(
+        result.is_error,
+        "expected error, got success: {}",
+        result.content
+    );
+}
