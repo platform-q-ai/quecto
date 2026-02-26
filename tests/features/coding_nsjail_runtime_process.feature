@@ -1,4 +1,4 @@
-@wip @coding-live
+@done @coding-live
 Feature: NsjailWorkerRuntime Real Process Spawn
   As the coding coordinator
   I need NsjailWorkerRuntime to spawn real OS processes with piped I/O

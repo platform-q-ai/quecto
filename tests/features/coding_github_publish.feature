@@ -1,4 +1,4 @@
-@wip
+@done
 Feature: GitHub Publish Boundary
   As the coding runtime coordinator
   I want to manage all GitHub/PR operations under policy control

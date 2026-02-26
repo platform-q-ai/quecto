@@ -1,4 +1,4 @@
-@wip
+@done
 Feature: Skill Injection Policy
   As the coding runtime coordinator
   I want to inject skills into worker jobs under policy control

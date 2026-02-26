@@ -1,4 +1,4 @@
-@wip
+@done
 Feature: Child Agent Spawn Flow
   As the coding runtime coordinator
   I want to manage child agent spawning requested by workers

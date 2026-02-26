@@ -1,4 +1,4 @@
-@wip
+@done
 Feature: Coding Worker Tool Execution Events
   As the coding runtime coordinator
   I want to receive structured tool execution events from workers
