@@ -9,16 +9,16 @@ use crate::application::coding_coordinator::{
 };
 use crate::application::coding_lifecycle::CodingLifecycleDriver;
 use crate::domain::coding_command::{
-    CancelResponse, CleanupResponse, CommandError, ListRequest, ListResponse, RunRequest,
-    RunResponse, StatusResponse,
+    CancelResponse, CleanupResponse, CommandError, CreateRequest, CreateResponse, ImportRequest,
+    ImportResponse, ListRequest, ListResponse, RunRequest, RunResponse, StatusResponse,
 };
-use crate::domain::coding_ports::CodingJobService;
+use crate::domain::coding_ports::{CodingJobService, RepoCreator};
 use crate::domain::skill::SkillLoader;
 use crate::infrastructure::auth::credential_store::Credential;
 use crate::infrastructure::coding::nsjail_runtime::{NsjailRuntimeConfig, NsjailWorkerRuntime};
 use crate::infrastructure::coding::repo_mirror::FileRepoMirrorStore;
 use crate::infrastructure::coding::runtime_adapters::{
-    WorkspaceRepoValidator, WorkspaceSkillResolver,
+    WorkspaceRepoCreator, WorkspaceRepoValidator, WorkspaceSkillResolver,
 };
 use crate::infrastructure::persistence::skill_loader::FileSkillLoader;
 use crate::infrastructure::tools::coding_job::CodingJobTool;
@@ -124,9 +124,12 @@ pub fn build_coding_lifecycle(
     let driver = CodingLifecycleDriver::new(coordinator, runtime, mirror);
     let shared: SharedLifecycleDriver = Arc::new(Mutex::new(driver));
 
+    let repo_creator = Box::new(WorkspaceRepoCreator::new(workspace.to_path_buf()));
+
     // Create a CodingJobService adapter that delegates through the driver.
     let service: Arc<Mutex<dyn CodingJobService>> = Arc::new(Mutex::new(DriverJobService {
         driver: shared.clone(),
+        repo_creator,
     }));
     registry.register(Arc::new(CodingJobTool::new(service)));
 
@@ -136,9 +139,11 @@ pub fn build_coding_lifecycle(
 /// `CodingJobService` adapter that delegates to a shared `CodingLifecycleDriver`.
 ///
 /// Ticks the driver on `run()` and `status_by_*()` calls so jobs advance
-/// immediately when the agent interacts with them.
+/// immediately when the agent interacts with them. Also holds a `RepoCreator`
+/// for `create_repo()` and `import_repo()` operations.
 struct DriverJobService<R: RepoValidator, S: SkillResolver> {
     driver: Arc<Mutex<CodingLifecycleDriver<R, S>>>,
+    repo_creator: Box<dyn RepoCreator>,
 }
 
 /// Acquire the driver lock, converting poison errors to `CommandError::Internal`.
@@ -151,6 +156,38 @@ fn lock_driver<R: RepoValidator, S: SkillResolver>(
 }
 
 impl<R: RepoValidator + Send, S: SkillResolver + Send> CodingJobService for DriverJobService<R, S> {
+    fn create_repo(&mut self, req: CreateRequest) -> Result<CreateResponse, CommandError> {
+        self.repo_creator.validate_name(&req.name)?;
+        if self.repo_creator.exists(&req.name) {
+            return Err(CommandError::AlreadyExists);
+        }
+        let path = self
+            .repo_creator
+            .create(&req.name, req.description.as_deref())?;
+        Ok(CreateResponse {
+            name: req.name,
+            path,
+            created: true,
+        })
+    }
+
+    fn import_repo(&mut self, req: ImportRequest) -> Result<ImportResponse, CommandError> {
+        let name = match req.name {
+            Some(ref n) => n.clone(),
+            None => self.repo_creator.name_from_url(&req.url)?,
+        };
+        self.repo_creator.validate_name(&name)?;
+        if self.repo_creator.exists(&name) {
+            return Err(CommandError::AlreadyExists);
+        }
+        let path = self.repo_creator.import(&req.url, &name)?;
+        Ok(ImportResponse {
+            name,
+            path,
+            imported: true,
+        })
+    }
+
     fn run(&mut self, req: RunRequest) -> Result<RunResponse, CommandError> {
         let mut guard = lock_driver(&self.driver)?;
         let resp = guard.coordinator_mut().run(req)?;

@@ -7,7 +7,9 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-use crate::domain::coding_command::{CommandError, ListRequest, RunRequest};
+use crate::domain::coding_command::{
+    CommandError, CreateRequest, ImportRequest, ListRequest, RunRequest,
+};
 use crate::domain::coding_ports::CodingJobService;
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
@@ -50,6 +52,8 @@ impl CodingJobTool {
             .ok_or("missing required field: action")?;
 
         match action {
+            "create" => self.handle_create(arguments),
+            "import" => self.handle_import(arguments),
             "run" => self.handle_run(arguments),
             "status" => self.handle_status(&args),
             "cancel" => self.handle_cancel(&args),
@@ -57,6 +61,22 @@ impl CodingJobTool {
             "list" => self.handle_list(arguments),
             other => Err(format!("unknown action: {other}")),
         }
+    }
+
+    fn handle_create(&self, raw: &str) -> Result<String, String> {
+        let req: CreateRequest = deserialize_stripping_action(raw)
+            .map_err(|e| format!("invalid create request: {e}"))?;
+        let mut svc = self.service.lock().map_err(|e| format!("lock: {e}"))?;
+        let resp = svc.create_repo(req).map_err(|e| format_command_error(&e))?;
+        serde_json::to_string(&resp).map_err(|e| format!("serialize: {e}"))
+    }
+
+    fn handle_import(&self, raw: &str) -> Result<String, String> {
+        let req: ImportRequest = deserialize_stripping_action(raw)
+            .map_err(|e| format!("invalid import request: {e}"))?;
+        let mut svc = self.service.lock().map_err(|e| format!("lock: {e}"))?;
+        let resp = svc.import_repo(req).map_err(|e| format_command_error(&e))?;
+        serde_json::to_string(&resp).map_err(|e| format!("serialize: {e}"))
     }
 
     fn handle_run(&self, raw: &str) -> Result<String, String> {
@@ -140,9 +160,7 @@ impl Tool for CodingJobTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "coding_job".to_string(),
-            description: "Manage coding jobs (run, status, cancel, cleanup, list). \
-                Jobs execute asynchronously in sandboxed workers."
-                .to_string(),
+            description: CODING_JOB_DESCRIPTION.to_string(),
             parameters_schema: CODING_JOB_SCHEMA.to_string(),
         }
     }
@@ -178,7 +196,34 @@ impl Tool for CodingJobTool {
     }
 }
 
-const CODING_JOB_SCHEMA: &str = r#"{"type":"object","properties":{"action":{"type":"string","enum":["run","status","cancel","cleanup","list"],"description":"The coding job action to perform"},"goal":{"type":"string","description":"Goal description (for run)"},"repo":{"type":"string","description":"Repository identifier (for run)"},"base_ref":{"type":"string","description":"Base branch/ref (for run)"},"priority":{"type":"string","enum":["low","medium","high"],"description":"Job priority (for run, default: medium)"},"labels":{"type":"array","items":{"type":"string"},"description":"Labels (for run)"},"skills":{"type":"array","items":{"type":"string"},"description":"Skill names (for run)"},"profile":{"type":"string","description":"Profile name (for run, default: default)"},"max_wall_seconds":{"type":"integer","description":"Wall-clock timeout in seconds (for run)"},"job_id":{"type":"string","description":"Job ID (for status/cancel/cleanup)"},"run_id":{"type":"string","description":"Run ID (for status)"},"state_filter":{"type":"array","items":{"type":"string"},"description":"Filter by job states (for list)"},"keep_artifacts":{"type":"boolean","description":"Keep artifacts on cleanup (default: true)"}},"required":["action"]}"#;
+const CODING_JOB_DESCRIPTION: &str = "\
+Manage coding repositories and jobs. Repos live in the workspace directory.
+
+WORKFLOW:
+1. create - Create a new empty repo (git init + initial commit) in the workspace.
+2. import - Clone a remote repo (HTTPS/SSH) into the workspace.
+3. run    - Launch an async coding job on a workspace repo. A sandboxed worker \
+            gets a full clone, checks out a job branch, and works toward the goal \
+            using edit/grep/find/read tools. Returns job_id and run_id.
+4. status - Poll job progress (state, todos, artifacts). Each call advances the job.
+5. cancel - Stop a running job and kill its worker.
+6. cleanup - Remove job artifacts after completion.
+7. list   - List all jobs, optionally filtered by state.
+
+REPO RULES:
+- 'repo' must be a directory name in the workspace (e.g. \"my-project\"), not a URL.
+- Use 'create' to make a new repo from scratch, or 'import' to clone from GitHub.
+- 'base_ref' must be a valid branch/tag/commit in the repo (e.g. \"main\").
+
+JOB STATES: queued -> preparing -> running -> succeeded/failed/canceled
+
+TYPICAL USAGE:
+- New project: create(name) -> run(repo=name, base_ref=\"main\", goal=\"...\")
+- Existing remote: import(url) -> run(repo=name, base_ref=\"main\", goal=\"...\")
+- Monitor: status(job_id) repeatedly until succeeded/failed
+- Done: cleanup(job_id)";
+
+const CODING_JOB_SCHEMA: &str = r#"{"type":"object","properties":{"action":{"type":"string","enum":["create","import","run","status","cancel","cleanup","list"],"description":"The action to perform"},"name":{"type":"string","description":"Repository name (for create/import)"},"description":{"type":"string","description":"Project description (for create, optional)"},"url":{"type":"string","description":"Remote git URL to clone (for import)"},"goal":{"type":"string","description":"Goal description (for run)"},"repo":{"type":"string","description":"Workspace repo name (for run)"},"base_ref":{"type":"string","description":"Base branch/ref (for run, e.g. main)"},"priority":{"type":"string","enum":["low","medium","high"],"description":"Job priority (for run, default: medium)"},"labels":{"type":"array","items":{"type":"string"},"description":"Labels (for run)"},"skills":{"type":"array","items":{"type":"string"},"description":"Skill names (for run)"},"profile":{"type":"string","description":"Profile name (for run, default: default)"},"max_wall_seconds":{"type":"integer","description":"Wall-clock timeout in seconds (for run)"},"job_id":{"type":"string","description":"Job ID (for status/cancel/cleanup)"},"run_id":{"type":"string","description":"Run ID (for status)"},"state_filter":{"type":"array","items":{"type":"string"},"description":"Filter by job states (for list)"},"keep_artifacts":{"type":"boolean","description":"Keep artifacts on cleanup (default: true)"}},"required":["action"]}"#;
 
 #[cfg(test)]
 mod tests {
@@ -244,7 +289,52 @@ mod tests {
 
     #[test]
     fn test_definition_description() {
-        assert!(make_tool().definition().description.contains("coding job"));
+        let desc = make_tool().definition().description;
+        assert!(desc.contains("WORKFLOW"));
+        assert!(desc.contains("create"));
+        assert!(desc.contains("import"));
+        assert!(desc.contains("run"));
+    }
+
+    #[test]
+    fn test_definition_schema_has_create_import() {
+        let schema = make_tool().definition().parameters_schema;
+        assert!(schema.contains("\"create\""));
+        assert!(schema.contains("\"import\""));
+        assert!(schema.contains("\"url\""));
+        assert!(schema.contains("\"name\""));
+    }
+
+    // create/import on bare coordinator returns Internal error (not supported)
+    #[test]
+    fn test_create_on_bare_coordinator() {
+        let r = exec(&make_tool(), r#"{"action":"create","name":"my-proj"}"#);
+        assert!(r.is_error);
+        assert!(r.content.contains("internal"));
+    }
+
+    #[test]
+    fn test_import_on_bare_coordinator() {
+        let r = exec(
+            &make_tool(),
+            r#"{"action":"import","url":"https://github.com/org/repo"}"#,
+        );
+        assert!(r.is_error);
+        assert!(r.content.contains("internal"));
+    }
+
+    #[test]
+    fn test_create_missing_name() {
+        let r = exec(&make_tool(), r#"{"action":"create"}"#);
+        assert!(r.is_error);
+        assert!(r.content.contains("invalid create request"));
+    }
+
+    #[test]
+    fn test_import_missing_url() {
+        let r = exec(&make_tool(), r#"{"action":"import"}"#);
+        assert!(r.is_error);
+        assert!(r.content.contains("invalid import request"));
     }
 
     #[test]

@@ -27,6 +27,52 @@ where
 }
 
 // ============================================================================
+// Create command
+// ============================================================================
+
+/// Request to create a new repository in the workspace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateRequest {
+    /// Repository name (e.g. "my-project"). Will be created under workspace.
+    pub name: String,
+    /// Optional description for the initial commit message.
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// Response from a `create` command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateResponse {
+    pub name: String,
+    pub path: String,
+    pub created: bool,
+}
+
+// ============================================================================
+// Import command
+// ============================================================================
+
+/// Request to clone a remote repository into the workspace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportRequest {
+    /// Remote URL (HTTPS or SSH) to clone from.
+    pub url: String,
+    /// Optional local name. Defaults to the repo name derived from the URL.
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// Response from an `import` command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportResponse {
+    pub name: String,
+    pub path: String,
+    pub imported: bool,
+}
+
+// ============================================================================
 // Run command
 // ============================================================================
 
@@ -237,6 +283,14 @@ pub enum CommandError {
     JobNotTerminal,
     /// Job cannot transition from its current state.
     InvalidTransition,
+    /// Repository name is invalid (bad characters, traversal, etc.).
+    InvalidName,
+    /// Repository already exists in the workspace.
+    AlreadyExists,
+    /// Remote URL is invalid or disallowed.
+    InvalidUrl,
+    /// Git operation failed (clone, init, etc.).
+    GitFailed(String),
     /// Internal error (e.g. poisoned lock, unexpected state).
     Internal(String),
 }
@@ -251,6 +305,10 @@ impl std::fmt::Display for CommandError {
             Self::NotFound => "not_found",
             Self::JobNotTerminal => "job_not_terminal",
             Self::InvalidTransition => "invalid_transition",
+            Self::InvalidName => "invalid_name",
+            Self::AlreadyExists => "already_exists",
+            Self::InvalidUrl => "invalid_url",
+            Self::GitFailed(msg) => return write!(f, "git_failed: {msg}"),
             Self::Internal(msg) => return write!(f, "internal: {msg}"),
         };
         f.write_str(s)
@@ -269,6 +327,12 @@ impl std::str::FromStr for CommandError {
             "not_found" => Ok(Self::NotFound),
             "job_not_terminal" => Ok(Self::JobNotTerminal),
             "invalid_transition" => Ok(Self::InvalidTransition),
+            "invalid_name" => Ok(Self::InvalidName),
+            "already_exists" => Ok(Self::AlreadyExists),
+            "invalid_url" => Ok(Self::InvalidUrl),
+            s if s.starts_with("git_failed: ") => {
+                Ok(Self::GitFailed(s["git_failed: ".len()..].to_string()))
+            }
             s if s.starts_with("internal: ") => {
                 Ok(Self::Internal(s["internal: ".len()..].to_string()))
             }
@@ -291,11 +355,52 @@ mod tests {
             CommandError::NotFound,
             CommandError::JobNotTerminal,
             CommandError::InvalidTransition,
+            CommandError::InvalidName,
+            CommandError::AlreadyExists,
+            CommandError::InvalidUrl,
         ] {
             let s = err.to_string();
             let parsed: CommandError = s.parse().unwrap();
             assert_eq!(err, parsed);
         }
+    }
+
+    #[test]
+    fn test_git_failed_display_round_trip() {
+        let err = CommandError::GitFailed("clone failed".to_string());
+        let s = err.to_string();
+        let parsed: CommandError = s.parse().unwrap();
+        assert_eq!(err, parsed);
+    }
+
+    #[test]
+    fn test_create_request_basic() {
+        let json = r#"{"name":"my-project"}"#;
+        let req: CreateRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.name, "my-project");
+        assert!(req.description.is_none());
+    }
+
+    #[test]
+    fn test_create_request_with_description() {
+        let json = r#"{"name":"my-project","description":"A new thing"}"#;
+        let req: CreateRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.description.as_deref(), Some("A new thing"));
+    }
+
+    #[test]
+    fn test_import_request_basic() {
+        let json = r#"{"url":"https://github.com/org/repo.git"}"#;
+        let req: ImportRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.url, "https://github.com/org/repo.git");
+        assert!(req.name.is_none());
+    }
+
+    #[test]
+    fn test_import_request_with_name() {
+        let json = r#"{"url":"https://github.com/org/repo.git","name":"my-repo"}"#;
+        let req: ImportRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.name.as_deref(), Some("my-repo"));
     }
 
     #[test]
