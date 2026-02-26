@@ -1006,7 +1006,7 @@ pub struct QuectoWorld {
     pub cwe_parsed_args: Option<Result<quecto::interface::cli::worker::WorkerArgs, String>>,
     pub cwe_job_dir: Option<PathBuf>,
     pub _cwe_temp_dir: Option<TempDir>,
-    pub cwe_validation_result: Option<Result<(), String>>,
+    pub cwe_validation_result: Option<Result<PathBuf, String>>,
     pub cwe_registry: Option<ToolRegistryImpl>,
     pub cwe_emitter:
         Option<quecto::infrastructure::coding::worker_event_emitter::WorkerEventEmitter<Vec<u8>>>,
@@ -1048,6 +1048,18 @@ pub struct QuectoWorld {
     pub wl_emitter_job_id: Option<String>,
     pub wl_system_prompt: Option<String>,
     pub wl_captured_messages: Arc<Mutex<Vec<Vec<Message>>>>,
+    // --- Worker IPC integration BDD fields ---
+    pub ipc_adapter: Option<
+        Arc<quecto::infrastructure::coding::worker_event_emitter::WorkerEventSinkAdapter<Vec<u8>>>,
+    >,
+    pub ipc_last_emit_result: Option<Result<u64, String>>,
+    pub ipc_emit_results: Vec<Result<u64, String>>,
+    pub ipc_job_dir: Option<PathBuf>,
+    pub ipc_temp_dir: Option<TempDir>,
+    pub ipc_provider: Option<Arc<dyn LlmProvider>>,
+    pub ipc_stdout: Option<String>,
+    pub ipc_stderr: Option<String>,
+    pub ipc_exit_code: Option<i32>,
 }
 
 fn push_coding_event(
@@ -1341,6 +1353,7 @@ mod coding_todos_steps;
 mod coding_worker_coding_tools_steps;
 mod coding_worker_entrypoint_steps;
 mod coding_worker_event_emitter_steps;
+mod coding_worker_ipc_steps;
 mod coding_worker_loop_steps;
 mod coding_worker_runtime_steps;
 mod coding_worker_tool_wrappers_steps;

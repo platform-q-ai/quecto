@@ -81,6 +81,11 @@ impl<W: Write> WorkerEventEmitter<W> {
     pub fn writer(&self) -> &W {
         &self.writer
     }
+
+    /// Consume the emitter and return the inner writer.
+    pub fn into_writer(self) -> W {
+        self.writer
+    }
 }
 
 /// Errors from event emission.
@@ -89,6 +94,64 @@ pub enum EmitError {
     UnknownEventType(String),
     Serialization(String),
     Write(String),
+}
+
+// ── WorkerEventSinkAdapter ─────────────────────────────────────────────
+
+use std::sync::Mutex;
+
+use crate::domain::coding_ports::WorkerEventSink;
+
+/// Adapter that bridges `WorkerEventEmitter<W>` (which needs `&mut self`)
+/// to the `WorkerEventSink` trait (which uses `&self`).
+///
+/// Wraps the emitter in a `Mutex` for interior mutability. The `Send + Sync`
+/// bounds are satisfied because `Mutex<T>` is `Sync` when `T: Send`.
+pub struct WorkerEventSinkAdapter<W: Write + Send> {
+    inner: Mutex<WorkerEventEmitter<W>>,
+}
+
+impl<W: Write + Send> std::fmt::Debug for WorkerEventSinkAdapter<W> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WorkerEventSinkAdapter").finish()
+    }
+}
+
+impl<W: Write + Send> WorkerEventSinkAdapter<W> {
+    /// Create a new adapter wrapping the given emitter.
+    pub fn new(emitter: WorkerEventEmitter<W>) -> Self {
+        Self {
+            inner: Mutex::new(emitter),
+        }
+    }
+
+    /// Clone the inner writer for inspection (holds the lock during clone).
+    ///
+    /// Primarily used in tests to inspect emitted JSON Lines output.
+    /// Prefer `into_writer()` in production to avoid the clone cost.
+    pub fn clone_writer(&self) -> Option<W>
+    where
+        W: Clone,
+    {
+        self.inner.lock().ok().map(|e| e.writer().clone())
+    }
+
+    /// Consume the adapter and return the inner writer, avoiding a clone.
+    ///
+    /// Returns `None` if the lock is poisoned or the Arc has other references.
+    pub fn into_writer(self) -> Option<W> {
+        self.inner.into_inner().ok().map(|e| e.into_writer())
+    }
+}
+
+impl<W: Write + Send + 'static> WorkerEventSink for WorkerEventSinkAdapter<W> {
+    fn emit(&self, event_type: &str, payload: serde_json::Value) -> Result<u64, String> {
+        self.inner
+            .lock()
+            .map_err(|_| "event emitter lock poisoned".to_string())?
+            .emit(event_type, payload)
+            .map_err(|e| e.to_string())
+    }
 }
 
 impl std::fmt::Display for EmitError {
@@ -267,5 +330,97 @@ mod tests {
             )
             .unwrap();
         assert_eq!(emitter.current_seq(), 1);
+    }
+
+    // ── WorkerEventSinkAdapter tests ───────────────────────────────────
+
+    fn test_adapter() -> WorkerEventSinkAdapter<Vec<u8>> {
+        let emitter = test_emitter();
+        WorkerEventSinkAdapter::new(emitter)
+    }
+
+    #[test]
+    fn test_adapter_emit_succeeds() {
+        let adapter = test_adapter();
+        let seq = adapter
+            .emit(
+                "log.message",
+                serde_json::json!({"level":"info","message":"test"}),
+            )
+            .unwrap();
+        assert_eq!(seq, 1);
+    }
+
+    #[test]
+    fn test_adapter_rejects_unknown_type() {
+        let adapter = test_adapter();
+        let result = adapter.emit("bad.type", serde_json::json!({}));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unknown event type"));
+    }
+
+    #[test]
+    fn test_adapter_seq_increments() {
+        let adapter = test_adapter();
+        let s1 = adapter
+            .emit(
+                "log.message",
+                serde_json::json!({"level":"info","message":"a"}),
+            )
+            .unwrap();
+        let s2 = adapter
+            .emit(
+                "log.message",
+                serde_json::json!({"level":"info","message":"b"}),
+            )
+            .unwrap();
+        assert_eq!(s1, 1);
+        assert_eq!(s2, 2);
+    }
+
+    #[test]
+    fn test_adapter_clone_writer() {
+        let adapter = test_adapter();
+        adapter
+            .emit(
+                "log.message",
+                serde_json::json!({"level":"info","message":"x"}),
+            )
+            .unwrap();
+        let buf = adapter.clone_writer().unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("log.message"));
+    }
+
+    #[test]
+    fn test_adapter_into_writer() {
+        let adapter = test_adapter();
+        adapter
+            .emit(
+                "log.message",
+                serde_json::json!({"level":"info","message":"x"}),
+            )
+            .unwrap();
+        let buf = adapter.into_writer().unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("log.message"));
+    }
+
+    #[test]
+    fn test_adapter_output_has_envelope_fields() {
+        let adapter = test_adapter();
+        adapter
+            .emit(
+                "tool.start",
+                serde_json::json!({"tool":"worker_read","call_id":"c1"}),
+            )
+            .unwrap();
+        let buf = adapter.clone_writer().unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        let json: serde_json::Value = serde_json::from_str(output.lines().last().unwrap()).unwrap();
+        assert_eq!(json["run_id"], "run-1");
+        assert_eq!(json["job_id"], "job-1");
+        assert!(json["ts"].as_str().is_some());
+        assert_eq!(json["seq"], 1);
     }
 }
