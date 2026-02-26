@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::application::worker_loop::{WorkerLoopConfig, WorkerLoopParams, run_worker_loop};
+use crate::domain::coding_ports::WorkerEventSink;
 use crate::domain::provider::LlmProvider;
 use crate::infrastructure::coding::worker_event_emitter::{
     EmitterConfig, WorkerEventEmitter, WorkerEventSinkAdapter,
@@ -105,8 +106,9 @@ fn require_next(args: &[String], i: &mut usize, flag: &str) -> Result<String, St
 /// Validate that the job directory exists, is a directory, and is safe.
 ///
 /// Canonicalizes the path to resolve symlinks and `..` components,
-/// then checks that it is an absolute path under an expected prefix.
-pub fn validate_job_dir(job_dir: &str) -> Result<(), String> {
+/// then checks that it is an absolute path. Returns the canonicalized
+/// path on success to prevent TOCTOU issues.
+pub fn validate_job_dir(job_dir: &str) -> Result<PathBuf, String> {
     let path = Path::new(job_dir);
     if !path.exists() {
         return Err(format!("job directory does not exist: {job_dir}"));
@@ -126,7 +128,7 @@ pub fn validate_job_dir(job_dir: &str) -> Result<(), String> {
     if canonical_str.contains("..") {
         return Err("job directory contains path traversal".to_string());
     }
-    Ok(())
+    Ok(canonical)
 }
 
 // ── Worker command handler ──────────────────────────────────────────────
@@ -135,30 +137,45 @@ pub fn validate_job_dir(job_dir: &str) -> Result<(), String> {
 const DEFAULT_WORKER_MODEL: &str = "gpt-4o";
 /// Default max iterations when --max-iterations is not specified.
 const DEFAULT_MAX_ITERATIONS: u32 = 25;
+/// Initial buffer capacity for JSON Lines output (~16 KB).
+const INITIAL_OUTPUT_CAPACITY: usize = 16 * 1024;
 
-/// Injected dependencies for `cmd_worker`. In production the caller
-/// builds a real provider; in tests a mock is injected.
+/// Injected dependencies for `cmd_worker_with_deps`. In production the
+/// caller builds a real provider; in tests a mock is injected.
 pub struct WorkerDeps {
     pub provider: Arc<dyn LlmProvider>,
 }
 
-/// Handle the `quecto worker` subcommand.
-///
-/// Parses arguments, validates the job directory, and runs the agent
-/// loop stub. JSON Lines output goes into `stdout`; errors into `stderr`.
-pub fn cmd_worker(args: &[String], stdout: &mut String, stderr: &mut String) -> i32 {
+/// Parse args and validate job directory. Shared by both cmd_worker paths.
+fn parse_and_validate(args: &[String], stderr: &mut String) -> Option<(WorkerArgs, PathBuf)> {
     let worker_args = match parse_worker_args(args) {
         Ok(a) => a,
         Err(e) => {
             stderr.push_str(&format!("worker: {e}\n"));
-            return 1;
+            return None;
         }
     };
 
-    if let Err(e) = validate_job_dir(&worker_args.job_dir) {
-        stderr.push_str(&format!("worker: {e}\n"));
-        return 1;
-    }
+    let canonical_dir = match validate_job_dir(&worker_args.job_dir) {
+        Ok(p) => p,
+        Err(e) => {
+            stderr.push_str(&format!("worker: {e}\n"));
+            return None;
+        }
+    };
+
+    Some((worker_args, canonical_dir))
+}
+
+/// Handle the `quecto worker` subcommand.
+///
+/// Parses arguments, validates the job directory, and exits.
+/// Without injected deps, emits a plain startup message (stub mode).
+pub fn cmd_worker(args: &[String], stdout: &mut String, stderr: &mut String) -> i32 {
+    let (worker_args, _canonical_dir) = match parse_and_validate(args, stderr) {
+        Some(v) => v,
+        None => return 1,
+    };
 
     // Without injected deps, emit a plain startup message (stub mode).
     stdout.push_str(&format!(
@@ -176,67 +193,19 @@ pub fn cmd_worker_with_deps(
     stdout: &mut String,
     stderr: &mut String,
 ) -> i32 {
-    let worker_args = match parse_worker_args(args) {
-        Ok(a) => a,
-        Err(e) => {
-            stderr.push_str(&format!("worker: {e}\n"));
-            return 1;
-        }
+    let (worker_args, canonical_dir) = match parse_and_validate(args, stderr) {
+        Some(v) => v,
+        None => return 1,
     };
 
-    if let Err(e) = validate_job_dir(&worker_args.job_dir) {
-        stderr.push_str(&format!("worker: {e}\n"));
-        return 1;
-    }
+    let sink = build_default_sink(&worker_args);
+    let tool_registry = build_worker_tool_registry(canonical_dir);
 
-    run_worker_with_args(&worker_args, deps.provider, stdout, stderr)
-}
-
-/// Run the worker agent loop with parsed args and an LLM provider.
-///
-/// Builds the event emitter, tool registry, and worker loop config,
-/// then runs `run_worker_loop` in a tokio runtime. JSON Lines are
-/// captured in `stdout`; fatal startup errors go to `stderr`.
-fn run_worker_with_args(
-    args: &WorkerArgs,
-    provider: Arc<dyn LlmProvider>,
-    stdout: &mut String,
-    stderr: &mut String,
-) -> i32 {
-    // Build event emitter writing to a buffer (we'll copy to stdout)
-    let emitter_buf: Vec<u8> = Vec::new();
-    let emitter = WorkerEventEmitter::new(
-        EmitterConfig {
-            run_id: args.run_id.clone(),
-            job_id: args.job_id.clone(),
-            version: "1.0".to_string(),
-        },
-        emitter_buf,
-    );
-    let sink = Arc::new(WorkerEventSinkAdapter::new(emitter));
-
-    // Build tool registry
-    let job_dir = PathBuf::from(&args.job_dir);
-    let tool_registry = build_worker_tool_registry(job_dir);
-
-    // Build config
-    let config = WorkerLoopConfig {
-        run_id: args.run_id.clone(),
-        job_id: args.job_id.clone(),
-        job_dir: args.job_dir.clone(),
-        goal: args.goal.clone(),
-        model: args
-            .model
-            .clone()
-            .unwrap_or(DEFAULT_WORKER_MODEL.to_string()),
-        max_iterations: args.max_iterations.unwrap_or(DEFAULT_MAX_ITERATIONS),
-        ..WorkerLoopConfig::default()
-    };
-
+    let config = build_loop_config(&worker_args);
     let params = WorkerLoopParams {
         config,
-        provider,
-        sink: sink.clone(),
+        provider: deps.provider,
+        sink: sink.clone() as Arc<dyn WorkerEventSink>,
     };
 
     // Run the agent loop in a tokio runtime
@@ -249,18 +218,58 @@ fn run_worker_with_args(
     };
 
     let result = rt.block_on(run_worker_loop(params, Box::new(tool_registry)));
+    collect_output(sink, stdout, stderr);
+    result.exit_code
+}
 
-    // Copy emitter output to stdout
-    if let Some(buf) = sink.writer_snapshot() {
-        match String::from_utf8(buf) {
-            Ok(json_lines) => stdout.push_str(&json_lines),
-            Err(e) => {
-                stderr.push_str(&format!("worker: non-UTF8 output: {e}\n"));
-            }
+/// Build the default `WorkerEventSinkAdapter` for JSON Lines output.
+fn build_default_sink(args: &WorkerArgs) -> Arc<WorkerEventSinkAdapter<Vec<u8>>> {
+    let emitter = WorkerEventEmitter::new(
+        EmitterConfig {
+            run_id: args.run_id.clone(),
+            job_id: args.job_id.clone(),
+            version: "1.0".to_string(),
+        },
+        Vec::with_capacity(INITIAL_OUTPUT_CAPACITY),
+    );
+    Arc::new(WorkerEventSinkAdapter::new(emitter))
+}
+
+/// Build a `WorkerLoopConfig` from parsed CLI arguments.
+fn build_loop_config(args: &WorkerArgs) -> WorkerLoopConfig {
+    WorkerLoopConfig {
+        run_id: args.run_id.clone(),
+        job_id: args.job_id.clone(),
+        job_dir: args.job_dir.clone(),
+        goal: args.goal.clone(),
+        model: args
+            .model
+            .clone()
+            .unwrap_or(DEFAULT_WORKER_MODEL.to_string()),
+        max_iterations: args.max_iterations.unwrap_or(DEFAULT_MAX_ITERATIONS),
+        ..WorkerLoopConfig::default()
+    }
+}
+
+/// Extract buffered JSON Lines from the sink into stdout.
+///
+/// Tries `into_writer` (zero-copy) first, falls back to clone if
+/// the Arc has other references.
+fn collect_output(
+    sink: Arc<WorkerEventSinkAdapter<Vec<u8>>>,
+    stdout: &mut String,
+    stderr: &mut String,
+) {
+    let buf = match Arc::try_unwrap(sink) {
+        Ok(adapter) => adapter.into_writer().unwrap_or_default(),
+        Err(shared) => shared.clone_writer().unwrap_or_default(),
+    };
+    match String::from_utf8(buf) {
+        Ok(json_lines) => stdout.push_str(&json_lines),
+        Err(e) => {
+            stderr.push_str(&format!("worker: non-UTF8 output: {e}\n"));
         }
     }
-
-    result.exit_code
 }
 
 /// Help text for the worker subcommand.

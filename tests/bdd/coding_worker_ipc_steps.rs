@@ -310,9 +310,7 @@ fn then_ipc_stderr_contains(world: &mut QuectoWorld, expected: String) {
 /// Get the last JSON line from the adapter's buffer output.
 fn last_adapter_json(world: &QuectoWorld) -> serde_json::Value {
     let adapter = world.ipc_adapter.as_ref().expect("adapter not set");
-    let buf: Vec<u8> = adapter
-        .writer_snapshot()
-        .expect("failed to get writer snapshot");
+    let buf: Vec<u8> = adapter.clone_writer().expect("failed to get writer clone");
     let output = String::from_utf8(buf).unwrap();
     let last_line = output.lines().last().expect("no output lines");
     serde_json::from_str(last_line).expect("invalid JSON")

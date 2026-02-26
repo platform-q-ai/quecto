@@ -81,6 +81,11 @@ impl<W: Write> WorkerEventEmitter<W> {
     pub fn writer(&self) -> &W {
         &self.writer
     }
+
+    /// Consume the emitter and return the inner writer.
+    pub fn into_writer(self) -> W {
+        self.writer
+    }
 }
 
 /// Errors from event emission.
@@ -120,12 +125,22 @@ impl<W: Write + Send> WorkerEventSinkAdapter<W> {
         }
     }
 
-    /// Access the inner emitter's writer (for inspecting output in tests).
-    pub fn writer_snapshot(&self) -> Option<W>
+    /// Clone the inner writer for inspection (holds the lock during clone).
+    ///
+    /// Primarily used in tests to inspect emitted JSON Lines output.
+    /// Prefer `into_writer()` in production to avoid the clone cost.
+    pub fn clone_writer(&self) -> Option<W>
     where
         W: Clone,
     {
         self.inner.lock().ok().map(|e| e.writer().clone())
+    }
+
+    /// Consume the adapter and return the inner writer, avoiding a clone.
+    ///
+    /// Returns `None` if the lock is poisoned or the Arc has other references.
+    pub fn into_writer(self) -> Option<W> {
+        self.inner.into_inner().ok().map(|e| e.into_writer())
     }
 }
 
@@ -133,7 +148,7 @@ impl<W: Write + Send + 'static> WorkerEventSink for WorkerEventSinkAdapter<W> {
     fn emit(&self, event_type: &str, payload: serde_json::Value) -> Result<u64, String> {
         self.inner
             .lock()
-            .map_err(|e| format!("lock poisoned: {e}"))?
+            .map_err(|_| "event emitter lock poisoned".to_string())?
             .emit(event_type, payload)
             .map_err(|e| e.to_string())
     }
@@ -364,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn test_adapter_writer_snapshot() {
+    fn test_adapter_clone_writer() {
         let adapter = test_adapter();
         adapter
             .emit(
@@ -372,7 +387,21 @@ mod tests {
                 serde_json::json!({"level":"info","message":"x"}),
             )
             .unwrap();
-        let buf = adapter.writer_snapshot().unwrap();
+        let buf = adapter.clone_writer().unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("log.message"));
+    }
+
+    #[test]
+    fn test_adapter_into_writer() {
+        let adapter = test_adapter();
+        adapter
+            .emit(
+                "log.message",
+                serde_json::json!({"level":"info","message":"x"}),
+            )
+            .unwrap();
+        let buf = adapter.into_writer().unwrap();
         let output = String::from_utf8(buf).unwrap();
         assert!(output.contains("log.message"));
     }
@@ -386,7 +415,7 @@ mod tests {
                 serde_json::json!({"tool":"worker_read","call_id":"c1"}),
             )
             .unwrap();
-        let buf = adapter.writer_snapshot().unwrap();
+        let buf = adapter.clone_writer().unwrap();
         let output = String::from_utf8(buf).unwrap();
         let json: serde_json::Value = serde_json::from_str(output.lines().last().unwrap()).unwrap();
         assert_eq!(json["run_id"], "run-1");

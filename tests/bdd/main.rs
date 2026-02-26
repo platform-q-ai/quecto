@@ -1006,7 +1006,7 @@ pub struct QuectoWorld {
     pub cwe_parsed_args: Option<Result<quecto::interface::cli::worker::WorkerArgs, String>>,
     pub cwe_job_dir: Option<PathBuf>,
     pub _cwe_temp_dir: Option<TempDir>,
-    pub cwe_validation_result: Option<Result<(), String>>,
+    pub cwe_validation_result: Option<Result<PathBuf, String>>,
     pub cwe_registry: Option<ToolRegistryImpl>,
     pub cwe_emitter:
         Option<quecto::infrastructure::coding::worker_event_emitter::WorkerEventEmitter<Vec<u8>>>,
