@@ -18,6 +18,7 @@ fn test_config() -> NsjailRuntimeConfig {
         nsjail_binary: "nsjail".to_string(),
         quecto_binary: "/usr/local/bin/quecto".to_string(),
         command_override: None,
+        cgroups_available: true,
     }
 }
 

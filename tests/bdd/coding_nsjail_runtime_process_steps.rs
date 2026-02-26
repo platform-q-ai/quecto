@@ -41,6 +41,7 @@ fn setup_runtime_with_script(world: &mut QuectoWorld, cmd: Vec<String>) {
         nsjail_binary: "nsjail".to_string(),
         quecto_binary: "/usr/local/bin/quecto".to_string(),
         command_override: Some(cmd),
+        cgroups_available: true,
     };
     world.nrt_runtime = Some(NsjailWorkerRuntime::new(config));
     world.nrt_launch_config = Some(default_process_launch_config(world));
@@ -152,6 +153,7 @@ fn given_nonexistent_binary(world: &mut QuectoWorld) {
         nsjail_binary: "nsjail".to_string(),
         quecto_binary: "/usr/local/bin/quecto".to_string(),
         command_override: Some(vec!["/definitely/not/a/real/binary".to_string()]),
+        cgroups_available: true,
     };
     world.nrt_runtime = Some(NsjailWorkerRuntime::new(config));
     world.nrt_launch_config = Some(default_process_launch_config(world));

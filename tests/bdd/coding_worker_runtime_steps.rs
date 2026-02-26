@@ -11,7 +11,7 @@ use crate::QuectoWorld;
 
 fn ensure_runtime(world: &mut QuectoWorld) {
     if world.coding_worker_runtime.is_none() {
-        world.coding_worker_runtime = Some(MockWorkerRuntime::new());
+        world.coding_worker_runtime = Some(MockWorkerRuntime::with_cgroups(true));
     }
 }
 

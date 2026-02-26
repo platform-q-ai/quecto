@@ -21,6 +21,7 @@ use crate::domain::coding_event::EventEnvelope;
 use crate::domain::coding_ports::{
     WorkerEnvVar, WorkerEvent, WorkerLaunchConfig, WorkerRuntime, WorkerStatus,
 };
+use crate::infrastructure::tools::exec::probe_cgroup_writable;
 
 /// Maximum captured stderr size (1 MiB), matching ExecTool's limit.
 const MAX_STDERR_BYTES: usize = 1024 * 1024;
@@ -94,6 +95,9 @@ pub struct NsjailRuntimeConfig {
     /// Used for testing real process spawn without nsjail capabilities.
     /// The command receives the worker launch config via arguments.
     pub command_override: Option<Vec<String>>,
+    /// Whether cgroup-based limits (memory, PIDs) are available.
+    /// Probed at construction; when false, cgroup flags are omitted.
+    pub cgroups_available: bool,
 }
 
 impl Default for NsjailRuntimeConfig {
@@ -102,6 +106,7 @@ impl Default for NsjailRuntimeConfig {
             nsjail_binary: "nsjail".to_string(),
             quecto_binary: resolve_quecto_binary(),
             command_override: None,
+            cgroups_available: probe_cgroup_writable(),
         }
     }
 }
@@ -236,8 +241,11 @@ pub fn build_nsjail_worker_args(
     nsjail_args.push(launch.max_cpu_seconds.to_string());
     nsjail_args.push("--time_limit".to_string());
     nsjail_args.push(launch.max_wall_seconds.to_string());
-    nsjail_args.push("--cgroup_pids_max".to_string());
-    nsjail_args.push(launch.max_pids.to_string());
+    if config.cgroups_available {
+        nsjail_args.push("--detect_cgroupv2".to_string());
+        nsjail_args.push("--cgroup_pids_max".to_string());
+        nsjail_args.push(launch.max_pids.to_string());
+    }
 
     // Security
     nsjail_args.push("--no_new_privs".to_string());
