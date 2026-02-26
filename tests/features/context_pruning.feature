@@ -1,4 +1,4 @@
-@wip
+@done
 Feature: Context pruning via 3-turn collapse
 
   Background:

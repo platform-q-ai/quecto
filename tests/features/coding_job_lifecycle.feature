@@ -1,4 +1,4 @@
-@wip
+@done
 Feature: Coding Job Lifecycle
   As the coding runtime coordinator
   I want to manage coding jobs through a well-defined state machine

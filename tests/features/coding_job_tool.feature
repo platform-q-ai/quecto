@@ -1,4 +1,4 @@
-@wip
+@done
 Feature: Coding Job Tool
   As the LLM agent
   I want a coding_job tool that wraps the CodingCoordinator

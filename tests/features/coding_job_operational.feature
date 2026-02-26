@@ -1,4 +1,4 @@
-@wip
+@done
 Feature: Coding Job Operational Wiring
   As a Quecto operator
   I want coding_job to be wired through real entrypoints

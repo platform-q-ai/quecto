@@ -1,4 +1,4 @@
-@wip
+@done
 Feature: Crash Recovery and Event Replay
   As the coding runtime coordinator
   I want to recover state from event logs after a crash

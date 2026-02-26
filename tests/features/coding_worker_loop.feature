@@ -1,4 +1,4 @@
-@wip @coding-live
+@done @coding-live
 Feature: Worker Agent Loop
   As the coding runtime
   I need the worker loop to run an LLM agent loop with worker tools and event emission
