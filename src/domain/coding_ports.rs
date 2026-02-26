@@ -115,6 +115,12 @@ pub trait RepoMirrorStore {
 
     /// Remove a job's repo directory but preserve its artifact directory.
     fn remove_job_repo_keep_artifacts(&self, job_id: &str) -> bool;
+
+    /// Return the absolute path to the cloned repo directory for a job.
+    ///
+    /// This allows the application layer to pass the correct `job_dir`
+    /// to `WorkerLaunchConfig` without hardcoding filesystem paths.
+    fn job_repo_path(&self, job_id: &str) -> String;
 }
 
 // ============================================================================
@@ -170,6 +176,9 @@ pub struct WorkerEnvVar {
 ///
 /// The coordinator uses this trait to launch, monitor, communicate with,
 /// and tear down worker processes.
+///
+/// Includes `as_any_mut()` to support safe downcasting in test code
+/// (e.g. to access `MockWorkerRuntime`-specific injection methods).
 pub trait WorkerRuntime {
     /// Launch a new worker process inside nsjail.
     fn launch(&mut self, config: &WorkerLaunchConfig) -> Result<u32, String>;
@@ -200,6 +209,9 @@ pub trait WorkerRuntime {
 
     /// Clean up all resources for the given worker PID.
     fn cleanup(&mut self, pid: u32);
+
+    /// Downcast support for test code. Returns `self` as `&mut dyn Any`.
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }
 
 // ============================================================================

@@ -1060,6 +1060,16 @@ pub struct QuectoWorld {
     pub ipc_stdout: Option<String>,
     pub ipc_stderr: Option<String>,
     pub ipc_exit_code: Option<i32>,
+    // --- Coding lifecycle driver BDD fields ---
+    /// Lifecycle driver instance for tick-based orchestration scenarios
+    pub ld_driver: Option<
+        quecto::application::coding_lifecycle::CodingLifecycleDriver<
+            BddRepoValidator,
+            BddSkillResolver,
+        >,
+    >,
+    /// Job IDs created via the lifecycle driver
+    pub ld_job_ids: Vec<String>,
 }
 
 fn push_coding_event(
@@ -1344,6 +1354,7 @@ mod coding_github_publish_steps;
 mod coding_job_lifecycle_steps;
 mod coding_job_operational_steps;
 mod coding_job_tool_steps;
+mod coding_lifecycle_driver_steps;
 mod coding_nonblocking_coordinator_steps;
 mod coding_nsjail_runtime_process_steps;
 mod coding_nsjail_runtime_steps;

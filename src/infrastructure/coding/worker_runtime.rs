@@ -274,6 +274,10 @@ impl WorkerRuntime for MockWorkerRuntime {
     fn cleanup(&mut self, pid: u32) {
         self.workers.remove(&pid);
     }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
 
 /// Check if an environment variable name is blocked from the worker.
