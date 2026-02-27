@@ -5,6 +5,8 @@
 //! periodic state snapshots, and exits on shutdown command or SIGTERM.
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::application::coordinator_inbox;
 use crate::domain::coding_ipc::CoordinatorIpc;
@@ -77,15 +79,56 @@ fn require_next(args: &[String], i: &mut usize, flag: &str) -> Result<String, St
 
 // ── Coordinator loop ────────────────────────────────────────────────────
 
+/// Install signal handlers that set a shared shutdown flag on
+/// SIGTERM or SIGINT.
+///
+/// Spawns a background thread running a single-threaded tokio runtime
+/// that waits for `ctrl_c()` (SIGINT). For SIGTERM we rely on the
+/// default behavior (process killed) combined with the PID liveness
+/// check in the delegation tool — if the coordinator dies, the main
+/// agent will auto-restart it on the next `coding_job` call.
+///
+/// Returns an `Arc<AtomicBool>` that the loop checks each iteration.
+fn install_signal_handlers() -> Arc<AtomicBool> {
+    let flag = Arc::new(AtomicBool::new(false));
+    let flag_clone = Arc::clone(&flag);
+
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build();
+        if let Ok(rt) = rt {
+            rt.block_on(async {
+                let _ = tokio::signal::ctrl_c().await;
+                flag_clone.store(true, Ordering::SeqCst);
+            });
+        }
+    });
+
+    flag
+}
+
 /// Run the coordinator tick loop until shutdown is requested.
 ///
 /// This is the core polling loop: read inbox, dispatch to service, write
 /// outbox, write state, sleep, repeat. Exits when `tick()` returns
-/// `shutdown_requested: true`.
+/// `shutdown_requested: true` or when a SIGTERM/SIGINT signal is received.
 pub fn run_coordinator_loop(
     ipc: &dyn CoordinatorIpc,
     service: &mut dyn CodingJobService,
     poll_interval: std::time::Duration,
+) -> i32 {
+    let shutdown = install_signal_handlers();
+    run_coordinator_loop_with_flag(ipc, service, poll_interval, &shutdown)
+}
+
+/// Inner loop that checks both the IPC shutdown command and an external
+/// `AtomicBool` flag (set by signal handlers or tests).
+pub fn run_coordinator_loop_with_flag(
+    ipc: &dyn CoordinatorIpc,
+    service: &mut dyn CodingJobService,
+    poll_interval: std::time::Duration,
+    shutdown: &AtomicBool,
 ) -> i32 {
     // Write PID for liveness checks.
     let pid = std::process::id();
@@ -95,6 +138,12 @@ pub fn run_coordinator_loop(
     }
 
     loop {
+        // Check external shutdown flag (signal handler or test).
+        if shutdown.load(Ordering::SeqCst) {
+            tracing::info!("coordinator: signal received, exiting");
+            return 0;
+        }
+
         match coordinator_inbox::tick(ipc, service) {
             Ok(result) => {
                 if result.shutdown_requested {
@@ -225,7 +274,7 @@ use crate::domain::coding_ports::RepoCreator;
 use crate::infrastructure::coding::runtime_adapters::{
     WorkspaceRepoCreator, WorkspaceRepoValidator, WorkspaceSkillResolver,
 };
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 type SharedDriver =
     Arc<Mutex<CodingLifecycleDriver<WorkspaceRepoValidator, WorkspaceSkillResolver>>>;

@@ -82,3 +82,11 @@ Feature: Coordinator entrypoint
       """
     When the coordinator runs one tick
     Then the coordinator state should show alive
+
+  # ── Signal-driven shutdown ─────────────────────────────────────────
+
+  Scenario: Coordinator loop exits when external shutdown flag is set
+    Given a coordinator entrypoint with mock service
+    And the coordinator external shutdown flag is set
+    When the coordinator loop runs with the external flag
+    Then the coordinator loop should exit with code 0

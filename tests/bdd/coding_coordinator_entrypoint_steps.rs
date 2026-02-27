@@ -335,3 +335,35 @@ fn then_coordinator_state_alive(world: &mut QuectoWorld) {
         .expect("state present");
     assert!(state.alive, "coordinator state should show alive=true");
 }
+
+// ── Step definitions: Signal-driven shutdown ────────────────────────────
+
+#[given("the coordinator external shutdown flag is set")]
+fn given_external_shutdown_flag_set(world: &mut QuectoWorld) {
+    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    world.ep_coord_shutdown_flag = Some(flag);
+}
+
+#[when("the coordinator loop runs with the external flag")]
+fn when_coordinator_loop_runs_with_flag(world: &mut QuectoWorld) {
+    let ipc = world.ep_coord_ipc.as_ref().expect("ipc set");
+    let svc = world.ep_coord_svc.as_mut().expect("svc set");
+    let flag = world
+        .ep_coord_shutdown_flag
+        .as_ref()
+        .expect("shutdown flag set");
+
+    let exit_code = quecto::interface::cli::coordinator::run_coordinator_loop_with_flag(
+        ipc,
+        svc,
+        std::time::Duration::from_millis(10),
+        flag,
+    );
+    world.ep_coord_loop_exit_code = Some(exit_code);
+}
+
+#[then(regex = r#"^the coordinator loop should exit with code (\d+)$"#)]
+fn then_coordinator_loop_exit_code(world: &mut QuectoWorld, expected: i32) {
+    let code = world.ep_coord_loop_exit_code.expect("exit code set");
+    assert_eq!(code, expected, "expected exit code {expected}, got {code}");
+}

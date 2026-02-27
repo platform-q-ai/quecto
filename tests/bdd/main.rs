@@ -1256,6 +1256,10 @@ pub struct QuectoWorld {
     pub ep_coord_svc: Option<coding_coordinator_entrypoint_steps::BddEntrypointMockJobService>,
     /// Result of the last tick in entrypoint scenarios
     pub ep_coord_tick_result: Option<quecto::application::coordinator_inbox::TickResult>,
+    /// External shutdown flag for signal-driven shutdown scenarios
+    pub ep_coord_shutdown_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Exit code from the coordinator loop
+    pub ep_coord_loop_exit_code: Option<i32>,
 }
 
 fn push_coding_event(

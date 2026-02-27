@@ -1,8 +1,8 @@
 //! Infrastructure implementation of the CoordinatorSpawner port.
 //!
-//! Spawns the coordinator as a detached `quecto agent` child process with
-//! a coordinator-specific system prompt, long timeout, and named session.
-//! Writes the child PID to `coordinator/pid` for liveness checks.
+//! Spawns the coordinator as a detached `quecto coordinator` child process
+//! with file-based IPC. Writes the child PID to `coordinator/pid` for
+//! liveness checks.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -37,13 +37,13 @@ impl CoordinatorSpawnConfig {
     }
 }
 
-/// Spawns the coordinator as a real `quecto agent` child process.
+/// Spawns the coordinator as a detached `quecto coordinator` child process.
 ///
 /// On `ensure_alive()`:
 /// 1. Checks if the coordinator is alive via `CoordinatorIpc::is_coordinator_alive()`.
 /// 2. If alive, returns the existing PID from the pid file.
-/// 3. If not alive, resolves the current executable, spawns a child `quecto agent`
-///    with coordinator-specific flags, records the PID, and returns.
+/// 3. If not alive, resolves the current executable, spawns a child
+///    `quecto coordinator` with IPC flags, records the PID, and returns.
 pub struct CoordinatorProcessSpawner {
     ipc: Arc<dyn CoordinatorIpc>,
     config: CoordinatorSpawnConfig,
