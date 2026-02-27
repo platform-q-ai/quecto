@@ -1226,6 +1226,15 @@ pub struct QuectoWorld {
     /// Real CoordinatorProcessSpawner for configuration assertion scenarios
     pub coord_process_spawner:
         Option<quecto::infrastructure::coding::coordinator_spawner::CoordinatorProcessSpawner>,
+    // --- Coordinator inbox processor BDD fields ---
+    /// Mock IPC for inbox processor scenarios
+    pub inbox_ipc: Option<coding_coordinator_inbox_steps::BddInboxMockIpc>,
+    /// Mock job service for inbox processor scenarios
+    pub inbox_svc: Option<coding_coordinator_inbox_steps::BddInboxMockJobService>,
+    /// Result of the last `tick()` call
+    pub inbox_tick_result: Option<quecto::application::coordinator_inbox::TickResult>,
+    /// Last command ID added (for single-command assertion scenarios)
+    pub inbox_last_cmd_id: Option<String>,
 }
 
 fn push_coding_event(
@@ -1505,6 +1514,7 @@ mod coding_artifact_export_steps;
 mod coding_child_agents_steps;
 mod coding_coordinator_delegation_steps;
 mod coding_coordinator_delegation_tool_steps;
+mod coding_coordinator_inbox_steps;
 mod coding_coordinator_spawn_steps;
 mod coding_coordinator_worker_lifecycle_steps;
 mod coding_crash_recovery_steps;

@@ -8,6 +8,7 @@ pub mod coding_spawn_manager;
 pub mod coding_todos;
 pub mod coding_worker_events;
 pub mod context_pruning;
+pub mod coordinator_inbox;
 pub mod cron_executor;
 pub mod heartbeat;
 pub mod onboard;
