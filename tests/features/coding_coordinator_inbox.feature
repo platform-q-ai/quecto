@@ -1,4 +1,4 @@
-@wip
+@done
 Feature: Coordinator Inbox Processing
   As the coordinator subagent process
   I want to poll my inbox for commands and dispatch them through the job service

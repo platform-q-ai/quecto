@@ -1,4 +1,4 @@
-@wip
+@done
 Feature: Coordinator Delegation Tool
   As the LLM agent
   I want a coding_job tool that delegates to the coordinator via file-based IPC

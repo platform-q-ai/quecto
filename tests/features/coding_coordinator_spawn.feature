@@ -1,4 +1,4 @@
-@wip
+@done
 Feature: Coordinator Spawn and Liveness
   As the main agent
   I want to auto-spawn the coordinator subagent if it is not alive

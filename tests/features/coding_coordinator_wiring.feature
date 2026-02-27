@@ -1,4 +1,4 @@
-@wip
+@done
 Feature: Coordinator wiring via config flag
   As the composition root
   I want to choose between inline and subagent coordinator modes via config
