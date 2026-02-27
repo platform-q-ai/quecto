@@ -1088,6 +1088,28 @@ pub struct QuectoWorld {
     pub e2e_coding_worker_stdout: Option<String>,
     /// Worker subprocess stderr
     pub e2e_coding_worker_stderr: Option<String>,
+    // --- Coordinator delegation IPC BDD fields ---
+    /// FileCoordinatorIpc instance for delegation scenarios
+    pub coord_ipc: Option<quecto::infrastructure::coding::coordinator_ipc::FileCoordinatorIpc>,
+    /// Temp dir for coordinator IPC (kept alive)
+    pub _coord_ipc_temp_dir: Option<TempDir>,
+    /// Last IPC command written
+    pub coord_ipc_last_cmd: Option<quecto::domain::coding_ipc::CoordinatorIpcCommand>,
+    /// Last IPC response read
+    pub coord_ipc_last_response: Option<quecto::domain::coding_ipc::CoordinatorIpcResponse>,
+    /// Last IPC notification created
+    pub coord_ipc_last_notification: Option<quecto::domain::coding_ipc::CoordinatorNotification>,
+    /// Last IPC state snapshot
+    pub coord_ipc_last_state: Option<quecto::domain::coding_ipc::CoordinatorState>,
+    /// Coordinator alive check result
+    pub coord_ipc_alive: Option<bool>,
+    /// Last serialized JSON for assertion
+    pub coord_ipc_last_json: Option<String>,
+    /// Timeout poll result (Ok or Err)
+    pub coord_ipc_poll_result:
+        Option<Result<quecto::domain::coding_ipc::CoordinatorIpcResponse, String>>,
+    /// Read notifications result
+    pub coord_ipc_notifications: Option<Vec<quecto::domain::coding_ipc::CoordinatorNotification>>,
 }
 
 fn push_coding_event(
@@ -1365,6 +1387,7 @@ mod auth_steps;
 mod coding_agent_responsiveness_steps;
 mod coding_artifact_export_steps;
 mod coding_child_agents_steps;
+mod coding_coordinator_delegation_steps;
 mod coding_coordinator_worker_lifecycle_steps;
 mod coding_crash_recovery_steps;
 mod coding_event_persistence_steps;
