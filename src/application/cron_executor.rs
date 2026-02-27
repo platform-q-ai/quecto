@@ -3,9 +3,7 @@
 use std::time::Duration;
 
 use crate::domain::agent::AgentLoop;
-use crate::domain::cron::{
-    CronJob, CronJobResult, CronStore, is_job_due, unsupported_schedule_reason,
-};
+use crate::domain::cron::{CronJobResult, CronStore, is_job_due};
 use crate::domain::error::DomainError;
 use crate::domain::message::Message;
 
@@ -23,10 +21,6 @@ pub async fn execute_cron_tick(
     let mut results = Vec::new();
 
     for job in &jobs {
-        if handle_unsupported_job(store, job) {
-            continue;
-        }
-
         if !is_job_due(job, now_secs) {
             continue;
         }
@@ -48,25 +42,6 @@ fn now_unix_secs() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
-}
-
-fn handle_unsupported_job(store: &dyn CronStore, job: &CronJob) -> bool {
-    let Some(reason) = unsupported_schedule_reason(job) else {
-        return false;
-    };
-
-    if job.last_error.as_deref() == Some(reason) {
-        return true;
-    }
-
-    if let Err(e) = store.set_last_error(&job.id, Some(reason.to_string())) {
-        tracing::warn!(
-            job_id = %job.id,
-            "failed to update last_error on unsupported cron expression job: {}",
-            e
-        );
-    }
-    true
 }
 
 fn record_last_run(store: &dyn CronStore, job_id: &str, now_secs: u64) {
@@ -249,6 +224,7 @@ mod tests {
             deliver_to: None,
             last_error: None,
             last_run_at: 0,
+            created_at: 1_700_000_000,
         }
     }
 
@@ -324,36 +300,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_cron_expression_jobs_are_skipped_with_error_marker() {
+    async fn test_cron_expression_job_executes_when_matching() {
+        // "* * * * *" matches every minute — should execute, not skip.
         let job = CronJob {
-            id: "morning-brief".to_string(),
-            name: "Morning Brief".to_string(),
-            message: "Good morning brief".to_string(),
+            id: "every-minute".to_string(),
+            name: "Every Minute".to_string(),
+            message: "Run every minute".to_string(),
             schedule: CronSchedule::Cron {
-                expression: "0 9 * * *".to_string(),
+                expression: "* * * * *".to_string(),
             },
             enabled: true,
             deliver_to: None,
             last_error: None,
             last_run_at: 0,
+            created_at: 1_700_000_000,
         };
         let store = MockCronStore::new(vec![job]);
         let agent = MockAgent {
-            response: "should not run".to_string(),
+            response: "executed".to_string(),
         };
 
         let results = execute_cron_tick(&store, &agent, Duration::from_secs(60))
             .await
             .unwrap();
 
-        assert!(results.is_empty());
-        let stored = store.find_by_name("Morning Brief").unwrap().unwrap();
-        assert!(
-            stored
-                .last_error
-                .as_deref()
-                .is_some_and(|e| e.contains("not implemented"))
+        assert_eq!(
+            results.len(),
+            1,
+            "every-minute cron expression job should execute"
         );
+        assert!(results[0].ok);
+        assert_eq!(results[0].response, "executed");
     }
 
     #[tokio::test]
@@ -363,12 +340,13 @@ mod tests {
             name: "Disabled Brief".to_string(),
             message: "Should not run".to_string(),
             schedule: CronSchedule::Cron {
-                expression: "0 9 * * *".to_string(),
+                expression: "* * * * *".to_string(),
             },
             enabled: false,
             deliver_to: None,
             last_error: None,
             last_run_at: 0,
+            created_at: 1_700_000_000,
         };
         let store = MockCronStore::new(vec![job]);
         let agent = MockAgent {

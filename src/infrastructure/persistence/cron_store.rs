@@ -35,6 +35,8 @@ struct CronJobRecord {
     last_error: Option<String>,
     #[serde(default)]
     last_run_at: u64,
+    #[serde(default)]
+    created_at: u64,
 }
 
 impl FileCronStore {
@@ -87,6 +89,7 @@ fn job_to_record(job: &CronJob) -> CronJobRecord {
         deliver_to: job.deliver_to.clone(),
         last_error: job.last_error.clone(),
         last_run_at: job.last_run_at,
+        created_at: job.created_at,
     }
 }
 
@@ -108,6 +111,7 @@ fn record_to_job(rec: CronJobRecord) -> CronJob {
         deliver_to: rec.deliver_to,
         last_error: rec.last_error,
         last_run_at: rec.last_run_at,
+        created_at: rec.created_at,
     }
 }
 
@@ -177,6 +181,7 @@ mod tests {
             deliver_to: None,
             last_error: None,
             last_run_at: 0,
+            created_at: 1_700_000_000,
         }
     }
 
@@ -192,6 +197,7 @@ mod tests {
             deliver_to: None,
             last_error: None,
             last_run_at: 0,
+            created_at: 1_700_000_000,
         }
     }
 
@@ -300,5 +306,49 @@ mod tests {
         store.add(make_cron_job("Job3", "0 * * * *")).unwrap();
 
         assert_eq!(store.list().unwrap().len(), 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix 2: created_at field is persisted and round-tripped
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_created_at_persisted() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileCronStore::new(tmp.path());
+
+        let mut job = make_interval_job("Timestamped", 60);
+        job.created_at = 1_700_123_456;
+        store.add(job).unwrap();
+
+        // Recreate store from same directory to verify persistence
+        let store2 = FileCronStore::new(tmp.path());
+        let loaded = store2.find_by_name("Timestamped").unwrap().unwrap();
+        assert_eq!(
+            loaded.created_at, 1_700_123_456,
+            "created_at should survive persistence round-trip"
+        );
+    }
+
+    #[test]
+    fn test_created_at_defaults_for_old_jobs() {
+        // Simulate an old jobs.json that lacks the created_at field.
+        let tmp = TempDir::new().unwrap();
+        let cron_dir = tmp.path().join("cron");
+        std::fs::create_dir_all(&cron_dir).unwrap();
+        let jobs_json = cron_dir.join("jobs.json");
+        std::fs::write(
+            &jobs_json,
+            r#"{"jobs":[{"id":"old","name":"Old Job","message":"test","schedule_type":"interval","interval_seconds":60,"enabled":true,"last_run_at":0}]}"#,
+        )
+        .unwrap();
+
+        let store = FileCronStore::new(tmp.path());
+        let jobs = store.list().unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(
+            jobs[0].created_at, 0,
+            "old jobs without created_at should default to 0"
+        );
     }
 }

@@ -25,6 +25,7 @@ fn make_interval_job(name: &str, seconds: u64) -> CronJob {
         deliver_to: None,
         last_error: None,
         last_run_at: 0,
+        created_at: now_unix_secs(),
     }
 }
 
@@ -40,7 +41,15 @@ fn make_cron_expr_job(name: &str, expr: &str) -> CronJob {
         deliver_to: None,
         last_error: None,
         last_run_at: 0,
+        created_at: now_unix_secs(),
     }
+}
+
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 #[given("a cron store")]
@@ -208,6 +217,7 @@ fn given_gateway_cron_job_with_message(
         deliver_to: None,
         last_error: None,
         last_run_at: 0,
+        created_at: now_unix_secs(),
     };
     store.add(job).unwrap();
 }
@@ -227,6 +237,7 @@ fn given_gateway_disabled_cron_job(world: &mut QuectoWorld, name: String, second
         deliver_to: None,
         last_error: None,
         last_run_at: 0,
+        created_at: now_unix_secs(),
     };
     store.add(job).unwrap();
 }
@@ -266,6 +277,7 @@ fn given_gateway_cron_job_deliver_to(
         deliver_to: Some(deliver_to),
         last_error: None,
         last_run_at: 0,
+        created_at: now_unix_secs(),
     };
     store.add(job).unwrap();
 }
@@ -290,6 +302,7 @@ fn given_gateway_cron_job_with_expression_and_message(
         deliver_to: None,
         last_error: None,
         last_run_at: 0,
+        created_at: now_unix_secs(),
     };
     store.add(job).unwrap();
 }
@@ -412,6 +425,160 @@ fn then_message_contains(world: &mut QuectoWorld, expected: String) {
         "expected a result containing '{}', got: {:?}",
         expected,
         results.iter().map(|r| &r.response).collect::<Vec<_>>()
+    );
+}
+
+// ===========================================================================
+// Fix 2: created_at field steps
+// ===========================================================================
+
+#[then(expr = "the job {string} should have a non-zero created_at")]
+fn then_job_has_nonzero_created_at(world: &mut QuectoWorld, name: String) {
+    let store = world.cron_store.as_ref().unwrap();
+    let job = store
+        .find_by_name(&name)
+        .unwrap()
+        .unwrap_or_else(|| panic!("job '{}' not found", name));
+    assert!(
+        job.created_at > 0,
+        "job '{}' should have non-zero created_at, got {}",
+        name,
+        job.created_at
+    );
+}
+
+// ===========================================================================
+// Fix 3: list diagnostics steps
+// ===========================================================================
+
+#[when("I list jobs via the cron tool")]
+fn when_list_via_cron_tool(world: &mut QuectoWorld) {
+    // Use either the file-based cron store or the in-memory gateway store.
+    let store: Arc<dyn CronStore> = if let Some(ref s) = world.gateway_cron_store {
+        s.clone()
+    } else {
+        let ws = world.cron_workspace.as_ref().unwrap().clone();
+        Arc::new(FileCronStore::new(ws))
+    };
+    let tool = CronTool::new(store);
+    let result = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(tool.execute(r#"{"action":"list"}"#))
+        .unwrap();
+    world.cron_tool_output = Some(result.content);
+}
+
+#[then(expr = "the cron tool list output should contain {string}")]
+fn then_cron_tool_list_contains(world: &mut QuectoWorld, expected: String) {
+    let output = world
+        .cron_tool_output
+        .as_ref()
+        .expect("cron tool output not set");
+    assert!(
+        output.contains(&expected),
+        "cron tool list output should contain '{}', got:\n{}",
+        expected,
+        output
+    );
+}
+
+// ===========================================================================
+// Fix 3: last_error setup step
+// ===========================================================================
+
+#[given(expr = "the job {string} has last_error {string}")]
+fn given_job_has_last_error(world: &mut QuectoWorld, name: String, error: String) {
+    let store = world.cron_store.as_ref().unwrap();
+    let job = store
+        .find_by_name(&name)
+        .unwrap()
+        .unwrap_or_else(|| panic!("job '{}' not found", name));
+    store.set_last_error(&job.id, Some(error)).unwrap();
+}
+
+// ===========================================================================
+// Fix 4: deliver_to validation steps
+// ===========================================================================
+
+#[when(expr = "I try to add a job {string} with interval {int} seconds and deliver_to {string}")]
+fn when_try_add_job_with_deliver_to(
+    world: &mut QuectoWorld,
+    name: String,
+    seconds: u64,
+    deliver_to: String,
+) {
+    ensure_cron_store(world);
+    let ws = world.cron_workspace.as_ref().unwrap().clone();
+    let store: Arc<dyn CronStore> = Arc::new(FileCronStore::new(ws));
+    let tool = CronTool::new(store);
+    let args = serde_json::json!({
+        "action": "add",
+        "name": name,
+        "message": "test",
+        "interval_seconds": seconds,
+        "deliver_to": deliver_to,
+    })
+    .to_string();
+    let result = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(tool.execute(&args))
+        .unwrap();
+    world.cron_tool_result = Some(result);
+}
+
+#[then(expr = "the cron tool should return an error containing {string}")]
+fn then_cron_tool_error_contains(world: &mut QuectoWorld, expected: String) {
+    let result = world
+        .cron_tool_result
+        .as_ref()
+        .expect("cron tool result not set");
+    assert!(
+        result.is_error,
+        "expected cron tool to return error, got success: {}",
+        result.content
+    );
+    assert!(
+        result.content.contains(&expected),
+        "error should contain '{}', got: {}",
+        expected,
+        result.content
+    );
+}
+
+#[when(expr = "I try to add a job {string} with cron expression {string}")]
+fn when_try_add_job_with_cron_expression(
+    world: &mut QuectoWorld,
+    name: String,
+    expression: String,
+) {
+    ensure_cron_store(world);
+    let ws = world.cron_workspace.as_ref().unwrap().clone();
+    let store: Arc<dyn CronStore> = Arc::new(FileCronStore::new(ws));
+    let tool = CronTool::new(store);
+    let args = serde_json::json!({
+        "action": "add",
+        "name": name,
+        "message": "test",
+        "cron_expression": expression,
+    })
+    .to_string();
+    let result = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(tool.execute(&args))
+        .unwrap();
+    world.cron_tool_result = Some(result);
+}
+
+#[then("the cron tool should return success")]
+fn then_cron_tool_returns_success(world: &mut QuectoWorld) {
+    let result = world
+        .cron_tool_result
+        .as_ref()
+        .expect("cron tool result not set");
+    assert!(
+        !result.is_error,
+        "expected cron tool success, got error: {}",
+        result.content
     );
 }
 
