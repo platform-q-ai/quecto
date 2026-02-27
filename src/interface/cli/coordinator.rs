@@ -6,12 +6,21 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::application::coding_lifecycle::CodingLifecycleDriver;
 use crate::application::coordinator_inbox;
+use crate::domain::coding_command::{
+    CancelResponse, CleanupResponse, CommandError, CreateRequest, CreateResponse, ImportRequest,
+    ImportResponse, ListRequest, ListResponse, RunRequest, RunResponse, StatusResponse,
+};
 use crate::domain::coding_ipc::CoordinatorIpc;
-use crate::domain::coding_ports::CodingJobService;
+use crate::domain::coding_ports::{CodingJobService, RepoCreator};
 use crate::infrastructure::coding::coordinator_ipc::FileCoordinatorIpc;
+use crate::infrastructure::coding::runtime_adapters::{
+    WorkspaceRepoCreator, WorkspaceRepoValidator, WorkspaceSkillResolver,
+};
 
 // ── Parsed arguments ────────────────────────────────────────────────────
 
@@ -261,20 +270,10 @@ fn build_coordinator_service(
     }))
 }
 
-/// `CodingJobService` adapter for the coordinator process.
-///
-/// Same logic as `DriverJobService` in `shared.rs` but owned by the
-/// coordinator process rather than shared via `Arc<Mutex<dyn CodingJobService>>`.
-use crate::application::coding_lifecycle::CodingLifecycleDriver;
-use crate::domain::coding_command::{
-    CancelResponse, CleanupResponse, CommandError, CreateRequest, CreateResponse, ImportRequest,
-    ImportResponse, ListRequest, ListResponse, RunRequest, RunResponse, StatusResponse,
-};
-use crate::domain::coding_ports::RepoCreator;
-use crate::infrastructure::coding::runtime_adapters::{
-    WorkspaceRepoCreator, WorkspaceRepoValidator, WorkspaceSkillResolver,
-};
-use std::sync::Mutex;
+// `CodingJobService` adapter for the coordinator process.
+//
+// Same logic as `DriverJobService` in `shared.rs` but owned by the
+// coordinator process rather than shared via `Arc<Mutex<dyn CodingJobService>>`.
 
 type SharedDriver =
     Arc<Mutex<CodingLifecycleDriver<WorkspaceRepoValidator, WorkspaceSkillResolver>>>;

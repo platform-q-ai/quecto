@@ -121,6 +121,16 @@ pub struct CoordinatorState {
 // IPC Port Trait
 // ============================================================================
 
+/// Build the canonical filename for a notification file.
+///
+/// Both the IPC writer and the delegation tool need the same filename
+/// format to acknowledge notifications. Centralizing the logic here
+/// prevents the format from diverging.
+pub fn notification_filename(notif: &CoordinatorNotification) -> String {
+    let ts_safe = notif.ts.replace(':', "-").replace(' ', "_");
+    format!("{}_{}.json", ts_safe, notif.notification_type)
+}
+
 /// Port for coordinator file-based IPC operations.
 ///
 /// The main agent side uses this to write commands and read responses.
@@ -184,8 +194,8 @@ pub struct SpawnResult {
 /// Port for spawning and ensuring liveness of the coordinator subagent process.
 ///
 /// The main agent calls `ensure_alive()` before each IPC dispatch. If the
-/// coordinator is not running, the spawner launches a new `quecto agent`
-/// child process with a coordinator-specific system prompt and records its PID.
+/// coordinator is not running, the spawner launches a new `quecto coordinator`
+/// child process with file-based IPC and records its PID.
 pub trait CoordinatorSpawner: Send + Sync {
     /// Ensure the coordinator process is alive. If it is not, spawn a new one.
     ///

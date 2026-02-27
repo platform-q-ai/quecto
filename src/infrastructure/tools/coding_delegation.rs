@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use crate::domain::coding_ipc::{
     CoordinatorIpc, CoordinatorIpcCommand, CoordinatorIpcResponse, CoordinatorSpawner,
+    notification_filename,
 };
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
@@ -126,9 +127,7 @@ impl CoordinatorDelegationTool {
         // Check for pending notifications and acknowledge them
         let notifications = self.ipc.read_notifications().unwrap_or_default();
         for notif in &notifications {
-            // Reconstruct the filename from the notification fields.
-            let ts_safe = notif.ts.replace(':', "-").replace(' ', "_");
-            let filename = format!("{}_{}.json", ts_safe, notif.notification_type);
+            let filename = notification_filename(notif);
             let _ = self.ipc.acknowledge_notification(&filename);
         }
 
@@ -162,12 +161,14 @@ impl CoordinatorDelegationTool {
     }
 
     fn poll_response(&self, command_id: &str) -> Result<CoordinatorIpcResponse, String> {
+        let mut delay_ms = self.poll_timeout_ms;
         for _ in 0..self.poll_max_attempts {
             match self.ipc.read_response(command_id) {
                 Ok(Some(resp)) => return Ok(resp),
                 Ok(None) => {
-                    // Sleep briefly and retry
-                    std::thread::sleep(std::time::Duration::from_millis(self.poll_timeout_ms));
+                    std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                    // Exponential backoff: double the delay each miss, cap at 500ms
+                    delay_ms = (delay_ms * 2).min(500);
                 }
                 Err(e) => return Err(format!("ipc read: {e}")),
             }

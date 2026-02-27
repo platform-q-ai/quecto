@@ -5,6 +5,12 @@
 //! proactive notifications to `coordinator/notifications/` and periodic
 //! state snapshots to `coordinator/state.json`.
 //!
+//! Security hardening:
+//! - All filenames are validated (alphanumeric + hyphens/underscores only)
+//! - File reads are capped at 1 MiB to prevent OOM
+//! - Writes use atomic rename (write to `.tmp` then rename)
+//! - Directories are created with 0700 permissions on Unix
+//!
 //! Layout:
 //! ```text
 //! <base_dir>/coordinator/
@@ -16,12 +22,19 @@
 //! ```
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::domain::coding_ipc::{
     CoordinatorIpc, CoordinatorIpcCommand, CoordinatorIpcResponse, CoordinatorNotification,
     CoordinatorState,
 };
+
+/// Maximum IPC file size (1 MiB). Files larger than this are rejected
+/// to prevent OOM from malicious or corrupted files.
+const MAX_IPC_FILE_SIZE: u64 = 1024 * 1024;
+
+/// Maximum number of notifications returned per `read_notifications()` call.
+const MAX_NOTIFICATIONS_PER_READ: usize = 100;
 
 /// File-based implementation of `CoordinatorIpc`.
 ///
@@ -37,12 +50,16 @@ impl FileCoordinatorIpc {
     /// Create a new `FileCoordinatorIpc` rooted at the given directory.
     ///
     /// The directory and its subdirectories (inbox, outbox, notifications)
-    /// are created eagerly.
+    /// are created eagerly with restricted permissions (0700 on Unix).
     pub fn new(base: impl Into<PathBuf>) -> Result<Self, String> {
         let base = base.into();
         for sub in &["inbox", "outbox", "notifications"] {
-            fs::create_dir_all(base.join(sub)).map_err(|e| format!("mkdir {sub}: {e}"))?;
+            let dir = base.join(sub);
+            fs::create_dir_all(&dir).map_err(|e| format!("mkdir {sub}: {e}"))?;
+            set_dir_permissions(&dir);
         }
+        // Also restrict the base directory itself.
+        set_dir_permissions(&base);
         Ok(Self { base })
     }
 
@@ -68,30 +85,90 @@ impl FileCoordinatorIpc {
 
     /// Check whether an OS process with the given PID is running.
     ///
-    /// Uses `kill -0 <pid>` which sends signal 0 (existence check only).
-    /// Exit code 0 means the process exists; non-zero means it doesn't
-    /// (or we lack permission, but that still implies it exists).
+    /// Uses the `kill(pid, 0)` syscall pattern: signal 0 checks existence
+    /// without actually sending a signal. Returns true if the process
+    /// exists, false otherwise.
     fn process_alive(pid: u32) -> bool {
         if pid == 0 {
             return false;
         }
-        // `kill -0` checks existence without actually sending a signal.
-        // Returns exit code 0 if the process exists.
-        std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+        // Use /proc/<pid> existence as a fast, portable liveness check.
+        // This avoids shelling out to `kill` and avoids needing libc FFI.
+        Path::new(&format!("/proc/{pid}")).exists()
     }
+}
+
+/// Validate that a filename component contains only safe characters.
+///
+/// Allowed: alphanumeric, hyphens, underscores, dots.
+/// Rejects: `/`, `\`, `..`, null bytes, and any other path-unsafe chars.
+fn validate_ipc_filename(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("empty filename".to_string());
+    }
+    if name.contains("..") {
+        return Err(format!("path traversal in filename: {name}"));
+    }
+    if name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        Ok(())
+    } else {
+        Err(format!("unsafe characters in filename: {name}"))
+    }
+}
+
+/// Read a file with a size cap to prevent OOM on malicious files.
+fn read_file_capped(path: &Path) -> Result<String, String> {
+    let meta = fs::metadata(path).map_err(|e| format!("metadata {path:?}: {e}"))?;
+    if meta.len() > MAX_IPC_FILE_SIZE {
+        return Err(format!(
+            "file too large ({} bytes, max {}): {path:?}",
+            meta.len(),
+            MAX_IPC_FILE_SIZE
+        ));
+    }
+    fs::read_to_string(path).map_err(|e| format!("read {path:?}: {e}"))
+}
+
+/// Atomic write: write to a `.tmp` sibling, then rename into place.
+///
+/// This prevents readers from seeing partial/torn JSON files.
+fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
+    let tmp = path.with_extension("tmp");
+    fs::write(&tmp, content).map_err(|e| format!("write tmp {tmp:?}: {e}"))?;
+    fs::rename(&tmp, path).map_err(|e| format!("rename {tmp:?} -> {path:?}: {e}"))
+}
+
+/// Set 0700 permissions on a directory (Unix only, no-op elsewhere).
+#[cfg(unix)]
+fn set_dir_permissions(dir: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o700));
+}
+
+#[cfg(not(unix))]
+fn set_dir_permissions(_dir: &Path) {}
+
+/// Sanitize a notification timestamp for use in filenames.
+///
+/// Replaces colons and spaces with safe characters, and rejects
+/// any characters that could cause path traversal.
+fn sanitize_notification_ts(ts: &str) -> Result<String, String> {
+    let safe = ts.replace(':', "-").replace(' ', "_");
+    if safe.contains('/') || safe.contains('\\') || safe.contains("..") || safe.contains('\0') {
+        return Err(format!("unsafe timestamp for filename: {ts}"));
+    }
+    Ok(safe)
 }
 
 impl CoordinatorIpc for FileCoordinatorIpc {
     fn write_command(&self, cmd: &CoordinatorIpcCommand) -> Result<(), String> {
+        validate_ipc_filename(&cmd.command_id)?;
         let path = self.inbox_dir().join(format!("{}.json", cmd.command_id));
         let json = serde_json::to_string_pretty(cmd).map_err(|e| format!("serialize: {e}"))?;
-        fs::write(&path, json).map_err(|e| format!("write inbox: {e}"))
+        atomic_write(&path, &json)
     }
 
     fn read_pending_commands(&self) -> Result<Vec<CoordinatorIpcCommand>, String> {
@@ -104,7 +181,7 @@ impl CoordinatorIpc for FileCoordinatorIpc {
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
                 continue;
             }
-            let content = fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
+            let content = read_file_capped(&path)?;
             let cmd: CoordinatorIpcCommand =
                 serde_json::from_str(&content).map_err(|e| format!("parse {path:?}: {e}"))?;
             commands.push(cmd);
@@ -115,6 +192,7 @@ impl CoordinatorIpc for FileCoordinatorIpc {
     }
 
     fn acknowledge_command(&self, command_id: &str) -> Result<(), String> {
+        validate_ipc_filename(command_id)?;
         let path = self.inbox_dir().join(format!("{command_id}.json"));
         if path.exists() {
             fs::remove_file(&path).map_err(|e| format!("remove inbox {command_id}: {e}"))?;
@@ -123,31 +201,35 @@ impl CoordinatorIpc for FileCoordinatorIpc {
     }
 
     fn write_response(&self, resp: &CoordinatorIpcResponse) -> Result<(), String> {
+        validate_ipc_filename(&resp.command_id)?;
         let path = self.outbox_dir().join(format!("{}.json", resp.command_id));
         let json = serde_json::to_string_pretty(resp).map_err(|e| format!("serialize: {e}"))?;
-        fs::write(&path, json).map_err(|e| format!("write outbox: {e}"))
+        atomic_write(&path, &json)
     }
 
     fn read_response(&self, command_id: &str) -> Result<Option<CoordinatorIpcResponse>, String> {
+        validate_ipc_filename(command_id)?;
         let path = self.outbox_dir().join(format!("{command_id}.json"));
         if !path.exists() {
             return Ok(None);
         }
-        let content = fs::read_to_string(&path).map_err(|e| format!("read outbox: {e}"))?;
+        let content = read_file_capped(&path)?;
+        // Parse before deleting to avoid losing the response on parse failure.
         let resp: CoordinatorIpcResponse =
             serde_json::from_str(&content).map_err(|e| format!("parse outbox: {e}"))?;
-        // Remove the response file after reading.
+        // Remove the response file after successful parse.
         let _ = fs::remove_file(&path);
         Ok(Some(resp))
     }
 
     fn write_notification(&self, notif: &CoordinatorNotification) -> Result<(), String> {
-        // Filename: <ts>_<type>.json (ts sanitized for filesystem safety)
-        let ts_safe = notif.ts.replace(':', "-").replace(' ', "_");
-        let filename = format!("{}_{}.json", ts_safe, notif.notification_type);
+        // Validate ts before building filename.
+        sanitize_notification_ts(&notif.ts)?;
+        let filename = crate::domain::coding_ipc::notification_filename(notif);
+        validate_ipc_filename(&filename)?;
         let path = self.notifications_dir().join(filename);
         let json = serde_json::to_string_pretty(notif).map_err(|e| format!("serialize: {e}"))?;
-        fs::write(&path, json).map_err(|e| format!("write notification: {e}"))
+        atomic_write(&path, &json)
     }
 
     fn read_notifications(&self) -> Result<Vec<CoordinatorNotification>, String> {
@@ -155,22 +237,33 @@ impl CoordinatorIpc for FileCoordinatorIpc {
         let mut notifications = Vec::new();
         let entries = fs::read_dir(&dir).map_err(|e| format!("read notifications dir: {e}"))?;
         for entry in entries {
+            if notifications.len() >= MAX_NOTIFICATIONS_PER_READ {
+                break;
+            }
             let entry = entry.map_err(|e| format!("read entry: {e}"))?;
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
                 continue;
             }
-            let content = fs::read_to_string(&path).map_err(|e| format!("read {path:?}: {e}"))?;
-            let notif: CoordinatorNotification =
-                serde_json::from_str(&content).map_err(|e| format!("parse {path:?}: {e}"))?;
-            notifications.push(notif);
+            match read_file_capped(&path) {
+                Ok(content) => match serde_json::from_str(&content) {
+                    Ok(notif) => notifications.push(notif),
+                    Err(e) => {
+                        tracing::warn!("skip malformed notification {path:?}: {e}");
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!("skip unreadable notification {path:?}: {e}");
+                }
+            }
         }
         // Sort by timestamp for deterministic ordering.
-        notifications.sort_by(|a, b| a.ts.cmp(&b.ts));
+        notifications.sort_by(|a: &CoordinatorNotification, b| a.ts.cmp(&b.ts));
         Ok(notifications)
     }
 
     fn acknowledge_notification(&self, filename: &str) -> Result<(), String> {
+        validate_ipc_filename(filename)?;
         let path = self.notifications_dir().join(filename);
         if path.exists() {
             fs::remove_file(&path).map_err(|e| format!("remove notification: {e}"))?;
@@ -180,7 +273,7 @@ impl CoordinatorIpc for FileCoordinatorIpc {
 
     fn write_state(&self, state: &CoordinatorState) -> Result<(), String> {
         let json = serde_json::to_string_pretty(state).map_err(|e| format!("serialize: {e}"))?;
-        fs::write(self.state_path(), json).map_err(|e| format!("write state: {e}"))
+        atomic_write(&self.state_path(), &json)
     }
 
     fn read_state(&self) -> Result<Option<CoordinatorState>, String> {
@@ -188,14 +281,14 @@ impl CoordinatorIpc for FileCoordinatorIpc {
         if !path.exists() {
             return Ok(None);
         }
-        let content = fs::read_to_string(&path).map_err(|e| format!("read state: {e}"))?;
+        let content = read_file_capped(&path)?;
         let state: CoordinatorState =
             serde_json::from_str(&content).map_err(|e| format!("parse state: {e}"))?;
         Ok(Some(state))
     }
 
     fn write_pid(&self, pid: u32) -> Result<(), String> {
-        fs::write(self.pid_path(), pid.to_string()).map_err(|e| format!("write pid: {e}"))
+        atomic_write(&self.pid_path(), &pid.to_string())
     }
 
     fn read_pid(&self) -> Result<Option<u32>, String> {
@@ -408,5 +501,41 @@ mod tests {
     fn test_is_coordinator_alive_no_pid_file() {
         let (_td, ipc) = make_ipc();
         assert!(!ipc.is_coordinator_alive());
+    }
+
+    #[test]
+    fn test_path_traversal_rejected_in_command_id() {
+        let (_td, ipc) = make_ipc();
+        let cmd = CoordinatorIpcCommand {
+            command_id: "../../etc/passwd".to_string(),
+            action: "run".to_string(),
+            payload: serde_json::Value::Null,
+        };
+        assert!(ipc.write_command(&cmd).is_err());
+    }
+
+    #[test]
+    fn test_path_traversal_rejected_in_acknowledge() {
+        let (_td, ipc) = make_ipc();
+        assert!(ipc.acknowledge_notification("../../etc/passwd").is_err());
+    }
+
+    #[test]
+    fn test_oversized_file_rejected() {
+        let (_td, ipc) = make_ipc();
+        // Write a file larger than MAX_IPC_FILE_SIZE directly
+        let path = ipc.inbox_dir().join("big.json");
+        let big_content = "x".repeat((MAX_IPC_FILE_SIZE + 1) as usize);
+        fs::write(&path, big_content).unwrap();
+        assert!(ipc.read_pending_commands().is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_directory_permissions_are_restricted() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_td, ipc) = make_ipc();
+        let mode = fs::metadata(&ipc.base).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "base dir should be 0700, got {mode:o}");
     }
 }

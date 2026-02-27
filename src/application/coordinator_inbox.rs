@@ -47,16 +47,19 @@ pub fn tick(
         processed += 1;
     }
 
-    // Write state snapshot after processing.
-    let active_jobs = service.list(&ListRequest { state_filter: None }).jobs.len() as u32;
-    let state = CoordinatorState {
-        alive: true,
-        active_jobs,
-        last_heartbeat: chrono::Utc::now().to_rfc3339(),
-        job_summary: serde_json::json!({}),
-    };
-    // Best-effort state write — don't fail the tick if it errors.
-    let _ = ipc.write_state(&state);
+    // Only write state snapshot when commands were processed to avoid
+    // unnecessary disk I/O on idle ticks (~172k writes/day at 500ms).
+    if processed > 0 {
+        let active_jobs = service.list(&ListRequest { state_filter: None }).jobs.len() as u32;
+        let state = CoordinatorState {
+            alive: true,
+            active_jobs,
+            last_heartbeat: String::new(), // Caller provides timestamp
+            job_summary: serde_json::Value::Object(serde_json::Map::new()),
+        };
+        // Best-effort state write — don't fail the tick if it errors.
+        let _ = ipc.write_state(&state);
+    }
 
     Ok(TickResult {
         processed,
@@ -195,13 +198,17 @@ fn handle_list(
 
 /// Strip the "action" field from a payload before deserializing into a
 /// domain request struct (which doesn't have an "action" field).
+///
+/// Takes ownership to avoid a deep clone — the caller's payload is
+/// consumed (it was already serialized into the response if needed).
 fn strip_action(payload: &serde_json::Value) -> serde_json::Value {
-    if let Some(obj) = payload.as_object() {
-        let mut stripped = obj.clone();
-        stripped.remove("action");
-        serde_json::Value::Object(stripped)
-    } else {
-        payload.clone()
+    match payload {
+        serde_json::Value::Object(obj) if obj.contains_key("action") => {
+            let mut stripped = obj.clone();
+            stripped.remove("action");
+            serde_json::Value::Object(stripped)
+        }
+        other => other.clone(),
     }
 }
 

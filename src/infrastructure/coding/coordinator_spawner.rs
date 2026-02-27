@@ -6,8 +6,12 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::domain::coding_ipc::{CoordinatorIpc, CoordinatorSpawner, SpawnResult};
+
+/// Minimum seconds between spawn attempts to prevent crash-loops.
+const SPAWN_COOLDOWN_SECS: u64 = 5;
 
 /// Default poll interval for the coordinator inbox in milliseconds.
 const DEFAULT_POLL_INTERVAL_MS: u64 = 500;
@@ -47,6 +51,8 @@ impl CoordinatorSpawnConfig {
 pub struct CoordinatorProcessSpawner {
     ipc: Arc<dyn CoordinatorIpc>,
     config: CoordinatorSpawnConfig,
+    /// Timestamp of the last spawn attempt (for cooldown rate limiting).
+    last_spawn: std::sync::Mutex<Option<Instant>>,
 }
 
 impl std::fmt::Debug for CoordinatorProcessSpawner {
@@ -59,7 +65,11 @@ impl std::fmt::Debug for CoordinatorProcessSpawner {
 
 impl CoordinatorProcessSpawner {
     pub fn new(ipc: Arc<dyn CoordinatorIpc>, config: CoordinatorSpawnConfig) -> Self {
-        Self { ipc, config }
+        Self {
+            ipc,
+            config,
+            last_spawn: std::sync::Mutex::new(None),
+        }
     }
 
     /// Poll interval getter (for BDD assertions).
@@ -68,7 +78,25 @@ impl CoordinatorProcessSpawner {
     }
 
     /// Spawn the coordinator child process. Returns the child PID.
+    ///
+    /// Enforces a cooldown between spawn attempts to prevent crash-loops.
+    /// The child is detached: a background thread reaps it on exit to
+    /// prevent zombie accumulation.
     fn spawn_coordinator(&self) -> Result<u32, String> {
+        // Rate limit: refuse to spawn if last attempt was too recent.
+        {
+            let mut last = self.last_spawn.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(ts) = *last {
+                let elapsed = ts.elapsed().as_secs();
+                if elapsed < SPAWN_COOLDOWN_SECS {
+                    return Err(format!(
+                        "spawn cooldown: {elapsed}s since last attempt (min {SPAWN_COOLDOWN_SECS}s)"
+                    ));
+                }
+            }
+            *last = Some(Instant::now());
+        }
+
         let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
 
         let ipc_dir = self.config.base_dir.join("coordinator");
@@ -87,13 +115,18 @@ impl CoordinatorProcessSpawner {
             .stderr(std::process::Stdio::null())
             .stdin(std::process::Stdio::null());
 
-        let child = cmd.spawn().map_err(|e| format!("spawn failed: {e}"))?;
+        let mut child = cmd.spawn().map_err(|e| format!("spawn failed: {e}"))?;
         let pid = child.id();
 
         // Record the PID for liveness checks.
         self.ipc
             .write_pid(pid)
             .map_err(|e| format!("write_pid: {e}"))?;
+
+        // Reap the child on a background thread to prevent zombie processes.
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
 
         Ok(pid)
     }
