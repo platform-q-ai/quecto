@@ -91,6 +91,10 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
                     deliver_to: parsed.deliver_to,
                     last_error: None,
                     last_run_at: 0,
+                    created_at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
                 };
                 match store.add(job) {
                     Ok(()) => {

@@ -57,6 +57,11 @@ impl CronTool {
             .and_then(|v| v.as_str())
             .map(String::from);
 
+        // Validate deliver_to format if provided.
+        if let Some(ref target) = deliver_to {
+            crate::domain::channel::validate_deliver_to(target)?;
+        }
+
         let schedule = if let Some(expr) = args.get("cron_expression").and_then(|v| v.as_str()) {
             CronSchedule::Cron {
                 expression: expr.to_string(),
@@ -76,6 +81,7 @@ impl CronTool {
             deliver_to,
             last_error: None,
             last_run_at: 0,
+            created_at: now_unix_secs(),
         };
 
         self.store.add(job).map_err(|e| e.to_string())?;
@@ -106,6 +112,25 @@ impl CronTool {
                 CronSchedule::Cron { expression } => format!("cron: {}", expression),
             };
             out.push_str(&format!("- {} [{}] ({})\n", job.name, status, sched));
+
+            // Diagnostics
+            if job.last_run_at > 0 {
+                out.push_str(&format!(
+                    "  last_run: {}\n",
+                    format_timestamp(job.last_run_at)
+                ));
+            } else {
+                out.push_str("  last_run: never\n");
+            }
+            if let Some(ref err) = job.last_error {
+                out.push_str(&format!("  last_error: {}\n", err));
+            }
+            if job.created_at > 0 {
+                out.push_str(&format!(
+                    "  created: {}\n",
+                    format_timestamp(job.created_at)
+                ));
+            }
         }
         Ok(out)
     }
@@ -129,13 +154,29 @@ impl CronTool {
     }
 }
 
+/// Current time as Unix seconds.
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// Format a Unix timestamp as a simple UTC datetime string.
+fn format_timestamp(secs: u64) -> String {
+    // Use chrono for clean formatting.
+    chrono::DateTime::from_timestamp(secs as i64, 0)
+        .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
+        .unwrap_or_else(|| format!("{}s", secs))
+}
+
 impl Tool for CronTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "cron".to_string(),
             description: "Manage scheduled cron jobs (add, remove, list, enable, disable)"
                 .to_string(),
-            parameters_schema: r#"{"type":"object","properties":{"action":{"type":"string","enum":["add","remove","list","enable","disable"],"description":"The cron action to perform"},"name":{"type":"string","description":"Job name (for add/remove/enable/disable)"},"message":{"type":"string","description":"The message/prompt to execute (for add)"},"interval_seconds":{"type":"integer","description":"Interval in seconds (for add with interval)"},"cron_expression":{"type":"string","description":"Cron expression (for add with cron schedule)"},"deliver_to":{"type":"string","description":"Optional channel:chat_id for result delivery"}},"required":["action"]}"#.to_string(),
+            parameters_schema: r#"{"type":"object","properties":{"action":{"type":"string","enum":["add","remove","list","enable","disable"],"description":"The cron action to perform"},"name":{"type":"string","description":"Job name (for add/remove/enable/disable)"},"message":{"type":"string","description":"The message/prompt to execute (for add)"},"interval_seconds":{"type":"integer","description":"Interval in seconds (for add with interval)"},"cron_expression":{"type":"string","description":"Cron expression (for add with cron schedule)"},"deliver_to":{"type":"string","description":"Optional delivery target in format 'telegram:<chat_id>', e.g. 'telegram:12345'"}},"required":["action"]}"#.to_string(),
         }
     }
 
@@ -341,5 +382,141 @@ mod tests {
         let (tool, _tmp) = test_tool();
         let debug = format!("{:?}", tool);
         assert!(debug.contains("CronTool"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix 2: created_at should be set automatically when adding a job
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_add_job_sets_created_at() {
+        let (tool, _tmp) = test_tool();
+        tool.execute(
+            r#"{"action":"add","name":"Timestamped","message":"test","interval_seconds":60}"#,
+        )
+        .await
+        .unwrap();
+        let store = Arc::new(FileCronStore::new(_tmp.path()));
+        let job = store.find_by_name("Timestamped").unwrap().unwrap();
+        assert!(
+            job.created_at > 0,
+            "created_at should be set to current timestamp, got {}",
+            job.created_at
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix 3: list output includes diagnostics
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_list_shows_last_error() {
+        let (tool, _tmp) = test_tool();
+        tool.execute(r#"{"action":"add","name":"Failing","message":"test","interval_seconds":60}"#)
+            .await
+            .unwrap();
+        // Simulate an error on the job
+        let store = FileCronStore::new(_tmp.path());
+        let job = store.find_by_name("Failing").unwrap().unwrap();
+        store
+            .set_last_error(&job.id, Some("timeout".to_string()))
+            .unwrap();
+        let result = tool.execute(r#"{"action":"list"}"#).await.unwrap();
+        assert!(
+            result.content.contains("last_error"),
+            "list output should include last_error field, got: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("timeout"),
+            "list output should show the actual error value, got: {}",
+            result.content
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_shows_last_run_at() {
+        let (tool, _tmp) = test_tool();
+        tool.execute(r#"{"action":"add","name":"Runner","message":"test","interval_seconds":60}"#)
+            .await
+            .unwrap();
+        let store = FileCronStore::new(_tmp.path());
+        let job = store.find_by_name("Runner").unwrap().unwrap();
+        store.set_last_run_at(&job.id, 1_700_000_000).unwrap();
+        let result = tool.execute(r#"{"action":"list"}"#).await.unwrap();
+        assert!(
+            result.content.contains("last_run"),
+            "list output should include last_run info, got: {}",
+            result.content
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_shows_created_at() {
+        let (tool, _tmp) = test_tool();
+        tool.execute(r#"{"action":"add","name":"Dated","message":"test","interval_seconds":60}"#)
+            .await
+            .unwrap();
+        let result = tool.execute(r#"{"action":"list"}"#).await.unwrap();
+        assert!(
+            result.content.contains("created"),
+            "list output should include created_at info, got: {}",
+            result.content
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix 4: deliver_to validation at add-time
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_add_rejects_invalid_deliver_to() {
+        let (tool, _tmp) = test_tool();
+        let result = tool
+            .execute(
+                r#"{"action":"add","name":"Bad","message":"test","interval_seconds":60,"deliver_to":"current"}"#,
+            )
+            .await
+            .unwrap();
+        assert!(
+            result.is_error,
+            "should reject invalid deliver_to 'current'"
+        );
+        assert!(
+            result.content.contains("telegram:"),
+            "error should suggest valid format, got: {}",
+            result.content
+        );
+    }
+
+    #[tokio::test]
+    async fn test_add_accepts_valid_deliver_to() {
+        let (tool, _tmp) = test_tool();
+        let result = tool
+            .execute(
+                r#"{"action":"add","name":"Good","message":"test","interval_seconds":60,"deliver_to":"telegram:12345"}"#,
+            )
+            .await
+            .unwrap();
+        assert!(
+            !result.is_error,
+            "should accept valid deliver_to 'telegram:12345', got error: {}",
+            result.content
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Fix 5: tool description includes deliver_to format examples
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_definition_includes_deliver_to_example() {
+        let (tool, _tmp) = test_tool();
+        let def = tool.definition();
+        assert!(
+            def.parameters_schema.contains("telegram:") || def.description.contains("telegram:"),
+            "tool definition should include deliver_to format example (telegram:chat_id), got schema: {}",
+            def.parameters_schema
+        );
     }
 }

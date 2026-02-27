@@ -164,6 +164,7 @@ use quecto::infrastructure::providers;
 use quecto::infrastructure::providers::error::ErrorClass;
 use quecto::infrastructure::providers::fallback::FallbackProvider;
 use quecto::infrastructure::security::sandbox::Sandbox;
+use quecto::infrastructure::tools::cron_tool::CronTool;
 use quecto::infrastructure::tools::exec::{ExecIsolationMode, ExecTool};
 use quecto::infrastructure::tools::message::MessageTool;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
@@ -1070,6 +1071,10 @@ pub struct QuectoWorld {
     >,
     /// Job IDs created via the lifecycle driver
     pub ld_job_ids: Vec<String>,
+    /// Cron tool output from list action (for diagnostic assertions)
+    pub cron_tool_output: Option<String>,
+    /// Cron tool last result (for add validation assertions)
+    pub cron_tool_result: Option<ToolResult>,
     // --- E2E coding lifecycle fields ---
     /// Temp dir for e2e coding job directory (kept alive for test duration)
     pub _e2e_coding_job_temp: Option<TempDir>,

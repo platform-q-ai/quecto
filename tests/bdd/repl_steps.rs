@@ -488,6 +488,10 @@ fn create_cron_job_on_disk(base: &Path, name: &str, interval: u64, enabled: bool
             deliver_to: None,
             last_error: None,
             last_run_at: 0,
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
         })
         .expect("add cron job");
 }

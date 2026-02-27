@@ -81,10 +81,45 @@ Feature: Scheduled Tasks (Cron)
     Then the Telegram API should receive a sendMessage to chat "12345"
     And the message should contain "all systems operational"
 
-  @done @pr2-correctness
-  Scenario: Gateway skips cron-expression jobs until parsing is implemented
+  @done
+  Scenario: Gateway executes cron-expression job when current time matches
     Given a running gateway with a mock LLM provider
-    And a cron job "morning-brief" with cron expression "0 9 * * *" and message "Good morning brief"
+    And a cron job "every-minute" with cron expression "* * * * *" and message "Run every minute"
     When the cron tick fires
-    Then the mock LLM should not receive any requests
-    And the job should be marked as last_error containing "not implemented"
+    Then the mock LLM should receive a request containing "Run every minute"
+
+  @done
+  Scenario: Cron job has created_at timestamp set at creation time
+    Given a cron store
+    When I add a job "Timestamped" with interval 3600 seconds
+    Then the job "Timestamped" should have a non-zero created_at
+
+  @done
+  Scenario: Cron tool list output includes diagnostics
+    Given a running gateway with a mock LLM provider
+    And a cron job "weather" with interval 60 seconds and message "Check weather"
+    When the cron tick fires
+    And I list jobs via the cron tool
+    Then the cron tool list output should contain "last_run"
+    And the cron tool list output should contain "created"
+
+  @done
+  Scenario: Cron tool list output shows last_error when present
+    Given a cron store
+    And a job "Broken" with interval 60 seconds exists
+    And the job "Broken" has last_error "timeout"
+    When I list jobs via the cron tool
+    Then the cron tool list output should contain "last_error"
+    And the cron tool list output should contain "timeout"
+
+  @done
+  Scenario: Adding a job with invalid deliver_to is rejected
+    Given a cron store
+    When I try to add a job "Bad" with interval 60 seconds and deliver_to "current"
+    Then the cron tool should return an error containing "invalid deliver_to"
+
+  @done
+  Scenario: Adding a job with valid deliver_to succeeds
+    Given a cron store
+    When I try to add a job "Good" with interval 60 seconds and deliver_to "telegram:12345"
+    Then the cron tool should return success
