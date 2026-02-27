@@ -63,6 +63,12 @@ impl CronTool {
         }
 
         let schedule = if let Some(expr) = args.get("cron_expression").and_then(|v| v.as_str()) {
+            if !crate::domain::cron::validate_cron_expression(expr) {
+                return Err(format!(
+                    "invalid cron expression '{}': expected 5-field format 'minute hour dom month dow'",
+                    expr
+                ));
+            }
             CronSchedule::Cron {
                 expression: expr.to_string(),
             }
@@ -123,7 +129,16 @@ impl CronTool {
                 out.push_str("  last_run: never\n");
             }
             if let Some(ref err) = job.last_error {
-                out.push_str(&format!("  last_error: {}\n", err));
+                // Truncate long errors to keep list output readable.
+                const MAX_ERROR_LEN: usize = 200;
+                if err.len() > MAX_ERROR_LEN {
+                    out.push_str(&format!(
+                        "  last_error: {}...(truncated)\n",
+                        &err[..MAX_ERROR_LEN]
+                    ));
+                } else {
+                    out.push_str(&format!("  last_error: {}\n", err));
+                }
             }
             if job.created_at > 0 {
                 out.push_str(&format!(
@@ -164,8 +179,9 @@ fn now_unix_secs() -> u64 {
 
 /// Format a Unix timestamp as a simple UTC datetime string.
 fn format_timestamp(secs: u64) -> String {
-    // Use chrono for clean formatting.
-    chrono::DateTime::from_timestamp(secs as i64, 0)
+    // Use chrono for clean formatting. Clamp to i64::MAX to avoid silent wrapping.
+    let secs_i64 = i64::try_from(secs).unwrap_or(i64::MAX);
+    chrono::DateTime::from_timestamp(secs_i64, 0)
         .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
         .unwrap_or_else(|| format!("{}s", secs))
 }
@@ -501,6 +517,47 @@ mod tests {
         assert!(
             !result.is_error,
             "should accept valid deliver_to 'telegram:12345', got error: {}",
+            result.content
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Reviewer fix: cron expression validated at add-time
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_add_rejects_invalid_cron_expression() {
+        let (tool, _tmp) = test_tool();
+        let result = tool
+            .execute(
+                r#"{"action":"add","name":"Bad Cron","message":"test","cron_expression":"not valid"}"#,
+            )
+            .await
+            .unwrap();
+        assert!(
+            result.is_error,
+            "should reject invalid cron expression, got: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("invalid cron expression"),
+            "error should mention invalid cron expression, got: {}",
+            result.content
+        );
+    }
+
+    #[tokio::test]
+    async fn test_add_accepts_valid_cron_expression() {
+        let (tool, _tmp) = test_tool();
+        let result = tool
+            .execute(
+                r#"{"action":"add","name":"Valid Cron","message":"test","cron_expression":"0 9 * * *"}"#,
+            )
+            .await
+            .unwrap();
+        assert!(
+            !result.is_error,
+            "should accept valid cron expression, got error: {}",
             result.content
         );
     }

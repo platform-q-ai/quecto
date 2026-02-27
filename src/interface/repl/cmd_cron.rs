@@ -69,6 +69,24 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
         match parse_cron_add_args(args_str) {
             Ok(parsed) => {
                 let store = self.cron_store();
+                // Validate deliver_to if provided.
+                if let Some(ref target) = parsed.deliver_to {
+                    if let Err(e) = crate::domain::channel::validate_deliver_to(target) {
+                        let _ = writeln!(self.writer, "Error: {}", e);
+                        return;
+                    }
+                }
+                // Validate cron expression at add-time.
+                if let CronSchedule::Cron { ref expression } = parsed.schedule {
+                    if !crate::domain::cron::validate_cron_expression(expression) {
+                        let _ = writeln!(
+                            self.writer,
+                            "Error: invalid cron expression '{}'. Expected 5-field format: 'minute hour dom month dow'",
+                            expression
+                        );
+                        return;
+                    }
+                }
                 // Check for duplicate name
                 match store.find_by_name(&parsed.name) {
                     Ok(Some(_)) => {
@@ -432,6 +450,54 @@ mod tests {
         assert!(
             out.contains("already exists"),
             "expected duplicate error, got: {out}"
+        );
+    }
+
+    #[test]
+    fn test_cron_add_rejects_invalid_deliver_to() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut repl = make_test_repl(tmp.path());
+        repl.handle_cron("/cron add badjob --interval 60 --message Test --deliver-to current");
+        let out = get_output(&repl);
+        assert!(
+            out.contains("invalid deliver_to"),
+            "expected deliver_to validation error, got: {out}"
+        );
+    }
+
+    #[test]
+    fn test_cron_add_rejects_empty_telegram_chat_id() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut repl = make_test_repl(tmp.path());
+        repl.handle_cron("/cron add badjob --interval 60 --message Test --deliver-to telegram:");
+        let out = get_output(&repl);
+        assert!(
+            out.contains("must not be empty"),
+            "expected empty chat_id error, got: {out}"
+        );
+    }
+
+    #[test]
+    fn test_cron_add_rejects_invalid_cron_expression() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut repl = make_test_repl(tmp.path());
+        repl.handle_cron("/cron add badcron --cron 'not valid' --message Test");
+        let out = get_output(&repl);
+        assert!(
+            out.contains("invalid cron expression"),
+            "expected cron expression validation error, got: {out}"
+        );
+    }
+
+    #[test]
+    fn test_cron_add_accepts_valid_cron_expression() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut repl = make_test_repl(tmp.path());
+        repl.handle_cron("/cron add goodcron --cron '0 9 * * *' --message Morning");
+        let out = get_output(&repl);
+        assert!(
+            out.contains("created"),
+            "expected job created message, got: {out}"
         );
     }
 }

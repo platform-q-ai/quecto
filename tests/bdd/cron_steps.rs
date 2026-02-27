@@ -511,10 +511,14 @@ fn when_try_add_job_with_deliver_to(
     let ws = world.cron_workspace.as_ref().unwrap().clone();
     let store: Arc<dyn CronStore> = Arc::new(FileCronStore::new(ws));
     let tool = CronTool::new(store);
-    let args = format!(
-        r#"{{"action":"add","name":"{}","message":"test","interval_seconds":{},"deliver_to":"{}"}}"#,
-        name, seconds, deliver_to
-    );
+    let args = serde_json::json!({
+        "action": "add",
+        "name": name,
+        "message": "test",
+        "interval_seconds": seconds,
+        "deliver_to": deliver_to,
+    })
+    .to_string();
     let result = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(tool.execute(&args))
@@ -539,6 +543,30 @@ fn then_cron_tool_error_contains(world: &mut QuectoWorld, expected: String) {
         expected,
         result.content
     );
+}
+
+#[when(expr = "I try to add a job {string} with cron expression {string}")]
+fn when_try_add_job_with_cron_expression(
+    world: &mut QuectoWorld,
+    name: String,
+    expression: String,
+) {
+    ensure_cron_store(world);
+    let ws = world.cron_workspace.as_ref().unwrap().clone();
+    let store: Arc<dyn CronStore> = Arc::new(FileCronStore::new(ws));
+    let tool = CronTool::new(store);
+    let args = serde_json::json!({
+        "action": "add",
+        "name": name,
+        "message": "test",
+        "cron_expression": expression,
+    })
+    .to_string();
+    let result = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(tool.execute(&args))
+        .unwrap();
+    world.cron_tool_result = Some(result);
 }
 
 #[then("the cron tool should return success")]

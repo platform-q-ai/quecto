@@ -3,9 +3,7 @@
 use std::time::Duration;
 
 use crate::domain::agent::AgentLoop;
-use crate::domain::cron::{
-    CronJob, CronJobResult, CronStore, is_job_due, unsupported_schedule_reason,
-};
+use crate::domain::cron::{CronJobResult, CronStore, is_job_due};
 use crate::domain::error::DomainError;
 use crate::domain::message::Message;
 
@@ -23,10 +21,6 @@ pub async fn execute_cron_tick(
     let mut results = Vec::new();
 
     for job in &jobs {
-        if handle_unsupported_job(store, job) {
-            continue;
-        }
-
         if !is_job_due(job, now_secs) {
             continue;
         }
@@ -48,25 +42,6 @@ fn now_unix_secs() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
-}
-
-fn handle_unsupported_job(store: &dyn CronStore, job: &CronJob) -> bool {
-    let Some(reason) = unsupported_schedule_reason(job) else {
-        return false;
-    };
-
-    if job.last_error.as_deref() == Some(reason) {
-        return true;
-    }
-
-    if let Err(e) = store.set_last_error(&job.id, Some(reason.to_string())) {
-        tracing::warn!(
-            job_id = %job.id,
-            "failed to update last_error on unsupported cron expression job: {}",
-            e
-        );
-    }
-    true
 }
 
 fn record_last_run(store: &dyn CronStore, job_id: &str, now_secs: u64) {

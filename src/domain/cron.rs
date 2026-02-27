@@ -37,20 +37,15 @@ pub fn is_job_due(job: &CronJob, now_secs: u64) -> bool {
     }
 }
 
-/// Returns an unsupported scheduling reason when a job cannot execute yet.
-/// Now that cron expressions are implemented, this always returns `None`.
-pub fn unsupported_schedule_reason(job: &CronJob) -> Option<&'static str> {
-    if !job.enabled {
-        return None;
-    }
-    match job.schedule {
-        CronSchedule::Cron { .. } | CronSchedule::Interval { .. } => None,
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Cron expression evaluator (5-field: minute hour dom month dow)
 // ---------------------------------------------------------------------------
+
+/// Validate a 5-field cron expression without evaluating it.
+/// Returns `true` if the expression can be parsed, `false` otherwise.
+pub fn validate_cron_expression(expression: &str) -> bool {
+    parse_cron_fields(expression).is_some()
+}
 
 /// Check if the current time (as Unix seconds) matches a 5-field cron expression
 /// and the job hasn't already run during this matching minute.
@@ -129,6 +124,9 @@ fn parse_cron_fields(expression: &str) -> Option<CronFields> {
 }
 
 /// Parse a single cron field (e.g. "*", "5", "1,15", "*/10", "1-5").
+///
+/// Note: `range/step` syntax (e.g. `1-30/5`) is not supported.
+/// Use comma-separated values or `*/step` instead.
 fn parse_single_field(field: &str, min: u32, max: u32) -> Option<CronField> {
     if field == "*" {
         return Some(CronField::Any);
@@ -144,9 +142,17 @@ fn parse_single_field(field: &str, min: u32, max: u32) -> Option<CronField> {
         return Some(CronField::Values(vals));
     }
 
-    // Handle comma-separated list (may include ranges)
+    // Handle comma-separated list (may include ranges).
+    // Cap the number of parts to prevent unbounded allocation from adversarial input.
+    const MAX_PARTS: usize = 60; // enough for every minute 0-59
     let mut values = Vec::new();
-    for part in field.split(',') {
+    let parts_iter = field.split(',');
+    let mut count = 0;
+    for part in parts_iter {
+        count += 1;
+        if count > MAX_PARTS {
+            return None;
+        }
         if let Some((start_str, end_str)) = part.split_once('-') {
             let start: u32 = start_str.parse().ok()?;
             let end: u32 = end_str.parse().ok()?;
@@ -183,8 +189,10 @@ struct BrokenTime {
 
 /// Convert Unix timestamp (seconds since epoch) to broken-down UTC time.
 /// Uses civil date calculation (no external crate needed).
+///
+/// Timestamps beyond `i64::MAX` (year ~292 billion) are clamped to `i64::MAX`.
 fn unix_to_broken(secs: u64) -> BrokenTime {
-    let total_secs = secs as i64;
+    let total_secs = i64::try_from(secs).unwrap_or(i64::MAX);
     let day_secs = total_secs.rem_euclid(86400);
     let hour = (day_secs / 3600) as u32;
     let minute = ((day_secs % 3600) / 60) as u32;
@@ -419,20 +427,27 @@ mod tests {
         );
     }
 
+    // -----------------------------------------------------------------------
+    // Cron expression validation
+    // -----------------------------------------------------------------------
+
     #[test]
-    fn test_unsupported_schedule_reason_none_when_cron_implemented() {
-        // After implementation, cron expressions are no longer unsupported.
-        let enabled = make_job(
-            CronSchedule::Cron {
-                expression: "0 9 * * *".to_string(),
-            },
-            true,
-            0,
-        );
-        assert_eq!(
-            unsupported_schedule_reason(&enabled),
-            None,
-            "cron expression should no longer be unsupported"
-        );
+    fn test_validate_cron_expression_valid() {
+        assert!(validate_cron_expression("* * * * *"));
+        assert!(validate_cron_expression("0 9 * * *"));
+        assert!(validate_cron_expression("*/5 * * * *"));
+        assert!(validate_cron_expression("0 0 1 1 0"));
+        assert!(validate_cron_expression("1,15 * * * *"));
+        assert!(validate_cron_expression("0-30 * * * *"));
+    }
+
+    #[test]
+    fn test_validate_cron_expression_invalid() {
+        assert!(!validate_cron_expression("not valid"));
+        assert!(!validate_cron_expression(""));
+        assert!(!validate_cron_expression("* *"));
+        assert!(!validate_cron_expression("60 * * * *")); // minute out of range
+        assert!(!validate_cron_expression("* 24 * * *")); // hour out of range
+        assert!(!validate_cron_expression("* * * * 7")); // dow out of range
     }
 }

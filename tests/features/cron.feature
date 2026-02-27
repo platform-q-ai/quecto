@@ -123,3 +123,27 @@ Feature: Scheduled Tasks (Cron)
     Given a cron store
     When I try to add a job "Good" with interval 60 seconds and deliver_to "telegram:12345"
     Then the cron tool should return success
+
+  @done
+  Scenario: Adding a job with empty telegram chat_id is rejected
+    Given a cron store
+    When I try to add a job "Empty" with interval 60 seconds and deliver_to "telegram:"
+    Then the cron tool should return an error containing "must not be empty"
+
+  @done
+  Scenario: Adding a job with non-numeric telegram chat_id is rejected
+    Given a cron store
+    When I try to add a job "Alpha" with interval 60 seconds and deliver_to "telegram:abc"
+    Then the cron tool should return an error containing "must be numeric"
+
+  @done
+  Scenario: Adding a job with invalid cron expression is rejected
+    Given a cron store
+    When I try to add a job "BadCron" with cron expression "not valid"
+    Then the cron tool should return an error containing "invalid cron expression"
+
+  @done
+  Scenario: Adding a job with valid cron expression succeeds
+    Given a cron store
+    When I try to add a job "GoodCron" with cron expression "0 9 * * *"
+    Then the cron tool should return success
