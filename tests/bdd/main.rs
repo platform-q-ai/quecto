@@ -156,6 +156,106 @@ impl GitHubPort for BddGitHubPort {
     }
 }
 
+use quecto::domain::coding_ipc::{
+    CoordinatorIpc, CoordinatorIpcCommand, CoordinatorIpcResponse, CoordinatorNotification,
+    CoordinatorState,
+};
+
+/// BDD mock IPC for the coordinator delegation tool. Records commands and
+/// returns pre-configured responses/notifications.
+#[derive(Debug)]
+pub struct BddDelegMockIpc {
+    pub commands: Mutex<Vec<CoordinatorIpcCommand>>,
+    pub response: Mutex<Option<CoordinatorIpcResponse>>,
+    pub notifications: Mutex<Vec<CoordinatorNotification>>,
+    pub timeout: bool,
+}
+
+impl Default for BddDelegMockIpc {
+    fn default() -> Self {
+        Self {
+            commands: Mutex::new(vec![]),
+            response: Mutex::new(None),
+            notifications: Mutex::new(vec![]),
+            timeout: false,
+        }
+    }
+}
+
+impl BddDelegMockIpc {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_timeout() -> Self {
+        Self {
+            timeout: true,
+            ..Self::default()
+        }
+    }
+}
+
+impl CoordinatorIpc for BddDelegMockIpc {
+    fn write_command(&self, cmd: &CoordinatorIpcCommand) -> Result<(), String> {
+        self.commands.lock().unwrap().push(cmd.clone());
+        if let Some(resp) = self.response.lock().unwrap().as_mut() {
+            resp.command_id = cmd.command_id.clone();
+        }
+        Ok(())
+    }
+
+    fn read_pending_commands(&self) -> Result<Vec<CoordinatorIpcCommand>, String> {
+        Ok(self.commands.lock().unwrap().clone())
+    }
+
+    fn acknowledge_command(&self, _command_id: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn write_response(&self, _resp: &CoordinatorIpcResponse) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn read_response(&self, _command_id: &str) -> Result<Option<CoordinatorIpcResponse>, String> {
+        if self.timeout {
+            return Ok(None);
+        }
+        Ok(self.response.lock().unwrap().clone())
+    }
+
+    fn write_notification(&self, _notif: &CoordinatorNotification) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn read_notifications(&self) -> Result<Vec<CoordinatorNotification>, String> {
+        Ok(self.notifications.lock().unwrap().clone())
+    }
+
+    fn acknowledge_notification(&self, _filename: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn write_state(&self, _state: &CoordinatorState) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn read_state(&self) -> Result<Option<CoordinatorState>, String> {
+        Ok(None)
+    }
+
+    fn write_pid(&self, _pid: u32) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn read_pid(&self) -> Result<Option<u32>, String> {
+        Ok(None)
+    }
+
+    fn is_coordinator_alive(&self) -> bool {
+        false
+    }
+}
+
 use quecto::infrastructure::persistence::cron_store::FileCronStore;
 use quecto::infrastructure::persistence::memory_store::{self, MemoryStore};
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
@@ -1088,6 +1188,78 @@ pub struct QuectoWorld {
     pub e2e_coding_worker_stdout: Option<String>,
     /// Worker subprocess stderr
     pub e2e_coding_worker_stderr: Option<String>,
+    // --- Coordinator delegation IPC BDD fields ---
+    /// FileCoordinatorIpc instance for delegation scenarios
+    pub coord_ipc: Option<quecto::infrastructure::coding::coordinator_ipc::FileCoordinatorIpc>,
+    /// Temp dir for coordinator IPC (kept alive)
+    pub _coord_ipc_temp_dir: Option<TempDir>,
+    /// Last IPC command written
+    pub coord_ipc_last_cmd: Option<quecto::domain::coding_ipc::CoordinatorIpcCommand>,
+    /// Last IPC response read
+    pub coord_ipc_last_response: Option<quecto::domain::coding_ipc::CoordinatorIpcResponse>,
+    /// Last IPC notification created
+    pub coord_ipc_last_notification: Option<quecto::domain::coding_ipc::CoordinatorNotification>,
+    /// Last IPC state snapshot
+    pub coord_ipc_last_state: Option<quecto::domain::coding_ipc::CoordinatorState>,
+    /// Coordinator alive check result
+    pub coord_ipc_alive: Option<bool>,
+    /// Last serialized JSON for assertion
+    pub coord_ipc_last_json: Option<String>,
+    /// Timeout poll result (Ok or Err)
+    pub coord_ipc_poll_result:
+        Option<Result<quecto::domain::coding_ipc::CoordinatorIpcResponse, String>>,
+    /// Read notifications result
+    pub coord_ipc_notifications: Option<Vec<quecto::domain::coding_ipc::CoordinatorNotification>>,
+    // --- Coordinator delegation tool BDD fields ---
+    /// Delegation tool instance for tool-level BDD scenarios
+    pub deleg_tool:
+        Option<Arc<quecto::infrastructure::tools::coding_delegation::CoordinatorDelegationTool>>,
+    /// Mock IPC backing the delegation tool
+    pub deleg_mock_ipc: Option<Arc<BddDelegMockIpc>>,
+    /// Last ToolResult from a delegation tool execution
+    pub deleg_result: Option<quecto::domain::tool::ToolResult>,
+    // --- Coordinator spawn/liveness BDD fields ---
+    /// Mock spawner for spawn/liveness scenarios (BddMockSpawner defined in step file)
+    pub coord_spawner: Option<Arc<coding_coordinator_spawn_steps::BddMockSpawner>>,
+    /// Spawn result from the last ensure_alive call
+    pub coord_spawn_result: Option<Result<quecto::domain::coding_ipc::SpawnResult, String>>,
+    /// Real CoordinatorProcessSpawner for configuration assertion scenarios
+    pub coord_process_spawner:
+        Option<quecto::infrastructure::coding::coordinator_spawner::CoordinatorProcessSpawner>,
+    // --- Coordinator inbox processor BDD fields ---
+    /// Mock IPC for inbox processor scenarios
+    pub inbox_ipc: Option<coding_coordinator_inbox_steps::BddInboxMockIpc>,
+    /// Mock job service for inbox processor scenarios
+    pub inbox_svc: Option<coding_coordinator_inbox_steps::BddInboxMockJobService>,
+    /// Result of the last `tick()` call
+    pub inbox_tick_result: Option<quecto::application::coordinator_inbox::TickResult>,
+    /// Last command ID added (for single-command assertion scenarios)
+    pub inbox_last_cmd_id: Option<String>,
+    // --- Coordinator wiring BDD fields ---
+    /// Config for wiring scenarios
+    pub wiring_config: Option<quecto::infrastructure::config::Config>,
+    /// Tool registry for wiring scenarios
+    pub wiring_registry: Option<quecto::infrastructure::tools::registry::ToolRegistryImpl>,
+    /// Lifecycle driver result from build_coding_tool
+    pub wiring_driver: Option<quecto::interface::shared::SharedLifecycleDriver>,
+    /// Temp dir for wiring scenarios (kept alive)
+    pub _wiring_temp_dir: Option<TempDir>,
+    // --- Coordinator entrypoint BDD fields ---
+    /// Raw args string for coordinator arg parsing scenarios
+    pub ep_coord_args_str: Option<String>,
+    /// Parse result for coordinator arg parsing scenarios
+    pub ep_coord_parse_result:
+        Option<Result<quecto::interface::cli::coordinator::CoordinatorArgs, String>>,
+    /// Mock IPC for coordinator entrypoint tick scenarios
+    pub ep_coord_ipc: Option<coding_coordinator_entrypoint_steps::BddEntrypointMockIpc>,
+    /// Mock job service for coordinator entrypoint tick scenarios
+    pub ep_coord_svc: Option<coding_coordinator_entrypoint_steps::BddEntrypointMockJobService>,
+    /// Result of the last tick in entrypoint scenarios
+    pub ep_coord_tick_result: Option<quecto::application::coordinator_inbox::TickResult>,
+    /// External shutdown flag for signal-driven shutdown scenarios
+    pub ep_coord_shutdown_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Exit code from the coordinator loop
+    pub ep_coord_loop_exit_code: Option<i32>,
 }
 
 fn push_coding_event(
@@ -1365,6 +1537,12 @@ mod auth_steps;
 mod coding_agent_responsiveness_steps;
 mod coding_artifact_export_steps;
 mod coding_child_agents_steps;
+mod coding_coordinator_delegation_steps;
+mod coding_coordinator_delegation_tool_steps;
+mod coding_coordinator_entrypoint_steps;
+mod coding_coordinator_inbox_steps;
+mod coding_coordinator_spawn_steps;
+mod coding_coordinator_wiring_steps;
 mod coding_coordinator_worker_lifecycle_steps;
 mod coding_crash_recovery_steps;
 mod coding_event_persistence_steps;

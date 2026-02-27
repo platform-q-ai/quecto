@@ -16,7 +16,7 @@ Key outcomes:
 1. Use a dedicated **coding worker** runtime, launched per job.
 2. Run that worker inside **nsjail** (not just individual shell commands).
 3. Use **per-job repo clones** from a local bare mirror (default), not shared git worktrees.
-4. Keep orchestration in Quecto host process; keep coding execution in sandbox worker.
+4. Run the coordinator as a **long-lived subagent process** (`quecto agent` child) — not inline in the main agent. The main agent delegates via file-based IPC and the coordinator autonomously manages worker lifecycle.
 5. Keep the main agent responsive for user conversation and non-coding tasks while coding jobs run asynchronously.
 
 This gives better fault isolation and security than worktree sharing while preserving good startup performance via mirror clones.
@@ -43,29 +43,43 @@ Mitigation:
 
 ## High-Level Architecture
 
-### Host Coordinator (outside jail)
+### Host Coordinator (long-lived subagent process)
+
+The coordinator runs as a **long-lived `quecto agent` child process** — a full subagent with its own LLM, tools, and autonomous agent loop. It is **not** wired inline into the main agent process. The main agent spawns the coordinator on first need and communicates with it via file-based IPC.
 
 Responsibilities:
 
-- Receive coding task requests
+- Own all worker lifecycle (spawn, poll, kill, restart)
 - Allocate job IDs and resource/security policy
 - Prepare per-job repo environment
-- Launch and monitor nsjail worker process
-- Stream worker events/results to agent loop
-- Persist artifacts (patches/logs/results)
+- Launch and monitor nsjail worker processes
+- Autonomously reason about job state (stuck workers, failed jobs, retry decisions)
+- Proactively notify the main agent of issues (blocked workers, failures, completions)
+- Persist artifacts (patches/logs/results) and event logs
 - Cleanup job directories based on policy
+- Write periodic status snapshots (`coordinator/state.json`) for fast queries
+
+Process model:
+
+- Spawned as a `quecto agent` child process with a coordinator-specific system prompt
+- Runs indefinitely (no 120s timeout — configurable long timeout, e.g. 24h)
+- Uses a named session for context persistence across restarts
+- PID tracked in `coordinator/pid` for liveness checks
+- Auto-restarts on next `coding_job` call if it crashes
+- Graceful shutdown via signal from main agent
 
 ### Control Plane vs Execution Plane
 
-- Main agent = goal planner and user-facing orchestrator
-- Host coordinator = job foreman (queue, lifecycle, policy, aggregation)
+- Main agent = goal planner and user-facing orchestrator (thin delegation to coordinator)
+- Host coordinator = autonomous job foreman (long-lived subagent with own LLM loop)
 - Sandboxed worker = isolated executor for coding steps only
 
 Rules:
 
 - Worker-to-worker coordination is not allowed directly
-- Cross-job decisions are made by main agent, using coordinator summaries
+- Cross-job decisions are made by the coordinator autonomously, escalating to the main agent only when human input is needed
 - Main agent must remain free to converse with users and handle other tool flows while coding jobs execute
+- The coordinator does not block the main agent — all communication is asynchronous via file-based IPC
 
 ### Sandboxed Coding Worker (inside jail)
 
@@ -76,20 +90,84 @@ Responsibilities:
 - Enforce worker-local safety rules
 - Return final result and artifact metadata
 
-IPC:
+Worker IPC:
 
-- JSON Lines over stdin/stdout (simple and robust)
+- JSON Lines over stdin/stdout (worker to coordinator — simple and robust)
+
+## Main Agent ↔ Coordinator IPC (File-Based)
+
+The main agent communicates with the coordinator subagent via file-based IPC. This is chosen over sockets/pipes because it is debuggable (`cat coordinator/inbox/*.json`), survives restarts, requires no protocol, is fully auditable, and aligns with the existing append-only JSONL event log pattern.
+
+### File Layout
+
+```
+<workspace>/coordinator/
+├── inbox/                    # Main agent writes command files here
+│   └── <uuid>.json           # {"action": "run", "repo": "...", ...}
+├── outbox/                   # Coordinator writes responses here
+│   └── <uuid>.json           # {"ok": true, "job_id": "...", ...}
+├── notifications/            # Coordinator writes proactive alerts here
+│   └── <ts>_<type>.json      # {"type": "worker_blocked", "job_id": "...", "details": "..."}
+├── state.json                # Coordinator status snapshot (alive, job summary, last heartbeat)
+└── pid                       # Coordinator process PID for liveness checks
+```
+
+### Main Agent Tool Flow (`coding_job`)
+
+The `coding_job` tool in the main agent becomes a **thin file-based delegation layer**:
+
+1. Check if coordinator is alive (read `pid` file, verify process liveness via `kill -0`)
+2. If not alive, spawn it as a long-lived subagent (`quecto agent` with coordinator system prompt and full coding tool suite)
+3. Write command JSON to `coordinator/inbox/<uuid>.json`
+4. Poll `coordinator/outbox/<uuid>.json` for response (with configurable timeout)
+5. For fast-path queries (`status`, `list`): read `coordinator/state.json` directly without writing to inbox
+
+### Coordinator Inbox Processing
+
+The coordinator runs a watch/poll loop monitoring `coordinator/inbox/` for new command files. On each new file:
+
+1. Parse the command JSON
+2. Execute the requested action (run job, cancel, status query, etc.)
+3. Write the response to `coordinator/outbox/<uuid>.json` (same UUID as the command)
+4. Remove the processed inbox file
+
+### Coordinator Proactive Notifications
+
+The coordinator writes structured JSON files to `coordinator/notifications/` when issues arise that the main agent should know about without having to ask:
+
+| Type | Trigger |
+|---|---|
+| `worker_blocked` | Worker asks a question or needs human input |
+| `job_failed` | Unexpected crash, timeout, or resource limit hit |
+| `worker_stuck` | No progress for N minutes (configurable) |
+| `batch_complete` | All jobs in a batch finished (summary ready) |
+| `policy_violation` | Worker attempted forbidden action (force push, etc.) |
+
+The main agent checks `coordinator/notifications/` via a tool call or periodic check in the gateway event loop. For urgent notifications, the coordinator can also use `deliver_to` with the Telegram channel to push directly to the user.
+
+Notification format:
+
+```json
+{"type": "worker_blocked", "job_id": "...", "question": "Which test framework?", "ts": "..."}
+{"type": "job_failed", "job_id": "...", "error": "OOM killed after 2h", "ts": "..."}
+{"type": "worker_stuck", "job_id": "...", "no_progress_minutes": 30, "ts": "..."}
+{"type": "batch_complete", "job_ids": ["..."], "summary": "3 succeeded, 1 failed", "ts": "..."}
+{"type": "policy_violation", "job_id": "...", "detail": "worker attempted force push", "ts": "..."}
+```
 
 ## Event Storage and State Management (Keep It Simple)
 
+All event storage and state management lives inside the **coordinator subagent process**. The main agent does not directly read or write event logs — it queries job state through file-based IPC (`coordinator/state.json` for fast reads, or inbox/outbox for commands).
+
 Do not introduce Redis, Kafka, or any external queue/store for MVP.
 
-Use a lightweight local-first design:
+Use a lightweight local-first design (coordinator-internal):
 
 - In-memory queue for live flow: `tokio::mpsc` channels between coordinator and worker supervisors
 - Append-only JSONL event log on disk: durable source of truth per run/job (crash recovery + audit)
 - Small job index file: current state snapshot (`jobs/index.json`) so status queries are fast
 - Artifact directory per job: logs/diffs/summaries referenced by event IDs
+- `coordinator/state.json`: periodic snapshot of coordinator liveness and aggregate job summary (read by main agent for fast-path status queries)
 
 Runtime model:
 
@@ -137,23 +215,34 @@ Future-only extension (non-MVP):
 
 ## Runtime Lifecycle
 
-Control loop:
+Control loop (file-based delegation):
 
-`main agent -> host coordinator -> sandboxed workers -> host coordinator -> main agent`
+```
+main agent --[write inbox]--> coordinator subagent --[spawn nsjail]--> sandboxed workers
+main agent <--[read outbox/state/notifications]-- coordinator subagent <--[worker events via stdout]-- sandboxed workers
+```
 
-1. **Prepare**
+0. **Delegate**
+   - Main agent writes command to `coordinator/inbox/<uuid>.json`
+   - If coordinator is not alive, main agent spawns it first (auto-spawn)
+   - Main agent polls `coordinator/outbox/<uuid>.json` for acknowledgment
+1. **Prepare** (coordinator-owned)
    - Ensure mirror exists/updated
    - Create job directory
    - Clone repo into `jobs/<job-id>/repo`
    - Checkout requested base branch/commit
    - Create job branch (e.g., `quecto/job/<job-id>`)
-2. **Execute**
+2. **Execute** (coordinator-owned)
    - Start worker in nsjail with strict mounts and limits
    - Process coding plan/tool calls until completion or timeout
-3. **Export**
+   - Coordinator autonomously monitors progress and handles stuck/failed workers
+3. **Export** (coordinator-owned)
    - Capture patch (`git diff`), commit metadata, logs, test output
    - Return summary + artifact references + goal-progress signals for next decision
-4. **Finalize**
+4. **Notify**
+   - Coordinator writes completion/failure notification to `coordinator/notifications/`
+   - For urgent issues, coordinator can push directly to user via `deliver_to` + Telegram channel
+5. **Finalize** (coordinator-owned)
    - Optionally keep branch/artifacts
    - Cleanup job directory (default on success)
 
@@ -305,6 +394,32 @@ Context management integration:
 - spill large tool outputs via existing context spill store + recall IDs
 - maintain concise per-job status snapshots so main agent can continue normal user conversation without blocking
 
+## Long-Lived Subagent Requirements
+
+The current `SpawnTool` has a 120-second timeout and discards stdout/stderr. The coordinator subagent needs different semantics:
+
+1. **No timeout (or configurable long timeout, e.g. 24h)** — the coordinator runs indefinitely while jobs are active
+2. **Graceful shutdown** — main agent can signal the coordinator to shut down cleanly (e.g. via a `shutdown` command in inbox, or SIGTERM)
+3. **Auto-restart** — if coordinator dies, main agent re-spawns it on next `coding_job` call
+4. **Session persistence** — coordinator uses a named session so it survives restarts with context
+5. **PID tracking** — main agent writes/reads `coordinator/pid` for liveness checks (`kill -0`)
+6. **No stdout/stderr capture by main agent** — coordinator manages its own I/O; communication is exclusively via file-based IPC
+
+### Reuse of Existing Infrastructure
+
+| Component | Reuse Strategy |
+|---|---|
+| `SpawnTool` | Extend with long-lived mode (no 120s timeout) |
+| `SubagentConfig` | Add coordinator-specific fields or use `system` prompt override |
+| `CodingCoordinator` | Moves unchanged into coordinator process |
+| `CodingLifecycleDriver` | Moves unchanged into coordinator process |
+| `NsjailWorkerRuntime` | Moves unchanged into coordinator process |
+| `CodingJobTool` | Rewritten as thin delegation layer for main agent; original logic moves to coordinator |
+| `CoordinatorBus` | Replaced by file-based IPC (inbox/outbox/notifications) or kept for coordinator-internal use |
+| `Channel` trait + `deliver_to` | Coordinator uses for urgent Telegram notifications |
+| Event logs (JSONL) | Unchanged, owned by coordinator |
+| Crash recovery | Runs in coordinator process on startup |
+
 ## Clean Architecture Placement
 
 ### domain/
@@ -313,17 +428,23 @@ Context management integration:
   - `CodingJobSpec`, `CodingJobLimits`, `CodingJobPolicy`, `CodingJobResult`
 - `coding_worker.rs`
   - worker request/response/event model traits
+- `coding_coordinator.rs`
+  - coordinator command/response/notification types, `CoordinatorCommand`, `CoordinatorNotification`
 
 ### application/
 
 - `coding_orchestrator.rs`
-  - job lifecycle state machine
+  - job lifecycle state machine (runs inside coordinator subagent process)
 - `coding_policy.rs`
   - policy resolution (security/network/toolset)
 - `coding_todos.rs`
   - coordinator-owned per-worker todo state and aggregation
+- `coding_crash_recovery.rs`
+  - event log replay and orphaned job detection on coordinator startup
 
 ### infrastructure/
+
+Components that run **inside the coordinator subagent process**:
 
 - `sandbox/nsjail_worker.rs`
   - launch/monitor/stop worker process
@@ -336,12 +457,27 @@ Context management integration:
   - validated child-agent spawning, budget enforcement, result routing
   - reuses existing `application/subagent.rs` (`SubagentContext`) for spawn mechanics
   - adds policy layer (allowlist, depth/budget caps, dedup) on top of existing spawn infra
+- `coding/coordinator_bus.rs`
+  - inbox watcher, outbox writer, notification writer, state.json snapshot writer
 - `tools/coding/*`
-  - worker coding tool implementations
+  - worker coding tool implementations (wired into coordinator's tool registry)
 - `persistence/coding_artifacts.rs`
   - artifact manifest and metadata writing
 - `persistence/coding_events.rs`
   - append-only JSONL event log, index snapshot, replay-on-startup
+
+Components that run **inside the main agent process**:
+
+- `tools/coding_delegation.rs`
+  - `CoordinatorDelegationTool` — thin file-based delegation layer
+  - writes commands to `coordinator/inbox/`, polls `coordinator/outbox/`
+  - reads `coordinator/state.json` for fast-path status queries
+  - checks `coordinator/notifications/` for proactive alerts
+  - auto-spawns coordinator subagent if not alive (PID check + `kill -0`)
+- `coding/coordinator_spawn.rs`
+  - coordinator process spawning logic (long-lived `quecto agent` with coordinator system prompt)
+  - PID file management and liveness verification
+  - graceful shutdown signaling
 
 ### interface/
 
@@ -362,6 +498,12 @@ Add `coding` section to config:
 - `coding.repos.cache_dir` (bare mirrors; `jobs_dir` defaults to `<cache_dir>/jobs/` — only expose if separate volume needed)
 - `coding.repos.clone_strategy` (`mirror_clone` default)
 - `coding.repos.cleanup_policy` (enum: `always`, `on_success`, `on_failure`, `never`; default: `on_success`)
+- `coding.coordinator.system_prompt` (override coordinator system prompt; defaults to built-in coordinator prompt)
+- `coding.coordinator.model` (LLM model for coordinator; defaults to global model)
+- `coding.coordinator.max_timeout_seconds` (coordinator process lifetime; default: 86400 = 24h)
+- `coding.coordinator.inbox_poll_interval_ms` (how often coordinator checks inbox; default: 1000)
+- `coding.coordinator.state_snapshot_interval_seconds` (how often state.json is written; default: 10)
+- `coding.coordinator.stuck_worker_threshold_minutes` (no-progress threshold for `worker_stuck` notification; default: 30)
 - `coding.orchestration.max_parallel_jobs`
 - `coding.orchestration.todos.enabled`
 - `coding.orchestration.todos.max_items_per_job`
@@ -393,7 +535,9 @@ Config simplification notes:
 - mirror cache + per-job clone setup (including mirror flock protocol)
 - baseline tools: read/write/list/find/grep/exec
 - single-job end-to-end path
-- **Prototype non-blocking agent integration**: coordinator runs as async background task via `tokio::spawn`, communicates with main agent through channels, so main agent loop remains responsive. This is a prerequisite for all later phases — do not defer.
+- **Coordinator as long-lived subagent**: spawn coordinator as a `quecto agent` child process with file-based IPC (inbox/outbox/notifications/state.json/pid). Main agent delegates via thin `CoordinatorDelegationTool`. This is a prerequisite for all later phases — do not defer.
+- **SpawnTool long-lived mode**: extend `SpawnTool` to support long-lived subagents (no 120s timeout, PID tracking, auto-restart on next call)
+- **Coordinator auto-spawn and liveness**: main agent checks `coordinator/pid`, spawns if not alive, writes PID file
 
 ### Phase 2: Edit Engine Parity
 
@@ -412,9 +556,10 @@ Config simplification notes:
 - multi-job queue and resource scheduling
 - per-job policy overrides
 - host-level concurrency caps
-- non-blocking coordination so main agent can interleave conversation and unrelated tasks
+- coordinator autonomous decision-making for stuck/failed workers (retry, reassign, escalate)
 - coordinator-only merge point for cross-job conflict detection and resolution
 - coordinator-owned per-worker todo lists + global dependency board
+- proactive notification pipeline (worker_blocked, job_failed, worker_stuck, batch_complete, policy_violation)
 
 ### Phase 5: GitHub Orchestration
 
@@ -477,6 +622,12 @@ Config simplification notes:
 - GitHub publish: coordinator creates PR from job artifacts under policy constraints
 - todo lifecycle: coordinator tracks per-worker todos through full status cycle
 - main agent responsiveness: agent handles user messages while coding job runs in background
+- coordinator auto-spawn: main agent spawns coordinator on first `coding_job` call if not alive
+- coordinator auto-restart: main agent detects dead coordinator and re-spawns on next call
+- file-based IPC round-trip: command written to inbox, response read from outbox
+- proactive notifications: coordinator writes notification for blocked/failed worker, main agent reads it
+- coordinator graceful shutdown: main agent signals shutdown, coordinator finishes active jobs and exits
+- coordinator state.json: fast-path status query reads state.json without inbox/outbox round-trip
 
 ## Risks and Mitigations
 
@@ -493,7 +644,13 @@ Config simplification notes:
 - **Index file (`jobs/index.json`) write contention**
   - Mitigation: index is rebuilt from event logs on startup; only written as periodic snapshot, not on every event
 - **Main agent responsiveness requires async integration**
-  - Mitigation: prototype non-blocking coordinator in Phase 1 (not Phase 4); coordinator as `tokio::spawn` task with channel IPC to agent loop
+  - Mitigation: coordinator runs as a long-lived subagent process with file-based IPC — main agent is never blocked. Implemented in Phase 1 as a prerequisite.
+- **Coordinator subagent process crashes or hangs**
+  - Mitigation: main agent checks PID liveness on every `coding_job` call; auto-restarts coordinator if dead. Coordinator uses named session for context persistence across restarts. Crash recovery replays event logs to reconstruct state.
+- **File-based IPC latency and stale files**
+  - Mitigation: polling with configurable timeout; cleanup of processed inbox files; `state.json` includes last-heartbeat timestamp for staleness detection. File-based IPC trades latency for debuggability and restart-safety.
+- **Coordinator LLM cost from autonomous loop**
+  - Mitigation: coordinator only invokes LLM when it needs to reason about exceptions (stuck workers, retry decisions). Routine lifecycle transitions (prepare, execute, export) are mechanical state machine steps that do not require LLM calls.
 - **Child agent spawning overlaps existing `SubagentContext`**
   - Mitigation: reuse existing spawn infrastructure; add policy layer on top, do not duplicate spawn mechanics
 - **JSONL event size unbounded**
@@ -525,10 +682,14 @@ When implementing, optimize for:
 
 Definition of done for MVP:
 
+- Coordinator runs as a long-lived subagent process (`quecto agent` child), not inline in main agent
+- Main agent delegates to coordinator via file-based IPC (inbox/outbox/notifications/state.json/pid)
+- Coordinator auto-spawns on first `coding_job` call and auto-restarts if it crashes
 - Parallel jobs can safely implement multiple issues in same repo using per-job clones
 - Worker runs inside nsjail with bounded resources and mount restrictions
 - Edit tool supports robust replace semantics and returns useful diffs
 - Artifacts/logs are persisted and inspectable
 - Existing Quecto flows remain backward compatible
 - Main agent stays responsive for user conversation and non-coding requests while coding jobs run
+- Coordinator proactively notifies main agent of blocked/failed/stuck workers
 - Coordinator returns decision-ready aggregate job status back to main agent (not only raw artifacts)

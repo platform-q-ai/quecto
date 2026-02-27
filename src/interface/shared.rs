@@ -15,12 +15,18 @@ use crate::domain::coding_command::{
 use crate::domain::coding_ports::{CodingJobService, RepoCreator};
 use crate::domain::skill::SkillLoader;
 use crate::infrastructure::auth::credential_store::Credential;
+use crate::infrastructure::coding::coordinator_ipc::FileCoordinatorIpc;
+use crate::infrastructure::coding::coordinator_spawner::{
+    CoordinatorProcessSpawner, CoordinatorSpawnConfig,
+};
 use crate::infrastructure::coding::nsjail_runtime::{NsjailRuntimeConfig, NsjailWorkerRuntime};
 use crate::infrastructure::coding::repo_mirror::FileRepoMirrorStore;
 use crate::infrastructure::coding::runtime_adapters::{
     WorkspaceRepoCreator, WorkspaceRepoValidator, WorkspaceSkillResolver,
 };
+use crate::infrastructure::config::CoordinatorMode;
 use crate::infrastructure::persistence::skill_loader::FileSkillLoader;
+use crate::infrastructure::tools::coding_delegation::CoordinatorDelegationTool;
 use crate::infrastructure::tools::coding_job::CodingJobTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
@@ -134,6 +140,51 @@ pub fn build_coding_lifecycle(
     registry.register(Arc::new(CodingJobTool::new(service)));
 
     shared
+}
+
+/// Build the coding delegation stack: FileCoordinatorIpc + ProcessSpawner +
+/// DelegationTool. Registers the `coding_job` tool on the registry (same name
+/// and schema as the inline variant). Returns `None` for the lifecycle driver
+/// since job management is handled by the coordinator subprocess.
+pub fn build_coding_delegation(
+    registry: &mut ToolRegistryImpl,
+    base_dir: &Path,
+) -> Option<SharedLifecycleDriver> {
+    let ipc_dir = base_dir.join("coordinator");
+    let ipc = match FileCoordinatorIpc::new(ipc_dir) {
+        Ok(ipc) => Arc::new(ipc) as Arc<dyn crate::domain::coding_ipc::CoordinatorIpc>,
+        Err(e) => {
+            tracing::error!("failed to create coordinator IPC: {e}");
+            return None;
+        }
+    };
+
+    let spawn_config = CoordinatorSpawnConfig::new(base_dir.to_path_buf());
+    let spawner = Arc::new(CoordinatorProcessSpawner::new(ipc.clone(), spawn_config));
+
+    let tool = CoordinatorDelegationTool::with_spawner(ipc, spawner);
+    registry.register(Arc::new(tool));
+
+    // No inline lifecycle driver in subagent mode.
+    None
+}
+
+/// Build the coding tool stack based on the configured coordinator mode.
+///
+/// - `Inline`: builds the full in-process lifecycle (coordinator + worker
+///   runtime + repo mirror) and returns the shared driver handle.
+/// - `Subagent`: builds the IPC delegation tool and returns `None` (the
+///   coordinator subprocess manages jobs independently).
+pub fn build_coding_tool(
+    registry: &mut ToolRegistryImpl,
+    workspace: &Path,
+    base_dir: &Path,
+    mode: CoordinatorMode,
+) -> Option<SharedLifecycleDriver> {
+    match mode {
+        CoordinatorMode::Inline => Some(build_coding_lifecycle(registry, workspace, base_dir)),
+        CoordinatorMode::Subagent => build_coding_delegation(registry, base_dir),
+    }
 }
 
 /// `CodingJobService` adapter that delegates to a shared `CodingLifecycleDriver`.
@@ -351,6 +402,75 @@ mod tests {
         assert_eq!(
             gateway_background_coding_coordinator_scope(),
             CodingCoordinatorScopePolicy::Shared
+        );
+    }
+
+    #[test]
+    fn test_build_coding_delegation_adds_definition() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let workspace = tmp.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        let sandbox = Sandbox::new(Some(workspace.clone()), true);
+        let mut registry = ToolRegistryImpl::with_core_tools(workspace, sandbox);
+        let driver = build_coding_delegation(&mut registry, tmp.path());
+
+        // Delegation mode returns None for the lifecycle driver.
+        assert!(driver.is_none());
+        // But the coding_job tool should still be registered.
+        assert!(
+            registry
+                .definitions()
+                .iter()
+                .any(|d| d.name == "coding_job")
+        );
+    }
+
+    #[test]
+    fn test_build_coding_tool_inline_returns_driver() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let workspace = tmp.path().join("workspace");
+        std::fs::create_dir_all(workspace.join("skills")).unwrap();
+
+        let sandbox = Sandbox::new(Some(workspace.clone()), true);
+        let mut registry = ToolRegistryImpl::with_core_tools(workspace.clone(), sandbox);
+        let driver = build_coding_tool(
+            &mut registry,
+            &workspace,
+            tmp.path(),
+            CoordinatorMode::Inline,
+        );
+
+        assert!(driver.is_some());
+        assert!(
+            registry
+                .definitions()
+                .iter()
+                .any(|d| d.name == "coding_job")
+        );
+    }
+
+    #[test]
+    fn test_build_coding_tool_subagent_returns_none() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let workspace = tmp.path().join("workspace");
+        std::fs::create_dir_all(workspace.join("skills")).unwrap();
+
+        let sandbox = Sandbox::new(Some(workspace.clone()), true);
+        let mut registry = ToolRegistryImpl::with_core_tools(workspace.clone(), sandbox);
+        let driver = build_coding_tool(
+            &mut registry,
+            &workspace,
+            tmp.path(),
+            CoordinatorMode::Subagent,
+        );
+
+        assert!(driver.is_none());
+        assert!(
+            registry
+                .definitions()
+                .iter()
+                .any(|d| d.name == "coding_job")
         );
     }
 }
