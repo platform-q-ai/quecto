@@ -1218,6 +1218,14 @@ pub struct QuectoWorld {
     pub deleg_mock_ipc: Option<Arc<BddDelegMockIpc>>,
     /// Last ToolResult from a delegation tool execution
     pub deleg_result: Option<quecto::domain::tool::ToolResult>,
+    // --- Coordinator spawn/liveness BDD fields ---
+    /// Mock spawner for spawn/liveness scenarios (BddMockSpawner defined in step file)
+    pub coord_spawner: Option<Arc<coding_coordinator_spawn_steps::BddMockSpawner>>,
+    /// Spawn result from the last ensure_alive call
+    pub coord_spawn_result: Option<Result<quecto::domain::coding_ipc::SpawnResult, String>>,
+    /// Real CoordinatorProcessSpawner for configuration assertion scenarios
+    pub coord_process_spawner:
+        Option<quecto::infrastructure::coding::coordinator_spawner::CoordinatorProcessSpawner>,
 }
 
 fn push_coding_event(
@@ -1497,6 +1505,7 @@ mod coding_artifact_export_steps;
 mod coding_child_agents_steps;
 mod coding_coordinator_delegation_steps;
 mod coding_coordinator_delegation_tool_steps;
+mod coding_coordinator_spawn_steps;
 mod coding_coordinator_worker_lifecycle_steps;
 mod coding_crash_recovery_steps;
 mod coding_event_persistence_steps;

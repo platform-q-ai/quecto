@@ -168,6 +168,31 @@ pub trait CoordinatorIpc: Send + Sync {
     fn is_coordinator_alive(&self) -> bool;
 }
 
+// ============================================================================
+// Coordinator Spawner Port
+// ============================================================================
+
+/// Result of an `ensure_alive` call on the coordinator spawner.
+#[derive(Debug, Clone)]
+pub struct SpawnResult {
+    /// PID of the coordinator process (existing or newly spawned).
+    pub pid: u32,
+    /// Whether the coordinator was freshly spawned (true) or was already running (false).
+    pub spawned: bool,
+}
+
+/// Port for spawning and ensuring liveness of the coordinator subagent process.
+///
+/// The main agent calls `ensure_alive()` before each IPC dispatch. If the
+/// coordinator is not running, the spawner launches a new `quecto agent`
+/// child process with a coordinator-specific system prompt and records its PID.
+pub trait CoordinatorSpawner: Send + Sync {
+    /// Ensure the coordinator process is alive. If it is not, spawn a new one.
+    ///
+    /// Returns the PID of the coordinator (existing or newly spawned).
+    fn ensure_alive(&self) -> Result<SpawnResult, String>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -10,7 +10,9 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use crate::domain::coding_ipc::{CoordinatorIpc, CoordinatorIpcCommand, CoordinatorIpcResponse};
+use crate::domain::coding_ipc::{
+    CoordinatorIpc, CoordinatorIpcCommand, CoordinatorIpcResponse, CoordinatorSpawner,
+};
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 
@@ -25,6 +27,8 @@ const KNOWN_ACTIONS: &[&str] = &[
 /// to `coordinator/inbox/` and polls `coordinator/outbox/` for responses.
 pub struct CoordinatorDelegationTool {
     ipc: Arc<dyn CoordinatorIpc>,
+    /// Optional spawner for auto-starting the coordinator process.
+    spawner: Option<Arc<dyn CoordinatorSpawner>>,
     /// Maximum time to wait for a response, in milliseconds.
     poll_timeout_ms: u64,
     /// Maximum number of poll attempts before timing out.
@@ -41,8 +45,22 @@ impl CoordinatorDelegationTool {
     pub fn new(ipc: Arc<dyn CoordinatorIpc>) -> Self {
         Self {
             ipc,
+            spawner: None,
             poll_timeout_ms: 50,
             poll_max_attempts: 600, // 30 seconds at 50ms intervals
+        }
+    }
+
+    /// Create with an auto-spawner that ensures the coordinator is alive.
+    pub fn with_spawner(
+        ipc: Arc<dyn CoordinatorIpc>,
+        spawner: Arc<dyn CoordinatorSpawner>,
+    ) -> Self {
+        Self {
+            ipc,
+            spawner: Some(spawner),
+            poll_timeout_ms: 50,
+            poll_max_attempts: 600,
         }
     }
 
@@ -50,12 +68,33 @@ impl CoordinatorDelegationTool {
     pub fn with_polling(ipc: Arc<dyn CoordinatorIpc>, timeout_ms: u64, max_attempts: u32) -> Self {
         Self {
             ipc,
+            spawner: None,
+            poll_timeout_ms: timeout_ms,
+            poll_max_attempts: max_attempts,
+        }
+    }
+
+    /// Create with spawner and custom polling parameters (for testing).
+    pub fn with_spawner_and_polling(
+        ipc: Arc<dyn CoordinatorIpc>,
+        spawner: Arc<dyn CoordinatorSpawner>,
+        timeout_ms: u64,
+        max_attempts: u32,
+    ) -> Self {
+        Self {
+            ipc,
+            spawner: Some(spawner),
             poll_timeout_ms: timeout_ms,
             poll_max_attempts: max_attempts,
         }
     }
 
     fn handle_action(&self, arguments: &str) -> Result<String, String> {
+        // Auto-spawn the coordinator if a spawner is configured.
+        if let Some(ref spawner) = self.spawner {
+            spawner.ensure_alive()?;
+        }
+
         let args: serde_json::Value =
             serde_json::from_str(arguments).map_err(|e| format!("invalid JSON: {e}"))?;
 
@@ -149,11 +188,13 @@ impl Tool for CoordinatorDelegationTool {
             // Run synchronous IPC in a blocking task to avoid blocking the tokio runtime
             let result = tokio::task::spawn_blocking({
                 let ipc = self.ipc.clone();
+                let spawner = self.spawner.clone();
                 let poll_timeout_ms = self.poll_timeout_ms;
                 let poll_max_attempts = self.poll_max_attempts;
                 move || {
                     let tool = CoordinatorDelegationTool {
                         ipc,
+                        spawner,
                         poll_timeout_ms,
                         poll_max_attempts,
                     };
@@ -478,5 +519,126 @@ mod tests {
     fn test_debug_format() {
         let tool = make_tool_ok(serde_json::json!({}));
         assert!(format!("{tool:?}").contains("CoordinatorDelegationTool"));
+    }
+
+    // --- Auto-spawn integration tests ---
+
+    /// Mock spawner that records calls and returns configurable results.
+    #[derive(Debug)]
+    struct MockSpawner {
+        alive: bool,
+        existing_pid: u32,
+        spawned_pid: u32,
+        fail: bool,
+        calls: Mutex<u32>,
+        spawns: Mutex<u32>,
+    }
+
+    impl MockSpawner {
+        fn already_alive(pid: u32) -> Self {
+            Self {
+                alive: true,
+                existing_pid: pid,
+                spawned_pid: 0,
+                fail: false,
+                calls: Mutex::new(0),
+                spawns: Mutex::new(0),
+            }
+        }
+
+        fn needs_spawn(new_pid: u32) -> Self {
+            Self {
+                alive: false,
+                existing_pid: 0,
+                spawned_pid: new_pid,
+                fail: false,
+                calls: Mutex::new(0),
+                spawns: Mutex::new(0),
+            }
+        }
+
+        fn failing() -> Self {
+            Self {
+                alive: false,
+                existing_pid: 0,
+                spawned_pid: 0,
+                fail: true,
+                calls: Mutex::new(0),
+                spawns: Mutex::new(0),
+            }
+        }
+    }
+
+    impl CoordinatorSpawner for MockSpawner {
+        fn ensure_alive(&self) -> Result<SpawnResult, String> {
+            *self.calls.lock().unwrap() += 1;
+            if self.fail {
+                return Err("spawn failed: mock".to_string());
+            }
+            if self.alive {
+                Ok(SpawnResult {
+                    pid: self.existing_pid,
+                    spawned: false,
+                })
+            } else {
+                *self.spawns.lock().unwrap() += 1;
+                Ok(SpawnResult {
+                    pid: self.spawned_pid,
+                    spawned: true,
+                })
+            }
+        }
+    }
+
+    #[test]
+    fn test_auto_spawn_calls_spawner() {
+        let ipc = Arc::new(MockIpc::with_response(
+            true,
+            Some(serde_json::json!({"ok": true})),
+            None,
+        ));
+        let spawner = Arc::new(MockSpawner::needs_spawn(999));
+        let tool = CoordinatorDelegationTool::with_spawner_and_polling(ipc, spawner.clone(), 1, 3);
+        let r = exec(&tool, r#"{"action":"list"}"#);
+        assert!(!r.is_error);
+        assert_eq!(*spawner.calls.lock().unwrap(), 1);
+        assert_eq!(*spawner.spawns.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_auto_spawn_skips_when_alive() {
+        let ipc = Arc::new(MockIpc::with_response(
+            true,
+            Some(serde_json::json!({"ok": true})),
+            None,
+        ));
+        let spawner = Arc::new(MockSpawner::already_alive(42));
+        let tool = CoordinatorDelegationTool::with_spawner_and_polling(ipc, spawner.clone(), 1, 3);
+        let r = exec(&tool, r#"{"action":"list"}"#);
+        assert!(!r.is_error);
+        assert_eq!(*spawner.calls.lock().unwrap(), 1);
+        assert_eq!(*spawner.spawns.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_auto_spawn_failure_returns_error() {
+        let ipc = Arc::new(MockIpc::with_response(
+            true,
+            Some(serde_json::json!({"ok": true})),
+            None,
+        ));
+        let spawner = Arc::new(MockSpawner::failing());
+        let tool = CoordinatorDelegationTool::with_spawner_and_polling(ipc, spawner, 1, 3);
+        let r = exec(&tool, r#"{"action":"list"}"#);
+        assert!(r.is_error);
+        assert!(r.content.contains("spawn failed"));
+    }
+
+    #[test]
+    fn test_no_spawner_works_normally() {
+        // Default construction (no spawner) should work without auto-spawn
+        let tool = make_tool_ok(serde_json::json!({"ok": true}));
+        let r = exec(&tool, r#"{"action":"list"}"#);
+        assert!(!r.is_error);
     }
 }
