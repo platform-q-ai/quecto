@@ -19,7 +19,7 @@ use crate::infrastructure::tools::recall::RecallTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
 use crate::interface::shared::{
-    CodingCoordinatorScopePolicy, SharedLifecycleDriver, build_coding_lifecycle,
+    CodingCoordinatorScopePolicy, SharedLifecycleDriver, build_coding_tool,
     cli_coding_coordinator_scope, resolve_api_key,
 };
 
@@ -248,7 +248,12 @@ pub(crate) fn build_agent_from_config(
     let mut registry = registry;
     let lifecycle_driver =
         if cli_coding_coordinator_scope() == CodingCoordinatorScopePolicy::PerSession {
-            Some(build_coding_lifecycle(&mut registry, &workspace, base_dir))
+            build_coding_tool(
+                &mut registry,
+                &workspace,
+                base_dir,
+                config.tools.coding.coordinator_mode,
+            )
         } else {
             None
         };

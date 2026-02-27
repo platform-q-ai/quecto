@@ -1235,6 +1235,15 @@ pub struct QuectoWorld {
     pub inbox_tick_result: Option<quecto::application::coordinator_inbox::TickResult>,
     /// Last command ID added (for single-command assertion scenarios)
     pub inbox_last_cmd_id: Option<String>,
+    // --- Coordinator wiring BDD fields ---
+    /// Config for wiring scenarios
+    pub wiring_config: Option<quecto::infrastructure::config::Config>,
+    /// Tool registry for wiring scenarios
+    pub wiring_registry: Option<quecto::infrastructure::tools::registry::ToolRegistryImpl>,
+    /// Lifecycle driver result from build_coding_tool
+    pub wiring_driver: Option<quecto::interface::shared::SharedLifecycleDriver>,
+    /// Temp dir for wiring scenarios (kept alive)
+    pub _wiring_temp_dir: Option<TempDir>,
 }
 
 fn push_coding_event(
@@ -1516,6 +1525,7 @@ mod coding_coordinator_delegation_steps;
 mod coding_coordinator_delegation_tool_steps;
 mod coding_coordinator_inbox_steps;
 mod coding_coordinator_spawn_steps;
+mod coding_coordinator_wiring_steps;
 mod coding_coordinator_worker_lifecycle_steps;
 mod coding_crash_recovery_steps;
 mod coding_event_persistence_steps;

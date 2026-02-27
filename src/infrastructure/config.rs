@@ -133,6 +133,29 @@ pub struct ToolsConfig {
     pub cron: CronToolConfig,
     #[serde(default)]
     pub exec: ExecToolConfig,
+    #[serde(default)]
+    pub coding: CodingToolConfig,
+}
+
+/// Configuration for the coding job tool's coordinator mode.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CodingToolConfig {
+    /// How the coordinator runs: `inline` (in-process, default) or `subagent`
+    /// (long-lived child process communicating via file-based IPC).
+    #[serde(default)]
+    pub coordinator_mode: CoordinatorMode,
+}
+
+/// Coordinator execution mode.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CoordinatorMode {
+    /// Coordinator runs in the same process (current behavior).
+    #[default]
+    Inline,
+    /// Coordinator runs as a long-lived `quecto agent` child process,
+    /// communicating via file-based IPC (inbox/outbox/state).
+    Subagent,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -698,5 +721,23 @@ mod tests {
         }"#;
         let config: Config = serde_json::from_str(json).unwrap();
         assert_eq!(config.agents.defaults.max_session_messages, 12);
+    }
+
+    #[test]
+    fn test_coding_tool_config_coordinator_mode() {
+        // Default is inline
+        let config: Config = serde_json::from_str("{}").unwrap();
+        assert_eq!(
+            config.tools.coding.coordinator_mode,
+            CoordinatorMode::Inline
+        );
+        // Explicit inline
+        let json = r#"{"tools":{"coding":{"coordinator_mode":"inline"}}}"#;
+        let c: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(c.tools.coding.coordinator_mode, CoordinatorMode::Inline);
+        // Subagent
+        let json = r#"{"tools":{"coding":{"coordinator_mode":"subagent"}}}"#;
+        let c: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(c.tools.coding.coordinator_mode, CoordinatorMode::Subagent);
     }
 }
