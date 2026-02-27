@@ -295,6 +295,14 @@ pub struct CodingJob {
     pub progress: Option<u32>,
     /// Wall-clock duration in milliseconds (set on completion).
     pub duration_ms: Option<u64>,
+    /// Unix timestamp (seconds) when the job was created (queued).
+    pub created_at: u64,
+    /// Unix timestamp (seconds) when the job last changed state.
+    pub state_entered_at: u64,
+    /// ISO 8601 timestamp of the most-recent event received for this job.
+    pub last_event_ts: Option<String>,
+    /// Event type of the most-recent event received for this job.
+    pub last_event_type: Option<String>,
 }
 
 /// Required fields to construct a new coding job.
@@ -311,6 +319,7 @@ pub struct CodingJobInit {
 impl CodingJob {
     /// Create a new job in Queued state.
     pub fn new(init: CodingJobInit) -> Self {
+        let now = now_unix_secs();
         Self {
             job_id: init.job_id,
             run_id: init.run_id,
@@ -334,6 +343,10 @@ impl CodingJob {
             artifacts: vec![],
             progress: None,
             duration_ms: None,
+            created_at: now,
+            state_entered_at: now,
+            last_event_ts: None,
+            last_event_type: None,
         }
     }
 
@@ -341,6 +354,7 @@ impl CodingJob {
     pub fn transition_to(&mut self, target: JobState) -> Result<(), TransitionError> {
         if self.state.can_transition_to(target) {
             self.state = target;
+            self.state_entered_at = now_unix_secs();
             Ok(())
         } else {
             Err(TransitionError {
@@ -349,6 +363,15 @@ impl CodingJob {
             })
         }
     }
+}
+
+/// Return the current Unix timestamp in whole seconds.
+fn now_unix_secs() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 /// Error returned when a state transition is invalid.

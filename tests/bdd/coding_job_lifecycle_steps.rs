@@ -1100,7 +1100,14 @@ fn then_run_fails_with(world: &mut QuectoWorld, code: String) {
         .coding_command_error
         .as_ref()
         .expect("expected command error");
-    assert_eq!(err.to_string(), code);
+    // `invalid_base_ref` may carry an enriched detail suffix:
+    // "invalid_base_ref: default_branch=...; available_refs=[...]"
+    // so check starts_with rather than exact equality.
+    let err_str = err.to_string();
+    assert!(
+        err_str == code || err_str.starts_with(&format!("{code}: ")),
+        "expected error code starting with {code:?}, got {err_str:?}"
+    );
 }
 
 #[then("the coordinator should accept the job")]

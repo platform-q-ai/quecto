@@ -12,8 +12,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::application::coding_lifecycle::CodingLifecycleDriver;
 use crate::application::coordinator_inbox;
 use crate::domain::coding_command::{
-    CancelResponse, CleanupResponse, CommandError, CreateRequest, CreateResponse, ImportRequest,
-    ImportResponse, ListRequest, ListResponse, RunRequest, RunResponse, StatusResponse,
+    CancelResponse, CleanupAllRequest, CleanupAllResponse, CleanupResponse, CommandError,
+    CreateRequest, CreateResponse, ImportRequest, ImportResponse, ListRequest, ListResponse,
+    RunRequest, RunResponse, StatusResponse,
 };
 use crate::domain::coding_ipc::CoordinatorIpc;
 use crate::domain::coding_ports::{CodingJobService, RepoCreator};
@@ -365,6 +366,11 @@ impl CodingJobService for CoordinatorJobService {
         let resp = guard.coordinator_mut().cleanup(job_id, keep_artifacts)?;
         guard.forget_job(job_id);
         Ok(resp)
+    }
+
+    fn cleanup_all(&mut self, req: &CleanupAllRequest) -> Result<CleanupAllResponse, CommandError> {
+        let mut guard = lock_driver(&self.driver)?;
+        guard.coordinator_mut().cleanup_all_impl(req)
     }
 
     fn list(&self, req: &ListRequest) -> ListResponse {

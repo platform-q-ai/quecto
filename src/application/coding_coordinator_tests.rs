@@ -98,7 +98,21 @@ fn test_run_rejects_invalid_base_ref() {
             skills: vec![],
         })
         .unwrap_err();
-    assert_eq!(err, CommandError::InvalidBaseRef);
+    // Now returns the enriched variant so callers get the default branch and
+    // available refs inline — the display string starts with "invalid_base_ref: ".
+    assert!(
+        matches!(err, CommandError::InvalidBaseRefDetail(_)),
+        "expected InvalidBaseRefDetail, got {err:?}"
+    );
+    let detail = err.to_string();
+    assert!(
+        detail.starts_with("invalid_base_ref: "),
+        "detail should start with 'invalid_base_ref: ', got: {detail}"
+    );
+    assert!(
+        detail.contains("default_branch="),
+        "detail should contain default_branch hint, got: {detail}"
+    );
 }
 
 #[test]
@@ -551,3 +565,6 @@ fn test_invalid_transition_returns_distinct_error() {
     let err = coord.mark_ready(&resp.job_id, 42, None).unwrap_err();
     assert_eq!(err, CommandError::InvalidTransition);
 }
+
+// ── Issues 1, 4, 5: visibility / base_ref UX / cleanup_all ──────────────
+// Tests moved to coding_coordinator_extra_tests.rs (file-size limit).

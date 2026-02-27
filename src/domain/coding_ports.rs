@@ -19,6 +19,23 @@ pub trait WorkerEventSink: Send + Sync {
 pub trait RepoValidator {
     fn repo_exists(&self, repo: &str) -> bool;
     fn ref_exists(&self, repo: &str, base_ref: &str) -> bool;
+
+    /// Return the repository's default branch name (e.g. "main" or "master").
+    ///
+    /// Returns `None` if the repo doesn't exist or has no commits.
+    /// The default implementation returns `None`; infrastructure adapters
+    /// should override this with a real `git symbolic-ref HEAD` probe.
+    fn default_branch(&self, _repo: &str) -> Option<String> {
+        None
+    }
+
+    /// Return up to `limit` local branch names for the repo.
+    ///
+    /// Returns an empty vec if the repo doesn't exist or has no branches.
+    /// The default implementation returns an empty vec.
+    fn list_branches(&self, _repo: &str, _limit: usize) -> Vec<String> {
+        vec![]
+    }
 }
 
 /// Port for resolving skills from the workspace.
@@ -229,8 +246,9 @@ pub trait WorkerRuntime: Send {
 // ============================================================================
 
 use super::coding_command::{
-    CancelResponse, CleanupResponse, CommandError, CreateRequest, CreateResponse, ImportRequest,
-    ImportResponse, ListRequest, ListResponse, RunRequest, RunResponse, StatusResponse,
+    CancelResponse, CleanupAllRequest, CleanupAllResponse, CleanupResponse, CommandError,
+    CreateRequest, CreateResponse, ImportRequest, ImportResponse, ListRequest, ListResponse,
+    RunRequest, RunResponse, StatusResponse,
 };
 
 /// Port for coding job management operations.
@@ -264,6 +282,12 @@ pub trait CodingJobService: Send {
         job_id: &str,
         keep_artifacts: bool,
     ) -> Result<CleanupResponse, CommandError>;
+
+    /// Clean up multiple jobs in bulk.
+    ///
+    /// Skips non-terminal jobs when `req.terminal_only` is true (the default).
+    /// Returns the list of cleaned and skipped job IDs.
+    fn cleanup_all(&mut self, req: &CleanupAllRequest) -> Result<CleanupAllResponse, CommandError>;
 
     /// List jobs, optionally filtered by state.
     fn list(&self, req: &ListRequest) -> ListResponse;

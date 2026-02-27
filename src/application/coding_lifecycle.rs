@@ -7,6 +7,7 @@
 //! 4. Canceled (while running) → kill worker
 
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 use super::coding_coordinator::{CodingCoordinator, FailureInfo, SuccessInfo};
 use crate::domain::coding_command::RunRequest;
@@ -44,6 +45,9 @@ pub struct CodingLifecycleDriver<R: RepoValidator, S: SkillResolver> {
     running_workers: HashMap<String, u32>,
     /// Tracks which workers have been killed (to avoid double-kill).
     killed_workers: HashSet<String>,
+    /// Maps job_id → wall-clock instant when the worker was launched.
+    /// Used to enforce `max_wall_seconds` timeouts.
+    worker_started_at: HashMap<String, Instant>,
 }
 
 impl<R: RepoValidator, S: SkillResolver> std::fmt::Debug for CodingLifecycleDriver<R, S> {
@@ -68,6 +72,7 @@ impl<R: RepoValidator, S: SkillResolver> CodingLifecycleDriver<R, S> {
             mirror,
             running_workers: HashMap::new(),
             killed_workers: HashSet::new(),
+            worker_started_at: HashMap::new(),
         }
     }
 
@@ -114,6 +119,7 @@ impl<R: RepoValidator, S: SkillResolver> CodingLifecycleDriver<R, S> {
     pub fn forget_job(&mut self, job_id: &str) {
         self.running_workers.remove(job_id);
         self.killed_workers.remove(job_id);
+        self.worker_started_at.remove(job_id);
     }
 
     /// Main tick — advances all jobs one step through the lifecycle.
@@ -145,6 +151,7 @@ impl<R: RepoValidator, S: SkillResolver> CodingLifecycleDriver<R, S> {
                     tracing::warn!(job_id, pid, error = %e, "failed to kill worker");
                 }
                 self.runtime.cleanup(pid);
+                self.worker_started_at.remove(&job_id);
                 self.killed_workers.insert(job_id);
             }
         }
@@ -282,6 +289,8 @@ impl<R: RepoValidator, S: SkillResolver> CodingLifecycleDriver<R, S> {
                     tracing::warn!(job_id, error = %e, "failed to mark job as ready");
                 }
                 self.running_workers.insert(job_id.to_string(), pid);
+                self.worker_started_at
+                    .insert(job_id.to_string(), Instant::now());
             }
             Err(err) => {
                 let detail = format!("launch failed: {err}");
@@ -297,6 +306,12 @@ impl<R: RepoValidator, S: SkillResolver> CodingLifecycleDriver<R, S> {
 
     /// Poll a running worker for events and check exit status.
     fn poll_worker(&mut self, job_id: &str, pid: u32) {
+        // Check wall-clock timeout before draining events.
+        if self.is_wall_timeout_exceeded(job_id) {
+            self.handle_wall_timeout(job_id, pid);
+            return;
+        }
+
         self.drain_worker_events(job_id, pid);
 
         match self.runtime.status(pid) {
@@ -307,6 +322,42 @@ impl<R: RepoValidator, S: SkillResolver> CodingLifecycleDriver<R, S> {
             WorkerStatus::Killed { reason } => {
                 self.handle_worker_killed(job_id, pid, &reason);
             }
+        }
+    }
+
+    /// Returns true if the job's `max_wall_seconds` has elapsed since launch.
+    fn is_wall_timeout_exceeded(&self, job_id: &str) -> bool {
+        let max_wall = match self.coordinator.job(job_id) {
+            Some(job) => match job.max_wall_seconds {
+                Some(s) if s > 0 => s,
+                _ => return false,
+            },
+            None => return false,
+        };
+        match self.worker_started_at.get(job_id) {
+            Some(started) => started.elapsed().as_secs() >= max_wall,
+            None => false,
+        }
+    }
+
+    /// Kill the worker and mark the job canceled with `WallTimeout` reason.
+    fn handle_wall_timeout(&mut self, job_id: &str, pid: u32) {
+        tracing::warn!(job_id, pid, "wall timeout exceeded — killing worker");
+        if let Err(e) = self.runtime.kill(pid) {
+            tracing::warn!(job_id, pid, error = %e, "kill failed during wall timeout");
+        }
+        self.runtime.cleanup(pid);
+        self.running_workers.remove(job_id);
+        self.worker_started_at.remove(job_id);
+        self.killed_workers.insert(job_id.to_string());
+
+        use crate::domain::coding_job::{CancelInitiator, CancelReason};
+        if let Err(e) = self.coordinator.cancel_with_reason(
+            job_id,
+            CancelReason::WallTimeout,
+            CancelInitiator::System,
+        ) {
+            tracing::warn!(job_id, error = %e, "failed to cancel job after wall timeout");
         }
     }
 
@@ -332,6 +383,7 @@ impl<R: RepoValidator, S: SkillResolver> CodingLifecycleDriver<R, S> {
     /// Handle a worker that exited with a status code.
     fn handle_worker_exit(&mut self, job_id: &str, pid: u32, status: i32) {
         self.running_workers.remove(job_id);
+        self.worker_started_at.remove(job_id);
         self.runtime.cleanup(pid);
         if status == 0 {
             if let Err(e) = self.coordinator.mark_succeeded(SuccessInfo {
@@ -359,6 +411,7 @@ impl<R: RepoValidator, S: SkillResolver> CodingLifecycleDriver<R, S> {
     /// Handle a worker that was killed by signal or timeout.
     fn handle_worker_killed(&mut self, job_id: &str, pid: u32, reason: &str) {
         self.running_workers.remove(job_id);
+        self.worker_started_at.remove(job_id);
         self.runtime.cleanup(pid);
         let detail = format!("worker killed: {reason}");
         if let Err(e) = self.coordinator.mark_failed(FailureInfo {

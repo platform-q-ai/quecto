@@ -408,6 +408,17 @@ impl RepoMirrorStore for FileRepoMirrorStore {
         if let Some(p) = dest.parent() {
             let _ = fs::create_dir_all(p);
         }
+        // Remove a pre-existing dest directory (stale from a previous aborted
+        // run with the same job_id) so `git clone` gets a clean target.
+        if dest.exists() {
+            if let Err(e) = fs::remove_dir_all(&dest) {
+                return repo_err(
+                    0,
+                    &format!("failed to remove stale dest dir: {e}"),
+                    "clone_error",
+                );
+            }
+        }
         let start = Instant::now();
         if let Err(r) = check_git(
             Command::new("git")

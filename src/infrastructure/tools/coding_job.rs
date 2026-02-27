@@ -58,6 +58,7 @@ impl CodingJobTool {
             "status" => self.handle_status(&args),
             "cancel" => self.handle_cancel(&args),
             "cleanup" => self.handle_cleanup(&args),
+            "cleanup_all" => self.handle_cleanup_all(arguments),
             "list" => self.handle_list(arguments),
             other => Err(format!("unknown action: {other}")),
         }
@@ -125,6 +126,17 @@ impl CodingJobTool {
         let mut svc = self.service.lock().map_err(|e| format!("lock: {e}"))?;
         let resp = svc
             .cleanup(job_id, keep_artifacts)
+            .map_err(|e| format_command_error(&e))?;
+        serde_json::to_string(&resp).map_err(|e| format!("serialize: {e}"))
+    }
+
+    fn handle_cleanup_all(&self, raw: &str) -> Result<String, String> {
+        use crate::domain::coding_command::CleanupAllRequest;
+        let req: CleanupAllRequest = deserialize_stripping_action(raw)
+            .map_err(|e| format!("invalid cleanup_all request: {e}"))?;
+        let mut svc = self.service.lock().map_err(|e| format!("lock: {e}"))?;
+        let resp = svc
+            .cleanup_all(&req)
             .map_err(|e| format_command_error(&e))?;
         serde_json::to_string(&resp).map_err(|e| format!("serialize: {e}"))
     }
@@ -200,30 +212,41 @@ const CODING_JOB_DESCRIPTION: &str = "\
 Manage coding repositories and jobs. Repos live in the workspace directory.
 
 WORKFLOW:
-1. create - Create a new empty repo (git init + initial commit) in the workspace.
-2. import - Clone a remote repo (HTTPS/SSH) into the workspace.
-3. run    - Launch an async coding job on a workspace repo. A sandboxed worker \
-            gets a full clone, checks out a job branch, and works toward the goal \
-            using edit/grep/find/read tools. Returns job_id and run_id.
-4. status - Poll job progress (state, todos, artifacts). Each call advances the job.
-5. cancel - Stop a running job and kill its worker.
-6. cleanup - Remove job artifacts after completion.
-7. list   - List all jobs, optionally filtered by state.
+1. create     - Create a new empty repo (git init + initial commit) in the workspace.
+2. import     - Clone a remote repo (HTTPS/SSH) into the workspace.
+3. run        - Launch an async coding job on a workspace repo. A sandboxed worker \
+                gets a full clone, checks out a job branch, and works toward the goal \
+                using edit/grep/find/read tools. Returns job_id and run_id.
+4. status     - Poll job progress (state, todos, artifacts, last_event_ts). \
+                Each call advances the job internally.
+5. cancel     - Stop a running job and kill its worker.
+6. cleanup    - Remove a single terminal job's artifacts.
+7. cleanup_all- Remove all terminal jobs in bulk (filter by state, skip non-terminal).
+8. list       - List jobs with metadata (created_at, state_entered_at, last_event_ts).
 
 REPO RULES:
 - 'repo' must be a directory name in the workspace (e.g. \"my-project\"), not a URL.
 - Use 'create' to make a new repo from scratch, or 'import' to clone from GitHub.
-- 'base_ref' must be a valid branch/tag/commit in the repo (e.g. \"main\").
+- 'base_ref' must be a valid branch/tag/commit in the repo (e.g. \"main\"). \
+  On invalid_base_ref the error includes the default branch and available refs.
+- Each run() targets exactly one repo. Multi-repo goals require multiple jobs.
 
 JOB STATES: queued -> preparing -> running -> succeeded/failed/canceled
+- 'running' jobs are automatically killed if max_wall_seconds elapses.
+
+VISIBILITY:
+- status() returns last_event_ts/last_event_type so you can detect hung jobs.
+- list() returns created_at and state_entered_at; use (now - state_entered_at) \
+  to detect jobs that have been stuck in 'running' longer than expected.
 
 TYPICAL USAGE:
-- New project: create(name) -> run(repo=name, base_ref=\"main\", goal=\"...\")
-- Existing remote: import(url) -> run(repo=name, base_ref=\"main\", goal=\"...\")
-- Monitor: status(job_id) repeatedly until succeeded/failed
-- Done: cleanup(job_id)";
+- New project:      create(name) -> run(repo=name, base_ref=\"main\", goal=\"...\")
+- Existing remote:  import(url) -> run(repo=name, base_ref=\"main\", goal=\"...\")
+- Monitor:          status(job_id) repeatedly until succeeded/failed
+- Bulk cleanup:     cleanup_all() or cleanup_all(state_filter=[\"succeeded\",\"failed\"])
+- Done:             cleanup(job_id)";
 
-const CODING_JOB_SCHEMA: &str = r#"{"type":"object","properties":{"action":{"type":"string","enum":["create","import","run","status","cancel","cleanup","list"],"description":"The action to perform"},"name":{"type":"string","description":"Repository name (for create/import)"},"description":{"type":"string","description":"Project description (for create, optional)"},"url":{"type":"string","description":"Remote git URL to clone (for import)"},"goal":{"type":"string","description":"Goal description (for run)"},"repo":{"type":"string","description":"Workspace repo name (for run)"},"base_ref":{"type":"string","description":"Base branch/ref (for run, e.g. main)"},"priority":{"type":"string","enum":["low","medium","high"],"description":"Job priority (for run, default: medium)"},"labels":{"type":"array","items":{"type":"string"},"description":"Labels (for run)"},"skills":{"type":"array","items":{"type":"string"},"description":"Skill names (for run)"},"profile":{"type":"string","description":"Profile name (for run, default: default)"},"max_wall_seconds":{"type":"integer","description":"Wall-clock timeout in seconds (for run)"},"job_id":{"type":"string","description":"Job ID (for status/cancel/cleanup)"},"run_id":{"type":"string","description":"Run ID (for status)"},"state_filter":{"type":"array","items":{"type":"string"},"description":"Filter by job states (for list)"},"keep_artifacts":{"type":"boolean","description":"Keep artifacts on cleanup (default: true)"}},"required":["action"]}"#;
+const CODING_JOB_SCHEMA: &str = r#"{"type":"object","properties":{"action":{"type":"string","enum":["create","import","run","status","cancel","cleanup","cleanup_all","list"],"description":"The action to perform"},"name":{"type":"string","description":"Repository name (for create/import)"},"description":{"type":"string","description":"Project description (for create, optional)"},"url":{"type":"string","description":"Remote git URL to clone (for import)"},"goal":{"type":"string","description":"Goal description (for run)"},"repo":{"type":"string","description":"Workspace repo name (for run)"},"base_ref":{"type":"string","description":"Base branch/ref (for run, e.g. main)"},"priority":{"type":"string","enum":["low","medium","high"],"description":"Job priority (for run, default: medium)"},"labels":{"type":"array","items":{"type":"string"},"description":"Labels (for run)"},"skills":{"type":"array","items":{"type":"string"},"description":"Skill names (for run)"},"profile":{"type":"string","description":"Profile name (for run, default: default)"},"max_wall_seconds":{"type":"integer","description":"Wall-clock timeout in seconds (for run)"},"job_id":{"type":"string","description":"Job ID (for status/cancel/cleanup)"},"run_id":{"type":"string","description":"Run ID (for status)"},"state_filter":{"type":"array","items":{"type":"string"},"description":"Filter by job states (for list/cleanup_all)"},"keep_artifacts":{"type":"boolean","description":"Keep artifacts on cleanup/cleanup_all (default: true)"},"terminal_only":{"type":"boolean","description":"Skip non-terminal jobs in cleanup_all instead of erroring (default: true)"}},"required":["action"]}"#;
 
 #[cfg(test)]
 mod tests {

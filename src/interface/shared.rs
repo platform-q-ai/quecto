@@ -9,8 +9,9 @@ use crate::application::coding_coordinator::{
 };
 use crate::application::coding_lifecycle::CodingLifecycleDriver;
 use crate::domain::coding_command::{
-    CancelResponse, CleanupResponse, CommandError, CreateRequest, CreateResponse, ImportRequest,
-    ImportResponse, ListRequest, ListResponse, RunRequest, RunResponse, StatusResponse,
+    CancelResponse, CleanupAllRequest, CleanupAllResponse, CleanupResponse, CommandError,
+    CreateRequest, CreateResponse, ImportRequest, ImportResponse, ListRequest, ListResponse,
+    RunRequest, RunResponse, StatusResponse,
 };
 use crate::domain::coding_ports::{CodingJobService, RepoCreator};
 use crate::domain::skill::SkillLoader;
@@ -283,6 +284,11 @@ impl<R: RepoValidator + Send, S: SkillResolver + Send> CodingJobService for Driv
         // unboundedly for cleaned-up jobs.
         guard.forget_job(job_id);
         Ok(resp)
+    }
+
+    fn cleanup_all(&mut self, req: &CleanupAllRequest) -> Result<CleanupAllResponse, CommandError> {
+        let mut guard = lock_driver(&self.driver)?;
+        guard.coordinator_mut().cleanup_all_impl(req)
     }
 
     fn list(&self, req: &ListRequest) -> ListResponse {
