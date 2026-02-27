@@ -1,6 +1,7 @@
 mod agent;
 mod auth;
 mod commands;
+pub mod coordinator;
 pub mod worker;
 
 use std::path::PathBuf;
@@ -102,6 +103,9 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
                 1
             }
             "skills" => commands::cmd_skills(ctx, &args[2..], &mut stdout, &mut stderr),
+            "coordinator" => {
+                coordinator::cmd_coordinator(ctx, &args[2..], &mut stdout, &mut stderr)
+            }
             "worker" => worker::cmd_worker_from_config(ctx, &args[2..], &mut stdout, &mut stderr),
             "help" | "--help" | "-h" => {
                 help_text(&mut stdout);
@@ -301,6 +305,7 @@ fn help_text(out: &mut String) {
     out.push_str("  status      Show status\n");
     out.push_str("  cron        Manage scheduled tasks\n");
     out.push_str("  skills      Manage skills (install, list, remove)\n");
+    out.push_str(coordinator::coordinator_help_text());
     out.push_str(worker::worker_help_text());
     out.push_str("  help        Show this help\n");
     out.push_str("  version     Show version information\n");

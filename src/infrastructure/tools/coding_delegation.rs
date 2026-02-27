@@ -123,8 +123,14 @@ impl CoordinatorDelegationTool {
         // Poll outbox for response
         let response = self.poll_response(&command_id)?;
 
-        // Check for pending notifications and attach them
+        // Check for pending notifications and acknowledge them
         let notifications = self.ipc.read_notifications().unwrap_or_default();
+        for notif in &notifications {
+            // Reconstruct the filename from the notification fields.
+            let ts_safe = notif.ts.replace(':', "-").replace(' ', "_");
+            let filename = format!("{}_{}.json", ts_safe, notif.notification_type);
+            let _ = self.ipc.acknowledge_notification(&filename);
+        }
 
         // Build result
         if response.ok {

@@ -6,7 +6,7 @@ Feature: Coordinator Spawn and Liveness
 
   The main agent checks coordinator liveness before dispatching each command.
   If the coordinator is dead or has never been started, the spawner launches
-  a new `quecto agent` child process with a coordinator-specific system prompt,
+  a new `quecto coordinator` child process with an IPC directory,
   writes its PID to coordinator/pid, and returns. All communication then
   proceeds via file-based IPC.
 
@@ -57,14 +57,10 @@ Feature: Coordinator Spawn and Liveness
 
   # --- Spawn configuration ---
 
-  Scenario: Spawner uses coordinator session name for persistence
-    Given a coordinator process spawner with session "coordinator"
-    Then the spawner session name should be "coordinator"
+  Scenario: Spawner uses configurable poll interval
+    Given a coordinator process spawner with poll interval 100 ms
+    Then the spawner poll interval should be 100
 
-  Scenario: Spawner uses configurable max timeout
-    Given a coordinator process spawner with max timeout 86400 seconds
-    Then the spawner max timeout should be 86400
-
-  Scenario: Spawner uses default max timeout of 86400 seconds
+  Scenario: Spawner uses default poll interval of 500 ms
     Given a coordinator process spawner with default config
-    Then the spawner max timeout should be 86400
+    Then the spawner poll interval should be 500

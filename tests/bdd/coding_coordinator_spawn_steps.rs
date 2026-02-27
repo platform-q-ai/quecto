@@ -208,17 +208,10 @@ fn then_no_launches(world: &mut QuectoWorld) {
 // Spawn configuration scenarios
 // ============================================================================
 
-#[given(regex = r#"^a coordinator process spawner with session "([^"]+)"$"#)]
-fn given_spawner_with_session(world: &mut QuectoWorld, session: String) {
+#[given(regex = r#"^a coordinator process spawner with poll interval (\d+) ms$"#)]
+fn given_spawner_with_poll_interval(world: &mut QuectoWorld, ms: u64) {
     let ipc = Arc::new(BddDelegMockIpc::new());
-    let config = CoordinatorSpawnConfig::new(PathBuf::from("/tmp/test")).with_session(&session);
-    world.coord_process_spawner = Some(CoordinatorProcessSpawner::new(ipc, config));
-}
-
-#[given(regex = r#"^a coordinator process spawner with max timeout (\d+) seconds$"#)]
-fn given_spawner_with_timeout(world: &mut QuectoWorld, timeout: u64) {
-    let ipc = Arc::new(BddDelegMockIpc::new());
-    let config = CoordinatorSpawnConfig::new(PathBuf::from("/tmp/test")).with_max_timeout(timeout);
+    let config = CoordinatorSpawnConfig::new(PathBuf::from("/tmp/test")).with_poll_interval(ms);
     world.coord_process_spawner = Some(CoordinatorProcessSpawner::new(ipc, config));
 }
 
@@ -229,20 +222,11 @@ fn given_spawner_default(world: &mut QuectoWorld) {
     world.coord_process_spawner = Some(CoordinatorProcessSpawner::new(ipc, config));
 }
 
-#[then(regex = r#"^the spawner session name should be "([^"]+)"$"#)]
-fn then_spawner_session(world: &mut QuectoWorld, expected: String) {
+#[then(regex = r#"^the spawner poll interval should be (\d+)$"#)]
+fn then_spawner_poll_interval(world: &mut QuectoWorld, expected: u64) {
     let spawner = world
         .coord_process_spawner
         .as_ref()
         .expect("process spawner set");
-    assert_eq!(spawner.session_name(), expected);
-}
-
-#[then(regex = r#"^the spawner max timeout should be (\d+)$"#)]
-fn then_spawner_timeout(world: &mut QuectoWorld, expected: u64) {
-    let spawner = world
-        .coord_process_spawner
-        .as_ref()
-        .expect("process spawner set");
-    assert_eq!(spawner.max_timeout_secs(), expected);
+    assert_eq!(spawner.poll_interval_ms(), expected);
 }

@@ -1244,6 +1244,18 @@ pub struct QuectoWorld {
     pub wiring_driver: Option<quecto::interface::shared::SharedLifecycleDriver>,
     /// Temp dir for wiring scenarios (kept alive)
     pub _wiring_temp_dir: Option<TempDir>,
+    // --- Coordinator entrypoint BDD fields ---
+    /// Raw args string for coordinator arg parsing scenarios
+    pub ep_coord_args_str: Option<String>,
+    /// Parse result for coordinator arg parsing scenarios
+    pub ep_coord_parse_result:
+        Option<Result<quecto::interface::cli::coordinator::CoordinatorArgs, String>>,
+    /// Mock IPC for coordinator entrypoint tick scenarios
+    pub ep_coord_ipc: Option<coding_coordinator_entrypoint_steps::BddEntrypointMockIpc>,
+    /// Mock job service for coordinator entrypoint tick scenarios
+    pub ep_coord_svc: Option<coding_coordinator_entrypoint_steps::BddEntrypointMockJobService>,
+    /// Result of the last tick in entrypoint scenarios
+    pub ep_coord_tick_result: Option<quecto::application::coordinator_inbox::TickResult>,
 }
 
 fn push_coding_event(
@@ -1523,6 +1535,7 @@ mod coding_artifact_export_steps;
 mod coding_child_agents_steps;
 mod coding_coordinator_delegation_steps;
 mod coding_coordinator_delegation_tool_steps;
+mod coding_coordinator_entrypoint_steps;
 mod coding_coordinator_inbox_steps;
 mod coding_coordinator_spawn_steps;
 mod coding_coordinator_wiring_steps;

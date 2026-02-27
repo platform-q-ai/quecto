@@ -9,23 +9,16 @@ use std::sync::Arc;
 
 use crate::domain::coding_ipc::{CoordinatorIpc, CoordinatorSpawner, SpawnResult};
 
-/// Default maximum timeout for the coordinator process (24 hours).
-const DEFAULT_MAX_TIMEOUT_SECS: u64 = 86400;
-
-/// Default session name for the coordinator process.
-const DEFAULT_SESSION_NAME: &str = "coordinator";
+/// Default poll interval for the coordinator inbox in milliseconds.
+const DEFAULT_POLL_INTERVAL_MS: u64 = 500;
 
 /// Configuration for the coordinator process spawner.
 #[derive(Debug, Clone)]
 pub struct CoordinatorSpawnConfig {
     /// Base directory for the coordinator process (QUECTO_BASE_DIR).
     pub base_dir: PathBuf,
-    /// Session name for persistence across restarts.
-    pub session: String,
-    /// Maximum wall-clock timeout in seconds.
-    pub max_timeout_secs: u64,
-    /// System prompt for the coordinator agent.
-    pub system_prompt: Option<String>,
+    /// How often the coordinator polls the inbox, in milliseconds.
+    pub poll_interval_ms: u64,
 }
 
 impl CoordinatorSpawnConfig {
@@ -33,27 +26,13 @@ impl CoordinatorSpawnConfig {
     pub fn new(base_dir: PathBuf) -> Self {
         Self {
             base_dir,
-            session: DEFAULT_SESSION_NAME.to_string(),
-            max_timeout_secs: DEFAULT_MAX_TIMEOUT_SECS,
-            system_prompt: None,
+            poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
         }
     }
 
-    /// Set the session name.
-    pub fn with_session(mut self, session: &str) -> Self {
-        self.session = session.to_string();
-        self
-    }
-
-    /// Set the maximum timeout.
-    pub fn with_max_timeout(mut self, secs: u64) -> Self {
-        self.max_timeout_secs = secs;
-        self
-    }
-
-    /// Set the system prompt.
-    pub fn with_system_prompt(mut self, prompt: &str) -> Self {
-        self.system_prompt = Some(prompt.to_string());
+    /// Set the poll interval.
+    pub fn with_poll_interval(mut self, ms: u64) -> Self {
+        self.poll_interval_ms = ms;
         self
     }
 }
@@ -73,8 +52,7 @@ pub struct CoordinatorProcessSpawner {
 impl std::fmt::Debug for CoordinatorProcessSpawner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CoordinatorProcessSpawner")
-            .field("session", &self.config.session)
-            .field("max_timeout_secs", &self.config.max_timeout_secs)
+            .field("poll_interval_ms", &self.config.poll_interval_ms)
             .finish()
     }
 }
@@ -84,32 +62,22 @@ impl CoordinatorProcessSpawner {
         Self { ipc, config }
     }
 
-    /// Session name getter (for BDD assertions).
-    pub fn session_name(&self) -> &str {
-        &self.config.session
-    }
-
-    /// Max timeout getter (for BDD assertions).
-    pub fn max_timeout_secs(&self) -> u64 {
-        self.config.max_timeout_secs
+    /// Poll interval getter (for BDD assertions).
+    pub fn poll_interval_ms(&self) -> u64 {
+        self.config.poll_interval_ms
     }
 
     /// Spawn the coordinator child process. Returns the child PID.
     fn spawn_coordinator(&self) -> Result<u32, String> {
         let exe = std::env::current_exe().map_err(|e| format!("current_exe: {e}"))?;
 
+        let ipc_dir = self.config.base_dir.join("coordinator");
         let mut cmd = std::process::Command::new(exe);
-        cmd.arg("agent")
-            .arg("-m")
-            .arg("You are the coordinator. Process inbox commands and manage coding jobs.")
-            .arg("-s")
-            .arg(&self.config.session)
-            .arg("--max-time")
-            .arg(self.config.max_timeout_secs.to_string());
-
-        if let Some(ref prompt) = self.config.system_prompt {
-            cmd.arg("--system").arg(prompt);
-        }
+        cmd.arg("coordinator")
+            .arg("--ipc-dir")
+            .arg(ipc_dir.to_string_lossy().as_ref())
+            .arg("--poll-interval-ms")
+            .arg(self.config.poll_interval_ms.to_string());
 
         // Set QUECTO_BASE_DIR so the child uses the same config/workspace.
         cmd.env("QUECTO_BASE_DIR", &self.config.base_dir);
@@ -234,23 +202,13 @@ mod tests {
     #[test]
     fn test_config_defaults() {
         let config = CoordinatorSpawnConfig::new(PathBuf::from("/tmp/q"));
-        assert_eq!(config.session, "coordinator");
-        assert_eq!(config.max_timeout_secs, 86400);
-        assert!(config.system_prompt.is_none());
+        assert_eq!(config.poll_interval_ms, 500);
     }
 
     #[test]
     fn test_config_builder() {
-        let config = CoordinatorSpawnConfig::new(PathBuf::from("/tmp/q"))
-            .with_session("my-coordinator")
-            .with_max_timeout(3600)
-            .with_system_prompt("You are a coordinator.");
-        assert_eq!(config.session, "my-coordinator");
-        assert_eq!(config.max_timeout_secs, 3600);
-        assert_eq!(
-            config.system_prompt.as_deref(),
-            Some("You are a coordinator.")
-        );
+        let config = CoordinatorSpawnConfig::new(PathBuf::from("/tmp/q")).with_poll_interval(100);
+        assert_eq!(config.poll_interval_ms, 100);
     }
 
     #[test]
@@ -267,23 +225,13 @@ mod tests {
     }
 
     #[test]
-    fn test_session_name_getter() {
+    fn test_poll_interval_getter() {
         let ipc = Arc::new(TestMockIpc::dead());
         let spawner = CoordinatorProcessSpawner::new(
             ipc,
-            CoordinatorSpawnConfig::new(PathBuf::from("/tmp/q")).with_session("custom"),
+            CoordinatorSpawnConfig::new(PathBuf::from("/tmp/q")).with_poll_interval(100),
         );
-        assert_eq!(spawner.session_name(), "custom");
-    }
-
-    #[test]
-    fn test_max_timeout_getter() {
-        let ipc = Arc::new(TestMockIpc::dead());
-        let spawner = CoordinatorProcessSpawner::new(
-            ipc,
-            CoordinatorSpawnConfig::new(PathBuf::from("/tmp/q")).with_max_timeout(7200),
-        );
-        assert_eq!(spawner.max_timeout_secs(), 7200);
+        assert_eq!(spawner.poll_interval_ms(), 100);
     }
 
     #[test]
@@ -295,7 +243,7 @@ mod tests {
         );
         let debug = format!("{spawner:?}");
         assert!(debug.contains("CoordinatorProcessSpawner"));
-        assert!(debug.contains("coordinator"));
+        assert!(debug.contains("poll_interval_ms"));
     }
 
     // Note: We cannot test spawn_coordinator() in unit tests because it
