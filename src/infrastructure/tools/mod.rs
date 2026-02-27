@@ -1,3 +1,4 @@
+pub mod coding_delegation;
 pub mod coding_job;
 pub mod cron_tool;
 pub mod exec;

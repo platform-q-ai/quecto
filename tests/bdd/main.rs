@@ -156,6 +156,106 @@ impl GitHubPort for BddGitHubPort {
     }
 }
 
+use quecto::domain::coding_ipc::{
+    CoordinatorIpc, CoordinatorIpcCommand, CoordinatorIpcResponse, CoordinatorNotification,
+    CoordinatorState,
+};
+
+/// BDD mock IPC for the coordinator delegation tool. Records commands and
+/// returns pre-configured responses/notifications.
+#[derive(Debug)]
+pub struct BddDelegMockIpc {
+    pub commands: Mutex<Vec<CoordinatorIpcCommand>>,
+    pub response: Mutex<Option<CoordinatorIpcResponse>>,
+    pub notifications: Mutex<Vec<CoordinatorNotification>>,
+    pub timeout: bool,
+}
+
+impl Default for BddDelegMockIpc {
+    fn default() -> Self {
+        Self {
+            commands: Mutex::new(vec![]),
+            response: Mutex::new(None),
+            notifications: Mutex::new(vec![]),
+            timeout: false,
+        }
+    }
+}
+
+impl BddDelegMockIpc {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_timeout() -> Self {
+        Self {
+            timeout: true,
+            ..Self::default()
+        }
+    }
+}
+
+impl CoordinatorIpc for BddDelegMockIpc {
+    fn write_command(&self, cmd: &CoordinatorIpcCommand) -> Result<(), String> {
+        self.commands.lock().unwrap().push(cmd.clone());
+        if let Some(resp) = self.response.lock().unwrap().as_mut() {
+            resp.command_id = cmd.command_id.clone();
+        }
+        Ok(())
+    }
+
+    fn read_pending_commands(&self) -> Result<Vec<CoordinatorIpcCommand>, String> {
+        Ok(self.commands.lock().unwrap().clone())
+    }
+
+    fn acknowledge_command(&self, _command_id: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn write_response(&self, _resp: &CoordinatorIpcResponse) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn read_response(&self, _command_id: &str) -> Result<Option<CoordinatorIpcResponse>, String> {
+        if self.timeout {
+            return Ok(None);
+        }
+        Ok(self.response.lock().unwrap().clone())
+    }
+
+    fn write_notification(&self, _notif: &CoordinatorNotification) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn read_notifications(&self) -> Result<Vec<CoordinatorNotification>, String> {
+        Ok(self.notifications.lock().unwrap().clone())
+    }
+
+    fn acknowledge_notification(&self, _filename: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn write_state(&self, _state: &CoordinatorState) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn read_state(&self) -> Result<Option<CoordinatorState>, String> {
+        Ok(None)
+    }
+
+    fn write_pid(&self, _pid: u32) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn read_pid(&self) -> Result<Option<u32>, String> {
+        Ok(None)
+    }
+
+    fn is_coordinator_alive(&self) -> bool {
+        false
+    }
+}
+
 use quecto::infrastructure::persistence::cron_store::FileCronStore;
 use quecto::infrastructure::persistence::memory_store::{self, MemoryStore};
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
@@ -1110,6 +1210,14 @@ pub struct QuectoWorld {
         Option<Result<quecto::domain::coding_ipc::CoordinatorIpcResponse, String>>,
     /// Read notifications result
     pub coord_ipc_notifications: Option<Vec<quecto::domain::coding_ipc::CoordinatorNotification>>,
+    // --- Coordinator delegation tool BDD fields ---
+    /// Delegation tool instance for tool-level BDD scenarios
+    pub deleg_tool:
+        Option<Arc<quecto::infrastructure::tools::coding_delegation::CoordinatorDelegationTool>>,
+    /// Mock IPC backing the delegation tool
+    pub deleg_mock_ipc: Option<Arc<BddDelegMockIpc>>,
+    /// Last ToolResult from a delegation tool execution
+    pub deleg_result: Option<quecto::domain::tool::ToolResult>,
 }
 
 fn push_coding_event(
@@ -1388,6 +1496,7 @@ mod coding_agent_responsiveness_steps;
 mod coding_artifact_export_steps;
 mod coding_child_agents_steps;
 mod coding_coordinator_delegation_steps;
+mod coding_coordinator_delegation_tool_steps;
 mod coding_coordinator_worker_lifecycle_steps;
 mod coding_crash_recovery_steps;
 mod coding_event_persistence_steps;
