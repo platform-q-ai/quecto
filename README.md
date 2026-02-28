@@ -276,8 +276,6 @@ Config file: `~/.quecto/config.json`
       "pid_limit": 256,
       "cpu_time_limit_secs": 30,
       "wall_time_limit_secs": 30,
-      "die_with_parent": true,
-      "allow_without_die_with_parent": false
     },
     "web": {
       "brave": {
@@ -316,8 +314,6 @@ Set `providers.<name>.api_base` only when you need a non-default endpoint (for e
 - `tools.exec.allow_native_fallback`: when `true`, missing/unexecutable nsjail falls back to native mode; when `false` (default), `exec` calls fail with a config error
 - `tools.exec.network_passthrough`: allow outbound network inside nsjail (`false` by default)
 - `tools.exec.memory_limit_mb`, `tools.exec.pid_limit`, `tools.exec.cpu_time_limit_secs`, `tools.exec.wall_time_limit_secs`: per-call nsjail resource limits (safe defaults enabled)
-- `tools.exec.die_with_parent`: enable parent-death cleanup for jailed processes (`true` by default)
-- `tools.exec.allow_without_die_with_parent`: when `true`, runs even if the local nsjail build does not support `--die_with_parent`; default `false` (fail closed)
 - `tools.exec.nsjail_binary`: must resolve to an executable under trusted system paths (`/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`, `/usr/local/bin`); relative paths are rejected
 - exec child environment is allowlisted by default (`PATH`, locale vars, and basic shell/runtime vars), preventing broad secret env leakage
 

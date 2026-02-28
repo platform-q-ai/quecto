@@ -24,8 +24,6 @@ pub struct ExecRegistrySettings {
     pub pid_limit: u64,
     pub cpu_time_limit_secs: u64,
     pub wall_time_limit_secs: u64,
-    pub die_with_parent: bool,
-    pub allow_without_die_with_parent: bool,
 }
 use super::filesystem::{AppendFileTool, EditFileTool, ListDirTool, ReadFileTool, WriteFileTool};
 
@@ -67,8 +65,6 @@ impl ToolRegistryImpl {
             pid_limit: exec.pid_limit,
             cpu_time_limit_secs: exec.cpu_time_limit_secs,
             wall_time_limit_secs: exec.wall_time_limit_secs,
-            die_with_parent: exec.die_with_parent,
-            allow_without_die_with_parent: exec.allow_without_die_with_parent,
         }
     }
 
@@ -115,8 +111,6 @@ impl ToolRegistryImpl {
                 pid_limit: Some(settings.pid_limit),
                 cpu_time_limit_secs: Some(settings.cpu_time_limit_secs),
                 wall_time_limit_secs: Some(settings.wall_time_limit_secs),
-                die_with_parent: settings.die_with_parent,
-                allow_without_die_with_parent: settings.allow_without_die_with_parent,
             },
             ..ExecOptions::default()
         };

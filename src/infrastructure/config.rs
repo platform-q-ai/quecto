@@ -153,10 +153,6 @@ pub struct ExecToolConfig {
     pub cpu_time_limit_secs: u64,
     #[serde(default = "default_nsjail_wall_time_limit_secs")]
     pub wall_time_limit_secs: u64,
-    #[serde(default = "default_true")]
-    pub die_with_parent: bool,
-    #[serde(default)]
-    pub allow_without_die_with_parent: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -178,8 +174,6 @@ impl Default for ExecToolConfig {
             pid_limit: default_nsjail_pid_limit(),
             cpu_time_limit_secs: default_nsjail_cpu_time_limit_secs(),
             wall_time_limit_secs: default_nsjail_wall_time_limit_secs(),
-            die_with_parent: true,
-            allow_without_die_with_parent: false,
         }
     }
 }
@@ -518,8 +512,6 @@ mod tests {
         assert_eq!(config.tools.exec.pid_limit, 256);
         assert_eq!(config.tools.exec.cpu_time_limit_secs, 30);
         assert_eq!(config.tools.exec.wall_time_limit_secs, 30);
-        assert!(config.tools.exec.die_with_parent);
-        assert!(!config.tools.exec.allow_without_die_with_parent);
     }
 
     #[test]
@@ -534,9 +526,7 @@ mod tests {
                     "memory_limit_mb": 1024,
                     "pid_limit": 128,
                     "cpu_time_limit_secs": 20,
-                    "wall_time_limit_secs": 25,
-                    "die_with_parent": false,
-                    "allow_without_die_with_parent": true
+                    "wall_time_limit_secs": 25
                 }
             }
         }"#;
@@ -549,8 +539,6 @@ mod tests {
         assert_eq!(config.tools.exec.pid_limit, 128);
         assert_eq!(config.tools.exec.cpu_time_limit_secs, 20);
         assert_eq!(config.tools.exec.wall_time_limit_secs, 25);
-        assert!(!config.tools.exec.die_with_parent);
-        assert!(config.tools.exec.allow_without_die_with_parent);
     }
 
     #[test]
