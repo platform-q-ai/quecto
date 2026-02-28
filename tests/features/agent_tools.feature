@@ -103,10 +103,25 @@ Feature: Agent Tool System
     Given a tool workspace
     And a file "a.txt" exists with content "a"
     And a file "b.txt" exists with content "b"
-    When the agent executes tool "list_dir" with args:
+    When the agent executes tool "ls" with args:
       | path | . |
     Then the tool result should contain "a.txt"
     And the tool result should contain "b.txt"
+
+  Scenario: ls uses current directory when path is dot
+    Given a tool workspace
+    And a file "hello.txt" exists with content "hi"
+    When the agent executes tool "ls" with args:
+      | path | . |
+    Then the tool result should contain "hello.txt"
+    And the tool result should not be an error
+
+  Scenario: ls truncates when entry limit exceeded
+    Given a tool workspace with 1100 files
+    When the agent executes tool "ls" with args:
+      | path | . |
+    Then the tool result should contain "[Showing"
+    And the tool result should not be an error
 
   Scenario: Tool registry lists core tools
     Given a tool workspace
@@ -115,7 +130,7 @@ Feature: Agent Tool System
     And the tool registry should contain "write"
     And the tool registry should contain "edit"
     And the tool registry should contain "append_file"
-    And the tool registry should contain "list_dir"
+    And the tool registry should contain "ls"
 
   Scenario: Message tool sends to channel via bus
     Given a message tool with default target "telegram:12345"

@@ -25,7 +25,7 @@ pub struct ExecRegistrySettings {
     pub cpu_time_limit_secs: u64,
     pub wall_time_limit_secs: u64,
 }
-use super::filesystem::{AppendFileTool, EditTool, ListDirTool, ReadTool, WriteTool};
+use super::filesystem::{AppendFileTool, EditTool, LsTool, ReadTool, WriteTool};
 
 /// Registry of all available tools, keyed by name.
 pub struct ToolRegistryImpl {
@@ -144,10 +144,8 @@ impl ToolRegistryImpl {
             workspace.clone(),
             sandbox.clone(),
         )));
-        reg.register(Arc::new(ListDirTool::new(
-            workspace.clone(),
-            sandbox.clone(),
-        )));
+        let ls_tool = Arc::new(LsTool::new(workspace.clone(), sandbox.clone()));
+        reg.register(ls_tool.clone());
 
         // Backward-compat aliases inserted after all register() calls so that
         // definitions (rebuilt on each register) is not polluted by duplicate entries.
@@ -157,6 +155,7 @@ impl ToolRegistryImpl {
         reg.tools.insert("read_file".to_string(), read_tool);
         reg.tools.insert("write_file".to_string(), write_tool);
         reg.tools.insert("edit_file".to_string(), edit_tool);
+        reg.tools.insert("list_dir".to_string(), ls_tool);
 
         reg
     }
@@ -233,7 +232,7 @@ mod tests {
         assert!(names.contains(&"write".to_string()));
         assert!(names.contains(&"edit".to_string()));
         assert!(names.contains(&"append_file".to_string()));
-        assert!(names.contains(&"list_dir".to_string()));
+        assert!(names.contains(&"ls".to_string()));
     }
 
     #[test]

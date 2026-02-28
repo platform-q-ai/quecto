@@ -45,6 +45,16 @@ fn given_crlf_file(world: &mut QuectoWorld, filename: String, content: String) {
     std::fs::write(ws.join(&filename), crlf_content).expect("write crlf file");
 }
 
+#[given(expr = "a tool workspace with {int} files")]
+fn given_workspace_with_many_files(world: &mut QuectoWorld, count: usize) {
+    let tmp = tempfile::TempDir::new().expect("create temp dir");
+    for i in 0..count {
+        std::fs::write(tmp.path().join(format!("file{:04}.txt", i)), "x").unwrap();
+    }
+    world.tool_workspace = Some(tmp.path().to_path_buf());
+    world._tool_workspace_tmp = Some(tmp);
+}
+
 #[given(expr = "a large file {string} exists with {int} lines")]
 fn given_large_file(world: &mut QuectoWorld, filename: String, lines: usize) {
     let ws = world
