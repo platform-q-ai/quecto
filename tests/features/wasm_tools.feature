@@ -34,7 +34,7 @@ Feature: WASM Tool Ports
   @done
   Scenario: WASM WriteFileTool creates a file in the workspace
     Given a WASM-containerized tool registry
-    When the agent executes WASM tool "write_file" with args:
+    When the agent executes WASM tool "write" with args:
       | path    | output.txt  |
       | content | hello world |
     Then the WASM workspace file "output.txt" should exist
@@ -43,7 +43,7 @@ Feature: WASM Tool Ports
   @done
   Scenario: WASM WriteFileTool creates parent directories
     Given a WASM-containerized tool registry
-    When the agent executes WASM tool "write_file" with args:
+    When the agent executes WASM tool "write" with args:
       | path    | sub/dir/file.txt |
       | content | nested content   |
     Then the WASM workspace file "sub/dir/file.txt" should exist
@@ -200,9 +200,9 @@ Feature: WASM Tool Ports
     Then the WASM parity results should be identical
 
   @done
-  Scenario: WASM tools produce identical output to native tools for write_file
+  Scenario: WASM tools produce identical output to native tools for write
     Given a native tool registry and a WASM-containerized tool registry
-    When both registries execute "write_file" with args:
+    When both registries execute "write" with args:
       | path    | out.txt        |
       | content | parity check   |
     Then the WASM parity files should have identical content

@@ -30,7 +30,7 @@ fn tool_schemas() -> Vec<(&'static str, &'static str, &'static str)> {
             r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#,
         ),
         (
-            "write_file",
+            "write",
             "Write a file",
             r#"{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}"#,
         ),
@@ -606,7 +606,7 @@ fn then_parity_identical(world: &mut QuectoWorld) {
 
 #[then("the WASM parity files should have identical content")]
 fn then_parity_files_identical(world: &mut QuectoWorld) {
-    // Both write_file operations should produce the same file content.
+    // Both write operations should produce the same file content.
     let ws = world
         .wasm_parity_workspace
         .as_ref()

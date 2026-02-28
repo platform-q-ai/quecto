@@ -237,7 +237,7 @@ mod tests {
         let ws = tmp.path().to_path_buf();
         let ws2 = ws.clone();
 
-        let wrapper = create_real_wrapper("write_file").with_host_configurator(Arc::new(
+        let wrapper = create_real_wrapper("write").with_host_configurator(Arc::new(
             move |host: &mut HostState| {
                 host.workspace = ws2.clone();
             },

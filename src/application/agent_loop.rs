@@ -471,10 +471,10 @@ mod tests {
         let (agent, _) = make_agent(
             vec![
                 tool_call_response("read_file", r#"{"path":"a.txt"}"#),
-                tool_call_response("write_file", r#"{"path":"b.txt","content":"data"}"#),
+                tool_call_response("write", r#"{"path":"b.txt","content":"data"}"#),
                 text_response("Done copying"),
             ],
-            vec![("read_file", "file content"), ("write_file", "ok")],
+            vec![("read_file", "file content"), ("write", "ok")],
         );
         let mut messages = vec![Message::user("Copy files")];
         let result = agent.run_loop(&mut messages).await.unwrap();
@@ -515,10 +515,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_agent_info() {
-        let (agent, _) = make_agent(
-            vec![],
-            vec![("exec", ""), ("read_file", ""), ("write_file", "")],
-        );
+        let (agent, _) = make_agent(vec![], vec![("exec", ""), ("read_file", ""), ("write", "")]);
         let agent = agent.with_skill_count(2);
         let info = agent.info();
         assert_eq!(info.tool_count, 3);

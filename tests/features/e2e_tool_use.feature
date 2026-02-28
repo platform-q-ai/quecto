@@ -21,7 +21,7 @@ Feature: End-to-End Tool Execution
 
   @done
   Scenario: LLM writes a file via tool call
-    Given the mock LLM first returns a tool call for "write_file" with args:
+    Given the mock LLM first returns a tool call for "write" with args:
       | path    | output.txt  |
       | content | hello world |
     And the mock LLM then returns a text response "File written successfully"
@@ -66,7 +66,7 @@ Feature: End-to-End Tool Execution
     Given a file "source.txt" in the e2e workspace with content "important data"
     And the mock LLM returns a tool call sequence:
       | call | read_file  | {"path":"source.txt"}                    |
-      | call | write_file | {"path":"copy.txt","content":"important data"} |
+      | call | write | {"path":"copy.txt","content":"important data"} |
       | text | Copied source.txt to copy.txt |                          |
     When I run quecto agent -s - -m "Copy source.txt to copy.txt"
     Then the exit code should be 0

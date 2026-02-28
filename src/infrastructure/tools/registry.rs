@@ -25,7 +25,7 @@ pub struct ExecRegistrySettings {
     pub cpu_time_limit_secs: u64,
     pub wall_time_limit_secs: u64,
 }
-use super::filesystem::{AppendFileTool, EditFileTool, ListDirTool, ReadFileTool, WriteFileTool};
+use super::filesystem::{AppendFileTool, EditFileTool, ListDirTool, ReadFileTool, WriteTool};
 
 /// Registry of all available tools, keyed by name.
 pub struct ToolRegistryImpl {
@@ -137,10 +137,8 @@ impl ToolRegistryImpl {
             workspace.clone(),
             sandbox.clone(),
         )));
-        reg.register(Arc::new(WriteFileTool::new(
-            workspace.clone(),
-            sandbox.clone(),
-        )));
+        let write_tool = Arc::new(WriteTool::new(workspace.clone(), sandbox.clone()));
+        reg.register(write_tool.clone());
         reg.register(Arc::new(EditFileTool::new(
             workspace.clone(),
             sandbox.clone(),
@@ -153,6 +151,12 @@ impl ToolRegistryImpl {
             workspace.clone(),
             sandbox.clone(),
         )));
+
+        // Backward-compat alias inserted after all register() calls so that
+        // definitions (rebuilt on each register) stays at 6. The alias maps
+        // the old "write_file" name to WriteTool for sessions/LLMs using the
+        // old name. It is NOT exposed in definitions() so the LLM only sees "write".
+        reg.tools.insert("write_file".to_string(), write_tool);
 
         reg
     }
@@ -226,7 +230,7 @@ mod tests {
         let names = reg.names();
         assert!(names.contains(&"exec".to_string()));
         assert!(names.contains(&"read_file".to_string()));
-        assert!(names.contains(&"write_file".to_string()));
+        assert!(names.contains(&"write".to_string()));
         assert!(names.contains(&"edit_file".to_string()));
         assert!(names.contains(&"append_file".to_string()));
         assert!(names.contains(&"list_dir".to_string()));

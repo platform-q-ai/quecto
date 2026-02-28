@@ -1,4 +1,4 @@
-// Filesystem tools: read_file, write_file, edit_file, append_file, list_dir.
+// Filesystem tools: read_file, write, edit_file, append_file, list_dir.
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -9,6 +9,7 @@ use tokio::io::AsyncWriteExt;
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
+use crate::infrastructure::tools::path_utils::resolve_to_cwd;
 
 const MAX_TEXT_FILE_BYTES: u64 = 1024 * 1024;
 
@@ -19,9 +20,9 @@ const MAX_TEXT_FILE_BYTES: u64 = 1024 * 1024;
 fn resolve_and_validate(
     workspace: &Path,
     sandbox: &Sandbox,
-    relative_path: &str,
+    raw_path: &str,
 ) -> Result<PathBuf, DomainError> {
-    let full_path = workspace.join(relative_path);
+    let full_path = resolve_to_cwd(raw_path, workspace);
     let full_str = full_path.to_string_lossy().to_string();
     sandbox
         .validate_path(&full_str)
@@ -103,23 +104,23 @@ impl Tool for ReadFileTool {
 // WriteFileTool
 // ===========================================================================
 
-pub struct WriteFileTool {
+pub struct WriteTool {
     workspace: Arc<PathBuf>,
     sandbox: Arc<Sandbox>,
 }
 
-impl WriteFileTool {
+impl WriteTool {
     pub fn new(workspace: Arc<PathBuf>, sandbox: Arc<Sandbox>) -> Self {
         Self { workspace, sandbox }
     }
 }
 
-impl Tool for WriteFileTool {
+impl Tool for WriteTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "write_file".to_string(),
-            description: "Write content to a file (creates or overwrites)".to_string(),
-            parameters_schema: r#"{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}"#.to_string(),
+            name: "write".to_string(),
+            description: "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.".to_string(),
+            parameters_schema: r#"{"type":"object","properties":{"path":{"type":"string","description":"Path to the file to write (relative or absolute)"},"content":{"type":"string","description":"Content to write to the file"}},"required":["path","content"]}"#.to_string(),
         }
     }
 
@@ -151,10 +152,10 @@ impl Tool for WriteFileTool {
 
             tokio::fs::write(&full_path, content)
                 .await
-                .map_err(|e| DomainError::Tool(format!("write_file failed: {}", e)))?;
+                .map_err(|e| DomainError::Tool(format!("write failed: {}", e)))?;
 
             Ok(ToolResult {
-                content: format!("wrote {} bytes to {}", content.len(), path),
+                content: format!("Successfully wrote {} bytes to {}", content.len(), path),
                 is_error: false,
             })
         })
@@ -393,7 +394,7 @@ mod tests {
     #[tokio::test]
     async fn test_write_and_read_file() {
         let (ws, sb, _tmp) = test_tools();
-        let write_tool = WriteFileTool::new(ws.clone(), sb.clone());
+        let write_tool = WriteTool::new(ws.clone(), sb.clone());
         let read_tool = ReadFileTool::new(ws.clone(), sb.clone());
 
         let result = write_tool
@@ -491,15 +492,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_write_file_creates_parent_dirs() {
+    async fn test_write_creates_parent_dirs_and_success_message() {
         let (ws, sb, tmp) = test_tools();
-        let tool = WriteFileTool::new(ws, sb);
+        let tool = WriteTool::new(ws, sb);
         let result = tool
             .execute(r#"{"path": "sub/dir/file.txt", "content": "nested"}"#)
             .await
             .unwrap();
         assert!(!result.is_error);
         assert!(tmp.path().join("sub/dir/file.txt").exists());
+        // Pi-parity: success message must start with "Successfully wrote"
+        assert!(
+            result.content.starts_with("Successfully wrote"),
+            "expected Pi-format message, got: {}",
+            result.content
+        );
     }
 
     #[tokio::test]

@@ -21,7 +21,7 @@ Feature: Agent Loop
 
   Scenario: Message triggers multiple tool calls in sequence
     Given a configured agent with a mock LLM
-    And the LLM returns tool calls in sequence: "read_file", "write_file"
+    And the LLM returns tool calls in sequence: "read_file", "write"
     When the agent processes message "Copy my notes to output.txt"
     Then both tools should be executed in order
     And the final response should confirm completion
