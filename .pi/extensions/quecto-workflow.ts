@@ -2,7 +2,7 @@
  * Quecto Workflow Extension - Enforces the BDD/TDD Red-Green-Refactor development workflow
  * from AGENTS.md as an interactive todo checklist in Pi.
  *
- * The workflow has 15 steps:
+ * The workflow has 16 steps:
  *  1. Update Scenarios / Add new features as necessary
  *  2. Write/update unit tests
  *  3. Ensure new/modified tests fail (RED)
@@ -16,8 +16,9 @@
  * 11. Fix all valid concerns raised in review comments
  * 12. Push changes to remote
  * 13. Reply to comments and mark resolved
- * 14. Merge
- * 15. Move to local master and pull
+ * 14. Run pre-merge hooks (real-LLM, machete, deny)
+ * 15. Merge
+ * 16. Move to local master and pull
  *
  * Features:
  * - `/workflow` command opens an interactive checklist UI
@@ -57,8 +58,9 @@ const WORKFLOW_TEMPLATE: Omit<WorkflowStep, "done">[] = [
 	{ id: 11, label: "Fix all valid review concerns", phase: "review" },
 	{ id: 12, label: "Push changes to remote", phase: "review" },
 	{ id: 13, label: "Reply to comments and mark resolved", phase: "review" },
-	{ id: 14, label: "Merge", phase: "ci" },
-	{ id: 15, label: "Move to local master and pull", phase: "ci" },
+	{ id: 14, label: "Run pre-merge hooks (real-LLM, machete, deny)", phase: "ci" },
+	{ id: 15, label: "Merge", phase: "ci" },
+	{ id: 16, label: "Move to local master and pull", phase: "ci" },
 ];
 
 function freshSteps(): WorkflowStep[] {
@@ -411,6 +413,21 @@ export default function (pi: ExtensionAPI) {
 				injection += "```\n";
 				injection += `Get the PR number from \`gh pr view --json number -q .number\` or from the PR URL created in step 9.\n`;
 			}
+
+			if (current.id === 14) {
+				injection += `\n### Step 14: Run Pre-Merge Hooks\n`;
+				injection += `Run the pre-merge-commit checks (real-LLM e2e tests, cargo machete, cargo deny).\n`;
+				injection += `Use the sharded runner — do NOT run BDD tests in a single process:\n`;
+				injection += "```bash\n";
+				injection += `bash scripts/run-bdd-shards.sh --suite real-llm-bdd --shards 24 --timeout 12m --tag real-llm --real-llm\n`;
+				injection += "```\n";
+				injection += `Then run:\n`;
+				injection += "```bash\n";
+				injection += `cargo machete\n`;
+				injection += `cargo deny check\n`;
+				injection += "```\n";
+				injection += `If OPENAI_API_KEY is not set, skip the real-LLM suite but still run machete and deny.\n`;
+			}
 		} else {
 			injection += `All steps complete! You may start a new workflow cycle with \`workflow reset\`.\n`;
 		}
@@ -422,7 +439,7 @@ export default function (pi: ExtensionAPI) {
 
 	const WorkflowParams = Type.Object({
 		action: StringEnum(["status", "check", "uncheck", "reset", "skip"] as const),
-		step: Type.Optional(Type.Number({ description: "Step number (1-15)" })),
+		step: Type.Optional(Type.Number({ description: "Step number (1-16)" })),
 	});
 
 	pi.registerTool({
@@ -442,7 +459,7 @@ export default function (pi: ExtensionAPI) {
 			"  4:   GREEN phase (implement until tests pass)",
 			"  5:   REFACTOR phase (clean up)",
 			"  6:   GREEN phase (verify tests still pass)",
-			"  7-15: CI/CD and review",
+			"  7-16: CI/CD and review",
 		].join("\n"),
 		parameters: WorkflowParams,
 
@@ -559,7 +576,7 @@ export default function (pi: ExtensionAPI) {
 					steps = freshSteps();
 					updateWidget(ctx);
 					return {
-						content: [{ type: "text", text: "Workflow reset — all 15 steps cleared for new cycle" }],
+						content: [{ type: "text", text: "Workflow reset — all 16 steps cleared for new cycle" }],
 						details: makeDetails("reset"),
 					};
 				}
