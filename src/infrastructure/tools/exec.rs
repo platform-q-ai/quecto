@@ -29,7 +29,20 @@ const EXEC_ENV_ALLOWLIST: &[&str] = &[
 
 /// System paths to mount read-only inside the nsjail container.
 /// These provide the basic toolchain (/bin/sh, common utilities, shared libs).
-const NSJAIL_RO_BINDMOUNTS: &[&str] = &["/bin", "/usr", "/lib", "/lib64", "/etc"];
+const NSJAIL_RO_BINDMOUNTS: &[&str] = &["/bin", "/usr", "/lib", "/lib64"];
+
+/// Individual files from `/etc` needed inside the jail.
+/// We mount these individually rather than all of `/etc` to avoid exposing
+/// host configuration (hostname, machine-id, ssh keys, resolv.conf, etc.).
+const NSJAIL_RO_ETC_FILES: &[&str] = &[
+    "/etc/ld.so.cache",
+    "/etc/ld.so.conf",
+    "/etc/nsswitch.conf",
+    "/etc/passwd",
+    "/etc/group",
+    "/etc/ssl",
+    "/etc/alternatives",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecIsolationMode {
@@ -46,9 +59,22 @@ pub enum ExecIsolationMode {
 pub struct NsjailOptions {
     pub binary: String,
     pub network_passthrough: bool,
-    /// Memory address-space limit in MB, enforced via `--rlimit_as`.
+    /// Virtual address-space limit in MB, enforced via `--rlimit_as`.
+    ///
+    /// **Note:** This limits *virtual* address space, not physical RSS (unlike
+    /// the former `--cgroup_mem_max`). Runtimes that pre-reserve large virtual
+    /// regions (Go, JVM) may need a higher value than their actual memory use.
+    /// Conversely, `mmap(MAP_NORESERVE)` can bypass this until page faults.
+    /// The `--time_limit` wall-clock cap partially mitigates unbounded consumption.
     pub memory_limit_mb: Option<u64>,
     /// Maximum number of processes, enforced via `--rlimit_nproc`.
+    ///
+    /// **Note:** `RLIMIT_NPROC` is a per-UID limit, not per-jail. Inside
+    /// nsjail's user namespace the jailed UID maps to an outer UID, so the
+    /// budget is shared with any other processes running as that outer UID.
+    /// This is weaker than the former per-cgroup `--cgroup_pids_max` in
+    /// multi-tenant scenarios. If concurrent jails are expected, consider
+    /// distinct UID mappings per invocation.
     pub pid_limit: Option<u64>,
     /// CPU time limit in seconds, enforced via `--rlimit_cpu`.
     pub cpu_time_limit_secs: Option<u64>,
@@ -97,6 +123,9 @@ pub struct ExecTool {
     max_capture_bytes: usize,
     mode: ExecIsolationMode,
     nsjail: NsjailOptions,
+    /// System paths resolved at construction time to avoid per-execution stat() calls.
+    ro_bindmounts: Vec<&'static str>,
+    ro_etc_files: Vec<&'static str>,
     startup_warning: Option<String>,
     startup_error: Option<String>,
 }
@@ -148,6 +177,18 @@ impl ExecTool {
         let mut startup_error = None;
         let mut mode = options.isolation_mode;
         if mode == ExecIsolationMode::Nsjail {
+            // Warn if nsjail mode is active but all resource limits are disabled.
+            if options.nsjail.memory_limit_mb.is_none()
+                && options.nsjail.pid_limit.is_none()
+                && options.nsjail.cpu_time_limit_secs.is_none()
+                && options.nsjail.wall_time_limit_secs.is_none()
+            {
+                tracing::warn!(
+                    target: "exec",
+                    "nsjail isolation is active but all resource limits are disabled. \
+                     The jail will run without memory, PID, CPU, or wall-clock limits."
+                );
+            }
             if let Some(resolved_binary) = resolve_nsjail_binary(&options.nsjail.binary) {
                 options.nsjail.binary = resolved_binary;
             } else {
@@ -168,6 +209,8 @@ impl ExecTool {
                 }
             }
         }
+        let ro_bindmounts = resolve_ro_bindmounts();
+        let ro_etc_files = resolve_ro_etc_files();
         Self {
             workspace,
             sandbox,
@@ -175,6 +218,8 @@ impl ExecTool {
             max_capture_bytes: options.max_capture_bytes,
             mode,
             nsjail: options.nsjail,
+            ro_bindmounts,
+            ro_etc_files,
             startup_warning: warning,
             startup_error,
         }
@@ -192,6 +237,8 @@ impl ExecTool {
         sandbox: Arc<Sandbox>,
         options: ExecOptions,
     ) -> Self {
+        let ro_bindmounts = resolve_ro_bindmounts();
+        let ro_etc_files = resolve_ro_etc_files();
         Self {
             workspace,
             sandbox,
@@ -199,6 +246,8 @@ impl ExecTool {
             max_capture_bytes: options.max_capture_bytes,
             mode: options.isolation_mode,
             nsjail: options.nsjail,
+            ro_bindmounts,
+            ro_etc_files,
             startup_warning: None,
             startup_error: None,
         }
@@ -220,7 +269,8 @@ impl ExecTool {
         self.startup_error.as_deref()
     }
 
-    /// Returns the nsjail options for inspection (e.g. in tests).
+    /// Returns the nsjail options for inspection in tests/BDD.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn nsjail_options(&self) -> &NsjailOptions {
         &self.nsjail
     }
@@ -234,7 +284,12 @@ impl ExecTool {
         command: &str,
     ) -> tokio::process::Command {
         let source_env = HashMap::new();
-        build_nsjail_command(workspace, command, &source_env, &self.nsjail)
+        let config = NsjailConfig {
+            options: &self.nsjail,
+            ro_dirs: &self.ro_bindmounts,
+            ro_etc_files: &self.ro_etc_files,
+        };
+        build_nsjail_command(workspace, command, &source_env, &config)
     }
 
     pub fn execute_with_env(
@@ -276,7 +331,12 @@ impl ExecTool {
     ) -> Result<ToolResult, DomainError> {
         let mut cmd = match mode {
             ExecIsolationMode::Nsjail => {
-                build_nsjail_command(&self.workspace, command, source_env, &self.nsjail)
+                let config = NsjailConfig {
+                    options: &self.nsjail,
+                    ro_dirs: &self.ro_bindmounts,
+                    ro_etc_files: &self.ro_etc_files,
+                };
+                build_nsjail_command(&self.workspace, command, source_env, &config)
             }
             ExecIsolationMode::Native => build_shell_command(&self.workspace, command, source_env),
         };
@@ -353,12 +413,22 @@ fn build_shell_command(
     cmd
 }
 
+/// All nsjail configuration needed to build a command: options + pre-resolved mounts.
+struct NsjailConfig<'a> {
+    options: &'a NsjailOptions,
+    /// Directory-level RO mounts (e.g. /bin, /usr, /lib), resolved at construction.
+    ro_dirs: &'a [&'static str],
+    /// Individual /etc file RO mounts (e.g. /etc/ld.so.cache), resolved at construction.
+    ro_etc_files: &'a [&'static str],
+}
+
 fn build_nsjail_command(
     workspace: &Path,
     command: &str,
     source_env: &HashMap<String, String>,
-    options: &NsjailOptions,
+    config: &NsjailConfig<'_>,
 ) -> tokio::process::Command {
+    let options = config.options;
     let mut cmd = tokio::process::Command::new(&options.binary);
     cmd.arg("--quiet")
         .arg("--mode")
@@ -368,13 +438,15 @@ fn build_nsjail_command(
         .arg("--bindmount")
         .arg(format!("{}:/workspace", workspace.display()));
 
-    // Mount essential system paths read-only so /bin/sh, shared libraries,
-    // and common utilities are available inside the jail.
-    for sys_path in NSJAIL_RO_BINDMOUNTS {
-        if Path::new(sys_path).exists() {
-            cmd.arg("--bindmount_ro")
-                .arg(format!("{sys_path}:{sys_path}"));
-        }
+    // Mount essential system paths read-only (resolved at construction time).
+    for sys_path in config.ro_dirs {
+        cmd.arg("--bindmount_ro")
+            .arg(format!("{sys_path}:{sys_path}"));
+    }
+    // Mount individual /etc files needed by the dynamic linker and NSS.
+    for etc_path in config.ro_etc_files {
+        cmd.arg("--bindmount_ro")
+            .arg(format!("{etc_path}:{etc_path}"));
     }
 
     // Disable cgroup namespace — resource limits are enforced via rlimits
@@ -422,6 +494,26 @@ fn build_nsjail_command(
         cmd.env("PATH", path);
     }
     cmd
+}
+
+/// Resolve which system RO bindmount paths exist on this host.
+/// Called once at construction time to avoid per-execution stat() calls.
+fn resolve_ro_bindmounts() -> Vec<&'static str> {
+    NSJAIL_RO_BINDMOUNTS
+        .iter()
+        .copied()
+        .filter(|p| Path::new(p).exists())
+        .collect()
+}
+
+/// Resolve which individual /etc files exist on this host.
+/// Called once at construction time.
+fn resolve_ro_etc_files() -> Vec<&'static str> {
+    NSJAIL_RO_ETC_FILES
+        .iter()
+        .copied()
+        .filter(|p| Path::new(p).exists())
+        .collect()
 }
 
 fn resolve_nsjail_binary(binary: &str) -> Option<String> {

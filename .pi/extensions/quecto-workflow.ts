@@ -221,6 +221,7 @@ class WorkflowChecklist {
 
 export default function (pi: ExtensionAPI) {
 	let steps: WorkflowStep[] = freshSteps();
+	let autoComplete = false;
 
 	// ── State reconstruction ──────────────────────────────────────────
 
@@ -338,16 +339,13 @@ export default function (pi: ExtensionAPI) {
 
 	// ── Guard: enforce sharded BDD runs ───────────────────────────────
 
-	pi.on("tool_call", async (event, ctx) => {
+	pi.on("tool_call", async (event, _ctx) => {
 		if (!isToolCallEventType("bash", event)) return;
 
 		const cmd = event.input.command?.trim() ?? "";
 
-		// Detect `cargo test --test bdd` without shard env vars
+		// Detect `cargo test --test bdd`
 		if (!/cargo\s+test\b/.test(cmd) || !/--test\s+bdd\b/.test(cmd)) return;
-
-		// Allow if shard env vars are present (inline env or exported)
-		if (/QUECTO_BDD_SHARD_INDEX/.test(cmd) && /QUECTO_BDD_SHARD_TOTAL/.test(cmd)) return;
 
 		// Allow if running via the sharding script
 		if (/run-bdd-shards\.sh/.test(cmd)) return;
@@ -355,23 +353,29 @@ export default function (pi: ExtensionAPI) {
 		// Allow if QUECTO_TAG is set (single-scenario debugging with @focus)
 		if (/QUECTO_TAG/.test(cmd)) return;
 
-		const reason =
-			"BDD tests must run sharded (24-way parallel). Use:\n" +
-			"  bash scripts/run-bdd-shards.sh\n" +
-			"Or for a single scenario, tag it @focus and run:\n" +
-			"  QUECTO_TAG=focus cargo test --no-fail-fast --features test-support --test bdd 2>&1 | scripts/test-filter.sh";
-
-		if (!ctx.hasUI) {
-			return { block: true, reason };
+		// Check shard env vars — must use exactly 24 shards
+		const totalMatch = cmd.match(/QUECTO_BDD_SHARD_TOTAL=(\d+)/);
+		if (totalMatch && /QUECTO_BDD_SHARD_INDEX/.test(cmd)) {
+			const total = parseInt(totalMatch[1], 10);
+			if (total === 24) return;
+			// Reject any other shard count
+			return {
+				block: true,
+				reason:
+					`QUECTO_BDD_SHARD_TOTAL=${total} is not allowed. Use 24 shards:\n` +
+					"  bash scripts/run-bdd-shards.sh",
+			};
 		}
 
-		const ok = await ctx.ui.confirm(
-			"⚠️ Unsharded BDD Run Detected",
-			`Running all BDD tests in a single process will be very slow.\n\n${reason}\n\nRun unsharded anyway?`,
-		);
-		if (!ok) {
-			return { block: true, reason: "Blocked by workflow extension — use sharded BDD runs" };
-		}
+		// No shard vars at all — block
+		return {
+			block: true,
+			reason:
+				"BDD tests must run sharded (24-way parallel). Use:\n" +
+				"  bash scripts/run-bdd-shards.sh\n" +
+				"Or for a single scenario, tag it @focus and run:\n" +
+				"  QUECTO_TAG=focus cargo test --no-fail-fast --features test-support --test bdd 2>&1 | scripts/test-filter.sh",
+		};
 	});
 
 	// ── System prompt injection ───────────────────────────────────────
@@ -389,6 +393,24 @@ export default function (pi: ExtensionAPI) {
 			injection += `\nYou MUST follow the BDD/TDD Red-Green-Refactor process.\n`;
 			injection += `Use the \`workflow\` tool to check off steps as you complete them.\n`;
 			injection += `Do NOT skip ahead — complete steps in order.\n`;
+
+			// Step-specific instructions
+			if (current.id === 10) {
+				injection += `\n### Step 10: Dispatch Reviewer Subagents\n`;
+				injection += `Use the \`subagent\` tool in parallel mode to dispatch all three reviewers simultaneously.\n`;
+				injection += `Each reviewer will submit a formal GitHub PR review with inline comments.\n`;
+				injection += `\nExample:\n`;
+				injection += "```json\n";
+				injection += `{\n`;
+				injection += `  "tasks": [\n`;
+				injection += `    { "agent": "architecture-reviewer", "task": "Review PR #<number> in this repo for architectural soundness, system design, modularity, and upstream compatibility. Submit a formal GitHub PR review with inline comments." },\n`;
+				injection += `    { "agent": "security-reviewer", "task": "Review PR #<number> in this repo for security vulnerabilities, input validation, auth flaws, and data exposure risks. Submit a formal GitHub PR review with inline comments." },\n`;
+				injection += `    { "agent": "performance-reviewer", "task": "Review PR #<number> in this repo for performance regressions, memory leaks, unbounded growth, and hot path efficiency. Submit a formal GitHub PR review with inline comments." }\n`;
+				injection += `  ]\n`;
+				injection += `}\n`;
+				injection += "```\n";
+				injection += `Get the PR number from \`gh pr view --json number -q .number\` or from the PR URL created in step 9.\n`;
+			}
 		} else {
 			injection += `All steps complete! You may start a new workflow cycle with \`workflow reset\`.\n`;
 		}
@@ -659,6 +681,60 @@ export default function (pi: ExtensionAPI) {
 				pi.appendEntry("workflow-state", { steps: steps.map((s) => ({ ...s })) });
 				updateWidget(ctx);
 			}
+		},
+	});
+
+	// ── Auto-complete: nudge agent to continue until all steps done ──
+
+	pi.on("agent_end", async (_event, _ctx) => {
+		if (!autoComplete) return;
+
+		const done = steps.filter((s) => s.done).length;
+		const total = steps.length;
+		if (done >= total) return;
+
+		// At least one step must have been checked to avoid nudging on a
+		// fresh session where the agent hasn't started the workflow yet.
+		if (done === 0) return;
+
+		const current = steps.find((s) => !s.done);
+		if (!current) return;
+
+		const msg =
+			`Workflow incomplete (${done}/${total}). ` +
+			`Continue with step ${current.id}: ${current.label} [${phaseLabel(current.phase)}]. ` +
+			`Use the workflow tool to check off steps as you complete them.`;
+
+		pi.sendUserMessage(msg, { deliverAs: "followUp" });
+	});
+
+	// ── Command: /workflow-auto — toggle auto-complete ────────────────
+
+	pi.registerCommand("workflow-auto", {
+		description: "Toggle auto-continue: nudge agent to keep going until all workflow steps are done",
+		handler: async (_args, ctx) => {
+			autoComplete = !autoComplete;
+			ctx.ui.notify(
+				autoComplete
+					? "Workflow auto-continue ON — agent will be nudged to complete all steps"
+					: "Workflow auto-continue OFF",
+				"info",
+			);
+		},
+	});
+
+	// ── Shortcut: Ctrl+Shift+A to toggle auto-complete ───────────────
+
+	pi.registerShortcut("ctrl+shift+a", {
+		description: "Toggle workflow auto-continue",
+		handler: async (ctx) => {
+			autoComplete = !autoComplete;
+			ctx.ui.notify(
+				autoComplete
+					? "Workflow auto-continue ON — agent will be nudged to complete all steps"
+					: "Workflow auto-continue OFF",
+				"info",
+			);
 		},
 	});
 }

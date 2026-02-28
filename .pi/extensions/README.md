@@ -75,7 +75,7 @@ The agent can call the `workflow` tool to track its own progress:
 | `reset` | Clear all steps for a new cycle |
 | `skip <step>` | Mark done even if earlier steps are incomplete |
 
-The system prompt is injected each turn with the current step and a reminder to follow BDD/TDD order.
+The system prompt is injected each turn with the current step and a reminder to follow BDD/TDD order. Step-specific instructions are included when the agent reaches certain steps — for example, step 10 injects concrete `subagent` tool usage showing how to dispatch the architecture, security, and performance reviewers in parallel.
 
 ### Git Commit Guard
 
@@ -90,6 +90,17 @@ When the LLM runs `cargo test --test bdd` without shard environment variables (`
 - Single-scenario debugging with `QUECTO_TAG` (e.g., `@focus`)
 
 In interactive mode, you get a confirmation dialog to override. In non-interactive mode, the command is blocked outright.
+
+### Auto-Continue
+
+When the agent stops with incomplete workflow steps, you can have it automatically continue. Toggle with:
+
+- **`/workflow-auto`** command
+- **`Ctrl+Shift+A`** shortcut
+
+When enabled, the extension detects when the agent finishes (`agent_end`) and, if at least one step is checked but not all are done, sends a follow-up message telling the agent to continue with the next incomplete step. This creates a loop where the agent keeps working through the workflow until all 15 steps are complete.
+
+The nudge is skipped if no steps have been checked yet (to avoid pestering on fresh sessions where the workflow hasn't started).
 
 ### State Persistence
 
