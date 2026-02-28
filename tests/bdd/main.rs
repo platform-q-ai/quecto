@@ -623,6 +623,13 @@ pub struct QuectoWorld {
     pub cron_outbound_rx: Option<tokio::sync::mpsc::Receiver<OutboundMessage>>,
     /// Last outbound message captured for assertion
     pub last_outbound_message: Option<OutboundMessage>,
+    // --- Truncation BDD fields ---
+    /// Input string for truncation scenarios
+    pub truncation_input: Option<String>,
+    /// Result from truncate_head / truncate_tail
+    pub truncation_result: Option<quecto::infrastructure::tools::truncate::TruncationResult>,
+    /// Result from truncate_line
+    pub truncation_line_result: Option<(String, bool)>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
@@ -885,6 +892,7 @@ mod session_steps;
 mod skills_steps;
 mod subagent_steps;
 mod telegram_steps;
+mod truncate_steps;
 mod voice_steps;
 mod wasm_steps;
 mod wasm_tools_steps;
