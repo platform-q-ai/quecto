@@ -64,6 +64,10 @@ impl CronTool {
             .get("deliver_to")
             .and_then(|v| v.as_str())
             .map(String::from);
+        let run_once = args
+            .get("run_once")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         let schedule = if let Some(expr) = args.get("cron_expression").and_then(|v| v.as_str()) {
             CronSchedule::Cron {
@@ -87,6 +91,7 @@ impl CronTool {
             deliver_to,
             last_error: None,
             last_run_at: 0,
+            run_once,
         };
 
         // Atomic check-and-insert to avoid TOCTOU race between find_by_name + add.
@@ -129,9 +134,10 @@ impl CronTool {
             } else {
                 format!("{}s ago", now_unix_secs().saturating_sub(job.last_run_at))
             };
+            let once_tag = if job.run_once { " [one-shot]" } else { "" };
             let mut line = format!(
-                "- {} [{}] ({}) last_run: {}",
-                job.name, status, sched, last_run
+                "- {}{} [{}] ({}) last_run: {}",
+                job.name, once_tag, status, sched, last_run
             );
             if let Some(ref err) = job.last_error {
                 line.push_str(&format!(" last_error: {}", err));
@@ -174,7 +180,7 @@ impl Tool for CronTool {
             name: "cron".to_string(),
             description: "Manage scheduled cron jobs (add, remove, list, enable, disable)"
                 .to_string(),
-            parameters_schema: r#"{"type":"object","properties":{"action":{"type":"string","enum":["add","remove","list","enable","disable"],"description":"The cron action to perform"},"name":{"type":"string","description":"Job name (for add/remove/enable/disable)"},"message":{"type":"string","description":"The message/prompt to execute (for add)"},"interval_seconds":{"type":"integer","description":"Interval in seconds (for add with interval)"},"cron_expression":{"type":"string","description":"Cron expression (for add with cron schedule)"},"deliver_to":{"type":"string","description":"Optional delivery target in format 'telegram:<chat_id>', e.g. 'telegram:123456789'"}},"required":["action"]}"#.to_string(),
+            parameters_schema: r#"{"type":"object","properties":{"action":{"type":"string","enum":["add","remove","list","enable","disable"],"description":"The cron action to perform"},"name":{"type":"string","description":"Job name (for add/remove/enable/disable)"},"message":{"type":"string","description":"The message/prompt to execute (for add)"},"interval_seconds":{"type":"integer","description":"Interval in seconds (for add with interval)"},"cron_expression":{"type":"string","description":"Cron expression (for add with cron schedule)"},"deliver_to":{"type":"string","description":"Optional delivery target in format 'telegram:<chat_id>', e.g. 'telegram:123456789'"},"run_once":{"type":"boolean","description":"If true, job auto-removes after one successful execution (for reminders/delayed actions)"}},"required":["action"]}"#.to_string(),
         }
     }
 
@@ -234,6 +240,55 @@ mod tests {
             .unwrap();
         assert!(!result.is_error);
         assert!(result.content.contains("added"));
+    }
+
+    #[tokio::test]
+    async fn test_add_run_once_job() {
+        let (tool, _tmp) = test_tool();
+        let result = tool
+            .execute(
+                r#"{"action":"add","name":"Reminder","message":"Call dentist","interval_seconds":1800,"run_once":true}"#,
+            )
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains("added"));
+        // Verify the stored job has run_once set
+        let store = tool.store.clone();
+        let job = store.find_by_name("Reminder").unwrap().unwrap();
+        assert!(job.run_once, "job should have run_once=true");
+    }
+
+    #[tokio::test]
+    async fn test_add_job_without_run_once_defaults_to_false() {
+        let (tool, _tmp) = test_tool();
+        let result = tool
+            .execute(
+                r#"{"action":"add","name":"Recurring","message":"check","interval_seconds":60}"#,
+            )
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        let store = tool.store.clone();
+        let job = store.find_by_name("Recurring").unwrap().unwrap();
+        assert!(!job.run_once, "job should default to run_once=false");
+    }
+
+    #[tokio::test]
+    async fn test_list_shows_one_shot_for_run_once_jobs() {
+        let (tool, _tmp) = test_tool();
+        tool.execute(
+            r#"{"action":"add","name":"Reminder","message":"test","interval_seconds":1800,"run_once":true}"#,
+        )
+        .await
+        .unwrap();
+        let result = tool.execute(r#"{"action":"list"}"#).await.unwrap();
+        assert!(!result.is_error);
+        assert!(
+            result.content.contains("one-shot"),
+            "list output should show 'one-shot' for run_once jobs, got: {}",
+            result.content
+        );
     }
 
     #[tokio::test]

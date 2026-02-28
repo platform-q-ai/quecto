@@ -15,6 +15,9 @@ pub struct CronJob {
     pub last_error: Option<String>,
     /// Unix timestamp (seconds) of last execution, or 0 if never run.
     pub last_run_at: u64,
+    /// If true, the job is auto-removed from the store after a single successful execution.
+    /// Useful for reminders, delayed actions, and one-shot scheduled notifications.
+    pub run_once: bool,
 }
 
 /// Check whether a cron job is due based on current time.
@@ -111,6 +114,7 @@ mod tests {
             deliver_to: None,
             last_error: None,
             last_run_at,
+            run_once: false,
         }
     }
 
@@ -160,6 +164,20 @@ mod tests {
             0,
         );
         assert!(!is_job_due(&job, 1000));
+    }
+
+    #[test]
+    fn test_run_once_job_defaults_to_false() {
+        let job = make_job(CronSchedule::Interval { seconds: 60 }, true, 0);
+        assert!(!job.run_once);
+    }
+
+    #[test]
+    fn test_run_once_job_is_due_like_regular_job() {
+        let mut job = make_job(CronSchedule::Interval { seconds: 60 }, true, 0);
+        job.run_once = true;
+        // run_once doesn't affect scheduling — only post-execution behaviour
+        assert!(is_job_due(&job, 1000));
     }
 
     #[test]

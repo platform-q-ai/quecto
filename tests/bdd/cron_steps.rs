@@ -25,6 +25,7 @@ fn make_interval_job(name: &str, seconds: u64) -> CronJob {
         deliver_to: None,
         last_error: None,
         last_run_at: 0,
+        run_once: false,
     }
 }
 
@@ -40,6 +41,7 @@ fn make_cron_expr_job(name: &str, expr: &str) -> CronJob {
         deliver_to: None,
         last_error: None,
         last_run_at: 0,
+        run_once: false,
     }
 }
 
@@ -208,6 +210,7 @@ fn given_gateway_cron_job_with_message(
         deliver_to: None,
         last_error: None,
         last_run_at: 0,
+        run_once: false,
     };
     store.add(job).unwrap();
 }
@@ -227,6 +230,7 @@ fn given_gateway_disabled_cron_job(world: &mut QuectoWorld, name: String, second
         deliver_to: None,
         last_error: None,
         last_run_at: 0,
+        run_once: false,
     };
     store.add(job).unwrap();
 }
@@ -266,6 +270,7 @@ fn given_gateway_cron_job_deliver_to(
         deliver_to: Some(deliver_to),
         last_error: None,
         last_run_at: 0,
+        run_once: false,
     };
     store.add(job).unwrap();
 }
@@ -290,6 +295,7 @@ fn given_gateway_cron_job_with_expression_and_message(
         deliver_to: None,
         last_error: None,
         last_run_at: 0,
+        run_once: false,
     };
     store.add(job).unwrap();
 }
@@ -416,3 +422,248 @@ fn then_message_contains(world: &mut QuectoWorld, expected: String) {
 }
 
 // ===========================================================================
+// Issue #105: Run-once cron jobs
+// ===========================================================================
+
+#[when(expr = "I add a run-once job {string} with interval {int} seconds and message {string}")]
+fn when_add_run_once_job(world: &mut QuectoWorld, name: String, seconds: u64, message: String) {
+    ensure_cron_store(world);
+    let store = world.cron_store.as_ref().unwrap();
+    let mut job = make_interval_job(&name, seconds);
+    job.message = message;
+    job.run_once = true;
+    store.add(job).unwrap();
+}
+
+#[given(expr = "a run-once job {string} with interval {int} seconds exists")]
+fn given_run_once_job_exists(world: &mut QuectoWorld, name: String, seconds: u64) {
+    ensure_cron_store(world);
+    let store = world.cron_store.as_ref().unwrap();
+    let mut job = make_interval_job(&name, seconds);
+    job.run_once = true;
+    store.add(job).unwrap();
+}
+
+#[given(expr = "a run-once cron job {string} with interval {int} seconds and message {string}")]
+fn given_gateway_run_once_cron_job(
+    world: &mut QuectoWorld,
+    name: String,
+    seconds: u64,
+    message: String,
+) {
+    let store = world
+        .gateway_cron_store
+        .as_ref()
+        .expect("gateway cron store not set");
+    let job = CronJob {
+        id: name.to_lowercase().replace(' ', "-"),
+        name: name.clone(),
+        message,
+        schedule: CronSchedule::Interval { seconds },
+        enabled: true,
+        deliver_to: None,
+        last_error: None,
+        last_run_at: 0,
+        run_once: true,
+    };
+    store.add(job).unwrap();
+}
+
+#[then(expr = "the job {string} should be marked as run_once")]
+fn then_job_is_run_once(world: &mut QuectoWorld, name: String) {
+    let store = world.cron_store.as_ref().unwrap();
+    let job = store
+        .find_by_name(&name)
+        .unwrap()
+        .unwrap_or_else(|| panic!("job '{}' not found", name));
+    assert!(job.run_once, "job '{}' should be marked as run_once", name);
+}
+
+#[then(expr = "the gateway job {string} should not exist in the store")]
+fn then_gateway_job_not_exists(world: &mut QuectoWorld, name: String) {
+    let store = world
+        .gateway_cron_store
+        .as_ref()
+        .expect("gateway cron store not set");
+    let found = store.find_by_name(&name).unwrap();
+    assert!(
+        found.is_none(),
+        "gateway job '{}' should not exist after run_once execution",
+        name
+    );
+}
+
+#[then(expr = "the gateway job {string} should still exist in the store")]
+fn then_gateway_job_still_exists(world: &mut QuectoWorld, name: String) {
+    let store = world
+        .gateway_cron_store
+        .as_ref()
+        .expect("gateway cron store not set");
+    let found = store.find_by_name(&name).unwrap();
+    assert!(found.is_some(), "gateway job '{}' should still exist", name);
+}
+
+#[when("I list all jobs via the cron tool")]
+fn when_list_jobs_via_tool(world: &mut QuectoWorld) {
+    ensure_cron_store(world);
+    let tool = CronTool::new(Arc::new(FileCronStore::new(
+        world.cron_workspace.as_ref().unwrap(),
+    )));
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let result = rt.block_on(tool.execute(r#"{"action":"list"}"#)).unwrap();
+    world.cron_tool_list_output = Some(result.content);
+}
+
+#[then(expr = "the list output should contain {string}")]
+fn then_list_output_contains(world: &mut QuectoWorld, expected: String) {
+    let output = world
+        .cron_tool_list_output
+        .as_ref()
+        .expect("no cron tool list output");
+    assert!(
+        output.contains(&expected),
+        "expected list output to contain '{}', got: {}",
+        expected,
+        output
+    );
+}
+
+// ===========================================================================
+// Issue #106: Cron job result delivery
+// ===========================================================================
+
+#[given("a running gateway with a mock LLM provider and outbound channel")]
+fn given_gateway_with_outbound_channel(world: &mut QuectoWorld) {
+    // Set up standard gateway mock context (same as gateway_steps)
+    let messages = Arc::new(Mutex::new(Vec::new()));
+    world.mock_agent_messages = messages.clone();
+    let agent = RecordingMockAgent {
+        response: "OK".to_string(),
+        messages,
+    };
+    world._gateway_mock_agent = Some(DebugAgent(Arc::new(agent)));
+    world.gateway_cron_store = Some(Arc::new(InMemoryCronStore::new()));
+    world.gateway_tick_config = Some(Config::default());
+    // Create outbound channel for capturing messages
+    let (tx, rx) = tokio::sync::mpsc::channel(64);
+    world.cron_outbound_tx = Some(tx);
+    world.cron_outbound_rx = Some(rx);
+}
+
+#[given(
+    expr = "a cron job {string} with interval {int} seconds and message {string} and deliver_to {string}"
+)]
+fn given_cron_job_with_message_and_deliver_to(
+    world: &mut QuectoWorld,
+    name: String,
+    seconds: u64,
+    message: String,
+    deliver_to: String,
+) {
+    let store = world
+        .gateway_cron_store
+        .as_ref()
+        .expect("gateway cron store not set");
+    let job = CronJob {
+        id: name.to_lowercase().replace(' ', "-"),
+        name: name.clone(),
+        message,
+        schedule: CronSchedule::Interval { seconds },
+        enabled: true,
+        deliver_to: Some(deliver_to),
+        last_error: None,
+        last_run_at: 0,
+        run_once: false,
+    };
+    store.add(job).unwrap();
+}
+
+#[when("the cron tick fires and results are delivered")]
+fn when_cron_tick_fires_and_delivers(world: &mut QuectoWorld) {
+    let agent = &world
+        ._gateway_mock_agent
+        .as_ref()
+        .expect("mock agent not set")
+        .0;
+    let store = world
+        .gateway_cron_store
+        .as_ref()
+        .expect("cron store not set");
+    let timeout = std::time::Duration::from_secs(60);
+    let outbound_tx = world
+        .cron_outbound_tx
+        .as_ref()
+        .expect("outbound_tx not set")
+        .clone();
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let results = rt
+        .block_on(cron_executor::execute_cron_tick(
+            store.as_ref(),
+            agent.as_ref(),
+            timeout,
+        ))
+        .unwrap();
+
+    // Simulate gateway delivery logic (mirrors run_cron_tick)
+    for result in &results {
+        if result.ok {
+            if let Some(ref target) = result.deliver_to {
+                let msg = OutboundMessage {
+                    target: target.clone(),
+                    text: result.response.clone(),
+                };
+                let _ = rt.block_on(outbound_tx.send(msg));
+            }
+        }
+    }
+
+    world.cron_tick_results = Some(results);
+}
+
+#[then(expr = "the outbound channel should have received a message to {string}")]
+fn then_outbound_received_message_to(world: &mut QuectoWorld, target: String) {
+    let rx = world
+        .cron_outbound_rx
+        .as_mut()
+        .expect("outbound_rx not set");
+    let mut found = false;
+    while let Ok(msg) = rx.try_recv() {
+        if msg.target == target {
+            found = true;
+            world.last_outbound_message = Some(msg);
+        }
+    }
+    assert!(
+        found,
+        "expected outbound message to '{}', but none received",
+        target
+    );
+}
+
+#[then(expr = "the outbound message should contain {string}")]
+fn then_outbound_message_contains(world: &mut QuectoWorld, expected: String) {
+    let msg = world
+        .last_outbound_message
+        .as_ref()
+        .expect("no outbound message captured");
+    assert!(
+        msg.text.contains(&expected),
+        "expected outbound message to contain '{}', got: {}",
+        expected,
+        msg.text
+    );
+}
+
+#[then("the outbound channel should not have received any messages")]
+fn then_outbound_no_messages(world: &mut QuectoWorld) {
+    let rx = world
+        .cron_outbound_rx
+        .as_mut()
+        .expect("outbound_rx not set");
+    let msg = rx.try_recv();
+    assert!(
+        msg.is_err(),
+        "expected no outbound messages, but received one"
+    );
+}

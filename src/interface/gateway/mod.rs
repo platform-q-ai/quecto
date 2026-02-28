@@ -94,12 +94,13 @@ impl EventLoopContext {
             self.workspace,
             self.skill_prompt.clone(),
         ));
-        let h_cron = tokio::spawn(Gateway::run_cron_tick(
-            self.cron_store.clone(),
-            self.agent.clone(),
-            self.config.tools.cron.exec_timeout_minutes,
-            self.skill_prompt.clone(),
-        ));
+        let h_cron = tokio::spawn(Gateway::run_cron_tick(services::CronTickContext {
+            store: self.cron_store.clone(),
+            agent: self.agent.clone(),
+            timeout_minutes: self.config.tools.cron.exec_timeout_minutes,
+            skill_prompt: self.skill_prompt.clone(),
+            outbound_tx: self.outbound_tx.clone(),
+        }));
         let max_session_messages = self
             .config
             .agents

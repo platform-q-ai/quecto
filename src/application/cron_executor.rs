@@ -36,6 +36,16 @@ pub async fn execute_cron_tick(
         let result = execute_single_job(agent, job, timeout).await;
         record_job_error(store, job, &result);
 
+        // Auto-remove run_once jobs after successful execution.
+        if job.run_once && result.ok {
+            if let Err(e) = store.remove(&job.id) {
+                tracing::warn!(
+                    job_id = %job.id,
+                    "failed to auto-remove run_once job: {}", e
+                );
+            }
+        }
+
         results.push(result);
     }
 
@@ -257,6 +267,7 @@ mod tests {
             deliver_to: None,
             last_error: None,
             last_run_at: 0,
+            run_once: false,
         }
     }
 
@@ -317,6 +328,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_run_once_job_is_removed_after_successful_execution() {
+        let mut job = make_job("reminder", true);
+        job.run_once = true;
+        let store = MockCronStore::new(vec![job]);
+        let agent = MockAgent {
+            response: "Done".to_string(),
+        };
+        let results = execute_cron_tick(&store, &agent, Duration::from_secs(60))
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].ok);
+        // Job should be auto-removed from the store after successful execution
+        assert!(
+            store.find_by_name("reminder").unwrap().is_none(),
+            "run_once job should be auto-removed after successful execution"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_run_once_job_is_not_removed_on_failure() {
+        let mut job = make_job("reminder", true);
+        job.run_once = true;
+        let store = MockCronStore::new(vec![job]);
+        let agent = SlowAgent; // Will timeout
+        let results = execute_cron_tick(&store, &agent, Duration::from_millis(50))
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].ok);
+        // Job should NOT be removed on failure — will retry next tick
+        assert!(
+            store.find_by_name("reminder").unwrap().is_some(),
+            "run_once job should NOT be removed on failed execution"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_regular_job_is_not_removed_after_execution() {
+        let job = make_job("recurring", true);
+        assert!(!job.run_once);
+        let store = MockCronStore::new(vec![job]);
+        let agent = MockAgent {
+            response: "Done".to_string(),
+        };
+        let _ = execute_cron_tick(&store, &agent, Duration::from_secs(60))
+            .await
+            .unwrap();
+        assert!(
+            store.find_by_name("recurring").unwrap().is_some(),
+            "regular (non-run_once) job should NOT be removed after execution"
+        );
+    }
+
+    #[tokio::test]
     async fn test_success_clears_last_error() {
         let mut job = make_job("recovery", true);
         job.last_error = Some("previous error".to_string());
@@ -344,6 +410,7 @@ mod tests {
             deliver_to: None,
             last_error: None,
             last_run_at: 0,
+            run_once: false,
         };
         let store = MockCronStore::new(vec![job]);
         let agent = MockAgent {
@@ -377,6 +444,7 @@ mod tests {
             deliver_to: None,
             last_error: None,
             last_run_at: 0,
+            run_once: false,
         };
         let store = MockCronStore::new(vec![job]);
         let agent = MockAgent {

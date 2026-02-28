@@ -488,6 +488,7 @@ fn create_cron_job_on_disk(base: &Path, name: &str, interval: u64, enabled: bool
             deliver_to: None,
             last_error: None,
             last_run_at: 0,
+            run_once: false,
         })
         .expect("add cron job");
 }
