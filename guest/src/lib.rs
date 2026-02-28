@@ -94,12 +94,38 @@ fn dispatch_edit_file(args: &serde_json::Value) -> Result<String, String> {
         .ok_or_else(|| "missing required field: 'newText'".to_string())?;
 
     let content = host::workspace_read(path)?;
-    if !content.contains(old) {
+
+    // Uniqueness enforcement: reject ambiguous matches (matches native EditTool)
+    let count = count_occurrences_capped(&content, old, 2);
+    if count == 0 {
         return Err(format!("substring not found: '{old}'"));
     }
+    if count > 1 {
+        return Err(format!(
+            "'{old}' matches {count} times in {path} — must match exactly once"
+        ));
+    }
+
     let replaced = content.replacen(old, new, 1);
     host::workspace_write(path, &replaced)?;
     Ok(format!("replaced '{old}' with '{new}' in {path}"))
+}
+
+/// Count non-overlapping occurrences of needle, stopping at cap.
+fn count_occurrences_capped(haystack: &str, needle: &str, cap: usize) -> usize {
+    if needle.is_empty() {
+        return 0;
+    }
+    let mut count = 0;
+    let mut start = 0;
+    while let Some(pos) = haystack[start..].find(needle) {
+        count += 1;
+        if count >= cap {
+            return count;
+        }
+        start = start + pos + needle.len();
+    }
+    count
 }
 
 fn dispatch_append_file(args: &serde_json::Value) -> Result<String, String> {

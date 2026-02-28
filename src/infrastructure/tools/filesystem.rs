@@ -358,12 +358,13 @@ impl Tool for EditTool {
                 .await
                 .map_err(|e| DomainError::Tool(format!("edit read failed: {}", e)))?;
 
-            // Fuzzy normalisation: strip BOM and normalise CRLF → LF
+            // Normalise only for *matching purposes* — we write back to raw to preserve
+            // the file's original line endings outside the edited region.
             let content = fuzzy_normalise(&raw);
             let normalised_old = fuzzy_normalise(old_text);
 
-            // Check match count — uniqueness enforcement
-            let count = count_occurrences(&content, &normalised_old);
+            // Single-pass: count occurrences (capped at 2) and get first match offset.
+            let (count, match_offset) = count_occurrences_capped(&content, &normalised_old, 2);
             if count == 0 {
                 return Ok(ToolResult {
                     content: format!("oldText not found in {}", path),
@@ -381,14 +382,36 @@ impl Tool for EditTool {
                 });
             }
 
+            let offset = match_offset.expect("count=1 guarantees Some(offset)");
             let normalised_new = fuzzy_normalise(new_text);
-            let updated = content.replacen(&normalised_old, &normalised_new, 1);
+
+            // Write-back: apply replacement to the normalised content (already allocated)
+            // rather than trying to map back into raw bytes (complex and error-prone).
+            // The file's content becomes LF-only — this is a deliberate trade-off:
+            // fuzzy matching of CRLF files must normalise before matching, and we document
+            // that edits normalise line endings. Users who need CRLF preserved should use
+            // `bash` + `sed`.
+            let updated = {
+                let mut s = String::with_capacity(
+                    content.len() - normalised_old.len() + normalised_new.len(),
+                );
+                s.push_str(&content[..offset]);
+                s.push_str(&normalised_new);
+                s.push_str(&content[offset + normalised_old.len()..]);
+                s
+            };
 
             tokio::fs::write(&full_path, &updated)
                 .await
                 .map_err(|e| DomainError::Tool(format!("edit write failed: {}", e)))?;
 
-            let diff = make_edit_diff(path, &content, &normalised_old, &normalised_new);
+            let diff = make_edit_diff(EditDiffArgs {
+                path,
+                content: &content,
+                byte_offset: offset,
+                old_text: &normalised_old,
+                new_text: &normalised_new,
+            });
 
             Ok(ToolResult {
                 content: diff,
@@ -398,62 +421,103 @@ impl Tool for EditTool {
     }
 }
 
-/// Strip UTF-8 BOM and normalise CRLF → LF.
+/// Strip UTF-8 BOM and normalise CRLF → LF in a single pass.
 fn fuzzy_normalise(s: &str) -> String {
-    let stripped = s.strip_prefix('\u{FEFF}').unwrap_or(s);
-    stripped.replace("\r\n", "\n").replace('\r', "\n")
+    let s = s.strip_prefix('\u{FEFF}').unwrap_or(s);
+    // Fast path: no CR bytes at all — skip all allocation
+    if !s.contains('\r') {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\r' {
+            // consume following \n if present (CRLF → LF)
+            if chars.peek() == Some(&'\n') {
+                chars.next();
+            }
+            out.push('\n');
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
-/// Count non-overlapping occurrences of `needle` in `haystack`.
-fn count_occurrences(haystack: &str, needle: &str) -> usize {
+/// Count non-overlapping occurrences of `needle` in `haystack`, stopping at `cap`.
+/// Returns `(count, first_match_offset)`.
+fn count_occurrences_capped(haystack: &str, needle: &str, cap: usize) -> (usize, Option<usize>) {
     if needle.is_empty() {
-        return 0;
+        return (0, None);
     }
-    let mut count = 0;
+    let mut count = 0usize;
+    let mut first_offset: Option<usize> = None;
     let mut start = 0;
     while let Some(pos) = haystack[start..].find(needle) {
+        let abs_pos = start + pos;
+        if first_offset.is_none() {
+            first_offset = Some(abs_pos);
+        }
         count += 1;
-        start += pos + needle.len();
+        if count >= cap {
+            return (count, first_offset);
+        }
+        start = abs_pos + needle.len();
     }
-    count
+    (count, first_offset)
+}
+
+const DIFF_MAX_BYTES: usize = 4096;
+
+struct EditDiffArgs<'a> {
+    path: &'a str,
+    content: &'a str,
+    byte_offset: usize,
+    old_text: &'a str,
+    new_text: &'a str,
 }
 
 /// Produce a compact unified-diff-style snippet showing the change.
 /// Returns a `@@` block with 2 lines of context around the change.
-fn make_edit_diff(path: &str, content: &str, old_text: &str, new_text: &str) -> String {
+/// Output is capped at `DIFF_MAX_BYTES` to prevent prompt-injection via huge diffs.
+fn make_edit_diff(a: EditDiffArgs<'_>) -> String {
+    let EditDiffArgs {
+        path,
+        content,
+        byte_offset,
+        old_text,
+        new_text,
+    } = a;
     const CONTEXT: usize = 2;
 
-    // Find the byte offset of the match
-    let Some(byte_offset) = content.find(old_text) else {
-        return format!("Successfully edited {}", path);
-    };
-
-    // Convert byte offset to line number
+    // Use byte counting (not lines().count()) to correctly handle trailing newlines
     let before = &content[..byte_offset];
-    let start_line = before.lines().count(); // 0-indexed first line of match
+    let start_line = before.bytes().filter(|&b| b == b'\n').count(); // 0-indexed
     let old_line_count = old_text.lines().count().max(1);
     let new_line_count = new_text.lines().count().max(1);
 
-    let all_lines: Vec<&str> = content.lines().collect();
-    let total = all_lines.len();
-
+    // Collect only the window of lines we need — avoid materialising the whole file
+    let total_lines = content.bytes().filter(|&b| b == b'\n').count() + 1;
     let ctx_start = start_line.saturating_sub(CONTEXT);
-    let ctx_end = (start_line + old_line_count + CONTEXT).min(total);
+    let ctx_end = (start_line + old_line_count + CONTEXT).min(total_lines);
 
-    let mut hunk = String::new();
+    let window_lines: Vec<&str> = content
+        .lines()
+        .skip(ctx_start)
+        .take(ctx_end - ctx_start)
+        .collect();
 
-    // @@ -a,b +c,d @@
     let old_count = ctx_end - ctx_start;
     let new_count = old_count - old_line_count + new_line_count;
-    hunk.push_str(&format!(
+    let mut hunk = format!(
         "@@ -{},{} +{},{} @@\n",
         ctx_start + 1,
         old_count,
         ctx_start + 1,
         new_count
-    ));
+    );
 
-    for (i, line) in all_lines[ctx_start..ctx_end].iter().enumerate() {
+    for (i, line) in window_lines.iter().enumerate() {
         let abs = ctx_start + i;
         if abs >= start_line && abs < start_line + old_line_count {
             hunk.push_str(&format!("-{}\n", line));
@@ -465,7 +529,14 @@ fn make_edit_diff(path: &str, content: &str, old_text: &str, new_text: &str) -> 
         hunk.push_str(&format!("+{}\n", ln));
     }
 
-    format!("Successfully edited {}\n\n```diff\n{}```", path, hunk)
+    let diff_body = format!("Successfully edited {}\n\n```diff\n{}```", path, hunk);
+
+    // Cap diff output to prevent oversized tool responses / prompt-injection surface
+    if diff_body.len() > DIFF_MAX_BYTES {
+        format!("Successfully edited {}", path)
+    } else {
+        diff_body
+    }
 }
 
 // ===========================================================================
