@@ -10,10 +10,18 @@ use crate::domain::error::DomainError;
 ///
 /// All mutations are serialized via an internal `Mutex` to prevent
 /// lost-update races when multiple async tasks share the same `Arc<FileCronStore>`.
+///
+/// Uses `std::sync::Mutex` (not `tokio::sync::Mutex`) because the `CronStore`
+/// trait methods are synchronous (`-> Result`, not futures). The lock is held
+/// only during blocking `std::fs` I/O (read + write + rename), which is
+/// acceptable for the current workload (few cron jobs, local filesystem).
+/// On very slow filesystems (SD card, NFS) this will briefly block the
+/// tokio worker thread — acceptable for a 2s poll interval with few jobs.
 #[derive(Debug)]
 pub struct FileCronStore {
     path: PathBuf,
     /// Guards the read-modify-write cycle for all mutations.
+    /// See struct-level doc for rationale on `std::sync::Mutex` vs `tokio::sync::Mutex`.
     mu: Mutex<()>,
 }
 
@@ -76,13 +84,20 @@ impl FileCronStore {
         let json = serde_json::to_string_pretty(&file)
             .map_err(|e| DomainError::Other(format!("failed to serialize cron jobs: {}", e)))?;
 
-        // Atomic write: write to a temp file in the same directory, then rename.
-        // This avoids data loss if the process is killed mid-write.
-        let tmp_path = parent.join(".jobs.json.tmp");
+        // Atomic write: write to a temp file with a random suffix in the same
+        // directory, then rename. The random suffix prevents symlink attacks and
+        // avoids collisions if multiple processes share the directory.
+        let tmp_path = parent.join(format!(".jobs.json.{}.tmp", uuid::Uuid::new_v4()));
         std::fs::write(&tmp_path, json)
             .map_err(|e| DomainError::Other(format!("failed to write temp cron file: {}", e)))?;
-        std::fs::rename(&tmp_path, &self.path)
-            .map_err(|e| DomainError::Other(format!("failed to rename cron file: {}", e)))?;
+        if let Err(e) = std::fs::rename(&tmp_path, &self.path) {
+            // Clean up the temp file on rename failure to avoid leaking files.
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(DomainError::Other(format!(
+                "failed to rename cron file: {}",
+                e
+            )));
+        }
         Ok(())
     }
 }
@@ -140,7 +155,19 @@ impl CronStore for FileCronStore {
             .lock()
             .map_err(|e| DomainError::Other(format!("cron store lock poisoned: {}", e)))?;
         let records = self.load_all()?;
-        records.into_iter().map(record_to_job).collect()
+        // Skip records with unknown schedule types rather than failing the entire
+        // list — a single corrupt record should not make the store unreadable.
+        let mut jobs = Vec::with_capacity(records.len());
+        for rec in records {
+            let name = rec.name.clone();
+            match record_to_job(rec) {
+                Ok(job) => jobs.push(job),
+                Err(e) => {
+                    tracing::warn!(job_name = name, error = %e, "skipping corrupt cron record");
+                }
+            }
+        }
+        Ok(jobs)
     }
 
     fn add(&self, job: CronJob) -> Result<(), DomainError> {
@@ -151,6 +178,20 @@ impl CronStore for FileCronStore {
         let mut records = self.load_all()?;
         records.push(job_to_record(&job));
         self.save_all(&records)
+    }
+
+    fn add_if_absent(&self, job: CronJob) -> Result<bool, DomainError> {
+        let _lock = self
+            .mu
+            .lock()
+            .map_err(|e| DomainError::Other(format!("cron store lock poisoned: {}", e)))?;
+        let mut records = self.load_all()?;
+        if records.iter().any(|r| r.name == job.name) {
+            return Ok(false);
+        }
+        records.push(job_to_record(&job));
+        self.save_all(&records)?;
+        Ok(true)
     }
 
     fn remove(&self, id: &str) -> Result<(), DomainError> {
@@ -363,5 +404,55 @@ mod tests {
         store.add(make_cron_job("Job3", "0 * * * *")).unwrap();
 
         assert_eq!(store.list().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn test_add_if_absent_inserts_new() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileCronStore::new(tmp.path());
+
+        let added = store
+            .add_if_absent(make_interval_job("Weather", 3600))
+            .unwrap();
+        assert!(added);
+        assert_eq!(store.list().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_add_if_absent_rejects_duplicate() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileCronStore::new(tmp.path());
+
+        assert!(
+            store
+                .add_if_absent(make_interval_job("Weather", 3600))
+                .unwrap()
+        );
+        let added = store
+            .add_if_absent(make_interval_job("Weather", 60))
+            .unwrap();
+        assert!(!added);
+        assert_eq!(store.list().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_list_skips_corrupt_schedule_type() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileCronStore::new(tmp.path());
+
+        // Add a valid job first.
+        store.add(make_interval_job("Good", 60)).unwrap();
+
+        // Manually write a corrupt record with unknown schedule_type.
+        let data = std::fs::read_to_string(&store.path).unwrap();
+        let corrupted = data.replace(
+            r#""schedule_type": "interval"#,
+            r#""schedule_type": "bogus"#,
+        );
+        std::fs::write(&store.path, corrupted).unwrap();
+
+        // list() should skip the corrupt record, not error.
+        let jobs = store.list().unwrap();
+        assert!(jobs.is_empty());
     }
 }

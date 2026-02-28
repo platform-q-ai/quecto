@@ -50,8 +50,16 @@ impl AgentLoop for SystemPromptAgent {
             let prompt = crate::interface::shared::build_system_prompt(&self.skill_prompt, &None);
             messages.insert(0, Message::system(prompt.clone()));
             let result = self.inner.process(messages).await;
-            // Remove the transient system prompt after processing.
-            messages.retain(|m| !(m.role == Role::System && m.content == prompt));
+            // Remove the transient system prompt by position (index 0) rather than
+            // content equality — avoids accidental removal of user system messages
+            // that happen to match the prompt content.
+            if messages
+                .first()
+                .map(|m| m.role == Role::System && m.content == prompt)
+                .unwrap_or(false)
+            {
+                messages.remove(0);
+            }
             result
         })
     }

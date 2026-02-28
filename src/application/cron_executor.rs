@@ -206,6 +206,14 @@ mod tests {
             self.jobs.lock().unwrap().push(job);
             Ok(())
         }
+        fn add_if_absent(&self, job: CronJob) -> Result<bool, DomainError> {
+            let mut jobs = self.jobs.lock().unwrap();
+            if jobs.iter().any(|j| j.name == job.name) {
+                return Ok(false);
+            }
+            jobs.push(job);
+            Ok(true)
+        }
         fn remove(&self, id: &str) -> Result<(), DomainError> {
             self.jobs.lock().unwrap().retain(|j| j.id != id);
             Ok(())

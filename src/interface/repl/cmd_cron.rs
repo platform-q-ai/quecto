@@ -69,19 +69,6 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
         match parse_cron_add_args(args_str) {
             Ok(parsed) => {
                 let store = self.cron_store();
-                // Check for duplicate name
-                match store.find_by_name(&parsed.name) {
-                    Ok(Some(_)) => {
-                        let _ =
-                            writeln!(self.writer, "Error: job '{}' already exists", parsed.name);
-                        return;
-                    }
-                    Err(e) => {
-                        let _ = writeln!(self.writer, "Error: {}", e);
-                        return;
-                    }
-                    _ => {}
-                }
                 let job = CronJob {
                     id: uuid::Uuid::new_v4().to_string(),
                     name: parsed.name.clone(),
@@ -92,9 +79,14 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
                     last_error: None,
                     last_run_at: 0,
                 };
-                match store.add(job) {
-                    Ok(()) => {
+                // Atomic check-and-insert to avoid TOCTOU race.
+                match store.add_if_absent(job) {
+                    Ok(true) => {
                         let _ = writeln!(self.writer, "Job '{}' created", parsed.name);
+                    }
+                    Ok(false) => {
+                        let _ =
+                            writeln!(self.writer, "Error: job '{}' already exists", parsed.name);
                     }
                     Err(e) => {
                         let _ = writeln!(self.writer, "Error: {}", e);

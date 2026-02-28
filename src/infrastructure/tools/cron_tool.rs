@@ -78,11 +78,6 @@ impl CronTool {
             return Err("must provide either cron_expression or interval_seconds".to_string());
         };
 
-        // Check for duplicate name before adding.
-        if let Ok(Some(_)) = self.store.find_by_name(name) {
-            return Err(format!("job '{}' already exists", name));
-        }
-
         let job = CronJob {
             id: name.to_lowercase().replace(' ', "-"),
             name: name.to_string(),
@@ -94,7 +89,11 @@ impl CronTool {
             last_run_at: 0,
         };
 
-        self.store.add(job).map_err(|e| e.to_string())?;
+        // Atomic check-and-insert to avoid TOCTOU race between find_by_name + add.
+        let added = self.store.add_if_absent(job).map_err(|e| e.to_string())?;
+        if !added {
+            return Err(format!("job '{}' already exists", name));
+        }
         Ok(format!("Job '{}' added successfully.", name))
     }
 

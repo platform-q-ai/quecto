@@ -77,6 +77,10 @@ pub trait CronStore: Send + Sync {
     /// Add a new job.
     fn add(&self, job: CronJob) -> Result<(), DomainError>;
 
+    /// Atomically add a job only if no job with the same name exists.
+    /// Returns `Ok(true)` if added, `Ok(false)` if a duplicate was found.
+    fn add_if_absent(&self, job: CronJob) -> Result<bool, DomainError>;
+
     /// Remove a job by id.
     fn remove(&self, id: &str) -> Result<(), DomainError>;
 
