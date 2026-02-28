@@ -82,8 +82,13 @@ pub(super) fn parse_cron_add_args(args_str: &str) -> Result<ParsedCronAdd, Strin
 
     let message = message.ok_or_else(|| "missing required flag: --message".to_string())?;
     let schedule = match (interval, cron_expr) {
-        (Some(seconds), _) => CronSchedule::Interval { seconds },
-        (None, Some(expression)) => CronSchedule::Cron { expression },
+        (_, Some(expression)) => CronSchedule::Cron { expression },
+        (Some(seconds), None) => {
+            if seconds == 0 {
+                return Err("interval must be greater than 0".to_string());
+            }
+            CronSchedule::Interval { seconds }
+        }
         (None, None) => {
             return Err("missing schedule: specify --interval or --cron".to_string());
         }

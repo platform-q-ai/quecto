@@ -1,14 +1,20 @@
 // JSON-based CronStore: persists cron jobs as a single JSON file.
 
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use crate::domain::cron::{CronJob, CronSchedule, CronStore};
 use crate::domain::error::DomainError;
 
 /// File-based cron store. Jobs are stored in `<base_dir>/cron/jobs.json`.
+///
+/// All mutations are serialized via an internal `Mutex` to prevent
+/// lost-update races when multiple async tasks share the same `Arc<FileCronStore>`.
 #[derive(Debug)]
 pub struct FileCronStore {
     path: PathBuf,
+    /// Guards the read-modify-write cycle for all mutations.
+    mu: Mutex<()>,
 }
 
 // -- Serializable structs --
@@ -41,6 +47,7 @@ impl FileCronStore {
     pub fn new(base_dir: impl AsRef<Path>) -> Self {
         Self {
             path: base_dir.as_ref().join("cron").join("jobs.json"),
+            mu: Mutex::new(()),
         }
     }
 
@@ -56,17 +63,26 @@ impl FileCronStore {
     }
 
     fn save_all(&self, jobs: &[CronJobRecord]) -> Result<(), DomainError> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| DomainError::Other(format!("failed to create cron dir: {}", e)))?;
-        }
+        let parent = self
+            .path
+            .parent()
+            .ok_or_else(|| DomainError::Other("cron jobs path has no parent".to_string()))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| DomainError::Other(format!("failed to create cron dir: {}", e)))?;
+
         let file = CronFile {
             jobs: jobs.to_vec(),
         };
         let json = serde_json::to_string_pretty(&file)
             .map_err(|e| DomainError::Other(format!("failed to serialize cron jobs: {}", e)))?;
-        std::fs::write(&self.path, json)
-            .map_err(|e| DomainError::Other(format!("failed to write cron jobs: {}", e)))?;
+
+        // Atomic write: write to a temp file in the same directory, then rename.
+        // This avoids data loss if the process is killed mid-write.
+        let tmp_path = parent.join(".jobs.json.tmp");
+        std::fs::write(&tmp_path, json)
+            .map_err(|e| DomainError::Other(format!("failed to write temp cron file: {}", e)))?;
+        std::fs::rename(&tmp_path, &self.path)
+            .map_err(|e| DomainError::Other(format!("failed to rename cron file: {}", e)))?;
         Ok(())
     }
 }
@@ -90,16 +106,22 @@ fn job_to_record(job: &CronJob) -> CronJobRecord {
     }
 }
 
-fn record_to_job(rec: CronJobRecord) -> CronJob {
+fn record_to_job(rec: CronJobRecord) -> Result<CronJob, DomainError> {
     let schedule = match rec.schedule_type.as_str() {
         "cron" => CronSchedule::Cron {
             expression: rec.cron_expression.unwrap_or_default(),
         },
-        _ => CronSchedule::Interval {
+        "interval" => CronSchedule::Interval {
             seconds: rec.interval_seconds.unwrap_or(3600),
         },
+        other => {
+            return Err(DomainError::Other(format!(
+                "unknown schedule type '{}' for job '{}'",
+                other, rec.name
+            )));
+        }
     };
-    CronJob {
+    Ok(CronJob {
         id: rec.id,
         name: rec.name,
         message: rec.message,
@@ -108,56 +130,97 @@ fn record_to_job(rec: CronJobRecord) -> CronJob {
         deliver_to: rec.deliver_to,
         last_error: rec.last_error,
         last_run_at: rec.last_run_at,
-    }
+    })
 }
 
 impl CronStore for FileCronStore {
     fn list(&self) -> Result<Vec<CronJob>, DomainError> {
+        let _lock = self
+            .mu
+            .lock()
+            .map_err(|e| DomainError::Other(format!("cron store lock poisoned: {}", e)))?;
         let records = self.load_all()?;
-        Ok(records.into_iter().map(record_to_job).collect())
+        records.into_iter().map(record_to_job).collect()
     }
 
     fn add(&self, job: CronJob) -> Result<(), DomainError> {
+        let _lock = self
+            .mu
+            .lock()
+            .map_err(|e| DomainError::Other(format!("cron store lock poisoned: {}", e)))?;
         let mut records = self.load_all()?;
         records.push(job_to_record(&job));
         self.save_all(&records)
     }
 
     fn remove(&self, id: &str) -> Result<(), DomainError> {
+        let _lock = self
+            .mu
+            .lock()
+            .map_err(|e| DomainError::Other(format!("cron store lock poisoned: {}", e)))?;
         let mut records = self.load_all()?;
+        let before = records.len();
         records.retain(|r| r.id != id);
+        if records.len() == before {
+            return Err(DomainError::Other(format!(
+                "cron job with id '{}' not found",
+                id
+            )));
+        }
         self.save_all(&records)
     }
 
     fn set_enabled(&self, id: &str, enabled: bool) -> Result<(), DomainError> {
+        let _lock = self
+            .mu
+            .lock()
+            .map_err(|e| DomainError::Other(format!("cron store lock poisoned: {}", e)))?;
         let mut records = self.load_all()?;
-        if let Some(rec) = records.iter_mut().find(|r| r.id == id) {
-            rec.enabled = enabled;
-        }
+        let rec = records
+            .iter_mut()
+            .find(|r| r.id == id)
+            .ok_or_else(|| DomainError::Other(format!("cron job with id '{}' not found", id)))?;
+        rec.enabled = enabled;
         self.save_all(&records)
     }
 
     fn find_by_name(&self, name: &str) -> Result<Option<CronJob>, DomainError> {
+        let _lock = self
+            .mu
+            .lock()
+            .map_err(|e| DomainError::Other(format!("cron store lock poisoned: {}", e)))?;
         let records = self.load_all()?;
-        Ok(records
-            .into_iter()
-            .find(|r| r.name == name)
-            .map(record_to_job))
+        match records.into_iter().find(|r| r.name == name) {
+            Some(rec) => Ok(Some(record_to_job(rec)?)),
+            None => Ok(None),
+        }
     }
 
     fn set_last_error(&self, id: &str, error: Option<String>) -> Result<(), DomainError> {
+        let _lock = self
+            .mu
+            .lock()
+            .map_err(|e| DomainError::Other(format!("cron store lock poisoned: {}", e)))?;
         let mut records = self.load_all()?;
-        if let Some(rec) = records.iter_mut().find(|r| r.id == id) {
-            rec.last_error = error;
-        }
+        let rec = records
+            .iter_mut()
+            .find(|r| r.id == id)
+            .ok_or_else(|| DomainError::Other(format!("cron job with id '{}' not found", id)))?;
+        rec.last_error = error;
         self.save_all(&records)
     }
 
     fn set_last_run_at(&self, id: &str, timestamp: u64) -> Result<(), DomainError> {
+        let _lock = self
+            .mu
+            .lock()
+            .map_err(|e| DomainError::Other(format!("cron store lock poisoned: {}", e)))?;
         let mut records = self.load_all()?;
-        if let Some(rec) = records.iter_mut().find(|r| r.id == id) {
-            rec.last_run_at = timestamp;
-        }
+        let rec = records
+            .iter_mut()
+            .find(|r| r.id == id)
+            .ok_or_else(|| DomainError::Other(format!("cron job with id '{}' not found", id)))?;
+        rec.last_run_at = timestamp;
         self.save_all(&records)
     }
 }

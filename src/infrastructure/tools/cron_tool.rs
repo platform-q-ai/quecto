@@ -8,6 +8,14 @@ use crate::domain::cron::{CronJob, CronSchedule, CronStore};
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 
+/// Current time as Unix seconds (for display purposes).
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
 /// Tool that lets the agent manage cron jobs (add, remove, list, enable, disable).
 pub struct CronTool {
     store: Arc<dyn CronStore>,
@@ -62,10 +70,18 @@ impl CronTool {
                 expression: expr.to_string(),
             }
         } else if let Some(secs) = args.get("interval_seconds").and_then(|v| v.as_u64()) {
+            if secs == 0 {
+                return Err("interval_seconds must be greater than 0".to_string());
+            }
             CronSchedule::Interval { seconds: secs }
         } else {
             return Err("must provide either cron_expression or interval_seconds".to_string());
         };
+
+        // Check for duplicate name before adding.
+        if let Ok(Some(_)) = self.store.find_by_name(name) {
+            return Err(format!("job '{}' already exists", name));
+        }
 
         let job = CronJob {
             id: name.to_lowercase().replace(' ', "-"),
@@ -88,8 +104,12 @@ impl CronTool {
             .and_then(|v| v.as_str())
             .ok_or("missing field: name")?;
 
-        let id = name.to_lowercase().replace(' ', "-");
-        self.store.remove(&id).map_err(|e| e.to_string())?;
+        let job = self
+            .store
+            .find_by_name(name)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("job '{}' not found", name))?;
+        self.store.remove(&job.id).map_err(|e| e.to_string())?;
         Ok(format!("Job '{}' removed.", name))
     }
 
@@ -105,7 +125,23 @@ impl CronTool {
                 CronSchedule::Interval { seconds } => format!("every {}s", seconds),
                 CronSchedule::Cron { expression } => format!("cron: {}", expression),
             };
-            out.push_str(&format!("- {} [{}] ({})\n", job.name, status, sched));
+            let last_run = if job.last_run_at == 0 {
+                "never".to_string()
+            } else {
+                format!("{}s ago", now_unix_secs().saturating_sub(job.last_run_at))
+            };
+            let mut line = format!(
+                "- {} [{}] ({}) last_run: {}",
+                job.name, status, sched, last_run
+            );
+            if let Some(ref err) = job.last_error {
+                line.push_str(&format!(" last_error: {}", err));
+            }
+            if let Some(ref target) = job.deliver_to {
+                line.push_str(&format!(" deliver_to: {}", target));
+            }
+            line.push('\n');
+            out.push_str(&line);
         }
         Ok(out)
     }
@@ -120,9 +156,13 @@ impl CronTool {
             .and_then(|v| v.as_str())
             .ok_or("missing field: name")?;
 
-        let id = name.to_lowercase().replace(' ', "-");
+        let job = self
+            .store
+            .find_by_name(name)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("job '{}' not found", name))?;
         self.store
-            .set_enabled(&id, enabled)
+            .set_enabled(&job.id, enabled)
             .map_err(|e| e.to_string())?;
         let action = if enabled { "enabled" } else { "disabled" };
         Ok(format!("Job '{}' {}.", name, action))
@@ -135,7 +175,7 @@ impl Tool for CronTool {
             name: "cron".to_string(),
             description: "Manage scheduled cron jobs (add, remove, list, enable, disable)"
                 .to_string(),
-            parameters_schema: r#"{"type":"object","properties":{"action":{"type":"string","enum":["add","remove","list","enable","disable"],"description":"The cron action to perform"},"name":{"type":"string","description":"Job name (for add/remove/enable/disable)"},"message":{"type":"string","description":"The message/prompt to execute (for add)"},"interval_seconds":{"type":"integer","description":"Interval in seconds (for add with interval)"},"cron_expression":{"type":"string","description":"Cron expression (for add with cron schedule)"},"deliver_to":{"type":"string","description":"Optional channel:chat_id for result delivery"}},"required":["action"]}"#.to_string(),
+            parameters_schema: r#"{"type":"object","properties":{"action":{"type":"string","enum":["add","remove","list","enable","disable"],"description":"The cron action to perform"},"name":{"type":"string","description":"Job name (for add/remove/enable/disable)"},"message":{"type":"string","description":"The message/prompt to execute (for add)"},"interval_seconds":{"type":"integer","description":"Interval in seconds (for add with interval)"},"cron_expression":{"type":"string","description":"Cron expression (for add with cron schedule)"},"deliver_to":{"type":"string","description":"Optional delivery target in format 'telegram:<chat_id>', e.g. 'telegram:123456789'"}},"required":["action"]}"#.to_string(),
         }
     }
 
