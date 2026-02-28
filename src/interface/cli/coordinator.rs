@@ -120,9 +120,19 @@ fn require_next(args: &[String], i: &mut usize, flag: &str) -> Result<String, St
 /// A `HeartbeatTaskSource` that reads pending IPC commands from the
 /// coordinator inbox and formats them as heartbeat task messages.
 ///
-/// Read-only: this source only reads commands and formats them. The
-/// acknowledge/response side effects are performed in `run_coordinator()`
-/// after the agent finishes processing each task.
+/// On each `read_heartbeat_md()` call, this source:
+/// 1. Reads pending commands from the inbox
+/// 2. Formats non-shutdown commands as heartbeat task lines
+/// 3. Acknowledges commands and writes "processing" responses to the outbox
+///
+/// Steps 2 and 3 happen atomically within the same call so that:
+/// - The gateway gets an immediate "processing" ack (unblocking its poll)
+/// - The heartbeat tasks contain the actual command content for the LLM
+///
+/// The acknowledge must happen here (not in a separate step) because the
+/// heartbeat infrastructure calls `read_heartbeat_md()` exactly once per
+/// tick — if we ack in a separate function before this call, the inbox
+/// would be empty by the time we read it.
 struct InboxHeartbeatSource {
     ipc: Arc<dyn CoordinatorIpc>,
 }
@@ -167,6 +177,25 @@ impl HeartbeatTaskSource for InboxHeartbeatSource {
                     "- Process coordinator command (id={}): action={}, payload={}\n",
                     cmd.command_id, cmd.action, payload_str,
                 ));
+            }
+
+            // Acknowledge commands and write "processing" responses.
+            // This must happen after reading/formatting but before returning,
+            // so the gateway's poll_response() unblocks with an immediate ack
+            // while the LLM processes the tasks.
+            for cmd in &non_shutdown {
+                let ack_response = crate::domain::coding_ipc::CoordinatorIpcResponse {
+                    command_id: cmd.command_id.clone(),
+                    ok: true,
+                    body: Some(serde_json::json!({"status": "processing"})),
+                    error: None,
+                };
+                if let Err(e) = self.ipc.write_response(&ack_response) {
+                    tracing::warn!(command_id = %cmd.command_id, "failed to write ack: {e}");
+                }
+                if let Err(e) = self.ipc.acknowledge_command(&cmd.command_id) {
+                    tracing::warn!(command_id = %cmd.command_id, "failed to ack: {e}");
+                }
             }
 
             Ok(Some(content))
@@ -343,39 +372,6 @@ fn handle_shutdown_commands(ipc: &dyn CoordinatorIpc) -> bool {
     true
 }
 
-/// Acknowledge commands and write processing responses.
-///
-/// Called after `read_heartbeat_md()` returns tasks — this separates
-/// side effects from the read path (architecture reviewer finding).
-fn acknowledge_pending_commands(ipc: &dyn CoordinatorIpc) {
-    let commands = match ipc.read_pending_commands() {
-        Ok(cmds) => cmds,
-        Err(e) => {
-            tracing::warn!("failed to re-read commands for ack: {e}");
-            return;
-        }
-    };
-
-    for cmd in &commands {
-        if cmd.action == "shutdown" {
-            continue; // Handled separately by handle_shutdown_commands.
-        }
-
-        let ack_response = crate::domain::coding_ipc::CoordinatorIpcResponse {
-            command_id: cmd.command_id.clone(),
-            ok: true,
-            body: Some(serde_json::json!({"status": "processing"})),
-            error: None,
-        };
-        if let Err(e) = ipc.write_response(&ack_response) {
-            tracing::warn!(command_id = %cmd.command_id, "failed to write ack: {e}");
-        }
-        if let Err(e) = ipc.acknowledge_command(&cmd.command_id) {
-            tracing::warn!(command_id = %cmd.command_id, "failed to ack: {e}");
-        }
-    }
-}
-
 /// Query active job count from the lifecycle driver.
 fn active_job_count(driver: &SharedLifecycleDriver) -> u32 {
     match driver.lock() {
@@ -455,9 +451,6 @@ async fn run_coordinator(ctx: CoordinatorRunContext) -> i32 {
 
                 // Process inbox commands via the agent.
                 tracing::debug!("coordinator heartbeat tick");
-
-                // Acknowledge commands before processing (separates read from side effects).
-                acknowledge_pending_commands(&*ipc);
 
                 match heartbeat::execute_heartbeat_tick(&inbox_source, &*agent, timeout).await {
                     Ok(results) => {
