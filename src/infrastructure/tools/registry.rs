@@ -25,7 +25,7 @@ pub struct ExecRegistrySettings {
     pub cpu_time_limit_secs: u64,
     pub wall_time_limit_secs: u64,
 }
-use super::filesystem::{AppendFileTool, EditFileTool, ListDirTool, ReadFileTool, WriteFileTool};
+use super::filesystem::{AppendFileTool, EditFileTool, ListDirTool, ReadFileTool, WriteTool};
 
 /// Registry of all available tools, keyed by name.
 pub struct ToolRegistryImpl {
@@ -137,10 +137,7 @@ impl ToolRegistryImpl {
             workspace.clone(),
             sandbox.clone(),
         )));
-        reg.register(Arc::new(WriteFileTool::new(
-            workspace.clone(),
-            sandbox.clone(),
-        )));
+        reg.register(Arc::new(WriteTool::new(workspace.clone(), sandbox.clone())));
         reg.register(Arc::new(EditFileTool::new(
             workspace.clone(),
             sandbox.clone(),
@@ -226,7 +223,7 @@ mod tests {
         let names = reg.names();
         assert!(names.contains(&"exec".to_string()));
         assert!(names.contains(&"read_file".to_string()));
-        assert!(names.contains(&"write_file".to_string()));
+        assert!(names.contains(&"write".to_string()));
         assert!(names.contains(&"edit_file".to_string()));
         assert!(names.contains(&"append_file".to_string()));
         assert!(names.contains(&"list_dir".to_string()));

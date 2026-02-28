@@ -29,7 +29,7 @@ Feature: Agent Tool System
 
   Scenario: Write a file
     Given a tool workspace
-    When the agent executes tool "write_file" with args:
+    When the agent executes tool "write" with args:
       | path    | output.txt   |
       | content | hello world  |
     Then the file "output.txt" should exist in the workspace
@@ -66,7 +66,7 @@ Feature: Agent Tool System
     Given a tool workspace
     Then the tool registry should contain "exec"
     And the tool registry should contain "read_file"
-    And the tool registry should contain "write_file"
+    And the tool registry should contain "write"
     And the tool registry should contain "edit_file"
     And the tool registry should contain "append_file"
     And the tool registry should contain "list_dir"

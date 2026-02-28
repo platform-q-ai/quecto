@@ -40,13 +40,13 @@ Feature: End-to-End Session + Tool Interactions
     And the session "cli:resume" should contain at least 6 messages
 
   Scenario: Multiple tool calls across messages accumulate in session
-    Given the mock LLM first returns a tool call for "write_file" with args:
+    Given the mock LLM first returns a tool call for "write" with args:
       | path    | first.txt |
       | content | one       |
     And the mock LLM then returns a text response "Wrote first.txt"
     When I run quecto agent -s accum -m "Create first.txt"
     Then the exit code should be 0
-    Given the mock LLM first returns a tool call for "write_file" with args:
+    Given the mock LLM first returns a tool call for "write" with args:
       | path    | second.txt |
       | content | two        |
     And the mock LLM then returns a text response "Wrote second.txt"
@@ -57,7 +57,7 @@ Feature: End-to-End Session + Tool Interactions
     And the file "second.txt" should exist in the e2e workspace
 
   Scenario: Ephemeral session with tool use leaves no trace
-    Given the mock LLM first returns a tool call for "write_file" with args:
+    Given the mock LLM first returns a tool call for "write" with args:
       | path    | ephemeral.txt |
       | content | temp data     |
     And the mock LLM then returns a text response "File created"

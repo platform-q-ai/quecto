@@ -55,7 +55,7 @@ Feature: End-to-End Agentic Loop
     And the mock LLM returns a tool call sequence:
       | call | read_file  | {"path":"input.txt"}                         |
       | call | exec       | {"command":"echo HELLO WORLD"}                |
-      | call | write_file | {"path":"output.txt","content":"HELLO WORLD"} |
+      | call | write | {"path":"output.txt","content":"HELLO WORLD"} |
       | text | Pipeline complete |                                        |
     When I run quecto agent -s - -m "Uppercase input.txt and save to output.txt"
     Then the exit code should be 0
@@ -94,7 +94,7 @@ Feature: End-to-End Agentic Loop
   Scenario: LLM recovers from a missing file by creating it
     Given the mock LLM returns a tool call sequence:
       | call | read_file  | {"path":"missing.txt"}                    |
-      | call | write_file | {"path":"missing.txt","content":"created"} |
+      | call | write | {"path":"missing.txt","content":"created"} |
       | call | read_file  | {"path":"missing.txt"}                    |
       | text | File created and verified |                             |
     When I run quecto agent -s - -m "Read missing.txt or create it"

@@ -30,7 +30,7 @@ fn tool_schemas() -> Vec<(&'static str, &'static str, &'static str)> {
             r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#,
         ),
         (
-            "write_file",
+            "write",
             "Write a file",
             r#"{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}"#,
         ),

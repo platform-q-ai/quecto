@@ -52,7 +52,7 @@ Feature: End-to-End Safety and Limits
     And stdout should contain "Access denied"
 
   Scenario: Write_file outside workspace is blocked
-    Given the mock LLM first returns a tool call for "write_file" with args:
+    Given the mock LLM first returns a tool call for "write" with args:
       | path    | ../../tmp/pwned.txt |
       | content | owned               |
     And the mock LLM then returns a text response "Write denied"

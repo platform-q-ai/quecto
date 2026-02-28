@@ -199,10 +199,9 @@ fn given_fully_initialized_agent(world: &mut QuectoWorld) {
         "read_file".to_string(),
         Arc::new(MockBddTool::new("read_file", "")),
     );
-    world.mock_tools.insert(
-        "write_file".to_string(),
-        Arc::new(MockBddTool::new("write_file", "")),
-    );
+    world
+        .mock_tools
+        .insert("write".to_string(), Arc::new(MockBddTool::new("write", "")));
 }
 
 #[when(expr = "the agent processes message {string}")]
