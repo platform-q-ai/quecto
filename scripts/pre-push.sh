@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # pre-push.sh — Runs on every git push.
-# Local quality gate: static checks + parallel test wave (lib + architecture + 25-way non-real BDD).
+# Local quality gate: static checks + parallel test wave (lib + architecture + 24-way non-real BDD).
 # Expensive checks (real-LLM, machete, deny) live in pre-merge-commit.sh.
 set -euo pipefail
 
@@ -12,7 +12,7 @@ cd "$ROOT"
 source "$ROOT/scripts/load-dotenv.sh"
 
 E2E_TIMEOUT="${QUECTO_E2E_TIMEOUT:-12m}"
-BDD_SHARDS="${QUECTO_BDD_SHARDS:-25}"
+BDD_SHARDS="${QUECTO_BDD_SHARDS:-24}"
 FORCE_RUN="${QUECTO_PREPUSH_FORCE:-0}"
 
 HEAD_SHA="$(git rev-parse HEAD)"

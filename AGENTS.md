@@ -69,7 +69,7 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 
 **WASM** (all tools except exec/spawn): Real wasm32-wasip2 via Wasmtime Component Model. Fresh `Store<HostState>` per invocation, fuel metering, memory limits, epoch interruption. Guest crate at `guest/` exports `quecto:tools/tool`.
 
-**nsjail** (exec only): Linux process isolation via kernel namespaces + cgroups v2. Workspace RW, toolchain RO, memory/PID/CPU limits, Kafel seccomp-bpf. Configure via `tools.exec.isolation`, `tools.exec.nsjail_binary`, `tools.exec.allow_native_fallback`.
+**nsjail** (exec only): Linux process isolation via kernel namespaces + rlimits. Workspace RW, toolchain RO, memory/PID/CPU limits via `--rlimit_as`/`--rlimit_nproc`/`--rlimit_cpu` (no cgroup access required). Configure via `tools.exec.isolation`, `tools.exec.nsjail_binary`, `tools.exec.allow_native_fallback`.
 
 ### interface/ — CLI + Gateway (composition root)
 Manual arg parsing (no clap). Entry point: `cli::run(args) -> i32`.
@@ -124,7 +124,7 @@ Gateway: `EventLoopContext` holds runtime state. Telegram polling, bot commands 
 | Lint | `cargo clippy -- -D warnings` (zero warnings) |
 | Unit tests | `cargo test --no-fail-fast --lib 2>&1 \| scripts/test-filter.sh` |
 | Architecture | `cargo test --no-fail-fast --test architecture 2>&1 \| scripts/test-filter.sh` |
-| BDD (sharded) | See [Sharded BDD](#sharded-bdd-25-way-parallel) below |
+| BDD (sharded) | See [Sharded BDD](#sharded-bdd-24-way-parallel) below |
 
 All test commands pipe through `scripts/test-filter.sh` which strips the per-test `... ok` noise and shows only:
 - **Summary totals** (passed/failed counts)
@@ -133,22 +133,22 @@ All test commands pipe through `scripts/test-filter.sh` which strips the per-tes
 
 `--no-fail-fast` ensures all failures are reported in a single run, not just the first.
 
-Three-tier hooks: pre-commit (~20-40s: quality+fmt+clippy), pre-push (~30-60s: tests+25-shard BDD), pre-merge (~30-90s: real-LLM+machete+deny). SHA-based caching. Install via `scripts/install-hooks.sh`.
+Three-tier hooks: pre-commit (~20-40s: quality+fmt+clippy), pre-push (~30-60s: tests+24-shard BDD), pre-merge (~30-90s: real-LLM+machete+deny). SHA-based caching. Install via `scripts/install-hooks.sh`.
 
-### Sharded BDD (25-way parallel)
+### Sharded BDD (24-way parallel)
 
 Non-real-LLM (fast, no API key needed):
 ```bash
-(for i in $(seq 0 24); do
-  (timeout 12m env QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=25 cargo test --no-fail-fast --features test-support --test bdd 2>&1 | scripts/test-filter.sh) &
+(for i in $(seq 0 23); do
+  (timeout 12m env QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=24 cargo test --no-fail-fast --features test-support --test bdd 2>&1 | scripts/test-filter.sh) &
 done
 wait)
 ```
 
 Real-LLM (requires `OPENAI_API_KEY`):
 ```bash
-(for i in $(seq 0 24); do
-  (timeout 12m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=25 cargo test --no-fail-fast --features test-support --test bdd 2>&1 | scripts/test-filter.sh) &
+(for i in $(seq 0 23); do
+  (timeout 12m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=24 cargo test --no-fail-fast --features test-support --test bdd 2>&1 | scripts/test-filter.sh) &
 done
 wait)
 ```

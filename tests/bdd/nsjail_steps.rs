@@ -455,6 +455,40 @@ fn then_no_nsjail_processes(_world: &mut QuectoWorld) {}
 #[then("no stale mount namespaces should remain")]
 fn then_no_stale_mount_ns(_world: &mut QuectoWorld) {}
 
+#[then(expr = "the nsjail command for {string} should not contain {string}")]
+fn then_nsjail_command_not_contain(world: &mut QuectoWorld, command: String, needle: String) {
+    let exec_tool = world.exec_tool.as_ref().expect("exec tool not set");
+    let ws = world.tool_workspace.as_ref().expect("workspace not set");
+    let cmd = exec_tool.build_nsjail_command_for_testing(ws, &command);
+    let args: Vec<String> = cmd
+        .as_std()
+        .get_args()
+        .map(|a| a.to_string_lossy().to_string())
+        .collect();
+    let args_str = args.join(" ");
+    assert!(
+        !args_str.contains(&needle),
+        "nsjail command should NOT contain '{needle}', got args: {args_str}"
+    );
+}
+
+#[then(expr = "the nsjail command for {string} should contain {string}")]
+fn then_nsjail_command_contains(world: &mut QuectoWorld, command: String, needle: String) {
+    let exec_tool = world.exec_tool.as_ref().expect("exec tool not set");
+    let ws = world.tool_workspace.as_ref().expect("workspace not set");
+    let cmd = exec_tool.build_nsjail_command_for_testing(ws, &command);
+    let args: Vec<String> = cmd
+        .as_std()
+        .get_args()
+        .map(|a| a.to_string_lossy().to_string())
+        .collect();
+    let args_str = args.join(" ");
+    assert!(
+        args_str.contains(&needle),
+        "nsjail command should contain '{needle}', got args: {args_str}"
+    );
+}
+
 #[then("the tool result should be truncated to approximately 1 MiB")]
 fn then_result_truncated_1mib(world: &mut QuectoWorld) {
     let result = world.tool_result.as_ref().expect("no result");

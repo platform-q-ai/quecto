@@ -5,7 +5,7 @@ ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
 SUITE_NAME="bdd"
-SHARDS="25"
+SHARDS="24"
 TIMEOUT_PER_SHARD="5m"
 TAG=""
 REAL_LLM="0"

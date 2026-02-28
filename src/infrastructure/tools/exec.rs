@@ -5,7 +5,6 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 #[cfg(unix)]
@@ -28,19 +27,58 @@ const EXEC_ENV_ALLOWLIST: &[&str] = &[
     "HOME", "PATH", "LANG", "TZ", "TERM", "SHELL", "USER", "LOGNAME", "TMPDIR",
 ];
 
+/// System paths to mount read-only inside the nsjail container.
+/// These provide the basic toolchain (/bin/sh, common utilities, shared libs).
+const NSJAIL_RO_BINDMOUNTS: &[&str] = &["/bin", "/usr", "/lib", "/lib64"];
+
+/// Individual files from `/etc` needed inside the jail.
+/// We mount these individually rather than all of `/etc` to avoid exposing
+/// host configuration (hostname, machine-id, ssh keys, resolv.conf, etc.).
+const NSJAIL_RO_ETC_FILES: &[&str] = &[
+    "/etc/ld.so.cache",
+    "/etc/ld.so.conf",
+    "/etc/nsswitch.conf",
+    "/etc/passwd",
+    "/etc/group",
+    "/etc/ssl",
+    "/etc/alternatives",
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecIsolationMode {
     Native,
     Nsjail,
 }
 
+/// nsjail configuration options.
+///
+/// Resource limits are enforced via rlimits (`--rlimit_as`, `--rlimit_nproc`,
+/// `--rlimit_cpu`) which work without root or cgroup access. The cgroup
+/// namespace is always disabled (`--disable_clone_newcgroup`).
 #[derive(Debug, Clone)]
 pub struct NsjailOptions {
     pub binary: String,
     pub network_passthrough: bool,
+    /// Virtual address-space limit in MB, enforced via `--rlimit_as`.
+    ///
+    /// **Note:** This limits *virtual* address space, not physical RSS (unlike
+    /// the former `--cgroup_mem_max`). Runtimes that pre-reserve large virtual
+    /// regions (Go, JVM) may need a higher value than their actual memory use.
+    /// Conversely, `mmap(MAP_NORESERVE)` can bypass this until page faults.
+    /// The `--time_limit` wall-clock cap partially mitigates unbounded consumption.
     pub memory_limit_mb: Option<u64>,
+    /// Maximum number of processes, enforced via `--rlimit_nproc`.
+    ///
+    /// **Note:** `RLIMIT_NPROC` is a per-UID limit, not per-jail. Inside
+    /// nsjail's user namespace the jailed UID maps to an outer UID, so the
+    /// budget is shared with any other processes running as that outer UID.
+    /// This is weaker than the former per-cgroup `--cgroup_pids_max` in
+    /// multi-tenant scenarios. If concurrent jails are expected, consider
+    /// distinct UID mappings per invocation.
     pub pid_limit: Option<u64>,
+    /// CPU time limit in seconds, enforced via `--rlimit_cpu`.
     pub cpu_time_limit_secs: Option<u64>,
+    /// Wall-clock time limit in seconds, enforced via `--time_limit`.
     pub wall_time_limit_secs: Option<u64>,
 }
 
@@ -84,13 +122,12 @@ pub struct ExecTool {
     timeout: Duration,
     max_capture_bytes: usize,
     mode: ExecIsolationMode,
-    allow_native_fallback: bool,
     nsjail: NsjailOptions,
+    /// System paths resolved at construction time to avoid per-execution stat() calls.
+    ro_bindmounts: Vec<&'static str>,
+    ro_etc_files: Vec<&'static str>,
     startup_warning: Option<String>,
     startup_error: Option<String>,
-    /// Latched to `true` after the first runtime cgroup fallback succeeds,
-    /// so subsequent calls skip the doomed nsjail attempt entirely.
-    cgroup_fallback_latched: AtomicBool,
 }
 
 impl std::fmt::Debug for ExecTool {
@@ -140,6 +177,18 @@ impl ExecTool {
         let mut startup_error = None;
         let mut mode = options.isolation_mode;
         if mode == ExecIsolationMode::Nsjail {
+            // Warn if nsjail mode is active but all resource limits are disabled.
+            if options.nsjail.memory_limit_mb.is_none()
+                && options.nsjail.pid_limit.is_none()
+                && options.nsjail.cpu_time_limit_secs.is_none()
+                && options.nsjail.wall_time_limit_secs.is_none()
+            {
+                tracing::warn!(
+                    target: "exec",
+                    "nsjail isolation is active but all resource limits are disabled. \
+                     The jail will run without memory, PID, CPU, or wall-clock limits."
+                );
+            }
             if let Some(resolved_binary) = resolve_nsjail_binary(&options.nsjail.binary) {
                 options.nsjail.binary = resolved_binary;
             } else {
@@ -160,17 +209,19 @@ impl ExecTool {
                 }
             }
         }
+        let ro_bindmounts = resolve_ro_bindmounts();
+        let ro_etc_files = resolve_ro_etc_files();
         Self {
             workspace,
             sandbox,
             timeout: options.timeout,
             max_capture_bytes: options.max_capture_bytes,
             mode,
-            allow_native_fallback: options.allow_native_fallback,
             nsjail: options.nsjail,
+            ro_bindmounts,
+            ro_etc_files,
             startup_warning: warning,
             startup_error,
-            cgroup_fallback_latched: AtomicBool::new(false),
         }
     }
 
@@ -186,17 +237,19 @@ impl ExecTool {
         sandbox: Arc<Sandbox>,
         options: ExecOptions,
     ) -> Self {
+        let ro_bindmounts = resolve_ro_bindmounts();
+        let ro_etc_files = resolve_ro_etc_files();
         Self {
             workspace,
             sandbox,
             timeout: options.timeout,
             max_capture_bytes: options.max_capture_bytes,
             mode: options.isolation_mode,
-            allow_native_fallback: options.allow_native_fallback,
             nsjail: options.nsjail,
+            ro_bindmounts,
+            ro_etc_files,
             startup_warning: None,
             startup_error: None,
-            cgroup_fallback_latched: AtomicBool::new(false),
         }
     }
 
@@ -214,6 +267,29 @@ impl ExecTool {
 
     pub fn startup_error(&self) -> Option<&str> {
         self.startup_error.as_deref()
+    }
+
+    /// Returns the nsjail options for inspection in tests/BDD.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn nsjail_options(&self) -> &NsjailOptions {
+        &self.nsjail
+    }
+
+    /// Build the nsjail command for a given workspace and command string.
+    /// Exposed for testing to verify argument construction.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn build_nsjail_command_for_testing(
+        &self,
+        workspace: &Path,
+        command: &str,
+    ) -> tokio::process::Command {
+        let source_env = HashMap::new();
+        let config = NsjailConfig {
+            options: &self.nsjail,
+            ro_dirs: &self.ro_bindmounts,
+            ro_etc_files: &self.ro_etc_files,
+        };
+        build_nsjail_command(workspace, command, &source_env, &config)
     }
 
     pub fn execute_with_env(
@@ -244,41 +320,7 @@ impl ExecTool {
 
         let source_env = build_source_env(env_overrides);
 
-        // If a previous cgroup failure already latched the fallback, skip nsjail.
-        let effective_mode = if self.cgroup_fallback_latched.load(Ordering::Relaxed) {
-            ExecIsolationMode::Native
-        } else {
-            self.mode
-        };
-
-        let result = self
-            .spawn_and_wait(&command, &source_env, effective_mode)
-            .await?;
-
-        // If nsjail failed with a cgroup-related error, retry with native exec
-        // and latch the fallback so subsequent calls skip nsjail entirely.
-        // NOTE: This silently downgrades from kernel-level nsjail isolation to
-        // software-only sandbox denylist. Operators should monitor for this log
-        // message and fix the underlying cgroup configuration.
-        if effective_mode == ExecIsolationMode::Nsjail
-            && self.allow_native_fallback
-            && result.is_error
-            && is_nsjail_cgroup_failure(&result.content)
-        {
-            tracing::error!(
-                target: "exec",
-                command = command,
-                "nsjail cgroup setup failed; falling back to native exec. \
-                 All subsequent commands will run WITHOUT nsjail isolation. \
-                 Fix cgroup configuration or set tools.exec.isolation=native."
-            );
-            self.cgroup_fallback_latched.store(true, Ordering::Relaxed);
-            return self
-                .spawn_and_wait(&command, &source_env, ExecIsolationMode::Native)
-                .await;
-        }
-
-        Ok(result)
+        self.spawn_and_wait(&command, &source_env, self.mode).await
     }
 
     async fn spawn_and_wait(
@@ -289,7 +331,12 @@ impl ExecTool {
     ) -> Result<ToolResult, DomainError> {
         let mut cmd = match mode {
             ExecIsolationMode::Nsjail => {
-                build_nsjail_command(&self.workspace, command, source_env, &self.nsjail)
+                let config = NsjailConfig {
+                    options: &self.nsjail,
+                    ro_dirs: &self.ro_bindmounts,
+                    ro_etc_files: &self.ro_etc_files,
+                };
+                build_nsjail_command(&self.workspace, command, source_env, &config)
             }
             ExecIsolationMode::Native => build_shell_command(&self.workspace, command, source_env),
         };
@@ -316,44 +363,6 @@ impl ExecTool {
 
         run_child_with_timeout(child, stream_tasks, self.timeout, self.max_capture_bytes).await
     }
-}
-
-/// Check whether an nsjail error result indicates a cgroup setup failure.
-///
-/// Only inspects the stderr portion of the formatted error output to avoid
-/// false positives from user command stdout that mentions cgroup keywords.
-/// Also pre-filters on nsjail's internal exit code 255 (distinct from the
-/// child process exit code).
-///
-/// Patterns validated against nsjail 3.4 (2025-01). Re-audit on version bumps.
-fn is_nsjail_cgroup_failure(content: &str) -> bool {
-    // Pre-filter: nsjail uses exit code 255 for internal failures.
-    // The formatted output starts with "exit code exit status: 255" on Linux.
-    let first_line = content.lines().next().unwrap_or("");
-    if !first_line.contains("255") {
-        return false;
-    }
-
-    // Extract only the stderr portion to avoid matching user stdout.
-    // Format: "exit code {status}\nstdout: {stdout}\nstderr: {stderr}"
-    let stderr_section = content
-        .find("\nstderr: ")
-        .map(|idx| &content[idx..])
-        .unwrap_or(content);
-
-    // Limit scan to last 4 KiB to avoid allocating a lowercased copy
-    // of potentially large (up to 1 MiB) output.
-    let tail = if stderr_section.len() > 4096 {
-        &stderr_section[stderr_section.len() - 4096..]
-    } else {
-        stderr_section
-    };
-    let lower = tail.to_lowercase();
-
-    lower.contains("createcgroup")
-        || lower.contains("couldn't initialize cgroup")
-        || (lower.contains("cgroup") && lower.contains("no such file or directory"))
-        || (lower.contains("cgroup") && lower.contains("permission denied"))
 }
 
 fn extract_command(arguments: &str) -> Result<String, DomainError> {
@@ -404,12 +413,22 @@ fn build_shell_command(
     cmd
 }
 
+/// All nsjail configuration needed to build a command: options + pre-resolved mounts.
+struct NsjailConfig<'a> {
+    options: &'a NsjailOptions,
+    /// Directory-level RO mounts (e.g. /bin, /usr, /lib), resolved at construction.
+    ro_dirs: &'a [&'static str],
+    /// Individual /etc file RO mounts (e.g. /etc/ld.so.cache), resolved at construction.
+    ro_etc_files: &'a [&'static str],
+}
+
 fn build_nsjail_command(
     workspace: &Path,
     command: &str,
     source_env: &HashMap<String, String>,
-    options: &NsjailOptions,
+    config: &NsjailConfig<'_>,
 ) -> tokio::process::Command {
+    let options = config.options;
     let mut cmd = tokio::process::Command::new(&options.binary);
     cmd.arg("--quiet")
         .arg("--mode")
@@ -419,26 +438,42 @@ fn build_nsjail_command(
         .arg("--bindmount")
         .arg(format!("{}:/workspace", workspace.display()));
 
-    // Auto-detect cgroup version so that nsjail uses the correct mount paths.
-    // On cgroup v2 hosts, nsjail's default v1 paths (/sys/fs/cgroup/memory etc.)
-    // do not exist, causing cgroup setup failures.
-    cmd.arg("--detect_cgroupv2");
-
-    if options.network_passthrough {
-        cmd.arg("--disable_clone_newnet");
+    // Mount essential system paths read-only (resolved at construction time).
+    for sys_path in config.ro_dirs {
+        cmd.arg("--bindmount_ro")
+            .arg(format!("{sys_path}:{sys_path}"));
     }
+    // Mount individual /etc files needed by the dynamic linker and NSS.
+    for etc_path in config.ro_etc_files {
+        cmd.arg("--bindmount_ro")
+            .arg(format!("{etc_path}:{etc_path}"));
+    }
+
+    // Disable cgroup namespace — resource limits are enforced via rlimits
+    // which work without root or cgroup write access.
+    cmd.arg("--disable_clone_newcgroup");
+
+    // Resource limits via rlimits (unprivileged, per-process).
+    // --rlimit_as: virtual address space limit in MB.
+    // --rlimit_nproc: max processes per UID (effectively per-jail inside
+    //   nsjail's user namespace).
+    // --rlimit_cpu: CPU time limit in seconds.
+    // --time_limit: wall-clock time limit in seconds.
     if let Some(mem) = options.memory_limit_mb {
-        cmd.arg("--cgroup_mem_max")
-            .arg((mem * 1024 * 1024).to_string());
+        cmd.arg("--rlimit_as").arg(mem.to_string());
     }
     if let Some(pid) = options.pid_limit {
-        cmd.arg("--cgroup_pids_max").arg(pid.to_string());
+        cmd.arg("--rlimit_nproc").arg(pid.to_string());
     }
     if let Some(cpu) = options.cpu_time_limit_secs {
         cmd.arg("--rlimit_cpu").arg(cpu.to_string());
     }
     if let Some(wall) = options.wall_time_limit_secs {
         cmd.arg("--time_limit").arg(wall.to_string());
+    }
+
+    if options.network_passthrough {
+        cmd.arg("--disable_clone_newnet");
     }
 
     cmd.arg("--")
@@ -459,6 +494,26 @@ fn build_nsjail_command(
         cmd.env("PATH", path);
     }
     cmd
+}
+
+/// Resolve which system RO bindmount paths exist on this host.
+/// Called once at construction time to avoid per-execution stat() calls.
+fn resolve_ro_bindmounts() -> Vec<&'static str> {
+    NSJAIL_RO_BINDMOUNTS
+        .iter()
+        .copied()
+        .filter(|p| Path::new(p).exists())
+        .collect()
+}
+
+/// Resolve which individual /etc files exist on this host.
+/// Called once at construction time.
+fn resolve_ro_etc_files() -> Vec<&'static str> {
+    NSJAIL_RO_ETC_FILES
+        .iter()
+        .copied()
+        .filter(|p| Path::new(p).exists())
+        .collect()
 }
 
 fn resolve_nsjail_binary(binary: &str) -> Option<String> {
