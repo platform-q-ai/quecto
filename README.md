@@ -275,7 +275,7 @@ Config file: `~/.quecto/config.json`
       "memory_limit_mb": 512,
       "pid_limit": 256,
       "cpu_time_limit_secs": 30,
-      "wall_time_limit_secs": 30,
+      "wall_time_limit_secs": 30
     },
     "web": {
       "brave": {
@@ -386,7 +386,7 @@ The agent operates inside a sandbox:
 
 - **Workspace restriction**: When `restrict_to_workspace` is `true` (default), all file operations are confined to the workspace directory. Symlinks pointing outside are blocked. Path traversal (`../`) is caught.
 - **Dangerous commands blocked**: `rm -rf /`, `rm -r -f /`, `mkfs`, `dd`, `shutdown`, `reboot`, `chmod -R 777 /`, fork bombs, and pipe-to-shell patterns (`curl|sh`) are always blocked regardless of other settings. Command checks normalize whitespace/casing, so equivalent variants like `rm  -rf /` are also blocked.
-- **Exec runtime isolation**: The `exec` tool runs in `nsjail` mode by default with bounded resources and parent-death cleanup; `native` remains available as an explicit opt-in via `tools.exec.isolation`.
+- **Exec runtime isolation**: The `exec` tool runs in `nsjail` mode by default with bounded resources; `native` remains available as an explicit opt-in via `tools.exec.isolation`.
 - **Environment isolation**: `QUECTO_*` environment variables (including API keys) are stripped from child processes spawned by the `exec` tool.
 - **Secret redaction**: Log/status output redacts OpenAI/Anthropic (`sk-*`), Groq (`gsk_*`/`gsk-*`), and Telegram bot token values.
 
