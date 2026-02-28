@@ -359,3 +359,76 @@ fn then_worker_exit_code(world: &mut QuectoWorld, expected: i32) {
         world.e2e_coding_worker_stderr.as_deref().unwrap_or("")
     );
 }
+
+// ---------------------------------------------------------------------------
+// Real LLM: agent with configurable max-time
+// ---------------------------------------------------------------------------
+
+/// Run the real LLM agent with a custom wall-clock timeout.
+/// Higher max-iterations because coding jobs need multiple status polls.
+#[when(expr = "I run the real LLM agent with max-time {int} and message {string}")]
+fn when_run_real_llm_agent_max_time(world: &mut QuectoWorld, max_time: i32, message: String) {
+    let args = vec![
+        "quecto".to_string(),
+        "agent".to_string(),
+        "--model".to_string(),
+        "gpt-5.2".to_string(),
+        "--max-iterations".to_string(),
+        "15".to_string(),
+        "--max-time".to_string(),
+        max_time.to_string(),
+        "-s".to_string(),
+        "-".to_string(),
+        "-m".to_string(),
+        message,
+    ];
+    let output = quecto::interface::cli::run_with_output(args, &world.cli_context);
+    world.exit_code = output.exit_code;
+    world.stdout = output.stdout;
+    world.stderr = output.stderr;
+}
+
+// ---------------------------------------------------------------------------
+// Real LLM: worker subprocess with configurable max-time
+// ---------------------------------------------------------------------------
+
+/// Run the real LLM worker subprocess with a wall-clock timeout.
+/// Uses the same `cmd_worker_from_config` path but with the real LLM config.
+/// The max-time parameter is accepted for documentation but the worker
+/// subprocess timeout is governed by the worker's own internal limits.
+#[allow(clippy::too_many_arguments)]
+#[when(
+    expr = "I run the real LLM worker with run-id {string} job-id {string} and goal {string} and max-time {int}"
+)]
+fn when_run_real_llm_worker(
+    world: &mut QuectoWorld,
+    run_id: String,
+    job_id: String,
+    goal: String,
+    _max_time: i32,
+) {
+    let job_dir = world
+        .e2e_coding_job_dir
+        .as_ref()
+        .expect("job directory should be set")
+        .to_string_lossy()
+        .to_string();
+
+    let args = vec![
+        "quecto".to_string(),
+        "worker".to_string(),
+        "--run-id".to_string(),
+        run_id,
+        "--job-id".to_string(),
+        job_id,
+        "--job-dir".to_string(),
+        job_dir,
+        "--goal".to_string(),
+        goal,
+    ];
+
+    let output = quecto::interface::cli::run_with_output(args, &world.cli_context);
+    world.e2e_coding_worker_exit_code = Some(output.exit_code);
+    world.e2e_coding_worker_stdout = Some(output.stdout);
+    world.e2e_coding_worker_stderr = Some(output.stderr);
+}

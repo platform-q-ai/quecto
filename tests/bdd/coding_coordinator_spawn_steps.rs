@@ -208,10 +208,11 @@ fn then_no_launches(world: &mut QuectoWorld) {
 // Spawn configuration scenarios
 // ============================================================================
 
-#[given(regex = r#"^a coordinator process spawner with poll interval (\d+) ms$"#)]
-fn given_spawner_with_poll_interval(world: &mut QuectoWorld, ms: u64) {
+#[given(regex = r#"^a coordinator process spawner with heartbeat interval (\d+) seconds$"#)]
+fn given_spawner_with_heartbeat_interval(world: &mut QuectoWorld, secs: u64) {
     let ipc = Arc::new(BddDelegMockIpc::new());
-    let config = CoordinatorSpawnConfig::new(PathBuf::from("/tmp/test")).with_poll_interval(ms);
+    let config =
+        CoordinatorSpawnConfig::new(PathBuf::from("/tmp/test")).with_heartbeat_interval(secs);
     world.coord_process_spawner = Some(CoordinatorProcessSpawner::new(ipc, config));
 }
 
@@ -222,11 +223,11 @@ fn given_spawner_default(world: &mut QuectoWorld) {
     world.coord_process_spawner = Some(CoordinatorProcessSpawner::new(ipc, config));
 }
 
-#[then(regex = r#"^the spawner poll interval should be (\d+)$"#)]
-fn then_spawner_poll_interval(world: &mut QuectoWorld, expected: u64) {
+#[then(regex = r#"^the spawner heartbeat interval should be (\d+)$"#)]
+fn then_spawner_heartbeat_interval(world: &mut QuectoWorld, expected: u64) {
     let spawner = world
         .coord_process_spawner
         .as_ref()
         .expect("process spawner set");
-    assert_eq!(spawner.poll_interval_ms(), expected);
+    assert_eq!(spawner.heartbeat_interval_secs(), expected);
 }

@@ -13,16 +13,16 @@ use crate::domain::coding_ipc::{CoordinatorIpc, CoordinatorSpawner, SpawnResult}
 /// Minimum seconds between spawn attempts to prevent crash-loops.
 const SPAWN_COOLDOWN_SECS: u64 = 5;
 
-/// Default poll interval for the coordinator inbox in milliseconds.
-const DEFAULT_POLL_INTERVAL_MS: u64 = 500;
+/// Default heartbeat interval for the coordinator agent in seconds.
+const DEFAULT_HEARTBEAT_INTERVAL_SECS: u64 = 60;
 
 /// Configuration for the coordinator process spawner.
 #[derive(Debug, Clone)]
 pub struct CoordinatorSpawnConfig {
     /// Base directory for the coordinator process (QUECTO_BASE_DIR).
     pub base_dir: PathBuf,
-    /// How often the coordinator polls the inbox, in milliseconds.
-    pub poll_interval_ms: u64,
+    /// How often the coordinator agent heartbeat runs, in seconds.
+    pub heartbeat_interval_secs: u64,
 }
 
 impl CoordinatorSpawnConfig {
@@ -30,13 +30,13 @@ impl CoordinatorSpawnConfig {
     pub fn new(base_dir: PathBuf) -> Self {
         Self {
             base_dir,
-            poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
+            heartbeat_interval_secs: DEFAULT_HEARTBEAT_INTERVAL_SECS,
         }
     }
 
-    /// Set the poll interval.
-    pub fn with_poll_interval(mut self, ms: u64) -> Self {
-        self.poll_interval_ms = ms;
+    /// Set the heartbeat interval in seconds.
+    pub fn with_heartbeat_interval(mut self, secs: u64) -> Self {
+        self.heartbeat_interval_secs = secs;
         self
     }
 }
@@ -58,7 +58,10 @@ pub struct CoordinatorProcessSpawner {
 impl std::fmt::Debug for CoordinatorProcessSpawner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CoordinatorProcessSpawner")
-            .field("poll_interval_ms", &self.config.poll_interval_ms)
+            .field(
+                "heartbeat_interval_secs",
+                &self.config.heartbeat_interval_secs,
+            )
             .finish()
     }
 }
@@ -72,9 +75,9 @@ impl CoordinatorProcessSpawner {
         }
     }
 
-    /// Poll interval getter (for BDD assertions).
-    pub fn poll_interval_ms(&self) -> u64 {
-        self.config.poll_interval_ms
+    /// Heartbeat interval getter (for BDD assertions).
+    pub fn heartbeat_interval_secs(&self) -> u64 {
+        self.config.heartbeat_interval_secs
     }
 
     /// Spawn the coordinator child process. Returns the child PID.
@@ -104,8 +107,8 @@ impl CoordinatorProcessSpawner {
         cmd.arg("coordinator")
             .arg("--ipc-dir")
             .arg(ipc_dir.to_string_lossy().as_ref())
-            .arg("--poll-interval-ms")
-            .arg(self.config.poll_interval_ms.to_string());
+            .arg("--heartbeat-interval")
+            .arg(self.config.heartbeat_interval_secs.to_string());
 
         // Set QUECTO_BASE_DIR so the child uses the same config/workspace.
         cmd.env("QUECTO_BASE_DIR", &self.config.base_dir);
@@ -235,13 +238,14 @@ mod tests {
     #[test]
     fn test_config_defaults() {
         let config = CoordinatorSpawnConfig::new(PathBuf::from("/tmp/q"));
-        assert_eq!(config.poll_interval_ms, 500);
+        assert_eq!(config.heartbeat_interval_secs, 60);
     }
 
     #[test]
     fn test_config_builder() {
-        let config = CoordinatorSpawnConfig::new(PathBuf::from("/tmp/q")).with_poll_interval(100);
-        assert_eq!(config.poll_interval_ms, 100);
+        let config =
+            CoordinatorSpawnConfig::new(PathBuf::from("/tmp/q")).with_heartbeat_interval(30);
+        assert_eq!(config.heartbeat_interval_secs, 30);
     }
 
     #[test]
@@ -258,13 +262,13 @@ mod tests {
     }
 
     #[test]
-    fn test_poll_interval_getter() {
+    fn test_heartbeat_interval_getter() {
         let ipc = Arc::new(TestMockIpc::dead());
         let spawner = CoordinatorProcessSpawner::new(
             ipc,
-            CoordinatorSpawnConfig::new(PathBuf::from("/tmp/q")).with_poll_interval(100),
+            CoordinatorSpawnConfig::new(PathBuf::from("/tmp/q")).with_heartbeat_interval(30),
         );
-        assert_eq!(spawner.poll_interval_ms(), 100);
+        assert_eq!(spawner.heartbeat_interval_secs(), 30);
     }
 
     #[test]
@@ -276,7 +280,7 @@ mod tests {
         );
         let debug = format!("{spawner:?}");
         assert!(debug.contains("CoordinatorProcessSpawner"));
-        assert!(debug.contains("poll_interval_ms"));
+        assert!(debug.contains("heartbeat_interval_secs"));
     }
 
     // Note: We cannot test spawn_coordinator() in unit tests because it
