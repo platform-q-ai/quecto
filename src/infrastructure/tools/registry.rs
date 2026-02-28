@@ -137,7 +137,8 @@ impl ToolRegistryImpl {
             workspace.clone(),
             sandbox.clone(),
         )));
-        reg.register(Arc::new(WriteTool::new(workspace.clone(), sandbox.clone())));
+        let write_tool = Arc::new(WriteTool::new(workspace.clone(), sandbox.clone()));
+        reg.register(write_tool.clone());
         reg.register(Arc::new(EditFileTool::new(
             workspace.clone(),
             sandbox.clone(),
@@ -150,6 +151,12 @@ impl ToolRegistryImpl {
             workspace.clone(),
             sandbox.clone(),
         )));
+
+        // Backward-compat alias inserted after all register() calls so that
+        // definitions (rebuilt on each register) stays at 6. The alias maps
+        // the old "write_file" name to WriteTool for sessions/LLMs using the
+        // old name. It is NOT exposed in definitions() so the LLM only sees "write".
+        reg.tools.insert("write_file".to_string(), write_tool);
 
         reg
     }
