@@ -55,7 +55,7 @@ fn dispatch(params: &str) -> Result<String, String> {
         .ok_or_else(|| "missing __tool field".to_string())?;
 
     match tool_name {
-        "read_file" => dispatch_read_file(&args),
+        "read" | "read_file" => dispatch_read_file(&args),
         "write" | "write_file" => dispatch_write_file(&args),
         "edit_file" => dispatch_edit_file(&args),
         "append_file" => dispatch_append_file(&args),

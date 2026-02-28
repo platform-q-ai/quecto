@@ -12,7 +12,7 @@ Feature: End-to-End Tool Execution
   @done
   Scenario: LLM reads a file via tool call
     Given a file "notes.txt" in the e2e workspace with content "buy milk"
-    And the mock LLM first returns a tool call for "read_file" with args:
+    And the mock LLM first returns a tool call for "read" with args:
       | path | notes.txt |
     And the mock LLM then returns a text response "Your notes say: buy milk"
     When I run quecto agent -s - -m "What are my notes?"
@@ -65,7 +65,7 @@ Feature: End-to-End Tool Execution
   Scenario: LLM makes two sequential tool calls
     Given a file "source.txt" in the e2e workspace with content "important data"
     And the mock LLM returns a tool call sequence:
-      | call | read_file  | {"path":"source.txt"}                    |
+      | call | read  | {"path":"source.txt"}                    |
       | call | write | {"path":"copy.txt","content":"important data"} |
       | text | Copied source.txt to copy.txt |                          |
     When I run quecto agent -s - -m "Copy source.txt to copy.txt"
@@ -75,7 +75,7 @@ Feature: End-to-End Tool Execution
 
   @done
   Scenario: Tool error is sent back to LLM and it recovers
-    Given the mock LLM first returns a tool call for "read_file" with args:
+    Given the mock LLM first returns a tool call for "read" with args:
       | path | nonexistent.txt |
     And the mock LLM then returns a text response "Sorry, that file does not exist"
     When I run quecto agent -s - -m "Read nonexistent.txt"
@@ -87,7 +87,7 @@ Feature: End-to-End Tool Execution
   @done
   Scenario: Tool call and result are included in persisted session
     Given a file "data.txt" in the e2e workspace with content "42"
-    And the mock LLM first returns a tool call for "read_file" with args:
+    And the mock LLM first returns a tool call for "read" with args:
       | path | data.txt |
     And the mock LLM then returns a text response "The data is 42"
     When I run quecto agent -s tool-session -m "Read data.txt"

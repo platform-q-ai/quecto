@@ -10,7 +10,7 @@ Feature: End-to-End Session + Tool Interactions
 
   Scenario: Tool call and result are persisted with correct roles
     Given a file "info.txt" in the e2e workspace with content "secret=42"
-    And the mock LLM first returns a tool call for "read_file" with args:
+    And the mock LLM first returns a tool call for "read" with args:
       | path | info.txt |
     And the mock LLM then returns a text response "The secret is 42"
     When I run quecto agent -s toolsess -m "Read the secret"
@@ -20,7 +20,7 @@ Feature: End-to-End Session + Tool Interactions
 
   Scenario: Second message in session sees tool history from first
     Given a file "data.txt" in the e2e workspace with content "alpha"
-    And the mock LLM first returns a tool call for "read_file" with args:
+    And the mock LLM first returns a tool call for "read" with args:
       | path | data.txt |
     And the mock LLM then returns a text response "File says alpha"
     When I run quecto agent -s multi -m "Read data.txt"
@@ -32,7 +32,7 @@ Feature: End-to-End Session + Tool Interactions
     And the session "cli:multi" should contain text "alpha"
 
   Scenario: Session with tool call history is loadable by subsequent run
-    Given a pre-existing session "cli:resume" with tool call history for "read_file"
+    Given a pre-existing session "cli:resume" with tool call history for "read"
     And the mock LLM returns a text response "Resuming after tool use"
     When I run quecto agent -s resume -m "Continue"
     Then the exit code should be 0
@@ -67,7 +67,7 @@ Feature: End-to-End Session + Tool Interactions
     And no session files should exist
 
   Scenario: Tool error in first message does not corrupt session for second
-    Given the mock LLM first returns a tool call for "read_file" with args:
+    Given the mock LLM first returns a tool call for "read" with args:
       | path | missing.txt |
     And the mock LLM then returns a text response "File not found"
     When I run quecto agent -s errsess -m "Read missing.txt"
