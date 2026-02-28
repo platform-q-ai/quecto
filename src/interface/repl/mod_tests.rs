@@ -99,7 +99,13 @@ fn test_build_system_prompt_no_skills_no_user_prompt() {
         flags: &flags,
     };
     let result = build_system_prompt(&ctx);
-    assert!(result.is_none());
+    // Always Some — at minimum contains the datetime preamble.
+    assert!(result.is_some());
+    assert!(
+        result.as_deref().unwrap().contains("Current date and time"),
+        "expected datetime preamble, got: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -119,7 +125,15 @@ fn test_build_system_prompt_with_user_prompt() {
         flags: &flags,
     };
     let result = build_system_prompt(&ctx);
-    assert_eq!(result.as_deref(), Some("Be helpful"));
+    let prompt = result.as_deref().unwrap();
+    assert!(
+        prompt.contains("Current date and time"),
+        "expected datetime preamble"
+    );
+    assert!(
+        prompt.contains("Be helpful"),
+        "expected user prompt in result"
+    );
 }
 
 /// Stub provider for unit tests that never makes real HTTP calls.

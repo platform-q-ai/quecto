@@ -75,6 +75,8 @@ pub(super) struct EventLoopContext {
     /// Whether to allow insecure (HTTP) voice API base URLs.
     /// Read once at startup from env var, threaded through to avoid mid-run env reads.
     pub(super) allow_insecure_voice: bool,
+    /// Skill prompt loaded once at startup, combined with datetime per-request.
+    pub(super) skill_prompt: String,
 }
 
 impl EventLoopContext {
@@ -90,11 +92,13 @@ impl EventLoopContext {
             self.config.heartbeat.clone(),
             self.agent.clone(),
             self.workspace,
+            self.skill_prompt.clone(),
         ));
         let h_cron = tokio::spawn(Gateway::run_cron_tick(
             self.cron_store.clone(),
             self.agent.clone(),
             self.config.tools.cron.exec_timeout_minutes,
+            self.skill_prompt.clone(),
         ));
         let max_session_messages = self
             .config
@@ -124,6 +128,7 @@ impl EventLoopContext {
                     session_store: self.session_store,
                     outbound_tx: self.outbound_tx,
                     max_session_messages,
+                    skill_prompt: self.skill_prompt.clone(),
                 },
             ) => {
                 tracing::info!("Inbound processor stopped");
@@ -201,6 +206,7 @@ impl Gateway {
 
         let (inbound_tx, inbound_rx, outbound_tx, outbound_rx) = Self::take_channels(&mut bus);
         let telegram = Arc::new(TelegramChannel::new(&self.config.channels.telegram));
+        let skill_prompt = crate::interface::shared::load_skill_prompt(&self.base_dir);
         let ctx = EventLoopContext {
             inbound_tx,
             inbound_rx,
@@ -216,6 +222,7 @@ impl Gateway {
             cron_store,
             provider_for_inbound: provider,
             allow_insecure_voice,
+            skill_prompt,
         };
         ctx.run().await;
 

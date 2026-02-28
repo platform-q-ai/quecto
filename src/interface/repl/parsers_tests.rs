@@ -156,9 +156,15 @@ fn test_cron_invalid_interval() {
 }
 
 #[test]
-fn test_cron_interval_priority_over_cron() {
+fn test_cron_expression_priority_over_interval() {
+    // When both --interval and --cron are provided, cron expression takes precedence
+    // (consistent with CronTool behavior).
     let p = parse_cron_add_args("job --interval 60 --cron '0 * * * *' --message test").unwrap();
-    assert!(matches!(p.schedule, CronSchedule::Interval { seconds: 60 }));
+    assert!(
+        matches!(p.schedule, CronSchedule::Cron { ref expression } if expression == "0 * * * *"),
+        "expected cron expression to take precedence, got: {:?}",
+        p.schedule
+    );
 }
 
 #[test]

@@ -27,7 +27,7 @@ pub fn is_job_due(job: &CronJob, now_secs: u64) -> bool {
             if *seconds == 0 {
                 return false;
             }
-            job.last_run_at == 0 || now_secs >= job.last_run_at + seconds
+            job.last_run_at == 0 || now_secs >= job.last_run_at.saturating_add(*seconds)
         }
         CronSchedule::Cron { .. } => {
             // Cron expression evaluation is not yet implemented.
@@ -76,6 +76,10 @@ pub trait CronStore: Send + Sync {
 
     /// Add a new job.
     fn add(&self, job: CronJob) -> Result<(), DomainError>;
+
+    /// Atomically add a job only if no job with the same name exists.
+    /// Returns `Ok(true)` if added, `Ok(false)` if a duplicate was found.
+    fn add_if_absent(&self, job: CronJob) -> Result<bool, DomainError>;
 
     /// Remove a job by id.
     fn remove(&self, id: &str) -> Result<(), DomainError>;

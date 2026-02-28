@@ -3,6 +3,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use chrono::Local;
+
 use crate::domain::skill::SkillLoader;
 use crate::infrastructure::auth::credential_store::Credential;
 use crate::infrastructure::persistence::skill_loader::FileSkillLoader;
@@ -30,6 +32,34 @@ pub fn merge_prompts(skill_prompt: &str, user_prompt: &Option<String>) -> String
     match user_prompt {
         Some(up) if !up.is_empty() => format!("{}\n\n{}", skill_prompt, up),
         _ => skill_prompt.to_string(),
+    }
+}
+
+/// Generate a preamble with the current local date, time, and timezone.
+///
+/// Example: `"Current date and time: Saturday, March 1, 2026 at 10:30:15 AM GMT+1"`
+pub fn datetime_preamble() -> String {
+    let now = Local::now();
+    // Format: "Saturday, March 1, 2026 at 10:30:15 AM GMT+1"
+    let date_str = now.format("%A, %B %-d, %Y at %I:%M:%S %p %Z").to_string();
+    format!("Current date and time: {}", date_str)
+}
+
+/// Build a complete system prompt with datetime preamble, skills, and user prompt.
+///
+/// Always prepends the current date/time/timezone so the agent knows
+/// what "today" and "now" mean — critical for cron scheduling and
+/// time-aware tasks. Combines:
+/// 1. Datetime preamble (always present)
+/// 2. Skill content (if any skills are loaded)
+/// 3. User-provided system prompt (if any)
+pub fn build_system_prompt(skill_prompt: &str, user_prompt: &Option<String>) -> String {
+    let preamble = datetime_preamble();
+    let merged = merge_prompts(skill_prompt, user_prompt);
+    if merged.is_empty() {
+        preamble
+    } else {
+        format!("{}\n\n{}", preamble, merged)
     }
 }
 
@@ -117,5 +147,53 @@ mod tests {
     fn test_merge_prompts_skill_with_empty_user() {
         let result = merge_prompts("Skill content", &Some(String::new()));
         assert_eq!(result, "Skill content");
+    }
+
+    #[test]
+    fn test_datetime_preamble_contains_current_date() {
+        let preamble = datetime_preamble();
+        assert!(
+            preamble.starts_with("Current date and time:"),
+            "expected preamble to start with 'Current date and time:', got: {}",
+            preamble
+        );
+        // Should contain a year (4 digits)
+        let year = chrono::Local::now().format("%Y").to_string();
+        assert!(
+            preamble.contains(&year),
+            "expected preamble to contain current year {}, got: {}",
+            year,
+            preamble
+        );
+    }
+
+    #[test]
+    fn test_build_system_prompt_datetime_only() {
+        let result = build_system_prompt("", &None);
+        assert!(result.starts_with("Current date and time:"));
+        // No trailing skills/user content
+        assert!(!result.contains("\n\n"));
+    }
+
+    #[test]
+    fn test_build_system_prompt_with_skills() {
+        let result = build_system_prompt("Skill content", &None);
+        assert!(result.starts_with("Current date and time:"));
+        assert!(result.contains("Skill content"));
+    }
+
+    #[test]
+    fn test_build_system_prompt_with_skills_and_user() {
+        let result = build_system_prompt("Skill content", &Some("Be helpful".to_string()));
+        assert!(result.starts_with("Current date and time:"));
+        assert!(result.contains("Skill content"));
+        assert!(result.contains("Be helpful"));
+    }
+
+    #[test]
+    fn test_build_system_prompt_with_user_only() {
+        let result = build_system_prompt("", &Some("Be helpful".to_string()));
+        assert!(result.starts_with("Current date and time:"));
+        assert!(result.contains("Be helpful"));
     }
 }
