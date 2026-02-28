@@ -34,6 +34,17 @@ fn given_tool_workspace_with_exec_timeout(world: &mut QuectoWorld, timeout_secs:
     world._temp_dir = Some(td);
 }
 
+#[given(expr = "a file {string} exists with CRLF line endings and content {string}")]
+fn given_crlf_file(world: &mut QuectoWorld, filename: String, content: String) {
+    let ws = world
+        .tool_workspace
+        .as_ref()
+        .expect("tool workspace not set");
+    // Replace literal \n with actual \r\n
+    let crlf_content = content.replace("\\n", "\r\n");
+    std::fs::write(ws.join(&filename), crlf_content).expect("write crlf file");
+}
+
 #[given(expr = "a large file {string} exists with {int} lines")]
 fn given_large_file(world: &mut QuectoWorld, filename: String, lines: usize) {
     let ws = world

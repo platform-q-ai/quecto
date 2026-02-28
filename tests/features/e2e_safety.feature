@@ -60,11 +60,11 @@ Feature: End-to-End Safety and Limits
     Then the exit code should be 0
     And stdout should contain "Write denied"
 
-  Scenario: Edit_file outside workspace is blocked
-    Given the mock LLM first returns a tool call for "edit_file" with args:
-      | path | ../../etc/passwd |
-      | old  | root             |
-      | new  | pwned            |
+  Scenario: Edit outside workspace is blocked
+    Given the mock LLM first returns a tool call for "edit" with args:
+      | path    | ../../etc/passwd |
+      | oldText | root             |
+      | newText | pwned            |
     And the mock LLM then returns a text response "Edit denied"
     When I run quecto agent -s - -m "Edit protected file"
     Then the exit code should be 0

@@ -10,12 +10,12 @@ Feature: End-to-End Agentic Loop
   # --- Untested tool types ---
 
   @done
-  Scenario: LLM edits a file via edit_file tool
+  Scenario: LLM edits a file via edit tool
     Given a file "config.txt" in the e2e workspace with content "mode=debug"
-    And the mock LLM first returns a tool call for "edit_file" with args:
-      | path | config.txt |
-      | old  | debug      |
-      | new  | release    |
+    And the mock LLM first returns a tool call for "edit" with args:
+      | path    | config.txt |
+      | oldText | debug      |
+      | newText | release    |
     And the mock LLM then returns a text response "Changed mode to release"
     When I run quecto agent -s - -m "Switch config to release mode"
     Then the exit code should be 0
@@ -35,12 +35,12 @@ Feature: End-to-End Agentic Loop
     And the file "log.txt" in the e2e workspace should contain "appended-line"
 
   @done
-  Scenario: edit_file error when substring not found is sent back to LLM
+  Scenario: edit error when substring not found is sent back to LLM
     Given a file "data.txt" in the e2e workspace with content "hello world"
-    And the mock LLM first returns a tool call for "edit_file" with args:
-      | path | data.txt  |
-      | old  | not-found |
-      | new  | replaced  |
+    And the mock LLM first returns a tool call for "edit" with args:
+      | path    | data.txt  |
+      | oldText | not-found |
+      | newText | replaced  |
     And the mock LLM then returns a text response "The substring was not in the file"
     When I run quecto agent -s - -m "Edit data.txt"
     Then the exit code should be 0
@@ -67,7 +67,7 @@ Feature: End-to-End Agentic Loop
     Given a file "version.txt" in the e2e workspace with content "v1.0.0"
     And the mock LLM returns a tool call sequence:
       | call | read | {"path":"version.txt"}                             |
-      | call | edit_file | {"path":"version.txt","old":"1.0.0","new":"2.0.0"} |
+      | call | edit | {"path":"version.txt","oldText":"1.0.0","newText":"2.0.0"} |
       | call | read | {"path":"version.txt"}                             |
       | text | Version bumped from v1.0.0 to v2.0.0 |                        |
     When I run quecto agent -s - -m "Bump the version to 2.0.0"

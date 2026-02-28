@@ -35,7 +35,7 @@ fn tool_schemas() -> Vec<(&'static str, &'static str, &'static str)> {
             r#"{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}"#,
         ),
         (
-            "edit_file",
+            "edit",
             "Edit a file",
             r#"{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"}},"required":["path","old","new"]}"#,
         ),

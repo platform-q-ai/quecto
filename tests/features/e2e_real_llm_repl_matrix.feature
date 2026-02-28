@@ -157,7 +157,7 @@ Feature: E2E Real LLM REPL Matrix
   Scenario: REPL can edit existing file
     Given a file "repl-edit.txt" in the e2e workspace with content "state=old"
     When I start quecto in REPL mode
-    And I type "Use edit_file to change repl-edit.txt from state=old to state=new"
+    And I type "Use edit to change repl-edit.txt from state=old to state=new"
     And I type "/exit"
     Then the exit code should be 0
     And the file "repl-edit.txt" in the e2e workspace should contain "state=new"

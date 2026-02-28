@@ -49,23 +49,23 @@ Feature: WASM Tool Ports
     Then the WASM workspace file "sub/dir/file.txt" should exist
 
   @done
-  Scenario: WASM EditFileTool replaces content in a file
+  Scenario: WASM EditTool replaces content in a file
     Given a WASM-containerized tool registry
     And a WASM workspace file "code.py" with content "print('hello')"
-    When the agent executes WASM tool "edit_file" with args:
-      | path | code.py    |
-      | old  | hello      |
-      | new  | goodbye    |
+    When the agent executes WASM tool "edit" with args:
+      | path    | code.py  |
+      | oldText | hello    |
+      | newText | goodbye  |
     Then the WASM workspace file "code.py" should contain "print('goodbye')"
 
   @done
-  Scenario: WASM EditFileTool fails when substring not found
+  Scenario: WASM EditTool fails when substring not found
     Given a WASM-containerized tool registry
     And a WASM workspace file "code.py" with content "print('hello')"
-    When the agent executes WASM tool "edit_file" with args:
-      | path | code.py    |
-      | old  | nonexistent |
-      | new  | replacement |
+    When the agent executes WASM tool "edit" with args:
+      | path    | code.py     |
+      | oldText | nonexistent |
+      | newText | replacement |
     Then the WASM tool result should be an error
 
   @done

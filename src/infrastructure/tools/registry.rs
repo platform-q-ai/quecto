@@ -25,7 +25,7 @@ pub struct ExecRegistrySettings {
     pub cpu_time_limit_secs: u64,
     pub wall_time_limit_secs: u64,
 }
-use super::filesystem::{AppendFileTool, EditFileTool, ListDirTool, ReadTool, WriteTool};
+use super::filesystem::{AppendFileTool, EditTool, ListDirTool, ReadTool, WriteTool};
 
 /// Registry of all available tools, keyed by name.
 pub struct ToolRegistryImpl {
@@ -137,10 +137,8 @@ impl ToolRegistryImpl {
         reg.register(read_tool.clone());
         let write_tool = Arc::new(WriteTool::new(workspace.clone(), sandbox.clone()));
         reg.register(write_tool.clone());
-        reg.register(Arc::new(EditFileTool::new(
-            workspace.clone(),
-            sandbox.clone(),
-        )));
+        let edit_tool = Arc::new(EditTool::new(workspace.clone(), sandbox.clone()));
+        reg.register(edit_tool.clone());
         reg.register(Arc::new(AppendFileTool::new(
             workspace.clone(),
             sandbox.clone(),
@@ -156,6 +154,7 @@ impl ToolRegistryImpl {
         // that were trained on the previous naming convention.
         reg.tools.insert("read_file".to_string(), read_tool);
         reg.tools.insert("write_file".to_string(), write_tool);
+        reg.tools.insert("edit_file".to_string(), edit_tool);
 
         reg
     }
@@ -230,7 +229,7 @@ mod tests {
         assert!(names.contains(&"exec".to_string()));
         assert!(names.contains(&"read".to_string()));
         assert!(names.contains(&"write".to_string()));
-        assert!(names.contains(&"edit_file".to_string()));
+        assert!(names.contains(&"edit".to_string()));
         assert!(names.contains(&"append_file".to_string()));
         assert!(names.contains(&"list_dir".to_string()));
     }
