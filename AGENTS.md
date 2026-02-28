@@ -2,6 +2,9 @@
 
 Rust reimplementation of an agentic AI assistant — single static binary targeting ultra-low resource usage (VPS, RPi, containers). Supports self-replication and bidirectional child process communication.
 
+**ALWAYS FOLLOW BDD/TDD RED, GREEN, REFACTOR PROCESS WHEN MAKING CHANGES**
+**ALWAYS USE FULL DEVELOPMENT WORKFLOW**
+
 ## Architecture
 
 Four layers, strict dependency direction. Inner layers never import outer.
@@ -96,7 +99,21 @@ Gateway: `EventLoopContext` holds runtime state. Telegram polling, bot commands 
 
 ## Development workflow
 
-BDD-first with cucumber-rs: `@pending` → `@wip` → write steps → implement → `@done`. Runner uses `.fail_on_skipped()`, runs `@wip`+`@done`. `@real-llm` gated by `QUECTO_REAL_LLM=1`. `QUECTO_TAG=<tag>` for filtering. 49 feature files, 25 step definition modules.
+1 - Update Scenarios/Add new features as necessary
+2 - Write/update unit tests
+3 - ensure new/modified tests fail -RED
+4 - Implement code - GREEN
+5 - Refactor based in performance, security and clean architecture standards - REFACTOR
+6 - Ensure tests still pass - GREEN
+7 - Commit
+8 - Push
+9 - Create PR
+10 - Despatch Architecture, Security, Performance Reviewers
+11 - Fix all valid concerns raised in review comments
+12 - Push changes to remote
+13 - Reply to comments and mark resolved
+14 - Merge
+15 - Move to local master and pull
 
 ## Quality gates
 
@@ -105,9 +122,16 @@ BDD-first with cucumber-rs: `@pending` → `@wip` → write steps → implement 
 | Quality scripts | `scripts/check-quality.sh`, `scripts/check-bdd-quality.sh` |
 | Format | `cargo fmt --check` |
 | Lint | `cargo clippy -- -D warnings` (zero warnings) |
-| Unit tests | `cargo test --lib` (831 tests) |
-| Architecture | `cargo test --test architecture` |
-| BDD | `cargo test --test bdd` |
+| Unit tests | `cargo test --no-fail-fast --lib 2>&1 \| scripts/test-filter.sh` |
+| Architecture | `cargo test --no-fail-fast --test architecture 2>&1 \| scripts/test-filter.sh` |
+| BDD (sharded) | See [Sharded BDD](#sharded-bdd-25-way-parallel) below |
+
+All test commands pipe through `scripts/test-filter.sh` which strips the per-test `... ok` noise and shows only:
+- **Summary totals** (passed/failed counts)
+- **Failure details** (test name, file:line, assertion message, panic reason)
+- **BDD failures** with Feature/Scenario context
+
+`--no-fail-fast` ensures all failures are reported in a single run, not just the first.
 
 Three-tier hooks: pre-commit (~20-40s: quality+fmt+clippy), pre-push (~30-60s: tests+25-shard BDD), pre-merge (~30-90s: real-LLM+machete+deny). SHA-based caching. Install via `scripts/install-hooks.sh`.
 
@@ -115,18 +139,18 @@ Three-tier hooks: pre-commit (~20-40s: quality+fmt+clippy), pre-push (~30-60s: t
 
 Non-real-LLM (fast, no API key needed):
 ```bash
-for i in $(seq 0 24); do
-  (timeout 12m env QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=25 cargo test --test bdd) &
+(for i in $(seq 0 24); do
+  (timeout 12m env QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=25 cargo test --no-fail-fast --test bdd 2>&1 | scripts/test-filter.sh) &
 done
-wait
+wait)
 ```
 
 Real-LLM (requires `OPENAI_API_KEY`):
 ```bash
-for i in $(seq 0 24); do
-  (timeout 12m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=25 cargo test --test bdd) &
+(for i in $(seq 0 24); do
+  (timeout 12m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=25 cargo test --no-fail-fast --test bdd 2>&1 | scripts/test-filter.sh) &
 done
-wait
+wait)
 ```
 
 Use `QUECTO_TAG=real-llm-smoke` for quicker paid smoke runs.
@@ -135,9 +159,12 @@ Use `QUECTO_TAG=real-llm-smoke` for quicker paid smoke runs.
 
 To debug a single scenario, add a temporary tag (e.g. `@focus`) to the scenario in the `.feature` file, then run:
 ```bash
-QUECTO_TAG=focus cargo test --test bdd
+QUECTO_TAG=focus cargo test --no-fail-fast --test bdd 2>&1 | scripts/test-filter.sh
 ```
 Remove the tag before committing.
 
 ## Tech stack
 Rust 2024, Tokio, reqwest+rustls, serde/serde_json/serde_yaml, uuid, chrono, tracing, dirs, thiserror. Dev: cucumber 0.21, futures, tempfile, wiremock 0.6.
+
+**ALWAYS FOLLOW BDD/TDD RED, GREEN, REFACTOR PROCESS WHEN MAKING CHANGES**
+**ALWAYS USE FULL DEVELOPMENT WORKFLOW**

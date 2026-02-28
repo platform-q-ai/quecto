@@ -83,6 +83,7 @@ pub struct ExecTool {
     timeout: Duration,
     max_capture_bytes: usize,
     mode: ExecIsolationMode,
+    allow_native_fallback: bool,
     nsjail: NsjailOptions,
     startup_warning: Option<String>,
     startup_error: Option<String>,
@@ -161,6 +162,7 @@ impl ExecTool {
             timeout: options.timeout,
             max_capture_bytes: options.max_capture_bytes,
             mode,
+            allow_native_fallback: options.allow_native_fallback,
             nsjail: options.nsjail,
             startup_warning: warning,
             startup_error,
@@ -210,7 +212,40 @@ impl ExecTool {
             .map_err(|e| DomainError::Security(e.to_string()))?;
 
         let source_env = build_source_env(env_overrides);
-        let mut cmd = build_command(self, &command, &source_env);
+        let result = self
+            .spawn_and_wait(&command, &source_env, self.mode)
+            .await?;
+
+        // If nsjail failed with a cgroup-related error, retry with native exec.
+        if self.mode == ExecIsolationMode::Nsjail
+            && self.allow_native_fallback
+            && result.is_error
+            && is_nsjail_cgroup_failure(&result.content)
+        {
+            tracing::warn!(
+                target: "exec",
+                "nsjail cgroup setup failed; falling back to native exec"
+            );
+            return self
+                .spawn_and_wait(&command, &source_env, ExecIsolationMode::Native)
+                .await;
+        }
+
+        Ok(result)
+    }
+
+    async fn spawn_and_wait(
+        &self,
+        command: &str,
+        source_env: &HashMap<String, String>,
+        mode: ExecIsolationMode,
+    ) -> Result<ToolResult, DomainError> {
+        let mut cmd = match mode {
+            ExecIsolationMode::Nsjail => {
+                build_nsjail_command(&self.workspace, command, source_env, &self.nsjail)
+            }
+            ExecIsolationMode::Native => build_shell_command(&self.workspace, command, source_env),
+        };
 
         let mut child = cmd
             .stdout(std::process::Stdio::piped())
@@ -234,6 +269,19 @@ impl ExecTool {
 
         run_child_with_timeout(child, stream_tasks, self.timeout, self.max_capture_bytes).await
     }
+}
+
+/// Check whether an nsjail error result indicates a cgroup setup failure.
+///
+/// Matches patterns from nsjail's cgroup initialization code, which reports
+/// errors like "createCgroup(): mkdir('.../memory/NSJAIL/...')" or
+/// "Couldn't initialize cgroup".
+fn is_nsjail_cgroup_failure(content: &str) -> bool {
+    let lower = content.to_lowercase();
+    lower.contains("createcgroup")
+        || lower.contains("couldn't initialize cgroup")
+        || (lower.contains("cgroup") && lower.contains("no such file or directory"))
+        || (lower.contains("cgroup") && lower.contains("permission denied"))
 }
 
 fn extract_command(arguments: &str) -> Result<String, DomainError> {
@@ -284,15 +332,22 @@ fn build_shell_command(
     cmd
 }
 
-fn build_command(
-    tool: &ExecTool,
-    command: &str,
-    source_env: &HashMap<String, String>,
-) -> tokio::process::Command {
-    if tool.mode == ExecIsolationMode::Nsjail {
-        return build_nsjail_command(&tool.workspace, command, source_env, &tool.nsjail);
+/// Detect the cgroup version on the host.
+///
+/// Returns `CgroupVersion::V2` if the unified hierarchy is available
+/// (i.e. `/sys/fs/cgroup/cgroup.controllers` exists), otherwise `V1`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CgroupVersion {
+    V1,
+    V2,
+}
+
+pub fn detect_cgroup_version() -> CgroupVersion {
+    if Path::new("/sys/fs/cgroup/cgroup.controllers").exists() {
+        CgroupVersion::V2
+    } else {
+        CgroupVersion::V1
     }
-    build_shell_command(&tool.workspace, command, source_env)
 }
 
 fn build_nsjail_command(
@@ -309,6 +364,11 @@ fn build_nsjail_command(
         .arg("/workspace")
         .arg("--bindmount")
         .arg(format!("{}:/workspace", workspace.display()));
+
+    // Auto-detect cgroup version so that nsjail uses the correct mount paths.
+    // On cgroup v2 hosts, nsjail's default v1 paths (/sys/fs/cgroup/memory etc.)
+    // do not exist, causing cgroup setup failures.
+    cmd.arg("--detect_cgroupv2");
 
     if options.network_passthrough {
         cmd.arg("--disable_clone_newnet");
@@ -557,123 +617,5 @@ impl Tool for ExecTool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    fn test_exec(restrict: bool) -> (ExecTool, TempDir) {
-        let tmp = TempDir::new().unwrap();
-        let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), restrict);
-        let tool = ExecTool::new(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox));
-        (tool, tmp)
-    }
-
-    #[tokio::test]
-    async fn test_exec_echo() {
-        let (tool, _tmp) = test_exec(false);
-        let result = tool.execute(r#"{"command": "echo hello"}"#).await.unwrap();
-        assert!(!result.is_error);
-        assert!(result.content.contains("hello"));
-    }
-
-    #[tokio::test]
-    async fn test_exec_dangerous_command_blocked() {
-        let (tool, _tmp) = test_exec(false);
-        let result = tool.execute(r#"{"command": "rm -rf /"}"#).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_exec_missing_command_arg() {
-        let (tool, _tmp) = test_exec(false);
-        let result = tool.execute(r#"{}"#).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_exec_timeout_kills_long_command() {
-        let tmp = TempDir::new().unwrap();
-        let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
-        let tool = ExecTool::with_timeout(
-            Arc::new(tmp.path().to_path_buf()),
-            Arc::new(sandbox),
-            Duration::from_secs(1),
-        );
-
-        let result = tool.execute(r#"{"command": "sleep 60"}"#).await.unwrap();
-        assert!(result.is_error);
-        assert!(result.content.contains("timed out"));
-    }
-
-    #[tokio::test]
-    async fn test_exec_strips_quecto_env_vars() {
-        let tmp = TempDir::new().unwrap();
-        let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
-        let tool = ExecTool::new(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox));
-
-        let mut env_vars = HashMap::new();
-        env_vars.insert(
-            "QUECTO_PROVIDERS_OPENAI_API_KEY".to_string(),
-            "sk-secret".to_string(),
-        );
-        env_vars.insert("HOME".to_string(), "/home/testuser".to_string());
-
-        let result = tool
-            .execute_with_env(
-                r#"{"command": "printenv QUECTO_PROVIDERS_OPENAI_API_KEY"}"#,
-                &env_vars,
-            )
-            .await
-            .unwrap();
-        assert!(!result.content.contains("sk-secret"));
-    }
-
-    #[test]
-    fn test_nsjail_falls_back_when_binary_missing() {
-        let tmp = TempDir::new().unwrap();
-        let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
-        let opts = ExecOptions {
-            isolation_mode: ExecIsolationMode::Nsjail,
-            allow_native_fallback: true,
-            nsjail: NsjailOptions {
-                binary: "definitely-not-a-real-binary".to_string(),
-                ..NsjailOptions::default()
-            },
-            ..ExecOptions::default()
-        };
-        let tool =
-            ExecTool::with_options(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox), opts);
-        assert_eq!(tool.mode(), ExecIsolationMode::Native);
-        assert!(
-            tool.startup_warning()
-                .unwrap_or_default()
-                .contains("falling back to native")
-        );
-        assert!(tool.startup_error().is_none());
-    }
-
-    #[tokio::test]
-    async fn test_nsjail_missing_without_fallback_returns_config_error() {
-        let tmp = TempDir::new().unwrap();
-        let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
-        let opts = ExecOptions {
-            isolation_mode: ExecIsolationMode::Nsjail,
-            nsjail: NsjailOptions {
-                binary: "definitely-not-a-real-binary".to_string(),
-                ..NsjailOptions::default()
-            },
-            ..ExecOptions::default()
-        };
-        let tool =
-            ExecTool::with_options(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox), opts);
-
-        let result = tool.execute(r#"{"command":"echo hi"}"#).await;
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("allow_native_fallback")
-        );
-    }
-}
+#[path = "exec_tests.rs"]
+mod tests;
