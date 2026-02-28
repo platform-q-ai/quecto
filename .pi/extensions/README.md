@@ -4,7 +4,7 @@ A [Pi](https://github.com/badlogic/pi-mono) extension that enforces the BDD/TDD 
 
 ## Why
 
-The Quecto project mandates a strict 15-step development workflow for every change. This extension makes that workflow visible, trackable, and enforced — both for you and for the LLM agent working alongside you.
+The Quecto project mandates a strict 16-step development workflow for every change. This extension makes that workflow visible, trackable, and enforced — both for you and for the LLM agent working alongside you.
 
 ## The Workflow
 
@@ -25,8 +25,9 @@ Steps are grouped into phases, color-coded in the TUI:
 | | 11. Fix review concerns | Address all valid feedback |
 | | 12. Push changes | Push fixes to remote |
 | | 13. Reply & resolve comments | Mark review threads as resolved |
-| 🔵 **CI/CD** | 14. Merge | Merge the PR |
-| | 15. Pull to local master | `git checkout master && git pull` |
+| 🔵 **CI/CD** | 14. Run pre-merge hooks | Real-LLM e2e tests (24-shard), cargo machete, cargo deny |
+| | 15. Merge | Merge the PR |
+| | 16. Pull to local master | `git checkout master && git pull` |
 
 ## Features
 
@@ -38,7 +39,7 @@ Open with `/workflow` or `Ctrl+Shift+W`. Navigate with ↑↓ or j/k, toggle ste
 ───── Quecto Dev Workflow ─────────────────────
   BDD/TDD Red → Green → Refactor
 
-  ████████░░░░░░░░░░░░░░░░░░░░░░ 4/15 (27%)
+  ████████░░░░░░░░░░░░░░░░░░░░░░ 4/16 (25%)
 
   RED
   ▸ ✓  1. Update Scenarios / Add new features
@@ -58,7 +59,7 @@ Open with `/workflow` or `Ctrl+Shift+W`. Navigate with ↑↓ or j/k, toggle ste
 A one-line progress bar appears above the editor once you start working:
 
 ```
-Workflow ████░░░░░░░░░░░ 4/15 (27%) → Step 5: Refactor (perf, security, clean arch) [REFACTOR]
+Workflow ████░░░░░░░░░░░ 4/16 (25%) → Step 5: Refactor (perf, security, clean arch) [REFACTOR]
 ```
 
 Hidden when no steps are checked (no clutter on fresh sessions).
@@ -98,7 +99,7 @@ When the agent stops with incomplete workflow steps, you can have it automatical
 - **`/workflow-auto`** command
 - **`Ctrl+Shift+A`** shortcut
 
-When enabled, the extension detects when the agent finishes (`agent_end`) and, if at least one step is checked but not all are done, sends a follow-up message telling the agent to continue with the next incomplete step. This creates a loop where the agent keeps working through the workflow until all 15 steps are complete.
+When enabled, the extension detects when the agent finishes (`agent_end`) and, if at least one step is checked but not all are done, sends a follow-up message telling the agent to continue with the next incomplete step. This creates a loop where the agent keeps working through the workflow until all 16 steps are complete.
 
 The nudge is skipped if no steps have been checked yet (to avoid pestering on fresh sessions where the workflow hasn't started).
 
@@ -126,5 +127,5 @@ Pi auto-discovers it when you run `pi` from the `quecto` directory. Use `/reload
 - **Auto-verify RED/GREEN** — Run `cargo test` automatically when checking steps 3 and 6, and confirm the exit code matches expectations (non-zero for RED, zero for GREEN).
 - **Strict ordering** — Hard-block out-of-order step completion instead of warning.
 - **Guard git push** — Block `git push` if step 7 (Commit) isn't checked.
-- **Auto-reset** — Automatically reset the checklist after step 15.
+- **Auto-reset** — Automatically reset the checklist after step 16.
 - **Quality gate integration** — Run `scripts/check-quality.sh` and `cargo clippy` as part of the refactor step verification.

@@ -313,9 +313,16 @@ Set `providers.<name>.api_base` only when you need a non-default endpoint (for e
 - `tools.exec.nsjail_binary`: binary name or absolute path used when `isolation` is `nsjail` (default `nsjail`)
 - `tools.exec.allow_native_fallback`: when `true`, missing/unexecutable nsjail falls back to native mode; when `false` (default), `exec` calls fail with a config error
 - `tools.exec.network_passthrough`: allow outbound network inside nsjail (`false` by default)
-- `tools.exec.memory_limit_mb`, `tools.exec.pid_limit`, `tools.exec.cpu_time_limit_secs`, `tools.exec.wall_time_limit_secs`: per-call nsjail resource limits (safe defaults enabled)
+- `tools.exec.memory_limit_mb`: virtual address-space limit via `--rlimit_as` (MB). Limits virtual reservations, not physical RSS — runtimes with large virtual mappings (Go, JVM) may need higher values
+- `tools.exec.pid_limit`: max processes via `--rlimit_nproc`. Per-UID limit, not per-jail — budget is shared across concurrent jails running as the same UID
+- `tools.exec.cpu_time_limit_secs`: CPU time limit via `--rlimit_cpu` (seconds per process)
+- `tools.exec.wall_time_limit_secs`: wall-clock timeout via `--time_limit` (seconds)
 - `tools.exec.nsjail_binary`: must resolve to an executable under trusted system paths (`/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`, `/usr/local/bin`); relative paths are rejected
 - exec child environment is allowlisted by default (`PATH`, locale vars, and basic shell/runtime vars), preventing broad secret env leakage
+
+nsjail resource limits use rlimits (`--rlimit_as`, `--rlimit_nproc`, `--rlimit_cpu`) instead of cgroups, so no root access or cgroup write permissions are required. The cgroup namespace is always disabled (`--disable_clone_newcgroup`). This means nsjail works in containers, on unprivileged users, and in any environment without `/sys/fs/cgroup/` access.
+
+nsjail mounts `/bin`, `/usr`, `/lib`, `/lib64` read-only inside the jail, plus individual `/etc` files needed by the dynamic linker and NSS (`ld.so.cache`, `ld.so.conf`, `nsswitch.conf`, `passwd`, `group`, `ssl`, `alternatives`). Only paths that exist on the host are mounted.
 
 ### Environment variable overrides
 
@@ -386,7 +393,7 @@ The agent operates inside a sandbox:
 
 - **Workspace restriction**: When `restrict_to_workspace` is `true` (default), all file operations are confined to the workspace directory. Symlinks pointing outside are blocked. Path traversal (`../`) is caught.
 - **Dangerous commands blocked**: `rm -rf /`, `rm -r -f /`, `mkfs`, `dd`, `shutdown`, `reboot`, `chmod -R 777 /`, fork bombs, and pipe-to-shell patterns (`curl|sh`) are always blocked regardless of other settings. Command checks normalize whitespace/casing, so equivalent variants like `rm  -rf /` are also blocked.
-- **Exec runtime isolation**: The `exec` tool runs in `nsjail` mode by default with bounded resources; `native` remains available as an explicit opt-in via `tools.exec.isolation`.
+- **Exec runtime isolation**: The `exec` tool runs in `nsjail` mode by default with rlimit-based resource bounds (no cgroup access required); `native` remains available as an explicit opt-in via `tools.exec.isolation`.
 - **Environment isolation**: `QUECTO_*` environment variables (including API keys) are stripped from child processes spawned by the `exec` tool.
 - **Secret redaction**: Log/status output redacts OpenAI/Anthropic (`sk-*`), Groq (`gsk_*`/`gsk-*`), and Telegram bot token values.
 
