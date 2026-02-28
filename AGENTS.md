@@ -23,7 +23,7 @@ Zero deps except `thiserror`, `serde` (derive), `serde_yaml`. Defines system voc
 | `agent.rs` | `AgentLoop` trait, `AgentInfo`, `AgentResult` |
 | `session.rs` | `Session`, `SessionStore` trait, `SpillEntry`, `SpillIndex`, `ContextSpillStore` trait |
 | `skill.rs` | `Skill`, `SkillSource`, `SkillFrontmatter`, `SkillLoader` trait, `split_skill_md()`, `validate_frontmatter()` |
-| `cron.rs` | `CronJob`, `CronJobResult`, `CronSchedule`, `CronStore` trait |
+| `cron.rs` | `CronJob`, `CronJobResult`, `CronSchedule`, `CronStore` trait, `is_job_due()` (saturating arithmetic) |
 | `channel.rs` | `Channel` trait (outbound delivery port) |
 | `workspace.rs` | `HeartbeatTaskSource` and `OnboardStore` ports |
 | `subagent.rs` | `SubagentConfig`, `validate_agent_id()` |
@@ -52,8 +52,8 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 |---|---|
 | `config.rs` | `Config` with serde, env overrides, exec isolation settings (nsjail binary/limits/fallback) |
 | `providers/` | `OpenAiProvider`, `AnthropicProvider` (SSE streaming), `FallbackProvider` (cooldown + error classification). URL validation: https required for non-loopback |
-| `tools/` | `ExecTool` (shell, 1MiB cap, native/nsjail modes), `ReadFile/WriteFile/EditFile/AppendFile/ListDir` (async tokio::fs), `SpawnTool`, `CronTool`, `MessageTool`, `WebSearchTool` (Brave+DDG), `RecallTool` (spill retrieval), `ToolRegistryImpl`, `tools/wasm/` (wasm32-wasip2 via Wasmtime Component Model) |
-| `persistence/` | `FileSessionStore` (round-trips all Message fields), `MemoryStore`, `FileCronStore`, `FileSkillLoader`, `FileHeartbeatTaskSource`, `FileOnboardStore`, `FileContextSpillStore` (JSONL append-only) |
+| `tools/` | `ExecTool` (shell, 1MiB cap, native/nsjail modes), `ReadFile/WriteFile/EditFile/AppendFile/ListDir` (async tokio::fs), `SpawnTool`, `CronTool` (name-based lookup via `find_by_name`, duplicate name rejection, zero-interval validation), `MessageTool`, `WebSearchTool` (Brave+DDG), `RecallTool` (spill retrieval), `ToolRegistryImpl`, `tools/wasm/` (wasm32-wasip2 via Wasmtime Component Model) |
+| `persistence/` | `FileSessionStore` (round-trips all Message fields), `MemoryStore`, `FileCronStore` (Mutex-serialized read-modify-write, atomic temp-file rename), `FileSkillLoader`, `FileHeartbeatTaskSource`, `FileOnboardStore`, `FileContextSpillStore` (JSONL append-only) |
 | `security/` | `Sandbox` — workspace path validation + command filtering |
 | `auth/` | `CredentialStore` (file-based), `oauth.rs` (browser + device code flows) |
 | `channels/` | `TelegramChannel` — send/receive, user allowlist, configurable `api_base` |
@@ -84,7 +84,9 @@ Manual arg parsing (no clap). Entry point: `cli::run(args) -> i32`.
 
 REPL commands: `/help`, `/clear`, `/cron`, `/heartbeat`, `/agent`, `/spawn`, `/exit`. Uses abstracted I/O for testing.
 
-Gateway: `EventLoopContext` holds runtime state. Telegram polling, bot commands (`/start`, `/help`, `/status`), credential snapshot for efficiency, session trimming via `max_session_messages`, graceful shutdown via `tokio::select!`.
+All entry points (REPL, CLI agent, gateway) prepend a datetime preamble to the system prompt via `build_system_prompt()` so the agent always knows the current date/time/timezone — critical for cron scheduling and time-aware tasks.
+
+Gateway: `EventLoopContext` holds runtime state. Telegram polling, bot commands (`/start`, `/help`, `/status`), credential snapshot for efficiency, session trimming via `max_session_messages`, graceful shutdown via `tokio::select!`. Gateway services use a `SystemPromptAgent` wrapper that injects a transient datetime+skills system prompt before each `process()` call and strips it after — never persisted in session history. Applied to inbound message processing, heartbeat ticks, and cron ticks.
 
 ## Dependency rule
 - `domain/` imports nothing from project
