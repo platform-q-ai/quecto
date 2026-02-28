@@ -250,6 +250,141 @@ fn test_nsjail_command_omits_none_limits() {
 }
 
 #[test]
+fn test_nsjail_command_includes_bounded_tmpfs_for_tmp() {
+    let args = nsjail_args_str(&NsjailOptions::default());
+    // Should use bounded `-m none:/tmp:tmpfs:size=<bytes>` syntax, not unbounded --tmpfsmount.
+    assert!(
+        args.contains("none:/tmp:tmpfs:size="),
+        "missing bounded tmpfs mount for /tmp: {args}"
+    );
+    assert!(
+        !args.contains("--tmpfsmount"),
+        "should use -m syntax, not --tmpfsmount: {args}"
+    );
+}
+
+#[test]
+fn test_nsjail_command_sets_tmpdir_env() {
+    let workspace = PathBuf::from("/tmp/test");
+    let mut source_env = HashMap::new();
+    source_env.insert("HOME".to_string(), "/home/test".to_string());
+    let options = NsjailOptions::default();
+    let ro_dirs = resolve_ro_bindmounts();
+    let ro_etc = resolve_ro_etc_files();
+    let config = NsjailConfig {
+        options: &options,
+        ro_dirs: &ro_dirs,
+        ro_etc_files: &ro_etc,
+    };
+    let cmd = build_nsjail_command(&workspace, "echo hi", &source_env, &config);
+    let envs: Vec<(String, String)> = cmd
+        .as_std()
+        .get_envs()
+        .filter_map(|(k, v)| {
+            Some((
+                k.to_string_lossy().to_string(),
+                v?.to_string_lossy().to_string(),
+            ))
+        })
+        .collect();
+    let tmpdir = envs.iter().find(|(k, _)| k == "TMPDIR");
+    assert!(
+        tmpdir.is_some(),
+        "TMPDIR should be set in nsjail env, got: {envs:?}"
+    );
+    assert_eq!(tmpdir.unwrap().1, "/tmp", "TMPDIR should be /tmp");
+}
+
+#[test]
+fn test_nsjail_command_respects_caller_tmpdir_override() {
+    let workspace = PathBuf::from("/tmp/test");
+    let mut source_env = HashMap::new();
+    source_env.insert("HOME".to_string(), "/home/test".to_string());
+    source_env.insert("TMPDIR".to_string(), "/workspace/tmp".to_string());
+    let options = NsjailOptions::default();
+    let ro_dirs = resolve_ro_bindmounts();
+    let ro_etc = resolve_ro_etc_files();
+    let config = NsjailConfig {
+        options: &options,
+        ro_dirs: &ro_dirs,
+        ro_etc_files: &ro_etc,
+    };
+    let cmd = build_nsjail_command(&workspace, "echo hi", &source_env, &config);
+    let envs: Vec<(String, String)> = cmd
+        .as_std()
+        .get_envs()
+        .filter_map(|(k, v)| {
+            Some((
+                k.to_string_lossy().to_string(),
+                v?.to_string_lossy().to_string(),
+            ))
+        })
+        .collect();
+    let tmpdir = envs.iter().find(|(k, _)| k == "TMPDIR");
+    assert!(tmpdir.is_some(), "TMPDIR should be present");
+    assert_eq!(
+        tmpdir.unwrap().1,
+        "/workspace/tmp",
+        "caller-provided TMPDIR should be preserved, not overwritten"
+    );
+}
+
+#[test]
+fn test_nsjail_command_sets_tmp_and_temp_env() {
+    let workspace = PathBuf::from("/tmp/test");
+    let source_env = HashMap::new();
+    let options = NsjailOptions::default();
+    let ro_dirs = resolve_ro_bindmounts();
+    let ro_etc = resolve_ro_etc_files();
+    let config = NsjailConfig {
+        options: &options,
+        ro_dirs: &ro_dirs,
+        ro_etc_files: &ro_etc,
+    };
+    let cmd = build_nsjail_command(&workspace, "echo hi", &source_env, &config);
+    let envs: Vec<(String, String)> = cmd
+        .as_std()
+        .get_envs()
+        .filter_map(|(k, v)| {
+            Some((
+                k.to_string_lossy().to_string(),
+                v?.to_string_lossy().to_string(),
+            ))
+        })
+        .collect();
+    for var in ["TMPDIR", "TMP", "TEMP"] {
+        let found = envs.iter().find(|(k, _)| k == var);
+        assert!(found.is_some(), "{var} should be set in nsjail env");
+        assert_eq!(found.unwrap().1, "/tmp", "{var} should be /tmp");
+    }
+}
+
+#[test]
+fn test_nsjail_command_uses_bounded_tmpfs_mount() {
+    let args = nsjail_args_str(&NsjailOptions {
+        tmp_size_mb: Some(64),
+        ..NsjailOptions::default()
+    });
+    assert!(args.contains("-m"), "missing -m mount arg: {args}");
+    assert!(
+        args.contains("none:/tmp:tmpfs:size=67108864"),
+        "missing bounded tmpfs mount: {args}"
+    );
+}
+
+#[test]
+fn test_nsjail_command_omits_tmp_mount_when_disabled() {
+    let args = nsjail_args_str(&NsjailOptions {
+        tmp_size_mb: None,
+        ..NsjailOptions::default()
+    });
+    assert!(
+        !args.contains("none:/tmp:tmpfs"),
+        "should not have tmpfs mount when disabled: {args}"
+    );
+}
+
+#[test]
 fn test_nsjail_command_includes_time_limit() {
     let args = nsjail_args_str(&NsjailOptions {
         wall_time_limit_secs: Some(20),

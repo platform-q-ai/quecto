@@ -111,6 +111,7 @@ impl ToolRegistryImpl {
                 pid_limit: Some(settings.pid_limit),
                 cpu_time_limit_secs: Some(settings.cpu_time_limit_secs),
                 wall_time_limit_secs: Some(settings.wall_time_limit_secs),
+                ..NsjailOptions::default()
             },
             ..ExecOptions::default()
         };
