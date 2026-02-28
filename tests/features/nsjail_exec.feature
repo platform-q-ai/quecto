@@ -243,6 +243,42 @@ Feature: nsjail Exec Isolation
     Then the tool result should not contain "QUECTO_SECRET_KEY"
     And the tool result should not contain "hunter2"
 
+  # --- Writable /tmp (tmpfs) ---
+
+  @done
+  Scenario: Command can write to /tmp inside the sandbox
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with a workspace
+    When the agent executes nsjail tool "exec" with args:
+      | command | echo hello > /tmp/test.txt && cat /tmp/test.txt |
+    Then the tool result should contain "hello"
+    And the tool result should not be an error
+
+  @done
+  Scenario: mktemp works inside the sandbox
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with a workspace
+    When the agent executes nsjail tool "exec" with args:
+      | command | mktemp && echo ok |
+    Then the tool result should contain "ok"
+    And the tool result should not be an error
+
+  @done
+  Scenario: nsjail command includes tmpfsmount for /tmp
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with a workspace
+    Then the nsjail command for "echo test" should contain "--tmpfsmount"
+    And the nsjail command for "echo test" should contain "/tmp"
+
+  @done
+  Scenario: TMPDIR is set to /tmp inside the sandbox
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with a workspace
+    When the agent executes nsjail tool "exec" with args:
+      | command | echo $TMPDIR |
+    Then the tool result should contain "/tmp"
+    And the tool result should not be an error
+
   # --- Cleanup ---
 
   @done

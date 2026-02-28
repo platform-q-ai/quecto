@@ -449,6 +449,11 @@ fn build_nsjail_command(
             .arg(format!("{etc_path}:{etc_path}"));
     }
 
+    // Mount a writable tmpfs at /tmp so commands that expect a POSIX-standard
+    // writable temp directory (mktemp, compilers, pip, etc.) work out of the box.
+    // The tmpfs is ephemeral — automatically cleaned when the jail exits.
+    cmd.arg("--tmpfsmount").arg("/tmp");
+
     // Disable cgroup namespace — resource limits are enforced via rlimits
     // which work without root or cgroup write access.
     cmd.arg("--disable_clone_newcgroup");
@@ -493,6 +498,14 @@ fn build_nsjail_command(
     {
         cmd.env("PATH", path);
     }
+
+    // Ensure TMPDIR points to the writable tmpfs inside the jail.
+    // Many tools check TMPDIR/TMP/TEMP before falling back to /tmp,
+    // so set it explicitly to avoid relying on host env propagation.
+    if !source_env.contains_key("TMPDIR") {
+        cmd.env("TMPDIR", "/tmp");
+    }
+
     cmd
 }
 
