@@ -221,13 +221,6 @@ Feature: nsjail Exec Isolation
     Then no nsjail processes should remain running
     And no stale mount namespaces should remain
 
-  @done
-  Scenario: nsjail sandbox is cleaned up after parent crash
-    Given nsjail is available on the system
-    And an nsjail-isolated exec tool with die-with-parent enabled
-    When the parent process is killed during exec
-    Then the nsjail sandbox process should also be terminated
-
   # --- Output capture ---
 
   @done

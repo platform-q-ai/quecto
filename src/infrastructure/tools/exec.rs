@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
-use std::time::Instant;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -24,7 +23,6 @@ const DEFAULT_NSJAIL_PID_LIMIT: u64 = 256;
 const DEFAULT_NSJAIL_CPU_TIME_LIMIT_SECS: u64 = 30;
 const DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS: u64 = 30;
 const TRUSTED_NSJAIL_PATHS: &[&str] = &["/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin"];
-const NSJAIL_HELP_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 const EXEC_ENV_ALLOWLIST: &[&str] = &[
     "HOME", "PATH", "LANG", "TZ", "TERM", "SHELL", "USER", "LOGNAME", "TMPDIR",
 ];
@@ -43,8 +41,6 @@ pub struct NsjailOptions {
     pub pid_limit: Option<u64>,
     pub cpu_time_limit_secs: Option<u64>,
     pub wall_time_limit_secs: Option<u64>,
-    pub die_with_parent: bool,
-    pub allow_without_die_with_parent: bool,
 }
 
 impl Default for NsjailOptions {
@@ -56,8 +52,6 @@ impl Default for NsjailOptions {
             pid_limit: Some(DEFAULT_NSJAIL_PID_LIMIT),
             cpu_time_limit_secs: Some(DEFAULT_NSJAIL_CPU_TIME_LIMIT_SECS),
             wall_time_limit_secs: Some(DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS),
-            die_with_parent: true,
-            allow_without_die_with_parent: false,
         }
     }
 }
@@ -143,24 +137,6 @@ impl ExecTool {
         if mode == ExecIsolationMode::Nsjail {
             if let Some(resolved_binary) = resolve_nsjail_binary(&options.nsjail.binary) {
                 options.nsjail.binary = resolved_binary;
-                if options.nsjail.die_with_parent
-                    && !nsjail_supports_flag(&options.nsjail.binary, "--die_with_parent")
-                {
-                    if options.nsjail.allow_without_die_with_parent {
-                        options.nsjail.die_with_parent = false;
-                        warning = Some(format!(
-                            "nsjail binary '{}' does not support --die_with_parent; continuing without it",
-                            options.nsjail.binary
-                        ));
-                        tracing::warn!(target: "exec", "{}", warning.as_deref().unwrap_or_default());
-                    } else {
-                        startup_error = Some(format!(
-                            "nsjail binary '{}' does not support required --die_with_parent; set tools.exec.allow_without_die_with_parent=true to allow downgrade",
-                            options.nsjail.binary
-                        ));
-                        tracing::error!(target: "exec", "{}", startup_error.as_deref().unwrap_or_default());
-                    }
-                }
             } else {
                 let missing = format!(
                     "nsjail binary '{}' is not available or not executable",
@@ -334,10 +310,6 @@ fn build_nsjail_command(
         .arg("--bindmount")
         .arg(format!("{}:/workspace", workspace.display()));
 
-    if options.die_with_parent {
-        cmd.arg("--die_with_parent");
-    }
-
     if options.network_passthrough {
         cmd.arg("--disable_clone_newnet");
     }
@@ -417,48 +389,6 @@ fn is_trusted_nsjail_binary_path(path: &Path) -> bool {
         .iter()
         .map(Path::new)
         .any(|root| path.starts_with(root))
-}
-
-fn nsjail_supports_flag(binary: &str, flag: &str) -> bool {
-    use std::io::Read;
-
-    let mut child = match std::process::Command::new(binary)
-        .arg("--help")
-        .env_clear()
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(_) => return false,
-    };
-    let start = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) => {
-                if start.elapsed() >= NSJAIL_HELP_PROBE_TIMEOUT {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return false;
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            Err(_) => return false,
-        }
-    }
-    let mut text = String::new();
-    if let Some(mut stdout) = child.stdout.take() {
-        let mut buf = String::new();
-        let _ = stdout.read_to_string(&mut buf);
-        text.push_str(&buf);
-    }
-    if let Some(mut stderr) = child.stderr.take() {
-        let mut buf = String::new();
-        let _ = stderr.read_to_string(&mut buf);
-        text.push_str(&buf);
-    }
-    text.contains(flag)
 }
 
 fn is_executable_file(path: &Path) -> bool {

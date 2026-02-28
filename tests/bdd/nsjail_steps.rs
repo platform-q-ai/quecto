@@ -45,8 +45,6 @@ fn setup_nsjail_exec_tool(world: &mut QuectoWorld, setup: NsjailSetup) {
             pid_limit: setup.pid_limit,
             cpu_time_limit_secs: setup.cpu_time_limit_secs,
             wall_time_limit_secs: setup.wall_time_limit_secs,
-            die_with_parent: true,
-            allow_without_die_with_parent: true,
         },
     };
 
@@ -221,11 +219,6 @@ fn given_nsjail_with_allowlist(world: &mut QuectoWorld, allowlist: String) {
     );
 }
 
-#[given("an nsjail-isolated exec tool with die-with-parent enabled")]
-fn given_nsjail_die_with_parent(world: &mut QuectoWorld) {
-    setup_nsjail_exec_tool(world, NsjailSetup::default());
-}
-
 #[given(expr = "an nsjail-isolated exec tool with output capture limit {int} MiB")]
 fn given_nsjail_capture_limit(world: &mut QuectoWorld, mib: u64) {
     let bytes = (mib as usize) * 1024 * 1024;
@@ -328,8 +321,6 @@ fn when_registry_constructed(world: &mut QuectoWorld) {
                 pid_limit: Some(settings.pid_limit),
                 cpu_time_limit_secs: Some(settings.cpu_time_limit_secs),
                 wall_time_limit_secs: Some(settings.wall_time_limit_secs),
-                die_with_parent: settings.die_with_parent,
-                allow_without_die_with_parent: settings.allow_without_die_with_parent,
             },
             ..ExecOptions::default()
         },

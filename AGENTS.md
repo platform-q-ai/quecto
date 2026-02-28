@@ -4,17 +4,7 @@ Quecto is a Rust reimplementation of an agentic personal AI assistant — built 
 
 ## What we want to achieve
 
-A single static binary that runs an autonomous AI agent on minimal Linux systems (VPS, Raspberry Pi, containers). The agent:
-
-- Receives messages via Telegram (or CLI)
-- Routes them through an LLM provider (OpenAI or Anthropic, with automatic fallback)
-- Executes tools (shell commands, file operations, web search, cron scheduling, subagent spawning)
-- Persists sessions and cron jobs to disk
-- Loads user-defined skills from the filesystem
-- Runs a heartbeat loop for scheduled tasks
-- Stays within a security sandbox that restricts file access and command execution
-
-Linux only. No clap. No hardware. No migration tooling. English only.
+A single static binary that runs an autonomous AI agent on minimal Linux systems (VPS, Raspberry Pi, containers). That can replicate itself inline or in paralell and bidirectionally communicate between chold processes to solve complex tasks.
 
 ## Architecture
 
@@ -67,9 +57,9 @@ Implements the domain traits with real I/O. This is where serde, reqwest, tokio,
 
 | Directory | Contents |
 |---|---|
-| `config.rs` | `Config` struct with serde deserialization, env var overrides, workspace path expansion, and exec isolation settings (`tools.exec.isolation`, `tools.exec.nsjail_binary`, `tools.exec.allow_native_fallback`, `tools.exec.allow_without_die_with_parent`, nsjail resource limits) |
+| `config.rs` | `Config` struct with serde deserialization, env var overrides, workspace path expansion, and exec isolation settings (`tools.exec.isolation`, `tools.exec.nsjail_binary`, `tools.exec.allow_native_fallback`, nsjail resource limits) |
 | `providers/` | `OpenAiProvider`, `AnthropicProvider` (real HTTP, SSE streaming via `chat_stream()`), `FallbackProvider` (cooldown + provider-scoped error classification using extracted status codes and semantic matching), `ErrorClass`. `create_provider()` validates `api_base` (https for non-local hosts; http allowed only on loopback) and rejects unsafe URLs |
-| `tools/` | `ExecTool` (shell; drains stdout/stderr while running and caps captured output to 1 MiB per stream; supports `native` and `nsjail` runtime modes with executable-binary validation, trusted-path binary resolution, opt-in native fallback, default nsjail limits, optional downgrade when `--die_with_parent` is unsupported, and allowlisted env passthrough), `ReadFileTool`/`WriteFileTool`/`EditFileTool`/`AppendFileTool`/`ListDirTool` (filesystem, async via `tokio::fs`), `SpawnTool` (subagent), `CronTool`, `MessageTool`, `WebSearchTool` (Brave + DDG), `RecallTool` (retrieves spilled tool outputs by ID, supports `"list"` for full index, tracks repeated recalls with diagnostic warnings), `ToolRegistryImpl` (caches sorted tool definitions at registration time), and `tools/wasm/` (`runtime.rs`, `bindings.rs`, `capabilities.rs`, `host.rs`, `loader.rs`, `wrapper.rs`) for real `wasm32-wasip2` tool component execution |
+| `tools/` | `ExecTool` (shell; drains stdout/stderr while running and caps captured output to 1 MiB per stream; supports `native` and `nsjail` runtime modes with executable-binary validation, trusted-path binary resolution, opt-in native fallback, default nsjail limits, and allowlisted env passthrough), `ReadFileTool`/`WriteFileTool`/`EditFileTool`/`AppendFileTool`/`ListDirTool` (filesystem, async via `tokio::fs`), `SpawnTool` (subagent), `CronTool`, `MessageTool`, `WebSearchTool` (Brave + DDG), `RecallTool` (retrieves spilled tool outputs by ID, supports `"list"` for full index, tracks repeated recalls with diagnostic warnings), `ToolRegistryImpl` (caches sorted tool definitions at registration time), and `tools/wasm/` (`runtime.rs`, `bindings.rs`, `capabilities.rs`, `host.rs`, `loader.rs`, `wrapper.rs`) for real `wasm32-wasip2` tool component execution |
 | `persistence/` | `FileSessionStore` (round-trips all `Message` fields including context-pruning metadata: `turn`, `is_pinned`, `is_manifest`, `is_collapsed`, `tool_name`, `input_preview`, `spill_id`; backward-compatible with older session files via serde defaults), `MemoryStore`, `FileCronStore`, `FileSkillLoader`, `workspace_store.rs` (`FileHeartbeatTaskSource`, `FileOnboardStore`), `context_spill.rs` (`FileContextSpillStore` — JSONL append-only spill file for context pruning, implements `ContextSpillStore`) |
 | `security/` | `Sandbox` — workspace path validation and command filtering |
 | `auth/` | `CredentialStore` (file-based token CRUD), `oauth.rs` (`OAuthConfig`, `DeviceCodeResponse`, `request_device_code()` — OAuth browser flow and device code flow for headless environments) |
@@ -85,7 +75,7 @@ Two-tier isolation model for tool execution. No Docker. No daemon.
 
 **WASM containers** (all tools except exec and spawn): The runtime now executes real WebAssembly components (`wasm32-wasip2`) via Wasmtime Component Model using generated WIT bindings (`src/infrastructure/tools/wasm/bindings.rs`). A standalone guest crate at `guest/` is the source for the checked-in runtime artifact `guest/quecto_wasm_guest.wasm`, which exports `quecto:tools/tool` and dispatches built-in tool calls through host imports from `wit/tool.wit`. Each invocation gets a fresh `Store<HostState>` with linked WASI + host imports, fuel metering, memory limits, and epoch interruption (no cross-call state). Host parity behaviors include workspace path checks, 1 MiB read-size enforcement, cron/spill list+lookup operations, channel send, and allowlisted HTTP.
 
-**nsjail** (exec tool only): Shell commands run inside nsjail — a lightweight Linux process isolator using kernel namespaces and cgroups directly. Workspace bind-mounted RW, host toolchain RO, everything else invisible. cgroups v2 enforces memory limits, PID limits, and CPU time. Built-in timeout with automatic kill. Kafel seccomp-bpf for syscall filtering. Configure via `tools.exec.isolation` (`nsjail`/`native`), `tools.exec.nsjail_binary` (trusted executable path/name), `tools.exec.allow_native_fallback`, `tools.exec.allow_without_die_with_parent`, and nsjail limit fields. Missing/non-executable nsjail can fail closed (default) or fall back to native only when explicitly enabled.
+**nsjail** (exec tool only): Shell commands run inside nsjail — a lightweight Linux process isolator using kernel namespaces and cgroups directly. Workspace bind-mounted RW, host toolchain RO, everything else invisible. cgroups v2 enforces memory limits, PID limits, and CPU time. Built-in timeout with automatic kill. Kafel seccomp-bpf for syscall filtering. Configure via `tools.exec.isolation` (`nsjail`/`native`), `tools.exec.nsjail_binary` (trusted executable path/name), `tools.exec.allow_native_fallback`, and nsjail limit fields. Missing/non-executable nsjail can fail closed (default) or fall back to native only when explicitly enabled.
 
 **Spawn tool** unchanged — it launches `quecto agent` as a child process, which inherits the same WASM + nsjail isolation.
 
