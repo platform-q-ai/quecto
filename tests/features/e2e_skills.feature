@@ -107,3 +107,13 @@ Feature: E2E Skill Loading
     Then the exit code should be 0
     And the output should contain "Still works"
     And the LLM system message should only contain the datetime preamble
+
+  # Issue #104: The quecto datetime preamble is intentionally richer than
+  # any provider-injected "Current date:" metadata. It includes day-of-week,
+  # full time with seconds, and timezone — critical for cron scheduling
+  # and time-aware tasks. Duplication with provider-side date is expected.
+  Scenario: Datetime preamble includes day-of-week, time, and timezone
+    Given a mock LLM that captures requests and returns text "I know the time"
+    When I run quecto agent -s - -m "What time is it?"
+    Then the exit code should be 0
+    And the LLM system message datetime preamble should include day-of-week, time, and timezone

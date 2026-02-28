@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use wasmtime::component::ResourceTable;
 use wasmtime::{StoreLimits, StoreLimitsBuilder};
-use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiView};
+use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 /// An HTTP request from a WASM tool.
 #[derive(Debug, Clone)]
@@ -311,12 +311,11 @@ impl HostState {
 // ============================================================
 
 impl WasiView for HostState {
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.wasi_table
-    }
-
-    fn ctx(&mut self) -> &mut WasiCtx {
-        &mut self.wasi_ctx
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView {
+            ctx: &mut self.wasi_ctx,
+            table: &mut self.wasi_table,
+        }
     }
 }
 

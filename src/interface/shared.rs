@@ -38,6 +38,16 @@ pub fn merge_prompts(skill_prompt: &str, user_prompt: &Option<String>) -> String
 /// Generate a preamble with the current local date, time, and timezone.
 ///
 /// Example: `"Current date and time: Saturday, March 1, 2026 at 10:30:15 AM GMT+1"`
+///
+/// This preamble is intentionally richer than any date metadata injected by
+/// LLM providers (e.g. Anthropic's `"Current date: 2026-03-01"`). It includes:
+/// - **Day-of-week** (e.g. "Saturday") — useful for scheduling context
+/// - **Full time with seconds** — critical for cron scheduling precision
+/// - **Timezone identifier** — essential for timezone-aware tasks
+///
+/// The resulting duplication with provider-side date metadata is expected and
+/// harmless; this preamble is authoritative for time-aware agent operations.
+/// See issue #104 for discussion.
 pub fn datetime_preamble() -> String {
     let now = Local::now();
     // Format: "Saturday, March 1, 2026 at 10:30:15 AM GMT+1"
@@ -50,9 +60,14 @@ pub fn datetime_preamble() -> String {
 /// Always prepends the current date/time/timezone so the agent knows
 /// what "today" and "now" mean — critical for cron scheduling and
 /// time-aware tasks. Combines:
-/// 1. Datetime preamble (always present)
+/// 1. Datetime preamble (always present, see [`datetime_preamble`])
 /// 2. Skill content (if any skills are loaded)
 /// 3. User-provided system prompt (if any)
+///
+/// Note: Some LLM providers inject their own date metadata (e.g. "Current
+/// date: 2026-03-01"). The quecto preamble is richer (day-of-week, full
+/// time, timezone) and takes precedence for time-aware operations.
+/// This duplication is intentional — see issue #104.
 pub fn build_system_prompt(skill_prompt: &str, user_prompt: &Option<String>) -> String {
     let preamble = datetime_preamble();
     let merged = merge_prompts(skill_prompt, user_prompt);
@@ -195,5 +210,56 @@ mod tests {
         let result = build_system_prompt("", &Some("Be helpful".to_string()));
         assert!(result.starts_with("Current date and time:"));
         assert!(result.contains("Be helpful"));
+    }
+
+    /// Issue #104: The quecto datetime preamble is intentionally richer than
+    /// provider-injected "Current date:" metadata. It includes day-of-week,
+    /// full time with seconds, and timezone — critical for cron scheduling
+    /// and time-aware tasks.
+    #[test]
+    fn test_datetime_preamble_includes_day_of_week_time_and_timezone() {
+        let preamble = datetime_preamble();
+
+        // Must include a day-of-week name
+        let days = [
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+            "Sunday",
+        ];
+        assert!(
+            days.iter().any(|d| preamble.contains(d)),
+            "preamble should include day-of-week, got: {}",
+            preamble
+        );
+
+        // Must include AM/PM time with seconds (e.g. "06:55:58 PM")
+        assert!(
+            preamble.contains("AM") || preamble.contains("PM"),
+            "preamble should include AM/PM time, got: {}",
+            preamble
+        );
+
+        // Must include colons in the time portion (HH:MM:SS)
+        let colon_count = preamble.chars().filter(|c| *c == ':').count();
+        assert!(
+            colon_count >= 2,
+            "preamble should include HH:MM:SS (at least 2 colons), got: {}",
+            preamble
+        );
+
+        // After AM/PM, there should be a timezone identifier
+        let ampm_pos = preamble.find("AM").or_else(|| preamble.find("PM"));
+        if let Some(pos) = ampm_pos {
+            let after = &preamble[pos + 2..];
+            assert!(
+                !after.trim().is_empty(),
+                "preamble should have timezone after AM/PM, got: {}",
+                preamble
+            );
+        }
     }
 }
