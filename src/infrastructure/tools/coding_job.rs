@@ -60,6 +60,9 @@ impl CodingJobTool {
             "cleanup" => self.handle_cleanup(&args),
             "cleanup_all" => self.handle_cleanup_all(arguments),
             "list" => self.handle_list(arguments),
+            "message" => Err("message action requires subagent coordinator mode. \
+                 Set tools.coding.coordinator_mode = \"subagent\" in config."
+                .to_string()),
             other => Err(format!("unknown action: {other}")),
         }
     }
@@ -223,6 +226,10 @@ WORKFLOW:
 6. cleanup    - Remove a single terminal job's artifacts.
 7. cleanup_all- Remove all terminal jobs in bulk (filter by state, skip non-terminal).
 8. list       - List jobs with metadata (created_at, state_entered_at, last_event_ts).
+9. message    - Send a freeform text instruction to the coordinator agent. Use this \
+                to triage issues, ask the coordinator to investigate stuck jobs, \
+                change priorities, or give any open-ended directive. \
+                (Requires subagent coordinator mode.)
 
 REPO RULES:
 - 'repo' must be a directory name in the workspace (e.g. \"my-project\"), not a URL.
@@ -243,10 +250,11 @@ TYPICAL USAGE:
 - New project:      create(name) -> run(repo=name, base_ref=\"main\", goal=\"...\")
 - Existing remote:  import(url) -> run(repo=name, base_ref=\"main\", goal=\"...\")
 - Monitor:          status(job_id) repeatedly until succeeded/failed
+- Triage:           message(text=\"job X seems stuck, investigate and retry if needed\")
 - Bulk cleanup:     cleanup_all() or cleanup_all(state_filter=[\"succeeded\",\"failed\"])
 - Done:             cleanup(job_id)";
 
-const CODING_JOB_SCHEMA: &str = r#"{"type":"object","properties":{"action":{"type":"string","enum":["create","import","run","status","cancel","cleanup","cleanup_all","list"],"description":"The action to perform"},"name":{"type":"string","description":"Repository name (for create/import)"},"description":{"type":"string","description":"Project description (for create, optional)"},"url":{"type":"string","description":"Remote git URL to clone (for import)"},"goal":{"type":"string","description":"Goal description (for run)"},"repo":{"type":"string","description":"Workspace repo name (for run)"},"base_ref":{"type":"string","description":"Base branch/ref (for run, e.g. main)"},"priority":{"type":"string","enum":["low","medium","high"],"description":"Job priority (for run, default: medium)"},"labels":{"type":"array","items":{"type":"string"},"description":"Labels (for run)"},"skills":{"type":"array","items":{"type":"string"},"description":"Skill names (for run)"},"profile":{"type":"string","description":"Profile name (for run, default: default)"},"max_wall_seconds":{"type":"integer","description":"Wall-clock timeout in seconds (for run)"},"job_id":{"type":"string","description":"Job ID (for status/cancel/cleanup)"},"run_id":{"type":"string","description":"Run ID (for status)"},"state_filter":{"type":"array","items":{"type":"string"},"description":"Filter by job states (for list/cleanup_all)"},"keep_artifacts":{"type":"boolean","description":"Keep artifacts on cleanup/cleanup_all (default: true)"},"terminal_only":{"type":"boolean","description":"Skip non-terminal jobs in cleanup_all instead of erroring (default: true)"}},"required":["action"]}"#;
+const CODING_JOB_SCHEMA: &str = r#"{"type":"object","properties":{"action":{"type":"string","enum":["create","import","run","status","cancel","cleanup","cleanup_all","list","message"],"description":"The action to perform"},"name":{"type":"string","description":"Repository name (for create/import)"},"description":{"type":"string","description":"Project description (for create, optional)"},"url":{"type":"string","description":"Remote git URL to clone (for import)"},"goal":{"type":"string","description":"Goal description (for run)"},"repo":{"type":"string","description":"Workspace repo name (for run)"},"base_ref":{"type":"string","description":"Base branch/ref (for run, e.g. main)"},"priority":{"type":"string","enum":["low","medium","high"],"description":"Job priority (for run, default: medium)"},"labels":{"type":"array","items":{"type":"string"},"description":"Labels (for run)"},"skills":{"type":"array","items":{"type":"string"},"description":"Skill names (for run)"},"profile":{"type":"string","description":"Profile name (for run, default: default)"},"max_wall_seconds":{"type":"integer","description":"Wall-clock timeout in seconds (for run)"},"job_id":{"type":"string","description":"Job ID (for status/cancel/cleanup)"},"run_id":{"type":"string","description":"Run ID (for status)"},"state_filter":{"type":"array","items":{"type":"string"},"description":"Filter by job states (for list/cleanup_all)"},"keep_artifacts":{"type":"boolean","description":"Keep artifacts on cleanup/cleanup_all (default: true)"},"terminal_only":{"type":"boolean","description":"Skip non-terminal jobs in cleanup_all instead of erroring (default: true)"},"text":{"type":"string","description":"Freeform text instruction for the coordinator (for message)"}},"required":["action"]}"#;
 
 #[cfg(test)]
 mod tests {
@@ -531,6 +539,16 @@ mod tests {
         assert!(!r.is_error);
         let v: serde_json::Value = serde_json::from_str(&r.content).unwrap();
         assert!(v["jobs"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_message_action_requires_subagent_mode() {
+        let r = exec(
+            &make_tool(),
+            r#"{"action":"message","text":"investigate stuck jobs"}"#,
+        );
+        assert!(r.is_error);
+        assert!(r.content.contains("subagent"));
     }
 
     #[test]

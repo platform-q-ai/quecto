@@ -519,7 +519,7 @@ async fn run_coordinator(ctx: CoordinatorRunContext) -> i32 {
                 // Process inbox commands via the agent.
                 tracing::debug!("coordinator heartbeat tick");
 
-                process_inbox_tick(&inbox_source, &*agent, &*ipc, timeout).await;
+            process_inbox_tick(&inbox_source, &*agent, &*ipc, timeout).await;
 
                 // Also run workspace heartbeat tasks if any.
                 match heartbeat::execute_heartbeat_tick(&workspace_source, &*agent, timeout).await {
