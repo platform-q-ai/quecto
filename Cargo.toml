@@ -26,8 +26,8 @@ dirs = "6"
 thiserror = "2"
 
 # WASM tool isolation
-wasmtime = { version = "28", features = ["component-model"] }
-wasmtime-wasi = "28"
+wasmtime = { version = "42", features = ["component-model"] }
+wasmtime-wasi = "42"
 
 [features]
 default = []
