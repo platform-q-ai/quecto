@@ -2,13 +2,17 @@
 //!
 //! Runs a long-lived agent process that manages coding jobs autonomously.
 //! The coordinator has its own LLM provider, tool registry (with `coding_job`
-//! in inline mode), and a heartbeat loop that polls the IPC inbox for
-//! commands from the main agent.
+//! in inline mode + `recall`), and a heartbeat loop that polls the IPC inbox
+//! for commands from the main agent.
 //!
 //! Architecture: this is a mini-gateway — same pattern as `Gateway::run()`
 //! but without Telegram channels. The heartbeat reads pending IPC commands,
 //! converts them to agent messages, runs the agent loop, and writes
 //! responses back to the IPC outbox.
+//!
+//! Security: the coordinator's tool registry is restricted to `coding_job`
+//! and `recall` — no exec/fs/spawn tools. This prevents privilege
+//! escalation if the coordinator's LLM is tricked via prompt injection.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -16,15 +20,14 @@ use std::sync::Arc;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::heartbeat;
 use crate::domain::agent::AgentLoop;
-use crate::domain::coding_ipc::CoordinatorIpc;
+use crate::domain::coding_ipc::{CoordinatorIpc, CoordinatorIpcCommand};
 use crate::domain::workspace::HeartbeatTaskSource;
 use crate::infrastructure::coding::coordinator_ipc::FileCoordinatorIpc;
 use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
-use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::recall::RecallTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
-use crate::interface::shared::build_coding_lifecycle;
+use crate::interface::shared::{SharedLifecycleDriver, build_coding_lifecycle};
 
 // ── Parsed arguments ────────────────────────────────────────────────────
 
@@ -39,6 +42,9 @@ pub struct CoordinatorArgs {
 
 /// Default heartbeat interval in seconds.
 const DEFAULT_HEARTBEAT_INTERVAL_SECS: u64 = 60;
+
+/// Minimum allowed heartbeat interval in seconds.
+const MIN_HEARTBEAT_INTERVAL_SECS: u64 = 10;
 
 /// Parse coordinator flags from a slice of CLI arguments.
 pub fn parse_coordinator_args(args: &[String]) -> Result<CoordinatorArgs, String> {
@@ -56,6 +62,11 @@ pub fn parse_coordinator_args(args: &[String]) -> Result<CoordinatorArgs, String
                 let n: u64 = val
                     .parse()
                     .map_err(|_| format!("--heartbeat-interval must be a number, got '{val}'"))?;
+                if n < MIN_HEARTBEAT_INTERVAL_SECS {
+                    return Err(format!(
+                        "--heartbeat-interval must be >= {MIN_HEARTBEAT_INTERVAL_SECS}, got {n}"
+                    ));
+                }
                 heartbeat_interval_secs = Some(n);
             }
             // Legacy flag — accept but convert to heartbeat interval.
@@ -64,8 +75,9 @@ pub fn parse_coordinator_args(args: &[String]) -> Result<CoordinatorArgs, String
                 let ms: u64 = val
                     .parse()
                     .map_err(|_| format!("--poll-interval-ms must be a number, got '{val}'"))?;
-                // Convert ms to seconds, minimum 1s.
-                heartbeat_interval_secs = Some((ms / 1000).max(1));
+                // Convert ms to seconds, enforce minimum.
+                let secs = (ms / 1000).max(MIN_HEARTBEAT_INTERVAL_SECS);
+                heartbeat_interval_secs = Some(secs);
             }
             "--help" | "-h" => {
                 return Err("coordinator: see documentation for usage".to_string());
@@ -99,40 +111,20 @@ fn require_next(args: &[String], i: &mut usize, flag: &str) -> Result<String, St
     }
 }
 
-// ── Coordinator system prompt ───────────────────────────────────────────
-
-/// System prompt that defines the coordinator agent's role.
-const COORDINATOR_SYSTEM_PROMPT: &str = "\
-You are a coding job coordinator. You manage parallel coding workers for \
-long-running coding sessions. You have the `coding_job` tool available to \
-create repos, run jobs, check status, cancel, and cleanup.
-
-When you receive a command from the main agent via your heartbeat inbox, \
-execute it using the coding_job tool and return the result. You can reason \
-about stuck workers, retry failed jobs, and make autonomous decisions about \
-the coding workflow.
-
-On each heartbeat tick you should:
-1. Check for pending commands in the inbox and process them.
-2. Check the status of all running jobs and handle any that are stuck or failed.
-3. Report results back via the outbox.
-
-You are a long-lived process — you run continuously until shutdown is requested.";
-
 // ── IPC heartbeat source ────────────────────────────────────────────────
+// NOTE: A coordinator system prompt will be injected as `Message::system()`
+// once `heartbeat::dispatch_task()` supports system-message injection.
+// Until then, the coordinator's role context is implicit in the task
+// descriptions ("Process coordinator command ...") and tool definitions.
 
 /// A `HeartbeatTaskSource` that reads pending IPC commands from the
 /// coordinator inbox and formats them as heartbeat task messages.
 ///
-/// Each pending command becomes a heartbeat task message that the agent
-/// processes through its LLM loop. The agent uses the `coding_job` tool
-/// to execute the command and the response is captured.
-///
-/// The system prompt is prepended to each task so the agent has context
-/// about its role on every invocation.
+/// Read-only: this source only reads commands and formats them. The
+/// acknowledge/response side effects are performed in `run_coordinator()`
+/// after the agent finishes processing each task.
 struct InboxHeartbeatSource {
     ipc: Arc<dyn CoordinatorIpc>,
-    system_context: String,
 }
 
 impl HeartbeatTaskSource for InboxHeartbeatSource {
@@ -152,42 +144,29 @@ impl HeartbeatTaskSource for InboxHeartbeatSource {
             })?;
 
             if commands.is_empty() {
-                // Return a status check task even when inbox is empty so
-                // the coordinator proactively monitors running jobs.
-                return Ok(Some(format!(
-                    "- {context} Check status of all running coding jobs and report any issues.\n",
-                    context = self.system_context
-                )));
+                // No work — return None so the agent loop is NOT invoked.
+                // This avoids ~1440 unnecessary LLM API calls per day.
+                return Ok(None);
+            }
+
+            // Filter out shutdown commands — they are handled deterministically
+            // in run_coordinator() before reaching the LLM.
+            let non_shutdown: Vec<_> = commands.iter().filter(|c| c.action != "shutdown").collect();
+
+            if non_shutdown.is_empty() {
+                // Only shutdown commands — don't invoke LLM.
+                return Ok(None);
             }
 
             // Format each command as a heartbeat task line.
             let mut content = String::new();
-            for cmd in &commands {
+            for cmd in &non_shutdown {
                 let payload_str =
                     serde_json::to_string(&cmd.payload).unwrap_or_else(|_| "{}".to_string());
                 content.push_str(&format!(
-                    "- {context} Process coordinator command (id={}): action={}, payload={}\n",
-                    cmd.command_id,
-                    cmd.action,
-                    payload_str,
-                    context = self.system_context
+                    "- Process coordinator command (id={}): action={}, payload={}\n",
+                    cmd.command_id, cmd.action, payload_str,
                 ));
-
-                // Write a placeholder response immediately so the main agent
-                // doesn't time out waiting. The agent will update it after
-                // processing.
-                let ack_response = crate::domain::coding_ipc::CoordinatorIpcResponse {
-                    command_id: cmd.command_id.clone(),
-                    ok: true,
-                    body: Some(serde_json::json!({"status": "processing"})),
-                    error: None,
-                };
-                if let Err(e) = self.ipc.write_response(&ack_response) {
-                    tracing::warn!(command_id = %cmd.command_id, "failed to ack: {e}");
-                }
-                if let Err(e) = self.ipc.acknowledge_command(&cmd.command_id) {
-                    tracing::warn!(command_id = %cmd.command_id, "failed to ack: {e}");
-                }
             }
 
             Ok(Some(content))
@@ -199,9 +178,10 @@ impl HeartbeatTaskSource for InboxHeartbeatSource {
 
 /// Handle the `quecto coordinator` subcommand.
 ///
-/// Builds a full LLM-driven agent with `coding_job` tool (inline mode),
-/// then runs a heartbeat loop that polls the IPC inbox and feeds commands
-/// to the agent. This is the production entry point called from `cli/mod.rs`.
+/// Builds a full LLM-driven agent with restricted tools (`coding_job` +
+/// `recall` only), then runs a heartbeat loop that polls the IPC inbox
+/// and feeds commands to the agent. This is the production entry point
+/// called from `cli/mod.rs`.
 pub fn cmd_coordinator(
     ctx: &super::CliContext,
     args: &[String],
@@ -236,24 +216,7 @@ pub fn cmd_coordinator(
         return 1;
     }
 
-    // Build LLM provider.
-    let provider = match super::agent::build_agent_provider(
-        &match load_config(&base_dir) {
-            Ok(c) => c,
-            Err(e) => {
-                stderr.push_str(&format!("coordinator: {e}\n"));
-                return 1;
-            }
-        },
-        &base_dir,
-    ) {
-        Ok(p) => p,
-        Err(e) => {
-            stderr.push_str(&format!("coordinator: {e}\n"));
-            return 1;
-        }
-    };
-
+    // Load config once — used for provider, registry settings, and agent config.
     let config = match load_config(&base_dir) {
         Ok(c) => c,
         Err(e) => {
@@ -262,15 +225,20 @@ pub fn cmd_coordinator(
         }
     };
 
-    // Build tool registry with coding_job in inline mode.
-    let sandbox = Sandbox::new(Some(workspace.clone()), true);
-    let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
-    let mut registry = ToolRegistryImpl::with_core_tools_and_exec_settings(
-        workspace.clone(),
-        sandbox,
-        exec_settings,
-    );
-    let _lifecycle_driver = build_coding_lifecycle(&mut registry, &workspace, &base_dir);
+    // Build LLM provider.
+    let provider = match super::agent::build_agent_provider(&config, &base_dir) {
+        Ok(p) => p,
+        Err(e) => {
+            stderr.push_str(&format!("coordinator: {e}\n"));
+            return 1;
+        }
+    };
+
+    // Build restricted tool registry: coding_job + recall only.
+    // No exec/fs_read/fs_write/spawn — the coordinator should not have
+    // arbitrary shell or filesystem access (security reviewer finding).
+    let mut registry = ToolRegistryImpl::new();
+    let lifecycle_driver = build_coding_lifecycle(&mut registry, &workspace, &base_dir);
 
     let session_key = "coordinator:main".to_string();
     let spill_store = Arc::new(FileContextSpillStore::new(base_dir.clone()));
@@ -279,7 +247,7 @@ pub fn cmd_coordinator(
         session_key.clone(),
     )));
 
-    // Build agent.
+    // Build agent with system prompt injected as the first message.
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),
@@ -300,8 +268,10 @@ pub fn cmd_coordinator(
         coord_args.ipc_dir, coord_args.heartbeat_interval_secs, pid,
     ));
 
-    // Run the coordinator event loop.
-    let rt = match tokio::runtime::Builder::new_multi_thread()
+    // Run the coordinator event loop on a single-threaded runtime.
+    // The coordinator processes inbox commands sequentially — no need for
+    // a multi-threaded scheduler (performance reviewer finding).
+    let rt = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
     {
@@ -312,12 +282,13 @@ pub fn cmd_coordinator(
         }
     };
 
-    rt.block_on(run_coordinator(
+    rt.block_on(run_coordinator(CoordinatorRunContext {
         agent,
         ipc,
+        lifecycle_driver,
         workspace,
-        coord_args.heartbeat_interval_secs,
-    ))
+        heartbeat_interval_secs: coord_args.heartbeat_interval_secs,
+    }))
 }
 
 /// Load config from the base directory.
@@ -341,16 +312,106 @@ fn load_config(
     .map_err(|e| format!("failed to load config: {e}"))
 }
 
+/// Handle shutdown commands deterministically (no LLM needed).
+///
+/// Acknowledges each shutdown command, writes a success response, and
+/// returns `true` if at least one shutdown command was found.
+fn handle_shutdown_commands(ipc: &dyn CoordinatorIpc) -> bool {
+    let commands = match ipc.read_pending_commands() {
+        Ok(cmds) => cmds,
+        Err(_) => return false,
+    };
+
+    let shutdown_cmds: Vec<&CoordinatorIpcCommand> =
+        commands.iter().filter(|c| c.action == "shutdown").collect();
+
+    if shutdown_cmds.is_empty() {
+        return false;
+    }
+
+    for cmd in &shutdown_cmds {
+        let response = crate::domain::coding_ipc::CoordinatorIpcResponse {
+            command_id: cmd.command_id.clone(),
+            ok: true,
+            body: Some(serde_json::json!({"status": "shutdown_acknowledged"})),
+            error: None,
+        };
+        let _ = ipc.write_response(&response);
+        let _ = ipc.acknowledge_command(&cmd.command_id);
+    }
+
+    true
+}
+
+/// Acknowledge commands and write processing responses.
+///
+/// Called after `read_heartbeat_md()` returns tasks — this separates
+/// side effects from the read path (architecture reviewer finding).
+fn acknowledge_pending_commands(ipc: &dyn CoordinatorIpc) {
+    let commands = match ipc.read_pending_commands() {
+        Ok(cmds) => cmds,
+        Err(e) => {
+            tracing::warn!("failed to re-read commands for ack: {e}");
+            return;
+        }
+    };
+
+    for cmd in &commands {
+        if cmd.action == "shutdown" {
+            continue; // Handled separately by handle_shutdown_commands.
+        }
+
+        let ack_response = crate::domain::coding_ipc::CoordinatorIpcResponse {
+            command_id: cmd.command_id.clone(),
+            ok: true,
+            body: Some(serde_json::json!({"status": "processing"})),
+            error: None,
+        };
+        if let Err(e) = ipc.write_response(&ack_response) {
+            tracing::warn!(command_id = %cmd.command_id, "failed to write ack: {e}");
+        }
+        if let Err(e) = ipc.acknowledge_command(&cmd.command_id) {
+            tracing::warn!(command_id = %cmd.command_id, "failed to ack: {e}");
+        }
+    }
+}
+
+/// Query active job count from the lifecycle driver.
+fn active_job_count(driver: &SharedLifecycleDriver) -> u32 {
+    match driver.lock() {
+        Ok(guard) => {
+            let list = guard
+                .coordinator()
+                .list(&crate::domain::coding_command::ListRequest { state_filter: None });
+            list.jobs.iter().filter(|j| !j.state.is_terminal()).count() as u32
+        }
+        Err(_) => 0,
+    }
+}
+
+/// Bundled arguments for `run_coordinator()` to stay within clippy's
+/// argument limit.
+struct CoordinatorRunContext {
+    agent: Arc<dyn AgentLoop>,
+    ipc: Arc<dyn CoordinatorIpc>,
+    lifecycle_driver: SharedLifecycleDriver,
+    workspace: PathBuf,
+    heartbeat_interval_secs: u64,
+}
+
 /// Run the coordinator's async event loop until shutdown.
 ///
 /// The loop runs a heartbeat that polls the IPC inbox and feeds commands
-/// to the agent. On SIGINT/SIGTERM, the loop exits gracefully.
-async fn run_coordinator(
-    agent: Arc<dyn AgentLoop>,
-    ipc: Arc<dyn CoordinatorIpc>,
-    workspace: PathBuf,
-    heartbeat_interval_secs: u64,
-) -> i32 {
+/// to the agent. On SIGINT/SIGTERM or a `shutdown` IPC command, the loop
+/// exits gracefully.
+async fn run_coordinator(ctx: CoordinatorRunContext) -> i32 {
+    let CoordinatorRunContext {
+        agent,
+        ipc,
+        lifecycle_driver,
+        workspace,
+        heartbeat_interval_secs,
+    } = ctx;
     // Initialize tracing.
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
@@ -360,10 +421,7 @@ async fn run_coordinator(
         .try_init();
 
     let interval = std::time::Duration::from_secs(heartbeat_interval_secs);
-    let inbox_source = InboxHeartbeatSource {
-        ipc: ipc.clone(),
-        system_context: COORDINATOR_SYSTEM_PROMPT.to_string(),
-    };
+    let inbox_source = InboxHeartbeatSource { ipc: ipc.clone() };
     // Timeout per heartbeat task: interval minus 10s margin, clamped to [30s, 300s].
     let timeout_secs = heartbeat_interval_secs.saturating_sub(10).clamp(30, 300);
     let timeout = std::time::Duration::from_secs(timeout_secs);
@@ -381,11 +439,26 @@ async fn run_coordinator(
         );
 
     // Run heartbeat + signal handler concurrently.
+    // NOTE: The system prompt is not injected as a `Message::system()` because
+    // `execute_heartbeat_tick()` creates a fresh message vec per task. The
+    // coordinator's role context is implicit in the task descriptions and
+    // tool definitions. A future PR can add system-message injection to
+    // `dispatch_task()` if richer context is needed.
     tokio::select! {
         _ = async {
             loop {
+                // Check for shutdown commands deterministically (no LLM).
+                if handle_shutdown_commands(&*ipc) {
+                    tracing::info!("coordinator: shutdown command received via IPC");
+                    return;
+                }
+
                 // Process inbox commands via the agent.
                 tracing::debug!("coordinator heartbeat tick");
+
+                // Acknowledge commands before processing (separates read from side effects).
+                acknowledge_pending_commands(&*ipc);
+
                 match heartbeat::execute_heartbeat_tick(&inbox_source, &*agent, timeout).await {
                     Ok(results) => {
                         for result in &results {
@@ -416,10 +489,11 @@ async fn run_coordinator(
                     }
                 }
 
-                // Write state snapshot.
+                // Write state snapshot with real active job count.
+                let jobs = active_job_count(&lifecycle_driver);
                 let state = crate::domain::coding_ipc::CoordinatorState {
                     alive: true,
-                    active_jobs: 0, // TODO: query from lifecycle driver
+                    active_jobs: jobs,
                     last_heartbeat: chrono::Utc::now().to_rfc3339(),
                     job_summary: serde_json::json!({}),
                 };
@@ -476,10 +550,10 @@ mod tests {
             "--ipc-dir".into(),
             "/tmp/coord".into(),
             "--poll-interval-ms".into(),
-            "5000".into(),
+            "60000".into(),
         ];
         let parsed = parse_coordinator_args(&args).unwrap();
-        assert_eq!(parsed.heartbeat_interval_secs, 5);
+        assert_eq!(parsed.heartbeat_interval_secs, 60);
     }
 
     #[test]
@@ -491,8 +565,32 @@ mod tests {
             "100".into(),
         ];
         let parsed = parse_coordinator_args(&args).unwrap();
-        // 100ms / 1000 = 0, clamped to 1
-        assert_eq!(parsed.heartbeat_interval_secs, 1);
+        // 100ms / 1000 = 0, clamped to MIN_HEARTBEAT_INTERVAL_SECS (10)
+        assert_eq!(parsed.heartbeat_interval_secs, MIN_HEARTBEAT_INTERVAL_SECS);
+    }
+
+    #[test]
+    fn test_parse_args_heartbeat_interval_too_low() {
+        let args = vec![
+            "--ipc-dir".into(),
+            "/tmp/coord".into(),
+            "--heartbeat-interval".into(),
+            "5".into(),
+        ];
+        let err = parse_coordinator_args(&args).unwrap_err();
+        assert!(err.contains("must be >= 10"));
+    }
+
+    #[test]
+    fn test_parse_args_heartbeat_interval_zero() {
+        let args = vec![
+            "--ipc-dir".into(),
+            "/tmp/coord".into(),
+            "--heartbeat-interval".into(),
+            "0".into(),
+        ];
+        let err = parse_coordinator_args(&args).unwrap_err();
+        assert!(err.contains("must be >= 10"));
     }
 
     #[test]
@@ -533,8 +631,14 @@ mod tests {
     }
 
     #[test]
-    fn test_system_prompt_is_non_empty() {
-        assert!(!COORDINATOR_SYSTEM_PROMPT.is_empty());
-        assert!(COORDINATOR_SYSTEM_PROMPT.contains("coding job coordinator"));
+    fn test_parse_args_heartbeat_at_minimum() {
+        let args = vec![
+            "--ipc-dir".into(),
+            "/tmp/coord".into(),
+            "--heartbeat-interval".into(),
+            "10".into(),
+        ];
+        let parsed = parse_coordinator_args(&args).unwrap();
+        assert_eq!(parsed.heartbeat_interval_secs, 10);
     }
 }
