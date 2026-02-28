@@ -444,26 +444,26 @@ The gateway shuts down cleanly on Ctrl+C (SIGINT). The Telegram polling loop exi
 # Core suite (no real provider calls)
 cargo test --test bdd
 
-# Core suite (25-way sharded, fastest local full run)
-bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 25 --timeout 12m
+# Core suite (24-way sharded, fastest local full run)
+bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 12m
 
 # Real-LLM smoke subset (CI-sized)
-bash scripts/run-bdd-shards.sh --suite real-llm-smoke --shards 25 --timeout 12m --tag real-llm-smoke --real-llm
+bash scripts/run-bdd-shards.sh --suite real-llm-smoke --shards 24 --timeout 12m --tag real-llm-smoke --real-llm
 
 # Real-LLM full suite
-bash scripts/run-bdd-shards.sh --suite real-llm-bdd --shards 25 --timeout 12m --tag real-llm --real-llm
+bash scripts/run-bdd-shards.sh --suite real-llm-bdd --shards 24 --timeout 12m --tag real-llm --real-llm
 ```
 
-`scripts/pre-push.sh` runs quality checks plus a parallel test wave (`cargo test --lib`, `cargo test --test architecture`, and 25-way sharded non-real BDD), caches successful runs per `HEAD` commit + script hash, and writes a full log to `.git/pre-push.last.log`.
+`scripts/pre-push.sh` runs quality checks plus a parallel test wave (`cargo test --lib`, `cargo test --test architecture`, and 24-way sharded non-real BDD), caches successful runs per `HEAD` commit + script hash, and writes a full log to `.git/pre-push.last.log`.
 
 Pre-push controls:
 - `QUECTO_E2E_TIMEOUT` timeout per BDD shard (default `12m`)
-- `QUECTO_BDD_SHARDS` shard count for non-real BDD (default `25`)
+- `QUECTO_BDD_SHARDS` shard count for non-real BDD (default `24`)
 - `QUECTO_PREPUSH_FORCE=1` to bypass cache and rerun all checks
 
 Pre-merge controls (real-LLM lane):
 - `QUECTO_REAL_LLM_TIMEOUT` timeout per real-LLM shard (default `12m`)
-- `QUECTO_REAL_LLM_SHARDS` shard count for real-LLM BDD (default `25`)
+- `QUECTO_REAL_LLM_SHARDS` shard count for real-LLM BDD (default `24`)
 - `QUECTO_REAL_LLM_TAG` scenario tag to run (default `real-llm`; use `real-llm-smoke` for smoke)
 - `QUECTO_PREMERGE_FORCE=1` to bypass cache and rerun merge-time checks
 

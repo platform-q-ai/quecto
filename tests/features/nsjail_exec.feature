@@ -79,7 +79,7 @@ Feature: nsjail Exec Isolation
       | command | touch /usr/bin/evil |
     Then the tool result should be an error
 
-  # --- Resource limits ---
+  # --- Resource limits (rlimit-based) ---
 
   @done
   Scenario: Memory limit kills a memory-hogging command
@@ -114,6 +114,39 @@ Feature: nsjail Exec Isolation
     When the agent executes nsjail tool "exec" with args:
       | command | while true; do :; done |
     Then the tool result should be an error
+
+  @done
+  Scenario: nsjail uses rlimit_as for memory enforcement
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with memory limit 512 MB
+    Then the nsjail command for "echo test" should contain "--rlimit_as"
+    And the nsjail command for "echo test" should contain "512"
+
+  @done
+  Scenario: nsjail uses rlimit_nproc for PID enforcement
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with PID limit 128
+    Then the nsjail command for "echo test" should contain "--rlimit_nproc"
+    And the nsjail command for "echo test" should contain "128"
+
+  @done
+  Scenario: nsjail uses rlimit_cpu for CPU time enforcement
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with CPU time limit 15 seconds
+    Then the nsjail command for "echo test" should contain "--rlimit_cpu"
+    And the nsjail command for "echo test" should contain "15"
+
+  @done
+  Scenario: nsjail disables cgroup namespace
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with a workspace
+    Then the nsjail command for "echo test" should contain "--disable_clone_newcgroup"
+
+  @done
+  Scenario: nsjail includes system RO bindmounts
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with a workspace
+    Then the nsjail command for "echo test" should contain "--bindmount_ro"
 
   # --- Process isolation ---
 

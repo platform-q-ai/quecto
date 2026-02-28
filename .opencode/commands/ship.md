@@ -13,11 +13,11 @@ Run the following commands from the repo root, in order. If any fails, fix the i
 2. `cargo clippy -- -D warnings` — lint with all warnings as errors. Fix any issues and re-run.
 3. `cargo test --lib` — run all unit tests.
 4. `cargo test --test architecture` — run architecture boundary tests.
-5. Full non-real-LLM BDD using 25-way shards:
+5. Full non-real-LLM BDD using 24-way shards:
 
 ```bash
-for i in $(seq 0 24); do
-  (timeout 12m env QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=25 cargo test --test bdd) &
+for i in $(seq 0 23); do
+  (timeout 12m env QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=24 cargo test --test bdd) &
 done
 wait
 ```

@@ -10,7 +10,7 @@ agent: build
 ## Goals
 
 - Keep BDD-first development discipline
-- Use local parallel test gates (25-way BDD sharding)
+- Use local parallel test gates (24-way BDD sharding)
 - Run reviewer agents locally before PR creation
 - Push only after code + tests + local reviews are green
 
@@ -39,24 +39,24 @@ Run these checks, fixing failures immediately:
 3. `cargo test --lib`
 4. `cargo test --test architecture`
 
-Then run full BDD using 25-way shards.
+Then run full BDD using 24-way shards.
 
-### 2a) Full non-real-LLM BDD (25 shards)
+### 2a) Full non-real-LLM BDD (24 shards)
 
 ```bash
-for i in $(seq 0 24); do
-  (timeout 12m env QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=25 cargo test --test bdd) &
+for i in $(seq 0 23); do
+  (timeout 12m env QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=24 cargo test --test bdd) &
 done
 wait
 ```
 
-### 2b) Full real-LLM BDD (25 shards, only when required)
+### 2b) Full real-LLM BDD (24 shards, only when required)
 
 Requires `OPENAI_API_KEY` and paid API usage.
 
 ```bash
-for i in $(seq 0 24); do
-  (timeout 12m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=25 cargo test --test bdd) &
+for i in $(seq 0 23); do
+  (timeout 12m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=24 cargo test --test bdd) &
 done
 wait
 ```
