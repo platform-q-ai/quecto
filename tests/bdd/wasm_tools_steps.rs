@@ -25,7 +25,7 @@ use super::{QuectoWorld, table_to_json};
 fn tool_schemas() -> Vec<(&'static str, &'static str, &'static str)> {
     vec![
         (
-            "read_file",
+            "read",
             "Read a file",
             r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#,
         ),

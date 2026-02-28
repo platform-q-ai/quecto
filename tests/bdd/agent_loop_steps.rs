@@ -195,10 +195,9 @@ fn given_fully_initialized_agent(world: &mut QuectoWorld) {
     world
         .mock_tools
         .insert("exec".to_string(), Arc::new(MockBddTool::new("exec", "")));
-    world.mock_tools.insert(
-        "read_file".to_string(),
-        Arc::new(MockBddTool::new("read_file", "")),
-    );
+    world
+        .mock_tools
+        .insert("read".to_string(), Arc::new(MockBddTool::new("read", "")));
     world
         .mock_tools
         .insert("write".to_string(), Arc::new(MockBddTool::new("write", "")));

@@ -34,6 +34,16 @@ fn given_tool_workspace_with_exec_timeout(world: &mut QuectoWorld, timeout_secs:
     world._temp_dir = Some(td);
 }
 
+#[given(expr = "a large file {string} exists with {int} lines")]
+fn given_large_file(world: &mut QuectoWorld, filename: String, lines: usize) {
+    let ws = world
+        .tool_workspace
+        .as_ref()
+        .expect("tool workspace not set");
+    let content: String = (1..=lines).map(|i| format!("line{}\n", i)).collect();
+    std::fs::write(ws.join(&filename), content).expect("write large file");
+}
+
 #[given(expr = "a file {string} exists with content {string}")]
 fn given_file_exists(world: &mut QuectoWorld, filename: String, content: String) {
     let ws = world

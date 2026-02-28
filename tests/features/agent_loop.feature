@@ -12,16 +12,16 @@ Feature: Agent Loop
 
   Scenario: Message triggers a single tool call
     Given a configured agent with a mock LLM
-    And the LLM returns a tool call for "read_file" with args:
+    And the LLM returns a tool call for "read" with args:
       | path | notes.txt |
-    And the tool "read_file" returns "Buy groceries"
+    And the tool "read" returns "Buy groceries"
     And the LLM then returns "Your notes say: Buy groceries"
     When the agent processes message "What are my notes?"
     Then the response should be "Your notes say: Buy groceries"
 
   Scenario: Message triggers multiple tool calls in sequence
     Given a configured agent with a mock LLM
-    And the LLM returns tool calls in sequence: "read_file", "write"
+    And the LLM returns tool calls in sequence: "read", "write"
     When the agent processes message "Copy my notes to output.txt"
     Then both tools should be executed in order
     And the final response should confirm completion
@@ -34,9 +34,9 @@ Feature: Agent Loop
     And the response should indicate the iteration limit was reached
 
   Scenario: Agent includes tool definitions in LLM request
-    Given a configured agent with tools "exec" and "read_file"
+    Given a configured agent with tools "exec" and "read"
     When the agent sends a request to the LLM
-    Then the request should include tool definitions for "exec" and "read_file"
+    Then the request should include tool definitions for "exec" and "read"
     And each tool definition should have name, description, and parameters
 
   Scenario: Agent provides startup info

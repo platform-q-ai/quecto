@@ -10,7 +10,7 @@ Feature: WASM Tool Ports
   Scenario: WASM ReadFileTool reads a file from the workspace
     Given a WASM-containerized tool registry
     And a WASM workspace file "notes.txt" with content "buy milk"
-    When the agent executes WASM tool "read_file" with args:
+    When the agent executes WASM tool "read" with args:
       | path | notes.txt |
     Then the WASM tool result should contain "buy milk"
     And the WASM tool result should not be an error
@@ -18,7 +18,7 @@ Feature: WASM Tool Ports
   @done
   Scenario: WASM ReadFileTool rejects paths outside workspace
     Given a WASM-containerized tool registry
-    When the agent executes WASM tool "read_file" with args:
+    When the agent executes WASM tool "read" with args:
       | path | /etc/passwd |
     Then the WASM tool result should be an error
 
@@ -26,7 +26,7 @@ Feature: WASM Tool Ports
   Scenario: WASM ReadFileTool enforces file size limit
     Given a WASM-containerized tool registry
     And a WASM workspace file "huge.txt" larger than 1 MiB
-    When the agent executes WASM tool "read_file" with args:
+    When the agent executes WASM tool "read" with args:
       | path | huge.txt |
     Then the WASM tool result should be an error
     And the WASM error should mention "too large"
@@ -192,10 +192,10 @@ Feature: WASM Tool Ports
   # --- Behavioral parity with native tools ---
 
   @done
-  Scenario: WASM tools produce identical output to native tools for read_file
+  Scenario: WASM tools produce identical output to native tools for read
     Given a native tool registry and a WASM-containerized tool registry
     And both registries share the same workspace with file "test.txt" containing "identical output test"
-    When both registries execute "read_file" with args:
+    When both registries execute "read" with args:
       | path | test.txt |
     Then the WASM parity results should be identical
 

@@ -22,9 +22,26 @@ Feature: Agent Tool System
   Scenario: Read a file
     Given a tool workspace
     And a file "notes.txt" exists with content "important notes"
-    When the agent executes tool "read_file" with args:
+    When the agent executes tool "read" with args:
       | path | notes.txt |
     Then the tool result should contain "important notes"
+    And the tool result should not be an error
+
+  Scenario: Read a file with offset pagination
+    Given a tool workspace
+    And a file "multi.txt" exists with content "line1\nline2\nline3\nline4\nline5"
+    When the agent executes tool "read" with args:
+      | path   | multi.txt |
+      | offset | 3         |
+    Then the tool result should contain "line3"
+    And the tool result should not be an error
+
+  Scenario: Read a large file truncates with continuation hint
+    Given a tool workspace
+    And a large file "big.txt" exists with 3000 lines
+    When the agent executes tool "read" with args:
+      | path | big.txt |
+    Then the tool result should contain "[Showing lines"
     And the tool result should not be an error
 
   Scenario: Write a file
@@ -65,7 +82,7 @@ Feature: Agent Tool System
   Scenario: Tool registry lists core tools
     Given a tool workspace
     Then the tool registry should contain "exec"
-    And the tool registry should contain "read_file"
+    And the tool registry should contain "read"
     And the tool registry should contain "write"
     And the tool registry should contain "edit_file"
     And the tool registry should contain "append_file"

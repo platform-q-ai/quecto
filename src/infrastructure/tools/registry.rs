@@ -25,7 +25,7 @@ pub struct ExecRegistrySettings {
     pub cpu_time_limit_secs: u64,
     pub wall_time_limit_secs: u64,
 }
-use super::filesystem::{AppendFileTool, EditFileTool, ListDirTool, ReadFileTool, WriteTool};
+use super::filesystem::{AppendFileTool, EditFileTool, ListDirTool, ReadTool, WriteTool};
 
 /// Registry of all available tools, keyed by name.
 pub struct ToolRegistryImpl {
@@ -133,10 +133,8 @@ impl ToolRegistryImpl {
             sandbox.clone(),
             exec_options,
         )));
-        reg.register(Arc::new(ReadFileTool::new(
-            workspace.clone(),
-            sandbox.clone(),
-        )));
+        let read_tool = Arc::new(ReadTool::new(workspace.clone(), sandbox.clone()));
+        reg.register(read_tool.clone());
         let write_tool = Arc::new(WriteTool::new(workspace.clone(), sandbox.clone()));
         reg.register(write_tool.clone());
         reg.register(Arc::new(EditFileTool::new(
@@ -152,10 +150,11 @@ impl ToolRegistryImpl {
             sandbox.clone(),
         )));
 
-        // Backward-compat alias inserted after all register() calls so that
-        // definitions (rebuilt on each register) stays at 6. The alias maps
-        // the old "write_file" name to WriteTool for sessions/LLMs using the
-        // old name. It is NOT exposed in definitions() so the LLM only sees "write".
+        // Backward-compat aliases inserted after all register() calls so that
+        // definitions (rebuilt on each register) is not polluted by duplicate entries.
+        // These map old tool names to their renamed tools for sessions / LLMs
+        // that were trained on the previous naming convention.
+        reg.tools.insert("read_file".to_string(), read_tool);
         reg.tools.insert("write_file".to_string(), write_tool);
 
         reg
@@ -229,7 +228,7 @@ mod tests {
         let (reg, _tmp) = test_registry();
         let names = reg.names();
         assert!(names.contains(&"exec".to_string()));
-        assert!(names.contains(&"read_file".to_string()));
+        assert!(names.contains(&"read".to_string()));
         assert!(names.contains(&"write".to_string()));
         assert!(names.contains(&"edit_file".to_string()));
         assert!(names.contains(&"append_file".to_string()));

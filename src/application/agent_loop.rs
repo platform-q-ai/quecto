@@ -455,10 +455,10 @@ mod tests {
     async fn test_single_tool_call() {
         let (agent, _) = make_agent(
             vec![
-                tool_call_response("read_file", r#"{"path":"notes.txt"}"#),
+                tool_call_response("read", r#"{"path":"notes.txt"}"#),
                 text_response("Your notes say: Buy groceries"),
             ],
-            vec![("read_file", "Buy groceries")],
+            vec![("read", "Buy groceries")],
         );
         let mut messages = vec![Message::user("What are my notes?")];
         let result = agent.run_loop(&mut messages).await.unwrap();
@@ -470,11 +470,11 @@ mod tests {
     async fn test_multiple_tool_calls_in_sequence() {
         let (agent, _) = make_agent(
             vec![
-                tool_call_response("read_file", r#"{"path":"a.txt"}"#),
+                tool_call_response("read", r#"{"path":"a.txt"}"#),
                 tool_call_response("write", r#"{"path":"b.txt","content":"data"}"#),
                 text_response("Done copying"),
             ],
-            vec![("read_file", "file content"), ("write", "ok")],
+            vec![("read", "file content"), ("write", "ok")],
         );
         let mut messages = vec![Message::user("Copy files")];
         let result = agent.run_loop(&mut messages).await.unwrap();
@@ -500,22 +500,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_definitions_sent_to_llm() {
-        let (agent, provider) = make_agent(
-            vec![text_response("ok")],
-            vec![("exec", ""), ("read_file", "")],
-        );
+        let (agent, provider) =
+            make_agent(vec![text_response("ok")], vec![("exec", ""), ("read", "")]);
         let mut messages = vec![Message::user("test")];
         let _ = agent.run_loop(&mut messages).await.unwrap();
         let defs = provider.last_tool_defs();
         assert_eq!(defs.len(), 2);
         let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
         assert!(names.contains(&"exec"));
-        assert!(names.contains(&"read_file"));
+        assert!(names.contains(&"read"));
     }
 
     #[tokio::test]
     async fn test_agent_info() {
-        let (agent, _) = make_agent(vec![], vec![("exec", ""), ("read_file", ""), ("write", "")]);
+        let (agent, _) = make_agent(vec![], vec![("exec", ""), ("read", ""), ("write", "")]);
         let agent = agent.with_skill_count(2);
         let info = agent.info();
         assert_eq!(info.tool_count, 3);
@@ -526,10 +524,10 @@ mod tests {
     async fn test_messages_appended_during_loop() {
         let (agent, _) = make_agent(
             vec![
-                tool_call_response("read_file", r#"{"path":"x"}"#),
+                tool_call_response("read", r#"{"path":"x"}"#),
                 text_response("final"),
             ],
-            vec![("read_file", "content")],
+            vec![("read", "content")],
         );
         let mut messages = vec![Message::user("read")];
         let _ = agent.run_loop(&mut messages).await.unwrap();

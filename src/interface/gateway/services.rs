@@ -535,7 +535,7 @@ mod tests {
                 "calling tool",
                 vec![crate::domain::message::ToolCall {
                     id: "t1".to_string(),
-                    name: "read_file".to_string(),
+                    name: "read".to_string(),
                     arguments: "{}".to_string(),
                 }],
             ),

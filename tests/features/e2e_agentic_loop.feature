@@ -53,7 +53,7 @@ Feature: End-to-End Agentic Loop
   Scenario: Three-step pipeline reads, transforms via exec, and writes result
     Given a file "input.txt" in the e2e workspace with content "hello world"
     And the mock LLM returns a tool call sequence:
-      | call | read_file  | {"path":"input.txt"}                         |
+      | call | read  | {"path":"input.txt"}                         |
       | call | exec       | {"command":"echo HELLO WORLD"}                |
       | call | write | {"path":"output.txt","content":"HELLO WORLD"} |
       | text | Pipeline complete |                                        |
@@ -66,9 +66,9 @@ Feature: End-to-End Agentic Loop
   Scenario: Read-edit-read cycle verifies file was modified
     Given a file "version.txt" in the e2e workspace with content "v1.0.0"
     And the mock LLM returns a tool call sequence:
-      | call | read_file | {"path":"version.txt"}                             |
+      | call | read | {"path":"version.txt"}                             |
       | call | edit_file | {"path":"version.txt","old":"1.0.0","new":"2.0.0"} |
-      | call | read_file | {"path":"version.txt"}                             |
+      | call | read | {"path":"version.txt"}                             |
       | text | Version bumped from v1.0.0 to v2.0.0 |                        |
     When I run quecto agent -s - -m "Bump the version to 2.0.0"
     Then the exit code should be 0
@@ -82,7 +82,7 @@ Feature: End-to-End Agentic Loop
     Given a file "a.txt" in the e2e workspace with content "alpha"
     And a file "b.txt" in the e2e workspace with content "beta"
     And the mock LLM returns parallel tool calls then text:
-      | read_file | {"path":"a.txt"} | read_file | {"path":"b.txt"} |
+      | read | {"path":"a.txt"} | read | {"path":"b.txt"} |
     And the final text is "Files contain: alpha and beta"
     When I run quecto agent -s - -m "Read both files"
     Then the exit code should be 0
@@ -93,9 +93,9 @@ Feature: End-to-End Agentic Loop
   @done
   Scenario: LLM recovers from a missing file by creating it
     Given the mock LLM returns a tool call sequence:
-      | call | read_file  | {"path":"missing.txt"}                    |
+      | call | read  | {"path":"missing.txt"}                    |
       | call | write | {"path":"missing.txt","content":"created"} |
-      | call | read_file  | {"path":"missing.txt"}                    |
+      | call | read  | {"path":"missing.txt"}                    |
       | text | File created and verified |                             |
     When I run quecto agent -s - -m "Read missing.txt or create it"
     Then the exit code should be 0
@@ -110,7 +110,7 @@ Feature: End-to-End Agentic Loop
     Given a file "target.txt" in the e2e workspace with content "secret data"
     And the mock LLM returns a tool call sequence:
       | call | exec      | {"command":"ls"}      |
-      | call | read_file | {"path":"target.txt"} |
+      | call | read | {"path":"target.txt"} |
       | text | Found file and read: secret data | |
     When I run quecto agent -s - -m "List files then read the interesting one"
     Then the exit code should be 0

@@ -12,7 +12,7 @@ Feature: End-to-End Safety and Limits
   # --- Sandbox enforcement through CLI ---
 
   Scenario: Tool call to read file outside workspace returns error to LLM
-    Given the mock LLM first returns a tool call for "read_file" with args:
+    Given the mock LLM first returns a tool call for "read" with args:
       | path | /etc/passwd |
     And the mock LLM then returns a text response "I cannot access that file"
     When I run quecto agent -s - -m "Read /etc/passwd"
@@ -44,7 +44,7 @@ Feature: End-to-End Safety and Limits
     And stdout should contain "blocked"
 
   Scenario: Path traversal via tool call is blocked
-    Given the mock LLM first returns a tool call for "read_file" with args:
+    Given the mock LLM first returns a tool call for "read" with args:
       | path | ../../etc/passwd |
     And the mock LLM then returns a text response "Access denied"
     When I run quecto agent -s - -m "Read ../../etc/passwd"

@@ -1,4 +1,4 @@
-// Filesystem tools: read_file, write, edit_file, append_file, list_dir.
+// Filesystem tools: read, write, edit_file, append_file, list_dir.
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -9,13 +9,31 @@ use tokio::io::AsyncWriteExt;
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
-use crate::infrastructure::tools::path_utils::resolve_to_cwd;
-
-const MAX_TEXT_FILE_BYTES: u64 = 1024 * 1024;
+use crate::infrastructure::tools::path_utils::{resolve_read_path, resolve_to_cwd};
+use crate::infrastructure::tools::truncate::{
+    DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, format_size, truncate_head,
+};
 
 // ===========================================================================
 // Helper: resolve a relative path within the workspace and validate it.
 // ===========================================================================
+
+const MAX_EDIT_FILE_BYTES: u64 = 1024 * 1024;
+
+async fn enforce_edit_file_size_limit(full_path: &Path) -> Result<(), DomainError> {
+    let metadata = tokio::fs::metadata(full_path)
+        .await
+        .map_err(|e| DomainError::Tool(format!("metadata check failed: {}", e)))?;
+    if metadata.len() > MAX_EDIT_FILE_BYTES {
+        return Err(DomainError::Tool(format!(
+            "file '{}' exceeds maximum allowed size for editing ({} > {} bytes)",
+            full_path.display(),
+            metadata.len(),
+            MAX_EDIT_FILE_BYTES
+        )));
+    }
+    Ok(())
+}
 
 fn resolve_and_validate(
     workspace: &Path,
@@ -29,44 +47,27 @@ fn resolve_and_validate(
         .map_err(|e| DomainError::Security(e.to_string()))
 }
 
-async fn enforce_text_file_size_limit(full_path: &Path) -> Result<(), DomainError> {
-    let metadata = tokio::fs::metadata(full_path)
-        .await
-        .map_err(|e| DomainError::Tool(format!("metadata check failed: {}", e)))?;
-
-    if metadata.len() > MAX_TEXT_FILE_BYTES {
-        return Err(DomainError::Tool(format!(
-            "file '{}' exceeds maximum allowed size ({} > {} bytes)",
-            full_path.display(),
-            metadata.len(),
-            MAX_TEXT_FILE_BYTES
-        )));
-    }
-
-    Ok(())
-}
-
 // ===========================================================================
-// ReadFileTool
+// ReadTool  (Pi name: "read")
 // ===========================================================================
 
-pub struct ReadFileTool {
+pub struct ReadTool {
     workspace: Arc<PathBuf>,
     sandbox: Arc<Sandbox>,
 }
 
-impl ReadFileTool {
+impl ReadTool {
     pub fn new(workspace: Arc<PathBuf>, sandbox: Arc<Sandbox>) -> Self {
         Self { workspace, sandbox }
     }
 }
 
-impl Tool for ReadFileTool {
+impl Tool for ReadTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "read_file".to_string(),
-            description: "Read the contents of a file".to_string(),
-            parameters_schema: r#"{"type":"object","properties":{"path":{"type":"string","description":"Relative path to the file"}},"required":["path"]}"#.to_string(),
+            name: "read".to_string(),
+            description: "Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.".to_string(),
+            parameters_schema: r#"{"type":"object","properties":{"path":{"type":"string","description":"Path to the file to read (relative or absolute)"},"offset":{"type":"number","description":"Line number to start reading from (1-indexed)"},"limit":{"type":"number","description":"Maximum number of lines to read"}},"required":["path"]}"#.to_string(),
         }
     }
 
@@ -85,19 +86,152 @@ impl Tool for ReadFileTool {
                 .as_str()
                 .ok_or_else(|| DomainError::Tool("missing 'path' argument".to_string()))?;
 
-            let full_path = resolve_and_validate(&workspace, &sandbox, path)?;
-            enforce_text_file_size_limit(&full_path).await?;
+            // Resolve using read-path (macOS filename variant probing)
+            let resolved = resolve_read_path(path, &workspace);
+            let validated_str = resolved.to_string_lossy().to_string();
+            sandbox
+                .validate_path(&validated_str)
+                .map_err(|e| DomainError::Security(e.to_string()))?;
 
-            let content = tokio::fs::read_to_string(&full_path)
+            // Parse optional offset (1-indexed) and limit
+            let offset: Option<usize> = args["offset"].as_u64().map(|v| v as usize);
+            let limit: Option<usize> = args["limit"].as_u64().map(|v| v as usize);
+
+            // Safety cap: reject reads > 10 MiB before loading into memory.
+            // Truncation handles presentation limits; this prevents OOM on huge files.
+            const MAX_READ_BYTES: u64 = 10 * 1024 * 1024;
+            if let Ok(meta) = tokio::fs::metadata(&resolved).await {
+                if meta.len() > MAX_READ_BYTES {
+                    let size = format_size(meta.len() as usize);
+                    let hint = shell_escape_single(path);
+                    return Ok(ToolResult {
+                        content: format!(
+                            "File is {size} — too large to read directly (max 10 MiB). \
+                             Use bash: head -n 2000 {hint} | head -c 51200",
+                        ),
+                        is_error: true,
+                    });
+                }
+            }
+
+            // Load file content
+            let content = tokio::fs::read_to_string(&resolved)
                 .await
-                .map_err(|e| DomainError::Tool(format!("read_file failed: {}", e)))?;
+                .map_err(|e| DomainError::Tool(format!("read failed: {}", e)))?;
+
+            let output = apply_read_truncation(&content, path, offset, limit)?;
 
             Ok(ToolResult {
-                content,
+                content: output,
                 is_error: false,
             })
         })
     }
+}
+
+/// Wrap a path in single quotes for use in a shell command hint.
+/// Escapes any embedded single quotes using the standard `'\''` trick.
+fn shell_escape_single(path: &str) -> String {
+    format!("'{}'", path.replace('\'', "'\\''"))
+}
+
+/// Apply offset/limit pagination and truncation to file content.
+/// Returns the formatted output string with optional continuation hints.
+///
+/// # Offset semantics
+/// - `None` → start from line 1
+/// - `Some(0)` → **error** (1-indexed; 0 is not a valid line number)
+/// - `Some(n)` → start from line n (1-indexed)
+fn apply_read_truncation(
+    content: &str,
+    path: &str,
+    offset: Option<usize>,
+    limit: Option<usize>,
+) -> Result<String, DomainError> {
+    // Validate offset before counting lines — zero is never valid for 1-indexed API
+    if offset == Some(0) {
+        return Err(DomainError::Tool(
+            "offset is 1-indexed; 0 is not valid. Use offset=1 for the first line.".to_string(),
+        ));
+    }
+
+    let total_lines: usize = content.lines().count();
+
+    // Convert 1-indexed offset to 0-indexed skip count
+    let start_line = match offset {
+        None => 0,
+        Some(n) => {
+            if n > total_lines {
+                return Err(DomainError::Tool(format!(
+                    "Offset {} is beyond end of file ({} lines total)",
+                    n, total_lines
+                )));
+            }
+            n - 1
+        }
+    };
+
+    // Determine effective max_lines
+    let max_lines = limit.unwrap_or(DEFAULT_MAX_LINES);
+
+    // Build sliced content using iterator — avoids allocating an intermediate Vec
+    let sliced: String = {
+        let mut lines = content.lines().skip(start_line);
+        let mut buf = String::new();
+        let mut first = true;
+        for ln in lines.by_ref() {
+            if !first {
+                buf.push('\n');
+            }
+            buf.push_str(ln);
+            first = false;
+        }
+        buf
+    };
+
+    // Apply head-truncation
+    let tr = truncate_head(&sliced, max_lines, DEFAULT_MAX_BYTES);
+
+    // Build output with hints
+    let mut output = String::new();
+
+    if tr.first_line_exceeds_limit {
+        // Single line exceeds byte limit — suggest a shell command
+        let line_size = format_size(sliced.lines().next().map_or(0, str::len));
+        let limit_size = format_size(DEFAULT_MAX_BYTES);
+        let escaped = shell_escape_single(path);
+        output.push_str(&format!(
+            "[Line {} is {}, exceeds {} limit. Use bash: sed -n '{}p' {escaped} | head -c {}]",
+            start_line + 1,
+            line_size,
+            limit_size,
+            start_line + 1,
+            DEFAULT_MAX_BYTES
+        ));
+    } else {
+        output.push_str(&tr.content);
+
+        if tr.truncated {
+            let shown_start = start_line + 1;
+            let shown_end = start_line + tr.output_lines;
+            let next_offset = shown_end + 1;
+            let remaining = total_lines.saturating_sub(shown_end);
+
+            if limit.is_some() && remaining > 0 {
+                output.push_str(&format!(
+                    "\n[{} more lines in file. Use offset={} to continue.]",
+                    remaining, next_offset
+                ));
+            } else {
+                output.push_str(&format!(
+                    "\n[Showing lines {}-{} of {}. Use offset={} to continue.]",
+                    shown_start, shown_end, total_lines, next_offset
+                ));
+            }
+        }
+    }
+
+    Ok(output)
 }
 
 // ===========================================================================
@@ -208,7 +342,7 @@ impl Tool for EditFileTool {
                 .ok_or_else(|| DomainError::Tool("missing 'new' argument".to_string()))?;
 
             let full_path = resolve_and_validate(&workspace, &sandbox, path)?;
-            enforce_text_file_size_limit(&full_path).await?;
+            enforce_edit_file_size_limit(&full_path).await?;
 
             let content = tokio::fs::read_to_string(&full_path)
                 .await
@@ -395,7 +529,7 @@ mod tests {
     async fn test_write_and_read_file() {
         let (ws, sb, _tmp) = test_tools();
         let write_tool = WriteTool::new(ws.clone(), sb.clone());
-        let read_tool = ReadFileTool::new(ws.clone(), sb.clone());
+        let read_tool = ReadTool::new(ws.clone(), sb.clone());
 
         let result = write_tool
             .execute(r#"{"path": "test.txt", "content": "hello world"}"#)
@@ -468,26 +602,73 @@ mod tests {
     #[tokio::test]
     async fn test_read_file_outside_workspace_blocked() {
         let (ws, sb, _tmp) = test_tools();
-        let tool = ReadFileTool::new(ws, sb);
+        let tool = ReadTool::new(ws, sb);
         let result = tool.execute(r#"{"path": "/etc/passwd"}"#).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
-    async fn test_read_file_rejects_oversized_file() {
+    async fn test_read_truncates_large_file() {
         let (ws, sb, tmp) = test_tools();
-        let tool = ReadFileTool::new(ws, sb);
+        let tool = ReadTool::new(ws, sb);
 
-        let large_content = "a".repeat(1_048_577);
+        // 3000 lines — exceeds 2000 line default limit
+        let large_content: String = (1..=3000).map(|i| format!("line{}\n", i)).collect();
         std::fs::write(tmp.path().join("big.txt"), large_content).unwrap();
 
-        let result = tool.execute(r#"{"path": "big.txt"}"#).await;
-        assert!(result.is_err());
+        let result = tool.execute(r#"{"path": "big.txt"}"#).await.unwrap();
+        assert!(!result.is_error);
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("exceeds maximum allowed size")
+            result.content.contains("[Showing lines"),
+            "expected truncation hint, got: {}",
+            &result.content[..result.content.len().min(200)]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_read_offset_pagination() {
+        let (ws, sb, tmp) = test_tools();
+        let tool = ReadTool::new(ws, sb);
+        let content = (1..=10)
+            .map(|i| format!("line{}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(tmp.path().join("paged.txt"), content).unwrap();
+
+        let result = tool
+            .execute(r#"{"path": "paged.txt", "offset": 5}"#)
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains("line5"), "got: {}", result.content);
+        assert!(
+            !result.content.contains("line4"),
+            "should skip first 4 lines"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_read_offset_beyond_eof_error() {
+        let (ws, sb, tmp) = test_tools();
+        let tool = ReadTool::new(ws, sb);
+        std::fs::write(tmp.path().join("small.txt"), "only one line").unwrap();
+
+        let result = tool.execute(r#"{"path": "small.txt", "offset": 99}"#).await;
+        assert!(result.is_err() || result.unwrap().is_error);
+    }
+
+    #[tokio::test]
+    async fn test_read_offset_zero_is_error() {
+        let (ws, sb, tmp) = test_tools();
+        let tool = ReadTool::new(ws, sb);
+        std::fs::write(tmp.path().join("zero.txt"), "content").unwrap();
+
+        // offset=0 is invalid (1-indexed API)
+        let result = tool.execute(r#"{"path": "zero.txt", "offset": 0}"#).await;
+        assert!(
+            result.is_err(),
+            "expected error for offset=0 but got: {:?}",
+            result.unwrap().content
         );
     }
 
