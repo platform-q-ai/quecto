@@ -396,3 +396,37 @@ fn test_nsjail_command_includes_time_limit() {
     );
     assert!(args.contains("20"), "missing value 20: {args}");
 }
+
+#[test]
+fn test_truncate_tail_output_no_truncation() {
+    let content = "line1\nline2\nline3";
+    let (out, truncated) = truncate_tail_output(content, 2000, 50 * 1024);
+    assert!(!truncated);
+    assert_eq!(out, content);
+}
+
+#[test]
+fn test_truncate_tail_output_line_limit() {
+    let content: String = (1..=3000).map(|i| format!("line{}\n", i)).collect();
+    let (out, truncated) = truncate_tail_output(&content, 2000, 50 * 1024);
+    assert!(truncated, "expected truncation");
+    assert!(
+        out.contains("3000"),
+        "expected last line, got: {}",
+        &out[..out.len().min(100)]
+    );
+    assert!(!out.contains("line1\n"), "should have dropped first lines");
+}
+
+#[test]
+fn test_truncate_tail_output_byte_limit() {
+    // 3000 lines of 20 chars = ~60KB > 50KB
+    let content: String = (1..=3000).map(|i| format!("{:020}\n", i)).collect();
+    let (out, truncated) = truncate_tail_output(&content, 2000, 50 * 1024);
+    assert!(truncated, "expected byte truncation");
+    // should contain the last line
+    assert!(
+        out.contains(&format!("{:020}", 3000)),
+        "expected last entry in tail"
+    );
+}

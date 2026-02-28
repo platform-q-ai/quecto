@@ -6,17 +6,25 @@ Feature: Agent Tool System
 
   Scenario: Execute a shell command
     Given a tool workspace
-    When the agent executes tool "exec" with args:
+    When the agent executes tool "bash" with args:
       | command | echo hello |
     Then the tool result should contain "hello"
     And the tool result should not be an error
 
   @agent-tools
-  Scenario: Execute large output command without timeout
+  Scenario: Execute large output command truncates to tail
     Given a tool workspace with exec timeout 1 second
-    When the agent executes tool "exec" with args:
+    When the agent executes tool "bash" with args:
       | command | printf 'x%.0s' {1..100000} |
     Then the tool result should contain "x"
+    And the tool result should not be an error
+
+  Scenario: bash truncates large output and provides temp file hint
+    Given a tool workspace
+    When the agent executes tool "bash" with args:
+      | command | seq 1 3000 |
+    Then the tool result should contain "3000"
+    And the tool result should contain "[Output truncated"
     And the tool result should not be an error
 
   Scenario: Read a file
@@ -102,7 +110,7 @@ Feature: Agent Tool System
 
   Scenario: Tool registry lists core tools
     Given a tool workspace
-    Then the tool registry should contain "exec"
+    Then the tool registry should contain "bash"
     And the tool registry should contain "read"
     And the tool registry should contain "write"
     And the tool registry should contain "edit"

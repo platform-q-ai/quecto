@@ -34,9 +34,9 @@ Feature: Agent Loop
     And the response should indicate the iteration limit was reached
 
   Scenario: Agent includes tool definitions in LLM request
-    Given a configured agent with tools "exec" and "read"
+    Given a configured agent with tools "bash" and "read"
     When the agent sends a request to the LLM
-    Then the request should include tool definitions for "exec" and "read"
+    Then the request should include tool definitions for "bash" and "read"
     And each tool definition should have name, description, and parameters
 
   Scenario: Agent provides startup info

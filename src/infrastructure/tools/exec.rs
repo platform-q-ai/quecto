@@ -16,7 +16,10 @@ use crate::infrastructure::security::sandbox::Sandbox;
 
 const DEFAULT_EXEC_TIMEOUT: Duration = Duration::from_secs(30);
 const SECRET_ENV_PREFIX: &str = "QUECTO_";
-const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
+/// Maximum bytes captured per stream before the stream reader stops collecting.
+/// Raised to 10 MiB so the tail-truncation window (50 KB) always sees the true
+/// tail of the output, not a head-truncated proxy.
+const MAX_CAPTURE_BYTES: usize = 10 * 1024 * 1024;
 const STREAM_DRAIN_TIMEOUT_ON_KILL: Duration = Duration::from_millis(250);
 const DEFAULT_NSJAIL_MEMORY_LIMIT_MB: u64 = 512;
 const DEFAULT_NSJAIL_PID_LIMIT: u64 = 256;
@@ -353,7 +356,7 @@ impl ExecTool {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .map_err(|e| DomainError::Tool(format!("exec failed: {}", e)))?;
+            .map_err(|e| DomainError::Tool(format!("bash failed: {}", e)))?;
 
         let stdout_task = child
             .stdout
@@ -369,7 +372,7 @@ impl ExecTool {
             stderr_task,
         };
 
-        run_child_with_timeout(child, stream_tasks, self.timeout, self.max_capture_bytes).await
+        run_child_with_timeout(child, stream_tasks, self.timeout).await
     }
 }
 
@@ -613,34 +616,62 @@ async fn run_child_with_timeout(
     mut child: tokio::process::Child,
     mut stream_tasks: StreamTasks,
     timeout_dur: Duration,
-    max_capture_bytes: usize,
 ) -> Result<ToolResult, DomainError> {
+    // Pi-parity truncation limits: tail 2000 lines / 50KB
+    const TAIL_MAX_LINES: usize = 2000;
+    const TAIL_MAX_BYTES: usize = 50 * 1024;
+
     match tokio::time::timeout(timeout_dur, child.wait()).await {
         Ok(Ok(status)) => {
-            let (stdout, stdout_truncated) =
+            let (stdout_raw, _stdout_truncated_head) =
                 await_stream_output(stream_tasks.stdout_task.take()).await;
-            let (stderr, stderr_truncated) =
+            let (stderr_raw, _stderr_truncated_head) =
                 await_stream_output(stream_tasks.stderr_task.take()).await;
 
-            let stdout = annotate_truncation(stdout, stdout_truncated, "stdout", max_capture_bytes);
-            let stderr = annotate_truncation(stderr, stderr_truncated, "stderr", max_capture_bytes);
+            // Combine stdout + stderr, then apply Pi-parity tail-truncation
+            let combined = if stderr_raw.is_empty() {
+                stdout_raw
+            } else if stdout_raw.is_empty() {
+                stderr_raw
+            } else {
+                format!("{}\n{}", stdout_raw, stderr_raw)
+            };
+
+            let (truncated_output, was_truncated) =
+                truncate_tail_output(&combined, TAIL_MAX_LINES, TAIL_MAX_BYTES);
+
+            let mut content = truncated_output;
+
+            if was_truncated {
+                let combined_len = combined.len();
+                // Save full output to temp file asynchronously
+                let hint = if let Some(tmp_path) = save_to_temp_file(combined).await {
+                    format!(
+                        "\n[Output truncated. Full output ({} bytes) saved to: {}]",
+                        combined_len, tmp_path
+                    )
+                } else {
+                    format!(
+                        "\n[Output truncated to last {} lines / {} bytes]",
+                        TAIL_MAX_LINES, TAIL_MAX_BYTES
+                    )
+                };
+                content.push_str(&hint);
+            }
 
             if status.success() {
                 Ok(ToolResult {
-                    content: stdout,
+                    content,
                     is_error: false,
                 })
             } else {
                 Ok(ToolResult {
-                    content: format!(
-                        "exit code {}\nstdout: {}\nstderr: {}",
-                        status, stdout, stderr
-                    ),
+                    content: format!("exit code {}\n{}", status.code().unwrap_or(-1), content),
                     is_error: true,
                 })
             }
         }
-        Ok(Err(e)) => Err(DomainError::Tool(format!("exec failed: {}", e))),
+        Ok(Err(e)) => Err(DomainError::Tool(format!("bash failed: {}", e))),
         Err(_) => {
             let _ = child.kill().await;
             let _ = child.wait().await;
@@ -720,6 +751,7 @@ async fn await_stream_output_with_timeout(
     }
 }
 
+#[allow(dead_code)]
 fn annotate_truncation(
     mut content: String,
     truncated: bool,
@@ -735,12 +767,68 @@ fn annotate_truncation(
     content
 }
 
+/// Truncate `content` to at most `max_lines` tail-lines or `max_bytes` bytes.
+/// Returns `(truncated_content, was_truncated)` in a single reverse pass.
+/// Pi-parity: the *last* max_lines/max_bytes are kept, not the first.
+fn truncate_tail_output(content: &str, max_lines: usize, max_bytes: usize) -> (String, bool) {
+    // Single-pass reverse walk — terminates early when limits are hit.
+    let mut kept_lines: Vec<&str> = Vec::with_capacity(max_lines.min(4096));
+    let mut byte_count = 0usize;
+
+    for line in content.lines().rev() {
+        let line_bytes = line.len() + 1; // +1 for the separator newline
+        if byte_count + line_bytes > max_bytes || kept_lines.len() >= max_lines {
+            // Hit a limit — we are truncating
+            if kept_lines.is_empty() {
+                // This single line exceeds max_bytes — fall through to byte-slice path
+                break;
+            }
+            kept_lines.reverse();
+            return (kept_lines.join("\n"), true);
+        }
+        kept_lines.push(line);
+        byte_count += line_bytes;
+    }
+
+    if kept_lines.is_empty() && !content.is_empty() {
+        // Single line (or entire content) exceeds max_bytes — take the last max_bytes bytes,
+        // snapping back to a valid UTF-8 char boundary.
+        let raw_start = content.len().saturating_sub(max_bytes);
+        let start = (raw_start..=content.len())
+            .find(|&i| content.is_char_boundary(i))
+            .unwrap_or(0);
+        return (content[start..].to_string(), true);
+    }
+
+    // Consumed all lines without hitting a limit — no truncation
+    (content.to_string(), false)
+}
+
+/// Save content to a temp file asynchronously and return the path.
+/// The file is kept on disk intentionally — it is the "full output" file referenced in
+/// the tool result hint. OS-level /tmp cleanup (e.g. systemd-tmpfiles) handles eventual
+/// eviction. Future work: register paths for cleanup on tool drop.
+async fn save_to_temp_file(content: String) -> Option<String> {
+    tokio::task::spawn_blocking(move || {
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().ok()?;
+        f.write_all(content.as_bytes()).ok()?;
+        let (_, path) = f.keep().ok()?;
+        Some(path.display().to_string())
+    })
+    .await
+    .ok()?
+}
+
 impl Tool for ExecTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "exec".to_string(),
-            description: "Execute a shell command in the workspace directory".to_string(),
-            parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string","description":"Shell command to execute"}},"required":["command"]}"#.to_string(),
+            name: "bash".to_string(),
+            description: "Execute a bash command in the current working directory. Returns stdout \
+                          and stderr. Output is truncated to last 2000 lines or 50KB (whichever is \
+                          hit first). If truncated, full output is saved to a temp file."
+                .to_string(),
+            parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string","description":"Bash command to execute"}},"required":["command"]}"#.to_string(),
         }
     }
 

@@ -20,7 +20,7 @@ Feature: End-to-End Safety and Limits
     And stdout should contain "cannot access"
 
   Scenario: Tool call to execute dangerous command returns error to LLM
-    Given the mock LLM first returns a tool call for "exec" with args:
+    Given the mock LLM first returns a tool call for "bash" with args:
       | command | rm -rf / |
     And the mock LLM then returns a text response "That command is not allowed"
     When I run quecto agent -s - -m "Delete everything"
@@ -28,7 +28,7 @@ Feature: End-to-End Safety and Limits
     And stdout should contain "not allowed"
 
   Scenario: Tool call to execute wildcard root delete is blocked
-    Given the mock LLM first returns a tool call for "exec" with args:
+    Given the mock LLM first returns a tool call for "bash" with args:
       | command | rm -rf /* |
     And the mock LLM then returns a text response "That destructive command is blocked"
     When I run quecto agent -s - -m "Delete root recursively"
@@ -36,7 +36,7 @@ Feature: End-to-End Safety and Limits
     And stdout should contain "blocked"
 
   Scenario: Tool call to execute mkfs variant is blocked
-    Given the mock LLM first returns a tool call for "exec" with args:
+    Given the mock LLM first returns a tool call for "bash" with args:
       | command | mkfs.ext4 /dev/sda |
     And the mock LLM then returns a text response "Formatting commands are blocked"
     When I run quecto agent -s - -m "Format the disk"
@@ -90,7 +90,7 @@ Feature: End-to-End Safety and Limits
   # --- Iteration limits ---
 
   Scenario: Agent stops after max-iterations flag
-    Given the mock LLM always returns a tool call for "exec" with args:
+    Given the mock LLM always returns a tool call for "bash" with args:
       | command | echo loop |
     When I run quecto agent -s - --max-iterations 3 -m "Loop forever"
     Then the exit code should be 0
@@ -98,7 +98,7 @@ Feature: End-to-End Safety and Limits
 
   Scenario: Default iteration limit is applied from config
     Given the config sets max_tool_iterations to 5
-    And the mock LLM always returns a tool call for "exec" with args:
+    And the mock LLM always returns a tool call for "bash" with args:
       | command | echo loop |
     When I run quecto agent -s - -m "Loop forever"
     Then the exit code should be 0
@@ -106,7 +106,7 @@ Feature: End-to-End Safety and Limits
 
   Scenario: Max-iterations flag overrides config value
     Given the config sets max_tool_iterations to 25
-    And the mock LLM always returns a tool call for "exec" with args:
+    And the mock LLM always returns a tool call for "bash" with args:
       | command | echo loop |
     When I run quecto agent -s - --max-iterations 2 -m "Loop forever"
     Then the exit code should be 0
@@ -129,7 +129,7 @@ Feature: End-to-End Safety and Limits
 
   Scenario: Max-time covers total elapsed time including tool execution
     Given exec isolation is set to "native" in the config
-    And the mock LLM first returns a tool call for "exec" with args:
+    And the mock LLM first returns a tool call for "bash" with args:
       | command | sleep 3 |
     And the mock LLM then returns a text response "Done"
     When I run quecto agent -s - --max-time 1 -m "Run slow command"

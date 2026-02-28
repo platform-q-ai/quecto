@@ -128,11 +128,12 @@ impl ToolRegistryImpl {
         let workspace = Arc::new(workspace);
         let mut reg = Self::new();
 
-        reg.register(Arc::new(ExecTool::with_options(
+        let exec_tool = Arc::new(ExecTool::with_options(
             workspace.clone(),
             sandbox.clone(),
             exec_options,
-        )));
+        ));
+        reg.register(exec_tool.clone());
         let read_tool = Arc::new(ReadTool::new(workspace.clone(), sandbox.clone()));
         reg.register(read_tool.clone());
         let write_tool = Arc::new(WriteTool::new(workspace.clone(), sandbox.clone()));
@@ -152,6 +153,7 @@ impl ToolRegistryImpl {
         // definitions (rebuilt on each register) is not polluted by duplicate entries.
         // These map old tool names to their renamed tools for sessions / LLMs
         // that were trained on the previous naming convention.
+        reg.tools.insert("exec".to_string(), exec_tool);
         reg.tools.insert("read_file".to_string(), read_tool);
         reg.tools.insert("write_file".to_string(), write_tool);
         reg.tools.insert("edit_file".to_string(), edit_tool);
@@ -226,7 +228,7 @@ mod tests {
     fn test_registry_contains_core_tools() {
         let (reg, _tmp) = test_registry();
         let names = reg.names();
-        assert!(names.contains(&"exec".to_string()));
+        assert!(names.contains(&"bash".to_string()));
         assert!(names.contains(&"read".to_string()));
         assert!(names.contains(&"write".to_string()));
         assert!(names.contains(&"edit".to_string()));
@@ -237,7 +239,7 @@ mod tests {
     #[test]
     fn test_registry_get_returns_tool() {
         let (reg, _tmp) = test_registry();
-        assert!(reg.get("exec").is_some());
+        assert!(reg.get("bash").is_some());
         assert!(reg.get("nonexistent").is_none());
     }
 

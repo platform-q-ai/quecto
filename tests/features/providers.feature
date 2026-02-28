@@ -45,7 +45,7 @@ Feature: LLM Providers
   Scenario: Provider sends chat request with tools
     Given an OpenAI provider with a mock server
     And the mock server returns a chat response with content "Hello!"
-    When I send a chat request with message "Hi" and a tool "exec"
+    When I send a chat request with message "Hi" and a tool "bash"
     Then the chat response content should be "Hello!"
     And the chat request should have included an Authorization header
 
