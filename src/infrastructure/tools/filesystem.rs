@@ -97,7 +97,24 @@ impl Tool for ReadTool {
             let offset: Option<usize> = args["offset"].as_u64().map(|v| v as usize);
             let limit: Option<usize> = args["limit"].as_u64().map(|v| v as usize);
 
-            // Read the full file (no size rejection — truncation handles large files)
+            // Safety cap: reject reads > 10 MiB before loading into memory.
+            // Truncation handles presentation limits; this prevents OOM on huge files.
+            const MAX_READ_BYTES: u64 = 10 * 1024 * 1024;
+            if let Ok(meta) = tokio::fs::metadata(&resolved).await {
+                if meta.len() > MAX_READ_BYTES {
+                    let size = format_size(meta.len() as usize);
+                    let hint = shell_escape_single(path);
+                    return Ok(ToolResult {
+                        content: format!(
+                            "File is {size} — too large to read directly (max 10 MiB). \
+                             Use bash: head -n 2000 {hint} | head -c 51200",
+                        ),
+                        is_error: true,
+                    });
+                }
+            }
+
+            // Load file content
             let content = tokio::fs::read_to_string(&resolved)
                 .await
                 .map_err(|e| DomainError::Tool(format!("read failed: {}", e)))?;
@@ -112,23 +129,37 @@ impl Tool for ReadTool {
     }
 }
 
+/// Wrap a path in single quotes for use in a shell command hint.
+/// Escapes any embedded single quotes using the standard `'\''` trick.
+fn shell_escape_single(path: &str) -> String {
+    format!("'{}'", path.replace('\'', "'\\''"))
+}
+
 /// Apply offset/limit pagination and truncation to file content.
 /// Returns the formatted output string with optional continuation hints.
+///
+/// # Offset semantics
+/// - `None` → start from line 1
+/// - `Some(0)` → **error** (1-indexed; 0 is not a valid line number)
+/// - `Some(n)` → start from line n (1-indexed)
 fn apply_read_truncation(
     content: &str,
     path: &str,
     offset: Option<usize>,
     limit: Option<usize>,
 ) -> Result<String, DomainError> {
-    let total_lines: usize = if content.is_empty() {
-        0
-    } else {
-        content.lines().count()
-    };
+    // Validate offset before counting lines — zero is never valid for 1-indexed API
+    if offset == Some(0) {
+        return Err(DomainError::Tool(
+            "offset is 1-indexed; 0 is not valid. Use offset=1 for the first line.".to_string(),
+        ));
+    }
 
-    // Apply offset (1-indexed)
+    let total_lines: usize = content.lines().count();
+
+    // Convert 1-indexed offset to 0-indexed skip count
     let start_line = match offset {
-        Some(0) | None => 0,
+        None => 0,
         Some(n) => {
             if n > total_lines {
                 return Err(DomainError::Tool(format!(
@@ -136,19 +167,27 @@ fn apply_read_truncation(
                     n, total_lines
                 )));
             }
-            n - 1 // convert to 0-indexed
+            n - 1
         }
     };
 
-    // Build the slice from start_line
-    let sliced: String = content
-        .lines()
-        .skip(start_line)
-        .collect::<Vec<_>>()
-        .join("\n");
-
     // Determine effective max_lines
     let max_lines = limit.unwrap_or(DEFAULT_MAX_LINES);
+
+    // Build sliced content using iterator — avoids allocating an intermediate Vec
+    let sliced: String = {
+        let mut lines = content.lines().skip(start_line);
+        let mut buf = String::new();
+        let mut first = true;
+        for ln in lines.by_ref() {
+            if !first {
+                buf.push('\n');
+            }
+            buf.push_str(ln);
+            first = false;
+        }
+        buf
+    };
 
     // Apply head-truncation
     let tr = truncate_head(&sliced, max_lines, DEFAULT_MAX_BYTES);
@@ -157,16 +196,16 @@ fn apply_read_truncation(
     let mut output = String::new();
 
     if tr.first_line_exceeds_limit {
-        // Single line exceeds byte limit
-        let line_size = format_size(sliced.lines().next().map_or(0, |l| l.len()));
+        // Single line exceeds byte limit — suggest a shell command
+        let line_size = format_size(sliced.lines().next().map_or(0, str::len));
         let limit_size = format_size(DEFAULT_MAX_BYTES);
+        let escaped = shell_escape_single(path);
         output.push_str(&format!(
-            "[Line {} is {}, exceeds {} limit. Use bash: sed -n '{}p' {} | head -c {}]",
+            "[Line {} is {}, exceeds {} limit. Use bash: sed -n '{}p' {escaped} | head -c {}]",
             start_line + 1,
             line_size,
             limit_size,
             start_line + 1,
-            path,
             DEFAULT_MAX_BYTES
         ));
     } else {
@@ -616,6 +655,21 @@ mod tests {
 
         let result = tool.execute(r#"{"path": "small.txt", "offset": 99}"#).await;
         assert!(result.is_err() || result.unwrap().is_error);
+    }
+
+    #[tokio::test]
+    async fn test_read_offset_zero_is_error() {
+        let (ws, sb, tmp) = test_tools();
+        let tool = ReadTool::new(ws, sb);
+        std::fs::write(tmp.path().join("zero.txt"), "content").unwrap();
+
+        // offset=0 is invalid (1-indexed API)
+        let result = tool.execute(r#"{"path": "zero.txt", "offset": 0}"#).await;
+        assert!(
+            result.is_err(),
+            "expected error for offset=0 but got: {:?}",
+            result.unwrap().content
+        );
     }
 
     #[tokio::test]

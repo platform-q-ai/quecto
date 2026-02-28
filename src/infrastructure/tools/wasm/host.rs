@@ -141,7 +141,12 @@ impl HostState {
 
     // --- Host function implementations ---
 
-    /// Maximum file size for read operations (1 MiB), matching native ReadFileTool.
+    /// Maximum file size for WASM read operations (1 MiB hard cap).
+    ///
+    /// Note: the native `ReadTool` now accepts files up to 10 MiB and truncates the
+    /// output. The WASM host intentionally keeps a lower cap because the WASM guest
+    /// does not implement pagination — the full content is returned in one shot.
+    /// Files between 1 MiB and 10 MiB will succeed on native but fail on WASM.
     const MAX_READ_SIZE: u64 = 1024 * 1024;
 
     /// Read a workspace file.
