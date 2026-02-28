@@ -16,7 +16,10 @@ use crate::infrastructure::security::sandbox::Sandbox;
 
 const DEFAULT_EXEC_TIMEOUT: Duration = Duration::from_secs(30);
 const SECRET_ENV_PREFIX: &str = "QUECTO_";
-const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
+/// Maximum bytes captured per stream before the stream reader stops collecting.
+/// Raised to 10 MiB so the tail-truncation window (50 KB) always sees the true
+/// tail of the output, not a head-truncated proxy.
+const MAX_CAPTURE_BYTES: usize = 10 * 1024 * 1024;
 const STREAM_DRAIN_TIMEOUT_ON_KILL: Duration = Duration::from_millis(250);
 const DEFAULT_NSJAIL_MEMORY_LIMIT_MB: u64 = 512;
 const DEFAULT_NSJAIL_PID_LIMIT: u64 = 256;
@@ -640,12 +643,12 @@ async fn run_child_with_timeout(
             let mut content = truncated_output;
 
             if was_truncated {
-                // Save full output to temp file and include hint
-                let hint = if let Some(tmp_path) = save_to_temp_file(&combined) {
+                let combined_len = combined.len();
+                // Save full output to temp file asynchronously
+                let hint = if let Some(tmp_path) = save_to_temp_file(combined).await {
                     format!(
                         "\n[Output truncated. Full output ({} bytes) saved to: {}]",
-                        combined.len(),
-                        tmp_path
+                        combined_len, tmp_path
                     )
                 } else {
                     format!(
@@ -764,52 +767,57 @@ fn annotate_truncation(
     content
 }
 
-/// Truncate `content` to at most `max_lines` tail-lines or `max_bytes` bytes (whichever is hit
-/// first). Returns `(truncated_content, was_truncated)`.
+/// Truncate `content` to at most `max_lines` tail-lines or `max_bytes` bytes.
+/// Returns `(truncated_content, was_truncated)` in a single reverse pass.
 /// Pi-parity: the *last* max_lines/max_bytes are kept, not the first.
 fn truncate_tail_output(content: &str, max_lines: usize, max_bytes: usize) -> (String, bool) {
-    if content.len() <= max_bytes && content.lines().count() <= max_lines {
-        return (content.to_string(), false);
-    }
-
-    // Walk from the end, collecting lines up to max_lines / max_bytes
+    // Single-pass reverse walk — terminates early when limits are hit.
     let mut kept_lines: Vec<&str> = Vec::with_capacity(max_lines.min(4096));
     let mut byte_count = 0usize;
 
     for line in content.lines().rev() {
-        let line_bytes = line.len() + 1; // +1 for \n
-        if byte_count + line_bytes > max_bytes {
-            break;
-        }
-        if kept_lines.len() >= max_lines {
-            break;
+        let line_bytes = line.len() + 1; // +1 for the separator newline
+        if byte_count + line_bytes > max_bytes || kept_lines.len() >= max_lines {
+            // Hit a limit — we are truncating
+            if kept_lines.is_empty() {
+                // This single line exceeds max_bytes — fall through to byte-slice path
+                break;
+            }
+            kept_lines.reverse();
+            return (kept_lines.join("\n"), true);
         }
         kept_lines.push(line);
         byte_count += line_bytes;
     }
 
-    if kept_lines.is_empty() {
-        // Single line (or single word) exceeds max_bytes — take the last max_bytes bytes,
+    if kept_lines.is_empty() && !content.is_empty() {
+        // Single line (or entire content) exceeds max_bytes — take the last max_bytes bytes,
         // snapping back to a valid UTF-8 char boundary.
         let raw_start = content.len().saturating_sub(max_bytes);
-        // Move forward until we hit a valid char boundary
         let start = (raw_start..=content.len())
             .find(|&i| content.is_char_boundary(i))
             .unwrap_or(0);
         return (content[start..].to_string(), true);
     }
 
-    kept_lines.reverse();
-    (kept_lines.join("\n"), true)
+    // Consumed all lines without hitting a limit — no truncation
+    (content.to_string(), false)
 }
 
-/// Save content to a temp file and return the path (for the "full output" hint).
-fn save_to_temp_file(content: &str) -> Option<String> {
-    use std::io::Write;
-    let mut f = tempfile::NamedTempFile::new().ok()?;
-    f.write_all(content.as_bytes()).ok()?;
-    let (_, path) = f.keep().ok()?;
-    Some(path.display().to_string())
+/// Save content to a temp file asynchronously and return the path.
+/// The file is kept on disk intentionally — it is the "full output" file referenced in
+/// the tool result hint. OS-level /tmp cleanup (e.g. systemd-tmpfiles) handles eventual
+/// eviction. Future work: register paths for cleanup on tool drop.
+async fn save_to_temp_file(content: String) -> Option<String> {
+    tokio::task::spawn_blocking(move || {
+        use std::io::Write;
+        let mut f = tempfile::NamedTempFile::new().ok()?;
+        f.write_all(content.as_bytes()).ok()?;
+        let (_, path) = f.keep().ok()?;
+        Some(path.display().to_string())
+    })
+    .await
+    .ok()?
 }
 
 impl Tool for ExecTool {
@@ -820,7 +828,7 @@ impl Tool for ExecTool {
                           and stderr. Output is truncated to last 2000 lines or 50KB (whichever is \
                           hit first). If truncated, full output is saved to a temp file."
                 .to_string(),
-            parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string","description":"Bash command to execute"},"timeout":{"type":"number","description":"Timeout in seconds (optional, no default timeout)"}},"required":["command"]}"#.to_string(),
+            parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string","description":"Bash command to execute"}},"required":["command"]}"#.to_string(),
         }
     }
 
