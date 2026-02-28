@@ -81,15 +81,12 @@ pub struct HeartbeatTaskResult {
 /// Execute a heartbeat tick: load tasks from workspace, dispatch each
 /// through the agent (or via spawn for `use_spawn` tasks).
 ///
-/// Each task is executed with the given `timeout`. An optional `system_prompt`
-/// is prepended to each task's message list so the agent has context
-/// (e.g. current date/time) when processing. Returns the list of
+/// Each task is executed with the given `timeout`. Returns the list of
 /// dispatched task results, or an empty list if no HEARTBEAT.md exists.
 pub async fn execute_heartbeat_tick(
     source: &dyn HeartbeatTaskSource,
     agent: &dyn crate::domain::agent::AgentLoop,
     timeout: std::time::Duration,
-    system_prompt: Option<&str>,
 ) -> Result<Vec<HeartbeatTaskResult>, DomainError> {
     let tasks = load_tasks(source).await?;
     if tasks.is_empty() {
@@ -98,7 +95,7 @@ pub async fn execute_heartbeat_tick(
 
     let mut results = Vec::new();
     for task in &tasks {
-        let result = dispatch_task(agent, task, timeout, system_prompt).await;
+        let result = dispatch_task(agent, task, timeout).await;
         results.push(result);
     }
     Ok(results)
@@ -109,7 +106,6 @@ async fn dispatch_task(
     agent: &dyn crate::domain::agent::AgentLoop,
     task: &HeartbeatTask,
     timeout: std::time::Duration,
-    system_prompt: Option<&str>,
 ) -> HeartbeatTaskResult {
     let content = if task.use_spawn {
         format!("Spawn a subagent to handle this task: {}", task.message)
@@ -117,11 +113,7 @@ async fn dispatch_task(
         task.message.clone()
     };
 
-    let mut messages = Vec::new();
-    if let Some(prompt) = system_prompt {
-        messages.push(crate::domain::message::Message::system(prompt.to_string()));
-    }
-    messages.push(crate::domain::message::Message::user(content));
+    let mut messages = vec![crate::domain::message::Message::user(content)];
 
     let result = tokio::time::timeout(timeout, agent.process(&mut messages)).await;
 
@@ -306,7 +298,7 @@ mod tests {
                 tmp.path(),
             );
         let timeout = std::time::Duration::from_secs(60);
-        let results = execute_heartbeat_tick(&source, &agent, timeout, None)
+        let results = execute_heartbeat_tick(&source, &agent, timeout)
             .await
             .unwrap();
         assert_eq!(results.len(), 2);
@@ -328,7 +320,7 @@ mod tests {
                 tmp.path(),
             );
         let timeout = std::time::Duration::from_secs(60);
-        let results = execute_heartbeat_tick(&source, &agent, timeout, None)
+        let results = execute_heartbeat_tick(&source, &agent, timeout)
             .await
             .unwrap();
         assert!(results.is_empty());
@@ -349,7 +341,7 @@ mod tests {
                 tmp.path(),
             );
         let timeout = std::time::Duration::from_secs(60);
-        let results = execute_heartbeat_tick(&source, &agent, timeout, None)
+        let results = execute_heartbeat_tick(&source, &agent, timeout)
             .await
             .unwrap();
         assert_eq!(results.len(), 1);

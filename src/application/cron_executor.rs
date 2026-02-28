@@ -13,14 +13,10 @@ use crate::domain::message::Message;
 ///
 /// Returns a list of results for each executed job.
 /// Disabled and not-yet-due jobs are silently skipped.
-///
-/// An optional `system_prompt` is prepended to each job's message list
-/// so the agent has context (e.g. current date/time) when processing.
 pub async fn execute_cron_tick(
     store: &dyn CronStore,
     agent: &dyn AgentLoop,
     timeout: Duration,
-    system_prompt: Option<&str>,
 ) -> Result<Vec<CronJobResult>, DomainError> {
     let jobs = store.list()?;
     let now_secs = now_unix_secs();
@@ -37,7 +33,7 @@ pub async fn execute_cron_tick(
 
         record_last_run(store, &job.id, now_secs);
 
-        let result = execute_single_job(agent, job, timeout, system_prompt).await;
+        let result = execute_single_job(agent, job, timeout).await;
         record_job_error(store, job, &result);
 
         results.push(result);
@@ -107,13 +103,8 @@ async fn execute_single_job(
     agent: &dyn AgentLoop,
     job: &crate::domain::cron::CronJob,
     timeout: Duration,
-    system_prompt: Option<&str>,
 ) -> CronJobResult {
-    let mut messages = Vec::new();
-    if let Some(prompt) = system_prompt {
-        messages.push(Message::system(prompt.to_string()));
-    }
-    messages.push(Message::user(job.message.clone()));
+    let mut messages = vec![Message::user(job.message.clone())];
 
     let result = tokio::time::timeout(timeout, agent.process(&mut messages)).await;
 
@@ -267,7 +258,7 @@ mod tests {
         let agent = MockAgent {
             response: "Sunny".to_string(),
         };
-        let results = execute_cron_tick(&store, &agent, Duration::from_secs(60), None)
+        let results = execute_cron_tick(&store, &agent, Duration::from_secs(60))
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
@@ -281,7 +272,7 @@ mod tests {
         let agent = MockAgent {
             response: "Sunny".to_string(),
         };
-        let results = execute_cron_tick(&store, &agent, Duration::from_secs(60), None)
+        let results = execute_cron_tick(&store, &agent, Duration::from_secs(60))
             .await
             .unwrap();
         assert!(results.is_empty());
@@ -291,7 +282,7 @@ mod tests {
     async fn test_timeout_records_error() {
         let store = MockCronStore::new(vec![make_job("slow", true)]);
         let agent = SlowAgent;
-        let results = execute_cron_tick(&store, &agent, Duration::from_millis(50), None)
+        let results = execute_cron_tick(&store, &agent, Duration::from_millis(50))
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
@@ -310,7 +301,7 @@ mod tests {
         let agent = MockAgent {
             response: "Report done".to_string(),
         };
-        let results = execute_cron_tick(&store, &agent, Duration::from_secs(60), None)
+        let results = execute_cron_tick(&store, &agent, Duration::from_secs(60))
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
@@ -325,7 +316,7 @@ mod tests {
         let agent = MockAgent {
             response: "OK".to_string(),
         };
-        let _ = execute_cron_tick(&store, &agent, Duration::from_secs(60), None)
+        let _ = execute_cron_tick(&store, &agent, Duration::from_secs(60))
             .await
             .unwrap();
         let job = store.find_by_name("recovery").unwrap().unwrap();
@@ -351,7 +342,7 @@ mod tests {
             response: "should not run".to_string(),
         };
 
-        let results = execute_cron_tick(&store, &agent, Duration::from_secs(60), None)
+        let results = execute_cron_tick(&store, &agent, Duration::from_secs(60))
             .await
             .unwrap();
 
@@ -384,7 +375,7 @@ mod tests {
             response: "should not run".to_string(),
         };
 
-        let results = execute_cron_tick(&store, &agent, Duration::from_secs(60), None)
+        let results = execute_cron_tick(&store, &agent, Duration::from_secs(60))
             .await
             .unwrap();
 

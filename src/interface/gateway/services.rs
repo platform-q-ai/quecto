@@ -8,8 +8,9 @@ use tokio::sync::mpsc;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::application::cron_executor;
 use crate::application::heartbeat;
-use crate::domain::agent::AgentLoop;
+use crate::domain::agent::{AgentInfo, AgentLoop, AgentResult};
 use crate::domain::channel::{Channel, ChannelTarget};
+use crate::domain::error::DomainError;
 use crate::domain::message::{Message, Role};
 use crate::domain::provider::LlmProvider;
 use crate::domain::session::{Session, SessionStore};
@@ -30,12 +31,44 @@ use crate::infrastructure::tools::web_search::WebSearchTool;
 
 use super::Gateway;
 
+/// Wrapper that injects a transient system prompt before each `process()` call,
+/// building a fresh prompt (datetime + skills) each time so the agent always
+/// knows the current date/time. Mirrors the REPL/CLI system prompt pattern.
+struct SystemPromptAgent {
+    inner: Arc<dyn AgentLoop>,
+    skill_prompt: String,
+}
+
+impl AgentLoop for SystemPromptAgent {
+    fn process<'a>(
+        &'a self,
+        messages: &'a mut Vec<Message>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<AgentResult, DomainError>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            let prompt = crate::interface::shared::build_system_prompt(&self.skill_prompt, &None);
+            messages.insert(0, Message::system(prompt.clone()));
+            let result = self.inner.process(messages).await;
+            // Remove the transient system prompt after processing.
+            messages.retain(|m| !(m.role == Role::System && m.content == prompt));
+            result
+        })
+    }
+
+    fn info(&self) -> AgentInfo {
+        self.inner.info()
+    }
+}
+
 pub(super) struct InboundProcessorContext {
     pub(super) agent: Arc<dyn AgentLoop>,
     pub(super) agent_builder: Option<Arc<InboundAgentBuilder>>,
     pub(super) session_store: Arc<dyn SessionStore>,
     pub(super) outbound_tx: mpsc::Sender<OutboundMessage>,
     pub(super) max_session_messages: usize,
+    /// Skill prompt loaded at startup, combined with datetime per-request.
+    pub(super) skill_prompt: String,
 }
 
 pub(super) struct InboundAgentBuilder {
@@ -105,17 +138,11 @@ impl Gateway {
         while let Some(msg) = inbound_rx.recv().await {
             let mut messages = Self::load_session(&ctx.session_store, &msg).await;
 
-            // Inject a transient system prompt with the current date/time so the
-            // agent knows "now" for scheduling and time-aware tasks.
-            let system_prompt = crate::interface::shared::datetime_preamble();
-            messages.push(Message::system(system_prompt.clone()));
-
             messages.push(Message::user(msg.text.clone()));
 
             trim_session_messages(&mut messages, ctx.max_session_messages);
 
-            let response_text =
-                Self::process_and_save(&ctx, &msg, &mut messages, Some(&system_prompt)).await;
+            let response_text = Self::process_and_save(&ctx, &msg, &mut messages).await;
 
             let outbound = OutboundMessage {
                 target: msg.source.clone(),
@@ -146,28 +173,33 @@ impl Gateway {
 
     /// Process messages through agent loop, save session, return response text.
     ///
-    /// If `transient_system_prompt` is provided, it is stripped from the
-    /// message list before saving the session (it was only needed for the
-    /// current request, not for persistence).
+    /// Uses `SystemPromptAgent` to inject a transient datetime+skills system
+    /// prompt for the duration of the call — it is automatically stripped
+    /// after processing so it is never persisted in session history.
     async fn process_and_save(
         ctx: &InboundProcessorContext,
         msg: &InboundMessage,
         messages: &mut Vec<Message>,
-        transient_system_prompt: Option<&str>,
     ) -> String {
         let session_key = Session::build_key("telegram", &msg.source);
         let result = if let Some(ref builder) = ctx.agent_builder {
-            let per_session_agent = builder.build(&session_key, ctx.outbound_tx.clone());
-            per_session_agent.process(messages).await
+            let inner: Arc<dyn AgentLoop> =
+                Arc::new(builder.build(&session_key, ctx.outbound_tx.clone()));
+            let agent = SystemPromptAgent {
+                inner,
+                skill_prompt: ctx.skill_prompt.clone(),
+            };
+            agent.process(messages).await
         } else {
-            ctx.agent.process(messages).await
+            // Shared agent path (no per-session builder) — wrap with system prompt.
+            let agent = SystemPromptAgent {
+                inner: ctx.agent.clone(),
+                skill_prompt: ctx.skill_prompt.clone(),
+            };
+            agent.process(messages).await
         };
         match result {
             Ok(result) => {
-                // Strip the transient system prompt before persisting.
-                if let Some(prompt) = transient_system_prompt {
-                    messages.retain(|m| !(m.role == Role::System && m.content == prompt));
-                }
                 trim_session_messages(messages, ctx.max_session_messages);
                 let session = Session {
                     key: session_key,
@@ -239,9 +271,14 @@ impl Gateway {
     /// suspends forever (does not consume a select! slot).
     pub(super) async fn run_heartbeat(
         config: crate::infrastructure::config::HeartbeatConfig,
-        agent: Arc<dyn AgentLoop>,
+        inner_agent: Arc<dyn AgentLoop>,
         workspace: PathBuf,
+        skill_prompt: String,
     ) {
+        let agent = SystemPromptAgent {
+            inner: inner_agent,
+            skill_prompt,
+        };
         if !config.enabled {
             tracing::info!("Heartbeat disabled");
             std::future::pending::<()>().await;
@@ -263,10 +300,7 @@ impl Gateway {
         loop {
             tokio::time::sleep(interval).await;
             tracing::debug!("heartbeat tick");
-            let system_prompt = crate::interface::shared::datetime_preamble();
-            match heartbeat::execute_heartbeat_tick(&source, &*agent, timeout, Some(&system_prompt))
-                .await
-            {
+            match heartbeat::execute_heartbeat_tick(&source, &agent, timeout).await {
                 Ok(results) => {
                     for result in &results {
                         tracing::info!(
@@ -289,9 +323,14 @@ impl Gateway {
     /// Uses a short check interval (2s) so jobs fire promptly.
     pub(super) async fn run_cron_tick(
         store: Arc<FileCronStore>,
-        agent: Arc<dyn AgentLoop>,
+        inner_agent: Arc<dyn AgentLoop>,
         timeout_minutes: u32,
+        skill_prompt: String,
     ) {
+        let agent = SystemPromptAgent {
+            inner: inner_agent,
+            skill_prompt,
+        };
         let check_interval = std::time::Duration::from_secs(2);
         let timeout = std::time::Duration::from_secs(u64::from(timeout_minutes) * 60);
         tracing::info!(
@@ -303,10 +342,7 @@ impl Gateway {
         loop {
             tokio::time::sleep(check_interval).await;
             tracing::debug!("cron tick");
-            let system_prompt = crate::interface::shared::datetime_preamble();
-            match cron_executor::execute_cron_tick(&*store, &*agent, timeout, Some(&system_prompt))
-                .await
-            {
+            match cron_executor::execute_cron_tick(&*store, &agent, timeout).await {
                 Ok(results) => {
                     for result in &results {
                         tracing::info!(
@@ -488,6 +524,7 @@ mod tests {
             session_store: Arc::new(NoopSessionStore),
             outbound_tx: tokio::sync::mpsc::channel(1).0,
             max_session_messages: 50,
+            skill_prompt: String::new(),
         };
 
         let msg = InboundMessage {
@@ -497,7 +534,7 @@ mod tests {
         };
         let mut messages = vec![];
 
-        let response = Gateway::process_and_save(&ctx, &msg, &mut messages, None).await;
+        let response = Gateway::process_and_save(&ctx, &msg, &mut messages).await;
 
         assert!(response.starts_with("Error:"));
         assert!(!response.contains("sk-secret-key-12345"));

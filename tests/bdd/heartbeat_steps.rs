@@ -189,7 +189,6 @@ fn when_heartbeat_tick_fires(world: &mut QuectoWorld) {
             &source,
             agent.as_ref(),
             std::time::Duration::from_secs(60),
-            None,
         ))
         .unwrap();
     world.heartbeat_tick_results = Some(results);
