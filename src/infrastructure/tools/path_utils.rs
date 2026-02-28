@@ -1,55 +1,98 @@
 // Shared path resolution utilities for tool implementations.
 // Mirrors Pi's path-utils.js — handles ~ expansion, absolute paths,
 // @ prefix stripping, Unicode space normalisation, and macOS filename fixups.
+//
+// # Security
+// `resolve_to_cwd` and `resolve_read_path` return a `PathBuf` that may point
+// outside the workspace (e.g. absolute paths, ~ expansion). Callers **must**
+// pass the result through `Sandbox::validate_path()` before any I/O.
+// The sandbox performs canonicalisation and workspace-boundary checks.
+//
+// # HOME not set
+// `expand_tilde` returns `PathBuf::from("~")` (a literal path component) when
+// `dirs::home_dir()` returns `None` (containers, CI without HOME).
+// Callers that need hard failure should check `path.starts_with("~")` after
+// resolution and return a `DomainError::Config`.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 /// Strip a leading `@` prefix that editors sometimes prepend to file references.
+///
+/// Note: `@` is a valid filename character. This stripping matches Pi's
+/// `path-utils.js` behaviour and is intentional for editor-reference paths.
 pub fn normalize_at_prefix(path: &str) -> &str {
     path.strip_prefix('@').unwrap_or(path)
 }
 
+/// Return the cached home directory (resolved once per process).
+///
+/// Returns `None` in environments where `HOME` is unset (containers, CI,
+/// systemd units). Callers should treat `None` as an unresolvable tilde.
+pub fn home_dir() -> Option<&'static Path> {
+    static HOME: OnceLock<Option<PathBuf>> = OnceLock::new();
+    HOME.get_or_init(dirs::home_dir).as_deref()
+}
+
 /// Expand `~` and `~/` to the home directory.
-/// Returns the path unchanged if it does not start with `~`.
+///
+/// Returns the path unchanged (as `PathBuf::from(path)`) if it does not start
+/// with `~`, or if the home directory cannot be determined.
+///
+/// The returned path may contain `..` traversal components — callers must
+/// still validate through `Sandbox::validate_path()`.
 pub fn expand_tilde(path: &str) -> PathBuf {
     if path == "~" {
-        return dirs::home_dir().unwrap_or_else(|| PathBuf::from("~"));
+        return home_dir()
+            .map(|h| h.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("~"));
     }
     if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = home_dir() {
             return home.join(rest);
         }
     }
     PathBuf::from(path)
 }
 
+const SPECIAL_SPACES: &[char] = &[
+    '\u{00A0}', // NO-BREAK SPACE
+    '\u{2002}', // EN SPACE
+    '\u{2003}', // EM SPACE
+    '\u{2004}', // THREE-PER-EM SPACE
+    '\u{2005}', // FOUR-PER-EM SPACE
+    '\u{2006}', // SIX-PER-EM SPACE
+    '\u{2007}', // FIGURE SPACE
+    '\u{2008}', // PUNCTUATION SPACE
+    '\u{2009}', // THIN SPACE
+    '\u{200A}', // HAIR SPACE
+    '\u{202F}', // NARROW NO-BREAK SPACE
+    '\u{205F}', // MEDIUM MATHEMATICAL SPACE
+    '\u{3000}', // IDEOGRAPHIC SPACE
+];
+
 /// Normalise Unicode spaces to regular ASCII space (U+0020).
 ///
-/// Handles: non-breaking space (U+00A0), en/em/thin/hair spaces
-/// (U+2002–U+200A), narrow no-break space (U+202F), medium mathematical
-/// space (U+205F), ideographic space (U+3000).
-pub fn normalize_unicode_spaces(s: &str) -> String {
-    const SPECIAL_SPACES: &[char] = &[
-        '\u{00A0}', // NO-BREAK SPACE
-        '\u{2002}', // EN SPACE
-        '\u{2003}', // EM SPACE
-        '\u{2004}', // THREE-PER-EM SPACE
-        '\u{2005}', // FOUR-PER-EM SPACE
-        '\u{2006}', // SIX-PER-EM SPACE
-        '\u{2007}', // FIGURE SPACE
-        '\u{2008}', // PUNCTUATION SPACE
-        '\u{2009}', // THIN SPACE
-        '\u{200A}', // HAIR SPACE
-        '\u{202F}', // NARROW NO-BREAK SPACE
-        '\u{205F}', // MEDIUM MATHEMATICAL SPACE
-        '\u{3000}', // IDEOGRAPHIC SPACE
-    ];
-    if s.chars().any(|c| SPECIAL_SPACES.contains(&c)) {
-        s.chars()
-            .map(|c| if SPECIAL_SPACES.contains(&c) { ' ' } else { c })
-            .collect()
-    } else {
-        s.to_string()
+/// Single-pass: only allocates when a replacement is actually needed.
+/// ASCII-only fast path avoids char decoding entirely.
+pub fn normalize_unicode_spaces(s: &str) -> Cow<'_, str> {
+    // ASCII fast path — most LLM-emitted paths are pure ASCII
+    if s.bytes().all(|b| b.is_ascii()) {
+        return Cow::Borrowed(s);
+    }
+    let mut buf: Option<String> = None;
+    for (i, c) in s.char_indices() {
+        if SPECIAL_SPACES.contains(&c) {
+            let b = buf.get_or_insert_with(|| String::from(&s[..i]));
+            b.push(' ');
+        } else if let Some(b) = buf.as_mut() {
+            b.push(c);
+        }
+    }
+    match buf {
+        Some(b) => Cow::Owned(b),
+        None => Cow::Borrowed(s),
     }
 }
 
@@ -57,12 +100,16 @@ pub fn normalize_unicode_spaces(s: &str) -> String {
 /// support, `@` prefix stripping, and Unicode space normalisation.
 ///
 /// Used by: write, edit, bash (indirectly), grep, find, ls.
+///
+/// # Security
+/// The returned path **must** be validated by `Sandbox::validate_path()`
+/// before any I/O — this function performs no sandbox checks.
 pub fn resolve_to_cwd(path: &str, cwd: &Path) -> PathBuf {
     // 1. Strip @ prefix
     let path = normalize_at_prefix(path);
-    // 2. Normalise Unicode spaces
-    let path = normalize_unicode_spaces(path);
-    let path = path.as_str();
+    // 2. Normalise Unicode spaces (borrows when no change needed)
+    let normalised = normalize_unicode_spaces(path);
+    let path = normalised.as_ref();
     // 3. Expand ~ and ~/
     let expanded = expand_tilde(path);
     // 4. If absolute, return as-is; if relative, resolve against cwd
@@ -79,14 +126,19 @@ pub fn resolve_to_cwd(path: &str, cwd: &Path) -> PathBuf {
 /// Used by: read only.
 ///
 /// Variants tried (in order):
-/// 1. Primary resolved path
+/// 1. Primary resolved path (if it exists, return immediately)
 /// 2. AM/PM narrow no-break space variant (U+202F before AM/PM)
 /// 3. NFD Unicode decomposed form (macOS stores filenames in NFD)
-/// 4. Curly-quote variant (U+2019 right single quotation mark)
-/// 5. Combined NFD + curly-quote
+/// 4. Curly right single quote → straight apostrophe (French screenshot names)
+/// 5. Curly left single quote → straight apostrophe
 ///
 /// Returns the first variant that exists on disk, or the primary path
 /// if none exist.
+///
+/// # Security
+/// The returned path **must** be validated by `Sandbox::validate_path()`
+/// before any I/O. Existence probing happens only on the primary-resolved
+/// path's parent directory, but `Sandbox` canonicalisation is still required.
 pub fn resolve_read_path(path: &str, cwd: &Path) -> PathBuf {
     let primary = resolve_to_cwd(path, cwd);
 
@@ -94,12 +146,11 @@ pub fn resolve_read_path(path: &str, cwd: &Path) -> PathBuf {
         return primary;
     }
 
-    // Try macOS variants — only meaningful on macOS (or cross-platform
-    // when accessing macOS-generated files over a network share).
+    // Try macOS variants on the filename component only.
     if let Some(filename) = primary.file_name().and_then(|n| n.to_str()) {
         let parent = primary.parent().unwrap_or(Path::new(""));
 
-        // Variant 1: narrow no-break space before AM/PM (screenshot filenames)
+        // Variant: narrow no-break space before AM/PM (screenshot filenames)
         let ampm_variant = filename
             .replace(" AM", "\u{202F}AM")
             .replace(" PM", "\u{202F}PM");
@@ -110,7 +161,7 @@ pub fn resolve_read_path(path: &str, cwd: &Path) -> PathBuf {
             }
         }
 
-        // Variant 2: NFD decomposition (macOS normalises filenames to NFD)
+        // Variant: NFD decomposition (macOS normalises filenames to NFD)
         #[cfg(target_os = "macos")]
         {
             use unicode_normalization::UnicodeNormalization;
@@ -123,17 +174,16 @@ pub fn resolve_read_path(path: &str, cwd: &Path) -> PathBuf {
             }
         }
 
-        // Variant 3: curly right single quote → straight apostrophe
-        // (macOS uses U+2019 in French screenshot names like "Capture d'écran")
-        let curly_variant = filename.replace('\u{2019}', "'");
-        if curly_variant != filename {
-            let candidate = parent.join(&curly_variant);
+        // Variant: curly right single quote → straight apostrophe
+        let curly_right = filename.replace('\u{2019}', "'");
+        if curly_right != filename {
+            let candidate = parent.join(&curly_right);
             if candidate.exists() {
                 return candidate;
             }
         }
 
-        // Variant 4: curly left single quote → straight apostrophe
+        // Variant: curly left single quote → straight apostrophe
         let curly_left = filename.replace('\u{2018}', "'");
         if curly_left != filename {
             let candidate = parent.join(&curly_left);
@@ -176,16 +226,18 @@ mod tests {
 
     #[test]
     fn tilde_alone_expands_to_home() {
-        let result = expand_tilde("~");
-        let home = dirs::home_dir().unwrap();
-        assert_eq!(result, home);
+        if let Some(home) = home_dir() {
+            let result = expand_tilde("~");
+            assert_eq!(result, home);
+        }
     }
 
     #[test]
     fn tilde_slash_expands() {
-        let result = expand_tilde("~/foo/bar");
-        let home = dirs::home_dir().unwrap();
-        assert_eq!(result, home.join("foo/bar"));
+        if let Some(home) = home_dir() {
+            let result = expand_tilde("~/foo/bar");
+            assert_eq!(result, home.join("foo/bar"));
+        }
     }
 
     #[test]
@@ -219,15 +271,26 @@ mod tests {
     }
 
     #[test]
-    fn regular_space_unchanged() {
-        assert_eq!(normalize_unicode_spaces("my file.txt"), "my file.txt");
+    fn regular_space_unchanged_borrowed() {
+        let s = "my file.txt";
+        let result = normalize_unicode_spaces(s);
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(result, s);
     }
 
     #[test]
-    fn no_special_spaces_fast_path() {
+    fn ascii_fast_path_borrowed() {
         let s = "hello_world.rs";
         let result = normalize_unicode_spaces(s);
-        assert_eq!(result, s);
+        assert!(matches!(result, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn special_space_produces_owned() {
+        let s = "my\u{3000}file.txt";
+        let result = normalize_unicode_spaces(s);
+        assert!(matches!(result, Cow::Owned(_)));
+        assert_eq!(result, "my file.txt");
     }
 
     // --- resolve_to_cwd ---
@@ -248,10 +311,11 @@ mod tests {
 
     #[test]
     fn tilde_resolved() {
-        let td = tmp();
-        let home = dirs::home_dir().unwrap();
-        let result = resolve_to_cwd("~/foo.txt", td.path());
-        assert_eq!(result, home.join("foo.txt"));
+        if let Some(home) = home_dir() {
+            let td = tmp();
+            let result = resolve_to_cwd("~/foo.txt", td.path());
+            assert_eq!(result, home.join("foo.txt"));
+        }
     }
 
     #[test]
@@ -269,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn dot_resolves_to_cwd() {
+    fn dot_resolves_under_cwd() {
         let td = tmp();
         let result = resolve_to_cwd(".", td.path());
         assert_eq!(result, td.path().join("."));
@@ -294,14 +358,20 @@ mod tests {
     }
 
     #[test]
-    fn curly_quote_variant_found() {
+    fn curly_right_quote_variant_found() {
         let td = tmp();
-        // File stored with straight apostrophe, looked up with curly quote
         let stored = td.path().join("Capture d'écran.png");
         std::fs::write(&stored, b"").unwrap();
         // Query with curly right quote (U+2019)
         let result = resolve_read_path("Capture d\u{2019}\u{E9}cran.png", td.path());
-        // Should find the straight-apostrophe file
         assert_eq!(result, stored);
+    }
+
+    #[test]
+    fn home_dir_cached() {
+        // Call twice — should return same pointer (OnceLock)
+        let a = home_dir();
+        let b = home_dir();
+        assert_eq!(a, b);
     }
 }

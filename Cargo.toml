@@ -24,6 +24,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 dirs = "6"
 thiserror = "2"
+unicode-normalization = "0.1"
 
 # WASM tool isolation
 wasmtime = { version = "42", features = ["component-model"] }
