@@ -836,6 +836,19 @@ fn given_final_text_for_parallel(world: &mut QuectoWorld, content: String) {
 // E2E Safety and Limits Steps
 // ===========================================================================
 
+#[given(expr = "exec isolation is set to {string} in the config")]
+fn given_exec_isolation(world: &mut QuectoWorld, mode: String) {
+    let base = base_path(world);
+    let config_str = std::fs::read_to_string(base.join("config.json")).expect("read config");
+    let mut config: serde_json::Value = serde_json::from_str(&config_str).expect("parse config");
+    config["tools"]["exec"]["isolation"] = serde_json::Value::String(mode);
+    std::fs::write(
+        base.join("config.json"),
+        serde_json::to_string_pretty(&config).unwrap(),
+    )
+    .expect("rewrite config");
+}
+
 #[given("restrict_to_workspace is enabled in the config")]
 fn given_restrict_to_workspace_enabled(world: &mut QuectoWorld) {
     let base = base_path(world);
@@ -1867,6 +1880,49 @@ fn then_llm_no_system_message(world: &mut QuectoWorld) {
         !has_system,
         "expected no system messages in LLM requests, but found one"
     );
+}
+
+#[then("the LLM system message should only contain the datetime preamble")]
+fn then_llm_system_message_only_preamble(world: &mut QuectoWorld) {
+    let server = world
+        .wiremock_server_ref
+        .expect("no capturing mock LLM configured");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let requests = rt.block_on(async { server.received_requests().await });
+    std::mem::forget(rt);
+    let requests = requests.expect("request recording not enabled");
+    let system_contents: Vec<String> = requests
+        .iter()
+        .filter_map(|req| {
+            let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
+            body["messages"].as_array().and_then(|msgs| {
+                msgs.iter()
+                    .find(|m| m["role"] == "system")
+                    .and_then(|m| m["content"].as_str().map(String::from))
+            })
+        })
+        .collect();
+    assert!(
+        !system_contents.is_empty(),
+        "expected a system message with datetime preamble, but none found"
+    );
+    for content in &system_contents {
+        assert!(
+            content.starts_with("Current date and time: "),
+            "system message should start with datetime preamble, got: {}",
+            &content[..content.len().min(100)]
+        );
+        // After the datetime line, there should be no additional content
+        // (no skill prompts, no user prompts).
+        let lines: Vec<&str> = content.lines().collect();
+        assert!(
+            lines.len() == 1,
+            "system message should only have the datetime preamble (exactly 1 line), \
+             got {} lines: {:?}",
+            lines.len(),
+            &lines[..lines.len().min(5)]
+        );
+    }
 }
 
 // ===========================================================================

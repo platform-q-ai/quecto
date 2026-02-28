@@ -50,7 +50,7 @@ step "3/6" "cargo fmt --check"
 cargo fmt --all -- --check
 
 step "4/6" "cargo clippy (strict)"
-cargo clippy --all-targets -- -D warnings \
+cargo clippy --all-targets --features test-support -- -D warnings \
     -W clippy::cognitive_complexity \
     -W clippy::too_many_arguments \
     -W clippy::too_many_lines
@@ -58,12 +58,12 @@ cargo clippy --all-targets -- -D warnings \
 step "5/6" "Parallel test wave: unit + architecture + non-real BDD shards"
 
 (
-    cargo test --lib
+    cargo test --no-fail-fast --lib 2>&1 | "$ROOT/scripts/test-filter.sh"
 ) &
 PID_LIB=$!
 
 (
-    cargo test --test architecture
+    cargo test --no-fail-fast --test architecture 2>&1 | "$ROOT/scripts/test-filter.sh"
 ) &
 PID_ARCH=$!
 
