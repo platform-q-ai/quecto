@@ -486,9 +486,9 @@ mod tests {
     async fn test_iteration_limit() {
         // LLM always returns tool calls — should stop at limit
         let responses: Vec<LlmResponse> = (0..10)
-            .map(|i| tool_call_response("exec", &format!(r#"{{"cmd":"echo {}"}}"#, i)))
+            .map(|i| tool_call_response("bash", &format!(r#"{{"cmd":"echo {}"}}"#, i)))
             .collect();
-        let (agent, _) = make_agent(responses, vec![("exec", "output")]);
+        let (agent, _) = make_agent(responses, vec![("bash", "output")]);
         let agent = agent.with_max_tool_iterations(3);
 
         let mut messages = vec![Message::user("Loop forever")];
@@ -501,19 +501,19 @@ mod tests {
     #[tokio::test]
     async fn test_tool_definitions_sent_to_llm() {
         let (agent, provider) =
-            make_agent(vec![text_response("ok")], vec![("exec", ""), ("read", "")]);
+            make_agent(vec![text_response("ok")], vec![("bash", ""), ("read", "")]);
         let mut messages = vec![Message::user("test")];
         let _ = agent.run_loop(&mut messages).await.unwrap();
         let defs = provider.last_tool_defs();
         assert_eq!(defs.len(), 2);
         let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
-        assert!(names.contains(&"exec"));
+        assert!(names.contains(&"bash"));
         assert!(names.contains(&"read"));
     }
 
     #[tokio::test]
     async fn test_agent_info() {
-        let (agent, _) = make_agent(vec![], vec![("exec", ""), ("read", ""), ("write", "")]);
+        let (agent, _) = make_agent(vec![], vec![("bash", ""), ("read", ""), ("write", "")]);
         let agent = agent.with_skill_count(2);
         let info = agent.info();
         assert_eq!(info.tool_count, 3);

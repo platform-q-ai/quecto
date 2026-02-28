@@ -353,7 +353,7 @@ impl ExecTool {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .map_err(|e| DomainError::Tool(format!("exec failed: {}", e)))?;
+            .map_err(|e| DomainError::Tool(format!("bash failed: {}", e)))?;
 
         let stdout_task = child
             .stdout
@@ -369,7 +369,7 @@ impl ExecTool {
             stderr_task,
         };
 
-        run_child_with_timeout(child, stream_tasks, self.timeout, self.max_capture_bytes).await
+        run_child_with_timeout(child, stream_tasks, self.timeout).await
     }
 }
 
@@ -613,34 +613,62 @@ async fn run_child_with_timeout(
     mut child: tokio::process::Child,
     mut stream_tasks: StreamTasks,
     timeout_dur: Duration,
-    max_capture_bytes: usize,
 ) -> Result<ToolResult, DomainError> {
+    // Pi-parity truncation limits: tail 2000 lines / 50KB
+    const TAIL_MAX_LINES: usize = 2000;
+    const TAIL_MAX_BYTES: usize = 50 * 1024;
+
     match tokio::time::timeout(timeout_dur, child.wait()).await {
         Ok(Ok(status)) => {
-            let (stdout, stdout_truncated) =
+            let (stdout_raw, _stdout_truncated_head) =
                 await_stream_output(stream_tasks.stdout_task.take()).await;
-            let (stderr, stderr_truncated) =
+            let (stderr_raw, _stderr_truncated_head) =
                 await_stream_output(stream_tasks.stderr_task.take()).await;
 
-            let stdout = annotate_truncation(stdout, stdout_truncated, "stdout", max_capture_bytes);
-            let stderr = annotate_truncation(stderr, stderr_truncated, "stderr", max_capture_bytes);
+            // Combine stdout + stderr, then apply Pi-parity tail-truncation
+            let combined = if stderr_raw.is_empty() {
+                stdout_raw
+            } else if stdout_raw.is_empty() {
+                stderr_raw
+            } else {
+                format!("{}\n{}", stdout_raw, stderr_raw)
+            };
+
+            let (truncated_output, was_truncated) =
+                truncate_tail_output(&combined, TAIL_MAX_LINES, TAIL_MAX_BYTES);
+
+            let mut content = truncated_output;
+
+            if was_truncated {
+                // Save full output to temp file and include hint
+                let hint = if let Some(tmp_path) = save_to_temp_file(&combined) {
+                    format!(
+                        "\n[Output truncated. Full output ({} bytes) saved to: {}]",
+                        combined.len(),
+                        tmp_path
+                    )
+                } else {
+                    format!(
+                        "\n[Output truncated to last {} lines / {} bytes]",
+                        TAIL_MAX_LINES, TAIL_MAX_BYTES
+                    )
+                };
+                content.push_str(&hint);
+            }
 
             if status.success() {
                 Ok(ToolResult {
-                    content: stdout,
+                    content,
                     is_error: false,
                 })
             } else {
                 Ok(ToolResult {
-                    content: format!(
-                        "exit code {}\nstdout: {}\nstderr: {}",
-                        status, stdout, stderr
-                    ),
+                    content: format!("exit code {}\n{}", status.code().unwrap_or(-1), content),
                     is_error: true,
                 })
             }
         }
-        Ok(Err(e)) => Err(DomainError::Tool(format!("exec failed: {}", e))),
+        Ok(Err(e)) => Err(DomainError::Tool(format!("bash failed: {}", e))),
         Err(_) => {
             let _ = child.kill().await;
             let _ = child.wait().await;
@@ -720,6 +748,7 @@ async fn await_stream_output_with_timeout(
     }
 }
 
+#[allow(dead_code)]
 fn annotate_truncation(
     mut content: String,
     truncated: bool,
@@ -735,12 +764,63 @@ fn annotate_truncation(
     content
 }
 
+/// Truncate `content` to at most `max_lines` tail-lines or `max_bytes` bytes (whichever is hit
+/// first). Returns `(truncated_content, was_truncated)`.
+/// Pi-parity: the *last* max_lines/max_bytes are kept, not the first.
+fn truncate_tail_output(content: &str, max_lines: usize, max_bytes: usize) -> (String, bool) {
+    if content.len() <= max_bytes && content.lines().count() <= max_lines {
+        return (content.to_string(), false);
+    }
+
+    // Walk from the end, collecting lines up to max_lines / max_bytes
+    let mut kept_lines: Vec<&str> = Vec::with_capacity(max_lines.min(4096));
+    let mut byte_count = 0usize;
+
+    for line in content.lines().rev() {
+        let line_bytes = line.len() + 1; // +1 for \n
+        if byte_count + line_bytes > max_bytes {
+            break;
+        }
+        if kept_lines.len() >= max_lines {
+            break;
+        }
+        kept_lines.push(line);
+        byte_count += line_bytes;
+    }
+
+    if kept_lines.is_empty() {
+        // Single line (or single word) exceeds max_bytes — take the last max_bytes bytes,
+        // snapping back to a valid UTF-8 char boundary.
+        let raw_start = content.len().saturating_sub(max_bytes);
+        // Move forward until we hit a valid char boundary
+        let start = (raw_start..=content.len())
+            .find(|&i| content.is_char_boundary(i))
+            .unwrap_or(0);
+        return (content[start..].to_string(), true);
+    }
+
+    kept_lines.reverse();
+    (kept_lines.join("\n"), true)
+}
+
+/// Save content to a temp file and return the path (for the "full output" hint).
+fn save_to_temp_file(content: &str) -> Option<String> {
+    use std::io::Write;
+    let mut f = tempfile::NamedTempFile::new().ok()?;
+    f.write_all(content.as_bytes()).ok()?;
+    let (_, path) = f.keep().ok()?;
+    Some(path.display().to_string())
+}
+
 impl Tool for ExecTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "exec".to_string(),
-            description: "Execute a shell command in the workspace directory".to_string(),
-            parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string","description":"Shell command to execute"}},"required":["command"]}"#.to_string(),
+            name: "bash".to_string(),
+            description: "Execute a bash command in the current working directory. Returns stdout \
+                          and stderr. Output is truncated to last 2000 lines or 50KB (whichever is \
+                          hit first). If truncated, full output is saved to a temp file."
+                .to_string(),
+            parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string","description":"Bash command to execute"},"timeout":{"type":"number","description":"Timeout in seconds (optional, no default timeout)"}},"required":["command"]}"#.to_string(),
         }
     }
 

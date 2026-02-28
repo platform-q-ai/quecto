@@ -32,7 +32,7 @@ Feature: End-to-End Tool Execution
 
   @done
   Scenario: LLM executes a shell command via tool call
-    Given the mock LLM first returns a tool call for "exec" with args:
+    Given the mock LLM first returns a tool call for "bash" with args:
       | command | echo hello from shell |
     And the mock LLM then returns a text response "The command output: hello from shell"
     When I run quecto agent -s - -m "Run echo hello"
@@ -41,7 +41,7 @@ Feature: End-to-End Tool Execution
 
   @done @e2e-tool-use
   Scenario: LLM exec tool with large output completes within max-time
-    Given the mock LLM first returns a tool call for "exec" with args:
+    Given the mock LLM first returns a tool call for "bash" with args:
       | command | printf 'x%.0s' {1..100000} |
     And the mock LLM then returns a text response "Large output command completed"
     When I run quecto agent -s - --max-time 4 -m "Run a large output command"

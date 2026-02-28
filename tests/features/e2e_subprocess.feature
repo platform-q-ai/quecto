@@ -48,7 +48,7 @@ Feature: End-to-End Subprocess Protocol
 
   @done
   Scenario: Child process respects max-iterations flag
-    Given the mock LLM always returns a tool call for "exec" with args:
+    Given the mock LLM always returns a tool call for "bash" with args:
       | command | echo loop |
     When I spawn quecto as a subprocess with args: agent -s - --max-iterations 2 -m "Loop"
     Then the subprocess exit code should be 0

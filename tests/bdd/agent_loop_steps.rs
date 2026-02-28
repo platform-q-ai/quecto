@@ -162,17 +162,17 @@ fn given_llm_always_returns_tool_call(world: &mut QuectoWorld) {
             content: None,
             tool_calls: vec![ToolCall {
                 id: format!("call_{}", i),
-                name: "exec".to_string(),
+                name: "bash".to_string(),
                 arguments: r#"{"command":"echo hi"}"#.to_string(),
             }],
             usage: None,
         });
     }
     // Register the exec mock tool
-    if !world.mock_tools.contains_key("exec") {
+    if !world.mock_tools.contains_key("bash") {
         world.mock_tools.insert(
-            "exec".to_string(),
-            Arc::new(MockBddTool::new("exec", "output")),
+            "bash".to_string(),
+            Arc::new(MockBddTool::new("bash", "output")),
         );
     }
 }
@@ -194,7 +194,7 @@ fn given_fully_initialized_agent(world: &mut QuectoWorld) {
     // Register some tools to have a non-zero count
     world
         .mock_tools
-        .insert("exec".to_string(), Arc::new(MockBddTool::new("exec", "")));
+        .insert("bash".to_string(), Arc::new(MockBddTool::new("bash", "")));
     world
         .mock_tools
         .insert("read".to_string(), Arc::new(MockBddTool::new("read", "")));

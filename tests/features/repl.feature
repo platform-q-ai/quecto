@@ -98,7 +98,7 @@ Feature: REPL — Interactive Conversational Mode
   Scenario: REPL handles LLM tool calls
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    And the mock LLM returns a tool call for "exec" with args '{"command": "echo hello"}'
+    And the mock LLM returns a tool call for "bash" with args '{"command": "echo hello"}'
     And then the mock LLM returns a text response "The command output was: hello"
     When I start quecto in REPL mode
     And I type "Run echo hello"
