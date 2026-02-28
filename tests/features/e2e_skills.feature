@@ -91,12 +91,14 @@ Feature: E2E Skill Loading
     And the LLM should have received a system message containing "code review expert"
     And the LLM should have received a system message containing "testing specialist"
 
+
   Scenario: Agent works normally with no skills installed
     Given a mock LLM that captures requests and returns text "Hello from the agent"
     When I run quecto agent -s - -m "Hi"
     Then the exit code should be 0
     And the output should contain "Hello from the agent"
-    And the LLM should not have received a system message
+    And the LLM system message should only contain the datetime preamble
+
 
   Scenario: Skill without valid frontmatter does not add system prompt
     Given a workspace skill directory "bad-skill" with raw content "Just plain text"
@@ -104,4 +106,4 @@ Feature: E2E Skill Loading
     When I run quecto agent -s - -m "Hello"
     Then the exit code should be 0
     And the output should contain "Still works"
-    And the LLM should not have received a system message
+    And the LLM system message should only contain the datetime preamble

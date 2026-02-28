@@ -169,6 +169,31 @@ impl ExecTool {
         }
     }
 
+    /// Construct with options but skip nsjail binary path validation.
+    ///
+    /// # Safety (logical)
+    /// The caller asserts the binary path is safe. Intended **only** for
+    /// tests where a fake nsjail script lives outside the trusted system
+    /// directories. Do not use in production code paths.
+    #[doc(hidden)]
+    pub fn with_options_trusted(
+        workspace: Arc<PathBuf>,
+        sandbox: Arc<Sandbox>,
+        options: ExecOptions,
+    ) -> Self {
+        Self {
+            workspace,
+            sandbox,
+            timeout: options.timeout,
+            max_capture_bytes: options.max_capture_bytes,
+            mode: options.isolation_mode,
+            allow_native_fallback: options.allow_native_fallback,
+            nsjail: options.nsjail,
+            startup_warning: None,
+            startup_error: None,
+        }
+    }
+
     pub fn timeout(&self) -> Duration {
         self.timeout
     }
