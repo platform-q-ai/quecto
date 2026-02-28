@@ -270,11 +270,11 @@ pub struct CleanupAllRequest {
     #[serde(default = "default_keep_artifacts")]
     pub keep_artifacts: bool,
     /// Skip non-terminal jobs instead of returning an error (default: true).
-    #[serde(default = "default_true")]
+    #[serde(default = "default_terminal_only")]
     pub terminal_only: bool,
 }
 
-fn default_true() -> bool {
+fn default_terminal_only() -> bool {
     true
 }
 
@@ -344,14 +344,13 @@ pub enum CommandError {
     /// Repo identifier could not be resolved.
     InvalidRepo,
     /// Base ref does not exist in repo.
-    /// The `detail` field (when present) includes the repo's default branch
-    /// and a list of available local refs, formatted as:
+    ///
+    /// When `Some(detail)` is present, the detail includes the repo's default
+    /// branch and a list of available local refs, formatted as:
     /// `"default_branch=<b>; available_refs=[<r1>, <r2>, ...]"`
     /// This helps callers recover without a separate API call.
-    InvalidBaseRef,
-    /// Base ref does not exist, with enriched detail for caller recovery.
-    /// Distinct from `InvalidBaseRef` so existing match arms keep working.
-    InvalidBaseRefDetail(String),
+    /// `None` means no detail was available (e.g. mock/test context).
+    InvalidBaseRef(Option<String>),
     /// Job rejected by policy.
     PolicyDenied,
     /// Requested skill not found on disk.
@@ -378,8 +377,8 @@ impl std::fmt::Display for CommandError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
             Self::InvalidRepo => "invalid_repo",
-            Self::InvalidBaseRef => "invalid_base_ref",
-            Self::InvalidBaseRefDetail(detail) => {
+            Self::InvalidBaseRef(None) => "invalid_base_ref",
+            Self::InvalidBaseRef(Some(detail)) => {
                 return write!(f, "invalid_base_ref: {detail}");
             }
             Self::PolicyDenied => "policy_denied",
@@ -403,7 +402,7 @@ impl std::str::FromStr for CommandError {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "invalid_repo" => Ok(Self::InvalidRepo),
-            "invalid_base_ref" => Ok(Self::InvalidBaseRef),
+            "invalid_base_ref" => Ok(Self::InvalidBaseRef(None)),
             "policy_denied" => Ok(Self::PolicyDenied),
             "skill_not_found" => Ok(Self::SkillNotFound),
             "not_found" => Ok(Self::NotFound),
@@ -412,9 +411,9 @@ impl std::str::FromStr for CommandError {
             "invalid_name" => Ok(Self::InvalidName),
             "already_exists" => Ok(Self::AlreadyExists),
             "invalid_url" => Ok(Self::InvalidUrl),
-            s if s.starts_with("invalid_base_ref: ") => Ok(Self::InvalidBaseRefDetail(
+            s if s.starts_with("invalid_base_ref: ") => Ok(Self::InvalidBaseRef(Some(
                 s["invalid_base_ref: ".len()..].to_string(),
-            )),
+            ))),
             s if s.starts_with("git_failed: ") => {
                 Ok(Self::GitFailed(s["git_failed: ".len()..].to_string()))
             }
@@ -434,7 +433,7 @@ mod tests {
     fn test_command_error_display_round_trip() {
         for err in [
             CommandError::InvalidRepo,
-            CommandError::InvalidBaseRef,
+            CommandError::InvalidBaseRef(None),
             CommandError::PolicyDenied,
             CommandError::SkillNotFound,
             CommandError::NotFound,

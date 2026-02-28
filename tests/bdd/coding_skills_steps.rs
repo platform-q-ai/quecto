@@ -197,15 +197,18 @@ fn ensure_base(world: &mut QuectoWorld) {
 }
 
 fn seed_job(world: &mut QuectoWorld, profile: Option<String>) {
-    use quecto::domain::coding_job::{CodingJob, CodingJobInit, JobState};
-    let mut job = CodingJob::new(CodingJobInit {
-        job_id: "job_abc123".to_string(),
-        run_id: "run_abc123".to_string(),
-        goal: "skill injection".to_string(),
-        repo: "test-repo".to_string(),
-        base_ref: "main".to_string(),
-        branch: "quecto/job/job_abc123".to_string(),
-    });
+    use quecto::domain::coding_job::{CodingJob, CodingJobInit, JobState, now_unix_secs};
+    let mut job = CodingJob::new(
+        CodingJobInit {
+            job_id: "job_abc123".to_string(),
+            run_id: "run_abc123".to_string(),
+            goal: "skill injection".to_string(),
+            repo: "test-repo".to_string(),
+            base_ref: "main".to_string(),
+            branch: "quecto/job/job_abc123".to_string(),
+        },
+        now_unix_secs(),
+    );
     if let Some(p) = profile {
         job.profile = p;
     }

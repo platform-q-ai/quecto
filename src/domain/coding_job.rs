@@ -316,10 +316,22 @@ pub struct CodingJobInit {
     pub branch: String,
 }
 
+/// Return the current Unix timestamp in whole seconds.
+pub fn now_unix_secs() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
 impl CodingJob {
     /// Create a new job in Queued state.
-    pub fn new(init: CodingJobInit) -> Self {
-        let now = now_unix_secs();
+    ///
+    /// `now` is the Unix timestamp (seconds) for `created_at` and
+    /// `state_entered_at`. Callers should use `now_unix_secs()` in
+    /// production; tests can inject a deterministic value.
+    pub fn new(init: CodingJobInit, now: u64) -> Self {
         Self {
             job_id: init.job_id,
             run_id: init.run_id,
@@ -351,10 +363,14 @@ impl CodingJob {
     }
 
     /// Attempt a state transition. Returns an error if the transition is invalid.
-    pub fn transition_to(&mut self, target: JobState) -> Result<(), TransitionError> {
+    ///
+    /// `now` is the Unix timestamp (seconds) for `state_entered_at`.
+    /// Callers should use `now_unix_secs()` in production; tests can
+    /// inject a deterministic value.
+    pub fn transition_to(&mut self, target: JobState, now: u64) -> Result<(), TransitionError> {
         if self.state.can_transition_to(target) {
             self.state = target;
-            self.state_entered_at = now_unix_secs();
+            self.state_entered_at = now;
             Ok(())
         } else {
             Err(TransitionError {
@@ -363,15 +379,6 @@ impl CodingJob {
             })
         }
     }
-}
-
-/// Return the current Unix timestamp in whole seconds.
-fn now_unix_secs() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
 }
 
 /// Error returned when a state transition is invalid.
@@ -385,6 +392,20 @@ pub struct TransitionError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Fixed timestamp for deterministic tests.
+    const T: u64 = 1_700_000_000;
+
+    fn test_init(id: &str) -> CodingJobInit {
+        CodingJobInit {
+            job_id: id.into(),
+            run_id: format!("r_{id}"),
+            goal: "goal".into(),
+            repo: "repo".into(),
+            base_ref: "main".into(),
+            branch: format!("quecto/job/{id}"),
+        }
+    }
 
     // --- JobState ---
 
@@ -492,48 +513,30 @@ mod tests {
 
     #[test]
     fn test_new_job_is_queued() {
-        let job = CodingJob::new(CodingJobInit {
-            job_id: "j1".into(),
-            run_id: "r1".into(),
-            goal: "goal".into(),
-            repo: "repo".into(),
-            base_ref: "main".into(),
-            branch: "quecto/job/j1".into(),
-        });
+        let job = CodingJob::new(test_init("j1"), T);
         assert_eq!(job.state, JobState::Queued);
         assert_eq!(job.priority, Priority::Medium);
         assert_eq!(job.profile, "default");
+        assert_eq!(job.created_at, T);
+        assert_eq!(job.state_entered_at, T);
     }
 
     #[test]
     fn test_valid_transition() {
-        let mut job = CodingJob::new(CodingJobInit {
-            job_id: "j1".into(),
-            run_id: "r1".into(),
-            goal: "goal".into(),
-            repo: "repo".into(),
-            base_ref: "main".into(),
-            branch: "branch".into(),
-        });
-        assert!(job.transition_to(JobState::Preparing).is_ok());
+        let mut job = CodingJob::new(test_init("j1"), T);
+        assert!(job.transition_to(JobState::Preparing, T + 1).is_ok());
         assert_eq!(job.state, JobState::Preparing);
-        assert!(job.transition_to(JobState::Running).is_ok());
+        assert_eq!(job.state_entered_at, T + 1);
+        assert!(job.transition_to(JobState::Running, T + 2).is_ok());
         assert_eq!(job.state, JobState::Running);
-        assert!(job.transition_to(JobState::Succeeded).is_ok());
+        assert!(job.transition_to(JobState::Succeeded, T + 3).is_ok());
         assert_eq!(job.state, JobState::Succeeded);
     }
 
     #[test]
     fn test_invalid_transition_returns_error() {
-        let mut job = CodingJob::new(CodingJobInit {
-            job_id: "j1".into(),
-            run_id: "r1".into(),
-            goal: "goal".into(),
-            repo: "repo".into(),
-            base_ref: "main".into(),
-            branch: "branch".into(),
-        });
-        let err = job.transition_to(JobState::Running).unwrap_err();
+        let mut job = CodingJob::new(test_init("j1"), T);
+        let err = job.transition_to(JobState::Running, T).unwrap_err();
         assert_eq!(err.from, JobState::Queued);
         assert_eq!(err.to, JobState::Running);
         // State should not have changed
@@ -542,14 +545,7 @@ mod tests {
 
     #[test]
     fn test_terminal_state_rejects_all_transitions() {
-        let mut job = CodingJob::new(CodingJobInit {
-            job_id: "j1".into(),
-            run_id: "r1".into(),
-            goal: "goal".into(),
-            repo: "repo".into(),
-            base_ref: "main".into(),
-            branch: "branch".into(),
-        });
+        let mut job = CodingJob::new(test_init("j1"), T);
         job.state = JobState::Failed;
         for target in [
             JobState::Queued,
@@ -559,7 +555,7 @@ mod tests {
             JobState::Succeeded,
             JobState::Canceled,
         ] {
-            assert!(job.transition_to(target).is_err());
+            assert!(job.transition_to(target, T).is_err());
         }
     }
 
@@ -638,77 +634,42 @@ mod tests {
 
     #[test]
     fn test_happy_path_queued_to_succeeded() {
-        let mut job = CodingJob::new(CodingJobInit {
-            job_id: "j1".into(),
-            run_id: "r1".into(),
-            goal: "goal".into(),
-            repo: "repo".into(),
-            base_ref: "main".into(),
-            branch: "branch".into(),
-        });
-        assert!(job.transition_to(JobState::Preparing).is_ok());
-        assert!(job.transition_to(JobState::Running).is_ok());
-        assert!(job.transition_to(JobState::Succeeded).is_ok());
+        let mut job = CodingJob::new(test_init("j1"), T);
+        assert!(job.transition_to(JobState::Preparing, T + 1).is_ok());
+        assert!(job.transition_to(JobState::Running, T + 2).is_ok());
+        assert!(job.transition_to(JobState::Succeeded, T + 3).is_ok());
         assert!(job.state.is_terminal());
     }
 
     #[test]
     fn test_blocked_and_resume_path() {
-        let mut job = CodingJob::new(CodingJobInit {
-            job_id: "j1".into(),
-            run_id: "r1".into(),
-            goal: "goal".into(),
-            repo: "repo".into(),
-            base_ref: "main".into(),
-            branch: "branch".into(),
-        });
-        assert!(job.transition_to(JobState::Preparing).is_ok());
-        assert!(job.transition_to(JobState::Running).is_ok());
-        assert!(job.transition_to(JobState::Blocked).is_ok());
-        assert!(job.transition_to(JobState::Running).is_ok());
-        assert!(job.transition_to(JobState::Succeeded).is_ok());
+        let mut job = CodingJob::new(test_init("j1"), T);
+        assert!(job.transition_to(JobState::Preparing, T + 1).is_ok());
+        assert!(job.transition_to(JobState::Running, T + 2).is_ok());
+        assert!(job.transition_to(JobState::Blocked, T + 3).is_ok());
+        assert!(job.transition_to(JobState::Running, T + 4).is_ok());
+        assert!(job.transition_to(JobState::Succeeded, T + 5).is_ok());
     }
 
     #[test]
     fn test_queued_direct_to_failed() {
-        let mut job = CodingJob::new(CodingJobInit {
-            job_id: "j1".into(),
-            run_id: "r1".into(),
-            goal: "goal".into(),
-            repo: "repo".into(),
-            base_ref: "main".into(),
-            branch: "branch".into(),
-        });
-        assert!(job.transition_to(JobState::Failed).is_ok());
+        let mut job = CodingJob::new(test_init("j1"), T);
+        assert!(job.transition_to(JobState::Failed, T + 1).is_ok());
         assert!(job.state.is_terminal());
     }
 
     #[test]
     fn test_queued_direct_to_canceled() {
-        let mut job = CodingJob::new(CodingJobInit {
-            job_id: "j1".into(),
-            run_id: "r1".into(),
-            goal: "goal".into(),
-            repo: "repo".into(),
-            base_ref: "main".into(),
-            branch: "branch".into(),
-        });
-        assert!(job.transition_to(JobState::Canceled).is_ok());
+        let mut job = CodingJob::new(test_init("j1"), T);
+        assert!(job.transition_to(JobState::Canceled, T + 1).is_ok());
         assert!(job.state.is_terminal());
     }
 
     #[test]
     fn test_preparing_to_blocked_to_failed() {
-        let mut job = CodingJob::new(CodingJobInit {
-            job_id: "j1".into(),
-            run_id: "r1".into(),
-            goal: "goal".into(),
-            repo: "repo".into(),
-            base_ref: "main".into(),
-            branch: "branch".into(),
-        });
-        assert!(job.transition_to(JobState::Preparing).is_ok());
-        assert!(job.transition_to(JobState::Blocked).is_ok());
-        assert!(job.transition_to(JobState::Failed).is_ok());
+        let mut job = CodingJob::new(test_init("j1"), T);
+        assert!(job.transition_to(JobState::Preparing, T + 1).is_ok());
+        assert!(job.transition_to(JobState::Blocked, T + 2).is_ok());
+        assert!(job.transition_to(JobState::Failed, T + 3).is_ok());
     }
 }

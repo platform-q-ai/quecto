@@ -410,7 +410,32 @@ impl RepoMirrorStore for FileRepoMirrorStore {
         }
         // Remove a pre-existing dest directory (stale from a previous aborted
         // run with the same job_id) so `git clone` gets a clean target.
+        //
+        // Hardened against TOCTOU/symlink attacks: verify the dest path
+        // resolves to a directory inside the jobs dir (not a symlink
+        // pointing elsewhere) before removal.
         if dest.exists() {
+            // Reject symlinks — remove_dir_all follows symlinks.
+            if dest.is_symlink() {
+                return repo_err(
+                    0,
+                    "stale dest is a symlink — refusing to remove",
+                    "clone_error",
+                );
+            }
+            // Verify the resolved path is within the jobs directory.
+            let jobs_dir = self.jobs_dir();
+            if let (Ok(canonical_dest), Ok(canonical_jobs)) =
+                (dest.canonicalize(), jobs_dir.canonicalize())
+            {
+                if !canonical_dest.starts_with(&canonical_jobs) {
+                    return repo_err(
+                        0,
+                        "stale dest resolves outside jobs dir — refusing to remove",
+                        "clone_error",
+                    );
+                }
+            }
             if let Err(e) = fs::remove_dir_all(&dest) {
                 return repo_err(
                     0,

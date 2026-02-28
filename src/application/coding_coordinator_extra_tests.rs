@@ -1,65 +1,13 @@
 //! Extra coordinator tests: Issues 1 (status visibility), 4 (base_ref UX),
 //! 5 (cleanup_all). Split from coding_coordinator_tests.rs to stay under the
 //! 750-line source file limit.
+//!
+//! Reuses `MockRepoValidator`, `MockSkillResolver`, `test_coordinator()`,
+//! and `run_default()` from the main test module to avoid drift.
 
+use super::tests::{run_default as run_one, test_coordinator as make_coord};
 use super::*;
 use crate::domain::coding_job::Priority;
-
-// ── Shared helpers (mirrors coding_coordinator_tests.rs) ─────────────────
-
-struct MockRepoValidator2 {
-    valid_repos: Vec<String>,
-    valid_refs: Vec<(String, String)>,
-}
-
-impl RepoValidator for MockRepoValidator2 {
-    fn repo_exists(&self, repo: &str) -> bool {
-        self.valid_repos.iter().any(|r| r == repo)
-    }
-    fn ref_exists(&self, repo: &str, base_ref: &str) -> bool {
-        self.valid_refs
-            .iter()
-            .any(|(r, b)| r == repo && b == base_ref)
-    }
-}
-
-struct MockSkillResolver2 {
-    available: Vec<String>,
-}
-
-impl SkillResolver for MockSkillResolver2 {
-    fn skill_exists(&self, name: &str) -> bool {
-        self.available.iter().any(|s| s == name)
-    }
-}
-
-fn make_coord() -> CodingCoordinator<MockRepoValidator2, MockSkillResolver2> {
-    CodingCoordinator::new(
-        MockRepoValidator2 {
-            valid_repos: vec!["test-repo".to_string()],
-            valid_refs: vec![("test-repo".to_string(), "main".to_string())],
-        },
-        MockSkillResolver2 {
-            available: vec!["rust-style".to_string()],
-        },
-        CoordinatorPolicy::default(),
-    )
-}
-
-fn run_one(coord: &mut CodingCoordinator<MockRepoValidator2, MockSkillResolver2>) -> RunResponse {
-    coord
-        .run(RunRequest {
-            goal: "test goal".to_string(),
-            repo: "test-repo".to_string(),
-            base_ref: "main".to_string(),
-            priority: Priority::default(),
-            profile: "default".to_string(),
-            max_wall_seconds: None,
-            labels: vec![],
-            skills: vec![],
-        })
-        .unwrap()
-}
 
 // ── Issue 1: status visibility ───────────────────────────────────────────
 
@@ -161,7 +109,8 @@ fn test_state_entered_at_advances_on_transition() {
         .unwrap()
         .state_entered_at
         .unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(1100));
+    // transition_to now receives `now` from the application layer
+    // (now_unix_secs()), so state_entered_at will advance.
     coord.begin_preparation(&resp.job_id).unwrap();
     let after = coord
         .status_by_job_id(&resp.job_id)
@@ -192,8 +141,8 @@ fn test_invalid_base_ref_returns_detail_variant() {
         })
         .unwrap_err();
     assert!(
-        matches!(err, CommandError::InvalidBaseRefDetail(_)),
-        "expected InvalidBaseRefDetail, got {err:?}"
+        matches!(err, CommandError::InvalidBaseRef(Some(_))),
+        "expected InvalidBaseRef(Some(_)), got {err:?}"
     );
 }
 
@@ -229,13 +178,13 @@ fn test_invalid_base_ref_detail_contains_default_branch_hint() {
 
 #[test]
 fn test_invalid_base_ref_detail_parse_round_trip() {
-    let original = CommandError::InvalidBaseRefDetail(
+    let original = CommandError::InvalidBaseRef(Some(
         "default_branch=main; available_refs=[main, dev]".to_string(),
-    );
+    ));
     let s = original.to_string();
     let parsed: CommandError = s.parse().unwrap();
     assert!(
-        matches!(parsed, CommandError::InvalidBaseRefDetail(_)),
+        matches!(parsed, CommandError::InvalidBaseRef(Some(_))),
         "parse round-trip failed: {parsed:?}"
     );
 }

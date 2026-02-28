@@ -101,7 +101,10 @@ impl RepoValidator for WorkspaceRepoValidator {
 
     fn default_branch(&self, repo: &str) -> Option<String> {
         let repo_path = self.resolve_repo_path(repo);
-        if !self.repo_exists(repo) {
+        // NOTE: The caller (coordinator run()) already verified
+        // repo_exists() is true, so we skip the redundant check here
+        // to avoid spawning 2 extra git subprocesses.
+        if !self.is_within_workspace(&repo_path) {
             return None;
         }
         // Try `git symbolic-ref --short HEAD` first (works on non-empty repos)
@@ -114,9 +117,11 @@ impl RepoValidator for WorkspaceRepoValidator {
             .output()
             .ok()?;
         if output.status.success() {
-            let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !s.is_empty() {
-                return Some(s);
+            let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            // Sanitize: truncate long branch names and strip control chars.
+            let sanitized: String = raw.chars().filter(|c| !c.is_control()).take(256).collect();
+            if !sanitized.is_empty() {
+                return Some(sanitized);
             }
         }
         None
@@ -127,7 +132,8 @@ impl RepoValidator for WorkspaceRepoValidator {
             return vec![];
         }
         let repo_path = self.resolve_repo_path(repo);
-        if !self.repo_exists(repo) {
+        // NOTE: Same as default_branch() — caller already verified repo_exists().
+        if !self.is_within_workspace(&repo_path) {
             return vec![];
         }
         let output = match Command::new("git")
@@ -145,7 +151,14 @@ impl RepoValidator for WorkspaceRepoValidator {
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .take(limit)
-            .map(str::to_string)
+            .map(|s| {
+                // Sanitize: strip control chars, truncate individual names.
+                s.chars()
+                    .filter(|c| !c.is_control())
+                    .take(256)
+                    .collect::<String>()
+            })
+            .filter(|s| !s.is_empty())
             .collect()
     }
 }

@@ -6,9 +6,7 @@
 
 use std::collections::HashMap;
 
-use super::coding_spawn_manager::{
-    SpawnDecision, SpawnError, SpawnManager, SpawnPolicy, SpawnRequest, SpawnResult,
-};
+use super::coding_spawn_manager::SpawnManager;
 use super::coding_todos::TodoTracker;
 use crate::domain::coding_command::{
     CancelResponse, CleanupAllRequest, CleanupAllResponse, CleanupResponse, CommandError,
@@ -19,7 +17,7 @@ use crate::domain::coding_event::{
     EventEnvelope, EventSource, is_compatible_version, is_known_event_type,
 };
 use crate::domain::coding_job::{
-    CancelInitiator, CancelReason, CodingJob, CodingJobInit, ErrorCode, JobState,
+    CancelInitiator, CancelReason, CodingJob, CodingJobInit, ErrorCode, JobState, now_unix_secs,
 };
 pub use crate::domain::coding_ports::{RepoValidator, SkillResolver};
 
@@ -71,10 +69,10 @@ pub struct FailureInfo<'a> {
 
 /// Bundles source + type + payload for the internal `emit` method,
 /// keeping the argument count within the project's clippy threshold.
-struct EventMeta {
-    source: EventSource,
-    event_type: String,
-    payload: serde_json::Value,
+pub(super) struct EventMeta {
+    pub(super) source: EventSource,
+    pub(super) event_type: String,
+    pub(super) payload: serde_json::Value,
 }
 
 /// Maximum number of events held in memory. Oldest events are drained
@@ -156,22 +154,24 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
         let scope = SeqScope::new(meta.source, run_id.to_string(), job_id.to_string());
         let seq = next_seq_for(&scope, &self.seq_by_scope);
         let ts = chrono::Utc::now().to_rfc3339();
+        self.seq_by_scope.insert(scope, seq);
+        // Update the job first (cloning event_type into the job), then
+        // move meta.event_type into the envelope — avoids an extra heap
+        // allocation on every emit() call.
+        if let Some(job) = self.jobs.get_mut(job_id) {
+            job.last_event_ts = Some(ts.clone());
+            job.last_event_type = Some(meta.event_type.clone());
+        }
         let envelope = EventEnvelope {
             v: "1.0".to_string(),
-            ts: ts.clone(),
+            ts,
             run_id: run_id.to_string(),
             job_id: job_id.to_string(),
             source: meta.source,
-            event_type: meta.event_type.clone(),
+            event_type: meta.event_type,
             seq,
             payload: meta.payload,
         };
-        self.seq_by_scope.insert(scope, seq);
-        // Track last-event metadata on the job for status visibility.
-        if let Some(job) = self.jobs.get_mut(job_id) {
-            job.last_event_ts = Some(ts);
-            job.last_event_type = Some(meta.event_type);
-        }
         self.events.push(envelope);
         if self.events.len() > MAX_EVENTS {
             let drain_count = MAX_EVENTS / 2;
@@ -209,7 +209,7 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
                 default,
                 branches.join(", ")
             );
-            return Err(CommandError::InvalidBaseRefDetail(detail));
+            return Err(CommandError::InvalidBaseRef(Some(detail)));
         }
         for skill in &req.skills {
             if !self.policy.is_skill_allowed(skill) {
@@ -224,14 +224,17 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
         let run_id = self.next_id("run");
         let branch = format!("quecto/job/{}", job_id);
 
-        let mut job = CodingJob::new(CodingJobInit {
-            job_id: job_id.clone(),
-            run_id: run_id.clone(),
-            goal: req.goal,
-            repo: req.repo,
-            base_ref: req.base_ref,
-            branch,
-        });
+        let mut job = CodingJob::new(
+            CodingJobInit {
+                job_id: job_id.clone(),
+                run_id: run_id.clone(),
+                goal: req.goal,
+                repo: req.repo,
+                base_ref: req.base_ref,
+                branch,
+            },
+            now_unix_secs(),
+        );
         job.priority = req.priority;
         job.profile = req.profile;
         job.labels = req.labels;
@@ -302,7 +305,7 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
                 state: job.state,
             });
         }
-        job.transition_to(JobState::Canceled)
+        job.transition_to(JobState::Canceled, now_unix_secs())
             .map_err(|_| CommandError::InvalidTransition)?;
         job.cancel_reason = Some(reason);
         job.cancel_initiated_by = Some(initiator);
@@ -381,6 +384,10 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
     }
 
     /// Clean up all terminal jobs matching the given filter.
+    ///
+    /// When `terminal_only` is `false`, a pre-scan verifies all candidates
+    /// are terminal *before* cleaning any of them, ensuring all-or-nothing
+    /// semantics (no partial-failure mode).
     pub fn cleanup_all_impl(
         &mut self,
         req: &CleanupAllRequest,
@@ -398,6 +405,22 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
             .map(|j| j.job_id.clone())
             .collect();
 
+        // Pre-scan: when terminal_only is false, verify ALL candidates are
+        // terminal before cleaning any. This prevents the partial-failure
+        // mode where some jobs are cleaned but an error is returned.
+        if !req.terminal_only {
+            for job_id in &candidates {
+                let is_terminal = self
+                    .jobs
+                    .get(job_id)
+                    .map(|j| j.state.is_terminal())
+                    .unwrap_or(false);
+                if !is_terminal {
+                    return Err(CommandError::JobNotTerminal);
+                }
+            }
+        }
+
         let mut cleaned = Vec::new();
         let mut skipped = Vec::new();
 
@@ -409,12 +432,10 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
                 .unwrap_or(false);
 
             if !is_terminal {
-                if req.terminal_only {
-                    skipped.push(job_id);
-                    continue;
-                } else {
-                    return Err(CommandError::JobNotTerminal);
-                }
+                // terminal_only must be true here (non-terminal_only already
+                // failed in the pre-scan above).
+                skipped.push(job_id);
+                continue;
             }
 
             // Reuse the existing cleanup logic.
@@ -433,7 +454,7 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
 
     pub fn begin_preparation(&mut self, job_id: &str) -> Result<(), CommandError> {
         let job = self.jobs.get_mut(job_id).ok_or(CommandError::NotFound)?;
-        job.transition_to(JobState::Preparing)
+        job.transition_to(JobState::Preparing, now_unix_secs())
             .map_err(|_| CommandError::InvalidTransition)?;
         let rid = job.run_id.clone();
         let goal = job.goal.clone();
@@ -462,7 +483,7 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
         clone_duration_ms: Option<u64>,
     ) -> Result<(), CommandError> {
         let job = self.jobs.get_mut(job_id).ok_or(CommandError::NotFound)?;
-        job.transition_to(JobState::Running)
+        job.transition_to(JobState::Running, now_unix_secs())
             .map_err(|_| CommandError::InvalidTransition)?;
         job.worker_pid = Some(worker_pid);
         let rid = job.run_id.clone();
@@ -487,7 +508,7 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
             .jobs
             .get_mut(info.job_id)
             .ok_or(CommandError::NotFound)?;
-        job.transition_to(JobState::Succeeded)
+        job.transition_to(JobState::Succeeded, now_unix_secs())
             .map_err(|_| CommandError::InvalidTransition)?;
         job.summary = Some(info.summary.to_string());
         job.artifacts = info.artifacts.clone();
@@ -518,7 +539,7 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
             .jobs
             .get_mut(info.job_id)
             .ok_or(CommandError::NotFound)?;
-        job.transition_to(JobState::Failed)
+        job.transition_to(JobState::Failed, now_unix_secs())
             .map_err(|_| CommandError::InvalidTransition)?;
         job.error_code = Some(info.error_code);
         job.error_detail = Some(info.error_detail.to_string());
@@ -558,7 +579,7 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
         needs: Option<&str>,
     ) -> Result<(), CommandError> {
         let job = self.jobs.get_mut(job_id).ok_or(CommandError::NotFound)?;
-        job.transition_to(JobState::Blocked)
+        job.transition_to(JobState::Blocked, now_unix_secs())
             .map_err(|_| CommandError::InvalidTransition)?;
         let rid = job.run_id.clone();
         let mut payload = serde_json::json!({"reason": reason});
@@ -579,7 +600,7 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
 
     pub fn mark_resumed(&mut self, job_id: &str, reason: &str) -> Result<(), CommandError> {
         let job = self.jobs.get_mut(job_id).ok_or(CommandError::NotFound)?;
-        job.transition_to(JobState::Running)
+        job.transition_to(JobState::Running, now_unix_secs())
             .map_err(|_| CommandError::InvalidTransition)?;
         let rid = job.run_id.clone();
         self.emit(
@@ -633,12 +654,16 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
             validate_and_track_event(&event, &mut self.seq_by_scope)
                 .map_err(|e| format!("contract violation: {e}"))?;
         }
-        // Track last-event metadata on the job for status visibility.
-        if let Some(job) = self.jobs.get_mut(&event.job_id) {
-            job.last_event_ts = Some(event.ts.clone());
-            job.last_event_type = Some(event.event_type.clone());
-        }
+        // Extract last-event metadata before consuming the event into
+        // the log — avoids two string clones on every receive_event() call.
+        let last_ts = event.ts.clone();
+        let last_type = event.event_type.clone();
+        let job_id_key = event.job_id.clone();
         self.events.push(event);
+        if let Some(job) = self.jobs.get_mut(&job_id_key) {
+            job.last_event_ts = Some(last_ts);
+            job.last_event_type = Some(last_type);
+        }
         if self.events.len() > MAX_EVENTS {
             let drain_count = MAX_EVENTS / 2;
             self.events.drain(..drain_count);
@@ -671,12 +696,13 @@ impl<R: RepoValidator, S: SkillResolver> CodingCoordinator<R, S> {
 }
 
 // ── Spawn-management impl (see coding_coordinator_spawn.rs) ──────────────
-include!("coding_coordinator_spawn.rs");
 #[cfg(test)]
 #[path = "coding_coordinator_extra_tests.rs"]
 mod extra_tests;
 #[path = "coding_coordinator_service.rs"]
 mod service_impl;
+#[path = "coding_coordinator_spawn.rs"]
+mod spawn_impl;
 #[cfg(test)]
 #[path = "coding_coordinator_tests.rs"]
 mod tests;

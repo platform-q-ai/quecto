@@ -15,7 +15,13 @@ pub trait WorkerEventSink: Send + Sync {
     fn emit(&self, event_type: &str, payload: serde_json::Value) -> Result<u64, String>;
 }
 
-/// Port for validating repository and ref existence.
+/// Port for validating and inspecting repository state.
+///
+/// Originally a pure validation trait (`repo_exists`, `ref_exists`).
+/// Extended with `default_branch()` and `list_branches()` for error
+/// enrichment (Issue 4). A future PR may split this into separate
+/// `RepoValidator` and `RepoInspector` traits if the query surface
+/// grows further (ISP concern).
 pub trait RepoValidator {
     fn repo_exists(&self, repo: &str) -> bool;
     fn ref_exists(&self, repo: &str, base_ref: &str) -> bool;
