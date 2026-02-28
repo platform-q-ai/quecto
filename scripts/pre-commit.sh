@@ -24,7 +24,7 @@ step "3/4" "cargo fmt --check"
 cargo fmt --all -- --check
 
 step "4/4" "cargo clippy (strict: -D warnings + complexity lints)"
-cargo clippy --all-targets -- -D warnings \
+cargo clippy --all-targets --features test-support -- -D warnings \
     -W clippy::cognitive_complexity \
     -W clippy::too_many_arguments \
     -W clippy::too_many_lines

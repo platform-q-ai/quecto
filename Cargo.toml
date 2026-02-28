@@ -29,6 +29,10 @@ thiserror = "2"
 wasmtime = { version = "28", features = ["component-model"] }
 wasmtime-wasi = "28"
 
+[features]
+default = []
+test-support = []
+
 [dev-dependencies]
 cucumber = "0.21"
 futures = "0.3"

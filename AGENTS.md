@@ -140,7 +140,7 @@ Three-tier hooks: pre-commit (~20-40s: quality+fmt+clippy), pre-push (~30-60s: t
 Non-real-LLM (fast, no API key needed):
 ```bash
 (for i in $(seq 0 24); do
-  (timeout 12m env QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=25 cargo test --no-fail-fast --test bdd 2>&1 | scripts/test-filter.sh) &
+  (timeout 12m env QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=25 cargo test --no-fail-fast --features test-support --test bdd 2>&1 | scripts/test-filter.sh) &
 done
 wait)
 ```
@@ -148,7 +148,7 @@ wait)
 Real-LLM (requires `OPENAI_API_KEY`):
 ```bash
 (for i in $(seq 0 24); do
-  (timeout 12m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=25 cargo test --no-fail-fast --test bdd 2>&1 | scripts/test-filter.sh) &
+  (timeout 12m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=25 cargo test --no-fail-fast --features test-support --test bdd 2>&1 | scripts/test-filter.sh) &
 done
 wait)
 ```
@@ -159,7 +159,7 @@ Use `QUECTO_TAG=real-llm-smoke` for quicker paid smoke runs.
 
 To debug a single scenario, add a temporary tag (e.g. `@focus`) to the scenario in the `.feature` file, then run:
 ```bash
-QUECTO_TAG=focus cargo test --no-fail-fast --test bdd 2>&1 | scripts/test-filter.sh
+QUECTO_TAG=focus cargo test --no-fail-fast --features test-support --test bdd 2>&1 | scripts/test-filter.sh
 ```
 Remove the tag before committing.
 

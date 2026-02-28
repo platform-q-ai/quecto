@@ -65,7 +65,7 @@ for i in $(seq 0 $((SHARDS - 1))); do
         [[ "$REAL_LLM" == "1" ]] && env_args+=("QUECTO_REAL_LLM=1")
 
         set +e
-        timeout "$TIMEOUT_PER_SHARD" env "${env_args[@]}" cargo test --no-fail-fast --test bdd 2>&1 | "$ROOT/scripts/test-filter.sh"
+        timeout "$TIMEOUT_PER_SHARD" env "${env_args[@]}" cargo test --no-fail-fast --features test-support --test bdd 2>&1 | "$ROOT/scripts/test-filter.sh"
         code="${PIPESTATUS[0]}"
         set -e
         end="$(date +%s)"

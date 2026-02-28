@@ -50,7 +50,7 @@ step "3/6" "cargo fmt --check"
 cargo fmt --all -- --check
 
 step "4/6" "cargo clippy (strict)"
-cargo clippy --all-targets -- -D warnings \
+cargo clippy --all-targets --features test-support -- -D warnings \
     -W clippy::cognitive_complexity \
     -W clippy::too_many_arguments \
     -W clippy::too_many_lines

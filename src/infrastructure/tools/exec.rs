@@ -5,6 +5,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 #[cfg(unix)]
@@ -87,6 +88,9 @@ pub struct ExecTool {
     nsjail: NsjailOptions,
     startup_warning: Option<String>,
     startup_error: Option<String>,
+    /// Latched to `true` after the first runtime cgroup fallback succeeds,
+    /// so subsequent calls skip the doomed nsjail attempt entirely.
+    cgroup_fallback_latched: AtomicBool,
 }
 
 impl std::fmt::Debug for ExecTool {
@@ -166,6 +170,7 @@ impl ExecTool {
             nsjail: options.nsjail,
             startup_warning: warning,
             startup_error,
+            cgroup_fallback_latched: AtomicBool::new(false),
         }
     }
 
@@ -174,8 +179,8 @@ impl ExecTool {
     /// # Safety (logical)
     /// The caller asserts the binary path is safe. Intended **only** for
     /// tests where a fake nsjail script lives outside the trusted system
-    /// directories. Do not use in production code paths.
-    #[doc(hidden)]
+    /// directories. Absent from release builds.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn with_options_trusted(
         workspace: Arc<PathBuf>,
         sandbox: Arc<Sandbox>,
@@ -191,6 +196,7 @@ impl ExecTool {
             nsjail: options.nsjail,
             startup_warning: None,
             startup_error: None,
+            cgroup_fallback_latched: AtomicBool::new(false),
         }
     }
 
@@ -237,20 +243,36 @@ impl ExecTool {
             .map_err(|e| DomainError::Security(e.to_string()))?;
 
         let source_env = build_source_env(env_overrides);
+
+        // If a previous cgroup failure already latched the fallback, skip nsjail.
+        let effective_mode = if self.cgroup_fallback_latched.load(Ordering::Relaxed) {
+            ExecIsolationMode::Native
+        } else {
+            self.mode
+        };
+
         let result = self
-            .spawn_and_wait(&command, &source_env, self.mode)
+            .spawn_and_wait(&command, &source_env, effective_mode)
             .await?;
 
-        // If nsjail failed with a cgroup-related error, retry with native exec.
-        if self.mode == ExecIsolationMode::Nsjail
+        // If nsjail failed with a cgroup-related error, retry with native exec
+        // and latch the fallback so subsequent calls skip nsjail entirely.
+        // NOTE: This silently downgrades from kernel-level nsjail isolation to
+        // software-only sandbox denylist. Operators should monitor for this log
+        // message and fix the underlying cgroup configuration.
+        if effective_mode == ExecIsolationMode::Nsjail
             && self.allow_native_fallback
             && result.is_error
             && is_nsjail_cgroup_failure(&result.content)
         {
-            tracing::warn!(
+            tracing::error!(
                 target: "exec",
-                "nsjail cgroup setup failed; falling back to native exec"
+                command = command,
+                "nsjail cgroup setup failed; falling back to native exec. \
+                 All subsequent commands will run WITHOUT nsjail isolation. \
+                 Fix cgroup configuration or set tools.exec.isolation=native."
             );
+            self.cgroup_fallback_latched.store(true, Ordering::Relaxed);
             return self
                 .spawn_and_wait(&command, &source_env, ExecIsolationMode::Native)
                 .await;
@@ -298,11 +320,36 @@ impl ExecTool {
 
 /// Check whether an nsjail error result indicates a cgroup setup failure.
 ///
-/// Matches patterns from nsjail's cgroup initialization code, which reports
-/// errors like "createCgroup(): mkdir('.../memory/NSJAIL/...')" or
-/// "Couldn't initialize cgroup".
+/// Only inspects the stderr portion of the formatted error output to avoid
+/// false positives from user command stdout that mentions cgroup keywords.
+/// Also pre-filters on nsjail's internal exit code 255 (distinct from the
+/// child process exit code).
+///
+/// Patterns validated against nsjail 3.4 (2025-01). Re-audit on version bumps.
 fn is_nsjail_cgroup_failure(content: &str) -> bool {
-    let lower = content.to_lowercase();
+    // Pre-filter: nsjail uses exit code 255 for internal failures.
+    // The formatted output starts with "exit code exit status: 255" on Linux.
+    let first_line = content.lines().next().unwrap_or("");
+    if !first_line.contains("255") {
+        return false;
+    }
+
+    // Extract only the stderr portion to avoid matching user stdout.
+    // Format: "exit code {status}\nstdout: {stdout}\nstderr: {stderr}"
+    let stderr_section = content
+        .find("\nstderr: ")
+        .map(|idx| &content[idx..])
+        .unwrap_or(content);
+
+    // Limit scan to last 4 KiB to avoid allocating a lowercased copy
+    // of potentially large (up to 1 MiB) output.
+    let tail = if stderr_section.len() > 4096 {
+        &stderr_section[stderr_section.len() - 4096..]
+    } else {
+        stderr_section
+    };
+    let lower = tail.to_lowercase();
+
     lower.contains("createcgroup")
         || lower.contains("couldn't initialize cgroup")
         || (lower.contains("cgroup") && lower.contains("no such file or directory"))
@@ -355,24 +402,6 @@ fn build_shell_command(
     }
 
     cmd
-}
-
-/// Detect the cgroup version on the host.
-///
-/// Returns `CgroupVersion::V2` if the unified hierarchy is available
-/// (i.e. `/sys/fs/cgroup/cgroup.controllers` exists), otherwise `V1`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CgroupVersion {
-    V1,
-    V2,
-}
-
-pub fn detect_cgroup_version() -> CgroupVersion {
-    if Path::new("/sys/fs/cgroup/cgroup.controllers").exists() {
-        CgroupVersion::V2
-    } else {
-        CgroupVersion::V1
-    }
 }
 
 fn build_nsjail_command(

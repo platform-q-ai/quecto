@@ -1916,8 +1916,8 @@ fn then_llm_system_message_only_preamble(world: &mut QuectoWorld) {
         // (no skill prompts, no user prompts).
         let lines: Vec<&str> = content.lines().collect();
         assert!(
-            lines.len() <= 1,
-            "system message should only have the datetime preamble (1 line), \
+            lines.len() == 1,
+            "system message should only have the datetime preamble (exactly 1 line), \
              got {} lines: {:?}",
             lines.len(),
             &lines[..lines.len().min(5)]

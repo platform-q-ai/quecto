@@ -115,17 +115,13 @@ async fn test_nsjail_missing_without_fallback_returns_config_error() {
     );
 }
 
-#[test]
-fn test_detect_cgroup_version() {
-    let version = detect_cgroup_version();
-    // Should return a valid variant regardless of host
-    assert!(version == CgroupVersion::V1 || version == CgroupVersion::V2);
-}
+// --- cgroup detection and fallback tests ---
 
 #[test]
 fn test_is_nsjail_cgroup_failure_createcgroup() {
+    // Exit code 255 + stderr with createCgroup pattern
     assert!(is_nsjail_cgroup_failure(
-        "exit code 255\nstdout: \nstderr: \
+        "exit code exit status: 255\nstdout: \nstderr: \
          [W] createCgroup():43 mkdir('/sys/fs/cgroup/memory/NSJAIL') failed"
     ));
 }
@@ -133,7 +129,7 @@ fn test_is_nsjail_cgroup_failure_createcgroup() {
 #[test]
 fn test_is_nsjail_cgroup_failure_initialize() {
     assert!(is_nsjail_cgroup_failure(
-        "exit code 255\nstdout: \nstderr: \
+        "exit code exit status: 255\nstdout: \nstderr: \
          [E] Couldn't initialize cgroup user namespace for pid=12345"
     ));
 }
@@ -141,7 +137,7 @@ fn test_is_nsjail_cgroup_failure_initialize() {
 #[test]
 fn test_is_nsjail_cgroup_failure_no_such_file() {
     assert!(is_nsjail_cgroup_failure(
-        "exit code 255\nstdout: \nstderr: \
+        "exit code exit status: 255\nstdout: \nstderr: \
          cgroup path: No such file or directory"
     ));
 }
@@ -149,15 +145,33 @@ fn test_is_nsjail_cgroup_failure_no_such_file() {
 #[test]
 fn test_is_nsjail_cgroup_failure_permission_denied() {
     assert!(is_nsjail_cgroup_failure(
-        "exit code 255\nstdout: \nstderr: \
+        "exit code exit status: 255\nstdout: \nstderr: \
          cgroup: Permission denied"
     ));
 }
 
 #[test]
-fn test_is_nsjail_cgroup_failure_normal_error() {
+fn test_is_nsjail_cgroup_failure_normal_error_not_255() {
+    // Exit code 1 — not an nsjail internal error
     assert!(!is_nsjail_cgroup_failure(
-        "exit code 1\nstdout: \nstderr: command not found"
+        "exit code exit status: 1\nstdout: \nstderr: command not found"
+    ));
+}
+
+#[test]
+fn test_is_nsjail_cgroup_failure_ignores_stdout_cgroup_keywords() {
+    // Exit code 255 but cgroup keywords only in stdout, not stderr.
+    // Should NOT match — prevents sandbox escape via stdout injection.
+    assert!(!is_nsjail_cgroup_failure(
+        "exit code exit status: 255\nstdout: cgroup Permission denied\nstderr: some other error"
+    ));
+}
+
+#[test]
+fn test_is_nsjail_cgroup_failure_exit_code_0_not_matched() {
+    // Successful exit — never a cgroup failure
+    assert!(!is_nsjail_cgroup_failure(
+        "exit code exit status: 0\nstdout: \nstderr: cgroup warning"
     ));
 }
 
@@ -207,7 +221,8 @@ async fn test_nsjail_cgroup_failure_falls_back_to_native() {
         },
         ..ExecOptions::default()
     };
-    let tool = ExecTool::with_options(Arc::new(ws), Arc::new(sandbox), opts);
+    // Use with_options_trusted so the fake binary is actually invoked
+    let tool = ExecTool::with_options_trusted(Arc::new(ws), Arc::new(sandbox), opts);
 
     // The fake nsjail will fail with cgroup error, should fall back to native
     let result = tool.execute(r#"{"command": "echo hello"}"#).await.unwrap();
@@ -219,18 +234,58 @@ async fn test_nsjail_cgroup_failure_falls_back_to_native() {
     assert!(result.content.contains("hello"));
 }
 
+#[tokio::test]
+async fn test_nsjail_cgroup_fallback_is_latched() {
+    let tmp = TempDir::new().unwrap();
+    let ws = tmp.path().to_path_buf();
+
+    let fake_nsjail = ws.join("fake-nsjail-cgroup-fail.sh");
+    std::fs::write(
+        &fake_nsjail,
+        "#!/bin/sh\n\
+         echo \"[W] createCgroup():43 mkdir failed: No such file or directory\" >&2\n\
+         echo \"[E] Couldn't initialize cgroup user namespace\" >&2\n\
+         exit 255\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        let mut perms = std::fs::metadata(&fake_nsjail).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&fake_nsjail, perms).unwrap();
+    }
+
+    let sandbox = Sandbox::new(Some(ws.clone()), false);
+    let opts = ExecOptions {
+        isolation_mode: ExecIsolationMode::Nsjail,
+        allow_native_fallback: true,
+        nsjail: NsjailOptions {
+            binary: fake_nsjail.to_string_lossy().to_string(),
+            ..NsjailOptions::default()
+        },
+        ..ExecOptions::default()
+    };
+    let tool = ExecTool::with_options_trusted(Arc::new(ws), Arc::new(sandbox), opts);
+
+    // First call triggers the fallback and latches
+    let r1 = tool.execute(r#"{"command": "echo first"}"#).await.unwrap();
+    assert!(!r1.is_error);
+    assert!(tool.cgroup_fallback_latched.load(Ordering::Relaxed));
+
+    // Second call should skip nsjail entirely (latched)
+    let r2 = tool.execute(r#"{"command": "echo second"}"#).await.unwrap();
+    assert!(!r2.is_error);
+    assert!(r2.content.contains("second"));
+}
+
 #[test]
 fn test_nsjail_cgroup_failure_without_fallback_does_not_retry() {
-    // When allow_native_fallback is false and a cgroup failure occurs,
-    // is_nsjail_cgroup_failure returns true but the fallback branch is
-    // not taken. This is a logic-level test since we cannot easily place
-    // a fake nsjail binary in a trusted system path for integration testing.
-    let content = "exit code 255\nstdout: \nstderr: \
+    let content = "exit code exit status: 255\nstdout: \nstderr: \
          [W] createCgroup():43 mkdir failed\n\
          [E] Couldn't initialize cgroup user namespace";
     assert!(is_nsjail_cgroup_failure(content));
 
-    // Also verify that non-cgroup errors are not mistaken for cgroup failures
-    let normal = "exit code 1\nstdout: \nstderr: file not found";
+    // Non-cgroup errors are not mistaken for cgroup failures
+    let normal = "exit code exit status: 1\nstdout: \nstderr: file not found";
     assert!(!is_nsjail_cgroup_failure(normal));
 }
