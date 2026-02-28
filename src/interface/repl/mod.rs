@@ -369,16 +369,15 @@ pub fn run_repl<R: BufRead, W: Write>(
 }
 
 /// Build the system prompt by loading skills and merging with user prompt.
+///
+/// Always includes a datetime preamble so the agent knows the current
+/// date/time/timezone — important for scheduling and time-aware tasks.
 fn build_system_prompt(ctx: &ReplContext<'_>) -> Option<String> {
     let skill_prompt = super::shared::load_skill_prompt(ctx.base_dir);
-    if skill_prompt.is_empty() {
-        ctx.flags.system_prompt.clone()
-    } else {
-        Some(super::shared::merge_prompts(
-            &skill_prompt,
-            &ctx.flags.system_prompt,
-        ))
-    }
+    Some(super::shared::build_system_prompt(
+        &skill_prompt,
+        &ctx.flags.system_prompt,
+    ))
 }
 
 /// Context for constructing a REPL session.

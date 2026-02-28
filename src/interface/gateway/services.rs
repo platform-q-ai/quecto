@@ -105,11 +105,17 @@ impl Gateway {
         while let Some(msg) = inbound_rx.recv().await {
             let mut messages = Self::load_session(&ctx.session_store, &msg).await;
 
+            // Inject a transient system prompt with the current date/time so the
+            // agent knows "now" for scheduling and time-aware tasks.
+            let system_prompt = crate::interface::shared::datetime_preamble();
+            messages.push(Message::system(system_prompt.clone()));
+
             messages.push(Message::user(msg.text.clone()));
 
             trim_session_messages(&mut messages, ctx.max_session_messages);
 
-            let response_text = Self::process_and_save(&ctx, &msg, &mut messages).await;
+            let response_text =
+                Self::process_and_save(&ctx, &msg, &mut messages, Some(&system_prompt)).await;
 
             let outbound = OutboundMessage {
                 target: msg.source.clone(),
@@ -139,10 +145,15 @@ impl Gateway {
     }
 
     /// Process messages through agent loop, save session, return response text.
+    ///
+    /// If `transient_system_prompt` is provided, it is stripped from the
+    /// message list before saving the session (it was only needed for the
+    /// current request, not for persistence).
     async fn process_and_save(
         ctx: &InboundProcessorContext,
         msg: &InboundMessage,
         messages: &mut Vec<Message>,
+        transient_system_prompt: Option<&str>,
     ) -> String {
         let session_key = Session::build_key("telegram", &msg.source);
         let result = if let Some(ref builder) = ctx.agent_builder {
@@ -153,6 +164,10 @@ impl Gateway {
         };
         match result {
             Ok(result) => {
+                // Strip the transient system prompt before persisting.
+                if let Some(prompt) = transient_system_prompt {
+                    messages.retain(|m| !(m.role == Role::System && m.content == prompt));
+                }
                 trim_session_messages(messages, ctx.max_session_messages);
                 let session = Session {
                     key: session_key,
@@ -248,7 +263,10 @@ impl Gateway {
         loop {
             tokio::time::sleep(interval).await;
             tracing::debug!("heartbeat tick");
-            match heartbeat::execute_heartbeat_tick(&source, &*agent, timeout).await {
+            let system_prompt = crate::interface::shared::datetime_preamble();
+            match heartbeat::execute_heartbeat_tick(&source, &*agent, timeout, Some(&system_prompt))
+                .await
+            {
                 Ok(results) => {
                     for result in &results {
                         tracing::info!(
@@ -285,7 +303,10 @@ impl Gateway {
         loop {
             tokio::time::sleep(check_interval).await;
             tracing::debug!("cron tick");
-            match cron_executor::execute_cron_tick(&*store, &*agent, timeout).await {
+            let system_prompt = crate::interface::shared::datetime_preamble();
+            match cron_executor::execute_cron_tick(&*store, &*agent, timeout, Some(&system_prompt))
+                .await
+            {
                 Ok(results) => {
                     for result in &results {
                         tracing::info!(
@@ -476,7 +497,7 @@ mod tests {
         };
         let mut messages = vec![];
 
-        let response = Gateway::process_and_save(&ctx, &msg, &mut messages).await;
+        let response = Gateway::process_and_save(&ctx, &msg, &mut messages, None).await;
 
         assert!(response.starts_with("Error:"));
         assert!(!response.contains("sk-secret-key-12345"));

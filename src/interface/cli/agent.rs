@@ -170,14 +170,12 @@ pub(crate) fn cmd_agent(
         None => return 1,
     };
 
-    // Load skills and prepend their content to the system prompt
+    // Build system prompt: datetime preamble + skills + user prompt
     let skill_prompt = crate::interface::shared::load_skill_prompt(&base_dir);
-    if !skill_prompt.is_empty() {
-        flags.system_prompt = Some(crate::interface::shared::merge_prompts(
-            &skill_prompt,
-            &flags.system_prompt,
-        ));
-    }
+    flags.system_prompt = Some(crate::interface::shared::build_system_prompt(
+        &skill_prompt,
+        &flags.system_prompt,
+    ));
 
     let mut out = AgentOutput { stdout, stderr };
     run_agent_session(&base_dir, agent, &flags, &mut out)

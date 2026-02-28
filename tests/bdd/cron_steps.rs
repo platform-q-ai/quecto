@@ -319,6 +319,7 @@ fn when_cron_tick_fires(world: &mut QuectoWorld) {
             store.as_ref(),
             agent.as_ref(),
             timeout,
+            None,
         ))
         .unwrap();
     world.cron_tick_results = Some(results);
@@ -340,6 +341,7 @@ fn when_cron_job_exceeds_timeout(world: &mut QuectoWorld) {
             store.as_ref(),
             &slow_agent,
             timeout,
+            None,
         ))
         .unwrap();
     world.cron_tick_results = Some(results);
