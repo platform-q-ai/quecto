@@ -4,7 +4,7 @@ Quecto is a Rust reimplementation of an agentic personal AI assistant — built 
 
 ## What we want to achieve
 
-A single static binary that runs an autonomous AI agent on minimal Linux systems (VPS, Raspberry Pi, containers). That can replicate itself inline or in paralell and bidirectionally communicate between chold processes to solve complex tasks.
+A single static binary that runs an autonomous AI agent on minimal Linux systems (VPS, Raspberry Pi, containers). That can replicate itself inline or in parallel and bidirectionally communicate between child processes to solve complex tasks.
 
 ## Architecture
 
@@ -78,8 +78,6 @@ Two-tier isolation model for tool execution. No Docker. No daemon.
 **nsjail** (exec tool only): Shell commands run inside nsjail — a lightweight Linux process isolator using kernel namespaces and cgroups directly. Workspace bind-mounted RW, host toolchain RO, everything else invisible. cgroups v2 enforces memory limits, PID limits, and CPU time. Built-in timeout with automatic kill. Kafel seccomp-bpf for syscall filtering. Configure via `tools.exec.isolation` (`nsjail`/`native`), `tools.exec.nsjail_binary` (trusted executable path/name), `tools.exec.allow_native_fallback`, and nsjail limit fields. Missing/non-executable nsjail can fail closed (default) or fall back to native only when explicitly enabled.
 
 **Spawn tool** unchanged — it launches `quecto agent` as a child process, which inherits the same WASM + nsjail isolation.
-
-Full strategy: `reviews/tool-isolation-strategy.md`
 
 ### interface/ — CLI + Gateway (composition root)
 

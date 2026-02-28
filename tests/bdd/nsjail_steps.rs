@@ -262,14 +262,6 @@ fn when_executes_nsjail_tool(world: &mut QuectoWorld, tool_name: String, step: &
     world.tool_result = Some(result.map_err(|e| e.to_string()));
 }
 
-#[when("the parent process is killed during exec")]
-fn when_parent_killed_during_exec(world: &mut QuectoWorld) {
-    world.tool_result = Some(Ok(ToolResult {
-        content: "parent terminated; child terminated".to_string(),
-        is_error: true,
-    }));
-}
-
 #[given(expr = "a config file with exec.isolation set to {string}")]
 fn given_config_exec_isolation(world: &mut QuectoWorld, isolation: String) {
     let mut cfg = Config::default();
@@ -445,16 +437,6 @@ fn then_no_nsjail_processes(_world: &mut QuectoWorld) {}
 
 #[then("no stale mount namespaces should remain")]
 fn then_no_stale_mount_ns(_world: &mut QuectoWorld) {}
-
-#[then("the nsjail sandbox process should also be terminated")]
-fn then_nsjail_process_terminated(world: &mut QuectoWorld) {
-    let result = world.tool_result.as_ref().expect("no tool result");
-    let text = match result {
-        Ok(tr) => tr.content.clone(),
-        Err(e) => e.clone(),
-    };
-    assert!(text.contains("terminated"));
-}
 
 #[then("the tool result should be truncated to approximately 1 MiB")]
 fn then_result_truncated_1mib(world: &mut QuectoWorld) {
