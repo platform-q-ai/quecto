@@ -33,6 +33,7 @@ use quecto::infrastructure::providers;
 use quecto::infrastructure::providers::error::ErrorClass;
 use quecto::infrastructure::providers::fallback::FallbackProvider;
 use quecto::infrastructure::security::sandbox::Sandbox;
+use quecto::infrastructure::tools::cron_tool::CronTool;
 use quecto::infrastructure::tools::exec::{ExecIsolationMode, ExecTool};
 use quecto::infrastructure::tools::message::MessageTool;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
@@ -613,6 +614,15 @@ pub struct QuectoWorld {
     pub wasm_parity_workspace: Option<PathBuf>,
     /// WASM tool port: temp dir for parity tests
     pub _wasm_parity_temp_dir: Option<TempDir>,
+    // --- Issue #105/#106: Cron run-once and delivery ---
+    /// Cron tool list output for assertion
+    pub cron_tool_list_output: Option<String>,
+    /// Outbound channel sender for cron delivery tests
+    pub cron_outbound_tx: Option<tokio::sync::mpsc::Sender<OutboundMessage>>,
+    /// Outbound channel receiver for cron delivery tests
+    pub cron_outbound_rx: Option<tokio::sync::mpsc::Receiver<OutboundMessage>>,
+    /// Last outbound message captured for assertion
+    pub last_outbound_message: Option<OutboundMessage>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.

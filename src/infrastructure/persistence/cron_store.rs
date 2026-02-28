@@ -49,6 +49,8 @@ struct CronJobRecord {
     last_error: Option<String>,
     #[serde(default)]
     last_run_at: u64,
+    #[serde(default)]
+    run_once: bool,
 }
 
 impl FileCronStore {
@@ -118,6 +120,7 @@ fn job_to_record(job: &CronJob) -> CronJobRecord {
         deliver_to: job.deliver_to.clone(),
         last_error: job.last_error.clone(),
         last_run_at: job.last_run_at,
+        run_once: job.run_once,
     }
 }
 
@@ -145,6 +148,7 @@ fn record_to_job(rec: CronJobRecord) -> Result<CronJob, DomainError> {
         deliver_to: rec.deliver_to,
         last_error: rec.last_error,
         last_run_at: rec.last_run_at,
+        run_once: rec.run_once,
     })
 }
 
@@ -281,6 +285,7 @@ mod tests {
             deliver_to: None,
             last_error: None,
             last_run_at: 0,
+            run_once: false,
         }
     }
 
@@ -296,6 +301,7 @@ mod tests {
             deliver_to: None,
             last_error: None,
             last_run_at: 0,
+            run_once: false,
         }
     }
 
@@ -433,6 +439,56 @@ mod tests {
             .unwrap();
         assert!(!added);
         assert_eq!(store.list().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_run_once_field_persists() {
+        let tmp = TempDir::new().unwrap();
+        let store1 = FileCronStore::new(tmp.path());
+
+        let mut job = make_interval_job("Reminder", 1800);
+        job.run_once = true;
+        store1.add(job).unwrap();
+
+        // Recreate store from same directory
+        let store2 = FileCronStore::new(tmp.path());
+        let jobs = store2.list().unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert!(
+            jobs[0].run_once,
+            "run_once should persist across store instances"
+        );
+    }
+
+    #[test]
+    fn test_run_once_defaults_to_false_for_old_records() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileCronStore::new(tmp.path());
+
+        // Add a regular job, then manually remove the run_once field from JSON.
+        // The `#[serde(default)]` annotation should make run_once default to false.
+        store.add(make_interval_job("OldJob", 60)).unwrap();
+        let data = std::fs::read_to_string(&store.path).unwrap();
+        // Remove the run_once line entirely (including trailing comma or preceding comma).
+        let stripped = data.replace(r#"      "run_once": false,"#, "").replace(
+            r#",
+      "run_once": false"#,
+            "",
+        );
+        std::fs::write(&store.path, &stripped).unwrap();
+        // Verify run_once is not in the JSON
+        assert!(
+            !stripped.contains("run_once"),
+            "run_once should be removed from JSON"
+        );
+
+        // Load should default run_once to false (backward compatible via #[serde(default)])
+        let jobs = store.list().unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert!(
+            !jobs[0].run_once,
+            "run_once should default to false for old records"
+        );
     }
 
     #[test]

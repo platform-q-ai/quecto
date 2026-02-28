@@ -78,6 +78,7 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
                     deliver_to: parsed.deliver_to,
                     last_error: None,
                     last_run_at: 0,
+                    run_once: false,
                 };
                 // Atomic check-and-insert to avoid TOCTOU race.
                 match store.add_if_absent(job) {

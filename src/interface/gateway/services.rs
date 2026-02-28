@@ -69,6 +69,15 @@ impl AgentLoop for SystemPromptAgent {
     }
 }
 
+/// Parameters for the cron tick timer task.
+pub(super) struct CronTickContext {
+    pub(super) store: Arc<FileCronStore>,
+    pub(super) agent: Arc<dyn AgentLoop>,
+    pub(super) timeout_minutes: u32,
+    pub(super) skill_prompt: String,
+    pub(super) outbound_tx: mpsc::Sender<OutboundMessage>,
+}
+
 pub(super) struct InboundProcessorContext {
     pub(super) agent: Arc<dyn AgentLoop>,
     pub(super) agent_builder: Option<Arc<InboundAgentBuilder>>,
@@ -329,16 +338,16 @@ impl Gateway {
     ///
     /// Periodically checks for due cron jobs and dispatches them through the agent.
     /// Uses a short check interval (2s) so jobs fire promptly.
-    pub(super) async fn run_cron_tick(
-        store: Arc<FileCronStore>,
-        inner_agent: Arc<dyn AgentLoop>,
-        timeout_minutes: u32,
-        skill_prompt: String,
-    ) {
+    /// When a job has a `deliver_to` target and produces a successful response,
+    /// the result is sent to the outbound channel for delivery (issue #106).
+    pub(super) async fn run_cron_tick(ctx: CronTickContext) {
         let agent = SystemPromptAgent {
-            inner: inner_agent,
-            skill_prompt,
+            inner: ctx.agent,
+            skill_prompt: ctx.skill_prompt,
         };
+        let store = ctx.store;
+        let timeout_minutes = ctx.timeout_minutes;
+        let outbound_tx = ctx.outbound_tx;
         let check_interval = std::time::Duration::from_secs(2);
         let timeout = std::time::Duration::from_secs(u64::from(timeout_minutes) * 60);
         tracing::info!(
@@ -358,6 +367,23 @@ impl Gateway {
                             ok = result.ok,
                             "cron job executed"
                         );
+                        // Deliver successful cron results to the configured channel.
+                        if result.ok {
+                            if let Some(ref target) = result.deliver_to {
+                                let msg = OutboundMessage {
+                                    target: target.clone(),
+                                    text: result.response.clone(),
+                                };
+                                if let Err(e) = outbound_tx.send(msg).await {
+                                    tracing::error!(
+                                        job_id = result.job_id.as_str(),
+                                        target = target.as_str(),
+                                        error = %e,
+                                        "failed to deliver cron result"
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
                 Err(e) => {
