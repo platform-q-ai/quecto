@@ -120,11 +120,40 @@ fn require_next(args: &[String], i: &mut usize, flag: &str) -> Result<String, St
 /// A `HeartbeatTaskSource` that reads pending IPC commands from the
 /// coordinator inbox and formats them as heartbeat task messages.
 ///
-/// Read-only: this source only reads commands and formats them. The
-/// acknowledge/response side effects are performed in `run_coordinator()`
-/// after the agent finishes processing each task.
+/// On each `read_heartbeat_md()` call, this source:
+/// 1. Reads pending commands from the inbox
+/// 2. Formats non-shutdown commands as heartbeat task lines (one per command)
+/// 3. Acknowledges inbox files (removes from inbox so they aren't re-read)
+/// 4. Stores command_ids in `pending_command_ids` for the coordinator loop
+///    to write real responses to the outbox after the LLM finishes
+///
+/// The outbox response is NOT written here — that would cause the gateway's
+/// `poll_response()` to return a premature `{"status":"processing"}` before
+/// the coordinator LLM has actually processed the command.
 struct InboxHeartbeatSource {
     ipc: Arc<dyn CoordinatorIpc>,
+    /// Command IDs from the last `read_heartbeat_md()` call.
+    /// The coordinator loop reads these after `execute_heartbeat_tick()`
+    /// to map agent results back to IPC responses.
+    /// Order matches the task lines (and thus the `HeartbeatTaskResult` vec).
+    pending_command_ids: std::sync::Mutex<Vec<String>>,
+}
+
+impl InboxHeartbeatSource {
+    fn new(ipc: Arc<dyn CoordinatorIpc>) -> Self {
+        Self {
+            ipc,
+            pending_command_ids: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Take the pending command IDs from the last tick (drains the vec).
+    fn take_pending_command_ids(&self) -> Vec<String> {
+        self.pending_command_ids
+            .lock()
+            .map(|mut ids| std::mem::take(&mut *ids))
+            .unwrap_or_default()
+    }
 }
 
 impl HeartbeatTaskSource for InboxHeartbeatSource {
@@ -158,6 +187,13 @@ impl HeartbeatTaskSource for InboxHeartbeatSource {
                 return Ok(None);
             }
 
+            // Store command IDs for post-processing (outbox response writing).
+            let command_ids: Vec<String> =
+                non_shutdown.iter().map(|c| c.command_id.clone()).collect();
+            if let Ok(mut pending) = self.pending_command_ids.lock() {
+                *pending = command_ids;
+            }
+
             // Format each command as a heartbeat task line.
             let mut content = String::new();
             for cmd in &non_shutdown {
@@ -167,6 +203,16 @@ impl HeartbeatTaskSource for InboxHeartbeatSource {
                     "- Process coordinator command (id={}): action={}, payload={}\n",
                     cmd.command_id, cmd.action, payload_str,
                 ));
+            }
+
+            // Acknowledge inbox files — remove from inbox so they aren't
+            // re-read on the next heartbeat tick. Do NOT write to outbox here;
+            // the outbox response is written by the coordinator loop after
+            // the LLM finishes processing.
+            for cmd in &non_shutdown {
+                if let Err(e) = self.ipc.acknowledge_command(&cmd.command_id) {
+                    tracing::warn!(command_id = %cmd.command_id, "failed to ack: {e}");
+                }
             }
 
             Ok(Some(content))
@@ -343,39 +389,6 @@ fn handle_shutdown_commands(ipc: &dyn CoordinatorIpc) -> bool {
     true
 }
 
-/// Acknowledge commands and write processing responses.
-///
-/// Called after `read_heartbeat_md()` returns tasks — this separates
-/// side effects from the read path (architecture reviewer finding).
-fn acknowledge_pending_commands(ipc: &dyn CoordinatorIpc) {
-    let commands = match ipc.read_pending_commands() {
-        Ok(cmds) => cmds,
-        Err(e) => {
-            tracing::warn!("failed to re-read commands for ack: {e}");
-            return;
-        }
-    };
-
-    for cmd in &commands {
-        if cmd.action == "shutdown" {
-            continue; // Handled separately by handle_shutdown_commands.
-        }
-
-        let ack_response = crate::domain::coding_ipc::CoordinatorIpcResponse {
-            command_id: cmd.command_id.clone(),
-            ok: true,
-            body: Some(serde_json::json!({"status": "processing"})),
-            error: None,
-        };
-        if let Err(e) = ipc.write_response(&ack_response) {
-            tracing::warn!(command_id = %cmd.command_id, "failed to write ack: {e}");
-        }
-        if let Err(e) = ipc.acknowledge_command(&cmd.command_id) {
-            tracing::warn!(command_id = %cmd.command_id, "failed to ack: {e}");
-        }
-    }
-}
-
 /// Query active job count from the lifecycle driver.
 fn active_job_count(driver: &SharedLifecycleDriver) -> u32 {
     match driver.lock() {
@@ -386,6 +399,56 @@ fn active_job_count(driver: &SharedLifecycleDriver) -> u32 {
             list.jobs.iter().filter(|j| !j.state.is_terminal()).count() as u32
         }
         Err(_) => 0,
+    }
+}
+
+/// Process inbox commands and write real responses to the outbox.
+///
+/// Runs `execute_heartbeat_tick()` on the inbox source, then maps each
+/// result back to its command_id and writes the LLM response to the outbox.
+async fn process_inbox_tick(
+    inbox_source: &InboxHeartbeatSource,
+    agent: &dyn crate::domain::agent::AgentLoop,
+    ipc: &dyn CoordinatorIpc,
+    timeout: std::time::Duration,
+) {
+    match heartbeat::execute_heartbeat_tick(inbox_source, agent, timeout).await {
+        Ok(results) => {
+            let command_ids = inbox_source.take_pending_command_ids();
+            for (i, result) in results.iter().enumerate() {
+                tracing::info!(
+                    task = result.message.as_str(),
+                    "coordinator heartbeat task completed"
+                );
+                if let Some(cmd_id) = command_ids.get(i) {
+                    let resp = crate::domain::coding_ipc::CoordinatorIpcResponse {
+                        command_id: cmd_id.clone(),
+                        ok: true,
+                        body: Some(serde_json::json!({
+                            "status": "completed",
+                            "response": result.response,
+                        })),
+                        error: None,
+                    };
+                    if let Err(e) = ipc.write_response(&resp) {
+                        tracing::warn!(command_id = %cmd_id, "failed to write response: {e}");
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            let command_ids = inbox_source.take_pending_command_ids();
+            for cmd_id in &command_ids {
+                let resp = crate::domain::coding_ipc::CoordinatorIpcResponse {
+                    command_id: cmd_id.clone(),
+                    ok: false,
+                    body: None,
+                    error: Some(format!("heartbeat tick failed: {e}")),
+                };
+                let _ = ipc.write_response(&resp);
+            }
+            tracing::error!(error = %e, "coordinator heartbeat tick failed");
+        }
     }
 }
 
@@ -421,7 +484,7 @@ async fn run_coordinator(ctx: CoordinatorRunContext) -> i32 {
         .try_init();
 
     let interval = std::time::Duration::from_secs(heartbeat_interval_secs);
-    let inbox_source = InboxHeartbeatSource { ipc: ipc.clone() };
+    let inbox_source = InboxHeartbeatSource::new(ipc.clone());
     // Timeout per heartbeat task: interval minus 10s margin, clamped to [30s, 300s].
     let timeout_secs = heartbeat_interval_secs.saturating_sub(10).clamp(30, 300);
     let timeout = std::time::Duration::from_secs(timeout_secs);
@@ -456,22 +519,7 @@ async fn run_coordinator(ctx: CoordinatorRunContext) -> i32 {
                 // Process inbox commands via the agent.
                 tracing::debug!("coordinator heartbeat tick");
 
-                // Acknowledge commands before processing (separates read from side effects).
-                acknowledge_pending_commands(&*ipc);
-
-                match heartbeat::execute_heartbeat_tick(&inbox_source, &*agent, timeout).await {
-                    Ok(results) => {
-                        for result in &results {
-                            tracing::info!(
-                                task = result.message.as_str(),
-                                "coordinator heartbeat task completed"
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!(error = %e, "coordinator heartbeat tick failed");
-                    }
-                }
+                process_inbox_tick(&inbox_source, &*agent, &*ipc, timeout).await;
 
                 // Also run workspace heartbeat tasks if any.
                 match heartbeat::execute_heartbeat_tick(&workspace_source, &*agent, timeout).await {

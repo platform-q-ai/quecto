@@ -57,6 +57,116 @@ pub fn merge_prompts(skill_prompt: &str, user_prompt: &Option<String>) -> String
     }
 }
 
+/// Build the gateway system prompt.
+///
+/// Combines skills with coding job guidance appropriate for the configured
+/// coordinator mode. Returns `None` if there is nothing to say (no skills,
+/// inline mode with no special instructions).
+pub fn build_gateway_system_prompt(
+    base_dir: &Path,
+    coordinator_mode: CoordinatorMode,
+) -> Option<String> {
+    let mut sections: Vec<String> = Vec::new();
+
+    // Skills.
+    let skill_prompt = load_skill_prompt(base_dir);
+    if !skill_prompt.is_empty() {
+        sections.push(skill_prompt);
+    }
+
+    // Coding job guidance — always present when the tool is registered.
+    sections.push(build_coding_job_prompt(coordinator_mode));
+
+    if sections.is_empty() {
+        return None;
+    }
+    Some(sections.join("\n\n"))
+}
+
+/// Build the coding job section of the system prompt.
+fn build_coding_job_prompt(mode: CoordinatorMode) -> String {
+    let mut prompt = String::from(
+        "## Coding Jobs\n\
+        \n\
+        You have a `coding_job` tool for managing coding repositories and long-running \
+        coding jobs. Here is how it works:\n\
+        \n\
+        ### Workflow\n\
+        1. **create** — Create a new empty repo in the workspace (git init + initial commit).\n\
+        2. **import** — Clone a remote repo (HTTPS or SSH URL) into the workspace.\n\
+        3. **run** — Launch an async coding job on a workspace repo. A sandboxed worker \
+        clones the repo, checks out a job branch, and works toward the goal using \
+        edit/grep/find/read tools. Returns a `job_id` and `run_id`.\n\
+        4. **status** — Poll a job's progress (state, todos, artifacts). Each call \
+        advances the job internally.\n\
+        5. **cancel** — Stop a running job and kill its worker.\n\
+        6. **cleanup** — Remove a single terminal (succeeded/failed/canceled) job's artifacts.\n\
+        7. **cleanup_all** — Remove all terminal jobs in bulk.\n\
+        8. **list** — List all jobs with metadata (state, created_at, last_event_ts).\n\
+        9. **message** — Send a freeform text instruction to the coordinator.\n\
+        \n\
+        ### Key rules\n\
+        - `repo` is a directory name in the workspace, not a URL. Use `create` or `import` first.\n\
+        - `base_ref` must be a valid branch/tag/commit in the repo (e.g. \"main\").\n\
+        - Each `run` targets one repo. For multi-repo work, create multiple jobs.\n\
+        - Jobs go through states: queued → preparing → running → succeeded/failed/canceled.\n\
+        - Running jobs are killed when `max_wall_seconds` elapses.\n\
+        - Use `status` repeatedly to monitor progress. Check `last_event_ts` to detect stuck jobs.\n",
+    );
+
+    match mode {
+        CoordinatorMode::Subagent => {
+            prompt.push_str(
+                "\n\
+                ### Coordinator (subagent mode)\n\
+                \n\
+                Your coding jobs run through a **coordinator agent** — a separate long-lived \
+                LLM process that manages workers autonomously. When you call `coding_job`, your \
+                commands are sent to the coordinator via IPC and the coordinator processes them.\n\
+                \n\
+                The coordinator can reason about your jobs: it detects stuck workers, retries \
+                failures, and manages the full lifecycle. You and the coordinator work as a team:\n\
+                \n\
+                - **You** decide what work to do — create repos, launch jobs with goals, monitor status.\n\
+                - **The coordinator** handles execution — spawning workers, tracking progress, \
+                  managing failures.\n\
+                - **Use `message`** to communicate with the coordinator in natural language. \
+                  This is how you triage issues together. Examples:\n\
+                  - `{\"action\": \"message\", \"text\": \"Job X seems stuck, investigate and retry\"}` \n\
+                  - `{\"action\": \"message\", \"text\": \"Prioritize the auth refactor over UI work\"}` \n\
+                  - `{\"action\": \"message\", \"text\": \"Why did job Y fail? Should we retry?\"}` \n\
+                \n\
+                The `message` action sends your text to the coordinator's LLM, which reads it, \
+                reasons about it, and takes action using its own tools. The response contains the \
+                coordinator's reply.\n\
+                \n\
+                **Typical workflow:**\n\
+                1. `import` or `create` the repo\n\
+                2. `run` with a goal and base_ref\n\
+                3. `status` to check progress periodically\n\
+                4. `message` if something looks wrong or you want to adjust priorities\n\
+                5. `cleanup` when done\n",
+            );
+        }
+        CoordinatorMode::Inline => {
+            prompt.push_str(
+                "\n\
+                ### Coordinator (inline mode)\n\
+                \n\
+                Jobs run in-process. The `message` action is not available in this mode.\n\
+                \n\
+                **Typical workflow:**\n\
+                1. `import` or `create` the repo\n\
+                2. `run` with a goal and base_ref\n\
+                3. `status` to check progress (each call advances the job)\n\
+                4. `cleanup` when done\n",
+            );
+        }
+    }
+
+    prompt
+}
+
 /// Resolve an API key for a provider from a credential snapshot.
 ///
 /// The credential store snapshot takes priority over the config-file key.
@@ -478,5 +588,59 @@ mod tests {
                 .iter()
                 .any(|d| d.name == "coding_job")
         );
+    }
+
+    #[test]
+    fn test_build_gateway_system_prompt_subagent_contains_message_action() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let prompt = build_gateway_system_prompt(tmp.path(), CoordinatorMode::Subagent);
+        let text = prompt.unwrap();
+        assert!(text.contains("message"));
+        assert!(text.contains("coordinator"));
+        assert!(text.contains("subagent mode"));
+    }
+
+    #[test]
+    fn test_build_gateway_system_prompt_inline_mentions_inline() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let prompt = build_gateway_system_prompt(tmp.path(), CoordinatorMode::Inline);
+        let text = prompt.unwrap();
+        assert!(text.contains("inline mode"));
+        assert!(!text.contains("subagent mode"));
+    }
+
+    #[test]
+    fn test_build_gateway_system_prompt_includes_skills() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let skill_dir = tmp.path().join("workspace").join("skills").join("test");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            frontmatter("test", "A test skill", "Skill body content"),
+        )
+        .unwrap();
+        let prompt = build_gateway_system_prompt(tmp.path(), CoordinatorMode::Subagent);
+        let text = prompt.unwrap();
+        assert!(text.contains("Skill body content"));
+        assert!(text.contains("Coding Jobs"));
+    }
+
+    #[test]
+    fn test_build_coding_job_prompt_subagent_has_message_examples() {
+        let prompt = build_coding_job_prompt(CoordinatorMode::Subagent);
+        assert!(text_contains_all(
+            &prompt,
+            &["message", "triage", "coordinator", "investigate"]
+        ));
+    }
+
+    #[test]
+    fn test_build_coding_job_prompt_inline_no_message() {
+        let prompt = build_coding_job_prompt(CoordinatorMode::Inline);
+        assert!(prompt.contains("not available in this mode"));
+    }
+
+    fn text_contains_all(text: &str, needles: &[&str]) -> bool {
+        needles.iter().all(|n| text.contains(n))
     }
 }

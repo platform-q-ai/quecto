@@ -40,6 +40,8 @@ pub(super) struct InboundProcessorContext {
     pub(super) session_store: Arc<dyn SessionStore>,
     pub(super) outbound_tx: mpsc::Sender<OutboundMessage>,
     pub(super) max_session_messages: usize,
+    /// System prompt injected as `Message::system(...)` at the start of new sessions.
+    pub(super) system_prompt: Option<String>,
 }
 
 pub(super) struct InboundAgentBuilder {
@@ -130,7 +132,8 @@ impl Gateway {
     ) {
         let mut session_cache = SessionAgentCache::default();
         while let Some(msg) = inbound_rx.recv().await {
-            let mut messages = Self::load_session(&ctx.session_store, &msg).await;
+            let mut messages =
+                Self::load_session(&ctx.session_store, &msg, &ctx.system_prompt).await;
 
             messages.push(Message::user(msg.text.clone()));
 
@@ -151,14 +154,24 @@ impl Gateway {
     }
 
     /// Load session messages for an inbound message, or return empty vec.
+    ///
+    /// For new sessions (no saved history), injects the system prompt as
+    /// the first message so the LLM knows its role and available tools.
     async fn load_session(
         session_store: &Arc<dyn SessionStore>,
         msg: &InboundMessage,
+        system_prompt: &Option<String>,
     ) -> Vec<Message> {
         let session_key = Session::build_key("telegram", &msg.source);
         match session_store.load(&session_key).await {
             Ok(Some(session)) => session.messages,
-            Ok(None) => Vec::new(),
+            Ok(None) => {
+                // New session — inject system prompt if configured.
+                match system_prompt {
+                    Some(prompt) => vec![Message::system(prompt)],
+                    None => Vec::new(),
+                }
+            }
             Err(e) => {
                 tracing::error!(error = %e, key = session_key, "failed to load session");
                 Vec::new()
@@ -519,6 +532,7 @@ mod tests {
             session_store: Arc::new(NoopSessionStore),
             outbound_tx: tokio::sync::mpsc::channel(1).0,
             max_session_messages: 50,
+            system_prompt: None,
         };
 
         let msg = InboundMessage {

@@ -32,7 +32,8 @@ use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use crate::infrastructure::tools::spawn::SpawnTool;
 use crate::infrastructure::tools::web_search::WebSearchTool;
 use crate::interface::shared::{
-    CodingCoordinatorScopePolicy, build_coding_tool, gateway_background_coding_coordinator_scope,
+    CodingCoordinatorScopePolicy, build_coding_tool, build_gateway_system_prompt,
+    gateway_background_coding_coordinator_scope,
 };
 
 use tokio::sync::mpsc;
@@ -127,6 +128,10 @@ impl EventLoopContext {
                     session_store: self.session_store,
                     outbound_tx: self.outbound_tx,
                     max_session_messages,
+                    system_prompt: build_gateway_system_prompt(
+                        &self.base_dir,
+                        self.config.tools.coding.coordinator_mode,
+                    ),
                 },
             ) => {
                 tracing::info!("Inbound processor stopped");
