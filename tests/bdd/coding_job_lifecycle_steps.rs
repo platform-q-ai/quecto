@@ -1100,7 +1100,17 @@ fn then_run_fails_with(world: &mut QuectoWorld, code: String) {
         .coding_command_error
         .as_ref()
         .expect("expected command error");
-    assert_eq!(err.to_string(), code);
+    // Several CommandError variants carry payload suffixes in their Display:
+    //   InvalidBaseRef(Some(..)) → "invalid_base_ref: default_branch=...; ..."
+    //   GitFailed(..)            → "git_failed: ..."
+    //   Internal(..)             → "internal: ..."
+    // The BDD step asserts the error *code prefix* matches, which is the
+    // correct level of abstraction for feature-level assertions.
+    let err_str = err.to_string();
+    assert!(
+        err_str == code || err_str.starts_with(&format!("{code}: ")),
+        "expected error code starting with {code:?}, got {err_str:?}"
+    );
 }
 
 #[then("the coordinator should accept the job")]

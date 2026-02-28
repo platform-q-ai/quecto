@@ -6,7 +6,8 @@
 //! domain ports only (no direct I/O).
 
 use crate::domain::coding_command::{
-    CleanupRequest, CommandError, CreateRequest, ImportRequest, ListRequest, RunRequest,
+    CleanupAllRequest, CleanupRequest, CommandError, CreateRequest, ImportRequest, ListRequest,
+    RunRequest,
 };
 use crate::domain::coding_ipc::{
     CoordinatorIpc, CoordinatorIpcCommand, CoordinatorIpcResponse, CoordinatorState,
@@ -80,6 +81,7 @@ fn dispatch_command(
         "status" => handle_status(&cmd.payload, service),
         "cancel" => handle_cancel(&cmd.payload, service),
         "cleanup" => handle_cleanup(&cmd.payload, service),
+        "cleanup_all" => handle_cleanup_all(&cmd.payload, service),
         "list" => handle_list(&cmd.payload, service),
         "shutdown" => {
             *shutdown_requested = true;
@@ -178,6 +180,27 @@ fn handle_cleanup(
         .map_err(|e| format!("invalid cleanup: {e}"))?;
     let resp = service
         .cleanup(&req.job_id, req.keep_artifacts)
+        .map_err(|e| format_command_error(&e))?;
+    serde_json::to_value(&resp).map_err(|e| format!("serialize: {e}"))
+}
+
+fn handle_cleanup_all(
+    payload: &serde_json::Value,
+    service: &mut dyn CodingJobService,
+) -> Result<serde_json::Value, String> {
+    let req: CleanupAllRequest =
+        if payload.is_null() || payload.as_object().is_some_and(|m| m.is_empty()) {
+            CleanupAllRequest {
+                state_filter: None,
+                keep_artifacts: true,
+                terminal_only: true,
+            }
+        } else {
+            serde_json::from_value(strip_action(payload))
+                .map_err(|e| format!("invalid cleanup_all: {e}"))?
+        };
+    let resp = service
+        .cleanup_all(&req)
         .map_err(|e| format_command_error(&e))?;
     serde_json::to_value(&resp).map_err(|e| format!("serialize: {e}"))
 }
@@ -369,6 +392,10 @@ mod tests {
                 error_code: None,
                 error_detail: None,
                 cancel_reason: None,
+                state_entered_at: None,
+                created_at: None,
+                last_event_ts: None,
+                last_event_type: None,
             })
         }
         fn status_by_run_id(&self, run_id: &str) -> Result<StatusResponse, CommandError> {
@@ -383,6 +410,10 @@ mod tests {
                 error_code: None,
                 error_detail: None,
                 cancel_reason: None,
+                state_entered_at: None,
+                created_at: None,
+                last_event_ts: None,
+                last_event_type: None,
             })
         }
         fn cancel(&mut self, job_id: &str) -> Result<CancelResponse, CommandError> {
@@ -406,6 +437,47 @@ mod tests {
                 cleaned: true,
             })
         }
+        fn cleanup_all(
+            &mut self,
+            req: &CleanupAllRequest,
+        ) -> Result<CleanupAllResponse, CommandError> {
+            let candidates: Vec<String> = self
+                .jobs
+                .iter()
+                .filter(|(_, s)| {
+                    req.state_filter
+                        .as_ref()
+                        .map(|f| f.contains(s))
+                        .unwrap_or(true)
+                })
+                .map(|(id, _)| id.clone())
+                .collect();
+            let mut cleaned = vec![];
+            let mut skipped = vec![];
+            for job_id in candidates {
+                let terminal = self
+                    .jobs
+                    .get(&job_id)
+                    .map(|s| s.is_terminal())
+                    .unwrap_or(false);
+                if !terminal {
+                    if req.terminal_only {
+                        skipped.push(job_id);
+                        continue;
+                    } else {
+                        return Err(CommandError::JobNotTerminal);
+                    }
+                }
+                self.jobs.remove(&job_id);
+                cleaned.push(job_id);
+            }
+            Ok(CleanupAllResponse {
+                cleaned_count: cleaned.len(),
+                cleaned_job_ids: cleaned,
+                skipped_job_ids: skipped,
+            })
+        }
+
         fn list(&self, _req: &ListRequest) -> ListResponse {
             ListResponse {
                 jobs: self
@@ -416,6 +488,10 @@ mod tests {
                         run_id: "run_001".to_string(),
                         state: *state,
                         summary: None,
+                        created_at: None,
+                        state_entered_at: None,
+                        last_event_ts: None,
+                        last_event_type: None,
                     })
                     .collect(),
             }

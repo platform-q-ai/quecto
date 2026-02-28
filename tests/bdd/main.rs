@@ -1620,6 +1620,11 @@ fn main() {
                 if sc.tags.iter().any(|t| t == "real-llm") && !real_llm_enabled {
                     return false;
                 }
+                // Exclude @flaky-parallel scenarios from sharded parallel runs.
+                // Run them in isolation with: QUECTO_TAG=flaky-parallel cargo test --test bdd
+                if sc.tags.iter().any(|t| t == "flaky-parallel") && shard.is_some() {
+                    return false;
+                }
                 // If a tag filter is set, require matching scenarios, but still
                 // allow optional sharding to apply.
                 if let Some(ref tag) = tag_filter {

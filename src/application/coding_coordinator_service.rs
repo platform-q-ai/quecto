@@ -5,8 +5,9 @@
 // from coding_coordinator.rs and shares its scope.
 
 use crate::domain::coding_command::{
-    CancelResponse, CleanupResponse, CommandError, CreateRequest, CreateResponse, ImportRequest,
-    ImportResponse, ListRequest, ListResponse, RunRequest, RunResponse, StatusResponse,
+    CancelResponse, CleanupAllRequest, CleanupAllResponse, CleanupResponse, CommandError,
+    CreateRequest, CreateResponse, ImportRequest, ImportResponse, ListRequest, ListResponse,
+    RunRequest, RunResponse, StatusResponse,
 };
 use crate::domain::coding_ports::{CodingJobService, RepoValidator, SkillResolver};
 
@@ -51,6 +52,10 @@ impl<R: RepoValidator + Send, S: SkillResolver + Send> CodingJobService
         keep_artifacts: bool,
     ) -> Result<CleanupResponse, CommandError> {
         CodingCoordinator::cleanup(self, job_id, keep_artifacts)
+    }
+
+    fn cleanup_all(&mut self, req: &CleanupAllRequest) -> Result<CleanupAllResponse, CommandError> {
+        CodingCoordinator::cleanup_all_impl(self, req)
     }
 
     fn list(&self, req: &ListRequest) -> ListResponse {

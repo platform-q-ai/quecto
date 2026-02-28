@@ -173,6 +173,20 @@ pub struct StatusResponse {
     pub error_detail: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cancel_reason: Option<CancelReason>,
+    /// Unix timestamp (seconds) when the job entered the current state.
+    /// Allows callers to detect stuck/hung jobs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state_entered_at: Option<u64>,
+    /// Unix timestamp (seconds) when the job was created.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<u64>,
+    /// ISO 8601 timestamp of the most-recent event for this job.
+    /// `None` means no events have been emitted yet (job is queued/preparing).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_event_ts: Option<String>,
+    /// Type string of the most-recent event (e.g. `"tool.result"`, `"job.status"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_event_type: Option<String>,
 }
 
 /// A todo item as returned in status responses.
@@ -236,6 +250,46 @@ pub struct CleanupResponse {
 }
 
 // ============================================================================
+// Cleanup-all command
+// ============================================================================
+
+/// Request to clean up multiple jobs in bulk.
+///
+/// When `state_filter` is set only jobs in those states are eligible.
+/// All filtered jobs must be in terminal state or the request returns
+/// `job_not_terminal` for the first non-terminal job encountered.
+/// Setting `terminal_only: true` (the default) silently skips any
+/// non-terminal jobs rather than erroring.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CleanupAllRequest {
+    /// If set, only clean up jobs in these states.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state_filter: Option<Vec<JobState>>,
+    /// Keep job artifacts on disk (default: true).
+    #[serde(default = "default_keep_artifacts")]
+    pub keep_artifacts: bool,
+    /// Skip non-terminal jobs instead of returning an error (default: true).
+    #[serde(default = "default_terminal_only")]
+    pub terminal_only: bool,
+}
+
+fn default_terminal_only() -> bool {
+    true
+}
+
+/// Response from a `cleanup_all` command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CleanupAllResponse {
+    /// How many jobs were cleaned up.
+    pub cleaned_count: usize,
+    /// Job IDs that were cleaned.
+    pub cleaned_job_ids: Vec<String>,
+    /// Job IDs that were skipped (non-terminal when `terminal_only: true`).
+    pub skipped_job_ids: Vec<String>,
+}
+
+// ============================================================================
 // List command
 // ============================================================================
 
@@ -263,6 +317,20 @@ pub struct ListJobEntry {
     pub state: JobState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    /// Unix timestamp (seconds) when the job was created.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<u64>,
+    /// Unix timestamp (seconds) when the job entered its current state.
+    /// The difference `now - state_entered_at` is the time spent in the
+    /// current state — useful for detecting stuck `running` jobs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state_entered_at: Option<u64>,
+    /// ISO 8601 timestamp of the most-recent event for this job.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_event_ts: Option<String>,
+    /// Type of the most-recent event (e.g. `"tool.result"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_event_type: Option<String>,
 }
 
 // ============================================================================
@@ -276,7 +344,13 @@ pub enum CommandError {
     /// Repo identifier could not be resolved.
     InvalidRepo,
     /// Base ref does not exist in repo.
-    InvalidBaseRef,
+    ///
+    /// When `Some(detail)` is present, the detail includes the repo's default
+    /// branch and a list of available local refs, formatted as:
+    /// `"default_branch=<b>; available_refs=[<r1>, <r2>, ...]"`
+    /// This helps callers recover without a separate API call.
+    /// `None` means no detail was available (e.g. mock/test context).
+    InvalidBaseRef(Option<String>),
     /// Job rejected by policy.
     PolicyDenied,
     /// Requested skill not found on disk.
@@ -303,7 +377,10 @@ impl std::fmt::Display for CommandError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
             Self::InvalidRepo => "invalid_repo",
-            Self::InvalidBaseRef => "invalid_base_ref",
+            Self::InvalidBaseRef(None) => "invalid_base_ref",
+            Self::InvalidBaseRef(Some(detail)) => {
+                return write!(f, "invalid_base_ref: {detail}");
+            }
             Self::PolicyDenied => "policy_denied",
             Self::SkillNotFound => "skill_not_found",
             Self::NotFound => "not_found",
@@ -325,7 +402,7 @@ impl std::str::FromStr for CommandError {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "invalid_repo" => Ok(Self::InvalidRepo),
-            "invalid_base_ref" => Ok(Self::InvalidBaseRef),
+            "invalid_base_ref" => Ok(Self::InvalidBaseRef(None)),
             "policy_denied" => Ok(Self::PolicyDenied),
             "skill_not_found" => Ok(Self::SkillNotFound),
             "not_found" => Ok(Self::NotFound),
@@ -334,6 +411,9 @@ impl std::str::FromStr for CommandError {
             "invalid_name" => Ok(Self::InvalidName),
             "already_exists" => Ok(Self::AlreadyExists),
             "invalid_url" => Ok(Self::InvalidUrl),
+            s if s.starts_with("invalid_base_ref: ") => Ok(Self::InvalidBaseRef(Some(
+                s["invalid_base_ref: ".len()..].to_string(),
+            ))),
             s if s.starts_with("git_failed: ") => {
                 Ok(Self::GitFailed(s["git_failed: ".len()..].to_string()))
             }
@@ -353,7 +433,7 @@ mod tests {
     fn test_command_error_display_round_trip() {
         for err in [
             CommandError::InvalidRepo,
-            CommandError::InvalidBaseRef,
+            CommandError::InvalidBaseRef(None),
             CommandError::PolicyDenied,
             CommandError::SkillNotFound,
             CommandError::NotFound,

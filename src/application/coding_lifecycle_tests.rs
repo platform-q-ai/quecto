@@ -441,3 +441,78 @@ fn test_multiple_jobs_processed() {
     assert_eq!(job_a.state, JobState::Running);
     assert_eq!(job_b.state, JobState::Running);
 }
+
+// ── Issue 2: wall-timeout enforcement ────────────────────────────────────
+
+fn test_request_with_wall(goal: &str, wall_secs: u64) -> RunRequest {
+    RunRequest {
+        goal: goal.to_string(),
+        repo: "test/repo".to_string(),
+        base_ref: "main".to_string(),
+        priority: Default::default(),
+        profile: "default".to_string(),
+        max_wall_seconds: Some(wall_secs),
+        labels: vec![],
+        skills: vec![],
+    }
+}
+
+#[test]
+fn test_wall_timeout_kills_running_worker() {
+    // Job has a 1-second wall timeout; worker stays alive indefinitely.
+    // After the timeout elapses, the next tick must kill the worker and
+    // mark the job failed with cancel_reason WallTimeout.
+    let mut driver = CodingLifecycleDriver::new(
+        make_coord(),
+        Box::new(StayAliveRuntime::new()),
+        Box::new(SucceedingMirror),
+    );
+    let job_id = driver
+        .create_job(test_request_with_wall("timeout job", 1))
+        .unwrap();
+    driver.tick(); // queued → preparing
+    driver.tick(); // preparing → running
+
+    // Sleep long enough to exceed the 1-second wall timeout.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    driver.tick(); // should detect timeout, kill worker, mark failed/canceled
+    let job = driver.coordinator().job(&job_id).unwrap();
+    assert!(
+        job.state.is_terminal(),
+        "job should be terminal after wall timeout, got {:?}",
+        job.state
+    );
+    assert!(
+        matches!(
+            job.cancel_reason,
+            Some(crate::domain::coding_job::CancelReason::WallTimeout)
+        ) || job.error_code == Some(crate::domain::coding_job::ErrorCode::Timeout),
+        "expected WallTimeout cancel or Timeout error, got cancel={:?} error={:?}",
+        job.cancel_reason,
+        job.error_code
+    );
+}
+
+#[test]
+fn test_wall_timeout_does_not_fire_before_elapsed() {
+    // Wall timeout of 60s — should never trigger within this test.
+    let mut driver = CodingLifecycleDriver::new(
+        make_coord(),
+        Box::new(StayAliveRuntime::new()),
+        Box::new(SucceedingMirror),
+    );
+    let job_id = driver
+        .create_job(test_request_with_wall("long job", 60))
+        .unwrap();
+    driver.tick(); // queued → preparing
+    driver.tick(); // preparing → running
+    driver.tick(); // poll — still within timeout
+
+    let job = driver.coordinator().job(&job_id).unwrap();
+    assert_eq!(
+        job.state,
+        JobState::Running,
+        "job must still be running well before the wall timeout"
+    );
+}

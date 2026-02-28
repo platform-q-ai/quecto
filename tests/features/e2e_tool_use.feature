@@ -39,7 +39,7 @@ Feature: End-to-End Tool Execution
     Then the exit code should be 0
     And stdout should contain "hello from shell"
 
-  @done @e2e-tool-use
+  @done @e2e-tool-use @flaky-parallel
   Scenario: LLM exec tool with large output completes within max-time
     Given the mock LLM first returns a tool call for "exec" with args:
       | command | printf 'x%.0s' {1..100000} |

@@ -150,6 +150,10 @@ impl CodingJobService for BddInboxMockJobService {
             error_code: None,
             error_detail: None,
             cancel_reason: None,
+            state_entered_at: None,
+            created_at: None,
+            last_event_ts: None,
+            last_event_type: None,
         })
     }
     fn status_by_run_id(&self, run_id: &str) -> Result<StatusResponse, CommandError> {
@@ -164,6 +168,10 @@ impl CodingJobService for BddInboxMockJobService {
             error_code: None,
             error_detail: None,
             cancel_reason: None,
+            state_entered_at: None,
+            created_at: None,
+            last_event_ts: None,
+            last_event_type: None,
         })
     }
     fn cancel(&mut self, job_id: &str) -> Result<CancelResponse, CommandError> {
@@ -187,6 +195,40 @@ impl CodingJobService for BddInboxMockJobService {
             cleaned: true,
         })
     }
+    fn cleanup_all(&mut self, req: &CleanupAllRequest) -> Result<CleanupAllResponse, CommandError> {
+        let candidates: Vec<String> = self
+            .jobs
+            .iter()
+            .filter(|(_, s)| {
+                req.state_filter
+                    .as_ref()
+                    .map(|f| f.contains(s))
+                    .unwrap_or(true)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        let mut cleaned = vec![];
+        let mut skipped = vec![];
+        for job_id in candidates {
+            let terminal = self
+                .jobs
+                .get(&job_id)
+                .map(|s| s.is_terminal())
+                .unwrap_or(false);
+            if !terminal {
+                skipped.push(job_id);
+                continue;
+            }
+            self.jobs.remove(&job_id);
+            cleaned.push(job_id);
+        }
+        Ok(CleanupAllResponse {
+            cleaned_count: cleaned.len(),
+            cleaned_job_ids: cleaned,
+            skipped_job_ids: skipped,
+        })
+    }
+
     fn list(&self, _req: &ListRequest) -> ListResponse {
         ListResponse {
             jobs: self
@@ -197,6 +239,10 @@ impl CodingJobService for BddInboxMockJobService {
                     run_id: "run_001".to_string(),
                     state: *state,
                     summary: None,
+                    created_at: None,
+                    state_entered_at: None,
+                    last_event_ts: None,
+                    last_event_type: None,
                 })
                 .collect(),
         }

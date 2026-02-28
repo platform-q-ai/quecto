@@ -235,3 +235,39 @@ fn test_job_repo_path() {
     let expected = td.path().join("jobs/job_001/repo");
     assert_eq!(path, expected.to_string_lossy().to_string());
 }
+
+// ── Issue 3: workspace collision — pre-existing dest dir ─────────────────
+
+#[test]
+fn test_clone_for_job_succeeds_when_dest_already_exists() {
+    // Simulates a retry after a previous aborted run left a stale repo dir.
+    // clone_for_job must remove the stale dir and succeed.
+    let (td, store, _origin) = setup_with_mirror();
+
+    // First clone — succeeds and leaves the dir in place.
+    let r1 = store.clone_for_job(&cj("org/my-app", "job_001", "main", "quecto/job/job_001"));
+    assert!(r1.ok, "first clone failed: {:?}", r1.error);
+    let repo_dir = td.path().join("jobs/job_001/repo");
+    assert!(repo_dir.exists(), "repo dir should exist after first clone");
+
+    // Simulate a retry with the same job_id — dest dir is non-empty.
+    let r2 = store.clone_for_job(&cj("org/my-app", "job_001", "main", "quecto/job/job_001"));
+    assert!(
+        r2.ok,
+        "second clone (retry) must succeed even though dest already exists: {:?}",
+        r2.error
+    );
+    // The repo is still valid.
+    let head = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo_dir)
+        .arg("rev-parse")
+        .arg("--abbrev-ref")
+        .arg("HEAD")
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&head.stdout).trim(),
+        "quecto/job/job_001"
+    );
+}

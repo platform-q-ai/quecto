@@ -139,15 +139,17 @@ fn given_two_jobs_succeeded(world: &mut QuectoWorld) {
     // This scenario is @pending @future, so minimal stub is fine.
     world.coding_jobs.clear();
     for idx in 0..2 {
-        let mut job =
-            quecto::domain::coding_job::CodingJob::new(quecto::domain::coding_job::CodingJobInit {
+        let mut job = quecto::domain::coding_job::CodingJob::new(
+            quecto::domain::coding_job::CodingJobInit {
                 job_id: format!("job_multi_{}", idx + 1),
                 run_id: format!("run_multi_{}", idx + 1),
                 goal: format!("multi-goal-{}", idx + 1),
                 repo: "org/repo".to_string(),
                 base_ref: "main".to_string(),
                 branch: format!("quecto/job/multi_{}", idx + 1),
-            });
+            },
+            quecto::domain::coding_job::now_unix_secs(),
+        );
         job.state = JobState::Succeeded;
         world.coding_jobs.push(job.clone());
         world.coding_job = Some(job);

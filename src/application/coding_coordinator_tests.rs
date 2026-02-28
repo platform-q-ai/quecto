@@ -1,9 +1,9 @@
 use super::*;
 use crate::domain::coding_job::Priority;
 
-struct MockRepoValidator {
-    valid_repos: Vec<String>,
-    valid_refs: Vec<(String, String)>,
+pub(super) struct MockRepoValidator {
+    pub(super) valid_repos: Vec<String>,
+    pub(super) valid_refs: Vec<(String, String)>,
 }
 
 impl RepoValidator for MockRepoValidator {
@@ -17,8 +17,8 @@ impl RepoValidator for MockRepoValidator {
     }
 }
 
-struct MockSkillResolver {
-    available: Vec<String>,
+pub(super) struct MockSkillResolver {
+    pub(super) available: Vec<String>,
 }
 
 impl SkillResolver for MockSkillResolver {
@@ -27,7 +27,7 @@ impl SkillResolver for MockSkillResolver {
     }
 }
 
-fn test_coordinator() -> CodingCoordinator<MockRepoValidator, MockSkillResolver> {
+pub(super) fn test_coordinator() -> CodingCoordinator<MockRepoValidator, MockSkillResolver> {
     CodingCoordinator::new(
         MockRepoValidator {
             valid_repos: vec!["test-repo".to_string()],
@@ -40,7 +40,9 @@ fn test_coordinator() -> CodingCoordinator<MockRepoValidator, MockSkillResolver>
     )
 }
 
-fn run_default(coord: &mut CodingCoordinator<MockRepoValidator, MockSkillResolver>) -> RunResponse {
+pub(super) fn run_default(
+    coord: &mut CodingCoordinator<MockRepoValidator, MockSkillResolver>,
+) -> RunResponse {
     coord
         .run(RunRequest {
             goal: "test goal".to_string(),
@@ -98,7 +100,21 @@ fn test_run_rejects_invalid_base_ref() {
             skills: vec![],
         })
         .unwrap_err();
-    assert_eq!(err, CommandError::InvalidBaseRef);
+    // Now returns the enriched variant so callers get the default branch and
+    // available refs inline — the display string starts with "invalid_base_ref: ".
+    assert!(
+        matches!(err, CommandError::InvalidBaseRef(Some(_))),
+        "expected InvalidBaseRef(Some(_)), got {err:?}"
+    );
+    let detail = err.to_string();
+    assert!(
+        detail.starts_with("invalid_base_ref: "),
+        "detail should start with 'invalid_base_ref: ', got: {detail}"
+    );
+    assert!(
+        detail.contains("default_branch="),
+        "detail should contain default_branch hint, got: {detail}"
+    );
 }
 
 #[test]
@@ -551,3 +567,6 @@ fn test_invalid_transition_returns_distinct_error() {
     let err = coord.mark_ready(&resp.job_id, 42, None).unwrap_err();
     assert_eq!(err, CommandError::InvalidTransition);
 }
+
+// ── Issues 1, 4, 5: visibility / base_ref UX / cleanup_all ──────────────
+// Tests moved to coding_coordinator_extra_tests.rs (file-size limit).
