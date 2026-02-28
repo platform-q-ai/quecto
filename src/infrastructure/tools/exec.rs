@@ -22,6 +22,7 @@ const DEFAULT_NSJAIL_MEMORY_LIMIT_MB: u64 = 512;
 const DEFAULT_NSJAIL_PID_LIMIT: u64 = 256;
 const DEFAULT_NSJAIL_CPU_TIME_LIMIT_SECS: u64 = 30;
 const DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS: u64 = 30;
+const DEFAULT_NSJAIL_TMP_SIZE_MB: u64 = 64;
 const TRUSTED_NSJAIL_PATHS: &[&str] = &["/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin"];
 const EXEC_ENV_ALLOWLIST: &[&str] = &[
     "HOME", "PATH", "LANG", "TZ", "TERM", "SHELL", "USER", "LOGNAME", "TMPDIR",
@@ -80,6 +81,12 @@ pub struct NsjailOptions {
     pub cpu_time_limit_secs: Option<u64>,
     /// Wall-clock time limit in seconds, enforced via `--time_limit`.
     pub wall_time_limit_secs: Option<u64>,
+    /// Size of the writable tmpfs mounted at `/tmp` inside the jail, in MB.
+    ///
+    /// Defaults to 64 MB. Set to `None` to disable the `/tmp` tmpfs mount.
+    /// Uses the nsjail `-m none:/tmp:tmpfs:size=<bytes>` syntax to ensure
+    /// the tmpfs is explicitly bounded (kernel default is 50% of host RAM).
+    pub tmp_size_mb: Option<u64>,
 }
 
 impl Default for NsjailOptions {
@@ -91,6 +98,7 @@ impl Default for NsjailOptions {
             pid_limit: Some(DEFAULT_NSJAIL_PID_LIMIT),
             cpu_time_limit_secs: Some(DEFAULT_NSJAIL_CPU_TIME_LIMIT_SECS),
             wall_time_limit_secs: Some(DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS),
+            tmp_size_mb: Some(DEFAULT_NSJAIL_TMP_SIZE_MB),
         }
     }
 }
@@ -452,7 +460,13 @@ fn build_nsjail_command(
     // Mount a writable tmpfs at /tmp so commands that expect a POSIX-standard
     // writable temp directory (mktemp, compilers, pip, etc.) work out of the box.
     // The tmpfs is ephemeral — automatically cleaned when the jail exits.
-    cmd.arg("--tmpfsmount").arg("/tmp");
+    // We use the explicit `-m none:/tmp:tmpfs:size=<bytes>` syntax to bound
+    // the tmpfs size (kernel default is 50% of host RAM which is too generous).
+    if let Some(tmp_mb) = options.tmp_size_mb {
+        let tmp_bytes = tmp_mb * 1024 * 1024;
+        cmd.arg("-m")
+            .arg(format!("none:/tmp:tmpfs:size={tmp_bytes}"));
+    }
 
     // Disable cgroup namespace — resource limits are enforced via rlimits
     // which work without root or cgroup write access.
@@ -499,11 +513,13 @@ fn build_nsjail_command(
         cmd.env("PATH", path);
     }
 
-    // Ensure TMPDIR points to the writable tmpfs inside the jail.
-    // Many tools check TMPDIR/TMP/TEMP before falling back to /tmp,
-    // so set it explicitly to avoid relying on host env propagation.
-    if !source_env.contains_key("TMPDIR") {
-        cmd.env("TMPDIR", "/tmp");
+    // Ensure temp dir env vars point to the writable tmpfs inside the jail.
+    // TMPDIR (POSIX), TMP (common on Linux), TEMP (Python/cross-platform)
+    // are all set to /tmp unless the caller explicitly overrides them.
+    for var in ["TMPDIR", "TMP", "TEMP"] {
+        if !source_env.contains_key(var) {
+            cmd.env(var, "/tmp");
+        }
     }
 
     cmd

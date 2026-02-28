@@ -45,6 +45,7 @@ fn setup_nsjail_exec_tool(world: &mut QuectoWorld, setup: NsjailSetup) {
             pid_limit: setup.pid_limit,
             cpu_time_limit_secs: setup.cpu_time_limit_secs,
             wall_time_limit_secs: setup.wall_time_limit_secs,
+            ..NsjailOptions::default()
         },
     };
 
@@ -79,7 +80,7 @@ last=\"\"\n\
 for arg in \"$@\"; do last=\"$arg\"; done\n\
 case \"$last\" in\n\
   \"cat /etc/shadow\"*) echo denied >&2; exit 1;;\n\
-  \"echo pwned > /tmp/escape.txt\"*) echo denied >&2; exit 1;;\n\
+  \"echo pwned > /var/escape.txt\"*) echo denied >&2; exit 1;;\n\
   \"touch /usr/bin/evil\"*) echo readonly >&2; exit 1;;\n\
   \"which git\"*) echo /usr/bin/git; exit 0;;\n\
   \"ps aux\"*) echo 'PID COMMAND'; echo '1 sh'; echo '2 ps'; exit 0;;\n\
@@ -313,6 +314,7 @@ fn when_registry_constructed(world: &mut QuectoWorld) {
             pid_limit: Some(settings.pid_limit),
             cpu_time_limit_secs: Some(settings.cpu_time_limit_secs),
             wall_time_limit_secs: Some(settings.wall_time_limit_secs),
+            ..NsjailOptions::default()
         },
         ..ExecOptions::default()
     };
