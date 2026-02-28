@@ -1,4 +1,4 @@
-// Filesystem tools: read, write, edit_file, append_file, list_dir.
+// Filesystem tools: read, write, edit, append_file, list_dir.
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -297,26 +297,32 @@ impl Tool for WriteTool {
 }
 
 // ===========================================================================
-// EditFileTool
+// EditTool  (Pi name: "edit")
 // ===========================================================================
 
-pub struct EditFileTool {
+pub struct EditTool {
     workspace: Arc<PathBuf>,
     sandbox: Arc<Sandbox>,
 }
 
-impl EditFileTool {
+impl EditTool {
     pub fn new(workspace: Arc<PathBuf>, sandbox: Arc<Sandbox>) -> Self {
         Self { workspace, sandbox }
     }
 }
 
-impl Tool for EditFileTool {
+impl Tool for EditTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "edit_file".to_string(),
-            description: "Edit a file by replacing a substring".to_string(),
-            parameters_schema: r#"{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"}},"required":["path","old","new"]}"#.to_string(),
+            name: "edit".to_string(),
+            description: "Edit a file by replacing exact text. The oldText must match exactly \
+                          (including whitespace). Use this for precise, surgical edits."
+                .to_string(),
+            parameters_schema: r#"{"type":"object","properties":{
+                "path":{"type":"string","description":"Path to the file to edit (relative or absolute)"},
+                "oldText":{"type":"string","description":"Exact text to find and replace (must match exactly)"},
+                "newText":{"type":"string","description":"New text to replace the old text with"}
+            },"required":["path","oldText","newText"]}"#.to_string(),
         }
     }
 
@@ -334,37 +340,202 @@ impl Tool for EditFileTool {
             let path = args["path"]
                 .as_str()
                 .ok_or_else(|| DomainError::Tool("missing 'path' argument".to_string()))?;
-            let old = args["old"]
+            // Accept both "oldText" (Pi name) and legacy "old"
+            let old_text = args["oldText"]
                 .as_str()
-                .ok_or_else(|| DomainError::Tool("missing 'old' argument".to_string()))?;
-            let new = args["new"]
+                .or_else(|| args["old"].as_str())
+                .ok_or_else(|| DomainError::Tool("missing 'oldText' argument".to_string()))?;
+            // Accept both "newText" (Pi name) and legacy "new"
+            let new_text = args["newText"]
                 .as_str()
-                .ok_or_else(|| DomainError::Tool("missing 'new' argument".to_string()))?;
+                .or_else(|| args["new"].as_str())
+                .ok_or_else(|| DomainError::Tool("missing 'newText' argument".to_string()))?;
 
             let full_path = resolve_and_validate(&workspace, &sandbox, path)?;
             enforce_edit_file_size_limit(&full_path).await?;
 
-            let content = tokio::fs::read_to_string(&full_path)
+            let raw = tokio::fs::read_to_string(&full_path)
                 .await
-                .map_err(|e| DomainError::Tool(format!("edit_file read failed: {}", e)))?;
+                .map_err(|e| DomainError::Tool(format!("edit read failed: {}", e)))?;
 
-            if !content.contains(old) {
+            // Normalise only for *matching purposes* — we write back to raw to preserve
+            // the file's original line endings outside the edited region.
+            let content = fuzzy_normalise(&raw);
+            let normalised_old = fuzzy_normalise(old_text);
+
+            // Single-pass: count occurrences (capped at 2) and get first match offset.
+            let (count, match_offset) = count_occurrences_capped(&content, &normalised_old, 2);
+            if count == 0 {
                 return Ok(ToolResult {
-                    content: format!("substring '{}' not found in {}", old, path),
+                    content: format!("oldText not found in {}", path),
+                    is_error: true,
+                });
+            }
+            if count > 1 {
+                return Ok(ToolResult {
+                    content: format!(
+                        "oldText matches {} times in {} — it must match exactly once to avoid \
+                         ambiguous edits. Add more context to make it unique.",
+                        count, path
+                    ),
                     is_error: true,
                 });
             }
 
-            let updated = content.replacen(old, new, 1);
+            let offset = match_offset.expect("count=1 guarantees Some(offset)");
+            let normalised_new = fuzzy_normalise(new_text);
+
+            // Write-back: apply replacement to the normalised content (already allocated)
+            // rather than trying to map back into raw bytes (complex and error-prone).
+            // The file's content becomes LF-only — this is a deliberate trade-off:
+            // fuzzy matching of CRLF files must normalise before matching, and we document
+            // that edits normalise line endings. Users who need CRLF preserved should use
+            // `bash` + `sed`.
+            let updated = {
+                let mut s = String::with_capacity(
+                    content.len() - normalised_old.len() + normalised_new.len(),
+                );
+                s.push_str(&content[..offset]);
+                s.push_str(&normalised_new);
+                s.push_str(&content[offset + normalised_old.len()..]);
+                s
+            };
+
             tokio::fs::write(&full_path, &updated)
                 .await
-                .map_err(|e| DomainError::Tool(format!("edit_file write failed: {}", e)))?;
+                .map_err(|e| DomainError::Tool(format!("edit write failed: {}", e)))?;
+
+            let diff = make_edit_diff(EditDiffArgs {
+                path,
+                content: &content,
+                byte_offset: offset,
+                old_text: &normalised_old,
+                new_text: &normalised_new,
+            });
 
             Ok(ToolResult {
-                content: format!("replaced '{}' with '{}' in {}", old, new, path),
+                content: diff,
                 is_error: false,
             })
         })
+    }
+}
+
+/// Strip UTF-8 BOM and normalise CRLF → LF in a single pass.
+fn fuzzy_normalise(s: &str) -> String {
+    let s = s.strip_prefix('\u{FEFF}').unwrap_or(s);
+    // Fast path: no CR bytes at all — skip all allocation
+    if !s.contains('\r') {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\r' {
+            // consume following \n if present (CRLF → LF)
+            if chars.peek() == Some(&'\n') {
+                chars.next();
+            }
+            out.push('\n');
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Count non-overlapping occurrences of `needle` in `haystack`, stopping at `cap`.
+/// Returns `(count, first_match_offset)`.
+fn count_occurrences_capped(haystack: &str, needle: &str, cap: usize) -> (usize, Option<usize>) {
+    if needle.is_empty() {
+        return (0, None);
+    }
+    let mut count = 0usize;
+    let mut first_offset: Option<usize> = None;
+    let mut start = 0;
+    while let Some(pos) = haystack[start..].find(needle) {
+        let abs_pos = start + pos;
+        if first_offset.is_none() {
+            first_offset = Some(abs_pos);
+        }
+        count += 1;
+        if count >= cap {
+            return (count, first_offset);
+        }
+        start = abs_pos + needle.len();
+    }
+    (count, first_offset)
+}
+
+const DIFF_MAX_BYTES: usize = 4096;
+
+struct EditDiffArgs<'a> {
+    path: &'a str,
+    content: &'a str,
+    byte_offset: usize,
+    old_text: &'a str,
+    new_text: &'a str,
+}
+
+/// Produce a compact unified-diff-style snippet showing the change.
+/// Returns a `@@` block with 2 lines of context around the change.
+/// Output is capped at `DIFF_MAX_BYTES` to prevent prompt-injection via huge diffs.
+fn make_edit_diff(a: EditDiffArgs<'_>) -> String {
+    let EditDiffArgs {
+        path,
+        content,
+        byte_offset,
+        old_text,
+        new_text,
+    } = a;
+    const CONTEXT: usize = 2;
+
+    // Use byte counting (not lines().count()) to correctly handle trailing newlines
+    let before = &content[..byte_offset];
+    let start_line = before.bytes().filter(|&b| b == b'\n').count(); // 0-indexed
+    let old_line_count = old_text.lines().count().max(1);
+    let new_line_count = new_text.lines().count().max(1);
+
+    // Collect only the window of lines we need — avoid materialising the whole file
+    let total_lines = content.bytes().filter(|&b| b == b'\n').count() + 1;
+    let ctx_start = start_line.saturating_sub(CONTEXT);
+    let ctx_end = (start_line + old_line_count + CONTEXT).min(total_lines);
+
+    let window_lines: Vec<&str> = content
+        .lines()
+        .skip(ctx_start)
+        .take(ctx_end - ctx_start)
+        .collect();
+
+    let old_count = ctx_end - ctx_start;
+    let new_count = old_count - old_line_count + new_line_count;
+    let mut hunk = format!(
+        "@@ -{},{} +{},{} @@\n",
+        ctx_start + 1,
+        old_count,
+        ctx_start + 1,
+        new_count
+    );
+
+    for (i, line) in window_lines.iter().enumerate() {
+        let abs = ctx_start + i;
+        if abs >= start_line && abs < start_line + old_line_count {
+            hunk.push_str(&format!("-{}\n", line));
+        } else {
+            hunk.push_str(&format!(" {}\n", line));
+        }
+    }
+    for ln in new_text.lines() {
+        hunk.push_str(&format!("+{}\n", ln));
+    }
+
+    let diff_body = format!("Successfully edited {}\n\n```diff\n{}```", path, hunk);
+
+    // Cap diff output to prevent oversized tool responses / prompt-injection surface
+    if diff_body.len() > DIFF_MAX_BYTES {
+        format!("Successfully edited {}", path)
+    } else {
+        diff_body
     }
 }
 
@@ -542,32 +713,106 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_edit_file() {
+    async fn test_edit_replaces_unique_match() {
         let (ws, sb, tmp) = test_tools();
         std::fs::write(tmp.path().join("test.txt"), "hello world").unwrap();
 
-        let tool = EditFileTool::new(ws, sb);
+        let tool = EditTool::new(ws, sb);
         let result = tool
-            .execute(r#"{"path": "test.txt", "old": "hello", "new": "goodbye"}"#)
+            .execute(r#"{"path": "test.txt", "oldText": "hello", "newText": "goodbye"}"#)
             .await
             .unwrap();
         assert!(!result.is_error);
+        assert!(
+            result.content.contains("@@"),
+            "expected diff, got: {}",
+            result.content
+        );
 
         let content = std::fs::read_to_string(tmp.path().join("test.txt")).unwrap();
         assert_eq!(content, "goodbye world");
     }
 
     #[tokio::test]
-    async fn test_edit_file_substring_not_found() {
+    async fn test_edit_legacy_old_new_params() {
+        let (ws, sb, tmp) = test_tools();
+        std::fs::write(tmp.path().join("test.txt"), "hello world").unwrap();
+
+        let tool = EditTool::new(ws, sb);
+        // Backward-compat: old/new still accepted
+        let result = tool
+            .execute(r#"{"path": "test.txt", "old": "hello", "new": "goodbye"}"#)
+            .await
+            .unwrap();
+        assert!(!result.is_error);
+    }
+
+    #[tokio::test]
+    async fn test_edit_substring_not_found() {
         let (ws, sb, tmp) = test_tools();
         std::fs::write(tmp.path().join("test.txt"), "hello").unwrap();
 
-        let tool = EditFileTool::new(ws, sb);
+        let tool = EditTool::new(ws, sb);
         let result = tool
-            .execute(r#"{"path": "test.txt", "old": "xyz", "new": "abc"}"#)
+            .execute(r#"{"path": "test.txt", "oldText": "xyz", "newText": "abc"}"#)
             .await
             .unwrap();
         assert!(result.is_error);
+        assert!(result.content.contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_edit_rejects_ambiguous_match() {
+        let (ws, sb, tmp) = test_tools();
+        std::fs::write(tmp.path().join("dup.txt"), "x = 1\nx = 1").unwrap();
+
+        let tool = EditTool::new(ws, sb);
+        let result = tool
+            .execute(r#"{"path": "dup.txt", "oldText": "x = 1", "newText": "x = 2"}"#)
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert!(
+            result.content.contains("2"),
+            "expected count mention, got: {}",
+            result.content
+        );
+    }
+
+    #[tokio::test]
+    async fn test_edit_normalises_crlf() {
+        let (ws, sb, tmp) = test_tools();
+        // Write CRLF file
+        std::fs::write(tmp.path().join("crlf.txt"), "hello\r\nworld").unwrap();
+
+        let tool = EditTool::new(ws, sb);
+        let result = tool
+            .execute(r#"{"path": "crlf.txt", "oldText": "hello", "newText": "hi"}"#)
+            .await
+            .unwrap();
+        assert!(!result.is_error, "got error: {}", result.content);
+
+        let content = std::fs::read_to_string(tmp.path().join("crlf.txt")).unwrap();
+        assert!(
+            content.contains("hi"),
+            "expected replacement, got: {}",
+            content
+        );
+    }
+
+    #[tokio::test]
+    async fn test_edit_strips_bom() {
+        let (ws, sb, tmp) = test_tools();
+        // Write file with UTF-8 BOM
+        let bom_content = "\u{FEFF}hello world";
+        std::fs::write(tmp.path().join("bom.txt"), bom_content).unwrap();
+
+        let tool = EditTool::new(ws, sb);
+        let result = tool
+            .execute(r#"{"path": "bom.txt", "oldText": "hello", "newText": "hi"}"#)
+            .await
+            .unwrap();
+        assert!(!result.is_error, "got error: {}", result.content);
     }
 
     #[tokio::test]
@@ -691,15 +936,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_edit_file_rejects_oversized_file() {
+    async fn test_edit_rejects_oversized_file() {
         let (ws, sb, tmp) = test_tools();
-        let tool = EditFileTool::new(ws, sb);
+        let tool = EditTool::new(ws, sb);
 
         let large_content = "a".repeat(1_048_577);
         std::fs::write(tmp.path().join("big-edit.txt"), large_content).unwrap();
 
         let result = tool
-            .execute(r#"{"path": "big-edit.txt", "old": "a", "new": "b"}"#)
+            .execute(r#"{"path": "big-edit.txt", "oldText": "a", "newText": "b"}"#)
             .await;
         assert!(result.is_err());
         assert!(

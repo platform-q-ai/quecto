@@ -57,7 +57,7 @@ fn dispatch(params: &str) -> Result<String, String> {
     match tool_name {
         "read" | "read_file" => dispatch_read_file(&args),
         "write" | "write_file" => dispatch_write_file(&args),
-        "edit_file" => dispatch_edit_file(&args),
+        "edit" | "edit_file" => dispatch_edit_file(&args),
         "append_file" => dispatch_append_file(&args),
         "list_dir" => dispatch_list_dir(&args),
         "cron" => dispatch_cron(&args),
@@ -87,16 +87,45 @@ fn dispatch_write_file(args: &serde_json::Value) -> Result<String, String> {
 
 fn dispatch_edit_file(args: &serde_json::Value) -> Result<String, String> {
     let path = get_str(args, "path")?;
-    let old = get_str(args, "old")?;
-    let new = get_str(args, "new")?;
+    // Accept both Pi name (oldText/newText) and legacy (old/new)
+    let old = args["oldText"].as_str().or_else(|| args["old"].as_str())
+        .ok_or_else(|| "missing required field: 'oldText'".to_string())?;
+    let new = args["newText"].as_str().or_else(|| args["new"].as_str())
+        .ok_or_else(|| "missing required field: 'newText'".to_string())?;
 
     let content = host::workspace_read(path)?;
-    if !content.contains(old) {
+
+    // Uniqueness enforcement: reject ambiguous matches (matches native EditTool)
+    let count = count_occurrences_capped(&content, old, 2);
+    if count == 0 {
         return Err(format!("substring not found: '{old}'"));
     }
+    if count > 1 {
+        return Err(format!(
+            "'{old}' matches {count} times in {path} — must match exactly once"
+        ));
+    }
+
     let replaced = content.replacen(old, new, 1);
     host::workspace_write(path, &replaced)?;
     Ok(format!("replaced '{old}' with '{new}' in {path}"))
+}
+
+/// Count non-overlapping occurrences of needle, stopping at cap.
+fn count_occurrences_capped(haystack: &str, needle: &str, cap: usize) -> usize {
+    if needle.is_empty() {
+        return 0;
+    }
+    let mut count = 0;
+    let mut start = 0;
+    while let Some(pos) = haystack[start..].find(needle) {
+        count += 1;
+        if count >= cap {
+            return count;
+        }
+        start = start + pos + needle.len();
+    }
+    count
 }
 
 fn dispatch_append_file(args: &serde_json::Value) -> Result<String, String> {

@@ -55,11 +55,32 @@ Feature: Agent Tool System
   Scenario: Edit a file
     Given a tool workspace
     And a file "code.py" exists with content "print('hello')"
-    When the agent executes tool "edit_file" with args:
-      | path    | code.py          |
-      | old     | hello            |
-      | new     | world            |
+    When the agent executes tool "edit" with args:
+      | path    | code.py  |
+      | oldText | hello    |
+      | newText | world    |
     Then the file "code.py" should contain "print('world')"
+    And the tool result should contain "@@"
+
+  Scenario: Edit rejects ambiguous match
+    Given a tool workspace
+    And a file "dup.py" exists with content "x = 1\nx = 1"
+    When the agent executes tool "edit" with args:
+      | path    | dup.py |
+      | oldText | x = 1  |
+      | newText | x = 2  |
+    Then the tool result should be an error
+    And the tool result should contain "matches 2"
+
+  Scenario: Edit handles BOM and CRLF normalisation
+    Given a tool workspace
+    And a file "win.txt" exists with CRLF line endings and content "hello\nworld"
+    When the agent executes tool "edit" with args:
+      | path    | win.txt |
+      | oldText | hello   |
+      | newText | hi      |
+    Then the file "win.txt" should contain "hi"
+    And the tool result should not be an error
 
   Scenario: Append to a file
     Given a tool workspace
@@ -84,7 +105,7 @@ Feature: Agent Tool System
     Then the tool registry should contain "exec"
     And the tool registry should contain "read"
     And the tool registry should contain "write"
-    And the tool registry should contain "edit_file"
+    And the tool registry should contain "edit"
     And the tool registry should contain "append_file"
     And the tool registry should contain "list_dir"
 
