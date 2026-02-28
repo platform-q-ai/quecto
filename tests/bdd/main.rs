@@ -623,6 +623,9 @@ pub struct QuectoWorld {
     pub cron_outbound_rx: Option<tokio::sync::mpsc::Receiver<OutboundMessage>>,
     /// Last outbound message captured for assertion
     pub last_outbound_message: Option<OutboundMessage>,
+    // --- Path utils BDD fields ---
+    /// Resolved path from path_utils scenarios
+    pub path_utils_resolved: Option<std::path::PathBuf>,
     // --- Truncation BDD fields ---
     /// Input string for truncation scenarios
     pub truncation_input: Option<String>,
@@ -884,6 +887,7 @@ mod gateway_steps;
 mod heartbeat_steps;
 mod nsjail_steps;
 mod observability_steps;
+mod path_utils_steps;
 mod provider_steps;
 mod repl_steps;
 mod sandbox_steps;
