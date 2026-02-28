@@ -1023,43 +1023,7 @@ pub struct QuectoWorld {
     pub coding_worker_max_parallel: Option<usize>,
     pub coding_worker_queued_count: Option<usize>,
     pub coding_worker_third_job_queued: bool,
-    // --- Nonblocking coordinator BDD fields ---
-    pub nb_coord_bus: Option<quecto::infrastructure::coding::coordinator_bus::CoordinatorBus>,
-    pub nb_coord_sender: Option<
-        tokio::sync::mpsc::Sender<
-            quecto::infrastructure::coding::coordinator_bus::CoordinatorCommand,
-        >,
-    >,
-    pub nb_coord_handle: Option<quecto::infrastructure::coding::coordinator_bus::CoordinatorHandle>,
-    pub nb_coord_last_cmd:
-        Option<quecto::infrastructure::coding::coordinator_bus::CoordinatorCommand>,
-    pub nb_coord_last_response:
-        Option<quecto::infrastructure::coding::coordinator_bus::CoordinatorResponse>,
-    pub nb_coord_reply_rx: Option<
-        tokio::sync::oneshot::Receiver<
-            quecto::infrastructure::coding::coordinator_bus::CoordinatorResponse,
-        >,
-    >,
-    pub nb_coord_reply_rxs: Option<
-        Vec<
-            tokio::sync::oneshot::Receiver<
-                quecto::infrastructure::coding::coordinator_bus::CoordinatorResponse,
-            >,
-        >,
-    >,
-    pub nb_coord_responses:
-        Option<Vec<quecto::infrastructure::coding::coordinator_bus::CoordinatorResponse>>,
-    pub nb_coord_dropped_reply_rx: Option<
-        tokio::sync::oneshot::Receiver<
-            quecto::infrastructure::coding::coordinator_bus::CoordinatorResponse,
-        >,
-    >,
-    pub nb_coord_dispatch_mode:
-        Option<quecto::infrastructure::coding::coordinator_bus::DispatchMode>,
-    pub nb_coord_second_sent: bool,
-    pub nb_coord_in_flight: bool,
-    pub nb_coord_independent_done: bool,
-    pub nb_coord_buffered_count: Option<usize>,
+
     // --- Worker coding tools BDD fields ---
     pub wct_job_dir: Option<PathBuf>,
     pub _wct_temp_dir: Option<TempDir>,
@@ -1226,40 +1190,6 @@ pub struct QuectoWorld {
     /// Real CoordinatorProcessSpawner for configuration assertion scenarios
     pub coord_process_spawner:
         Option<quecto::infrastructure::coding::coordinator_spawner::CoordinatorProcessSpawner>,
-    // --- Coordinator inbox processor BDD fields ---
-    /// Mock IPC for inbox processor scenarios
-    pub inbox_ipc: Option<coding_coordinator_inbox_steps::BddInboxMockIpc>,
-    /// Mock job service for inbox processor scenarios
-    pub inbox_svc: Option<coding_coordinator_inbox_steps::BddInboxMockJobService>,
-    /// Result of the last `tick()` call
-    pub inbox_tick_result: Option<quecto::application::coordinator_inbox::TickResult>,
-    /// Last command ID added (for single-command assertion scenarios)
-    pub inbox_last_cmd_id: Option<String>,
-    // --- Coordinator wiring BDD fields ---
-    /// Config for wiring scenarios
-    pub wiring_config: Option<quecto::infrastructure::config::Config>,
-    /// Tool registry for wiring scenarios
-    pub wiring_registry: Option<quecto::infrastructure::tools::registry::ToolRegistryImpl>,
-    /// Lifecycle driver result from build_coding_tool
-    pub wiring_driver: Option<quecto::interface::shared::SharedLifecycleDriver>,
-    /// Temp dir for wiring scenarios (kept alive)
-    pub _wiring_temp_dir: Option<TempDir>,
-    // --- Coordinator entrypoint BDD fields ---
-    /// Raw args string for coordinator arg parsing scenarios
-    pub ep_coord_args_str: Option<String>,
-    /// Parse result for coordinator arg parsing scenarios
-    pub ep_coord_parse_result:
-        Option<Result<quecto::interface::cli::coordinator::CoordinatorArgs, String>>,
-    /// Mock IPC for coordinator entrypoint tick scenarios
-    pub ep_coord_ipc: Option<coding_coordinator_entrypoint_steps::BddEntrypointMockIpc>,
-    /// Mock job service for coordinator entrypoint tick scenarios
-    pub ep_coord_svc: Option<coding_coordinator_entrypoint_steps::BddEntrypointMockJobService>,
-    /// Result of the last tick in entrypoint scenarios
-    pub ep_coord_tick_result: Option<quecto::application::coordinator_inbox::TickResult>,
-    /// External shutdown flag for signal-driven shutdown scenarios
-    pub ep_coord_shutdown_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-    /// Exit code from the coordinator loop
-    pub ep_coord_loop_exit_code: Option<i32>,
 }
 
 fn push_coding_event(
@@ -1539,10 +1469,7 @@ mod coding_artifact_export_steps;
 mod coding_child_agents_steps;
 mod coding_coordinator_delegation_steps;
 mod coding_coordinator_delegation_tool_steps;
-mod coding_coordinator_entrypoint_steps;
-mod coding_coordinator_inbox_steps;
 mod coding_coordinator_spawn_steps;
-mod coding_coordinator_wiring_steps;
 mod coding_coordinator_worker_lifecycle_steps;
 mod coding_crash_recovery_steps;
 mod coding_event_persistence_steps;
@@ -1551,7 +1478,7 @@ mod coding_job_lifecycle_steps;
 mod coding_job_operational_steps;
 mod coding_job_tool_steps;
 mod coding_lifecycle_driver_steps;
-mod coding_nonblocking_coordinator_steps;
+
 mod coding_nsjail_runtime_process_steps;
 mod coding_nsjail_runtime_steps;
 mod coding_repo_mirror_steps;

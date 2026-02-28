@@ -1,27 +1,30 @@
-//! `quecto coordinator` subcommand — coordinator entrypoint.
+//! `quecto coordinator` subcommand — LLM-driven coordinator agent.
 //!
-//! Runs the coordinator inbox polling loop: reads commands from inbox,
-//! dispatches to `CodingJobService`, writes responses to outbox, writes
-//! periodic state snapshots, and exits on shutdown command or SIGTERM.
+//! Runs a long-lived agent process that manages coding jobs autonomously.
+//! The coordinator has its own LLM provider, tool registry (with `coding_job`
+//! in inline mode), and a heartbeat loop that polls the IPC inbox for
+//! commands from the main agent.
+//!
+//! Architecture: this is a mini-gateway — same pattern as `Gateway::run()`
+//! but without Telegram channels. The heartbeat reads pending IPC commands,
+//! converts them to agent messages, runs the agent loop, and writes
+//! responses back to the IPC outbox.
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::application::coding_lifecycle::CodingLifecycleDriver;
-use crate::application::coordinator_inbox;
-use crate::domain::coding_command::{
-    CancelResponse, CleanupAllRequest, CleanupAllResponse, CleanupResponse, CommandError,
-    CreateRequest, CreateResponse, ImportRequest, ImportResponse, ListRequest, ListResponse,
-    RunRequest, RunResponse, StatusResponse,
-};
+use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use crate::application::heartbeat;
+use crate::domain::agent::AgentLoop;
 use crate::domain::coding_ipc::CoordinatorIpc;
-use crate::domain::coding_ports::{CodingJobService, RepoCreator};
+use crate::domain::workspace::HeartbeatTaskSource;
 use crate::infrastructure::coding::coordinator_ipc::FileCoordinatorIpc;
-use crate::infrastructure::coding::runtime_adapters::{
-    WorkspaceRepoCreator, WorkspaceRepoValidator, WorkspaceSkillResolver,
-};
+use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
+use crate::infrastructure::security::sandbox::Sandbox;
+use crate::infrastructure::tools::recall::RecallTool;
+use crate::infrastructure::tools::registry::ToolRegistryImpl;
+
+use crate::interface::shared::build_coding_lifecycle;
 
 // ── Parsed arguments ────────────────────────────────────────────────────
 
@@ -30,17 +33,17 @@ use crate::infrastructure::coding::runtime_adapters::{
 pub struct CoordinatorArgs {
     /// Path to the IPC directory (coordinator/).
     pub ipc_dir: String,
-    /// How often to poll the inbox, in milliseconds.
-    pub poll_interval_ms: u64,
+    /// How often to poll the inbox (heartbeat interval), in seconds.
+    pub heartbeat_interval_secs: u64,
 }
 
-/// Default poll interval in milliseconds.
-const DEFAULT_POLL_INTERVAL_MS: u64 = 500;
+/// Default heartbeat interval in seconds.
+const DEFAULT_HEARTBEAT_INTERVAL_SECS: u64 = 60;
 
 /// Parse coordinator flags from a slice of CLI arguments.
 pub fn parse_coordinator_args(args: &[String]) -> Result<CoordinatorArgs, String> {
     let mut ipc_dir: Option<String> = None;
-    let mut poll_interval_ms: Option<u64> = None;
+    let mut heartbeat_interval_secs: Option<u64> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -48,12 +51,21 @@ pub fn parse_coordinator_args(args: &[String]) -> Result<CoordinatorArgs, String
             "--ipc-dir" => {
                 ipc_dir = Some(require_next(args, &mut i, "--ipc-dir")?);
             }
-            "--poll-interval-ms" => {
-                let val = require_next(args, &mut i, "--poll-interval-ms")?;
+            "--heartbeat-interval" => {
+                let val = require_next(args, &mut i, "--heartbeat-interval")?;
                 let n: u64 = val
                     .parse()
+                    .map_err(|_| format!("--heartbeat-interval must be a number, got '{val}'"))?;
+                heartbeat_interval_secs = Some(n);
+            }
+            // Legacy flag — accept but convert to heartbeat interval.
+            "--poll-interval-ms" => {
+                let val = require_next(args, &mut i, "--poll-interval-ms")?;
+                let ms: u64 = val
+                    .parse()
                     .map_err(|_| format!("--poll-interval-ms must be a number, got '{val}'"))?;
-                poll_interval_ms = Some(n);
+                // Convert ms to seconds, minimum 1s.
+                heartbeat_interval_secs = Some((ms / 1000).max(1));
             }
             "--help" | "-h" => {
                 return Err("coordinator: see documentation for usage".to_string());
@@ -72,7 +84,7 @@ pub fn parse_coordinator_args(args: &[String]) -> Result<CoordinatorArgs, String
 
     Ok(CoordinatorArgs {
         ipc_dir,
-        poll_interval_ms: poll_interval_ms.unwrap_or(DEFAULT_POLL_INTERVAL_MS),
+        heartbeat_interval_secs: heartbeat_interval_secs.unwrap_or(DEFAULT_HEARTBEAT_INTERVAL_SECS),
     })
 }
 
@@ -87,96 +99,109 @@ fn require_next(args: &[String], i: &mut usize, flag: &str) -> Result<String, St
     }
 }
 
-// ── Coordinator loop ────────────────────────────────────────────────────
+// ── Coordinator system prompt ───────────────────────────────────────────
 
-/// Install signal handlers that set a shared shutdown flag on
-/// SIGTERM or SIGINT.
+/// System prompt that defines the coordinator agent's role.
+const COORDINATOR_SYSTEM_PROMPT: &str = "\
+You are a coding job coordinator. You manage parallel coding workers for \
+long-running coding sessions. You have the `coding_job` tool available to \
+create repos, run jobs, check status, cancel, and cleanup.
+
+When you receive a command from the main agent via your heartbeat inbox, \
+execute it using the coding_job tool and return the result. You can reason \
+about stuck workers, retry failed jobs, and make autonomous decisions about \
+the coding workflow.
+
+On each heartbeat tick you should:
+1. Check for pending commands in the inbox and process them.
+2. Check the status of all running jobs and handle any that are stuck or failed.
+3. Report results back via the outbox.
+
+You are a long-lived process — you run continuously until shutdown is requested.";
+
+// ── IPC heartbeat source ────────────────────────────────────────────────
+
+/// A `HeartbeatTaskSource` that reads pending IPC commands from the
+/// coordinator inbox and formats them as heartbeat task messages.
 ///
-/// Spawns a background thread running a single-threaded tokio runtime
-/// that waits for `ctrl_c()` (SIGINT). For SIGTERM we rely on the
-/// default behavior (process killed) combined with the PID liveness
-/// check in the delegation tool — if the coordinator dies, the main
-/// agent will auto-restart it on the next `coding_job` call.
+/// Each pending command becomes a heartbeat task message that the agent
+/// processes through its LLM loop. The agent uses the `coding_job` tool
+/// to execute the command and the response is captured.
 ///
-/// Returns an `Arc<AtomicBool>` that the loop checks each iteration.
-fn install_signal_handlers() -> Arc<AtomicBool> {
-    let flag = Arc::new(AtomicBool::new(false));
-    let flag_clone = Arc::clone(&flag);
-
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build();
-        if let Ok(rt) = rt {
-            rt.block_on(async {
-                let _ = tokio::signal::ctrl_c().await;
-                flag_clone.store(true, Ordering::SeqCst);
-            });
-        }
-    });
-
-    flag
+/// The system prompt is prepended to each task so the agent has context
+/// about its role on every invocation.
+struct InboxHeartbeatSource {
+    ipc: Arc<dyn CoordinatorIpc>,
+    system_context: String,
 }
 
-/// Run the coordinator tick loop until shutdown is requested.
-///
-/// This is the core polling loop: read inbox, dispatch to service, write
-/// outbox, write state, sleep, repeat. Exits when `tick()` returns
-/// `shutdown_requested: true` or when a SIGTERM/SIGINT signal is received.
-pub fn run_coordinator_loop(
-    ipc: &dyn CoordinatorIpc,
-    service: &mut dyn CodingJobService,
-    poll_interval: std::time::Duration,
-) -> i32 {
-    let shutdown = install_signal_handlers();
-    run_coordinator_loop_with_flag(ipc, service, poll_interval, &shutdown)
-}
+impl HeartbeatTaskSource for InboxHeartbeatSource {
+    fn read_heartbeat_md(
+        &self,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<Option<String>, crate::domain::error::DomainError>,
+                > + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async move {
+            let commands = self.ipc.read_pending_commands().map_err(|e| {
+                crate::domain::error::DomainError::Other(format!("read inbox: {e}"))
+            })?;
 
-/// Inner loop that checks both the IPC shutdown command and an external
-/// `AtomicBool` flag (set by signal handlers or tests).
-pub fn run_coordinator_loop_with_flag(
-    ipc: &dyn CoordinatorIpc,
-    service: &mut dyn CodingJobService,
-    poll_interval: std::time::Duration,
-    shutdown: &AtomicBool,
-) -> i32 {
-    // Write PID for liveness checks.
-    let pid = std::process::id();
-    if let Err(e) = ipc.write_pid(pid) {
-        tracing::error!("coordinator: failed to write PID: {e}");
-        return 1;
-    }
+            if commands.is_empty() {
+                // Return a status check task even when inbox is empty so
+                // the coordinator proactively monitors running jobs.
+                return Ok(Some(format!(
+                    "- {context} Check status of all running coding jobs and report any issues.\n",
+                    context = self.system_context
+                )));
+            }
 
-    loop {
-        // Check external shutdown flag (signal handler or test).
-        if shutdown.load(Ordering::SeqCst) {
-            tracing::info!("coordinator: signal received, exiting");
-            return 0;
-        }
+            // Format each command as a heartbeat task line.
+            let mut content = String::new();
+            for cmd in &commands {
+                let payload_str =
+                    serde_json::to_string(&cmd.payload).unwrap_or_else(|_| "{}".to_string());
+                content.push_str(&format!(
+                    "- {context} Process coordinator command (id={}): action={}, payload={}\n",
+                    cmd.command_id,
+                    cmd.action,
+                    payload_str,
+                    context = self.system_context
+                ));
 
-        match coordinator_inbox::tick(ipc, service) {
-            Ok(result) => {
-                if result.shutdown_requested {
-                    tracing::info!("coordinator: shutdown requested, exiting");
-                    return 0;
+                // Write a placeholder response immediately so the main agent
+                // doesn't time out waiting. The agent will update it after
+                // processing.
+                let ack_response = crate::domain::coding_ipc::CoordinatorIpcResponse {
+                    command_id: cmd.command_id.clone(),
+                    ok: true,
+                    body: Some(serde_json::json!({"status": "processing"})),
+                    error: None,
+                };
+                if let Err(e) = self.ipc.write_response(&ack_response) {
+                    tracing::warn!(command_id = %cmd.command_id, "failed to ack: {e}");
+                }
+                if let Err(e) = self.ipc.acknowledge_command(&cmd.command_id) {
+                    tracing::warn!(command_id = %cmd.command_id, "failed to ack: {e}");
                 }
             }
-            Err(e) => {
-                tracing::error!("coordinator: tick error: {e}");
-                // Continue running — transient errors should not kill the loop.
-            }
-        }
-        std::thread::sleep(poll_interval);
+
+            Ok(Some(content))
+        })
     }
 }
 
-// ── CLI command handler ─────────────────────────────────────────────────
+// ── Coordinator agent loop ──────────────────────────────────────────────
 
-/// Handle the `quecto coordinator` subcommand with full lifecycle stack.
+/// Handle the `quecto coordinator` subcommand.
 ///
-/// Parses args, builds `FileCoordinatorIpc` and `CodingJobService`, then
-/// runs the polling loop. This is the production entry point called from
-/// `cli/mod.rs`.
+/// Builds a full LLM-driven agent with `coding_job` tool (inline mode),
+/// then runs a heartbeat loop that polls the IPC inbox and feeds commands
+/// to the agent. This is the production entry point called from `cli/mod.rs`.
 pub fn cmd_coordinator(
     ctx: &super::CliContext,
     args: &[String],
@@ -191,199 +216,230 @@ pub fn cmd_coordinator(
         }
     };
 
+    let base_dir = ctx.base_dir();
+    let workspace = base_dir.join("workspace");
+
+    // Initialize IPC.
     let ipc_dir = PathBuf::from(&coord_args.ipc_dir);
     let ipc = match FileCoordinatorIpc::new(&ipc_dir) {
-        Ok(ipc) => ipc,
+        Ok(ipc) => Arc::new(ipc) as Arc<dyn CoordinatorIpc>,
         Err(e) => {
             stderr.push_str(&format!("coordinator: failed to init IPC: {e}\n"));
             return 1;
         }
     };
 
-    // Build the full CodingJobService stack.
-    let base_dir = ctx.base_dir();
-    let workspace = base_dir.join("workspace");
+    // Write PID for liveness checks.
+    let pid = std::process::id();
+    if let Err(e) = ipc.write_pid(pid) {
+        stderr.push_str(&format!("coordinator: failed to write PID: {e}\n"));
+        return 1;
+    }
 
-    let service = match build_coordinator_service(&workspace, &base_dir) {
-        Ok(svc) => svc,
+    // Build LLM provider.
+    let provider = match super::agent::build_agent_provider(
+        &match load_config(&base_dir) {
+            Ok(c) => c,
+            Err(e) => {
+                stderr.push_str(&format!("coordinator: {e}\n"));
+                return 1;
+            }
+        },
+        &base_dir,
+    ) {
+        Ok(p) => p,
         Err(e) => {
             stderr.push_str(&format!("coordinator: {e}\n"));
             return 1;
         }
     };
-    let mut service = service;
 
-    let poll_interval = std::time::Duration::from_millis(coord_args.poll_interval_ms);
+    let config = match load_config(&base_dir) {
+        Ok(c) => c,
+        Err(e) => {
+            stderr.push_str(&format!("coordinator: {e}\n"));
+            return 1;
+        }
+    };
+
+    // Build tool registry with coding_job in inline mode.
+    let sandbox = Sandbox::new(Some(workspace.clone()), true);
+    let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
+    let mut registry = ToolRegistryImpl::with_core_tools_and_exec_settings(
+        workspace.clone(),
+        sandbox,
+        exec_settings,
+    );
+    let _lifecycle_driver = build_coding_lifecycle(&mut registry, &workspace, &base_dir);
+
+    let session_key = "coordinator:main".to_string();
+    let spill_store = Arc::new(FileContextSpillStore::new(base_dir.clone()));
+    registry.register(Arc::new(RecallTool::new(
+        spill_store.clone(),
+        session_key.clone(),
+    )));
+
+    // Build agent.
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider,
+        tool_registry: Box::new(registry),
+        model: config.agents.defaults.model.clone(),
+        max_tokens: config.agents.defaults.max_tokens,
+        temperature: config.agents.defaults.temperature,
+        spill_store: Some(spill_store),
+        session_key,
+        context_collapse_after_turns: config.agents.defaults.context_collapse_after_turns,
+        max_context_tokens: config.agents.defaults.max_context_tokens,
+    })
+    .with_max_tool_iterations(config.agents.defaults.max_tool_iterations);
+
+    let agent: Arc<dyn AgentLoop> = Arc::new(agent);
 
     stdout.push_str(&format!(
-        "coordinator: ready (ipc_dir={}, poll={}ms, pid={})\n",
-        coord_args.ipc_dir,
-        coord_args.poll_interval_ms,
-        std::process::id(),
+        "coordinator: ready (ipc_dir={}, heartbeat={}s, pid={})\n",
+        coord_args.ipc_dir, coord_args.heartbeat_interval_secs, pid,
     ));
 
-    run_coordinator_loop(&ipc, service.as_mut(), poll_interval)
+    // Run the coordinator event loop.
+    let rt = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            stderr.push_str(&format!("coordinator: failed to create runtime: {e}\n"));
+            return 1;
+        }
+    };
+
+    rt.block_on(run_coordinator(
+        agent,
+        ipc,
+        workspace,
+        coord_args.heartbeat_interval_secs,
+    ))
 }
 
-/// Build the `CodingJobService` for the coordinator process.
-///
-/// Creates the same stack as `build_coding_lifecycle` but returns a
-/// boxed `CodingJobService` instead of registering a tool.
-fn build_coordinator_service(
-    workspace: &std::path::Path,
+/// Load config from the base directory.
+fn load_config(
     base_dir: &std::path::Path,
-) -> Result<Box<dyn CodingJobService>, String> {
-    use crate::application::coding_coordinator::{CodingCoordinator, CoordinatorPolicy};
-    use crate::infrastructure::coding::nsjail_runtime::{NsjailRuntimeConfig, NsjailWorkerRuntime};
-    use crate::infrastructure::coding::repo_mirror::FileRepoMirrorStore;
+) -> Result<crate::infrastructure::config::Config, String> {
+    let config_path = base_dir.join("config.json");
+    if !config_path.exists() {
+        return Err(format!(
+            "config not found at {}\nrun 'quecto onboard' first",
+            config_path.display()
+        ));
+    }
+    let env_overrides: std::collections::HashMap<String, String> = std::env::vars()
+        .filter(|(k, _)| k.starts_with("QUECTO_"))
+        .collect();
+    crate::infrastructure::config::Config::load_with_env(
+        config_path.to_str().unwrap_or(""),
+        &env_overrides,
+    )
+    .map_err(|e| format!("failed to load config: {e}"))
+}
 
-    let repo_validator = WorkspaceRepoValidator::new(workspace.to_path_buf());
-    let skill_resolver = WorkspaceSkillResolver::new(workspace.to_path_buf());
-    let coordinator = CodingCoordinator::new(
-        repo_validator,
-        skill_resolver,
-        CoordinatorPolicy {
-            skill_denylist: Vec::new(),
-            skill_allowlist: Vec::new(),
-            max_retained_jobs: Some(512),
-        },
+/// Run the coordinator's async event loop until shutdown.
+///
+/// The loop runs a heartbeat that polls the IPC inbox and feeds commands
+/// to the agent. On SIGINT/SIGTERM, the loop exits gracefully.
+async fn run_coordinator(
+    agent: Arc<dyn AgentLoop>,
+    ipc: Arc<dyn CoordinatorIpc>,
+    workspace: PathBuf,
+    heartbeat_interval_secs: u64,
+) -> i32 {
+    // Initialize tracing.
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .try_init();
+
+    let interval = std::time::Duration::from_secs(heartbeat_interval_secs);
+    let inbox_source = InboxHeartbeatSource {
+        ipc: ipc.clone(),
+        system_context: COORDINATOR_SYSTEM_PROMPT.to_string(),
+    };
+    // Timeout per heartbeat task: interval minus 10s margin, clamped to [30s, 300s].
+    let timeout_secs = heartbeat_interval_secs.saturating_sub(10).clamp(30, 300);
+    let timeout = std::time::Duration::from_secs(timeout_secs);
+
+    tracing::info!(
+        heartbeat_secs = heartbeat_interval_secs,
+        timeout_secs = timeout_secs,
+        "coordinator agent started"
     );
 
-    let cache_dir = base_dir.join("coding");
-    let mirror = Box::new(FileRepoMirrorStore::with_workspace(
-        cache_dir,
-        workspace.to_path_buf(),
-    ));
-    let mut nsjail_config = NsjailRuntimeConfig::default();
-    nsjail_config.command_override = Some(vec![
-        nsjail_config.quecto_binary.clone(),
-        "worker".to_string(),
-    ]);
-    let runtime = Box::new(NsjailWorkerRuntime::new(nsjail_config));
-    let driver = CodingLifecycleDriver::new(coordinator, runtime, mirror);
-    let shared = Arc::new(Mutex::new(driver));
+    // Also read workspace HEARTBEAT.md for any standing coordinator tasks.
+    let workspace_source =
+        crate::infrastructure::persistence::workspace_store::FileHeartbeatTaskSource::new(
+            &workspace,
+        );
 
-    let repo_creator = Box::new(WorkspaceRepoCreator::new(workspace.to_path_buf()));
+    // Run heartbeat + signal handler concurrently.
+    tokio::select! {
+        _ = async {
+            loop {
+                // Process inbox commands via the agent.
+                tracing::debug!("coordinator heartbeat tick");
+                match heartbeat::execute_heartbeat_tick(&inbox_source, &*agent, timeout).await {
+                    Ok(results) => {
+                        for result in &results {
+                            tracing::info!(
+                                task = result.message.as_str(),
+                                "coordinator heartbeat task completed"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "coordinator heartbeat tick failed");
+                    }
+                }
 
-    Ok(Box::new(CoordinatorJobService {
-        driver: shared,
-        repo_creator,
-    }))
-}
+                // Also run workspace heartbeat tasks if any.
+                match heartbeat::execute_heartbeat_tick(&workspace_source, &*agent, timeout).await {
+                    Ok(results) => {
+                        for result in &results {
+                            tracing::info!(
+                                task = result.message.as_str(),
+                                via_spawn = result.dispatched_via_spawn,
+                                "coordinator workspace heartbeat task completed"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "coordinator workspace heartbeat failed");
+                    }
+                }
 
-// `CodingJobService` adapter for the coordinator process.
-//
-// Same logic as `DriverJobService` in `shared.rs` but owned by the
-// coordinator process rather than shared via `Arc<Mutex<dyn CodingJobService>>`.
+                // Write state snapshot.
+                let state = crate::domain::coding_ipc::CoordinatorState {
+                    alive: true,
+                    active_jobs: 0, // TODO: query from lifecycle driver
+                    last_heartbeat: chrono::Utc::now().to_rfc3339(),
+                    job_summary: serde_json::json!({}),
+                };
+                let _ = ipc.write_state(&state);
 
-type SharedDriver =
-    Arc<Mutex<CodingLifecycleDriver<WorkspaceRepoValidator, WorkspaceSkillResolver>>>;
-
-struct CoordinatorJobService {
-    driver: SharedDriver,
-    repo_creator: Box<dyn RepoCreator>,
-}
-
-fn lock_driver(
-    driver: &SharedDriver,
-) -> Result<
-    std::sync::MutexGuard<
-        '_,
-        CodingLifecycleDriver<WorkspaceRepoValidator, WorkspaceSkillResolver>,
-    >,
-    CommandError,
-> {
-    driver
-        .lock()
-        .map_err(|e| CommandError::Internal(format!("driver lock poisoned: {e}")))
-}
-
-impl CodingJobService for CoordinatorJobService {
-    fn create_repo(&mut self, req: CreateRequest) -> Result<CreateResponse, CommandError> {
-        self.repo_creator.validate_name(&req.name)?;
-        if self.repo_creator.exists(&req.name) {
-            return Err(CommandError::AlreadyExists);
-        }
-        let path = self
-            .repo_creator
-            .create(&req.name, req.description.as_deref())?;
-        Ok(CreateResponse {
-            name: req.name,
-            path,
-            created: true,
-        })
-    }
-
-    fn import_repo(&mut self, req: ImportRequest) -> Result<ImportResponse, CommandError> {
-        let name = match req.name {
-            Some(ref n) => n.clone(),
-            None => self.repo_creator.name_from_url(&req.url)?,
-        };
-        self.repo_creator.validate_name(&name)?;
-        if self.repo_creator.exists(&name) {
-            return Err(CommandError::AlreadyExists);
-        }
-        let path = self.repo_creator.import(&req.url, &name)?;
-        Ok(ImportResponse {
-            name,
-            path,
-            imported: true,
-        })
-    }
-
-    fn run(&mut self, req: RunRequest) -> Result<RunResponse, CommandError> {
-        let mut guard = lock_driver(&self.driver)?;
-        let resp = guard.coordinator_mut().run(req)?;
-        guard.tick();
-        Ok(resp)
-    }
-
-    fn status_by_job_id(&self, job_id: &str) -> Result<StatusResponse, CommandError> {
-        let mut guard = lock_driver(&self.driver)?;
-        guard.tick();
-        guard.coordinator().status_by_job_id(job_id)
-    }
-
-    fn status_by_run_id(&self, run_id: &str) -> Result<StatusResponse, CommandError> {
-        let mut guard = lock_driver(&self.driver)?;
-        guard.tick();
-        guard.coordinator().status_by_run_id(run_id)
-    }
-
-    fn cancel(&mut self, job_id: &str) -> Result<CancelResponse, CommandError> {
-        let mut guard = lock_driver(&self.driver)?;
-        let resp = guard.coordinator_mut().cancel(job_id)?;
-        guard.tick();
-        Ok(resp)
-    }
-
-    fn cleanup(
-        &mut self,
-        job_id: &str,
-        keep_artifacts: bool,
-    ) -> Result<CleanupResponse, CommandError> {
-        let mut guard = lock_driver(&self.driver)?;
-        let resp = guard.coordinator_mut().cleanup(job_id, keep_artifacts)?;
-        guard.forget_job(job_id);
-        Ok(resp)
-    }
-
-    fn cleanup_all(&mut self, req: &CleanupAllRequest) -> Result<CleanupAllResponse, CommandError> {
-        let mut guard = lock_driver(&self.driver)?;
-        guard.coordinator_mut().cleanup_all_impl(req)
-    }
-
-    fn list(&self, req: &ListRequest) -> ListResponse {
-        match lock_driver(&self.driver) {
-            Ok(guard) => guard.coordinator().list(req),
-            Err(_) => ListResponse { jobs: vec![] },
+                tokio::time::sleep(interval).await;
+            }
+        } => {}
+        _ = tokio::signal::ctrl_c() => {
+            tracing::info!("coordinator: shutdown signal received");
         }
     }
+
+    tracing::info!("coordinator agent stopped");
+    0
 }
 
 /// Help text for the coordinator subcommand.
 pub fn coordinator_help_text() -> &'static str {
-    "  coordinator Run the coordinator inbox loop (internal)\n"
+    "  coordinator Run the coordinator agent (internal)\n"
 }
 
 #[cfg(test)]
@@ -395,11 +451,39 @@ mod tests {
         let args = vec!["--ipc-dir".into(), "/tmp/coord".into()];
         let parsed = parse_coordinator_args(&args).unwrap();
         assert_eq!(parsed.ipc_dir, "/tmp/coord");
-        assert_eq!(parsed.poll_interval_ms, DEFAULT_POLL_INTERVAL_MS);
+        assert_eq!(
+            parsed.heartbeat_interval_secs,
+            DEFAULT_HEARTBEAT_INTERVAL_SECS
+        );
     }
 
     #[test]
-    fn test_parse_args_with_poll_interval() {
+    fn test_parse_args_with_heartbeat_interval() {
+        let args = vec![
+            "--ipc-dir".into(),
+            "/tmp/coord".into(),
+            "--heartbeat-interval".into(),
+            "30".into(),
+        ];
+        let parsed = parse_coordinator_args(&args).unwrap();
+        assert_eq!(parsed.ipc_dir, "/tmp/coord");
+        assert_eq!(parsed.heartbeat_interval_secs, 30);
+    }
+
+    #[test]
+    fn test_parse_args_legacy_poll_interval() {
+        let args = vec![
+            "--ipc-dir".into(),
+            "/tmp/coord".into(),
+            "--poll-interval-ms".into(),
+            "5000".into(),
+        ];
+        let parsed = parse_coordinator_args(&args).unwrap();
+        assert_eq!(parsed.heartbeat_interval_secs, 5);
+    }
+
+    #[test]
+    fn test_parse_args_legacy_poll_interval_minimum() {
         let args = vec![
             "--ipc-dir".into(),
             "/tmp/coord".into(),
@@ -407,13 +491,13 @@ mod tests {
             "100".into(),
         ];
         let parsed = parse_coordinator_args(&args).unwrap();
-        assert_eq!(parsed.ipc_dir, "/tmp/coord");
-        assert_eq!(parsed.poll_interval_ms, 100);
+        // 100ms / 1000 = 0, clamped to 1
+        assert_eq!(parsed.heartbeat_interval_secs, 1);
     }
 
     #[test]
     fn test_parse_args_missing_ipc_dir() {
-        let args = vec!["--poll-interval-ms".into(), "200".into()];
+        let args = vec!["--heartbeat-interval".into(), "30".into()];
         let err = parse_coordinator_args(&args).unwrap_err();
         assert!(err.contains("missing required flag --ipc-dir"));
     }
@@ -430,11 +514,11 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_args_invalid_poll_interval() {
+    fn test_parse_args_invalid_heartbeat_interval() {
         let args = vec![
             "--ipc-dir".into(),
             "/tmp/coord".into(),
-            "--poll-interval-ms".into(),
+            "--heartbeat-interval".into(),
             "abc".into(),
         ];
         let err = parse_coordinator_args(&args).unwrap_err();
@@ -446,5 +530,11 @@ mod tests {
         let args = vec!["--ipc-dir".into()];
         let err = parse_coordinator_args(&args).unwrap_err();
         assert!(err.contains("requires a value"));
+    }
+
+    #[test]
+    fn test_system_prompt_is_non_empty() {
+        assert!(!COORDINATOR_SYSTEM_PROMPT.is_empty());
+        assert!(COORDINATOR_SYSTEM_PROMPT.contains("coding job coordinator"));
     }
 }

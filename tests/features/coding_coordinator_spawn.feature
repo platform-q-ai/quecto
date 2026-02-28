@@ -57,10 +57,10 @@ Feature: Coordinator Spawn and Liveness
 
   # --- Spawn configuration ---
 
-  Scenario: Spawner uses configurable poll interval
-    Given a coordinator process spawner with poll interval 100 ms
-    Then the spawner poll interval should be 100
+  Scenario: Spawner uses configurable heartbeat interval
+    Given a coordinator process spawner with heartbeat interval 30 seconds
+    Then the spawner heartbeat interval should be 30
 
-  Scenario: Spawner uses default poll interval of 500 ms
+  Scenario: Spawner uses default heartbeat interval of 60 seconds
     Given a coordinator process spawner with default config
-    Then the spawner poll interval should be 500
+    Then the spawner heartbeat interval should be 60
