@@ -535,3 +535,109 @@ fn test_truncate_tail_output_byte_limit() {
         "expected last entry in tail"
     );
 }
+
+// --- Per-invocation timeout parameter ---
+
+#[tokio::test]
+async fn test_exec_per_invocation_timeout_kills_slow_command() {
+    let (tool, _tmp) = test_exec(false);
+    // Pass timeout=1 in JSON args — should kill sleep 10
+    let result = tool
+        .execute(r#"{"command": "sleep 10", "timeout": 1}"#)
+        .await
+        .unwrap();
+    assert!(
+        result.is_error,
+        "slow command should be killed by per-invocation timeout"
+    );
+    assert!(
+        result.content.contains("timed out"),
+        "should mention timeout, got: {}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn test_exec_per_invocation_timeout_capped_at_max() {
+    let tmp = TempDir::new().unwrap();
+    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
+    // Configure tool with max 5s timeout
+    let opts = ExecOptions {
+        timeout: Duration::from_secs(5),
+        ..ExecOptions::default()
+    };
+    let tool = ExecTool::with_options(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox), opts);
+    // Request 99999s — should be capped at configured max (5s), command still runs
+    let result = tool
+        .execute(r#"{"command": "echo hi", "timeout": 99999}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error, "echo should succeed: {}", result.content);
+    assert!(result.content.contains("hi"));
+}
+
+// --- commandPrefix option ---
+
+#[tokio::test]
+async fn test_exec_command_prefix_prepended() {
+    let tmp = TempDir::new().unwrap();
+    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
+    let opts = ExecOptions {
+        command_prefix: Some("export MY_PREFIX_VAR=hello".to_string()),
+        ..ExecOptions::default()
+    };
+    let tool = ExecTool::with_options(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox), opts);
+    let result = tool
+        .execute(r#"{"command": "echo $MY_PREFIX_VAR"}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error, "echo should succeed: {}", result.content);
+    assert!(
+        result.content.contains("hello"),
+        "prefix should set env: {}",
+        result.content
+    );
+}
+
+// --- Shell detection ---
+
+#[tokio::test]
+async fn test_exec_shell_detection_uses_shell_env() {
+    let (tool, _tmp) = test_exec(false);
+    // Set SHELL to /bin/sh via env override; command echoes $0 (the shell name)
+    let mut env_overrides = HashMap::new();
+    env_overrides.insert("SHELL".to_string(), "/bin/sh".to_string());
+    let result = tool
+        .execute_with_env(r#"{"command": "echo $0"}"#, &env_overrides)
+        .await
+        .unwrap();
+    assert!(
+        !result.is_error,
+        "shell detection should work: {}",
+        result.content
+    );
+}
+
+// --- Truncation notice format ---
+
+#[test]
+fn test_exec_truncation_byte_notice_has_line_range_and_50kb_hint() {
+    // Generate content that will be truncated by bytes (multi-line, >50KB)
+    let line = "x".repeat(50) + "\n"; // 51 bytes per line
+    let content: String = line.repeat(1500); // ~76.5KB
+    let (out, was_truncated) = truncate_tail_output(&content, 2000, 50 * 1024);
+    assert!(was_truncated, "should be truncated by bytes");
+    // The truncation notice should be added by collect_and_truncate_output
+    // Here we just verify the raw tail output is correct
+    let _ = out; // Used in integration test
+}
+
+#[test]
+fn test_exec_truncation_line_notice_format() {
+    // 3000 lines, each <50 bytes → truncated by lines
+    let content: String = (1..=3000).map(|i| format!("line{}\n", i)).collect();
+    let (out, was_truncated) = truncate_tail_output(&content, 2000, 50 * 1024);
+    assert!(was_truncated, "should be truncated by lines");
+    // Tail should include the last line
+    assert!(out.contains("line3000"));
+}

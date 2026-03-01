@@ -672,6 +672,8 @@ pub struct QuectoWorld {
     pub gateway_session_store: Option<Arc<FileSessionStore>>,
     /// Temp dir for gateway session key tests (kept alive)
     pub _gateway_session_temp_dir: Option<TempDir>,
+    /// Stored command for multi-step exec scenarios (e.g. large output tests)
+    pub stored_command: Option<String>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
@@ -938,6 +940,7 @@ mod context_pruning_steps;
 mod cron_steps;
 mod e2e_steps;
 mod edit_tool_steps;
+mod exec_tool_steps;
 mod find_steps;
 mod gateway_steps;
 mod grep_steps;

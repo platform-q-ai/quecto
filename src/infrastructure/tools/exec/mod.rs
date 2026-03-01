@@ -18,6 +18,8 @@ use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
 
+use crate::infrastructure::tools::truncate::{TruncatedBy, truncate_tail};
+
 use nsjail::{
     DEFAULT_EXEC_TIMEOUT, EXEC_ENV_ALLOWLIST, ExecIsolationMode as Mode, MAX_CAPTURE_BYTES,
     NsjailConfig, SECRET_ENV_PREFIX, STREAM_DRAIN_TIMEOUT_ON_KILL, build_nsjail_command,
@@ -31,6 +33,10 @@ pub struct ExecOptions {
     pub isolation_mode: ExecIsolationMode,
     pub allow_native_fallback: bool,
     pub nsjail: NsjailOptions,
+    /// Optional string prepended to every command before execution.
+    /// Useful for setting environment variables or aliases (e.g. `shopt -s expand_aliases`).
+    /// Separated from the actual command by `\n`.
+    pub command_prefix: Option<String>,
 }
 
 impl Default for ExecOptions {
@@ -41,6 +47,7 @@ impl Default for ExecOptions {
             isolation_mode: ExecIsolationMode::Native,
             allow_native_fallback: false,
             nsjail: NsjailOptions::default(),
+            command_prefix: None,
         }
     }
 }
@@ -52,6 +59,8 @@ pub struct ExecTool {
     max_capture_bytes: usize,
     mode: ExecIsolationMode,
     nsjail: NsjailOptions,
+    /// Optional string prepended to every command (e.g. alias setup or env exports).
+    command_prefix: Option<String>,
     /// System paths resolved at construction time to avoid per-execution stat() calls.
     ro_bindmounts: Vec<&'static str>,
     ro_etc_files: Vec<&'static str>,
@@ -147,6 +156,7 @@ impl ExecTool {
             max_capture_bytes: options.max_capture_bytes,
             mode,
             nsjail: options.nsjail,
+            command_prefix: options.command_prefix,
             ro_bindmounts,
             ro_etc_files,
             ro_dev_files,
@@ -175,6 +185,7 @@ impl ExecTool {
             max_capture_bytes: options.max_capture_bytes,
             mode: options.isolation_mode,
             nsjail: options.nsjail,
+            command_prefix: options.command_prefix,
             ro_bindmounts,
             ro_etc_files,
             ro_dev_files,
@@ -240,7 +251,19 @@ impl ExecTool {
             return Err(DomainError::Config(startup_error.clone()));
         }
 
-        let command = extract_command(arguments)?;
+        let (command, per_invocation_timeout) = extract_command_and_timeout(arguments)?;
+
+        // Per-invocation timeout is capped at the configured maximum.
+        let effective_timeout = match per_invocation_timeout {
+            Some(requested) => requested.min(self.timeout),
+            None => self.timeout,
+        };
+
+        // Apply command prefix if configured.
+        let full_command = match &self.command_prefix {
+            Some(prefix) => format!("{}\n{}", prefix, command),
+            None => command.clone(),
+        };
 
         self.sandbox
             .validate_command(&command)
@@ -248,16 +271,17 @@ impl ExecTool {
 
         let source_env = build_source_env(env_overrides);
 
-        self.spawn_and_wait(&command, &source_env, self.mode).await
+        self.spawn_and_wait(&full_command, &source_env, effective_timeout)
+            .await
     }
 
     async fn spawn_and_wait(
         &self,
         command: &str,
         source_env: &HashMap<String, String>,
-        mode: ExecIsolationMode,
+        timeout_dur: Duration,
     ) -> Result<ToolResult, DomainError> {
-        let mut cmd = match mode {
+        let mut cmd = match self.mode {
             Mode::Nsjail => {
                 let config = NsjailConfig {
                     options: &self.nsjail,
@@ -290,17 +314,26 @@ impl ExecTool {
             stderr_task,
         };
 
-        run_child_with_timeout(child, stream_tasks, self.timeout).await
+        run_child_with_timeout(child, stream_tasks, timeout_dur).await
     }
 }
 
-fn extract_command(arguments: &str) -> Result<String, DomainError> {
+/// Parse command and optional per-invocation timeout from JSON arguments.
+///
+/// Returns `(command, Some(timeout))` when a `timeout` key is present,
+/// or `(command, None)` otherwise. Callers cap the returned timeout at the
+/// configured maximum.
+fn extract_command_and_timeout(arguments: &str) -> Result<(String, Option<Duration>), DomainError> {
     let args: serde_json::Value =
         serde_json::from_str(arguments).map_err(|e| DomainError::Tool(e.to_string()))?;
-    args["command"]
+    let command = args["command"]
         .as_str()
         .map(|s| s.to_string())
-        .ok_or_else(|| DomainError::Tool("missing 'command' argument".to_string()))
+        .ok_or_else(|| DomainError::Tool("missing 'command' argument".to_string()))?;
+    let timeout = args["timeout"]
+        .as_u64()
+        .map(|secs| Duration::from_secs(secs.max(1)));
+    Ok((command, timeout))
 }
 
 fn build_source_env(env_overrides: Option<&HashMap<String, String>>) -> HashMap<String, String> {
@@ -321,7 +354,16 @@ fn build_shell_command(
     command: &str,
     source_env: &HashMap<String, String>,
 ) -> tokio::process::Command {
-    let mut cmd = tokio::process::Command::new("sh");
+    // Detect the user's shell from $SHELL in the source environment,
+    // falling back to /bin/sh. nsjail mode always uses sh (hard-coded in
+    // build_nsjail_command) for sandboxing consistency.
+    let shell = source_env
+        .get("SHELL")
+        .or_else(|| source_env.get("shell"))
+        .map(String::as_str)
+        .unwrap_or("/bin/sh");
+
+    let mut cmd = tokio::process::Command::new(shell);
     cmd.arg("-c")
         .arg(command)
         .current_dir(workspace)
@@ -362,7 +404,12 @@ async fn run_child_with_timeout(
     }
 }
 
-/// Collect stdout + stderr, truncate, and append path hint if needed.
+/// Collect stdout + stderr, truncate, and append Pi-format path hint if needed.
+///
+/// Truncation notice format (matching Pi's bash.ts):
+/// - Byte-truncated:  `[Showing lines X-Y of Z (50KB limit). Full output: PATH]`
+/// - Line-truncated:  `[Showing lines X-Y of Z. Full output: PATH]`
+/// - Save fails:      `[Output truncated to last N lines / N bytes]`
 async fn collect_and_truncate_output(stream_tasks: &mut StreamTasks) -> String {
     const TAIL_MAX_LINES: usize = 2000;
     const TAIL_MAX_BYTES: usize = 50 * 1024;
@@ -378,26 +425,38 @@ async fn collect_and_truncate_output(stream_tasks: &mut StreamTasks) -> String {
         format!("{}\n{}", stdout_raw, stderr_raw)
     };
 
-    let (truncated_output, was_truncated) =
-        truncate_tail_output(&combined, TAIL_MAX_LINES, TAIL_MAX_BYTES);
-    let mut content = truncated_output;
-
-    if was_truncated {
-        let combined_len = combined.len();
-        let hint = if let Some(tmp_path) = save_to_temp_file(combined).await {
-            format!(
-                "\n[Output truncated. Full output ({} bytes) saved to: {}]",
-                combined_len, tmp_path
-            )
-        } else {
-            format!(
-                "\n[Output truncated to last {} lines / {} bytes]",
-                TAIL_MAX_LINES, TAIL_MAX_BYTES
-            )
-        };
-        content.push_str(&hint);
+    let tr = truncate_tail(&combined, TAIL_MAX_LINES, TAIL_MAX_BYTES);
+    if !tr.truncated {
+        return tr.content;
     }
-    content
+
+    // Compute which lines are shown (tail slice).
+    let total = tr.total_lines;
+    let shown = tr.output_lines;
+    let start_line = total.saturating_sub(shown) + 1;
+    let end_line = total;
+    let combined_len = combined.len();
+
+    let hint = if let Some(tmp_path) = save_to_temp_file(combined).await {
+        let limit_note = if tr.truncated_by == Some(TruncatedBy::Bytes) {
+            " (50KB limit)"
+        } else {
+            ""
+        };
+        format!(
+            "\n[Showing lines {}-{} of {}{}. Full output ({} bytes) saved to: {}]",
+            start_line, end_line, total, limit_note, combined_len, tmp_path
+        )
+    } else {
+        format!(
+            "\n[Output truncated to last {} lines / {} bytes]",
+            TAIL_MAX_LINES, TAIL_MAX_BYTES
+        )
+    };
+
+    let mut output = tr.content;
+    output.push_str(&hint);
+    output
 }
 
 /// Build a ToolResult from a process exit status.
@@ -497,6 +556,8 @@ async fn await_stream_output_with_timeout(
 
 /// Truncate `content` to at most `max_lines` tail-lines or `max_bytes` bytes.
 /// Pi-parity: the *last* max_lines/max_bytes are kept, not the first.
+/// Kept for unit tests; production code uses [`truncate_tail`] from `truncate.rs`.
+#[cfg(test)]
 fn truncate_tail_output(content: &str, max_lines: usize, max_bytes: usize) -> (String, bool) {
     let mut kept_lines: Vec<&str> = Vec::with_capacity(max_lines.min(4096));
     let mut byte_count = 0usize;
@@ -544,9 +605,10 @@ impl Tool for ExecTool {
             name: "bash".to_string(),
             description: "Execute a bash command in the current working directory. Returns stdout \
                           and stderr. Output is truncated to last 2000 lines or 50KB (whichever is \
-                          hit first). If truncated, full output is saved to a temp file."
+                          hit first). If truncated, full output is saved to a temp file. \
+                          Optionally provide a timeout in seconds."
                 .to_string(),
-            parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string","description":"Bash command to execute"}},"required":["command"]}"#.to_string(),
+            parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string","description":"Bash command to execute"},"timeout":{"type":"number","description":"Timeout in seconds (optional, capped at configured maximum)"}},"required":["command"]}"#.to_string(),
         }
     }
 

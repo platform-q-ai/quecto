@@ -24,7 +24,7 @@ Feature: Agent Tool System
     When the agent executes tool "bash" with args:
       | command | seq 1 3000 |
     Then the tool result should contain "3000"
-    And the tool result should contain "[Output truncated"
+    And the tool result should contain "[Showing lines"
     And the tool result should not be an error
 
   Scenario: Read a file
