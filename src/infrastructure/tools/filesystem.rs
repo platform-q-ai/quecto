@@ -657,46 +657,55 @@ impl Tool for LsTool {
                 .await
                 .map_err(|e| DomainError::Tool(format!("ls failed: {}", e)))?;
 
-            let mut names: Vec<String> = Vec::new();
-            while let Some(entry) = entries_raw
-                .next_entry()
-                .await
-                .map_err(|e| DomainError::Tool(format!("ls entry error: {}", e)))?
-            {
-                let name = entry.file_name().to_string_lossy().to_string();
-                let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
-                if is_dir {
-                    names.push(format!("{}/", name));
-                } else {
-                    names.push(name);
+            // Collect at most LS_MAX_ENTRIES + 1 to detect truncation without
+            // reading the entire directory (prevents OOM on huge directories).
+            let read_cap = LS_MAX_ENTRIES + 1;
+            let mut names: Vec<String> = Vec::with_capacity(read_cap);
+            loop {
+                if names.len() >= read_cap {
+                    break;
+                }
+                match entries_raw
+                    .next_entry()
+                    .await
+                    .map_err(|e| DomainError::Tool(format!("ls entry error: {}", e)))?
+                {
+                    None => break,
+                    Some(entry) => {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
+                        if is_dir {
+                            names.push(format!("{}/", name));
+                        } else {
+                            names.push(name);
+                        }
+                    }
                 }
             }
 
+            let over_limit = names.len() > LS_MAX_ENTRIES;
             names.sort();
-
-            let total = names.len();
-            let truncated_entries = total > LS_MAX_ENTRIES;
-            let shown: &[String] = if truncated_entries {
+            let shown: &[String] = if over_limit {
                 &names[..LS_MAX_ENTRIES]
             } else {
                 &names
             };
 
-            // Build output and apply byte cap
+            // Build output and apply byte cap — scan backward to stay under cap
             let mut output = shown.join("\n");
             let truncated_bytes = output.len() > LS_MAX_BYTES;
             if truncated_bytes {
-                // Trim to byte boundary
-                let end = (LS_MAX_BYTES..=output.len())
+                let end = (0..=LS_MAX_BYTES)
+                    .rev()
                     .find(|&i| output.is_char_boundary(i))
-                    .unwrap_or(LS_MAX_BYTES);
+                    .unwrap_or(0);
                 output.truncate(end);
             }
 
-            if truncated_entries {
+            if over_limit {
                 output.push_str(&format!(
-                    "\n[Showing {} of {} entries. Use a more specific path to see more.]",
-                    LS_MAX_ENTRIES, total
+                    "\n[Showing {} of >={} entries. Use a more specific path to see more.]",
+                    LS_MAX_ENTRIES, LS_MAX_ENTRIES
                 ));
             } else if truncated_bytes {
                 output.push_str(&format!("\n[Output truncated at {} bytes]", LS_MAX_BYTES));

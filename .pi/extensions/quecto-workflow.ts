@@ -23,9 +23,11 @@
  * Features:
  * - `/workflow` command opens an interactive checklist UI
  * - `workflow` tool lets the LLM check/uncheck/reset/query steps
+ * - Tracks active GitHub issue (set/clear) and shows it in the widget
  * - Widget above editor shows current progress at a glance
  * - Blocks git commit if RED/GREEN/REFACTOR steps aren't done
  * - Injects workflow awareness into the system prompt
+ * - Completion nudge prompts for the next issue when all steps are done
  * - State persists across session restarts via tool result details
  */
 
@@ -42,6 +44,12 @@ interface WorkflowStep {
 	label: string;
 	phase: "red" | "green" | "refactor" | "ci" | "review";
 	done: boolean;
+}
+
+/** The active GitHub issue being worked on this cycle. */
+interface ActiveIssue {
+	number: number;
+	title: string;
 }
 
 const WORKFLOW_TEMPLATE: Omit<WorkflowStep, "done">[] = [
@@ -70,8 +78,9 @@ function freshSteps(): WorkflowStep[] {
 // ─── Tool details shape (for state persistence) ───────────────────────
 
 interface WorkflowDetails {
-	action: "status" | "check" | "uncheck" | "reset" | "skip";
+	action: "status" | "check" | "uncheck" | "reset" | "skip" | "set_issue" | "clear_issue";
 	steps: WorkflowStep[];
+	activeIssue?: ActiveIssue;
 	error?: string;
 }
 
@@ -115,14 +124,21 @@ function phaseLabel(phase: string): string {
 
 class WorkflowChecklist {
 	private steps: WorkflowStep[];
+	private activeIssue: ActiveIssue | undefined;
 	private theme: Theme;
 	private onClose: (steps: WorkflowStep[]) => void;
 	private selected: number = 0;
 	private cachedWidth?: number;
 	private cachedLines?: string[];
 
-	constructor(steps: WorkflowStep[], theme: Theme, onClose: (steps: WorkflowStep[]) => void) {
+	constructor(
+		steps: WorkflowStep[],
+		activeIssue: ActiveIssue | undefined,
+		theme: Theme,
+		onClose: (steps: WorkflowStep[]) => void,
+	) {
 		this.steps = steps.map((s) => ({ ...s })); // deep copy
+		this.activeIssue = activeIssue;
 		this.theme = theme;
 		this.onClose = onClose;
 	}
@@ -167,6 +183,12 @@ class WorkflowChecklist {
 		const bar = th.fg("borderMuted", "─".repeat(3)) + title + th.fg("borderMuted", "─".repeat(Math.max(0, width - 26)));
 		lines.push(truncateToWidth(bar, width));
 		lines.push(truncateToWidth(`  ${th.fg("dim", "BDD/TDD Red → Green → Refactor")}`, width));
+		if (this.activeIssue) {
+			lines.push(truncateToWidth(
+				`  ${th.fg("accent", th.bold(`Issue #${this.activeIssue.number}`))} ${th.fg("muted", this.activeIssue.title)}`,
+				width,
+			));
+		}
 		lines.push("");
 
 		const done = this.steps.filter((s) => s.done).length;
@@ -223,12 +245,16 @@ class WorkflowChecklist {
 
 export default function (pi: ExtensionAPI) {
 	let steps: WorkflowStep[] = freshSteps();
+	let activeIssue: ActiveIssue | undefined = undefined;
 	let autoComplete = false;
+	let completionNudgeEnabled = true;
+	let completionNudgeFired = false;
 
 	// ── State reconstruction ──────────────────────────────────────────
 
 	const reconstructState = (ctx: ExtensionContext) => {
 		steps = freshSteps();
+		activeIssue = undefined;
 
 		const entries = ctx.sessionManager.getBranch();
 		let lastToolResultIdx = -1;
@@ -243,6 +269,7 @@ export default function (pi: ExtensionAPI) {
 					const details = msg.details as WorkflowDetails | undefined;
 					if (details?.steps) {
 						steps = details.steps.map((s) => ({ ...s }));
+						activeIssue = details.activeIssue;
 						lastToolResultIdx = i;
 					}
 				}
@@ -257,9 +284,11 @@ export default function (pi: ExtensionAPI) {
 			const entry = entries[lastAppendIdx];
 			if (entry.type === "custom" && entry.data?.steps) {
 				steps = (entry.data.steps as WorkflowStep[]).map((s) => ({ ...s }));
+				activeIssue = entry.data.activeIssue as ActiveIssue | undefined;
 			}
 		}
 
+		completionNudgeFired = steps.every((s) => s.done);
 		updateWidget(ctx);
 	};
 
@@ -274,7 +303,7 @@ export default function (pi: ExtensionAPI) {
 		const done = steps.filter((s) => s.done).length;
 		const total = steps.length;
 
-		if (done === 0) {
+		if (done === 0 && !activeIssue) {
 			// Don't clutter UI when nothing started
 			ctx.ui.setWidget("workflow", undefined);
 			return;
@@ -295,8 +324,14 @@ export default function (pi: ExtensionAPI) {
 				theme.fg("success", "█".repeat(filled)) +
 				theme.fg("dim", "░".repeat(barLen - filled));
 
+			const issuePart = activeIssue
+				? theme.fg("accent", theme.bold(` #${activeIssue.number}`)) +
+				  theme.fg("dim", ` ${activeIssue.title.slice(0, 40)}${activeIssue.title.length > 40 ? "…" : ""} `)
+				: " ";
+
 			const line =
-				theme.fg("accent", theme.bold("Workflow ")) +
+				theme.fg("accent", theme.bold("Workflow")) +
+				issuePart +
 				bar +
 				theme.fg("muted", ` ${done}/${total} (${pct}%) `) +
 				theme.fg("dim", currentInfo);
@@ -389,6 +424,11 @@ export default function (pi: ExtensionAPI) {
 
 		let injection = `\n\n## Active Development Workflow (Quecto AGENTS.md)\n`;
 		injection += `Progress: ${done}/${total} steps complete.\n`;
+		if (activeIssue) {
+			injection += `Active issue: #${activeIssue.number} — ${activeIssue.title}\n`;
+		} else {
+			injection += `Active issue: (not set) — call workflow(action="set_issue", issueNumber=<n>, issueTitle="...")\n`;
+		}
 
 		if (current) {
 			injection += `CURRENT STEP → ${current.id}. ${current.label} [${phaseLabel(current.phase)}]\n`;
@@ -438,8 +478,10 @@ export default function (pi: ExtensionAPI) {
 	// ── Tool: LLM-callable workflow management ────────────────────────
 
 	const WorkflowParams = Type.Object({
-		action: StringEnum(["status", "check", "uncheck", "reset", "skip"] as const),
+		action: StringEnum(["status", "check", "uncheck", "reset", "skip", "set_issue", "clear_issue"] as const),
 		step: Type.Optional(Type.Number({ description: "Step number (1-16)" })),
+		issueNumber: Type.Optional(Type.Number({ description: "GitHub issue number (required for set_issue)" })),
+		issueTitle: Type.Optional(Type.String({ description: "GitHub issue title (required for set_issue)" })),
 	});
 
 	pi.registerTool({
@@ -448,11 +490,13 @@ export default function (pi: ExtensionAPI) {
 		description: [
 			"Manage the Quecto BDD/TDD development workflow checklist.",
 			"Actions:",
-			"  status  — Show all steps and current progress",
-			"  check   — Mark a step as done (requires step number)",
-			"  uncheck — Unmark a step (requires step number)",
-			"  reset   — Reset all steps for a new cycle",
-			"  skip    — Mark a step as done even if previous steps are incomplete (requires step number)",
+			"  status      — Show all steps and current progress",
+			"  check       — Mark a step as done (requires step number)",
+			"  uncheck     — Unmark a step (requires step number)",
+			"  reset       — Reset all steps for a new cycle",
+			"  skip        — Mark a step as done even if previous steps are incomplete (requires step number)",
+			"  set_issue   — Record the GitHub issue this cycle is for (requires issueNumber + issueTitle)",
+			"  clear_issue — Clear the active issue",
 			"",
 			"Steps should be completed in order. The workflow enforces:",
 			"  1-3: RED phase (scenarios, tests, verify they fail)",
@@ -467,13 +511,16 @@ export default function (pi: ExtensionAPI) {
 			const makeDetails = (action: WorkflowDetails["action"], error?: string): WorkflowDetails => ({
 				action,
 				steps: steps.map((s) => ({ ...s })),
+				activeIssue: activeIssue ? { ...activeIssue } : undefined,
 				error,
 			});
 
 			const formatStatus = (): string => {
 				const done = steps.filter((s) => s.done).length;
 				const total = steps.length;
-				let text = `Workflow: ${done}/${total} complete\n\n`;
+				let text = `Workflow: ${done}/${total} complete\n`;
+				if (activeIssue) text += `Active issue: #${activeIssue.number} — ${activeIssue.title}\n`;
+				text += "\n";
 				let lastPhase = "";
 				for (const s of steps) {
 					if (s.phase !== lastPhase) {
@@ -497,6 +544,32 @@ export default function (pi: ExtensionAPI) {
 					return {
 						content: [{ type: "text", text: formatStatus() }],
 						details: makeDetails("status"),
+					};
+				}
+
+				case "set_issue": {
+					if (params.issueNumber === undefined || !params.issueTitle) {
+						return {
+							content: [{ type: "text", text: "Error: issueNumber and issueTitle are required for set_issue" }],
+							details: makeDetails("set_issue", "issueNumber and issueTitle required"),
+						};
+					}
+					activeIssue = { number: params.issueNumber, title: params.issueTitle };
+					pi.appendEntry("workflow-state", { steps: steps.map((s) => ({ ...s })), activeIssue: { ...activeIssue } });
+					updateWidget(ctx);
+					return {
+						content: [{ type: "text", text: `🎯 Active issue set: #${activeIssue.number} — ${activeIssue.title}` }],
+						details: makeDetails("set_issue"),
+					};
+				}
+
+				case "clear_issue": {
+					activeIssue = undefined;
+					pi.appendEntry("workflow-state", { steps: steps.map((s) => ({ ...s })), activeIssue: undefined });
+					updateWidget(ctx);
+					return {
+						content: [{ type: "text", text: "Active issue cleared" }],
+						details: makeDetails("clear_issue"),
 					};
 				}
 
@@ -574,9 +647,13 @@ export default function (pi: ExtensionAPI) {
 
 				case "reset": {
 					steps = freshSteps();
+					completionNudgeFired = false;
 					updateWidget(ctx);
+					const issuePart = activeIssue
+						? ` (still tracking issue #${activeIssue.number} — call set_issue once you have picked the next one)`
+						: "";
 					return {
-						content: [{ type: "text", text: "Workflow reset — all 16 steps cleared for new cycle" }],
+						content: [{ type: "text", text: `Workflow reset — all 16 steps cleared for new cycle${issuePart}` }],
 						details: makeDetails("reset"),
 					};
 				}
@@ -592,6 +669,8 @@ export default function (pi: ExtensionAPI) {
 		renderCall(args, theme) {
 			let text = theme.fg("toolTitle", theme.bold("workflow ")) + theme.fg("muted", args.action);
 			if (args.step !== undefined) text += ` ${theme.fg("accent", `#${args.step}`)}`;
+			if (args.issueNumber !== undefined) text += ` ${theme.fg("accent", `#${args.issueNumber}`)}`;
+			if (args.issueTitle) text += ` ${theme.fg("dim", args.issueTitle)}`;
 			return new Text(text, 0, 0);
 		},
 
@@ -611,8 +690,21 @@ export default function (pi: ExtensionAPI) {
 			const pct = Math.round((done / total) * 100);
 
 			switch (details.action) {
+				case "set_issue": {
+					const msg = result.content[0];
+					return new Text(
+						theme.fg("accent", "🎯 ") + theme.fg("muted", msg?.type === "text" ? msg.text : ""),
+						0,
+						0,
+					);
+				}
+				case "clear_issue":
+					return new Text(theme.fg("dim", "Issue cleared"), 0, 0);
 				case "status": {
 					let text = theme.fg("muted", `${done}/${total} (${pct}%)`);
+					if (details.activeIssue) {
+						text += theme.fg("accent", ` #${details.activeIssue.number}`);
+					}
 					const current = details.steps.find((s) => !s.done);
 					if (current) {
 						const colorFn = phaseColor(current.phase, theme);
@@ -661,12 +753,13 @@ export default function (pi: ExtensionAPI) {
 			if (!ctx.hasUI) {
 				// Print mode fallback
 				const done = steps.filter((s) => s.done).length;
-				ctx.ui.notify(`Workflow: ${done}/${steps.length} steps complete`, "info");
+				const issuePart = activeIssue ? ` | Issue #${activeIssue.number}` : "";
+				ctx.ui.notify(`Workflow: ${done}/${steps.length} steps complete${issuePart}`, "info");
 				return;
 			}
 
 			const updatedSteps = await ctx.ui.custom<WorkflowStep[]>((_tui, theme, _kb, done) => {
-				return new WorkflowChecklist(steps, theme, (result) => done(result));
+				return new WorkflowChecklist(steps, activeIssue, theme, (result) => done(result));
 			});
 
 			if (updatedSteps) {
@@ -675,7 +768,7 @@ export default function (pi: ExtensionAPI) {
 
 				// Persist via appendEntry so it survives restarts
 				// (The tool results handle branching; this handles manual toggles)
-				pi.appendEntry("workflow-state", { steps: steps.map((s) => ({ ...s })) });
+				pi.appendEntry("workflow-state", { steps: steps.map((s) => ({ ...s })), activeIssue: activeIssue ? { ...activeIssue } : undefined });
 
 				updateWidget(ctx);
 			}
@@ -690,39 +783,63 @@ export default function (pi: ExtensionAPI) {
 			if (!ctx.hasUI) return;
 
 			const updatedSteps = await ctx.ui.custom<WorkflowStep[]>((_tui, theme, _kb, done) => {
-				return new WorkflowChecklist(steps, theme, (result) => done(result));
+				return new WorkflowChecklist(steps, activeIssue, theme, (result) => done(result));
 			});
 
 			if (updatedSteps) {
 				steps = updatedSteps;
-				pi.appendEntry("workflow-state", { steps: steps.map((s) => ({ ...s })) });
+				pi.appendEntry("workflow-state", { steps: steps.map((s) => ({ ...s })), activeIssue: activeIssue ? { ...activeIssue } : undefined });
 				updateWidget(ctx);
 			}
 		},
 	});
 
-	// ── Auto-complete: nudge agent to continue until all steps done ──
+	// ── Auto-complete + completion nudge ─────────────────────────────
 
 	pi.on("agent_end", async (_event, _ctx) => {
-		if (!autoComplete) return;
+		const allDone = steps.every((s) => s.done);
 
-		const done = steps.filter((s) => s.done).length;
-		const total = steps.length;
-		if (done >= total) return;
+		if (autoComplete && !allDone) {
+			const done = steps.filter((s) => s.done).length;
+			const total = steps.length;
 
-		// At least one step must have been checked to avoid nudging on a
-		// fresh session where the agent hasn't started the workflow yet.
-		if (done === 0) return;
+			// At least one step must have been checked to avoid nudging on a
+			// fresh session where the agent hasn't started the workflow yet.
+			if (done === 0) return;
 
-		const current = steps.find((s) => !s.done);
-		if (!current) return;
+			const current = steps.find((s) => !s.done);
+			if (!current) return;
 
-		const msg =
-			`Workflow incomplete (${done}/${total}). ` +
-			`Continue with step ${current.id}: ${current.label} [${phaseLabel(current.phase)}]. ` +
-			`Use the workflow tool to check off steps as you complete them.`;
+			const msg =
+				`Workflow incomplete (${done}/${total}). ` +
+				`Continue with step ${current.id}: ${current.label} [${phaseLabel(current.phase)}]. ` +
+				`Use the workflow tool to check off steps as you complete them.`;
 
-		pi.sendUserMessage(msg, { deliverAs: "followUp" });
+			pi.sendUserMessage(msg, { deliverAs: "followUp" });
+			return;
+		}
+
+		if (allDone && !completionNudgeFired && completionNudgeEnabled) {
+			completionNudgeFired = true;
+			const issueLine = activeIssue
+				? `You have completed all 16 workflow steps for issue #${activeIssue.number}: "${activeIssue.title}". `
+				: "You have completed all 16 workflow steps. ";
+
+			pi.sendUserMessage(
+				issueLine +
+				"Now do the following in order:\n" +
+				"1. Close the issue (if applicable)\n" +
+				"2. Pick the next issue to work on\n" +
+				"3. Record it: call the workflow tool with action=\"set_issue\", issueNumber=<n>, issueTitle=\"...\"\n" +
+				"4. Reset the checklist: call the workflow tool with action=\"reset\"\n" +
+				"5. Begin Step 1 immediately for the new issue",
+				{ deliverAs: "followUp" },
+			);
+		}
+
+		if (!allDone) {
+			completionNudgeFired = false;
+		}
 	});
 
 	// ── Command: /workflow-auto — toggle auto-complete ────────────────
@@ -750,6 +867,36 @@ export default function (pi: ExtensionAPI) {
 				autoComplete
 					? "Workflow auto-continue ON — agent will be nudged to complete all steps"
 					: "Workflow auto-continue OFF",
+				"info",
+			);
+		},
+	});
+
+	// ── Command: /workflow-nudge — toggle completion nudge ───────────
+
+	pi.registerCommand("workflow-nudge", {
+		description: "Toggle completion nudge: prompt agent to pick next issue when all steps are done",
+		handler: async (_args, ctx) => {
+			completionNudgeEnabled = !completionNudgeEnabled;
+			ctx.ui.notify(
+				completionNudgeEnabled
+					? "Workflow completion nudge ON — agent will be prompted to pick next issue on cycle complete"
+					: "Workflow completion nudge OFF — agent will stop after final step",
+				"info",
+			);
+		},
+	});
+
+	// ── Shortcut: Ctrl+Shift+N to toggle completion nudge ───────────
+
+	pi.registerShortcut("ctrl+shift+n", {
+		description: "Toggle workflow completion nudge",
+		handler: async (ctx) => {
+			completionNudgeEnabled = !completionNudgeEnabled;
+			ctx.ui.notify(
+				completionNudgeEnabled
+					? "Workflow completion nudge ON"
+					: "Workflow completion nudge OFF",
 				"info",
 			);
 		},

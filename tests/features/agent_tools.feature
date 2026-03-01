@@ -108,11 +108,10 @@ Feature: Agent Tool System
     Then the tool result should contain "a.txt"
     And the tool result should contain "b.txt"
 
-  Scenario: ls uses current directory when path is dot
+  Scenario: ls uses current directory when path is omitted
     Given a tool workspace
     And a file "hello.txt" exists with content "hi"
-    When the agent executes tool "ls" with args:
-      | path | . |
+    When the agent executes tool "ls" with empty args
     Then the tool result should contain "hello.txt"
     And the tool result should not be an error
 

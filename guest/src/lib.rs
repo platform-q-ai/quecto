@@ -135,7 +135,8 @@ fn dispatch_append_file(args: &serde_json::Value) -> Result<String, String> {
 }
 
 fn dispatch_list_dir(args: &serde_json::Value) -> Result<String, String> {
-    let path = get_str(args, "path")?;
+    // Default to "." when path is omitted (matches native LsTool behaviour)
+    let path = args["path"].as_str().unwrap_or(".");
     host::workspace_list_dir(path)
 }
 

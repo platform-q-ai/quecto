@@ -78,6 +78,15 @@ fn given_file_exists(world: &mut QuectoWorld, filename: String, content: String)
     std::fs::write(&path, &content).expect("write file");
 }
 
+#[when(expr = "the agent executes tool {string} with empty args")]
+fn when_agent_executes_tool_no_args(world: &mut QuectoWorld, tool_name: String) {
+    let registry = world.tool_registry.as_ref().expect("tool registry not set");
+    let result = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(registry.execute(&tool_name, "{}"));
+    world.tool_result = Some(result.map_err(|e| e.to_string()));
+}
+
 #[when(expr = "the agent executes tool {string} with args:")]
 fn when_agent_executes_tool(world: &mut QuectoWorld, tool_name: String, step: &gherkin::Step) {
     let table = step.table.as_ref().expect("step should have a table");
