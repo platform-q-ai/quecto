@@ -34,7 +34,7 @@ impl AnthropicProvider {
             builder
                 .header("Authorization", format!("Bearer {}", self.api_key))
                 .header("anthropic-beta", "claude-code-20250219,oauth-2025-04-20")
-                .header("user-agent", "claude-cli/2.1.2 (external, cli)")
+                .header("user-agent", "quecto/0.12.0 (external, cli)")
                 .header("x-app", "cli")
         } else {
             builder.header("x-api-key", &self.api_key)

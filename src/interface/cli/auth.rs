@@ -459,11 +459,12 @@ fn cmd_auth_login_anthropic_oauth(
     out: &mut Output<'_>,
 ) -> i32 {
     use crate::infrastructure::auth::oauth::{
-        build_anthropic_auth_url, exchange_anthropic_code, generate_pkce,
+        build_anthropic_auth_url, exchange_anthropic_code, generate_pkce, generate_state,
     };
 
     let pkce = generate_pkce();
-    let auth_url = build_anthropic_auth_url(config, &pkce);
+    let state = generate_state();
+    let auth_url = build_anthropic_auth_url(config, &pkce, &state);
 
     out.stdout.push_str(&format!(
         "Open this URL in your browser to authenticate with Anthropic:\n\n{}\n\n\

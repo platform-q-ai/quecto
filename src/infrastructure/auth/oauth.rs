@@ -81,8 +81,20 @@ pub fn generate_pkce() -> PkceCodes {
     }
 }
 
+/// Maximum size for error response bodies to prevent memory exhaustion.
+const MAX_ERROR_BODY_LEN: usize = 4096;
+
+/// Truncate an error response body to a safe length.
+fn truncate_error_body(body: String) -> String {
+    if body.len() > MAX_ERROR_BODY_LEN {
+        format!("{}... (truncated)", &body[..MAX_ERROR_BODY_LEN])
+    } else {
+        body
+    }
+}
+
 /// Build the Anthropic OAuth authorization URL with PKCE.
-pub fn build_anthropic_auth_url(config: &OAuthConfig, pkce: &PkceCodes) -> String {
+pub fn build_anthropic_auth_url(config: &OAuthConfig, pkce: &PkceCodes, state: &str) -> String {
     let params = [
         ("code", "true"),
         ("client_id", &config.client_id),
@@ -91,7 +103,7 @@ pub fn build_anthropic_auth_url(config: &OAuthConfig, pkce: &PkceCodes) -> Strin
         ("scope", &config.scopes),
         ("code_challenge", &pkce.challenge),
         ("code_challenge_method", "S256"),
-        ("state", &pkce.verifier),
+        ("state", state),
     ];
 
     let query: Vec<String> = params
@@ -139,7 +151,7 @@ pub async fn exchange_anthropic_code(
 
     let status = resp.status().as_u16();
     if status != 200 {
-        let error_body = resp.text().await.unwrap_or_default();
+        let error_body = truncate_error_body(resp.text().await.unwrap_or_default());
         return Err(DomainError::Provider(format!(
             "token exchange failed ({}): {}",
             status, error_body
@@ -177,7 +189,7 @@ pub async fn refresh_anthropic_token(
 
     let status = resp.status().as_u16();
     if status != 200 {
-        let error_body = resp.text().await.unwrap_or_default();
+        let error_body = truncate_error_body(resp.text().await.unwrap_or_default());
         return Err(DomainError::Provider(format!(
             "token refresh failed ({}): {}",
             status, error_body
@@ -248,7 +260,7 @@ pub async fn exchange_openai_code(
 
     let status = resp.status().as_u16();
     if status != 200 {
-        let error_body = resp.text().await.unwrap_or_default();
+        let error_body = truncate_error_body(resp.text().await.unwrap_or_default());
         return Err(DomainError::Provider(format!(
             "OpenAI token exchange failed ({}): {}",
             status, error_body
@@ -283,7 +295,7 @@ pub async fn refresh_openai_token(
 
     let status = resp.status().as_u16();
     if status != 200 {
-        let error_body = resp.text().await.unwrap_or_default();
+        let error_body = truncate_error_body(resp.text().await.unwrap_or_default());
         return Err(DomainError::Provider(format!(
             "OpenAI token refresh failed ({}): {}",
             status, error_body
@@ -344,13 +356,21 @@ pub async fn wait_for_oauth_callback(
             continue;
         }
 
-        // Parse query params
+        // Parse query params (URL-decode values to handle encoded chars)
         let query = path.split('?').nth(1).unwrap_or("");
-        let params: std::collections::HashMap<&str, &str> =
-            query.split('&').filter_map(|p| p.split_once('=')).collect();
+        let params: std::collections::HashMap<String, String> = query
+            .split('&')
+            .filter_map(|p| {
+                let (k, v) = p.split_once('=')?;
+                Some((
+                    k.to_string(),
+                    urlencoding::decode(v).unwrap_or_default().into_owned(),
+                ))
+            })
+            .collect();
 
-        let state = params.get("state").copied().unwrap_or("");
-        let code = params.get("code").copied().unwrap_or("");
+        let state = params.get("state").map(|s| s.as_str()).unwrap_or("");
+        let code = params.get("code").map(|s| s.as_str()).unwrap_or("");
 
         if state != expected {
             let resp = "HTTP/1.1 400 Bad Request\r\nContent-Length: 14\r\n\r\nState mismatch";
@@ -549,12 +569,15 @@ mod tests {
             verifier: "test-verifier".into(),
             challenge: "test-challenge".into(),
         };
-        let url = build_anthropic_auth_url(&config, &pkce);
+        let url = build_anthropic_auth_url(&config, &pkce, "test-state");
         assert!(url.starts_with("https://claude.ai/oauth/authorize?"));
         assert!(url.contains("client_id="));
         assert!(url.contains("code_challenge=test-challenge"));
         assert!(url.contains("response_type=code"));
         assert!(url.contains("redirect_uri="));
+        assert!(url.contains("state=test-state"));
+        // Verify PKCE verifier is NOT in the URL
+        assert!(!url.contains("test-verifier"));
     }
 
     #[test]
