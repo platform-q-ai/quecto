@@ -1,4 +1,5 @@
 pub mod cron_tool;
+pub mod ensure_tool;
 pub mod exec;
 pub mod filesystem;
 pub mod find;
