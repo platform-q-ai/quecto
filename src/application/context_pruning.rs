@@ -58,6 +58,8 @@ pub fn collapse_old_tool_results(
                 let tokens = estimate_tokens(&msg.content);
                 msg.content = collapse_stub(tool_name, input_preview, tokens, spill_id);
                 msg.is_collapsed = true;
+                // Release image data — no longer needed after collapse (spilled to disk).
+                msg.image_blocks.clear();
                 collapsed += 1;
             }
         }

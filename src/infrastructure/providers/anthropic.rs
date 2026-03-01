@@ -76,25 +76,32 @@ impl AnthropicProvider {
                     }
                 }
                 Role::Tool => {
-                    // Build the tool_result content array: text first, then image blocks.
-                    let mut result_content: Vec<serde_json::Value> =
-                        vec![serde_json::json!({"type": "text", "text": m.content})];
-                    for img in &m.image_blocks {
-                        result_content.push(serde_json::json!({
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": img.mime_type,
-                                "data": img.data,
-                            }
-                        }));
-                    }
+                    // Build tool_result content.
+                    // When image blocks are present, use the array format so Anthropic can
+                    // render them. Otherwise use a plain string (avoids wrapping overhead).
+                    let content_value = if m.image_blocks.is_empty() {
+                        serde_json::Value::String(m.content.clone())
+                    } else {
+                        let mut result_content: Vec<serde_json::Value> =
+                            vec![serde_json::json!({"type": "text", "text": m.content})];
+                        for img in &m.image_blocks {
+                            result_content.push(serde_json::json!({
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": img.mime_type,
+                                    "data": img.data,
+                                }
+                            }));
+                        }
+                        serde_json::Value::Array(result_content)
+                    };
                     api_messages.push(serde_json::json!({
                         "role": "user",
                         "content": [{
                             "type": "tool_result",
                             "tool_use_id": m.tool_call_id.as_deref().unwrap_or(""),
-                            "content": result_content,
+                            "content": content_value,
                         }],
                     }));
                 }

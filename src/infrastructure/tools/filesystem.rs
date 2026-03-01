@@ -116,14 +116,30 @@ impl Tool for ReadTool {
             }
 
             // Image detection: if the file is a supported image type, return as base64.
+            // Cap at 5 MiB — Anthropic's API rejects larger images in tool_result content.
+            const MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024;
             if let Some(mime) = detect_image_mime(&resolved) {
+                if let Ok(meta) = tokio::fs::metadata(&resolved).await {
+                    if meta.len() > MAX_IMAGE_BYTES {
+                        let size = format_size(meta.len() as usize);
+                        return Ok(ToolResult {
+                            content: format!(
+                                "Image is {size} — too large to send inline (max 5 MiB for API). \
+                                 Describe what you need from the image instead.",
+                            ),
+                            is_error: true,
+                            image_blocks: vec![],
+                        });
+                    }
+                }
                 let bytes = tokio::fs::read(&resolved)
                     .await
                     .map_err(|e| DomainError::Tool(format!("read image failed: {}", e)))?;
                 use base64::Engine as _;
                 let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                let size = format_size(bytes.len());
                 return Ok(ToolResult {
-                    content: format!("Read image file [{}]", mime),
+                    content: format!("Read image file [{}] ({size})", mime),
                     is_error: false,
                     image_blocks: vec![crate::domain::tool::ImageBlock {
                         mime_type: mime.to_string(),
