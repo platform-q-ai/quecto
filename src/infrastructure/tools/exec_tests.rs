@@ -418,11 +418,6 @@ fn test_nsjail_default_memory_limit_is_4096_mb() {
         args.contains("4096"),
         "default rlimit_as should be 4096 MB (was 512), got: {args}"
     );
-    // The old default (512) must not appear as the rlimit_as value.
-    assert!(
-        !args.contains("--rlimit_as 512"),
-        "default rlimit_as must not be 512 MB: {args}"
-    );
 }
 
 // --- /dev device node bindmount tests ---

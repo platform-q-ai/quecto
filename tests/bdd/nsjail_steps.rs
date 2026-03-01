@@ -33,6 +33,9 @@ fn setup_nsjail_exec_tool(world: &mut QuectoWorld, setup: NsjailSetup) {
         sandbox.command_allowlist = Some(allowlist);
     }
 
+    // Start from compiled defaults so "default options" scenarios see real
+    // production values (e.g. memory_limit_mb = 4096). Per-test overrides
+    // from NsjailSetup replace individual fields when explicitly provided.
     let default_nsjail = NsjailOptions::default();
     let opts = ExecOptions {
         timeout: std::time::Duration::from_secs(setup.timeout_secs.unwrap_or(30)),
@@ -42,9 +45,6 @@ fn setup_nsjail_exec_tool(world: &mut QuectoWorld, setup: NsjailSetup) {
         nsjail: NsjailOptions {
             binary: binary.clone(),
             network_passthrough: setup.network_passthrough,
-            // When a setup field is None, preserve the compiled default from
-            // NsjailOptions::default() so "default options" scenarios see the
-            // real default values (e.g. memory_limit_mb = 4096).
             memory_limit_mb: setup.memory_limit_mb.or(default_nsjail.memory_limit_mb),
             pid_limit: setup.pid_limit.or(default_nsjail.pid_limit),
             cpu_time_limit_secs: setup
@@ -53,7 +53,9 @@ fn setup_nsjail_exec_tool(world: &mut QuectoWorld, setup: NsjailSetup) {
             wall_time_limit_secs: setup
                 .wall_time_limit_secs
                 .or(default_nsjail.wall_time_limit_secs),
-            ..NsjailOptions::default()
+            // Reuse `default_nsjail` for remaining fields (tmp_size_mb, etc.)
+            // to avoid a second NsjailOptions::default() allocation.
+            ..default_nsjail
         },
     };
 
@@ -136,6 +138,9 @@ fn given_nsjail_workspace(world: &mut QuectoWorld) {
     setup_nsjail_exec_tool(world, NsjailSetup::default());
 }
 
+/// Alias for Gherkin readability in "default options" scenarios.
+/// Functionally identical to `given_nsjail_workspace` — uses `NsjailSetup::default()`
+/// which inherits all compiled-in defaults from `NsjailOptions::default()`.
 #[given("an nsjail-isolated exec tool with default options")]
 fn given_nsjail_default_options(world: &mut QuectoWorld) {
     setup_nsjail_exec_tool(world, NsjailSetup::default());
