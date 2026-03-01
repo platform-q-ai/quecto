@@ -79,7 +79,53 @@ fn given_file_exists(world: &mut QuectoWorld, filename: String, content: String)
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).expect("create parent dirs");
     }
-    std::fs::write(&path, &content).expect("write file");
+    // Interpret common escape sequences so Gherkin \n becomes a real newline.
+    let interpreted = interpret_escapes(&content);
+    std::fs::write(&path, interpreted.as_bytes()).expect("write file");
+}
+
+/// Interpret common escape sequences in a Gherkin string value.
+///
+/// Cucumber-rs passes `\"` and `\n` inside an `{string}` expression as
+/// literal backslash sequences rather than stripping the backslash.
+/// This helper normalises `\n`, `\r`, `\t`, `\\`, `\"` into their
+/// corresponding characters.
+///
+/// Applied to `given_file_exists` and `then_file_contains` so that feature
+/// files can write `"line1\nline2"` and get a real two-line file.
+pub(super) fn interpret_escapes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.peek() {
+                Some('n') => {
+                    chars.next();
+                    out.push('\n');
+                }
+                Some('r') => {
+                    chars.next();
+                    out.push('\r');
+                }
+                Some('t') => {
+                    chars.next();
+                    out.push('\t');
+                }
+                Some('\\') => {
+                    chars.next();
+                    out.push('\\');
+                }
+                Some('"') => {
+                    chars.next();
+                    out.push('"');
+                }
+                _ => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 #[when(expr = "the agent executes tool {string} with empty args")]
@@ -157,6 +203,8 @@ fn then_file_contains(world: &mut QuectoWorld, filename: String, expected: Strin
     let path = ws.join(&filename);
     let content = std::fs::read_to_string(&path)
         .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+    // Cucumber-rs passes `\"` literally; interpret before asserting.
+    let expected = interpret_escapes(&expected);
     assert!(
         content.contains(&expected),
         "expected '{}' to contain '{}', got: {}",

@@ -922,6 +922,7 @@ mod config_steps;
 mod context_pruning_steps;
 mod cron_steps;
 mod e2e_steps;
+mod edit_tool_steps;
 mod find_steps;
 mod gateway_steps;
 mod grep_steps;
