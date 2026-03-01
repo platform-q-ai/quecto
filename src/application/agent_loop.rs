@@ -13,7 +13,7 @@ use crate::domain::session::{ContextSpillStore, SpillEntry};
 use crate::domain::tool::ToolRegistry;
 
 /// Default maximum tool iterations before the loop is forcibly stopped.
-const DEFAULT_MAX_TOOL_ITERATIONS: u32 = 25;
+const DEFAULT_MAX_TOOL_ITERATIONS: u32 = 999_999;
 
 /// Configuration for building an agent loop.
 pub struct AgentLoopConfig {

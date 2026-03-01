@@ -15,7 +15,7 @@ use crate::domain::session::{ContextSpillStore, SpillIndex};
 
 /// Sentinel value indicating that tool-result collapse is disabled.
 /// Used as the default for `context_collapse_after_turns`. Safe because
-/// `max_tool_iterations` (500) is far below `u32::MAX`, so
+/// `max_tool_iterations` (999_999) is far below `u32::MAX`, so
 /// `current_turn.saturating_sub(turn)` can never reach this threshold.
 pub const COLLAPSE_DISABLED: u32 = u32::MAX;
 

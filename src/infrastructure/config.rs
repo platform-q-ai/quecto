@@ -315,7 +315,7 @@ fn default_temperature() -> f32 {
     0.7
 }
 fn default_max_tool_iterations() -> u32 {
-    500
+    999_999
 }
 fn default_exec_max_capture_bytes() -> usize {
     1024 * 1024
@@ -326,7 +326,7 @@ fn default_max_session_messages() -> usize {
 fn default_context_collapse_after_turns() -> u32 {
     // Disabled by default (u32::MAX) — tool results age naturally and are
     // dropped by the sliding window. Users can re-enable collapse by setting
-    // a lower value. Safe because max_tool_iterations (500) << u32::MAX.
+    // a lower value. Safe because max_tool_iterations (999_999) << u32::MAX.
     u32::MAX
 }
 fn default_max_context_tokens() -> usize {
@@ -508,7 +508,7 @@ mod tests {
         assert_eq!(config.agents.defaults.max_tokens, 8192);
         assert!((config.agents.defaults.temperature - 0.7).abs() < f32::EPSILON);
         assert_eq!(config.agents.defaults.workspace, "~/.quecto/workspace");
-        assert_eq!(config.agents.defaults.max_tool_iterations, 500);
+        assert_eq!(config.agents.defaults.max_tool_iterations, 999_999);
         assert!(config.agents.defaults.restrict_to_workspace);
     }
 
