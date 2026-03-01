@@ -173,11 +173,17 @@ impl Gateway {
     }
 
     /// Load session messages for an inbound message, or return empty vec.
+    ///
+    /// The `source` field of `InboundMessage` is already in `channel:id` form
+    /// (e.g. `"telegram:12345"`), so it is used directly as the session key.
+    /// Do NOT prefix it again with `Session::build_key("telegram", ...)` —
+    /// that would produce `"telegram:telegram:12345"` and break `/reload`
+    /// which looks up `"telegram:<chat_id>"`.
     async fn load_session(
         session_store: &Arc<dyn SessionStore>,
         msg: &InboundMessage,
     ) -> Vec<Message> {
-        let session_key = Session::build_key("telegram", &msg.source);
+        let session_key = msg.source.clone();
         match session_store.load(&session_key).await {
             Ok(Some(session)) => session.messages,
             Ok(None) => Vec::new(),
@@ -198,7 +204,8 @@ impl Gateway {
         msg: &InboundMessage,
         messages: &mut Vec<Message>,
     ) -> String {
-        let session_key = Session::build_key("telegram", &msg.source);
+        // source is already "channel:id" (e.g. "telegram:12345") — use directly.
+        let session_key = msg.source.clone();
         let result = if let Some(ref builder) = ctx.agent_builder {
             let inner: Arc<dyn AgentLoop> =
                 Arc::new(builder.build(&session_key, ctx.outbound_tx.clone()));
@@ -378,6 +385,18 @@ impl Gateway {
     }
 }
 
+/// Derive the session key for an inbound message source string.
+///
+/// The `source` field of `InboundMessage` is already in `channel:id` form
+/// (e.g. `"telegram:12345"`), so it is used directly as the session key
+/// without any additional prefixing.
+///
+/// Exposed for testing to ensure the key derivation contract is stable.
+#[cfg(any(test, feature = "test-support"))]
+pub fn session_key_for_source(source: &str) -> String {
+    source.to_string()
+}
+
 /// Deliver a successful cron result to its configured outbound target.
 async fn deliver_cron_result(
     result: &crate::domain::cron::CronJobResult,
@@ -450,6 +469,28 @@ mod tests {
     use crate::domain::error::DomainError;
     use crate::domain::session::{Session, SessionStore};
 
+    /// Agent that always returns a fixed text response without modifying messages.
+    #[derive(Debug)]
+    struct EchoAgent;
+
+    impl AgentLoop for EchoAgent {
+        fn process<'a>(
+            &'a self,
+            _messages: &'a mut Vec<Message>,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<AgentResult, DomainError>> + Send + 'a>,
+        > {
+            Box::pin(async { Ok(crate::domain::agent::AgentResult::text("echo reply")) })
+        }
+
+        fn info(&self) -> AgentInfo {
+            AgentInfo {
+                tool_count: 0,
+                skill_count: 0,
+            }
+        }
+    }
+
     #[derive(Debug)]
     struct FailingAgent;
 
@@ -472,6 +513,41 @@ mod tests {
                 tool_count: 0,
                 skill_count: 0,
             }
+        }
+    }
+
+    /// Session store that records the key used in the most recent save() call.
+    #[derive(Debug, Default)]
+    struct CapturingSessionStore {
+        saved_key: std::sync::Mutex<Option<String>>,
+    }
+
+    impl SessionStore for CapturingSessionStore {
+        fn load(
+            &self,
+            _key: &str,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Option<Session>, DomainError>> + Send + '_>,
+        > {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn save(
+            &self,
+            session: &Session,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + '_>>
+        {
+            *self.saved_key.lock().unwrap() = Some(session.key.clone());
+            Box::pin(async { Ok(()) })
+        }
+
+        fn exists(
+            &self,
+            _key: &str,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<bool, DomainError>> + Send + '_>,
+        > {
+            Box::pin(async { Ok(false) })
         }
     }
 
@@ -582,5 +658,85 @@ mod tests {
         assert!(response.starts_with("Error:"));
         assert!(!response.contains("sk-secret-key-12345"));
         assert!(response.contains("sk-***"));
+    }
+
+    /// The inbound message source is already in "channel:id" form
+    /// (e.g. "telegram:12345"). The session key must NOT add another
+    /// "telegram:" prefix — the saved key must equal the source exactly.
+    #[tokio::test]
+    async fn test_session_key_matches_inbound_source_exactly() {
+        let capturing_store = Arc::new(CapturingSessionStore::default());
+
+        let ctx = InboundProcessorContext {
+            agent: Arc::new(EchoAgent),
+            agent_builder: None,
+            session_store: capturing_store.clone(),
+            outbound_tx: tokio::sync::mpsc::channel(1).0,
+            max_session_messages: 50,
+            skill_prompt: String::new(),
+        };
+
+        let msg = InboundMessage {
+            source: "telegram:12345".to_string(),
+            sender_id: "12345".to_string(),
+            text: "hello".to_string(),
+        };
+        let mut messages = vec![];
+
+        Gateway::process_and_save(&ctx, &msg, &mut messages).await;
+
+        let saved_key = capturing_store
+            .saved_key
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("session should have been saved");
+
+        assert_eq!(
+            saved_key, "telegram:12345",
+            "session key must not double-prefix source: expected 'telegram:12345', got '{}'",
+            saved_key
+        );
+    }
+
+    /// /reload uses Session::build_key("telegram", chat_id) → "telegram:<chat_id>".
+    /// The inbound processor must save under the same key so /reload can find it.
+    /// This test verifies the keys are consistent by writing with the inbound
+    /// processor's key and reading back with the /reload key.
+    #[tokio::test]
+    async fn test_reload_key_matches_inbound_processor_key() {
+        use crate::infrastructure::persistence::session_store::FileSessionStore;
+
+        let td = tempfile::TempDir::new().expect("tempdir");
+        let store = Arc::new(FileSessionStore::new(td.path()));
+
+        // Simulate what the inbound processor saves:
+        // source = "telegram:99999" → key must be "telegram:99999"
+        let inbound_source = "telegram:99999";
+        let inbound_key = inbound_source.to_string(); // correct: source IS the key
+
+        let session = Session {
+            key: inbound_key.clone(),
+            messages: vec![Message::user("hi"), Message::assistant("hello", vec![])],
+        };
+        store.save(&session).await.expect("save");
+
+        // /reload builds key as Session::build_key("telegram", chat_id)
+        let reload_key = Session::build_key("telegram", "99999");
+
+        assert_eq!(
+            inbound_key, reload_key,
+            "inbound processor key '{}' must match /reload key '{}'",
+            inbound_key, reload_key
+        );
+
+        // Verify the session is actually readable via the reload key
+        let loaded = store
+            .load(&reload_key)
+            .await
+            .expect("load")
+            .expect("session must exist");
+
+        assert_eq!(loaded.messages.len(), 2);
     }
 }
