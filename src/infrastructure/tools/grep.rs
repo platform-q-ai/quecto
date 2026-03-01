@@ -133,30 +133,72 @@ impl Tool for GrepTool {
             }
 
             cmd.arg("--").arg(pattern).arg(&full_path);
+            // Pipe stdout so we can cap bytes before buffering into a String.
+            cmd.stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
 
-            // Spawn and read output
-            let output = cmd
-                .output()
-                .await
-                .map_err(|e| {
-                    if e.kind() == std::io::ErrorKind::NotFound {
-                        DomainError::Tool(
-                            "rg not found on PATH — install ripgrep: https://github.com/BurntSushi/ripgrep#installation".to_string()
-                        )
-                    } else {
-                        DomainError::Tool(format!("grep failed to spawn rg: {}", e))
+            // Spawn rg and read output, capping at MAX_OUTPUT_BYTES * 2 to avoid OOM
+            // on adversarial inputs (the formatter will further trim to MAX_OUTPUT_BYTES).
+            let cap = MAX_OUTPUT_BYTES * 2;
+            let mut child = cmd.spawn().map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    DomainError::Tool(
+                        "rg not found on PATH — install ripgrep: https://github.com/BurntSushi/ripgrep#installation".to_string()
+                    )
+                } else {
+                    DomainError::Tool(format!("grep failed to spawn rg: {}", e))
+                }
+            })?;
+
+            // Read stdout up to cap, then kill rg (match limit already handles this
+            // for normal use, but cap protects against unexpectedly large output).
+            use tokio::io::AsyncReadExt;
+            let mut stdout_bytes = Vec::with_capacity(cap.min(64 * 1024));
+            if let Some(mut out) = child.stdout.take() {
+                let mut buf = vec![0u8; 8192];
+                loop {
+                    let n = out.read(&mut buf).await.unwrap_or(0);
+                    if n == 0 {
+                        break;
                     }
-                })?;
+                    let remaining = cap.saturating_sub(stdout_bytes.len());
+                    let take = n.min(remaining);
+                    stdout_bytes.extend_from_slice(&buf[..take]);
+                    if stdout_bytes.len() >= cap {
+                        break;
+                    }
+                }
+            }
 
-            // rg exits with code 1 for "no matches" (not an error), 2+ for real errors
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stderr_output = {
+                let mut buf = Vec::new();
+                if let Some(mut err) = child.stderr.take() {
+                    let _ = err.read_to_end(&mut buf).await;
+                }
+                buf
+            };
 
-            if output.status.code() == Some(2)
-                || (!output.status.success() && stdout.is_empty() && !stderr.is_empty())
+            // Reap child (ignore errors — process may already have exited naturally).
+            let _ = child.kill().await;
+            let status = child.wait().await;
+
+            // rg exits: 0 = matches found, 1 = no matches, 2+ = error, None = signal-killed.
+            let exit_code = status.ok().and_then(|s| s.code());
+            let stdout = String::from_utf8_lossy(&stdout_bytes);
+            let stderr = String::from_utf8_lossy(&stderr_output);
+
+            // Exit code 2+ (or signal-killed with no output) = rg error
+            if exit_code == Some(2)
+                || (exit_code.is_none() && stdout.is_empty())
+                || (exit_code.is_some_and(|c| c > 2) && stdout.is_empty())
             {
+                let msg = if stderr.trim().is_empty() {
+                    "rg exited unexpectedly".to_string()
+                } else {
+                    format!("grep error: {}", stderr.trim())
+                };
                 return Ok(ToolResult {
-                    content: format!("grep error: {}", stderr.trim()),
+                    content: msg,
                     is_error: true,
                 });
             }
@@ -187,7 +229,7 @@ struct GrepOutputArgs<'a> {
 }
 
 /// Format rg output lines, applying match limit and byte truncation.
-/// Each line from rg is: `file:line:content` or `file-line-content` (context)
+/// Each line from rg is: `file:line:content` for matches, `--` for separators.
 fn format_grep_output(a: GrepOutputArgs<'_>) -> String {
     let GrepOutputArgs {
         raw,
@@ -200,14 +242,18 @@ fn format_grep_output(a: GrepOutputArgs<'_>) -> String {
         return "No matches found".to_string();
     }
 
+    // Hoist prefix computation out of the per-line loop.
+    let ws_prefix = workspace.to_string_lossy();
+    let ws_prefix_slash = format!("{}/", ws_prefix);
+
     let mut output = String::new();
     let mut match_count = 0usize;
     let mut truncated_limit = false;
     let mut truncated_bytes = false;
 
     for line in raw.lines() {
-        // Each rg line is "path:lineno:content" for matches, "path-lineno-content" for context
-        // Determine if this is a match line (colon separator) vs context (dash)
+        // Each rg line is "path:lineno:content" for matches, "path-lineno-context" for context,
+        // or "--" for group separators.
         let is_match_line = is_rg_match_line(line);
 
         if is_match_line {
@@ -218,11 +264,11 @@ fn format_grep_output(a: GrepOutputArgs<'_>) -> String {
             match_count += 1;
         }
 
-        // Truncate long lines
+        // Truncate long lines (fast path: skip allocation when short).
         let display_line = truncate_line(line, max_line_bytes);
 
-        // Make paths relative to workspace
-        let display_line = relativise_path(&display_line, workspace);
+        // Make paths relative to workspace (fast path: only strip known prefix).
+        let display_line = relativise_with_prefix(&display_line, &ws_prefix, &ws_prefix_slash);
 
         if output.len() + display_line.len() + 1 > max_output_bytes {
             truncated_bytes = true;
@@ -286,15 +332,18 @@ fn truncate_line(line: &str, max_bytes: usize) -> String {
 }
 
 /// Replace absolute workspace prefix with relative path in the line.
-fn relativise_path(line: &str, workspace: &Path) -> String {
-    let prefix = workspace.to_string_lossy();
-    let prefix_with_sep = format!("{}/", prefix);
-    if line.starts_with(prefix_with_sep.as_str()) {
-        line[prefix_with_sep.len()..].to_string()
-    } else if line.starts_with(prefix.as_ref()) {
-        line[prefix.len()..].to_string()
+/// Accepts pre-computed prefix strings to avoid repeated allocations in hot loop.
+fn relativise_with_prefix<'a>(
+    line: &'a str,
+    prefix: &str,
+    prefix_slash: &str,
+) -> std::borrow::Cow<'a, str> {
+    if let Some(rest) = line.strip_prefix(prefix_slash) {
+        std::borrow::Cow::Owned(rest.to_string())
+    } else if let Some(rest) = line.strip_prefix(prefix) {
+        std::borrow::Cow::Owned(rest.to_string())
     } else {
-        line.to_string()
+        std::borrow::Cow::Borrowed(line)
     }
 }
 
@@ -310,7 +359,8 @@ mod tests {
     fn test_grep() -> (GrepTool, Arc<PathBuf>, TempDir) {
         let tmp = TempDir::new().unwrap();
         let ws = Arc::new(tmp.path().to_path_buf());
-        let sandbox = Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), false));
+        // restrict_to_workspace: true — sandbox enforces workspace containment
+        let sandbox = Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), true));
         let tool = GrepTool::new(ws.clone(), sandbox);
         (tool, ws, tmp)
     }
@@ -401,13 +451,14 @@ mod tests {
 
     #[test]
     fn test_relativise_path() {
-        let ws = PathBuf::from("/workspace");
+        let prefix = "/workspace";
+        let prefix_slash = "/workspace/";
         assert_eq!(
-            relativise_path("/workspace/src/main.rs:1:hello", &ws),
+            relativise_with_prefix("/workspace/src/main.rs:1:hello", prefix, prefix_slash),
             "src/main.rs:1:hello"
         );
         assert_eq!(
-            relativise_path("/other/path:1:hello", &ws),
+            relativise_with_prefix("/other/path:1:hello", prefix, prefix_slash),
             "/other/path:1:hello"
         );
     }
