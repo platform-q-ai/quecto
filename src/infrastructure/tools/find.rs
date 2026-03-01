@@ -17,6 +17,14 @@ const DEFAULT_RESULT_LIMIT: usize = 1000;
 /// Maximum total output bytes (50 KiB).
 const MAX_OUTPUT_BYTES: usize = 50 * 1024;
 
+fn missing_pattern_error() -> ToolResult {
+    ToolResult {
+        content: "missing 'pattern' argument. Example: {\"pattern\": \"*.rs\"}".to_string(),
+        is_error: true,
+        image_blocks: vec![],
+    }
+}
+
 pub struct FindTool {
     workspace: Arc<PathBuf>,
     sandbox: Arc<Sandbox>,
@@ -88,12 +96,7 @@ impl Tool for FindTool {
                 serde_json::from_str(&args_str).map_err(|e| DomainError::Tool(e.to_string()))?;
 
             let Some(pattern) = args["pattern"].as_str() else {
-                return Ok(ToolResult {
-                    content: "missing 'pattern' argument. Example: {\"pattern\": \"*.rs\"}"
-                        .to_string(),
-                    is_error: true,
-                    image_blocks: vec![],
-                });
+                return Ok(missing_pattern_error());
             };
 
             let search_path = args["path"].as_str().unwrap_or(".");

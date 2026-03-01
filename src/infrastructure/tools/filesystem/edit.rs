@@ -19,6 +19,16 @@ const MAX_EDIT_FILE_BYTES: u64 = 1024 * 1024;
 const DIFF_MAX_BYTES: usize = 4096;
 const DIFF_CONTEXT_LINES: usize = 4;
 
+const EDIT_EXAMPLE: &str = "{\"path\": \"file.txt\", \"oldText\": \"old\", \"newText\": \"new\"}";
+
+fn missing_edit_arg(param: &str) -> ToolResult {
+    ToolResult {
+        content: format!("missing '{}' argument. Example: {}", param, EDIT_EXAMPLE),
+        is_error: true,
+        image_blocks: vec![],
+    }
+}
+
 async fn enforce_edit_file_size_limit(full_path: &Path) -> Result<(), DomainError> {
     let metadata = tokio::fs::metadata(full_path)
         .await
@@ -73,36 +83,16 @@ impl Tool for EditTool {
         Box::pin(async move {
             let args: serde_json::Value =
                 serde_json::from_str(&args_str).map_err(|e| DomainError::Tool(e.to_string()))?;
-            let edit_example =
-                "{\"path\": \"file.txt\", \"oldText\": \"old\", \"newText\": \"new\"}";
             let Some(path) = args["path"].as_str() else {
-                return Ok(ToolResult {
-                    content: format!("missing 'path' argument. Example: {}", edit_example),
-                    is_error: true,
-                    image_blocks: vec![],
-                });
+                return Ok(missing_edit_arg("path"));
             };
             // Accept "oldText" (Pi name) or legacy "old"
-            let old_text = match args["oldText"].as_str().or_else(|| args["old"].as_str()) {
-                Some(v) => v,
-                None => {
-                    return Ok(ToolResult {
-                        content: format!("missing 'oldText' argument. Example: {}", edit_example),
-                        is_error: true,
-                        image_blocks: vec![],
-                    });
-                }
+            let Some(old_text) = args["oldText"].as_str().or_else(|| args["old"].as_str()) else {
+                return Ok(missing_edit_arg("oldText"));
             };
             // Accept "newText" (Pi name) or legacy "new"
-            let new_text = match args["newText"].as_str().or_else(|| args["new"].as_str()) {
-                Some(v) => v,
-                None => {
-                    return Ok(ToolResult {
-                        content: format!("missing 'newText' argument. Example: {}", edit_example),
-                        is_error: true,
-                        image_blocks: vec![],
-                    });
-                }
+            let Some(new_text) = args["newText"].as_str().or_else(|| args["new"].as_str()) else {
+                return Ok(missing_edit_arg("newText"));
             };
 
             let full_path = resolve_and_validate(&workspace, &sandbox, path)?;
