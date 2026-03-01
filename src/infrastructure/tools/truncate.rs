@@ -31,13 +31,6 @@ pub enum TruncatedBy {
 /// If the first line alone exceeds the byte limit, returns empty content
 /// with `first_line_exceeds_limit = true`.
 pub fn truncate_head(content: &str, max_lines: usize, max_bytes: usize) -> TruncationResult {
-    let total_bytes = content.len();
-    let total_lines = if content.is_empty() {
-        0
-    } else {
-        content.lines().count()
-    };
-
     if content.is_empty() {
         return TruncationResult {
             content: String::new(),
@@ -51,74 +44,20 @@ pub fn truncate_head(content: &str, max_lines: usize, max_bytes: usize) -> Trunc
             first_line_exceeds_limit: false,
         };
     }
+    let total_bytes = content.len();
+    let total_lines = content.lines().count();
 
-    let mut output_lines = 0;
-    let mut output_bytes = 0;
-    let mut truncated = false;
-    let mut truncated_by = None;
-    let mut first_line_exceeds_limit = false;
+    let (output_lines, output_bytes, truncated, truncated_by, first_line_exceeds_limit) =
+        compute_head_limits(content, max_lines, max_bytes);
 
-    for line in content.lines() {
-        let line_bytes = line.len();
-        // Account for the newline separator (if not the first line)
-        let separator_bytes = if output_bytes > 0 { 1 } else { 0 };
-        let would_be = output_bytes + separator_bytes + line_bytes;
-
-        // Check if adding this line would exceed byte limit
-        if would_be > max_bytes {
-            truncated = true;
-            if output_lines == 0 {
-                // First line alone exceeds limit
-                first_line_exceeds_limit = true;
-                truncated_by = Some(TruncatedBy::Bytes);
-            } else {
-                truncated_by = Some(TruncatedBy::Bytes);
-            }
-            break;
-        }
-
-        // Check line limit
-        if output_lines >= max_lines {
-            truncated = true;
-            truncated_by = Some(TruncatedBy::Lines);
-            break;
-        }
-
-        output_bytes = would_be;
-        output_lines += 1;
-    }
-
-    // Build the output content from the first output_lines lines
-    let result_content = if first_line_exceeds_limit {
-        String::new()
-    } else {
-        let mut result = String::with_capacity(output_bytes);
-        for (i, line) in content.lines().enumerate() {
-            if i >= output_lines {
-                break;
-            }
-            if i > 0 {
-                result.push('\n');
-            }
-            result.push_str(line);
-        }
-        result
-    };
-
-    // If no truncation happened, check if everything was included
-    if !truncated {
-        // Verify we got all lines
-        if output_lines < total_lines {
-            truncated = true;
-            truncated_by = Some(TruncatedBy::Lines);
-        }
-    }
-
-    let result_bytes = if first_line_exceeds_limit {
-        0
-    } else {
-        result_content.len()
-    };
+    let result_content = build_head_content(
+        content,
+        output_lines,
+        output_bytes,
+        first_line_exceeds_limit,
+    );
+    let truncated = truncated || output_lines < total_lines;
+    let result_bytes = result_content.len();
 
     TruncationResult {
         content: result_content,
@@ -131,6 +70,69 @@ pub fn truncate_head(content: &str, max_lines: usize, max_bytes: usize) -> Trunc
         last_line_partial: false,
         first_line_exceeds_limit,
     }
+}
+
+/// Compute how many lines/bytes fit within the limits.
+/// Returns (output_lines, output_bytes, truncated, truncated_by, first_line_exceeds_limit).
+fn compute_head_limits(
+    content: &str,
+    max_lines: usize,
+    max_bytes: usize,
+) -> (usize, usize, bool, Option<TruncatedBy>, bool) {
+    let mut output_lines = 0;
+    let mut output_bytes = 0;
+    let mut truncated = false;
+    let mut truncated_by = None;
+    let mut first_line_exceeds_limit = false;
+
+    for line in content.lines() {
+        let separator_bytes = usize::from(output_bytes > 0);
+        let would_be = output_bytes + separator_bytes + line.len();
+        if would_be > max_bytes {
+            truncated = true;
+            first_line_exceeds_limit = output_lines == 0;
+            truncated_by = Some(TruncatedBy::Bytes);
+            break;
+        }
+        if output_lines >= max_lines {
+            truncated = true;
+            truncated_by = Some(TruncatedBy::Lines);
+            break;
+        }
+        output_bytes = would_be;
+        output_lines += 1;
+    }
+
+    (
+        output_lines,
+        output_bytes,
+        truncated,
+        truncated_by,
+        first_line_exceeds_limit,
+    )
+}
+
+/// Build result string from the first `output_lines` lines of content.
+fn build_head_content(
+    content: &str,
+    output_lines: usize,
+    output_bytes: usize,
+    first_line_exceeds_limit: bool,
+) -> String {
+    if first_line_exceeds_limit {
+        return String::new();
+    }
+    let mut result = String::with_capacity(output_bytes);
+    for (i, line) in content.lines().enumerate() {
+        if i >= output_lines {
+            break;
+        }
+        if i > 0 {
+            result.push('\n');
+        }
+        result.push_str(line);
+    }
+    result
 }
 
 /// Keep the **last** N lines/bytes. Used by: bash.

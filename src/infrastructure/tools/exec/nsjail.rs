@@ -121,6 +121,19 @@ pub(super) fn build_nsjail_command(
 ) -> tokio::process::Command {
     let options = config.options;
     let mut cmd = tokio::process::Command::new(&options.binary);
+    apply_base_nsjail_args(&mut cmd, workspace, config);
+    apply_nsjail_resource_limits(&mut cmd, options);
+    apply_nsjail_shell_command(&mut cmd, workspace, command);
+    apply_nsjail_env(&mut cmd, source_env);
+    cmd
+}
+
+/// Add basic nsjail flags: quiet mode, working directory, bind mounts.
+fn apply_base_nsjail_args(
+    cmd: &mut tokio::process::Command,
+    workspace: &Path,
+    config: &NsjailConfig<'_>,
+) {
     cmd.arg("--quiet")
         .arg("--mode")
         .arg("o")
@@ -139,7 +152,7 @@ pub(super) fn build_nsjail_command(
     }
 
     // Writable tmpfs at /tmp — ephemeral, bounded, POSIX-standard.
-    if let Some(tmp_mb) = options.tmp_size_mb {
+    if let Some(tmp_mb) = config.options.tmp_size_mb {
         let tmp_bytes = tmp_mb * 1024 * 1024;
         cmd.arg("-m")
             .arg(format!("none:/tmp:tmpfs:size={tmp_bytes}"));
@@ -147,6 +160,13 @@ pub(super) fn build_nsjail_command(
 
     cmd.arg("--disable_clone_newcgroup");
 
+    if config.options.network_passthrough {
+        cmd.arg("--disable_clone_newnet");
+    }
+}
+
+/// Add nsjail resource limit flags.
+fn apply_nsjail_resource_limits(cmd: &mut tokio::process::Command, options: &NsjailOptions) {
     if let Some(mem) = options.memory_limit_mb {
         cmd.arg("--rlimit_as").arg(mem.to_string());
     }
@@ -159,18 +179,20 @@ pub(super) fn build_nsjail_command(
     if let Some(wall) = options.wall_time_limit_secs {
         cmd.arg("--time_limit").arg(wall.to_string());
     }
+}
 
-    if options.network_passthrough {
-        cmd.arg("--disable_clone_newnet");
-    }
-
+/// Add the shell command after the `--` separator.
+fn apply_nsjail_shell_command(cmd: &mut tokio::process::Command, workspace: &Path, command: &str) {
     cmd.arg("--")
         .arg("/bin/sh")
         .arg("-c")
         .arg(command)
         .current_dir(workspace)
         .env_clear();
+}
 
+/// Propagate safe environment variables into the nsjail process.
+fn apply_nsjail_env(cmd: &mut tokio::process::Command, source_env: &HashMap<String, String>) {
     for (k, v) in source_env {
         if !k.starts_with(SECRET_ENV_PREFIX) {
             cmd.env(k, v);
@@ -181,15 +203,12 @@ pub(super) fn build_nsjail_command(
     {
         cmd.env("PATH", path);
     }
-
     // TMPDIR (POSIX), TMP (common on Linux), TEMP (Python/cross-platform)
     for var in ["TMPDIR", "TMP", "TEMP"] {
         if !source_env.contains_key(var) {
             cmd.env(var, "/tmp");
         }
     }
-
-    cmd
 }
 
 // ---------------------------------------------------------------------------

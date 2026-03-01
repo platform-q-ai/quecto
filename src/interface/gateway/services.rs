@@ -367,23 +367,7 @@ impl Gateway {
                             ok = result.ok,
                             "cron job executed"
                         );
-                        // Deliver successful cron results to the configured channel.
-                        if result.ok {
-                            if let Some(ref target) = result.deliver_to {
-                                let msg = OutboundMessage {
-                                    target: target.clone(),
-                                    text: result.response.clone(),
-                                };
-                                if let Err(e) = outbound_tx.send(msg).await {
-                                    tracing::error!(
-                                        job_id = result.job_id.as_str(),
-                                        target = target.as_str(),
-                                        error = %e,
-                                        "failed to deliver cron result"
-                                    );
-                                }
-                            }
-                        }
+                        deliver_cron_result(result, &outbound_tx).await;
                     }
                 }
                 Err(e) => {
@@ -391,6 +375,31 @@ impl Gateway {
                 }
             }
         }
+    }
+}
+
+/// Deliver a successful cron result to its configured outbound target.
+async fn deliver_cron_result(
+    result: &crate::domain::cron::CronJobResult,
+    outbound_tx: &mpsc::Sender<OutboundMessage>,
+) {
+    if !result.ok {
+        return;
+    }
+    let Some(ref target) = result.deliver_to else {
+        return;
+    };
+    let msg = OutboundMessage {
+        target: target.clone(),
+        text: result.response.clone(),
+    };
+    if let Err(e) = outbound_tx.send(msg).await {
+        tracing::error!(
+            job_id = result.job_id.as_str(),
+            target = target.as_str(),
+            error = %e,
+            "failed to deliver cron result"
+        );
     }
 }
 

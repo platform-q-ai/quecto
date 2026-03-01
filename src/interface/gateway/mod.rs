@@ -65,6 +65,7 @@ pub(super) struct EventLoopContext {
     pub(super) outbound_rx: mpsc::Receiver<OutboundMessage>,
     pub(super) agent: Arc<dyn AgentLoop>,
     pub(super) session_store: Arc<dyn SessionStore>,
+    pub(super) spill_store: Arc<dyn crate::domain::session::ContextSpillStore>,
     pub(super) outbound_channel: Arc<dyn Channel>,
     pub(super) telegram_poller: Arc<TelegramChannel>,
     pub(super) config: Config,
@@ -112,7 +113,14 @@ impl EventLoopContext {
         // Core messaging pipeline — select until one stops or shutdown.
         tokio::select! {
             _ = Gateway::run_telegram_polling(
-                self.telegram_poller, self.inbound_tx, polling_config, self.allow_insecure_voice,
+                self.telegram_poller,
+                telegram::TelegramPollingConfig {
+                    inbound_tx: self.inbound_tx,
+                    config: polling_config,
+                    allow_insecure_voice: self.allow_insecure_voice,
+                    session_store: self.session_store.clone(),
+                    spill_store: self.spill_store.clone(),
+                },
             ) => {
                 tracing::info!("Telegram polling stopped");
             }
@@ -215,6 +223,7 @@ impl Gateway {
             outbound_rx,
             agent,
             session_store: Arc::new(FileSessionStore::new(&self.base_dir)),
+            spill_store: Arc::new(FileContextSpillStore::new(self.base_dir.clone())),
             outbound_channel: telegram.clone(),
             telegram_poller: telegram,
             config: self.config.clone(),
@@ -376,12 +385,21 @@ impl Gateway {
     }
 }
 
-/// Handle a Telegram bot command (`/start`, `/help`, `/status`).
+/// Sentinel returned by `handle_bot_command` for `/reload` to signal `dispatch_update`
+/// that I/O-backed reload logic should run. Defined as a constant to prevent the
+/// two-site string coupling from silently breaking if the value ever changes.
+pub(crate) const RELOAD_SENTINEL: &str = "__reload__";
+
+/// Handle a Telegram bot command (`/start`, `/help`, `/status`, `/reload`).
 ///
 /// Returns `Some(response_text)` if the command is a known bot command,
 /// or `None` if the message should be routed to the agent as regular text.
 /// Only the first whitespace-delimited token is matched; trailing arguments are ignored
 /// (e.g. `/start deep_link_payload` still matches `/start`).
+///
+/// Note: `/reload` returns `RELOAD_SENTINEL` — the actual reload logic
+/// (session + spill clearing) is performed in `dispatch_update` where I/O access
+/// is available. Here we only signal that the command was recognized.
 pub fn handle_bot_command(text: &str, config: &Config) -> Option<String> {
     let command = text.split_whitespace().next().unwrap_or("");
     match command {
@@ -394,7 +412,8 @@ pub fn handle_bot_command(text: &str, config: &Config) -> Option<String> {
             "Available commands:\n\
              /start  — Show welcome message\n\
              /help   — Show this help\n\
-             /status — Show bot status\n\n\
+             /status — Show bot status\n\
+             /reload — Remove stale tool history, keep conversation\n\n\
              Or just type a message to chat with me."
                 .to_string(),
         ),
@@ -411,9 +430,15 @@ pub fn handle_bot_command(text: &str, config: &Config) -> Option<String> {
                  Telegram: {telegram_status}"
             ))
         }
+        // /reload is recognized here; dispatch_update intercepts RELOAD_SENTINEL
+        // to call execute_reload() with the I/O context (session + spill stores).
+        "/reload" => Some(RELOAD_SENTINEL.to_string()),
         _ => None,
     }
 }
+
+/// Re-export execute_reload from the application layer for use in dispatch_update.
+pub use crate::application::reload::execute_reload;
 
 // Re-export shared credential resolution functions for backward compatibility.
 pub use crate::interface::shared::{check_provider_readiness, resolve_api_key};

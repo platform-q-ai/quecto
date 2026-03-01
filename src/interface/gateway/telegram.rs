@@ -3,20 +3,32 @@
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+use crate::domain::session::{ContextSpillStore, SessionStore};
 use crate::infrastructure::bus::InboundMessage;
 use crate::infrastructure::channels::telegram::{TelegramChannel, TelegramUpdate};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::voice::groq_whisper::GroqWhisperClient;
 
-use super::{Gateway, handle_bot_command};
+use super::{Gateway, RELOAD_SENTINEL, execute_reload, handle_bot_command};
 
 pub(super) const MAX_VOICE_BYTES: usize = 10 * 1024 * 1024;
 pub(super) const ALLOW_INSECURE_VOICE_API_BASE_ENV: &str =
     "QUECTO_ALLOW_INSECURE_TELEGRAM_API_BASE";
 
+/// Parameters for the Telegram polling task (bundles to avoid too_many_arguments).
+pub(super) struct TelegramPollingConfig {
+    pub(super) inbound_tx: mpsc::Sender<InboundMessage>,
+    pub(super) config: Config,
+    pub(super) allow_insecure_voice: bool,
+    pub(super) session_store: Arc<dyn SessionStore>,
+    pub(super) spill_store: Arc<dyn ContextSpillStore>,
+}
+
 pub(super) struct UpdateDispatchContext<'a> {
     pub(super) config: &'a Config,
     pub(super) whisper: Option<GroqWhisperClient>,
+    pub(super) session_store: Arc<dyn SessionStore>,
+    pub(super) spill_store: Arc<dyn ContextSpillStore>,
 }
 
 pub(super) struct VoicePayload {
@@ -29,9 +41,7 @@ impl Gateway {
     /// Telegram long-polling task.
     pub(super) async fn run_telegram_polling(
         telegram: Arc<TelegramChannel>,
-        inbound_tx: mpsc::Sender<InboundMessage>,
-        config: Config,
-        allow_insecure_voice: bool,
+        polling: TelegramPollingConfig,
     ) {
         if !telegram.is_enabled() {
             tracing::info!("Telegram disabled, polling not started");
@@ -43,9 +53,15 @@ impl Gateway {
         let mut offset: i64 = 0;
 
         let dispatch_ctx = UpdateDispatchContext {
-            whisper: Self::build_whisper_client(&config.voice, allow_insecure_voice),
-            config: &config,
+            whisper: Self::build_whisper_client(
+                &polling.config.voice,
+                polling.allow_insecure_voice,
+            ),
+            config: &polling.config,
+            session_store: polling.session_store,
+            spill_store: polling.spill_store,
         };
+        let inbound_tx = polling.inbound_tx;
 
         loop {
             let poll_result = Self::poll_once(&telegram, &inbound_tx, offset, &dispatch_ctx).await;
@@ -103,7 +119,18 @@ impl Gateway {
 
             // Check for bot commands before routing to agent.
             if let Some(response) = handle_bot_command(&msg.text, ctx.config) {
-                if let Err(e) = telegram.send_message(&msg.chat_id, &response).await {
+                // /reload is handled here where I/O is available.
+                let final_response = if response == RELOAD_SENTINEL {
+                    execute_reload(
+                        &msg.chat_id,
+                        ctx.session_store.as_ref(),
+                        ctx.spill_store.as_ref(),
+                    )
+                    .await
+                } else {
+                    response
+                };
+                if let Err(e) = telegram.send_message(&msg.chat_id, &final_response).await {
                     tracing::error!(error = %e, "failed to send bot command response");
                 }
                 return Ok(());

@@ -326,3 +326,334 @@ fn then_parsed_sender_id(world: &mut QuectoWorld, expected: String) {
 }
 
 // ===========================================================================
+// /reload Steps
+// ===========================================================================
+
+/// Build a message row from the Gherkin table.
+/// Columns: role | content | is_manifest | tool_name
+fn build_message_from_row(
+    role: &str,
+    content: &str,
+    is_manifest: &str,
+    tool_name: &str,
+) -> Message {
+    use quecto::domain::message::{Role, ToolCall};
+
+    let parsed_role = match role {
+        "User" => Role::User,
+        "Assistant" => Role::Assistant,
+        "Tool" => Role::Tool,
+        "System" => Role::System,
+        _ => panic!("unknown role: {}", role),
+    };
+    let manifest = is_manifest == "true";
+    let tool_name_opt: Option<String> = if tool_name.is_empty() {
+        None
+    } else {
+        Some(tool_name.to_string())
+    };
+
+    let mut msg = match parsed_role {
+        Role::User => Message::user(content),
+        Role::System => Message::system(content),
+        Role::Assistant => {
+            // If the test row has a tool_name, simulate a tool_call assistant
+            if let Some(ref tn) = tool_name_opt {
+                Message::assistant(
+                    content,
+                    vec![ToolCall {
+                        id: format!("id-{}", tn),
+                        name: tn.clone(),
+                        arguments: "{}".to_string(),
+                    }],
+                )
+            } else {
+                Message::assistant(content, vec![])
+            }
+        }
+        Role::Tool => {
+            let mut m = Message::tool("tool-id", content);
+            m.tool_name = tool_name_opt.clone();
+            m
+        }
+    };
+    msg.is_manifest = manifest;
+    msg
+}
+
+#[given("a session with messages:")]
+fn given_session_with_messages(world: &mut QuectoWorld, step: &gherkin::Step) {
+    let table = step.table.as_ref().expect("expected a table");
+    let mut messages = Vec::new();
+
+    for row in &table.rows {
+        if row.len() < 4 {
+            continue;
+        }
+        // Skip header row
+        if row[0].trim() == "role" {
+            continue;
+        }
+        let role = row[0].trim();
+        let content = row[1].trim();
+        let is_manifest = row[2].trim();
+        let tool_name = row[3].trim();
+        messages.push(build_message_from_row(
+            role,
+            content,
+            is_manifest,
+            tool_name,
+        ));
+    }
+
+    world.reload_input_messages = Some(messages);
+}
+
+#[when("strip_tool_history is applied")]
+fn when_strip_tool_history_applied(world: &mut QuectoWorld) {
+    let messages = world
+        .reload_input_messages
+        .as_ref()
+        .expect("reload_input_messages not set");
+    let filtered = strip_tool_history(messages);
+    world.reload_filtered_messages = Some(filtered);
+}
+
+#[then(expr = "the filtered messages should have {int} messages")]
+fn then_filtered_messages_count(world: &mut QuectoWorld, expected: usize) {
+    let filtered = world
+        .reload_filtered_messages
+        .as_ref()
+        .expect("reload_filtered_messages not set");
+    assert_eq!(
+        filtered.len(),
+        expected,
+        "expected {} messages, got {}: {:?}",
+        expected,
+        filtered.len(),
+        filtered
+            .iter()
+            .map(|m| format!("{:?}:{}", m.role, m.content))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[then(expr = "message {int} should have role {string} and content {string}")]
+fn then_message_role_content(world: &mut QuectoWorld, index: usize, role: String, content: String) {
+    use quecto::domain::message::Role;
+
+    let filtered = world
+        .reload_filtered_messages
+        .as_ref()
+        .expect("reload_filtered_messages not set");
+    let msg = filtered
+        .get(index)
+        .unwrap_or_else(|| panic!("no message at index {}", index));
+
+    let expected_role = match role.as_str() {
+        "User" => Role::User,
+        "Assistant" => Role::Assistant,
+        "Tool" => Role::Tool,
+        "System" => Role::System,
+        _ => panic!("unknown role: {}", role),
+    };
+    assert_eq!(
+        msg.role, expected_role,
+        "message {} role mismatch: expected {:?}, got {:?}",
+        index, expected_role, msg.role
+    );
+    assert_eq!(
+        msg.content, content,
+        "message {} content mismatch: expected '{}', got '{}'",
+        index, content, msg.content
+    );
+}
+
+#[then(expr = "the bot should respond with a reload confirmation to chat {string}")]
+fn then_bot_reload_response(world: &mut QuectoWorld, _chat_id: String) {
+    let response = world
+        .bot_command_response
+        .as_ref()
+        .expect("no bot command response");
+    assert!(
+        response.is_some(),
+        "expected a reload response, got None (command not handled)"
+    );
+}
+
+/// Setup: create a session with stale tool calls in a temp store.
+#[given(expr = "a session {string} with stale tool calls exists in the store")]
+fn given_session_with_stale_tool_calls(world: &mut QuectoWorld, session_key: String) {
+    use quecto::domain::message::ToolCall;
+
+    ensure_temp_dir(world);
+    let base = base_path(world);
+
+    let session_store = Arc::new(FileSessionStore::new(&base));
+    let spill_store = Arc::new(FileContextSpillStore::new(base.clone()));
+
+    // Build a session with stale tool calls
+    let messages = vec![
+        Message::user("do something useful"),
+        Message::assistant(
+            "",
+            vec![ToolCall {
+                id: "tc-1".to_string(),
+                name: "exec".to_string(),
+                arguments: r#"{"command":"ls"}"#.to_string(),
+            }],
+        ),
+        {
+            let mut m = Message::tool("tc-1", "file1.txt\nfile2.txt");
+            m.tool_name = Some("exec".to_string());
+            m
+        },
+        Message::user("thanks"),
+        Message::assistant("you're welcome", vec![]),
+    ];
+
+    let session = Session {
+        key: session_key.clone(),
+        messages,
+    };
+
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    rt.block_on(async {
+        session_store.save(&session).await.expect("save session");
+    });
+
+    world.reload_session_store = Some(session_store);
+    world.reload_spill_store = Some(spill_store);
+}
+
+#[given("the session has spill entries in the spill store")]
+fn given_session_has_spill_entries(world: &mut QuectoWorld) {
+    use quecto::domain::session::SpillEntry;
+
+    let spill_store = world
+        .reload_spill_store
+        .as_ref()
+        .expect("reload_spill_store not set")
+        .clone();
+
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    rt.block_on(async {
+        spill_store
+            .append(
+                "telegram:99999",
+                &SpillEntry {
+                    id: "turn1:exec:0".to_string(),
+                    tool: "exec".to_string(),
+                    input_preview: "ls".to_string(),
+                    tokens: 50,
+                    content: "file1.txt\nfile2.txt".to_string(),
+                },
+            )
+            .await
+            .expect("append spill entry");
+    });
+}
+
+#[when(expr = "the reload command is executed for chat {string}")]
+fn when_reload_command_executed(world: &mut QuectoWorld, chat_id: String) {
+    use quecto::application::reload::execute_reload;
+
+    let session_store = world
+        .reload_session_store
+        .as_ref()
+        .expect("reload_session_store not set")
+        .clone();
+    let spill_store = world
+        .reload_spill_store
+        .as_ref()
+        .expect("reload_spill_store not set")
+        .clone();
+
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let response = rt.block_on(execute_reload(
+        &chat_id,
+        session_store.as_ref(),
+        spill_store.as_ref(),
+    ));
+    world.reload_response = Some(response);
+}
+
+#[then(expr = "the saved session {string} should have no stale tool results")]
+fn then_no_stale_tool_results(world: &mut QuectoWorld, session_key: String) {
+    use quecto::domain::message::Role;
+
+    let session_store = world
+        .reload_session_store
+        .as_ref()
+        .expect("reload_session_store not set")
+        .clone();
+
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let session = rt
+        .block_on(session_store.load(&session_key))
+        .expect("load session")
+        .expect("session should exist");
+
+    let has_stale_tool = session
+        .messages
+        .iter()
+        .any(|m| m.role == Role::Tool && m.tool_name.as_deref() != Some("recall"));
+    assert!(
+        !has_stale_tool,
+        "session still has stale tool results: {:?}",
+        session
+            .messages
+            .iter()
+            .map(|m| format!("{:?}:{}", m.role, m.content))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[then("the reload response should contain \"reloaded\"")]
+fn then_reload_response_contains_reloaded(world: &mut QuectoWorld) {
+    let response = world
+        .reload_response
+        .as_ref()
+        .expect("reload_response not set");
+    assert!(
+        response.to_lowercase().contains("reloaded"),
+        "expected response to contain 'reloaded', got: {}",
+        response
+    );
+}
+
+#[then("the reload response should mention messages kept and removed")]
+fn then_reload_response_mentions_counts(world: &mut QuectoWorld) {
+    let response = world
+        .reload_response
+        .as_ref()
+        .expect("reload_response not set");
+    // Response should mention counts of kept/removed messages
+    let has_number = response.chars().any(|c| c.is_ascii_digit());
+    assert!(
+        has_number,
+        "expected response to mention message counts, got: {}",
+        response
+    );
+}
+
+#[then(expr = "the spill file for session {string} should be empty")]
+fn then_spill_file_empty(world: &mut QuectoWorld, session_key: String) {
+    let spill_store = world
+        .reload_spill_store
+        .as_ref()
+        .expect("reload_spill_store not set")
+        .clone();
+
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let entries = rt
+        .block_on(spill_store.list_entries(&session_key))
+        .expect("list spill entries");
+    assert!(
+        entries.is_empty(),
+        "expected spill file to be empty, but found {} entries",
+        entries.len()
+    );
+}
+
+// ===========================================================================

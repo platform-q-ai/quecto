@@ -71,3 +71,100 @@ Feature: Telegram Gateway
     Given a running gateway with Telegram enabled and a mock Telegram API
     When the gateway receives a shutdown signal
     Then the Telegram polling loop should exit cleanly
+
+  # --- /reload command ---
+
+  @done
+  Scenario: /help mentions /reload command
+    Given a running gateway with Telegram enabled and a mock Telegram API
+    When user "12345" sends command "/help"
+    Then the response should contain "/reload"
+
+  @done
+  Scenario: /reload is recognised as a bot command and not routed to the agent
+    Given a running gateway with Telegram enabled and a mock Telegram API
+    When user "12345" sends command "/reload"
+    Then the bot should respond with a reload confirmation to chat "12345"
+
+  @done
+  Scenario: strip_tool_history keeps user and plain assistant messages
+    Given a session with messages:
+      | role      | content        | is_manifest | tool_name |
+      | User      | hello          | false       |           |
+      | Assistant | sure thing     | false       |           |
+    When strip_tool_history is applied
+    Then the filtered messages should have 2 messages
+    And message 0 should have role "User" and content "hello"
+    And message 1 should have role "Assistant" and content "sure thing"
+
+  @done
+  Scenario: strip_tool_history drops manifest messages
+    Given a session with messages:
+      | role      | content           | is_manifest | tool_name |
+      | User      | hello             | false       |           |
+      | Assistant | [spill manifest]  | true        |           |
+    When strip_tool_history is applied
+    Then the filtered messages should have 1 messages
+    And message 0 should have role "User" and content "hello"
+
+  @done
+  Scenario: strip_tool_history drops stale tool results (non-recall)
+    Given a session with messages:
+      | role      | content         | is_manifest | tool_name |
+      | User      | do something    | false       |           |
+      | Assistant |                 | false       | exec      |
+      | Tool      | exec output     | false       | exec      |
+    When strip_tool_history is applied
+    Then the filtered messages should have 1 messages
+    And message 0 should have role "User" and content "do something"
+
+  @done
+  Scenario: strip_tool_history keeps recall tool results and their paired assistant message
+    Given a session with messages:
+      | role      | content             | is_manifest | tool_name |
+      | User      | what did we do?     | false       |           |
+      | Assistant | (calls recall)      | false       | recall    |
+      | Tool      | recalled content    | false       | recall    |
+    When strip_tool_history is applied
+    Then the filtered messages should have 3 messages
+    And message 0 should have role "User" and content "what did we do?"
+    And message 1 should have role "Assistant" and content "(calls recall)"
+    And message 2 should have role "Tool" and content "recalled content"
+
+  @done
+  Scenario: strip_tool_history preserves narrative text from mixed assistant messages
+    Given a session with messages:
+      | role      | content            | is_manifest | tool_name |
+      | User      | do something       | false       |           |
+      | Assistant | I will run exec    | false       | exec      |
+      | Tool      | exec output        | false       | exec      |
+    When strip_tool_history is applied
+    Then the filtered messages should have 2 messages
+    And message 0 should have role "User" and content "do something"
+    And message 1 should have role "Assistant" and content "I will run exec"
+
+  @done
+  Scenario: strip_tool_history drops pure tool-dispatch assistant messages with no text
+    Given a session with messages:
+      | role      | content       | is_manifest | tool_name |
+      | User      | run it        | false       |           |
+      | Assistant |               | false       | exec      |
+      | Tool      | tool result   | false       | exec      |
+    When strip_tool_history is applied
+    Then the filtered messages should have 1 messages
+    And message 0 should have role "User" and content "run it"
+
+  @done
+  Scenario: /reload on a session with stale tool history strips it and saves
+    Given a session "telegram:99999" with stale tool calls exists in the store
+    When the reload command is executed for chat "99999"
+    Then the saved session "telegram:99999" should have no stale tool results
+    And the reload response should contain "reloaded"
+    And the reload response should mention messages kept and removed
+
+  @done
+  Scenario: /reload clears spill.jsonl for the session
+    Given a session "telegram:99999" with stale tool calls exists in the store
+    And the session has spill entries in the spill store
+    When the reload command is executed for chat "99999"
+    Then the spill file for session "telegram:99999" should be empty

@@ -102,7 +102,7 @@ impl Tool for GrepTool {
                 .validate_path(&full_str)
                 .map_err(|e| DomainError::Security(e.to_string()))?;
 
-            let glob = args["glob"].as_str();
+            let glob = args["glob"].as_str().map(String::from);
             let ignore_case = args["ignoreCase"].as_bool().unwrap_or(false);
             let literal = args["literal"].as_bool().unwrap_or(false);
             let context_lines = args["context"].as_u64().unwrap_or(0) as usize;
@@ -111,86 +111,23 @@ impl Tool for GrepTool {
                 .map(|v| v as usize)
                 .unwrap_or(DEFAULT_MATCH_LIMIT);
 
-            // Build rg command
-            let mut cmd = tokio::process::Command::new(&rg_cmd);
-            cmd.current_dir(workspace.as_ref())
-                .arg("--line-number")
-                .arg("--color=never")
-                .arg("--hidden")
-                .arg("--no-heading");
+            // Build and run rg command
+            let cmd = build_rg_command(&RgArgs {
+                rg_cmd: &rg_cmd,
+                workspace: &workspace,
+                pattern,
+                full_path: &full_path,
+                glob: glob.as_deref(),
+                ignore_case,
+                literal,
+                context_lines,
+            });
+            let (stdout_bytes, stderr_bytes, exit_code) = run_rg(cmd).await?;
 
-            if ignore_case {
-                cmd.arg("--ignore-case");
-            }
-            if literal {
-                cmd.arg("--fixed-strings");
-            }
-            if let Some(g) = glob {
-                cmd.arg("--glob").arg(g);
-            }
-            if context_lines > 0 {
-                cmd.arg(format!("--context={}", context_lines));
-            }
-
-            cmd.arg("--").arg(pattern).arg(&full_path);
-            // Pipe stdout so we can cap bytes before buffering into a String.
-            cmd.stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped());
-
-            // Spawn rg and read output, capping at MAX_OUTPUT_BYTES * 2 to avoid OOM
-            // on adversarial inputs (the formatter will further trim to MAX_OUTPUT_BYTES).
-            let cap = MAX_OUTPUT_BYTES * 2;
-            let mut child = cmd.spawn().map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    DomainError::Tool(
-                        "rg not found on PATH — install ripgrep: https://github.com/BurntSushi/ripgrep#installation".to_string()
-                    )
-                } else {
-                    DomainError::Tool(format!("grep failed to spawn rg: {}", e))
-                }
-            })?;
-
-            // Read stdout up to cap, then kill rg (match limit already handles this
-            // for normal use, but cap protects against unexpectedly large output).
-            use tokio::io::AsyncReadExt;
-            let mut stdout_bytes = Vec::with_capacity(cap.min(64 * 1024));
-            if let Some(mut out) = child.stdout.take() {
-                let mut buf = vec![0u8; 8192];
-                loop {
-                    let n = out.read(&mut buf).await.unwrap_or(0);
-                    if n == 0 {
-                        break;
-                    }
-                    let remaining = cap.saturating_sub(stdout_bytes.len());
-                    let take = n.min(remaining);
-                    stdout_bytes.extend_from_slice(&buf[..take]);
-                    if stdout_bytes.len() >= cap {
-                        break;
-                    }
-                }
-            }
-
-            let stderr_output = {
-                let mut buf = Vec::with_capacity(0);
-                if let Some(mut err) = child.stderr.take() {
-                    // Cap stderr at 4 KiB — enough for any error message, prevents OOM.
-                    let mut tmp = vec![0u8; 4096];
-                    let n = err.read(&mut tmp).await.unwrap_or(0);
-                    buf.extend_from_slice(&tmp[..n]);
-                }
-                buf
-            };
-
-            // Reap child (ignore errors — process may already have exited naturally).
-            let _ = child.kill().await;
-            let status = child.wait().await;
+            let stdout = String::from_utf8_lossy(&stdout_bytes);
+            let stderr = String::from_utf8_lossy(&stderr_bytes);
 
             // rg exits: 0 = matches found, 1 = no matches, 2+ = error, None = signal-killed.
-            let exit_code = status.ok().and_then(|s| s.code());
-            let stdout = String::from_utf8_lossy(&stdout_bytes);
-            let stderr = String::from_utf8_lossy(&stderr_output);
-
-            // Exit code 2+ (or signal-killed with no output) = rg error
             if exit_code == Some(2)
                 || (exit_code.is_none() && stdout.is_empty())
                 || (exit_code.is_some_and(|c| c > 2) && stdout.is_empty())
@@ -207,7 +144,6 @@ impl Tool for GrepTool {
                 });
             }
 
-            // Parse lines and apply truncation
             let result = format_grep_output(GrepOutputArgs {
                 raw: &stdout,
                 workspace: &workspace,
@@ -235,6 +171,91 @@ struct GrepOutputArgs<'a> {
 
 /// Format rg output lines, applying match limit and byte truncation.
 /// Each line from rg is: `file:line:content` for matches, `--` for separators.
+/// Parameters for a ripgrep invocation.
+struct RgArgs<'a> {
+    rg_cmd: &'a str,
+    workspace: &'a Path,
+    pattern: &'a str,
+    full_path: &'a Path,
+    glob: Option<&'a str>,
+    ignore_case: bool,
+    literal: bool,
+    context_lines: usize,
+}
+
+/// Build the ripgrep `tokio::process::Command` from tool arguments.
+fn build_rg_command(a: &RgArgs<'_>) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new(a.rg_cmd);
+    cmd.current_dir(a.workspace)
+        .arg("--line-number")
+        .arg("--color=never")
+        .arg("--hidden")
+        .arg("--no-heading");
+    if a.ignore_case {
+        cmd.arg("--ignore-case");
+    }
+    if a.literal {
+        cmd.arg("--fixed-strings");
+    }
+    if let Some(g) = a.glob {
+        cmd.arg("--glob").arg(g);
+    }
+    if a.context_lines > 0 {
+        cmd.arg(format!("--context={}", a.context_lines));
+    }
+    cmd.arg("--").arg(a.pattern).arg(a.full_path);
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    cmd
+}
+
+/// Spawn rg, read capped stdout/stderr, reap child, return (stdout_bytes, stderr_bytes, exit_code).
+async fn run_rg(
+    mut cmd: tokio::process::Command,
+) -> Result<(Vec<u8>, Vec<u8>, Option<i32>), DomainError> {
+    use tokio::io::AsyncReadExt;
+
+    let cap = MAX_OUTPUT_BYTES * 2;
+    let mut child = cmd.spawn().map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            DomainError::Tool(
+                "rg not found on PATH — install ripgrep: https://github.com/BurntSushi/ripgrep#installation".to_string()
+            )
+        } else {
+            DomainError::Tool(format!("grep failed to spawn rg: {}", e))
+        }
+    })?;
+
+    let mut stdout_bytes = Vec::with_capacity(cap.min(64 * 1024));
+    if let Some(mut out) = child.stdout.take() {
+        let mut buf = vec![0u8; 8192];
+        loop {
+            let n = out.read(&mut buf).await.unwrap_or(0);
+            if n == 0 {
+                break;
+            }
+            let remaining = cap.saturating_sub(stdout_bytes.len());
+            let take = n.min(remaining);
+            stdout_bytes.extend_from_slice(&buf[..take]);
+            if stdout_bytes.len() >= cap {
+                break;
+            }
+        }
+    }
+
+    let mut stderr_bytes = Vec::new();
+    if let Some(mut err) = child.stderr.take() {
+        let mut tmp = vec![0u8; 4096];
+        let n = err.read(&mut tmp).await.unwrap_or(0);
+        stderr_bytes.extend_from_slice(&tmp[..n]);
+    }
+
+    let _ = child.kill().await;
+    let status = child.wait().await;
+    let exit_code = status.ok().and_then(|s| s.code());
+    Ok((stdout_bytes, stderr_bytes, exit_code))
+}
+
 fn format_grep_output(a: GrepOutputArgs<'_>) -> String {
     let GrepOutputArgs {
         raw,
@@ -370,35 +391,32 @@ mod tests {
         (tool, ws, tmp)
     }
 
-    fn grep_output(raw: &str, ws: &str, limit: usize, line: usize, bytes: usize) -> String {
+    fn fmt_grep(raw: &str, ws: &str, limit: usize, max_bytes: usize) -> String {
         format_grep_output(GrepOutputArgs {
             raw,
             workspace: &PathBuf::from(ws),
             match_limit: limit,
-            max_line_bytes: line,
-            max_output_bytes: bytes,
+            max_line_bytes: 500,
+            max_output_bytes: max_bytes,
         })
     }
 
     #[test]
     fn test_format_grep_output_empty() {
-        assert_eq!(
-            grep_output("", "/ws", 100, 500, 50 * 1024),
-            "No matches found"
-        );
+        assert_eq!(fmt_grep("", "/ws", 100, 50 * 1024), "No matches found");
     }
 
     #[test]
     fn test_format_grep_output_basic() {
         let raw = "/ws/main.rs:1:fn main() {}";
-        let result = grep_output(raw, "/ws", 100, 500, 50 * 1024);
+        let result = fmt_grep(raw, "/ws", 100, 50 * 1024);
         assert!(result.contains("main.rs:1:"));
     }
 
     #[test]
     fn test_format_grep_output_relativises_path() {
         let raw = "/workspace/src/foo.rs:5:hello world";
-        let result = grep_output(raw, "/workspace", 100, 500, 50 * 1024);
+        let result = fmt_grep(raw, "/workspace", 100, 50 * 1024);
         assert!(result.contains("src/foo.rs:5:hello world"));
         assert!(!result.contains("/workspace/src/foo.rs"));
     }
@@ -409,7 +427,7 @@ mod tests {
             .map(|i| format!("/ws/file.rs:{}:needle here", i))
             .collect();
         let raw = lines.join("\n");
-        let result = grep_output(&raw, "/ws", 10, 500, 50 * 1024);
+        let result = fmt_grep(&raw, "/ws", 10, 50 * 1024);
         assert!(
             result.contains("[Showing first 10 matches"),
             "expected limit hint, got: {}",
@@ -424,7 +442,7 @@ mod tests {
             .map(|i| format!("/ws/f.rs:{}:{}", i, "x".repeat(20)))
             .collect();
         let raw = lines.join("\n");
-        let result = grep_output(&raw, "/ws", 1000, 500, 1024);
+        let result = fmt_grep(&raw, "/ws", 1000, 1024);
         assert!(
             result.contains("[Output truncated"),
             "expected byte truncation, got: {}",

@@ -15,11 +15,7 @@ fn given_empty_string(world: &mut QuectoWorld) {
 #[given(expr = "a string with {int} lines totalling {int} bytes")]
 fn given_string_with_lines_and_bytes(world: &mut QuectoWorld, lines: usize, total_bytes: usize) {
     let bytes_per_line = total_bytes / lines;
-    let char_count = if bytes_per_line > 1 {
-        bytes_per_line - 1
-    } else {
-        0
-    };
+    let char_count = bytes_per_line.saturating_sub(1);
     let mut s = String::new();
     for i in 0..lines {
         s.push_str(&"a".repeat(char_count));

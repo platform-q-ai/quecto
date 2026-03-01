@@ -65,6 +65,14 @@ impl ContextSpillStore for InMemorySpillStore {
             .collect();
         Box::pin(async move { Ok(entries) })
     }
+
+    fn clear(
+        &self,
+        _session_key: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
+        self.entries.lock().unwrap().clear();
+        Box::pin(async { Ok(()) })
+    }
 }
 
 // ===========================================================================

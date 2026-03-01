@@ -550,9 +550,39 @@ fn given_gateway_with_outbound_channel(world: &mut QuectoWorld) {
     world.cron_outbound_rx = Some(rx);
 }
 
+struct DeliverToCronSpec {
+    name: String,
+    seconds: u64,
+    message: String,
+    deliver_to: String,
+}
+
+fn add_cron_job_with_deliver_to(world: &mut QuectoWorld, spec: DeliverToCronSpec) {
+    let store = world
+        .gateway_cron_store
+        .as_ref()
+        .expect("gateway cron store not set");
+    let job = CronJob {
+        id: spec.name.to_lowercase().replace(' ', "-"),
+        name: spec.name.clone(),
+        message: spec.message,
+        schedule: CronSchedule::Interval {
+            seconds: spec.seconds,
+        },
+        enabled: true,
+        deliver_to: Some(spec.deliver_to),
+        last_error: None,
+        last_run_at: 0,
+        run_once: false,
+    };
+    store.add(job).unwrap();
+}
+
 #[given(
     expr = "a cron job {string} with interval {int} seconds and message {string} and deliver_to {string}"
 )]
+// Cucumber step functions have unavoidable arg count: world + all captures from the step expression.
+#[allow(clippy::too_many_arguments)]
 fn given_cron_job_with_message_and_deliver_to(
     world: &mut QuectoWorld,
     name: String,
@@ -560,22 +590,15 @@ fn given_cron_job_with_message_and_deliver_to(
     message: String,
     deliver_to: String,
 ) {
-    let store = world
-        .gateway_cron_store
-        .as_ref()
-        .expect("gateway cron store not set");
-    let job = CronJob {
-        id: name.to_lowercase().replace(' ', "-"),
-        name: name.clone(),
-        message,
-        schedule: CronSchedule::Interval { seconds },
-        enabled: true,
-        deliver_to: Some(deliver_to),
-        last_error: None,
-        last_run_at: 0,
-        run_once: false,
-    };
-    store.add(job).unwrap();
+    add_cron_job_with_deliver_to(
+        world,
+        DeliverToCronSpec {
+            name,
+            seconds,
+            message,
+            deliver_to,
+        },
+    );
 }
 
 #[when("the cron tick fires and results are delivered")]
@@ -613,7 +636,8 @@ fn when_cron_tick_fires_and_delivers(world: &mut QuectoWorld) {
                     target: target.clone(),
                     text: result.response.clone(),
                 };
-                let _ = rt.block_on(outbound_tx.send(msg));
+                rt.block_on(outbound_tx.send(msg))
+                    .expect("outbound send failed");
             }
         }
     }

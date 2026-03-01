@@ -345,79 +345,93 @@ async fn run_child_with_timeout(
     mut stream_tasks: StreamTasks,
     timeout_dur: Duration,
 ) -> Result<ToolResult, DomainError> {
+    match tokio::time::timeout(timeout_dur, child.wait()).await {
+        Ok(Ok(status)) => {
+            let output = collect_and_truncate_output(&mut stream_tasks).await;
+            Ok(make_exit_result(status, output))
+        }
+        Ok(Err(e)) => Err(DomainError::Tool(format!("bash failed: {}", e))),
+        Err(_) => Ok(handle_timeout(child, stream_tasks, timeout_dur).await),
+    }
+}
+
+/// Collect stdout + stderr, truncate, and append path hint if needed.
+async fn collect_and_truncate_output(stream_tasks: &mut StreamTasks) -> String {
     const TAIL_MAX_LINES: usize = 2000;
     const TAIL_MAX_BYTES: usize = 50 * 1024;
 
-    match tokio::time::timeout(timeout_dur, child.wait()).await {
-        Ok(Ok(status)) => {
-            let (stdout_raw, _stdout_truncated_head) =
-                await_stream_output(stream_tasks.stdout_task.take()).await;
-            let (stderr_raw, _stderr_truncated_head) =
-                await_stream_output(stream_tasks.stderr_task.take()).await;
+    let (stdout_raw, _) = await_stream_output(stream_tasks.stdout_task.take()).await;
+    let (stderr_raw, _) = await_stream_output(stream_tasks.stderr_task.take()).await;
 
-            let combined = if stderr_raw.is_empty() {
-                stdout_raw
-            } else if stdout_raw.is_empty() {
-                stderr_raw
-            } else {
-                format!("{}\n{}", stdout_raw, stderr_raw)
-            };
+    let combined = if stderr_raw.is_empty() {
+        stdout_raw
+    } else if stdout_raw.is_empty() {
+        stderr_raw
+    } else {
+        format!("{}\n{}", stdout_raw, stderr_raw)
+    };
 
-            let (truncated_output, was_truncated) =
-                truncate_tail_output(&combined, TAIL_MAX_LINES, TAIL_MAX_BYTES);
+    let (truncated_output, was_truncated) =
+        truncate_tail_output(&combined, TAIL_MAX_LINES, TAIL_MAX_BYTES);
+    let mut content = truncated_output;
 
-            let mut content = truncated_output;
-
-            if was_truncated {
-                let combined_len = combined.len();
-                let hint = if let Some(tmp_path) = save_to_temp_file(combined).await {
-                    format!(
-                        "\n[Output truncated. Full output ({} bytes) saved to: {}]",
-                        combined_len, tmp_path
-                    )
-                } else {
-                    format!(
-                        "\n[Output truncated to last {} lines / {} bytes]",
-                        TAIL_MAX_LINES, TAIL_MAX_BYTES
-                    )
-                };
-                content.push_str(&hint);
-            }
-
-            if status.success() {
-                Ok(ToolResult {
-                    content,
-                    is_error: false,
-                    image_blocks: vec![],
-                })
-            } else {
-                Ok(ToolResult {
-                    content: format!("exit code {}\n{}", status.code().unwrap_or(-1), content),
-                    is_error: true,
-                    image_blocks: vec![],
-                })
-            }
-        }
-        Ok(Err(e)) => Err(DomainError::Tool(format!("bash failed: {}", e))),
-        Err(_) => {
-            let _ = child.kill().await;
-            let _ = child.wait().await;
-            let _ = await_stream_output_with_timeout(
-                stream_tasks.stdout_task.take(),
-                STREAM_DRAIN_TIMEOUT_ON_KILL,
+    if was_truncated {
+        let combined_len = combined.len();
+        let hint = if let Some(tmp_path) = save_to_temp_file(combined).await {
+            format!(
+                "\n[Output truncated. Full output ({} bytes) saved to: {}]",
+                combined_len, tmp_path
             )
-            .await;
-            let _ = await_stream_output_with_timeout(
-                stream_tasks.stderr_task.take(),
-                STREAM_DRAIN_TIMEOUT_ON_KILL,
+        } else {
+            format!(
+                "\n[Output truncated to last {} lines / {} bytes]",
+                TAIL_MAX_LINES, TAIL_MAX_BYTES
             )
-            .await;
-            Ok(ToolResult {
-                content: format!("command timed out after {}s", timeout_dur.as_secs()),
-                is_error: true,
-                image_blocks: vec![],
-            })
+        };
+        content.push_str(&hint);
+    }
+    content
+}
+
+/// Build a ToolResult from a process exit status.
+fn make_exit_result(status: std::process::ExitStatus, content: String) -> ToolResult {
+    if status.success() {
+        ToolResult {
+            content,
+            is_error: false,
+            image_blocks: vec![],
         }
+    } else {
+        ToolResult {
+            content: format!("exit code {}\n{}", status.code().unwrap_or(-1), content),
+            is_error: true,
+            image_blocks: vec![],
+        }
+    }
+}
+
+/// Kill the process and drain streams after a timeout.
+async fn handle_timeout(
+    mut child: tokio::process::Child,
+    mut stream_tasks: StreamTasks,
+    timeout_dur: Duration,
+) -> ToolResult {
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+    let _ = await_stream_output_with_timeout(
+        stream_tasks.stdout_task.take(),
+        STREAM_DRAIN_TIMEOUT_ON_KILL,
+    )
+    .await;
+    let _ = await_stream_output_with_timeout(
+        stream_tasks.stderr_task.take(),
+        STREAM_DRAIN_TIMEOUT_ON_KILL,
+    )
+    .await;
+    ToolResult {
+        content: format!("command timed out after {}s", timeout_dur.as_secs()),
+        is_error: true,
+        image_blocks: vec![],
     }
 }
 
