@@ -67,7 +67,8 @@ impl Tool for GrepTool {
             description: format!(
                 "Search file contents using ripgrep (rg). Requires rg on PATH. \
                  Returns file:line:content matches with optional context lines (file-N- format). \
-                 Output capped at {} matches or {}KB.",
+                 Output capped at {} matches or {}KB. \
+                 Example: {{\"pattern\": \"search_term\"}}",
                 DEFAULT_MATCH_LIMIT,
                 MAX_OUTPUT_BYTES / 1024
             ),
@@ -101,9 +102,14 @@ impl Tool for GrepTool {
             let args: serde_json::Value =
                 serde_json::from_str(&args_str).map_err(|e| DomainError::Tool(e.to_string()))?;
 
-            let pattern = args["pattern"]
-                .as_str()
-                .ok_or_else(|| DomainError::Tool("missing 'pattern' argument".to_string()))?;
+            let Some(pattern) = args["pattern"].as_str() else {
+                return Ok(ToolResult {
+                    content: "missing 'pattern' argument. Example: {\"pattern\": \"search_term\"}"
+                        .to_string(),
+                    is_error: true,
+                    image_blocks: vec![],
+                });
+            };
 
             let search_path = args["path"].as_str().unwrap_or(".");
             let full_path = resolve_to_cwd(search_path, &workspace);
@@ -735,5 +741,37 @@ mod tests {
         let (tool, _ws, _tmp) = test_grep();
         let result = tool.execute(r#"{"pattern": "root", "path": "/etc"}"#).await;
         assert!(result.is_err() || result.unwrap().is_error);
+    }
+
+    // --- Fix 2: Actionable missing-parameter error ---
+
+    #[tokio::test]
+    async fn test_grep_empty_object_returns_actionable_error() {
+        let (tool, _ws, _tmp) = test_grep();
+        let result = tool.execute("{}").await.unwrap();
+        assert!(result.is_error, "expected error, got: {}", result.content);
+        assert!(
+            result.content.contains("pattern"),
+            "should mention missing 'pattern', got: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("Example"),
+            "should include example, got: {}",
+            result.content
+        );
+    }
+
+    // --- Fix 3: Description includes example ---
+
+    #[test]
+    fn test_grep_description_includes_example() {
+        let (tool, _ws, _tmp) = test_grep();
+        let def = tool.definition();
+        assert!(
+            def.description.contains("Example"),
+            "grep description should include Example, got: {}",
+            def.description
+        );
     }
 }

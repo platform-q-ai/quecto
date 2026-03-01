@@ -36,7 +36,8 @@ impl Tool for LsTool {
             description: format!(
                 "List directory contents. Defaults to the current working directory \
                  when path is omitted. Entries are sorted case-insensitively; directories \
-                 are suffixed with '/'. Output capped at {} entries or 50KB.",
+                 are suffixed with '/'. Output capped at {} entries or 50KB. \
+                 Example: {{\"path\": \"src\"}}",
                 LS_DEFAULT_LIMIT
             ),
             parameters_schema: format!(
@@ -289,6 +290,18 @@ mod tests {
             result.content.contains("5 entries limit reached"),
             "expected limit notice, got: {}",
             result.content
+        );
+    }
+
+    #[test]
+    fn test_ls_description_includes_example() {
+        let (ws, sb, _tmp) = test_tools();
+        let tool = LsTool::new(ws, sb);
+        let def = tool.definition();
+        assert!(
+            def.description.contains("Example"),
+            "ls description should include Example, got: {}",
+            def.description
         );
     }
 }

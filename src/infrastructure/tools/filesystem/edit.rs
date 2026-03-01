@@ -50,7 +50,8 @@ impl Tool for EditTool {
         ToolDefinition {
             name: "edit".to_string(),
             description: "Edit a file by replacing exact text. The oldText must match exactly \
-                          (including whitespace). Use this for precise, surgical edits."
+                          (including whitespace). Use this for precise, surgical edits. \
+                          Example: {\"path\": \"file.txt\", \"oldText\": \"old\", \"newText\": \"new\"}"
                 .to_string(),
             parameters_schema: r#"{"type":"object","properties":{
                 "path":{"type":"string","description":"Path to the file to edit (relative or absolute)"},
@@ -72,19 +73,37 @@ impl Tool for EditTool {
         Box::pin(async move {
             let args: serde_json::Value =
                 serde_json::from_str(&args_str).map_err(|e| DomainError::Tool(e.to_string()))?;
-            let path = args["path"]
-                .as_str()
-                .ok_or_else(|| DomainError::Tool("missing 'path' argument".to_string()))?;
+            let edit_example =
+                "{\"path\": \"file.txt\", \"oldText\": \"old\", \"newText\": \"new\"}";
+            let Some(path) = args["path"].as_str() else {
+                return Ok(ToolResult {
+                    content: format!("missing 'path' argument. Example: {}", edit_example),
+                    is_error: true,
+                    image_blocks: vec![],
+                });
+            };
             // Accept "oldText" (Pi name) or legacy "old"
-            let old_text = args["oldText"]
-                .as_str()
-                .or_else(|| args["old"].as_str())
-                .ok_or_else(|| DomainError::Tool("missing 'oldText' argument".to_string()))?;
+            let old_text = match args["oldText"].as_str().or_else(|| args["old"].as_str()) {
+                Some(v) => v,
+                None => {
+                    return Ok(ToolResult {
+                        content: format!("missing 'oldText' argument. Example: {}", edit_example),
+                        is_error: true,
+                        image_blocks: vec![],
+                    });
+                }
+            };
             // Accept "newText" (Pi name) or legacy "new"
-            let new_text = args["newText"]
-                .as_str()
-                .or_else(|| args["new"].as_str())
-                .ok_or_else(|| DomainError::Tool("missing 'newText' argument".to_string()))?;
+            let new_text = match args["newText"].as_str().or_else(|| args["new"].as_str()) {
+                Some(v) => v,
+                None => {
+                    return Ok(ToolResult {
+                        content: format!("missing 'newText' argument. Example: {}", edit_example),
+                        is_error: true,
+                        image_blocks: vec![],
+                    });
+                }
+            };
 
             let full_path = resolve_and_validate(&workspace, &sandbox, path)?;
             enforce_edit_file_size_limit(&full_path).await?;
@@ -743,6 +762,36 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("exceeds maximum allowed size")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_edit_empty_object_returns_actionable_error() {
+        let (ws, sb, _tmp) = test_tools();
+        let tool = EditTool::new(ws, sb);
+        let result = tool.execute("{}").await.unwrap();
+        assert!(result.is_error, "expected error, got: {}", result.content);
+        assert!(
+            result.content.contains("path"),
+            "should mention 'path', got: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("Example"),
+            "should include example, got: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    fn test_edit_description_includes_example() {
+        let (ws, sb, _tmp) = test_tools();
+        let tool = EditTool::new(ws, sb);
+        let def = tool.definition();
+        assert!(
+            def.description.contains("Example"),
+            "edit description should include Example, got: {}",
+            def.description
         );
     }
 }

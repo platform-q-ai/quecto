@@ -251,7 +251,22 @@ impl ExecTool {
             return Err(DomainError::Config(startup_error.clone()));
         }
 
-        let (command, per_invocation_timeout) = extract_command_and_timeout(arguments)?;
+        let (command, per_invocation_timeout) = match extract_command_and_timeout(arguments) {
+            Ok(v) => v,
+            Err(e) => {
+                let msg = e.to_string();
+                // Convert missing-param DomainError to ToolResult so the LLM
+                // gets an actionable error it can self-correct from.
+                if msg.contains("missing") {
+                    return Ok(ToolResult {
+                        content: msg.strip_prefix("tool error: ").unwrap_or(&msg).to_string(),
+                        is_error: true,
+                        image_blocks: vec![],
+                    });
+                }
+                return Err(e);
+            }
+        };
 
         // Per-invocation timeout is capped at the configured maximum.
         let effective_timeout = match per_invocation_timeout {
@@ -331,7 +346,11 @@ fn extract_command_and_timeout(arguments: &str) -> Result<(String, Option<Durati
     let command = args["command"]
         .as_str()
         .map(|s| s.to_string())
-        .ok_or_else(|| DomainError::Tool("missing 'command' argument".to_string()))?;
+        .ok_or_else(|| {
+            DomainError::Tool(
+                "missing 'command' argument. Example: {\"command\": \"ls -la\"}".to_string(),
+            )
+        })?;
     // Accept both integer and float timeout values (schema says "number").
     // as_u64() returns None for floats; use as_f64() and round for broad compatibility.
     let timeout = args["timeout"].as_f64().and_then(|f| {
@@ -599,7 +618,8 @@ impl Tool for ExecTool {
             description: "Execute a bash command in the current working directory. Returns stdout \
                           and stderr. Output is truncated to last 2000 lines or 50KB (whichever is \
                           hit first). If truncated, full output is saved to a temp file. \
-                          Optionally provide a timeout in seconds."
+                          Optionally provide a timeout in seconds. \
+                          Example: {\"command\": \"ls -la\"}"
                 .to_string(),
             parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string","description":"Bash command to execute"},"timeout":{"type":"number","description":"Timeout in seconds (optional, capped at configured maximum)"}},"required":["command"]}"#.to_string(),
         }
@@ -616,5 +636,5 @@ impl Tool for ExecTool {
 }
 
 #[cfg(test)]
-#[path = "../exec_tests.rs"]
+#[path = "../bash_tests.rs"]
 mod tests;

@@ -58,7 +58,8 @@ impl Tool for FindTool {
             name: "find".to_string(),
             description: "Find files by glob pattern using fd. Requires fd on PATH. \
                           Returns newline-separated relative paths. Respects .gitignore. \
-                          Output capped at 1000 results or 50KB."
+                          Output capped at 1000 results or 50KB. \
+                          Example: {\"pattern\": \"*.rs\"}"
                 .to_string(),
             parameters_schema: r#"{
                 "type": "object",
@@ -86,9 +87,14 @@ impl Tool for FindTool {
             let args: serde_json::Value =
                 serde_json::from_str(&args_str).map_err(|e| DomainError::Tool(e.to_string()))?;
 
-            let pattern = args["pattern"]
-                .as_str()
-                .ok_or_else(|| DomainError::Tool("missing 'pattern' argument".to_string()))?;
+            let Some(pattern) = args["pattern"].as_str() else {
+                return Ok(ToolResult {
+                    content: "missing 'pattern' argument. Example: {\"pattern\": \"*.rs\"}"
+                        .to_string(),
+                    is_error: true,
+                    image_blocks: vec![],
+                });
+            };
 
             let search_path = args["path"].as_str().unwrap_or(".");
             let full_path = resolve_to_cwd(search_path, &workspace);
@@ -526,5 +532,37 @@ mod tests {
             .execute(r#"{"pattern": "*.conf", "path": "/etc"}"#)
             .await;
         assert!(result.is_err() || result.unwrap().is_error);
+    }
+
+    // --- Fix 2: Actionable missing-parameter error ---
+
+    #[tokio::test]
+    async fn test_find_empty_object_returns_actionable_error() {
+        let (tool, _ws, _tmp) = test_find();
+        let result = tool.execute("{}").await.unwrap();
+        assert!(result.is_error, "expected error, got: {}", result.content);
+        assert!(
+            result.content.contains("pattern"),
+            "should mention missing 'pattern', got: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("Example"),
+            "should include example, got: {}",
+            result.content
+        );
+    }
+
+    // --- Fix 3: Description includes example ---
+
+    #[test]
+    fn test_find_description_includes_example() {
+        let (tool, _ws, _tmp) = test_find();
+        let def = tool.definition();
+        assert!(
+            def.description.contains("Example"),
+            "find description should include Example, got: {}",
+            def.description
+        );
     }
 }

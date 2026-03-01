@@ -1,6 +1,6 @@
 use super::*;
 
-use quecto::infrastructure::tools::exec::{ExecIsolationMode, ExecOptions, NsjailOptions};
+use quecto::infrastructure::tools::bash::{ExecIsolationMode, ExecOptions, NsjailOptions};
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 
 #[derive(Default)]
