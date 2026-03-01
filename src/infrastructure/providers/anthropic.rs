@@ -13,14 +13,31 @@ pub struct AnthropicProvider {
     api_key: String,
     api_base: String,
     client: reqwest::Client,
+    /// Whether the token is an OAuth access token (Bearer auth + Claude Code headers).
+    is_oauth: bool,
 }
 
 impl AnthropicProvider {
     pub fn new(api_key: String, api_base: Option<String>) -> Self {
+        let is_oauth = crate::infrastructure::auth::oauth::is_anthropic_oauth_token(&api_key);
         Self {
             api_key,
             api_base: api_base.unwrap_or_else(|| "https://api.anthropic.com".to_string()),
             client: reqwest::Client::new(),
+            is_oauth,
+        }
+    }
+
+    /// Apply the correct auth headers based on whether this is an OAuth or API key token.
+    fn apply_auth_headers(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if self.is_oauth {
+            builder
+                .header("Authorization", format!("Bearer {}", self.api_key))
+                .header("anthropic-beta", "claude-code-20250219,oauth-2025-04-20")
+                .header("user-agent", "claude-cli/2.1.2 (external, cli)")
+                .header("x-app", "cli")
+        } else {
+            builder.header("x-api-key", &self.api_key)
         }
     }
 
@@ -191,13 +208,15 @@ impl AnthropicProvider {
         body["stream"] = serde_json::Value::Bool(true);
         let url = format!("{}/v1/messages", self.api_base);
 
-        let response = self
+        let request_builder = self
             .client
             .post(&url)
-            .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
             .header("Content-Type", "application/json")
-            .json(&body)
+            .json(&body);
+        let request_builder = self.apply_auth_headers(request_builder);
+
+        let response = request_builder
             .send()
             .await
             .map_err(|e| DomainError::Provider(format!("HTTP error: {}", e)))?;
@@ -315,13 +334,15 @@ impl LlmProvider for AnthropicProvider {
         let url = format!("{}/v1/messages", self.api_base);
 
         Box::pin(async move {
-            let response = self
+            let request_builder = self
                 .client
                 .post(&url)
-                .header("x-api-key", &self.api_key)
                 .header("anthropic-version", "2023-06-01")
                 .header("Content-Type", "application/json")
-                .json(&body)
+                .json(&body);
+            let request_builder = self.apply_auth_headers(request_builder);
+
+            let response = request_builder
                 .send()
                 .await
                 .map_err(|e| DomainError::Provider(format!("HTTP error: {}", e)))?;

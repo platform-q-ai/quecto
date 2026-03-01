@@ -41,6 +41,8 @@ fn given_stored_credential(world: &mut QuectoWorld, provider: String, method: St
             token: "test-token".to_string(),
             method: auth_method,
             expires_at: None,
+            refresh_token: None,
+            account_id: None,
         })
         .unwrap();
 }
@@ -58,6 +60,8 @@ fn given_expired_credential(world: &mut QuectoWorld, provider: String) {
             token: "expired-token".to_string(),
             method: AuthMethod::Token,
             expires_at: Some(0), // epoch — always expired
+            refresh_token: None,
+            account_id: None,
         })
         .unwrap();
 }
@@ -74,6 +78,8 @@ fn when_store_token(world: &mut QuectoWorld, token: String, provider: String) {
             token,
             method: AuthMethod::Token,
             expires_at: None,
+            refresh_token: None,
+            account_id: None,
         })
         .unwrap();
 }
@@ -226,6 +232,8 @@ fn given_stored_credential_in_base(world: &mut QuectoWorld, provider: String) {
             token: "test-token".to_string(),
             method: AuthMethod::Token,
             expires_at: None,
+            refresh_token: None,
+            account_id: None,
         })
         .unwrap();
 }
@@ -249,6 +257,8 @@ fn given_stored_credential_method_in_base(
             token: "test-token".to_string(),
             method: auth_method,
             expires_at: None,
+            refresh_token: None,
+            account_id: None,
         })
         .unwrap();
 }
@@ -264,6 +274,8 @@ fn given_expired_credential_in_base(world: &mut QuectoWorld, provider: String) {
             token: "expired-token".to_string(),
             method: AuthMethod::Token,
             expires_at: Some(0), // epoch — always expired
+            refresh_token: None,
+            account_id: None,
         })
         .unwrap();
 }
@@ -319,6 +331,8 @@ fn given_stored_credential_with_token(world: &mut QuectoWorld, provider: String,
                 token,
                 method: AuthMethod::Token,
                 expires_at: None,
+                refresh_token: None,
+                account_id: None,
             })
             .unwrap();
     } else {
@@ -330,6 +344,8 @@ fn given_stored_credential_with_token(world: &mut QuectoWorld, provider: String,
                 token,
                 method: AuthMethod::Token,
                 expires_at: None,
+                refresh_token: None,
+                account_id: None,
             })
             .unwrap();
     }

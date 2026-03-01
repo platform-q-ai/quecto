@@ -1168,6 +1168,8 @@ fn given_credential_store_valid_token(world: &mut QuectoWorld, token: String, pr
             token,
             method: AuthMethod::Token,
             expires_at: None, // no expiry = always valid
+            refresh_token: None,
+            account_id: None,
         })
         .expect("store credential");
 }
@@ -1182,6 +1184,8 @@ fn given_credential_store_expired_token(world: &mut QuectoWorld, token: String, 
             token,
             method: AuthMethod::Token,
             expires_at: Some(0), // epoch = always expired
+            refresh_token: None,
+            account_id: None,
         })
         .expect("store credential");
 }

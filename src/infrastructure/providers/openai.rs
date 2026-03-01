@@ -13,14 +13,28 @@ pub struct OpenAiProvider {
     api_key: String,
     api_base: String,
     client: reqwest::Client,
+    /// Account ID for OAuth tokens (chatgpt_account_id from JWT).
+    account_id: Option<String>,
 }
 
 impl OpenAiProvider {
     pub fn new(api_key: String, api_base: Option<String>) -> Self {
+        let account_id = crate::infrastructure::auth::oauth::extract_openai_account_id(&api_key);
         Self {
             api_key,
             api_base: api_base.unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
             client: reqwest::Client::new(),
+            account_id,
+        }
+    }
+
+    /// Apply auth headers. Adds `chatgpt-account-id` for OAuth JWT tokens.
+    fn apply_auth_headers(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        let builder = builder.header("Authorization", format!("Bearer {}", self.api_key));
+        if let Some(ref account_id) = self.account_id {
+            builder.header("chatgpt-account-id", account_id)
+        } else {
+            builder
         }
     }
 
@@ -151,12 +165,14 @@ impl OpenAiProvider {
         body["stream"] = serde_json::Value::Bool(true);
         let url = format!("{}/chat/completions", self.api_base);
 
-        let response = self
+        let request_builder = self
             .client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
-            .json(&body)
+            .json(&body);
+        let request_builder = self.apply_auth_headers(request_builder);
+
+        let response = request_builder
             .send()
             .await
             .map_err(|e| DomainError::Provider(format!("HTTP error: {}", e)))?;
@@ -265,12 +281,14 @@ impl LlmProvider for OpenAiProvider {
         let url = format!("{}/chat/completions", self.api_base);
 
         Box::pin(async move {
-            let response = self
+            let request_builder = self
                 .client
                 .post(&url)
-                .header("Authorization", format!("Bearer {}", self.api_key))
                 .header("Content-Type", "application/json")
-                .json(&body)
+                .json(&body);
+            let request_builder = self.apply_auth_headers(request_builder);
+
+            let response = request_builder
                 .send()
                 .await
                 .map_err(|e| DomainError::Provider(format!("HTTP error: {}", e)))?;

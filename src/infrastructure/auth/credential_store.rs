@@ -35,6 +35,12 @@ pub struct Credential {
     pub method: AuthMethod,
     /// Unix timestamp (seconds) when this credential expires, or None if no expiry.
     pub expires_at: Option<i64>,
+    /// Refresh token for OAuth credentials. Used to obtain new access tokens.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_token: Option<String>,
+    /// Account ID for OpenAI OAuth (chatgpt_account_id from JWT).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
 }
 
 impl std::fmt::Debug for Credential {
@@ -44,6 +50,11 @@ impl std::fmt::Debug for Credential {
             .field("token", &"[REDACTED]")
             .field("method", &self.method)
             .field("expires_at", &self.expires_at)
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("account_id", &self.account_id)
             .finish()
     }
 }
@@ -237,6 +248,8 @@ mod tests {
             token: token.to_string(),
             method,
             expires_at: None,
+            refresh_token: None,
+            account_id: None,
         }
     }
 
@@ -246,6 +259,8 @@ mod tests {
             token: "expired-token".to_string(),
             method: AuthMethod::Token,
             expires_at: Some(0), // epoch — always expired
+            refresh_token: None,
+            account_id: None,
         }
     }
 
@@ -335,6 +350,8 @@ mod tests {
             token: "token".to_string(),
             method: AuthMethod::OAuth,
             expires_at: Some(i64::MAX), // far future
+            refresh_token: None,
+            account_id: None,
         };
         assert!(!cred.is_expired());
         assert_eq!(cred.status(), "active");

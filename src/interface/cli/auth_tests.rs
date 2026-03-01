@@ -70,16 +70,15 @@ fn test_auth_login_missing_provider() {
 }
 
 #[test]
-fn test_auth_login_missing_token() {
+fn test_auth_login_missing_token_flag_value() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
-        stdin_data: Some("\n".to_string()),
         ..Default::default()
     };
-    let out = run_with_output(args("auth login --provider openai"), &ctx);
+    let out = run_with_output(args("auth login --token"), &ctx);
     assert_eq!(out.exit_code, 1);
-    assert!(out.stderr.contains("must not be empty"));
+    assert!(out.stderr.contains("--token requires a value"));
 }
 
 #[test]
@@ -97,6 +96,8 @@ fn test_auth_logout_removes_credential() {
             token: "sk-test".to_string(),
             method: AuthMethod::Token,
             expires_at: None,
+            refresh_token: None,
+            account_id: None,
         })
         .unwrap();
 
@@ -128,6 +129,8 @@ fn test_auth_status_shows_credentials() {
             token: "sk-test".to_string(),
             method: AuthMethod::Token,
             expires_at: None,
+            refresh_token: None,
+            account_id: None,
         })
         .unwrap();
 
@@ -163,6 +166,8 @@ fn test_auth_status_expired() {
             token: "expired-tok".to_string(),
             method: AuthMethod::Token,
             expires_at: Some(0),
+            refresh_token: None,
+            account_id: None,
         })
         .unwrap();
 
@@ -265,47 +270,73 @@ fn test_auth_logout_unknown_flag_rejected() {
 // ===================================================================
 
 #[test]
-fn test_auth_login_interactive_from_stdin() {
+fn test_auth_login_bare_prompts_provider_choice() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
-        stdin_data: Some("sk-from-stdin-test\n".to_string()),
+        stdin_data: Some("3\n".to_string()), // invalid choice
         ..Default::default()
     };
-    let out = run_with_output(args("auth login --provider openai"), &ctx);
+    let out = run_with_output(args("auth login"), &ctx);
+    assert_eq!(out.exit_code, 1);
+    assert!(
+        out.stdout.contains("Choose a provider"),
+        "expected provider chooser, got: {}",
+        out.stdout
+    );
+    assert!(out.stderr.contains("invalid choice"));
+}
+
+#[test]
+fn test_auth_login_bare_choose_anthropic() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    // Choose "1" (Anthropic), then empty auth code → error
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        stdin_data: Some("1\n".to_string()),
+        ..Default::default()
+    };
+    let out = run_with_output(args("auth login"), &ctx);
+    // Should show auth URL prompt (we can't complete OAuth in test)
+    assert!(
+        out.stdout.contains("claude.ai") || out.stderr.contains("must not be empty"),
+        "expected OAuth flow start, got stdout={} stderr={}",
+        out.stdout,
+        out.stderr
+    );
+}
+
+#[test]
+fn test_auth_login_bare_choose_openai() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        stdin_data: Some("2\n".to_string()), // Choose OpenAI
+        ..Default::default()
+    };
+    let out = run_with_output(args("auth login"), &ctx);
+    // OpenAI OAuth flow just prints the URL
     assert_eq!(out.exit_code, 0);
-    assert!(out.stdout.contains("Paste your API token"));
+    assert!(out.stdout.contains("Open this URL"));
+}
+
+#[test]
+fn test_auth_login_token_still_works() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
+    let out = run_with_output(
+        args("auth login --provider openai --token sk-direct-key"),
+        &ctx,
+    );
+    assert_eq!(out.exit_code, 0);
     assert!(out.stdout.contains("stored"));
 
     let store = CredentialStore::new(tmp.path());
     let cred = store.get("openai").unwrap().unwrap();
-    assert_eq!(cred.token, "sk-from-stdin-test");
-}
-
-#[test]
-fn test_auth_login_interactive_empty_stdin() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        stdin_data: Some("".to_string()),
-        ..Default::default()
-    };
-    let out = run_with_output(args("auth login --provider openai"), &ctx);
-    assert_eq!(out.exit_code, 1);
-    assert!(out.stderr.contains("must not be empty"));
-}
-
-#[test]
-fn test_auth_login_interactive_whitespace_stdin() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        stdin_data: Some("   \n".to_string()),
-        ..Default::default()
-    };
-    let out = run_with_output(args("auth login --provider openai"), &ctx);
-    assert_eq!(out.exit_code, 1);
-    assert!(out.stderr.contains("must not be empty"));
+    assert_eq!(cred.token, "sk-direct-key");
 }
 
 // ===================================================================
@@ -326,18 +357,21 @@ fn test_auth_login_oauth_openai() {
 }
 
 #[test]
-fn test_auth_login_oauth_unsupported_provider() {
+fn test_auth_login_oauth_anthropic_prompts_for_code() {
     let tmp = tempfile::TempDir::new().unwrap();
-    // Use oauth_base_url=None so it actually calls OAuthConfig::for_provider
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        stdin_data: Some("\n".to_string()), // empty code triggers error
         ..Default::default()
     };
-    // Anthropic doesn't support OAuth in for_provider
     let out = run_with_output(args("auth login --provider anthropic --oauth"), &ctx);
-    assert_eq!(out.exit_code, 1);
-    assert!(out.stderr.contains("not supported"));
-    assert!(out.stderr.contains("anthropic"));
+    // Should start the flow (show URL) but fail on empty code
+    assert!(
+        out.stdout.contains("claude.ai") || out.stderr.contains("must not be empty"),
+        "expected OAuth URL or empty code error, got stdout={} stderr={}",
+        out.stdout,
+        out.stderr
+    );
 }
 
 #[test]
@@ -366,8 +400,11 @@ fn test_auth_login_device_code_unsupported_provider() {
     };
     let out = run_with_output(args("auth login --provider anthropic --device-code"), &ctx);
     assert_eq!(out.exit_code, 1);
-    assert!(out.stderr.contains("not supported"));
-    assert!(out.stderr.contains("anthropic"));
+    assert!(
+        out.stderr.contains("not supported"),
+        "expected 'not supported' in stderr: {}",
+        out.stderr
+    );
 }
 
 // ===================================================================
