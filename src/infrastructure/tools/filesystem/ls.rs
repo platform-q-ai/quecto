@@ -39,13 +39,16 @@ impl Tool for LsTool {
                  are suffixed with '/'. Output capped at {} entries or 50KB.",
                 LS_DEFAULT_LIMIT
             ),
-            parameters_schema: r#"{
+            parameters_schema: format!(
+                r#"{{
                 "type": "object",
-                "properties": {
-                    "path":  {"type":"string","description":"Directory path to list (relative or absolute, defaults to '.')"},
-                    "limit": {"type":"number","description":"Maximum number of entries to return (default 500)"}
-                }
-            }"#.to_string(),
+                "properties": {{
+                    "path":  {{"type":"string","description":"Directory path to list (relative or absolute, defaults to '.')"}},
+                    "limit": {{"type":"number","description":"Maximum number of entries to return (default {}, max {})"}}
+                }}
+            }}"#,
+                LS_DEFAULT_LIMIT, LS_MAX_LIMIT
+            ),
         }
     }
 
@@ -111,7 +114,9 @@ impl Tool for LsTool {
             }
 
             // Pi parity: case-insensitive sort.
-            names.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()).then(a.cmp(b)));
+            // Pi parity: case-insensitive sort.
+            // sort_by_key allocates the lowercase key once per entry (not per comparison).
+            names.sort_by_key(|s| s.to_lowercase());
 
             let shown: &[String] = if over_limit { &names[..limit] } else { &names };
 
@@ -128,10 +133,12 @@ impl Tool for LsTool {
 
             // Pi parity: actionable truncation notices.
             if over_limit {
+                // Suggest doubling, but cap at LS_MAX_LIMIT to avoid suggesting an impossible value.
+                let suggested = (limit * 2).min(LS_MAX_LIMIT);
                 output.push_str(&format!(
                     "\n[{} entries limit reached. Use limit={} for more, or use a more specific path]",
                     limit,
-                    limit * 2
+                    suggested
                 ));
             } else if truncated_bytes {
                 output.push_str(&format!("\n[Output truncated at {} bytes]", LS_MAX_BYTES));
