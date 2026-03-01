@@ -315,7 +315,7 @@ fn default_temperature() -> f32 {
     0.7
 }
 fn default_max_tool_iterations() -> u32 {
-    20
+    500
 }
 fn default_exec_max_capture_bytes() -> usize {
     1024 * 1024
@@ -501,7 +501,7 @@ mod tests {
         assert_eq!(config.agents.defaults.max_tokens, 8192);
         assert!((config.agents.defaults.temperature - 0.7).abs() < f32::EPSILON);
         assert_eq!(config.agents.defaults.workspace, "~/.quecto/workspace");
-        assert_eq!(config.agents.defaults.max_tool_iterations, 20);
+        assert_eq!(config.agents.defaults.max_tool_iterations, 500);
         assert!(config.agents.defaults.restrict_to_workspace);
     }
 

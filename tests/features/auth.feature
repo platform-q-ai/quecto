@@ -7,19 +7,21 @@ Feature: Authentication
   @done
   Scenario: Interactive login prompts for token paste
     Given a quecto base directory at a temporary path
+    And a mock OAuth server for "anthropic" with token exchange
     When I start quecto with arguments "auth login --provider anthropic"
-    And I paste the token "sk-ant-test-token-123"
+    And I paste the token "test-auth-code-123"
     Then the output should contain "stored"
     And the credential for "anthropic" should exist in the base directory
-    And the stored credential method should be "token"
+    And the stored credential method should be "oauth"
 
   @done
   Scenario: OAuth login initiates browser flow
     Given a quecto base directory at a temporary path
-    And a mock OAuth server for "openai"
-    When I run quecto with arguments "auth login --provider openai --oauth"
+    And a mock OAuth server for "openai" with token exchange
+    When I start quecto with arguments "auth login --provider openai --oauth"
+    And I paste the token "test-auth-code-456"
     Then the output should contain a URL to open in the browser
-    And the output should contain "Waiting for authorization"
+    And the output should contain "stored"
 
   @done
   Scenario: Device code login for headless environments
