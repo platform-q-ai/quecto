@@ -1,8 +1,17 @@
+#[path = "auth_import.rs"]
+mod auth_import;
+
 use super::CliContext;
 use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
 
 /// Known provider names accepted by the auth commands.
 const KNOWN_PROVIDERS: &[&str] = &["openai", "anthropic"];
+
+/// Bundled output streams for auth subcommands.
+pub(super) struct Output<'a> {
+    pub stdout: &'a mut String,
+    pub stderr: &'a mut String,
+}
 
 pub(crate) fn cmd_auth(
     ctx: &CliContext,
@@ -34,11 +43,10 @@ fn cmd_auth_login(
     stdout: &mut String,
     stderr: &mut String,
 ) -> i32 {
-    let base = ctx.base_dir();
     let mut provider: Option<String> = None;
     let mut token: Option<String> = None;
-    let mut use_oauth = false;
     let mut use_device_code = false;
+    let mut import_opencode = false;
     let mut i = 0;
 
     while i < args.len() {
@@ -61,12 +69,16 @@ fn cmd_auth_login(
                     return 1;
                 }
             }
-            "--oauth" => {
-                use_oauth = true;
-                i += 1;
-            }
             "--device-code" => {
                 use_device_code = true;
+                i += 1;
+            }
+            "--import-opencode" => {
+                import_opencode = true;
+                i += 1;
+            }
+            // Keep --oauth as a silent alias (backwards compat)
+            "--oauth" => {
                 i += 1;
             }
             other if other.starts_with("--") => {
@@ -79,73 +91,128 @@ fn cmd_auth_login(
         }
     }
 
-    let Some(provider) = provider else {
-        stderr.push_str("auth login: --provider is required\n");
-        return 1;
+    let mut out = Output { stdout, stderr };
+
+    if import_opencode {
+        return cmd_auth_import_opencode(ctx, &mut out);
+    }
+
+    if let Some(token_val) = token {
+        return cmd_auth_login_token(ctx, provider, &token_val, &mut out);
+    }
+
+    if use_device_code {
+        let Some(provider) = provider else {
+            out.stderr
+                .push_str("auth login: --provider is required when using --device-code\n");
+            return 1;
+        };
+        return cmd_auth_login_device_code(ctx, &provider, &mut out);
+    }
+
+    let provider = match resolve_provider_interactive(ctx, provider, &mut out) {
+        Some(p) => p,
+        None => return 1,
     };
 
+    cmd_auth_login_oauth(ctx, &provider, &mut out)
+}
+
+/// Handle `--token` direct API key login.
+fn cmd_auth_login_token(
+    ctx: &CliContext,
+    provider: Option<String>,
+    token_val: &str,
+    out: &mut Output<'_>,
+) -> i32 {
+    let Some(provider) = provider else {
+        out.stderr
+            .push_str("auth login: --provider is required when using --token\n");
+        return 1;
+    };
     if !KNOWN_PROVIDERS.contains(&provider.as_str()) {
-        stderr.push_str(&format!(
+        out.stderr.push_str(&format!(
             "auth login: unknown provider '{}'. Known: {}\n",
             provider,
             KNOWN_PROVIDERS.join(", ")
         ));
         return 1;
     }
-
-    if use_oauth {
-        return cmd_auth_login_oauth(ctx, &provider, stdout, stderr);
-    }
-
-    if use_device_code {
-        return cmd_auth_login_device_code(ctx, &provider, stdout, stderr);
-    }
-
-    // If --token was provided, use it directly.
-    // Otherwise, prompt for interactive token paste.
-    let token = match token {
-        Some(t) => t,
-        None => {
-            stdout.push_str(&format!("Paste your API token for {}:\n", provider));
-            match read_stdin_line(ctx) {
-                Ok(line) => line,
-                Err(e) => {
-                    stderr.push_str(&format!("auth login: {}\n", e));
-                    return 1;
-                }
-            }
-        }
-    };
-
-    let token = token.trim().to_string();
+    let token = token_val.trim().to_string();
     if token.is_empty() {
-        stderr.push_str("auth login: --token value must not be empty\n");
+        out.stderr
+            .push_str("auth login: --token value must not be empty\n");
         return 1;
     }
-
-    let store = CredentialStore::new(&base);
+    let store = CredentialStore::new(ctx.base_dir());
     match store.store(Credential {
         provider: provider.clone(),
         token,
         method: AuthMethod::Token,
         expires_at: None,
+        refresh_token: None,
+        account_id: None,
     }) {
         Ok(()) => {
-            stdout.push_str(&format!("Credential stored for {}\n", provider));
+            out.stdout
+                .push_str(&format!("Credential stored for {}\n", provider));
             0
         }
         Err(e) => {
-            stderr.push_str(&format!("auth login: failed to store credential: {}\n", e));
+            out.stderr
+                .push_str(&format!("auth login: failed to store credential: {}\n", e));
             1
         }
     }
 }
 
+/// Resolve the provider interactively if not specified, or validate the given one.
+fn resolve_provider_interactive(
+    ctx: &CliContext,
+    provider: Option<String>,
+    out: &mut Output<'_>,
+) -> Option<String> {
+    match provider {
+        Some(p) => {
+            if !KNOWN_PROVIDERS.contains(&p.as_str()) {
+                out.stderr.push_str(&format!(
+                    "auth login: unknown provider '{}'. Known: {}\n",
+                    p,
+                    KNOWN_PROVIDERS.join(", ")
+                ));
+                return None;
+            }
+            Some(p)
+        }
+        None => {
+            out.stdout.push_str(
+                "Choose a provider:\n  1) Anthropic (Claude Pro/Max — OAuth)\n  \
+                 2) OpenAI (OAuth)\n\nEnter 1 or 2: ",
+            );
+            flush_stdout(ctx, out);
+            let choice = match read_stdin_line(ctx) {
+                Ok(line) => line.trim().to_string(),
+                Err(e) => {
+                    out.stderr.push_str(&format!("auth login: {}\n", e));
+                    return None;
+                }
+            };
+            match choice.as_str() {
+                "1" | "anthropic" => Some("anthropic".to_string()),
+                "2" | "openai" => Some("openai".to_string()),
+                _ => {
+                    out.stderr
+                        .push_str(&format!("auth login: invalid choice '{}'\n", choice));
+                    None
+                }
+            }
+        }
+    }
+}
+
 /// Read a single line from stdin (or from `ctx.stdin_data` in test mode).
-/// Returns `Err` with an error message if stdin cannot be read.
 pub(crate) fn read_stdin_line(ctx: &CliContext) -> Result<String, String> {
     if let Some(ref data) = ctx.stdin_data {
-        // Return the first line of pre-loaded stdin data.
         Ok(data.lines().next().unwrap_or("").to_string())
     } else {
         let mut line = String::new();
@@ -154,6 +221,19 @@ pub(crate) fn read_stdin_line(ctx: &CliContext) -> Result<String, String> {
             .map_err(|e| format!("failed to read from stdin: {}", e))?;
         Ok(line)
     }
+}
+
+/// Flush buffered stdout text to the terminal immediately (for interactive prompts).
+/// In test mode (when `stdin_data` is set), we skip the flush to preserve output
+/// in the buffer for assertions.
+fn flush_stdout(ctx: &CliContext, out: &mut Output<'_>) {
+    if ctx.stdin_data.is_some() || out.stdout.is_empty() {
+        return;
+    }
+    use std::io::Write;
+    print!("{}", out.stdout);
+    let _ = std::io::stdout().flush();
+    out.stdout.clear();
 }
 
 /// Resolve OAuth config: use test override if set, otherwise look up the provider.
@@ -182,40 +262,319 @@ fn resolve_oauth_config(
 }
 
 /// OAuth browser-based login flow.
-fn cmd_auth_login_oauth(
-    ctx: &CliContext,
-    provider: &str,
-    stdout: &mut String,
-    stderr: &mut String,
-) -> i32 {
-    let config = match resolve_oauth_config(ctx, provider, "OAuth", stderr) {
+fn cmd_auth_login_oauth(ctx: &CliContext, provider: &str, out: &mut Output<'_>) -> i32 {
+    let config = match resolve_oauth_config(ctx, provider, "OAuth", out.stderr) {
         Some(c) => c,
         None => return 1,
     };
 
-    stdout.push_str(&format!(
+    if provider == "anthropic" {
+        return cmd_auth_login_anthropic_oauth(ctx, &config, out);
+    }
+
+    if provider == "openai" {
+        return cmd_auth_login_openai_oauth(ctx, &config, out);
+    }
+
+    out.stdout.push_str(&format!(
         "Open this URL in your browser:\n{}\n\nWaiting for authorization...\n",
         config.authorization_url
     ));
     0
 }
 
-/// Device code login flow for headless environments.
-fn cmd_auth_login_device_code(
+/// OpenAI OAuth login: PKCE + browser callback on localhost:1455.
+fn cmd_auth_login_openai_oauth(
     ctx: &CliContext,
-    provider: &str,
-    stdout: &mut String,
-    stderr: &mut String,
+    config: &crate::infrastructure::auth::oauth::OAuthConfig,
+    out: &mut Output<'_>,
 ) -> i32 {
-    let config = match resolve_oauth_config(ctx, provider, "device code flow", stderr) {
-        Some(c) => c,
-        None => return 1,
+    use crate::infrastructure::auth::oauth::{
+        build_openai_auth_url, exchange_openai_code, extract_openai_account_id, generate_pkce,
+        generate_state, wait_for_oauth_callback,
     };
+
+    let pkce = generate_pkce();
+    let state = generate_state();
+    let auth_url = build_openai_auth_url(config, &pkce, &state);
+
+    out.stdout.push_str(&format!(
+        "Open this URL in your browser to authenticate with OpenAI:\n\n{}\n\n\
+         Waiting for browser callback on http://localhost:1455 ...\n\
+         (If the browser doesn't open, copy the URL above and paste it manually)\n",
+        auth_url
+    ));
+    flush_stdout(ctx, out);
 
     let rt = match super::build_tokio_runtime() {
         Ok(rt) => rt,
         Err(e) => {
-            stderr.push_str(&format!("auth login: failed to create runtime: {}\n", e));
+            out.stderr
+                .push_str(&format!("auth login: failed to create runtime: {}\n", e));
+            return 1;
+        }
+    };
+
+    // In test mode (stdin_data set), skip the browser callback and go
+    // straight to the manual code-paste fallback.
+    let code = if ctx.stdin_data.is_some() {
+        let err = crate::domain::error::DomainError::Provider(
+            "browser callback skipped in test mode".into(),
+        );
+        match extract_fallback_code(ctx, err, out) {
+            Some(code) => code,
+            None => return 1,
+        }
+    } else {
+        match rt.block_on(wait_for_oauth_callback(&state, 300)) {
+            Ok(code) => code,
+            Err(e) => match extract_fallback_code(ctx, e, out) {
+                Some(code) => code,
+                None => return 1,
+            },
+        }
+    };
+
+    match rt.block_on(exchange_openai_code(config, &code, &pkce.verifier)) {
+        Ok(token_resp) => {
+            let account_id = extract_openai_account_id(&token_resp.access_token);
+            if account_id.is_none() {
+                out.stderr
+                    .push_str("auth login: warning — could not extract account ID from token\n");
+            }
+            let expires = chrono::Utc::now().timestamp() + token_resp.expires_in as i64;
+            let params = OAuthStoreParams {
+                provider: "openai".to_string(),
+                account_id,
+                expires_at: expires,
+            };
+            store_oauth_credential(ctx, params, &token_resp, out)
+        }
+        Err(e) => {
+            out.stderr
+                .push_str(&format!("auth login: token exchange failed: {}\n", e));
+            1
+        }
+    }
+}
+
+/// Fallback: prompt user to paste code when callback fails.
+fn extract_fallback_code(
+    ctx: &CliContext,
+    err: crate::domain::error::DomainError,
+    out: &mut Output<'_>,
+) -> Option<String> {
+    out.stdout.push_str(&format!(
+        "\nCallback failed ({}). Paste the authorization code or redirect URL:\n",
+        err
+    ));
+    flush_stdout(ctx, out);
+    match read_stdin_line(ctx) {
+        Ok(line) => {
+            let line = line.trim().to_string();
+            let code = extract_code_from_input(&line);
+            if code.is_none() {
+                out.stderr
+                    .push_str("auth login: could not extract authorization code\n");
+            }
+            code
+        }
+        Err(e) => {
+            out.stderr.push_str(&format!("auth login: {}\n", e));
+            None
+        }
+    }
+}
+
+/// Parameters for storing an OAuth credential.
+struct OAuthStoreParams {
+    provider: String,
+    account_id: Option<String>,
+    expires_at: i64,
+}
+
+/// Store an OAuth credential after a successful token exchange.
+fn store_oauth_credential(
+    ctx: &CliContext,
+    params: OAuthStoreParams,
+    token_resp: &crate::infrastructure::auth::oauth::OAuthTokenResponse,
+    out: &mut Output<'_>,
+) -> i32 {
+    let store = CredentialStore::new(ctx.base_dir());
+    match store.store(Credential {
+        provider: params.provider.clone(),
+        token: token_resp.access_token.clone(),
+        method: AuthMethod::OAuth,
+        expires_at: Some(params.expires_at),
+        refresh_token: Some(token_resp.refresh_token.clone()),
+        account_id: params.account_id,
+    }) {
+        Ok(()) => {
+            out.stdout.push_str(&format!(
+                "{} OAuth credential stored successfully\n",
+                capitalize(&params.provider)
+            ));
+            0
+        }
+        Err(e) => {
+            out.stderr
+                .push_str(&format!("auth login: failed to store credential: {}\n", e));
+            1
+        }
+    }
+}
+
+fn capitalize(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        None => String::new(),
+        Some(f) => f.to_uppercase().to_string() + c.as_str(),
+    }
+}
+
+/// Try to extract an authorization code from user input (URL or raw code).
+fn extract_code_from_input(input: &str) -> Option<String> {
+    // Try as URL: http://localhost:1455/auth/callback?code=<code>&state=<state>
+    if input.contains("code=") {
+        let query = input.split('?').nth(1).unwrap_or(input);
+        for param in query.split('&') {
+            if let Some(code) = param.strip_prefix("code=") {
+                if !code.is_empty() {
+                    return Some(code.to_string());
+                }
+            }
+        }
+    }
+    if !input.is_empty() {
+        Some(input.to_string())
+    } else {
+        None
+    }
+}
+
+/// Anthropic OAuth login: PKCE + browser + paste authorization code.
+fn cmd_auth_login_anthropic_oauth(
+    ctx: &CliContext,
+    config: &crate::infrastructure::auth::oauth::OAuthConfig,
+    out: &mut Output<'_>,
+) -> i32 {
+    use crate::infrastructure::auth::oauth::{
+        build_anthropic_auth_url, exchange_anthropic_code, generate_pkce, generate_state,
+    };
+
+    let pkce = generate_pkce();
+    let state = generate_state();
+    let auth_url = build_anthropic_auth_url(config, &pkce, &state);
+
+    out.stdout.push_str(&format!(
+        "Open this URL in your browser to authenticate with Anthropic:\n\n{}\n\n\
+         After authorizing, you'll be redirected to a page with a URL containing\n\
+         an authorization code. Copy the FULL URL or code and paste it below.\n\n\
+         Paste the authorization code:\n",
+        auth_url
+    ));
+    flush_stdout(ctx, out);
+
+    let auth_code = match read_stdin_line(ctx) {
+        Ok(line) => line.trim().to_string(),
+        Err(e) => {
+            out.stderr.push_str(&format!("auth login: {}\n", e));
+            return 1;
+        }
+    };
+
+    if auth_code.is_empty() {
+        out.stderr
+            .push_str("auth login: authorization code must not be empty\n");
+        return 1;
+    }
+
+    let rt = match super::build_tokio_runtime() {
+        Ok(rt) => rt,
+        Err(e) => {
+            out.stderr
+                .push_str(&format!("auth login: failed to create runtime: {}\n", e));
+            return 1;
+        }
+    };
+
+    match rt.block_on(exchange_anthropic_code(config, &auth_code, &pkce.verifier)) {
+        Ok(token_resp) => {
+            let expires = chrono::Utc::now().timestamp() + token_resp.expires_in as i64 - 300;
+            let params = OAuthStoreParams {
+                provider: "anthropic".to_string(),
+                account_id: None,
+                expires_at: expires,
+            };
+            store_oauth_credential(ctx, params, &token_resp, out)
+        }
+        Err(e) => {
+            out.stderr
+                .push_str(&format!("auth login: token exchange failed: {}\n", e));
+            1
+        }
+    }
+}
+
+/// Import credentials from opencode's auth.json file.
+fn cmd_auth_import_opencode(ctx: &CliContext, out: &mut Output<'_>) -> i32 {
+    let auth_json = match auth_import::load_opencode_auth_json(out.stderr) {
+        Some(v) => v,
+        None => return 1,
+    };
+
+    let store = CredentialStore::new(ctx.base_dir());
+    let rt = match super::build_tokio_runtime() {
+        Ok(rt) => rt,
+        Err(e) => {
+            out.stderr
+                .push_str(&format!("auth login: failed to create runtime: {}\n", e));
+            return 1;
+        }
+    };
+
+    let mut imported = 0;
+
+    match auth_import::import_anthropic(&auth_json, &store, &rt, out) {
+        Some(n) => imported += n,
+        None => return 1,
+    }
+
+    imported += auth_import::import_openai(&auth_json, &store, out);
+
+    if imported == 0 {
+        out.stderr
+            .push_str("auth login: no OAuth credentials found in opencode auth.json\n");
+        return 1;
+    }
+
+    out.stdout.push_str(&format!(
+        "Imported {} credential(s) from opencode\n",
+        imported
+    ));
+    0
+}
+
+/// Device code login flow for headless environments.
+fn cmd_auth_login_device_code(ctx: &CliContext, provider: &str, out: &mut Output<'_>) -> i32 {
+    let config = match resolve_oauth_config(ctx, provider, "device code flow", out.stderr) {
+        Some(c) => c,
+        None => return 1,
+    };
+
+    if config.device_code_url.is_empty() {
+        out.stderr.push_str(&format!(
+            "auth login: device code flow is not supported for '{}' (use --oauth instead)\n",
+            provider
+        ));
+        return 1;
+    }
+
+    let rt = match super::build_tokio_runtime() {
+        Ok(rt) => rt,
+        Err(e) => {
+            out.stderr
+                .push_str(&format!("auth login: failed to create runtime: {}\n", e));
             return 1;
         }
     };
@@ -223,14 +582,15 @@ fn cmd_auth_login_device_code(
         &config,
     )) {
         Ok(resp) => {
-            stdout.push_str(&format!(
+            out.stdout.push_str(&format!(
                 "Go to: {}\nEnter code: {}\n\nWaiting for authorization...\n",
                 resp.verification_uri, resp.user_code
             ));
             0
         }
         Err(e) => {
-            stderr.push_str(&format!("auth login: device code request failed: {}\n", e));
+            out.stderr
+                .push_str(&format!("auth login: device code request failed: {}\n", e));
             1
         }
     }

@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod codex;
 pub mod error;
 pub mod fallback;
 pub mod openai;
@@ -150,6 +151,15 @@ pub fn create_provider(
         ))),
         _ => unreachable!("provider name validated above"),
     }
+}
+
+/// Create a Codex provider for ChatGPT OAuth tokens.
+///
+/// OAuth tokens from `auth.openai.com` only work against the ChatGPT
+/// backend using the Responses API. Requires an `account_id` extracted
+/// from the JWT.
+pub fn create_codex_provider(api_key: String, account_id: String) -> Arc<dyn LlmProvider> {
+    Arc::new(codex::CodexProvider::new(api_key, account_id, None))
 }
 
 #[cfg(test)]

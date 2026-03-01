@@ -46,6 +46,8 @@ fn test_resolve_api_key_from_credential_store() {
             token: "sk-from-store".to_string(),
             method: AuthMethod::Token,
             expires_at: None,
+            refresh_token: None,
+            account_id: None,
         })
         .unwrap();
 
@@ -66,6 +68,8 @@ fn test_resolve_api_key_prefers_store_over_config() {
             token: "sk-from-store".to_string(),
             method: AuthMethod::Token,
             expires_at: None,
+            refresh_token: None,
+            account_id: None,
         })
         .unwrap();
 
@@ -103,6 +107,8 @@ fn test_resolve_api_key_ignores_expired_credential() {
             token: "sk-expired".to_string(),
             method: AuthMethod::Token,
             expires_at: Some(0), // always expired
+            refresh_token: None,
+            account_id: None,
         })
         .unwrap();
 
@@ -125,6 +131,8 @@ fn test_check_provider_readiness_reports_expired() {
             token: "sk-expired".to_string(),
             method: AuthMethod::Token,
             expires_at: Some(0),
+            refresh_token: None,
+            account_id: None,
         })
         .unwrap();
 
@@ -206,6 +214,8 @@ fn test_check_provider_readiness_active_is_empty() {
             token: "sk-active".to_string(),
             method: AuthMethod::Token,
             expires_at: None,
+            refresh_token: None,
+            account_id: None,
         })
         .unwrap();
 

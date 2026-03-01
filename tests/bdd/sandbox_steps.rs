@@ -207,6 +207,8 @@ fn given_credentials_file_with_permissions(world: &mut QuectoWorld, perms: u32) 
             token: "dummy".to_string(),
             method: AuthMethod::Token,
             expires_at: None,
+            refresh_token: None,
+            account_id: None,
         })
         .unwrap();
     // Now change the permissions to the specified value (interpret as octal)

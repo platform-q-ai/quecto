@@ -130,32 +130,17 @@ impl ToolRegistryImpl {
         let workspace = Arc::new(workspace);
         let mut reg = Self::new();
 
-        let exec_tool = Arc::new(ExecTool::with_options(
+        reg.register(Arc::new(ExecTool::with_options(
             workspace.clone(),
             sandbox.clone(),
             exec_options,
-        ));
-        reg.register(exec_tool.clone());
-        let read_tool = Arc::new(ReadTool::new(workspace.clone(), sandbox.clone()));
-        reg.register(read_tool.clone());
-        let write_tool = Arc::new(WriteTool::new(workspace.clone(), sandbox.clone()));
-        reg.register(write_tool.clone());
-        let edit_tool = Arc::new(EditTool::new(workspace.clone(), sandbox.clone()));
-        reg.register(edit_tool.clone());
-        let ls_tool = Arc::new(LsTool::new(workspace.clone(), sandbox.clone()));
-        reg.register(ls_tool.clone());
+        )));
+        reg.register(Arc::new(ReadTool::new(workspace.clone(), sandbox.clone())));
+        reg.register(Arc::new(WriteTool::new(workspace.clone(), sandbox.clone())));
+        reg.register(Arc::new(EditTool::new(workspace.clone(), sandbox.clone())));
+        reg.register(Arc::new(LsTool::new(workspace.clone(), sandbox.clone())));
         reg.register(Arc::new(GrepTool::new(workspace.clone(), sandbox.clone())));
         reg.register(Arc::new(FindTool::new(workspace.clone(), sandbox.clone())));
-
-        // Backward-compat aliases inserted after all register() calls so that
-        // definitions (rebuilt on each register) is not polluted by duplicate entries.
-        // These map old tool names to their renamed tools for sessions / LLMs
-        // that were trained on the previous naming convention.
-        reg.tools.insert("exec".to_string(), exec_tool);
-        reg.tools.insert("read_file".to_string(), read_tool);
-        reg.tools.insert("write_file".to_string(), write_tool);
-        reg.tools.insert("edit_file".to_string(), edit_tool);
-        reg.tools.insert("list_dir".to_string(), ls_tool);
 
         reg
     }
@@ -166,7 +151,24 @@ impl ToolRegistryImpl {
         let name = def.name.clone();
         self.tools.insert(name, tool);
 
-        self.definitions = self.tools.values().map(|t| t.definition()).collect();
+        self.rebuild_definitions();
+    }
+
+    /// Rebuild the cached definitions list, deduplicating by tool name.
+    fn rebuild_definitions(&mut self) {
+        let mut seen = std::collections::HashSet::new();
+        self.definitions = self
+            .tools
+            .values()
+            .filter_map(|t| {
+                let def = t.definition();
+                if seen.insert(def.name.clone()) {
+                    Some(def)
+                } else {
+                    None
+                }
+            })
+            .collect();
         self.definitions.sort_by(|a, b| a.name.cmp(&b.name));
     }
 

@@ -18,8 +18,6 @@ use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::recall::RecallTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
-use crate::interface::shared::resolve_api_key;
-
 /// Parsed flags for the `agent` subcommand.
 pub(crate) struct AgentFlags {
     /// Session name for persistence. `None` = "default", `Some("-")` = ephemeral.
@@ -391,28 +389,50 @@ pub fn build_agent_provider(
     base_dir: &std::path::Path,
 ) -> Result<Arc<dyn LlmProvider>, String> {
     let store = CredentialStore::new(base_dir);
-    let creds = store.load_snapshot().unwrap_or_default();
+
+    // Build a temporary runtime for token refresh if needed
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("failed to create runtime for token refresh: {}", e))?;
 
     let mut provider_list: Vec<Arc<dyn crate::domain::provider::LlmProvider>> = Vec::new();
 
-    // Try OpenAI
-    let openai_key = resolve_api_key(&config.providers.openai.api_key, &creds, "openai");
+    // Try OpenAI (with auto-refresh for expired OAuth tokens)
+    let openai_key = crate::interface::shared::resolve_api_key_with_refresh(
+        &config.providers.openai.api_key,
+        &store,
+        "openai",
+        &rt,
+    );
     if !openai_key.is_empty() {
-        let base = if config.providers.openai.api_base.is_empty() {
-            None
+        let account_id = crate::infrastructure::auth::oauth::extract_openai_account_id(&openai_key);
+        if let Some(acct) = account_id {
+            // OAuth token — use Codex provider (ChatGPT backend)
+            provider_list.push(providers::create_codex_provider(openai_key, acct));
         } else {
-            Some(config.providers.openai.api_base.clone())
-        };
-        match providers::create_provider("openai", openai_key, base) {
-            Ok(p) => provider_list.push(p),
-            Err(e) => {
-                return Err(format!("openai provider configuration error: {}", e));
+            // Regular API key — use standard OpenAI provider
+            let base = if config.providers.openai.api_base.is_empty() {
+                None
+            } else {
+                Some(config.providers.openai.api_base.clone())
+            };
+            match providers::create_provider("openai", openai_key, base) {
+                Ok(p) => provider_list.push(p),
+                Err(e) => {
+                    return Err(format!("openai provider configuration error: {}", e));
+                }
             }
         }
     }
 
-    // Try Anthropic
-    let anthropic_key = resolve_api_key(&config.providers.anthropic.api_key, &creds, "anthropic");
+    // Try Anthropic (with auto-refresh for expired OAuth tokens)
+    let anthropic_key = crate::interface::shared::resolve_api_key_with_refresh(
+        &config.providers.anthropic.api_key,
+        &store,
+        "anthropic",
+        &rt,
+    );
     if !anthropic_key.is_empty() {
         let base = if config.providers.anthropic.api_base.is_empty() {
             None

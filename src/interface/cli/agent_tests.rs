@@ -384,6 +384,8 @@ fn test_build_agent_provider_with_credential_store() {
             token: "sk-stored-cred".to_string(),
             method: AuthMethod::Token,
             expires_at: None,
+            refresh_token: None,
+            account_id: None,
         })
         .unwrap();
 
