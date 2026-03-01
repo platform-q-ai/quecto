@@ -1,4 +1,9 @@
-// Context pruning: 3-turn collapse of tool results with spill-to-disk.
+// Context pruning: sliding-window enforcement with spill-to-disk.
+//
+// Tool results are no longer collapsed after N turns. Instead, they age
+// naturally and are dropped by `enforce_context_ceiling()` when the
+// conversation exceeds the token budget. Spill-to-disk still happens at
+// creation time so `recall()` can retrieve dropped outputs.
 //
 // Depends on: domain::message, domain::session (ContextSpillStore).
 // Never imports infrastructure.
@@ -216,7 +221,7 @@ mod tests {
     }
 
     #[test]
-    fn test_collapse_old_tool_results_before_threshold() {
+    fn test_tool_results_never_collapsed_regardless_of_age() {
         let mut messages = vec![Message::user("test"), {
             let mut m = Message::tool("call_1", "big output here");
             m.turn = Some(1);
@@ -224,38 +229,34 @@ mod tests {
             m.spill_id = Some("turn1:bash:0".to_string());
             m
         }];
-        // Turn 3 -> only 2 turns old (3 - 1 = 2), not yet at threshold of 3
-        let collapsed = collapse_old_tool_results(&mut messages, 3, 3);
+        // Even at turn 100, tool results should NOT be collapsed
+        // collapse_after = u32::MAX effectively disables collapse
+        let collapsed = collapse_old_tool_results(&mut messages, 100, u32::MAX);
         assert_eq!(collapsed, 0);
         assert!(!messages[1].is_collapsed);
+        assert_eq!(messages[1].content, "big output here");
     }
 
     #[test]
-    fn test_collapse_old_tool_results_at_threshold() {
-        let mut messages = vec![Message::user("test"), {
-            let mut m = Message::tool("call_1", "big output here");
-            m.turn = Some(1);
+    fn test_tool_results_stay_full_across_many_turns() {
+        let mut messages = vec![];
+        // Create tool results on turns 1-10
+        for turn in 1..=10u32 {
+            let mut m = Message::tool(format!("call_{turn}"), format!("output for turn {turn}"));
+            m.turn = Some(turn);
             m.tool_name = Some("bash".to_string());
-            m.spill_id = Some("turn1:bash:0".to_string());
-            m
-        }];
-        // Turn 4 -> 3 turns old (4 - 1 = 3), at threshold
-        let collapsed = collapse_old_tool_results(&mut messages, 4, 3);
-        assert_eq!(collapsed, 1);
-        assert!(messages[1].is_collapsed);
-        assert!(messages[1].content.contains("recall(\"turn1:bash:0\")"));
-    }
-
-    #[test]
-    fn test_already_collapsed_not_re_collapsed() {
-        let mut messages = vec![{
-            let mut m = Message::tool("call_1", "[bash: ... recall(\"turn1:bash:0\")]");
-            m.turn = Some(1);
-            m.is_collapsed = true;
-            m
-        }];
-        let collapsed = collapse_old_tool_results(&mut messages, 10, 3);
+            m.spill_id = Some(format!("turn{turn}:bash:0"));
+            messages.push(m);
+        }
+        // Run collapse with u32::MAX (disabled) at turn 20
+        let collapsed = collapse_old_tool_results(&mut messages, 20, u32::MAX);
         assert_eq!(collapsed, 0);
+        // All messages should still have their original content
+        for (i, msg) in messages.iter().enumerate() {
+            let turn = i as u32 + 1;
+            assert!(!msg.is_collapsed);
+            assert_eq!(msg.content, format!("output for turn {turn}"));
+        }
     }
 
     #[test]
@@ -277,7 +278,7 @@ mod tests {
                 m
             },
         ];
-        let collapsed = collapse_old_tool_results(&mut messages, 100, 3);
+        let collapsed = collapse_old_tool_results(&mut messages, 100, u32::MAX);
         assert_eq!(collapsed, 0);
     }
 

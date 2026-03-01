@@ -324,10 +324,10 @@ fn default_max_session_messages() -> usize {
     200
 }
 fn default_context_collapse_after_turns() -> u32 {
-    3
+    u32::MAX
 }
 fn default_max_context_tokens() -> usize {
-    100_000
+    190_000
 }
 fn default_true() -> bool {
     true
