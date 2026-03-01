@@ -29,6 +29,8 @@ unicode-normalization = "0.1"
 similar = "2"
 base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+flate2 = "1"
+tar = "0.4"
 
 # WASM tool isolation
 wasmtime = { version = "42", features = ["component-model"] }

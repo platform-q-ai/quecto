@@ -658,6 +658,11 @@ pub struct QuectoWorld {
     pub ls_workspace: Option<PathBuf>,
     /// Result from ls tool execution
     pub ls_result: Option<quecto::domain::tool::ToolResult>,
+    // --- ensure_tool BDD fields ---
+    /// Temp dir for ensure_tool cache (kept alive)
+    pub _ensure_tool_tmp: Option<TempDir>,
+    /// Result path from ensure_tool (Ok)
+    pub ensure_tool_result: Option<Result<std::path::PathBuf, String>>,
     // --- /reload BDD fields ---
     /// Messages passed to strip_tool_history in /reload scenarios
     pub reload_input_messages: Option<Vec<Message>>,
@@ -947,6 +952,7 @@ mod context_pruning_steps;
 mod cron_steps;
 mod e2e_steps;
 mod edit_tool_steps;
+mod ensure_tool_steps;
 mod exec_tool_steps;
 mod find_steps;
 mod gateway_steps;
