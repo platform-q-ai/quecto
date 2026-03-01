@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
-use crate::domain::provider::{ChatRequest, LlmProvider};
+use crate::domain::provider::{ChatRequest, LlmProvider, model_excluded_from_provider};
 
 use super::error::ErrorClass;
 
@@ -121,26 +121,19 @@ impl FallbackProvider {
         }
     }
 
-    /// Return true when `model` has a known owner that is NOT `provider_name`.
-    fn model_excluded_from(model: &str, provider_name: &str) -> bool {
-        let lower = model.to_ascii_lowercase();
-        if lower.starts_with("claude-") {
-            return provider_name != "anthropic";
-        }
-        false
-    }
-
     /// Try to send a chat request, falling back through available providers.
     ///
     /// Model-aware routing: if the model name has a definitive owner (e.g.
     /// `claude-*` → Anthropic), only that provider is tried. Unknown model
     /// names fall through all providers in insertion order as before.
+    ///
+    /// See [`model_excluded_from_provider`] in `domain::provider` for routing rules.
     async fn try_chat(&self, request: &ChatRequest<'_>) -> Result<LlmResponse, DomainError> {
         let mut last_error: Option<DomainError> = None;
 
         for entry in &self.entries {
             // Skip providers that definitely cannot serve this model.
-            if Self::model_excluded_from(request.model, entry.provider.name()) {
+            if model_excluded_from_provider(request.model, entry.provider.name()) {
                 continue;
             }
 
