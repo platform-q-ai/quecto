@@ -907,7 +907,19 @@ fn table_to_json(table: &gherkin::Table) -> String {
         .rows
         .iter()
         .filter(|row| row.len() >= 2)
-        .map(|row| (row[0].trim().to_string(), serde_json::json!(row[1].trim())))
+        .map(|row| {
+            let key = row[0].trim().to_string();
+            let raw = row[1].trim();
+            // Coerce numeric strings to JSON numbers so tools can use as_u64()/as_i64().
+            let val = if let Ok(n) = raw.parse::<i64>() {
+                serde_json::json!(n)
+            } else if let Ok(f) = raw.parse::<f64>() {
+                serde_json::json!(f)
+            } else {
+                serde_json::json!(raw)
+            };
+            (key, val)
+        })
         .collect::<serde_json::Map<String, serde_json::Value>>()
         .into();
     obj.to_string()
@@ -931,6 +943,7 @@ mod nsjail_steps;
 mod observability_steps;
 mod path_utils_steps;
 mod provider_steps;
+mod read_tool_steps;
 mod repl_steps;
 mod sandbox_steps;
 mod security_steps;

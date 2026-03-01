@@ -1,0 +1,89 @@
+Feature: ReadTool — Pi parity
+  As an AI agent
+  I want the read tool to match Pi's feature set
+  So that LLM interactions are reliable regardless of image format or file size
+
+  Background:
+    Given a tool workspace
+
+  # --- Magic-byte image MIME detection ---
+
+  @done
+  Scenario: Magic bytes detect PNG with no extension
+    Given a PNG image file "screenshot" exists in the workspace
+    When the agent executes tool "read" with args:
+      | path | screenshot |
+    Then the tool result should not be an error
+    And the tool result image blocks should contain a "image/png" block
+
+  @done
+  Scenario: Magic bytes detect JPEG with wrong extension (.dat)
+    Given a JPEG image file "photo.dat" exists in the workspace
+    When the agent executes tool "read" with args:
+      | path | photo.dat |
+    Then the tool result should not be an error
+    And the tool result image blocks should contain a "image/jpeg" block
+
+  @done
+  Scenario: Magic bytes detect WebP with no extension
+    Given a WebP image file "icon" exists in the workspace
+    When the agent executes tool "read" with args:
+      | path | icon |
+    Then the tool result should not be an error
+    And the tool result image blocks should contain a "image/webp" block
+
+  @done
+  Scenario: Magic bytes detect GIF with wrong extension
+    Given a GIF image file "anim.bin" exists in the workspace
+    When the agent executes tool "read" with args:
+      | path | anim.bin |
+    Then the tool result should not be an error
+    And the tool result image blocks should contain a "image/gif" block
+
+  @done
+  Scenario: Text file with .jpg extension is not mis-detected as image
+    Given a file "not_an_image.jpg" exists with content "hello world"
+    When the agent executes tool "read" with args:
+      | path | not_an_image.jpg |
+    Then the tool result should not be an error
+    And the tool result image blocks should be empty
+    And the tool result should contain "hello world"
+
+  # --- Image auto-resize ---
+
+  @done
+  Scenario: Large image is auto-resized and dimension note is returned
+    Given a large PNG image file "big.png" of size 3000x3000 exists in the workspace
+    When the agent executes tool "read" with args:
+      | path | big.png |
+    Then the tool result should not be an error
+    And the tool result image blocks should contain a "image/png" block
+    And the tool result should contain "resized"
+
+  @done
+  Scenario: Small image is not resized
+    Given a PNG image file "small.png" exists in the workspace
+    When the agent executes tool "read" with args:
+      | path | small.png |
+    Then the tool result should not be an error
+    And the tool result image blocks should contain a "image/png" block
+    And the tool result should not contain "resized"
+
+  # --- Truncation notice formatting ---
+
+  @done
+  Scenario: Byte-truncated file notice includes 50KB limit hint
+    Given a file "bytes.txt" exists with 60000 bytes of content
+    When the agent executes tool "read" with args:
+      | path | bytes.txt |
+    Then the tool result should not be an error
+    And the tool result should contain "50KB limit"
+
+  @done
+  Scenario: User-specified limit notice shows remaining lines
+    Given a file "big.txt" exists with 100 lines
+    When the agent executes tool "read" with args:
+      | path  | big.txt |
+      | limit | 10      |
+    Then the tool result should not be an error
+    And the tool result should contain "more lines in file"
