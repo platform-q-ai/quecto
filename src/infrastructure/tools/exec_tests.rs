@@ -405,6 +405,21 @@ fn test_nsjail_command_includes_time_limit() {
     assert!(args.contains("20"), "missing value 20: {args}");
 }
 
+// --- Default memory limit test ---
+
+#[test]
+fn test_nsjail_default_memory_limit_is_4096_mb() {
+    // The default RLIMIT_AS must be 4096 MB so that Node/V8, JVM, and Go
+    // runtimes — which reserve large virtual address ranges at startup —
+    // can start inside the sandbox without hitting ENOMEM.
+    let args = nsjail_args_str(&NsjailOptions::default());
+    assert!(args.contains("--rlimit_as"), "missing --rlimit_as: {args}");
+    assert!(
+        args.contains("4096"),
+        "default rlimit_as should be 4096 MB (was 512), got: {args}"
+    );
+}
+
 // --- /dev device node bindmount tests ---
 
 #[test]

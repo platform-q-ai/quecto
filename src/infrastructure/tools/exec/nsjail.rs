@@ -19,7 +19,22 @@ pub(super) const SECRET_ENV_PREFIX: &str = "QUECTO_";
 pub(super) const MAX_CAPTURE_BYTES: usize = 10 * 1024 * 1024;
 pub(super) const STREAM_DRAIN_TIMEOUT_ON_KILL: Duration = Duration::from_millis(250);
 
-const DEFAULT_NSJAIL_MEMORY_LIMIT_MB: u64 = 512;
+/// Default virtual address-space limit (MB) passed to `--rlimit_as`.
+///
+/// Set to 4 GB because modern runtimes reserve large contiguous virtual
+/// regions at startup even when physical RSS is tiny:
+///
+/// - **Node.js / V8**: reserves ~1–2 GB of virtual space for the heap arena
+/// - **JVM**: reserves ~1–4 GB depending on heap flags
+/// - **Go**: uses large virtual mappings for goroutine stacks
+///
+/// `RLIMIT_AS` limits *virtual* address space, not physical RAM.  A Node
+/// process using 50 MB of RAM needs 1–2 GB of virtual space to start.
+/// 512 MB was too low for all three runtimes.
+///
+/// Operators running on very constrained hosts can lower this via
+/// `tools.exec.nsjail.memory_limit_mb` in their config file.
+const DEFAULT_NSJAIL_MEMORY_LIMIT_MB: u64 = 4096;
 const DEFAULT_NSJAIL_PID_LIMIT: u64 = 256;
 const DEFAULT_NSJAIL_CPU_TIME_LIMIT_SECS: u64 = 30;
 const DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS: u64 = 30;
@@ -85,9 +100,15 @@ pub struct NsjailOptions {
     pub network_passthrough: bool,
     /// Virtual address-space limit in MB, enforced via `--rlimit_as`.
     ///
-    /// **Note:** This limits *virtual* address space, not physical RSS (unlike
-    /// the former `--cgroup_mem_max`). Runtimes that pre-reserve large virtual
-    /// regions (Go, JVM) may need a higher value than their actual memory use.
+    /// **This is a virtual address-space cap, not a physical RAM cap.**
+    /// `RLIMIT_AS` limits the total `mmap`-able virtual region; RSS (actual
+    /// physical memory in use) is not constrained by this setting.
+    ///
+    /// Modern runtimes (Node.js/V8, JVM, Go) reserve 1–4 GB of virtual
+    /// address space at startup even when physical usage is only tens of MB.
+    /// The default of 4 GB (`DEFAULT_NSJAIL_MEMORY_LIMIT_MB`) accommodates
+    /// all three.  Lower this only on hosts where virtual address space is
+    /// genuinely scarce (32-bit environments, very low ulimit).
     pub memory_limit_mb: Option<u64>,
     /// Maximum number of processes, enforced via `--rlimit_nproc`.
     ///

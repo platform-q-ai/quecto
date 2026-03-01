@@ -342,7 +342,10 @@ fn default_nsjail_binary() -> String {
     "nsjail".to_string()
 }
 fn default_nsjail_memory_limit_mb() -> u64 {
-    512
+    // 4 GB: Node.js/V8, JVM, and Go all reserve 1–4 GB of virtual address
+    // space at startup. RLIMIT_AS limits virtual AS, not physical RAM — a
+    // process using 50 MB of RAM still needs gigabytes of virtual space.
+    4096
 }
 fn default_nsjail_pid_limit() -> u64 {
     256
@@ -508,7 +511,7 @@ mod tests {
         assert_eq!(config.tools.exec.isolation, ExecIsolationConfig::Nsjail);
         assert_eq!(config.tools.exec.nsjail_binary, "nsjail");
         assert!(!config.tools.exec.allow_native_fallback);
-        assert_eq!(config.tools.exec.memory_limit_mb, 512);
+        assert_eq!(config.tools.exec.memory_limit_mb, 4096);
         assert_eq!(config.tools.exec.pid_limit, 256);
         assert_eq!(config.tools.exec.cpu_time_limit_secs, 30);
         assert_eq!(config.tools.exec.wall_time_limit_secs, 30);
