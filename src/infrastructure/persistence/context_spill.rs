@@ -238,15 +238,35 @@ impl ContextSpillStore for FileContextSpillStore {
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         let path = self.spill_path(session_key);
         Box::pin(async move {
-            match tokio::fs::write(&path, b"").await {
-                Ok(()) => Ok(()),
-                // If the file does not exist yet, nothing to clear — that's fine.
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(e) => Err(DomainError::Session(format!(
-                    "failed to clear spill file: {}",
-                    e
-                ))),
+            // Check if the file exists — if not, nothing to clear.
+            match tokio::fs::metadata(&path).await {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(e) => {
+                    return Err(DomainError::Session(format!(
+                        "failed to stat spill file: {}",
+                        e
+                    )));
+                }
+                Ok(_) => {}
             }
+
+            // Atomic clear: write empty content to a temp file then rename over the target.
+            // This avoids a race window where a concurrent append() could interleave with
+            // a truncate-in-place (which O_TRUNC would cause).
+            let parent = path.parent().ok_or_else(|| {
+                DomainError::Session("spill path has no parent directory".to_string())
+            })?;
+
+            // Use the same directory so rename() is atomic (same filesystem).
+            let tmp_path = parent.join(format!(".spill-clear-{}.tmp", uuid::Uuid::new_v4()));
+
+            tokio::fs::write(&tmp_path, b"").await.map_err(|e| {
+                DomainError::Session(format!("failed to write temp clear file: {}", e))
+            })?;
+
+            tokio::fs::rename(&tmp_path, &path).await.map_err(|e| {
+                DomainError::Session(format!("failed to atomically clear spill file: {}", e))
+            })
         })
     }
 }

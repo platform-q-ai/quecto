@@ -556,7 +556,7 @@ fn given_session_has_spill_entries(world: &mut QuectoWorld) {
 
 #[when(expr = "the reload command is executed for chat {string}")]
 fn when_reload_command_executed(world: &mut QuectoWorld, chat_id: String) {
-    use quecto::interface::gateway::execute_reload;
+    use quecto::application::reload::execute_reload;
 
     let session_store = world
         .reload_session_store

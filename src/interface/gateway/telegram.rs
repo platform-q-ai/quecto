@@ -9,7 +9,7 @@ use crate::infrastructure::channels::telegram::{TelegramChannel, TelegramUpdate}
 use crate::infrastructure::config::Config;
 use crate::infrastructure::voice::groq_whisper::GroqWhisperClient;
 
-use super::{Gateway, execute_reload, handle_bot_command};
+use super::{Gateway, RELOAD_SENTINEL, execute_reload, handle_bot_command};
 
 pub(super) const MAX_VOICE_BYTES: usize = 10 * 1024 * 1024;
 pub(super) const ALLOW_INSECURE_VOICE_API_BASE_ENV: &str =
@@ -120,7 +120,7 @@ impl Gateway {
             // Check for bot commands before routing to agent.
             if let Some(response) = handle_bot_command(&msg.text, ctx.config) {
                 // /reload is handled here where I/O is available.
-                let final_response = if response == "__reload__" {
+                let final_response = if response == RELOAD_SENTINEL {
                     execute_reload(
                         &msg.chat_id,
                         ctx.session_store.as_ref(),

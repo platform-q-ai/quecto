@@ -80,22 +80,16 @@ pub struct SpillIndex {
 pub fn strip_tool_history(messages: &[Message]) -> Vec<Message> {
     use super::message::Role;
 
-    // First pass: identify assistant messages that pair with recall tool results.
-    // An assistant message "pairs with recall" if any of its tool_calls has name "recall".
-    let mut recall_assistant_indices = std::collections::HashSet::new();
-    for (i, msg) in messages.iter().enumerate() {
-        if msg.role == Role::Assistant && msg.tool_calls.iter().any(|tc| tc.name == "recall") {
-            recall_assistant_indices.insert(i);
-        }
-    }
-
+    // Single-pass filter: an assistant message that calls "recall" is kept in full;
+    // all other tool-dispatching assistant messages are either text-preserved or dropped.
+    // Tool results are kept only for "recall"; all others (and manifests) are dropped.
     let mut filtered = Vec::with_capacity(messages.len());
-    for (i, msg) in messages.iter().enumerate() {
+    for msg in messages {
         match msg.role {
             // Drop stale spill manifests
             _ if msg.is_manifest => continue,
 
-            // Keep recall tool results (recall output is conversational history)
+            // Keep recall tool results (agent needs them to access conversation history)
             Role::Tool if msg.tool_name.as_deref() == Some("recall") => {
                 filtered.push(msg.clone());
             }
@@ -103,20 +97,18 @@ pub fn strip_tool_history(messages: &[Message]) -> Vec<Message> {
             // Drop all other tool results
             Role::Tool => continue,
 
-            // Keep assistant messages that pair with a recall tool call
-            Role::Assistant if recall_assistant_indices.contains(&i) => {
-                filtered.push(msg.clone());
+            Role::Assistant if !msg.tool_calls.is_empty() => {
+                // Keep entire assistant message if it calls "recall" (must not orphan the result)
+                if msg.tool_calls.iter().any(|tc| tc.name == "recall") {
+                    filtered.push(msg.clone());
+                } else if !msg.content.is_empty() {
+                    // Non-recall tool call with narrative text: keep text, clear tool_calls
+                    let mut kept = msg.clone();
+                    kept.tool_calls = vec![];
+                    filtered.push(kept);
+                }
+                // else: pure dispatch (no text) — drop
             }
-
-            // Assistant with tool calls but also text — keep text, clear tool calls
-            Role::Assistant if !msg.tool_calls.is_empty() && !msg.content.is_empty() => {
-                let mut kept = msg.clone();
-                kept.tool_calls = vec![];
-                filtered.push(kept);
-            }
-
-            // Assistant with tool calls but no text — pure dispatch, drop
-            Role::Assistant if !msg.tool_calls.is_empty() => continue,
 
             // User and plain assistant messages — always keep
             _ => filtered.push(msg.clone()),
