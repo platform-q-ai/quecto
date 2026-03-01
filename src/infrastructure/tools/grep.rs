@@ -171,9 +171,12 @@ impl Tool for GrepTool {
             }
 
             let stderr_output = {
-                let mut buf = Vec::new();
+                let mut buf = Vec::with_capacity(0);
                 if let Some(mut err) = child.stderr.take() {
-                    let _ = err.read_to_end(&mut buf).await;
+                    // Cap stderr at 4 KiB — enough for any error message, prevents OOM.
+                    let mut tmp = vec![0u8; 4096];
+                    let n = err.read(&mut tmp).await.unwrap_or(0);
+                    buf.extend_from_slice(&tmp[..n]);
                 }
                 buf
             };
