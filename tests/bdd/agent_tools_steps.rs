@@ -51,7 +51,11 @@ fn given_workspace_with_many_files(world: &mut QuectoWorld, count: usize) {
     for i in 0..count {
         std::fs::write(tmp.path().join(format!("file{:04}.txt", i)), "x").unwrap();
     }
-    world.tool_workspace = Some(tmp.path().to_path_buf());
+    let ws = tmp.path().to_path_buf();
+    let sandbox = Sandbox::new(Some(ws.clone()), true);
+    let registry = ToolRegistryImpl::with_core_tools(ws.clone(), sandbox);
+    world.tool_workspace = Some(ws);
+    world.tool_registry = Some(registry);
     world._tool_workspace_tmp = Some(tmp);
 }
 
