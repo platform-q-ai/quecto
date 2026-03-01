@@ -97,9 +97,12 @@ impl Tool for FindTool {
                 .validate_path(&full_str)
                 .map_err(|e| DomainError::Security(e.to_string()))?;
 
+            // Accept float limits (JSON "number" type); cap at 100_000 to prevent
+            // pathological fd invocations.
+            const MAX_RESULT_LIMIT: usize = 100_000;
             let limit = args["limit"]
                 .as_f64()
-                .map(|v| (v.round() as usize).max(1))
+                .map(|v| (v.round() as usize).clamp(1, MAX_RESULT_LIMIT))
                 .unwrap_or(DEFAULT_RESULT_LIMIT);
 
             // Discover nested .gitignore files to pass via --ignore-file.
@@ -204,33 +207,51 @@ impl Tool for FindTool {
     }
 }
 
-/// Discover all `.gitignore` files under `search_dir` (Pi parity).
+/// Maximum .gitignore files to discover (prevents excessive fd startup overhead).
+const MAX_GITIGNORE_FILES: usize = 50;
+/// Maximum directory depth for .gitignore discovery (prevents DoS from deeply nested trees).
+const MAX_DISCOVER_DEPTH: usize = 20;
+
+/// Discover `.gitignore` files under `search_dir` (Pi parity).
 ///
 /// fd respects `.gitignore` within git repos, but may miss nested `.gitignore`
 /// files outside git repos. Passing them explicitly via `--ignore-file` ensures
 /// consistent behaviour regardless of git repo status.
 ///
-/// Ignores `node_modules/` and `.git/` directories during traversal.
-/// Capped at 500 files to prevent scanning huge trees.
+/// Safety:
+/// - Skips symlinks when deciding whether to recurse (prevents traversal outside workspace)
+/// - Caps at MAX_GITIGNORE_FILES and MAX_DISCOVER_DEPTH to prevent DoS
+/// - Skips `node_modules/` and `.git/` directories
 pub(crate) fn discover_gitignore_files(search_dir: &std::path::Path) -> Vec<PathBuf> {
-    const MAX_GITIGNORE_FILES: usize = 500;
     let mut result = Vec::new();
-    let mut stack = vec![search_dir.to_path_buf()];
-    while let Some(dir) = stack.pop() {
+    // Stack entries: (directory path, current depth)
+    let mut stack = vec![(search_dir.to_path_buf(), 0usize)];
+    while let Some((dir, depth)) = stack.pop() {
+        if depth > MAX_DISCOVER_DEPTH {
+            continue;
+        }
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
         for entry in entries.flatten() {
-            let path = entry.path();
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
             // Skip node_modules and .git
             if name_str == "node_modules" || name_str == ".git" {
                 continue;
             }
-            if path.is_dir() {
-                stack.push(path);
-            } else if name_str == ".gitignore" {
+            // Use symlink_metadata so we don't follow symlinks into subdirs
+            // (prevents escaping the workspace via symlink traversal).
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            let path = entry.path();
+            // DirEntry::metadata() does not follow symlinks on Unix,
+            // so is_dir() returns false for symlinks to directories.
+            // This prevents traversal outside the workspace via symlinks.
+            if meta.is_dir() {
+                stack.push((path, depth + 1));
+            } else if meta.is_file() && name_str == ".gitignore" {
                 result.push(path);
                 if result.len() >= MAX_GITIGNORE_FILES {
                     return result;

@@ -89,14 +89,6 @@ fn given_find_gitignore(world: &mut QuectoWorld, gitignore_path: String, ignored
     std::fs::write(&full, format!("{}\n", ignored)).expect("write gitignore file");
 }
 
-#[given(regex = r#"^a find workspace with (\d+) files named "file_NNN\.txt" for float$"#)]
-fn given_find_files_for_float(world: &mut QuectoWorld, count: usize) {
-    let ws = ensure_find_workspace(world);
-    for i in 0..count {
-        std::fs::write(ws.join(format!("file_{:04}.txt", i)), "").expect("write file");
-    }
-}
-
 // ---------------------------------------------------------------------------
 // When
 // ---------------------------------------------------------------------------
