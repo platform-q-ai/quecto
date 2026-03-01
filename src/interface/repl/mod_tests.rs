@@ -97,6 +97,7 @@ fn test_build_system_prompt_no_skills_no_user_prompt() {
         provider,
         config: &config,
         flags: &flags,
+        progress_callback: None,
     };
     let result = build_system_prompt(&ctx);
     // Always Some — at minimum contains the datetime preamble.
@@ -123,6 +124,7 @@ fn test_build_system_prompt_with_user_prompt() {
         provider,
         config: &config,
         flags: &flags,
+        progress_callback: None,
     };
     let result = build_system_prompt(&ctx);
     let prompt = result.as_deref().unwrap();
@@ -215,6 +217,7 @@ fn make_repl_loop(
         session_key: String::new(),
         context_collapse_after_turns: u32::MAX,
         max_context_tokens: 190_000,
+        progress_callback: None,
     });
     let session_store = FileSessionStore::new(base_dir);
     let session = ReplSession {

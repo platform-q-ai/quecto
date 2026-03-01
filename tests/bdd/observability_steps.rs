@@ -141,6 +141,7 @@ fn when_agent_processes_tool_call(world: &mut QuectoWorld) {
         session_key: String::new(),
         context_collapse_after_turns: u32::MAX,
         max_context_tokens: 190_000,
+        progress_callback: None,
     });
 
     // Capture tracing output

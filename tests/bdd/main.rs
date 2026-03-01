@@ -504,6 +504,12 @@ pub struct QuectoWorld {
     pub repl_flags: Vec<String>,
     /// REPL: whether the REPL has been executed (lazy execution)
     pub repl_executed: bool,
+    /// REPL: captured progress event labels (for progress recorder scenarios)
+    pub repl_progress_events: Vec<String>,
+    /// REPL: whether to inject a progress recorder callback
+    pub repl_use_progress_recorder: bool,
+    /// REPL: whether to force TTY mode (for TTY-specific rendering tests)
+    pub repl_force_tty: bool,
     /// Bot command response from handle_bot_command()
     pub bot_command_response: Option<Option<String>>,
     /// Whether the gateway shutdown completed cleanly

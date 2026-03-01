@@ -126,6 +126,10 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
 
 /// Run the REPL with the given input/output, capturing output for BDD testing.
 /// The `is_tty` parameter controls whether the REPL shows the banner and prompt.
+///
+/// When `is_tty = true`, the REPL will start the spinner thread. In the test
+/// harness, the spinner writes to real stderr (process-global). Use
+/// [`run_repl_with_tty_captured`] if you need to inspect spinner output.
 pub fn run_repl_with_output(
     ctx: &CliContext,
     args: &[String],
@@ -147,6 +151,73 @@ pub fn run_repl_with_output(
     }
 }
 
+/// Run the REPL in TTY mode, capturing both stdout AND spinner stderr output.
+///
+/// Unlike [`run_repl_with_output`], this variant intercepts the spinner thread's
+/// output into a captured stderr buffer so BDD tests can assert on rendered
+/// tool names, spinner frames, etc. without touching the real process stderr.
+pub fn run_repl_with_tty_captured(ctx: &CliContext, args: &[String], input: &[u8]) -> CliOutput {
+    use std::sync::{Arc, Mutex};
+
+    let stderr_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    let stderr_clone = stderr_buf.clone();
+
+    // Build a progress callback that renders into the capture buffer (not real stderr)
+    let renderer = Arc::new(Mutex::new(
+        super::repl::progress::ProgressRenderer::new_tty_capture(stderr_buf),
+    ));
+    let callback: crate::domain::agent::ProgressCallback = Arc::new(move |event| {
+        renderer.lock().unwrap().handle_event(event);
+    });
+
+    let mut output = Vec::new();
+    let io = ReplIo {
+        reader: std::io::BufReader::new(input),
+        writer: &mut output,
+        is_tty: true,
+    };
+    let exit_code = cmd_repl_with_progress(ctx, args, io, Some(callback));
+    let stdout = String::from_utf8_lossy(&output).to_string();
+    let stderr = String::from_utf8_lossy(&stderr_clone.lock().unwrap()).to_string();
+    CliOutput {
+        stdout,
+        stderr,
+        exit_code,
+    }
+}
+
+/// Options for [`run_repl_with_progress_recorder`].
+pub struct ReplRecorderOptions<'a> {
+    pub ctx: &'a CliContext,
+    pub args: &'a [String],
+    pub input: &'a [u8],
+    pub is_tty: bool,
+    pub progress_callback: crate::domain::agent::ProgressCallback,
+}
+
+/// Run the REPL with a progress callback recorder for BDD testing.
+///
+/// The `progress_callback` is wired into the agent loop and receives every
+/// [`AgentProgressEvent`] during processing. This allows BDD tests to assert
+/// that the right events were fired without needing to inspect TTY output.
+///
+/// [`AgentProgressEvent`]: crate::domain::agent::AgentProgressEvent
+pub fn run_repl_with_progress_recorder(opts: ReplRecorderOptions<'_>) -> CliOutput {
+    let mut output = Vec::new();
+    let io = ReplIo {
+        reader: std::io::BufReader::new(opts.input),
+        writer: &mut output,
+        is_tty: opts.is_tty,
+    };
+    let exit_code = cmd_repl_with_progress(opts.ctx, opts.args, io, Some(opts.progress_callback));
+    let stdout = String::from_utf8_lossy(&output).to_string();
+    CliOutput {
+        stdout,
+        stderr: String::new(),
+        exit_code,
+    }
+}
+
 /// Bundles REPL I/O streams and TTY detection.
 struct ReplIo<R: std::io::BufRead, W: std::io::Write> {
     reader: R,
@@ -158,7 +229,23 @@ struct ReplIo<R: std::io::BufRead, W: std::io::Write> {
 fn cmd_repl<R: std::io::BufRead, W: std::io::Write>(
     ctx: &CliContext,
     args: &[String],
+    io: ReplIo<R, W>,
+) -> i32 {
+    cmd_repl_with_progress(ctx, args, io, None)
+}
+
+/// REPL command with an optional progress callback for live event reporting.
+///
+/// The `progress_callback` is forwarded into the agent loop configuration so
+/// it receives [`AgentProgressEvent`]s as they fire. Pass `None` for normal
+/// interactive operation (the REPL builds its own TTY spinner if needed).
+///
+/// [`AgentProgressEvent`]: crate::domain::agent::AgentProgressEvent
+fn cmd_repl_with_progress<R: std::io::BufRead, W: std::io::Write>(
+    ctx: &CliContext,
+    args: &[String],
     mut io: ReplIo<R, W>,
+    progress_callback: Option<crate::domain::agent::ProgressCallback>,
 ) -> i32 {
     let flags = match parse_repl_flags(args) {
         Ok(f) => f,
@@ -201,6 +288,7 @@ fn cmd_repl<R: std::io::BufRead, W: std::io::Write>(
         provider,
         config: &config,
         flags: &flags,
+        progress_callback,
     };
     super::repl::run_repl(io.reader, io.writer, io.is_tty, &repl_ctx)
 }

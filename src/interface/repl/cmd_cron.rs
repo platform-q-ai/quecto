@@ -212,6 +212,7 @@ mod tests {
             session_key: String::new(),
             context_collapse_after_turns: u32::MAX,
             max_context_tokens: 190_000,
+            progress_callback: None,
         });
 
         let session = super::super::ReplSession {
