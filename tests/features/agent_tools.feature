@@ -111,7 +111,7 @@ Feature: Agent Tool System
     Given a tool workspace with 1100 files
     When the agent executes tool "ls" with args:
       | path | . |
-    Then the tool result should contain "[Showing"
+    Then the tool result should contain "entries limit reached"
     And the tool result should not be an error
 
   Scenario: Tool registry lists core tools

@@ -651,6 +651,13 @@ pub struct QuectoWorld {
     pub find_workspace: Option<PathBuf>,
     /// Result from find tool execution
     pub find_result: Option<quecto::domain::tool::ToolResult>,
+    // --- Ls BDD fields ---
+    /// Temp dir for ls workspace (kept alive)
+    pub _ls_temp_dir: Option<TempDir>,
+    /// Workspace path for ls tests
+    pub ls_workspace: Option<PathBuf>,
+    /// Result from ls tool execution
+    pub ls_result: Option<quecto::domain::tool::ToolResult>,
     // --- /reload BDD fields ---
     /// Messages passed to strip_tool_history in /reload scenarios
     pub reload_input_messages: Option<Vec<Message>>,
@@ -945,6 +952,7 @@ mod find_steps;
 mod gateway_steps;
 mod grep_steps;
 mod heartbeat_steps;
+mod ls_steps;
 mod nsjail_steps;
 mod observability_steps;
 mod path_utils_steps;
