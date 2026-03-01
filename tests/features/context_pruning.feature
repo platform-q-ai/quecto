@@ -3,9 +3,11 @@ Feature: Context pruning via sliding window (no tool-result collapse)
 
   Tool outputs remain in full context until dropped by the sliding window
   when the conversation exceeds the token budget. The old 3-turn collapse
-  behaviour has been removed — tool results age naturally alongside all
-  other messages. Spill-to-disk still occurs at creation time so recall()
-  can retrieve outputs that have been dropped by the sliding window.
+  behaviour is disabled by default — tool results age naturally alongside
+  all other messages. Users can re-enable collapse by setting
+  context_collapse_after_turns to a lower value. Spill-to-disk still
+  occurs at creation time so recall() can retrieve outputs that have been
+  dropped by the sliding window.
 
   Background:
     Given a configured agent with context pruning enabled

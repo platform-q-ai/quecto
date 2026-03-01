@@ -324,9 +324,16 @@ fn default_max_session_messages() -> usize {
     200
 }
 fn default_context_collapse_after_turns() -> u32 {
+    // Disabled by default (u32::MAX) — tool results age naturally and are
+    // dropped by the sliding window. Users can re-enable collapse by setting
+    // a lower value. Safe because max_tool_iterations (500) << u32::MAX.
     u32::MAX
 }
 fn default_max_context_tokens() -> usize {
+    // Upper bound for modern large-context models (Claude 200k, Gemini 1M+).
+    // Users on smaller-context models (GPT-4 128k) should override this.
+    // This is an application-level budget; it does not validate against the
+    // actual model context window.
     190_000
 }
 fn default_true() -> bool {

@@ -457,70 +457,6 @@ fn then_tool_result_from_turn_1_still_full(world: &mut QuectoWorld) {
     );
 }
 
-#[then("the tool result from turn 1 is replaced with a collapse stub")]
-fn then_tool_result_from_turn_1_collapsed(world: &mut QuectoWorld) {
-    let messages = world.context_messages.as_ref().unwrap();
-    let tool_msg = messages
-        .iter()
-        .find(|m| m.role == Role::Tool && m.turn == Some(1))
-        .expect("should find tool result from turn 1");
-    assert!(
-        tool_msg.is_collapsed,
-        "tool result from turn 1 should be collapsed"
-    );
-    assert!(
-        tool_msg.content.starts_with('['),
-        "collapsed content should start with '[', got: {}",
-        tool_msg.content
-    );
-}
-
-#[then(expr = "the collapse stub contains the tool name {string}")]
-fn then_collapse_stub_contains_tool_name(world: &mut QuectoWorld, tool_name: String) {
-    let messages = world.context_messages.as_ref().unwrap();
-    let tool_msg = messages
-        .iter()
-        .find(|m| m.is_collapsed)
-        .expect("should find a collapsed message");
-    assert!(
-        tool_msg.content.contains(&format!("[{}:", tool_name)),
-        "collapse stub should contain tool name '{}', got: {}",
-        tool_name,
-        tool_msg.content
-    );
-}
-
-#[then("the collapse stub contains the estimated token count")]
-fn then_collapse_stub_contains_token_count(world: &mut QuectoWorld) {
-    let messages = world.context_messages.as_ref().unwrap();
-    let tool_msg = messages
-        .iter()
-        .find(|m| m.is_collapsed)
-        .expect("should find a collapsed message");
-    assert!(
-        tool_msg.content.contains("tokens)"),
-        "collapse stub should contain token count, got: {}",
-        tool_msg.content
-    );
-}
-
-#[then(expr = "the collapse stub contains the recall ID {string}")]
-fn then_collapse_stub_contains_recall_id(world: &mut QuectoWorld, recall_id: String) {
-    let messages = world.context_messages.as_ref().unwrap();
-    let tool_msg = messages
-        .iter()
-        .find(|m| m.is_collapsed)
-        .expect("should find a collapsed message");
-    assert!(
-        tool_msg
-            .content
-            .contains(&format!("recall(\"{}\")", recall_id)),
-        "collapse stub should contain recall ID '{}', got: {}",
-        recall_id,
-        tool_msg.content
-    );
-}
-
 #[then(expr = "the spill file contains an entry with id {string}")]
 fn then_spill_file_contains_entry(world: &mut QuectoWorld, id: String) {
     let store = world.context_spill_store.as_ref().unwrap().clone();
@@ -563,19 +499,6 @@ fn then_recall_result_contains_full_output(world: &mut QuectoWorld) {
     assert_eq!(
         result.content, "hello world original output",
         "recall should return full original content"
-    );
-}
-
-#[then("the recall result from turn 10 is replaced with a collapse stub")]
-fn then_recall_result_from_turn_10_collapsed(world: &mut QuectoWorld) {
-    let messages = world.context_messages.as_ref().unwrap();
-    let recall_msg = messages
-        .iter()
-        .find(|m| m.role == Role::Tool && m.turn == Some(10))
-        .expect("should find recall result from turn 10");
-    assert!(
-        recall_msg.is_collapsed,
-        "recall result from turn 10 should be collapsed"
     );
 }
 
@@ -647,44 +570,6 @@ fn then_system_message_remains(world: &mut QuectoWorld) {
         .iter()
         .any(|m| m.role == Role::System && !m.is_manifest);
     assert!(has_system, "system message should remain in context");
-}
-
-#[then("the collapse stub from turn 1 appears exactly once")]
-fn then_collapse_stub_appears_once(world: &mut QuectoWorld) {
-    let messages = world.context_messages.as_ref().unwrap();
-    let collapsed_count = messages
-        .iter()
-        .filter(|m| m.role == Role::Tool && m.turn == Some(1) && m.is_collapsed)
-        .count();
-    assert_eq!(
-        collapsed_count, 1,
-        "should have exactly one collapsed stub from turn 1"
-    );
-}
-
-#[then("the message is_collapsed field is true")]
-fn then_is_collapsed_is_true(world: &mut QuectoWorld) {
-    let messages = world.context_messages.as_ref().unwrap();
-    let msg = messages
-        .iter()
-        .find(|m| m.role == Role::Tool && m.turn == Some(1))
-        .expect("should find tool message from turn 1");
-    assert!(msg.is_collapsed, "is_collapsed should be true");
-}
-
-#[then("its content has not been modified since turn 4")]
-fn then_content_not_modified_since_turn_4(world: &mut QuectoWorld) {
-    let messages = world.context_messages.as_ref().unwrap();
-    let msg = messages
-        .iter()
-        .find(|m| m.role == Role::Tool && m.turn == Some(1))
-        .expect("should find tool message from turn 1");
-    // The stub should contain the original recall ID, proving it wasn't re-collapsed
-    assert!(
-        msg.content.contains("recall(\"turn1:bash:0\")"),
-        "stub should still reference original ID, got: {}",
-        msg.content
-    );
 }
 
 #[then(expr = "the recall result is an error containing {string}")]

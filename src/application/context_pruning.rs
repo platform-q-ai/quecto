@@ -13,6 +13,12 @@ use std::collections::HashSet;
 use crate::domain::message::{Message, Role};
 use crate::domain::session::{ContextSpillStore, SpillIndex};
 
+/// Sentinel value indicating that tool-result collapse is disabled.
+/// Used as the default for `context_collapse_after_turns`. Safe because
+/// `max_tool_iterations` (500) is far below `u32::MAX`, so
+/// `current_turn.saturating_sub(turn)` can never reach this threshold.
+pub const COLLAPSE_DISABLED: u32 = u32::MAX;
+
 /// Estimate token count from byte length. Intentionally conservative.
 /// 1 token ~ 3 bytes. Overestimates for prose, roughly accurate for
 /// code/paths/URLs. Better to prune early than to exceed context limits.
@@ -21,8 +27,21 @@ pub fn estimate_tokens(text: &str) -> usize {
 }
 
 /// Estimate total tokens for a slice of messages.
+/// Includes both text content and base64-encoded image blocks so that
+/// the context ceiling accounts for image data (typically 100KB–1MB each).
 pub fn estimate_total_tokens(messages: &[Message]) -> usize {
-    messages.iter().map(|m| estimate_tokens(&m.content)).sum()
+    messages.iter().map(estimate_message_tokens).sum()
+}
+
+/// Estimate tokens for a single message including image blocks.
+pub fn estimate_message_tokens(msg: &Message) -> usize {
+    let text_tokens = estimate_tokens(&msg.content);
+    let image_tokens: usize = msg
+        .image_blocks
+        .iter()
+        .map(|img| estimate_tokens(&img.data))
+        .sum();
+    text_tokens + image_tokens
 }
 
 /// Truncate a string to at most `max_chars` characters, appending "..."
@@ -43,8 +62,13 @@ pub fn collapse_stub(tool: &str, input_preview: &str, tokens: usize, spill_id: &
     format!("[{tool}: {preview} ({tokens} tokens) — recall(\"{spill_id}\")]")
 }
 
-/// Scan messages and collapse tool results that are 3+ turns old.
+/// Collapse tool results older than `collapse_after` turns.
 /// Returns the number of tool results collapsed.
+///
+/// With the default `collapse_after = COLLAPSE_DISABLED` (u32::MAX), this
+/// function is never called — the agent loop short-circuits it. It remains
+/// available for users who explicitly set a lower `context_collapse_after_turns`
+/// value in their config.
 pub fn collapse_old_tool_results(
     messages: &mut [Message],
     current_turn: u32,
@@ -76,6 +100,12 @@ pub fn collapse_old_tool_results(
 /// Drops oldest non-pinned messages until under budget.
 /// Returns the number of messages dropped.
 ///
+/// The token budget covers both text content and base64 image blocks,
+/// so image-heavy sessions are correctly bounded. Note that this is an
+/// *application-level* budget — it does not know the actual model context
+/// window. Users on smaller-context models (e.g. GPT-4 128k) should
+/// override `max_context_tokens` in their config.
+///
 /// Uses a two-pass approach to avoid O(n^2) repeated scanning:
 /// 1. Calculate total tokens and identify droppable message indices.
 /// 2. Walk droppable indices from oldest, marking for removal until under budget.
@@ -100,7 +130,7 @@ pub fn enforce_context_ceiling(messages: &mut Vec<Message>, max_tokens: usize) -
         if total <= max_tokens {
             break;
         }
-        total = total.saturating_sub(estimate_tokens(&messages[idx].content));
+        total = total.saturating_sub(estimate_message_tokens(&messages[idx]));
         to_drop.insert(idx);
     }
 
@@ -350,5 +380,38 @@ mod tests {
             Message::user("abcdef"), // 2 tokens
         ];
         assert_eq!(estimate_total_tokens(&messages), 3);
+    }
+
+    #[test]
+    fn test_estimate_message_tokens_includes_image_blocks() {
+        use crate::domain::tool::ImageBlock;
+        let mut msg = Message::tool("call_1", "abc"); // 1 token text
+        msg.image_blocks = vec![ImageBlock {
+            mime_type: "image/png".to_string(),
+            data: "x".repeat(300), // 100 tokens image
+        }];
+        assert_eq!(estimate_message_tokens(&msg), 101); // 1 text + 100 image
+    }
+
+    #[test]
+    fn test_enforce_context_ceiling_accounts_for_image_blocks() {
+        use crate::domain::tool::ImageBlock;
+        let mut msg1 = Message::tool("call_1", "abc");
+        msg1.image_blocks = vec![ImageBlock {
+            mime_type: "image/png".to_string(),
+            data: "x".repeat(600), // 200 tokens
+        }];
+        let msg2 = Message::user("y".repeat(300)); // 100 tokens
+        let mut messages = vec![msg1, msg2];
+        // Budget of 150: total is ~301 tokens, should drop oldest (the 200-token image msg)
+        let dropped = enforce_context_ceiling(&mut messages, 150);
+        assert_eq!(dropped, 1);
+        assert_eq!(messages.len(), 1);
+        assert!(estimate_total_tokens(&messages) <= 150);
+    }
+
+    #[test]
+    fn test_collapse_disabled_constant() {
+        assert_eq!(COLLAPSE_DISABLED, u32::MAX);
     }
 }
