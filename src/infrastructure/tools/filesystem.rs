@@ -1,4 +1,5 @@
-// Filesystem tools: read, write, edit, append_file, list_dir.
+// Filesystem tools: read, write, edit, ls.
+// Note: append_file removed in #118 (use write or bash >> instead).
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
