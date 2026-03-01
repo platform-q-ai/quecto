@@ -73,6 +73,25 @@ fn given_grep_file_many_lines(world: &mut QuectoWorld, filename: String, word: S
     std::fs::write(ws.join(&filename), content).expect("failed to write many-line grep file");
 }
 
+#[allow(clippy::too_many_arguments)] // cucumber regex step captures 4 fields + world
+#[given(
+    regex = r#"^a grep workspace file "([^"]+)" with (\d+) lines of (\d+) chars containing "([^"]+)"$"#
+)]
+fn given_grep_file_long_lines(
+    world: &mut QuectoWorld,
+    filename: String,
+    line_count: usize,
+    chars: usize,
+    word: String,
+) {
+    let ws = ensure_grep_workspace(world);
+    let padding = "x".repeat(chars.saturating_sub(word.len()));
+    let content: String = (1..=line_count)
+        .map(|_| format!("{}{}\n", word, padding))
+        .collect();
+    std::fs::write(ws.join(&filename), content).expect("failed to write long-line grep file");
+}
+
 // ---------------------------------------------------------------------------
 // When
 // ---------------------------------------------------------------------------
@@ -111,6 +130,13 @@ fn when_grep_glob(world: &mut QuectoWorld, pattern: String, glob: String) {
 fn when_grep_limit(world: &mut QuectoWorld, pattern: String, limit: usize) {
     let tool = make_grep_tool(world);
     let args = serde_json::json!({ "pattern": pattern, "limit": limit });
+    world.grep_result = Some(run_tool(tool, args));
+}
+
+#[when(regex = r#"^I grep for pattern "([^"]+)" with context (\d+)$"#)]
+fn when_grep_context(world: &mut QuectoWorld, pattern: String, context: u64) {
+    let tool = make_grep_tool(world);
+    let args = serde_json::json!({ "pattern": pattern, "context": context });
     world.grep_result = Some(run_tool(tool, args));
 }
 

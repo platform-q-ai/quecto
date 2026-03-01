@@ -64,7 +64,7 @@ Feature: Grep Tool
   Scenario: Limit caps the number of matches
     Given a grep workspace file "many.txt" with 200 lines containing "needle"
     When I grep for pattern "needle" with limit 10
-    Then the grep result should contain "[Showing"
+    Then the grep result should contain "10 matches limit reached"
     And the grep result should not be an error
 
   Scenario: Missing rg binary returns clear error
@@ -75,3 +75,43 @@ Feature: Grep Tool
   Scenario: Pattern search outside workspace is blocked
     When I grep for pattern "root" in path "/etc"
     Then the grep result should be an error
+
+  @done
+  Scenario: Context lines use file cache (Pi parity — file-N- format)
+    Given a grep workspace file "ctx.rs" with content:
+      """
+      line one
+      fn target() {}
+      line three
+      """
+    When I grep for pattern "target" with context 1
+    Then the grep result should contain "ctx.rs:2:"
+    And the grep result should contain "ctx.rs-1-"
+    And the grep result should contain "ctx.rs-3-"
+    And the grep result should not be an error
+
+  @done
+  Scenario: Match limit notice includes suggested increase
+    Given a grep workspace file "many.txt" with 200 lines containing "needle"
+    When I grep for pattern "needle" with limit 5
+    Then the grep result should contain "5 matches limit reached"
+    And the grep result should contain "limit=10"
+    And the grep result should not be an error
+
+  @done
+  Scenario: Composite truncation notice when both match limit and line truncation apply
+    Given a grep workspace file "long_lines.txt" with 10 lines of 600 chars containing "target"
+    When I grep for pattern "target" with limit 3
+    Then the grep result should contain "3 matches limit reached"
+    And the grep result should contain "Use read tool to see full lines"
+    And the grep result should not be an error
+
+  @done
+  Scenario: Filenames with colons are parsed correctly via JSON output
+    Given a grep workspace file "time:zone.rs" with content:
+      """
+      fn timezone() {}
+      """
+    When I grep for pattern "timezone"
+    Then the grep result should contain "time:zone.rs"
+    And the grep result should not be an error
