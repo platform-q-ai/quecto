@@ -175,6 +175,7 @@ Feature: Telegram Gateway
     Given an inbound message from source "telegram:12345"
     When the inbound processor loads the session
     Then the session key should be "telegram:12345"
+    And the session key should not contain "telegram:telegram:"
 
   Scenario: /reload finds the session saved by the inbound processor
     Given a gateway inbound processor has handled one message from chat "55555"

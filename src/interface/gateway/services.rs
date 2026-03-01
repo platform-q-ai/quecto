@@ -385,13 +385,11 @@ impl Gateway {
     }
 }
 
-/// Derive the session key for an inbound message source string.
+/// Session key for an inbound message source (test-support only).
 ///
-/// The `source` field of `InboundMessage` is already in `channel:id` form
-/// (e.g. `"telegram:12345"`), so it is used directly as the session key
-/// without any additional prefixing.
-///
-/// Exposed for testing to ensure the key derivation contract is stable.
+/// `source` is already `"channel:id"` — returned as-is. Must stay in sync
+/// with `load_session` / `process_and_save`. Any future transformation must
+/// be reflected here so BDD tests track the real contract.
 #[cfg(any(test, feature = "test-support"))]
 pub fn session_key_for_source(source: &str) -> String {
     source.to_string()

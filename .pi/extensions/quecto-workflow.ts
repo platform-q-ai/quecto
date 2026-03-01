@@ -796,7 +796,18 @@ export default function (pi: ExtensionAPI) {
 
 	// ── Auto-complete + completion nudge ─────────────────────────────
 
-	pi.on("agent_end", async (_event, _ctx) => {
+	pi.on("agent_end", async (event, ctx) => {
+		// Detect if the agent was aborted (ESC). The last assistant message
+		// will have stopReason "aborted". Never send follow-ups after an
+		// abort — respect the user's intent to stop.
+		const lastMsg = event.messages[event.messages.length - 1];
+		const wasAborted = event.messages.length === 0
+			|| (lastMsg as any)?.stopReason === "aborted";
+		if (wasAborted) return;
+
+		// Don't nudge if the agent already has queued messages (it's continuing on its own).
+		if (ctx.hasPendingMessages()) return;
+
 		const allDone = steps.every((s) => s.done);
 
 		if (autoComplete && !allDone) {
@@ -812,11 +823,18 @@ export default function (pi: ExtensionAPI) {
 
 			const msg =
 				`Workflow incomplete (${done}/${total}). ` +
-				`Continue with step ${current.id}: ${current.label} [${phaseLabel(current.phase)}]. ` +
-				`Use the workflow tool to check off steps as you complete them.`;
+				`Continue with the next incomplete step. ` +
+				`Use the workflow tool to check off steps as you complete them. ` +
+				`Respond with just the word DONE (no other text) when all ${total} steps are checked off.`;
 
 			pi.sendUserMessage(msg, { deliverAs: "followUp" });
 			return;
+		}
+
+		// Auto-disable autoComplete when all steps are done.
+		if (autoComplete && allDone) {
+			autoComplete = false;
+			ctx.ui.notify("Workflow auto-continue OFF — all steps complete", "success");
 		}
 
 		if (allDone && !completionNudgeFired && completionNudgeEnabled) {
@@ -829,7 +847,7 @@ export default function (pi: ExtensionAPI) {
 				issueLine +
 				"Now do the following in order:\n" +
 				"1. Close the issue (if applicable)\n" +
-				"2. Pick the next issue to work on\n" +
+				"2. Pick the next issue to work on — if no open issues exist, respond with just the word NONE\n" +
 				"3. Record it: call the workflow tool with action=\"set_issue\", issueNumber=<n>, issueTitle=\"...\"\n" +
 				"4. Reset the checklist: call the workflow tool with action=\"reset\"\n" +
 				"5. Begin Step 1 immediately for the new issue",

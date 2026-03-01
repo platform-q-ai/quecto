@@ -569,9 +569,12 @@ fn when_reload_command_executed(world: &mut QuectoWorld, chat_id: String) {
         .expect("reload_spill_store not set")
         .clone();
 
+    // Build the session key the same way the gateway does: "telegram:<chat_id>"
+    let session_key = format!("telegram:{}", chat_id);
+
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     let response = rt.block_on(execute_reload(
-        &chat_id,
+        &session_key,
         session_store.as_ref(),
         spill_store.as_ref(),
     ));
@@ -690,6 +693,20 @@ fn then_session_key_should_be(world: &mut QuectoWorld, expected: String) {
         key, &expected,
         "session key mismatch: expected '{}', got '{}'",
         expected, key
+    );
+}
+
+#[then(expr = "the session key should not contain {string}")]
+fn then_session_key_should_not_contain(world: &mut QuectoWorld, unexpected: String) {
+    let key = world
+        .gateway_derived_session_key
+        .as_ref()
+        .expect("no session key derived");
+    assert!(
+        !key.contains(&unexpected),
+        "session key '{}' must not contain '{}' (double-prefix detected)",
+        key,
+        unexpected
     );
 }
 

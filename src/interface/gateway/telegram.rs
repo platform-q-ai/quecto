@@ -121,8 +121,11 @@ impl Gateway {
             if let Some(response) = handle_bot_command(&msg.text, ctx.config) {
                 // /reload is handled here where I/O is available.
                 let final_response = if response == RELOAD_SENTINEL {
+                    // Build the session key the same way the inbound processor does:
+                    // source = "telegram:<chat_id>", which is the session key directly.
+                    let session_key = format!("telegram:{}", msg.chat_id);
                     execute_reload(
-                        &msg.chat_id,
+                        &session_key,
                         ctx.session_store.as_ref(),
                         ctx.spill_store.as_ref(),
                     )
