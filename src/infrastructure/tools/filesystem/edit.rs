@@ -100,56 +100,59 @@ impl Tool for EditTool {
             let has_bom = raw.starts_with('\u{FEFF}');
 
             // Stage 1: exact match on BOM-stripped / CRLF-normalised content.
+            // `content` is what we splice into — the base-normalised file.
             let content = base_normalise(&raw);
             let base_old = base_normalise(old_text);
 
             let (count, match_offset) = count_occurrences_capped(&content, &base_old, 2);
 
-            // Stage 2: fuzzy fallback if exact match failed.
-            let (working_content, working_old, working_offset, working_count) = if count == 0 {
-                let fuzzy_content = normalize_for_fuzzy_match(&raw);
+            // Stage 2: fuzzy fallback — locate match only; splice into `content`.
+            // fuzzy_char() is a 1:1 char→char substitution so byte offsets
+            // in fuzzy_content correspond to the same positions in `content`.
+            let (splice_old, splice_offset, splice_count) = if count == 0 {
+                let fuzzy_content = normalize_for_fuzzy_match(&content);
                 let fuzzy_old = normalize_for_fuzzy_match(old_text);
                 let (fc, fo) = count_occurrences_capped(&fuzzy_content, &fuzzy_old, 2);
-                (fuzzy_content, fuzzy_old, fo, fc)
+                (fuzzy_old, fo, fc)
             } else {
-                (content, base_old, match_offset, count)
+                (base_old, match_offset, count)
             };
 
-            if working_count == 0 {
+            if splice_count == 0 {
                 return Ok(ToolResult {
                     content: format!("oldText not found in {}", path),
                     is_error: true,
                     image_blocks: vec![],
                 });
             }
-            if working_count > 1 {
+            if splice_count > 1 {
                 return Ok(ToolResult {
                     content: format!(
                         "oldText matches {} times in {} — it must match exactly once to avoid \
                          ambiguous edits. Add more context to make it unique.",
-                        working_count, path
+                        splice_count, path
                     ),
                     is_error: true,
                     image_blocks: vec![],
                 });
             }
 
-            let offset = working_offset.expect("count=1 guarantees Some(offset)");
+            let offset = splice_offset.expect("count=1 guarantees Some(offset)");
             let normalised_new = base_normalise(new_text);
 
-            // Build updated LF-normalised content.
+            // Splice into `content` (base-normalised), NOT fuzzy_content.
+            // This preserves all non-edited content exactly as-is.
             let updated_lf = {
-                let mut s = String::with_capacity(
-                    working_content.len() - working_old.len() + normalised_new.len(),
-                );
-                s.push_str(&working_content[..offset]);
+                let mut s =
+                    String::with_capacity(content.len() - splice_old.len() + normalised_new.len());
+                s.push_str(&content[..offset]);
                 s.push_str(&normalised_new);
-                s.push_str(&working_content[offset + working_old.len()..]);
+                s.push_str(&content[offset + splice_old.len()..]);
                 s
             };
 
             // No-op detection: if the result is byte-identical, reject.
-            if updated_lf == working_content {
+            if updated_lf == content {
                 return Ok(ToolResult {
                     content: format!(
                         "No changes made to {}. The replacement produced identical content.",
@@ -161,7 +164,7 @@ impl Tool for EditTool {
             }
 
             // Produce diff before restoring line endings (work in LF space).
-            let diff = make_edit_diff(path, &working_content, &updated_lf);
+            let diff = make_edit_diff(path, &content, &updated_lf);
 
             // Restore original line endings and BOM before writing.
             let write_content = restore_file_format(&updated_lf, original_ending, has_bom);
@@ -178,10 +181,6 @@ impl Tool for EditTool {
         })
     }
 }
-
-// ---------------------------------------------------------------------------
-// Line-ending detection and restoration
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LineEnding {
@@ -214,10 +213,6 @@ fn restore_file_format(lf_content: &str, ending: LineEnding, has_bom: bool) -> S
     }
 }
 
-// ---------------------------------------------------------------------------
-// Base normalisation: BOM strip + CRLF→LF (stage 1 / exact match)
-// ---------------------------------------------------------------------------
-
 /// Strip UTF-8 BOM and normalise CRLF → LF in a single pass.
 fn base_normalise(s: &str) -> String {
     let s = s.strip_prefix('\u{FEFF}').unwrap_or(s);
@@ -239,10 +234,6 @@ fn base_normalise(s: &str) -> String {
     out
 }
 
-// ---------------------------------------------------------------------------
-// Fuzzy normalisation (stage 2 fallback)
-// ---------------------------------------------------------------------------
-
 /// Normalise text for fuzzy matching — mirrors Pi's `normalizeForFuzzyMatch`.
 ///
 /// Applies on top of BOM stripping and CRLF normalisation:
@@ -251,7 +242,7 @@ fn base_normalise(s: &str) -> String {
 /// - Smart double quotes (U+201C–U+201F) → `"`
 /// - Unicode dashes (U+2010–U+2015, U+2212) → `-`
 /// - Special/non-breaking spaces → regular ASCII space
-pub(super) fn normalize_for_fuzzy_match(s: &str) -> String {
+fn normalize_for_fuzzy_match(s: &str) -> String {
     // Start from base normalisation (BOM strip + CRLF→LF).
     let base = base_normalise(s);
 
@@ -427,18 +418,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_edit_normalises_crlf() {
-        let (ws, sb, tmp) = test_tools();
-        std::fs::write(tmp.path().join("f.txt"), "line1\r\nline2\r\n").unwrap();
-        let tool = EditTool::new(ws, sb);
-        let result = tool
-            .execute(r#"{"path": "f.txt", "oldText": "line1\nline2", "newText": "replaced"}"#)
-            .await
-            .unwrap();
-        assert!(!result.is_error, "got: {}", result.content);
-    }
-
-    #[tokio::test]
     async fn test_edit_strips_bom() {
         let (ws, sb, tmp) = test_tools();
         let bom_content = "\u{FEFF}hello world";
@@ -497,6 +476,38 @@ mod tests {
         assert!(
             content.contains("goodbye"),
             "expected replacement, got: {}",
+            content
+        );
+    }
+
+    #[tokio::test]
+    async fn test_edit_fuzzy_preserves_non_edited_content() {
+        // Fuzzy path must NOT fuzzy-rewrite the whole file; only the matched region changes.
+        let (ws, sb, tmp) = test_tools();
+        // Line 2 has smart quotes outside the edited region — must survive unchanged.
+        let file = "say \"hello\" now\nline with \u{201C}preserved\u{201D} quotes\n";
+        std::fs::write(tmp.path().join("f.txt"), file).unwrap();
+        let tool = EditTool::new(ws, sb);
+        let result = tool
+            .execute(
+                "{\"path\":\"f.txt\",\"oldText\":\"say \\u201Chello\\u201D now\",\"newText\":\"say hi now\"}",
+            )
+            .await
+            .unwrap();
+        assert!(
+            !result.is_error,
+            "fuzzy match should succeed: {}",
+            result.content
+        );
+        let content = std::fs::read_to_string(tmp.path().join("f.txt")).unwrap();
+        assert!(
+            content.contains('\u{201C}') && content.contains('\u{201D}'),
+            "smart quotes outside edited region must be preserved, got: {:?}",
+            content
+        );
+        assert!(
+            content.contains("say hi now"),
+            "replacement must appear: {:?}",
             content
         );
     }
@@ -566,23 +577,6 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_edit_preserves_lf_line_endings() {
-        let (ws, sb, tmp) = test_tools();
-        std::fs::write(tmp.path().join("f.txt"), "line1\nline2\nline3\n").unwrap();
-        let tool = EditTool::new(ws, sb);
-        let result = tool
-            .execute(r#"{"path":"f.txt","oldText":"line2","newText":"EDITED"}"#)
-            .await
-            .unwrap();
-        assert!(!result.is_error, "edit should succeed: {}", result.content);
-        let bytes = std::fs::read(tmp.path().join("f.txt")).unwrap();
-        assert!(
-            !bytes.windows(2).any(|w| w == b"\r\n"),
-            "LF file should not gain CRLF endings"
-        );
-    }
-
     // --- BOM preservation ---
 
     #[tokio::test]
@@ -606,8 +600,6 @@ mod tests {
         assert!(text.contains("hi world"), "replacement should appear");
     }
 
-    // --- No-op detection ---
-
     #[tokio::test]
     async fn test_edit_rejects_noop_replacement() {
         let (ws, sb, tmp) = test_tools();
@@ -624,8 +616,6 @@ mod tests {
             result.content
         );
     }
-
-    // --- Diff context ---
 
     #[tokio::test]
     async fn test_edit_diff_context_4_lines() {

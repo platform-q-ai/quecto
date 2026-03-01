@@ -86,8 +86,13 @@ fn given_file_exists(world: &mut QuectoWorld, filename: String, content: String)
 
 /// Interpret common escape sequences in a Gherkin string value.
 ///
-/// Cucumber-rs passes `\"` inside an `{string}` as a literal `\"`  rather
-/// than stripping the backslash. This helper normalises those sequences.
+/// Cucumber-rs passes `\"` and `\n` inside an `{string}` expression as
+/// literal backslash sequences rather than stripping the backslash.
+/// This helper normalises `\n`, `\r`, `\t`, `\\`, `\"` into their
+/// corresponding characters.
+///
+/// Applied to `given_file_exists` and `then_file_contains` so that feature
+/// files can write `"line1\nline2"` and get a real two-line file.
 pub(super) fn interpret_escapes(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
