@@ -259,17 +259,19 @@ impl ExecTool {
             None => self.timeout,
         };
 
-        // Apply command prefix if configured.
-        let full_command = match &self.command_prefix {
-            Some(prefix) => format!("{}\n{}", prefix, command),
-            None => command.clone(),
-        };
-
+        // Apply command prefix if configured (prefix is a trusted construction-time option).
+        // Security: validate the user-supplied command first, then build the full command.
+        // The prefix runs before the validated command; it must be trusted by the deployer.
         self.sandbox
             .validate_command(&command)
             .map_err(|e| DomainError::Security(e.to_string()))?;
 
         let source_env = build_source_env(env_overrides);
+
+        let full_command = match &self.command_prefix {
+            Some(prefix) => format!("{}\n{}", prefix, command),
+            None => command,
+        };
 
         self.spawn_and_wait(&full_command, &source_env, effective_timeout)
             .await
@@ -330,9 +332,16 @@ fn extract_command_and_timeout(arguments: &str) -> Result<(String, Option<Durati
         .as_str()
         .map(|s| s.to_string())
         .ok_or_else(|| DomainError::Tool("missing 'command' argument".to_string()))?;
-    let timeout = args["timeout"]
-        .as_u64()
-        .map(|secs| Duration::from_secs(secs.max(1)));
+    // Accept both integer and float timeout values (schema says "number").
+    // as_u64() returns None for floats; use as_f64() and round for broad compatibility.
+    let timeout = args["timeout"].as_f64().and_then(|f| {
+        let secs = f.round() as u64;
+        if secs > 0 {
+            Some(Duration::from_secs(secs))
+        } else {
+            None // timeout=0 → use default
+        }
+    });
     Ok((command, timeout))
 }
 
@@ -349,18 +358,34 @@ fn is_allowed_exec_env_key(key: &str) -> bool {
         && (EXEC_ENV_ALLOWLIST.contains(&key) || key.starts_with("LC_"))
 }
 
+/// Shells that may be selected via the \`SHELL\` environment variable.
+///
+/// Restricted to well-known system shells to prevent arbitrary binary execution
+/// via a crafted or injected \`SHELL\` env var.
+const ALLOWED_SHELLS: &[&str] = &[
+    "/bin/sh",
+    "/bin/bash",
+    "/bin/dash",
+    "/bin/zsh",
+    "/usr/bin/bash",
+    "/usr/bin/zsh",
+    "/usr/local/bin/bash",
+    "/usr/local/bin/zsh",
+];
+
 fn build_shell_command(
     workspace: &PathBuf,
     command: &str,
     source_env: &HashMap<String, String>,
 ) -> tokio::process::Command {
-    // Detect the user's shell from $SHELL in the source environment,
-    // falling back to /bin/sh. nsjail mode always uses sh (hard-coded in
-    // build_nsjail_command) for sandboxing consistency.
+    // Detect the user's shell from $SHELL in the filtered source environment.
+    // Validated against an allowlist to prevent arbitrary binary execution.
+    // nsjail mode always uses sh (hardcoded in build_nsjail_command) for
+    // sandboxing consistency.
     let shell = source_env
         .get("SHELL")
-        .or_else(|| source_env.get("shell"))
         .map(String::as_str)
+        .filter(|s| ALLOWED_SHELLS.contains(s))
         .unwrap_or("/bin/sh");
 
     let mut cmd = tokio::process::Command::new(shell);
@@ -552,38 +577,6 @@ async fn await_stream_output_with_timeout(
     } else {
         (String::new(), false)
     }
-}
-
-/// Truncate `content` to at most `max_lines` tail-lines or `max_bytes` bytes.
-/// Pi-parity: the *last* max_lines/max_bytes are kept, not the first.
-/// Kept for unit tests; production code uses [`truncate_tail`] from `truncate.rs`.
-#[cfg(test)]
-fn truncate_tail_output(content: &str, max_lines: usize, max_bytes: usize) -> (String, bool) {
-    let mut kept_lines: Vec<&str> = Vec::with_capacity(max_lines.min(4096));
-    let mut byte_count = 0usize;
-
-    for line in content.lines().rev() {
-        let line_bytes = line.len() + 1;
-        if byte_count + line_bytes > max_bytes || kept_lines.len() >= max_lines {
-            if kept_lines.is_empty() {
-                break;
-            }
-            kept_lines.reverse();
-            return (kept_lines.join("\n"), true);
-        }
-        kept_lines.push(line);
-        byte_count += line_bytes;
-    }
-
-    if kept_lines.is_empty() && !content.is_empty() {
-        let raw_start = content.len().saturating_sub(max_bytes);
-        let start = (raw_start..=content.len())
-            .find(|&i| content.is_char_boundary(i))
-            .unwrap_or(0);
-        return (content[start..].to_string(), true);
-    }
-
-    (content.to_string(), false)
 }
 
 /// Save content to a temp file asynchronously and return the path.

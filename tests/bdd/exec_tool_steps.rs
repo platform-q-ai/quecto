@@ -6,17 +6,27 @@ use cucumber::{given, when};
 
 use super::*;
 
-/// Execute bash with a SHELL env variable override.
+/// Execute bash with a SHELL env variable override via execute_with_env.
 #[when(regex = r#"^the agent executes bash "([^"]+)" with shell env "([^"]+)"$"#)]
 fn when_exec_bash_with_shell(world: &mut QuectoWorld, command: String, shell: String) {
+    use quecto::infrastructure::tools::exec::{ExecOptions, ExecTool};
+    let ws = world
+        .tool_workspace
+        .as_ref()
+        .expect("tool workspace not set");
+    let sandbox = Arc::new(quecto::infrastructure::security::sandbox::Sandbox::new(
+        Some(ws.clone()),
+        false,
+    ));
+    let tool = ExecTool::with_options(Arc::new(ws.clone()), sandbox, ExecOptions::default());
+
     let mut env_overrides = std::collections::HashMap::new();
     env_overrides.insert("SHELL".to_string(), format!("/bin/{}", shell));
 
-    let registry = world.tool_registry.as_ref().expect("tool registry not set");
     let args = serde_json::json!({"command": command}).to_string();
     let result = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(registry.execute("bash", &args));
+        .block_on(tool.execute_with_env(&args, &env_overrides));
     world.tool_result = Some(result.map_err(|e| e.to_string()));
 }
 

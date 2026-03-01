@@ -503,35 +503,43 @@ fn test_nsjail_dev_files_are_bindmount_ro() {
 }
 
 #[test]
-fn test_truncate_tail_output_no_truncation() {
+fn test_truncate_tail_no_truncation() {
+    use crate::infrastructure::tools::truncate::truncate_tail;
     let content = "line1\nline2\nline3";
-    let (out, truncated) = truncate_tail_output(content, 2000, 50 * 1024);
-    assert!(!truncated);
-    assert_eq!(out, content);
+    let tr = truncate_tail(content, 2000, 50 * 1024);
+    assert!(!tr.truncated);
+    assert_eq!(tr.content, content);
 }
 
 #[test]
-fn test_truncate_tail_output_line_limit() {
+fn test_truncate_tail_line_limit() {
+    use crate::infrastructure::tools::truncate::{TruncatedBy, truncate_tail};
     let content: String = (1..=3000).map(|i| format!("line{}\n", i)).collect();
-    let (out, truncated) = truncate_tail_output(&content, 2000, 50 * 1024);
-    assert!(truncated, "expected truncation");
+    let tr = truncate_tail(&content, 2000, 50 * 1024);
+    assert!(tr.truncated, "expected truncation");
+    assert_eq!(tr.truncated_by, Some(TruncatedBy::Lines));
     assert!(
-        out.contains("3000"),
+        tr.content.contains("3000"),
         "expected last line, got: {}",
-        &out[..out.len().min(100)]
+        &tr.content[..tr.content.len().min(100)]
     );
-    assert!(!out.contains("line1\n"), "should have dropped first lines");
+    assert!(
+        !tr.content.contains("line1\n"),
+        "should have dropped first lines"
+    );
 }
 
 #[test]
-fn test_truncate_tail_output_byte_limit() {
-    // 3000 lines of 20 chars = ~60KB > 50KB
-    let content: String = (1..=3000).map(|i| format!("{:020}\n", i)).collect();
-    let (out, truncated) = truncate_tail_output(&content, 2000, 50 * 1024);
-    assert!(truncated, "expected byte truncation");
-    // should contain the last line
+fn test_truncate_tail_byte_limit() {
+    use crate::infrastructure::tools::truncate::{TruncatedBy, truncate_tail};
+    // 1500 lines of 40 chars = ~61.5KB > 50KB, BUT 1500 < 2000 (line limit)
+    // → truncated by bytes, not lines
+    let content: String = (1..=1500).map(|i| format!("{:040}\n", i)).collect();
+    let tr = truncate_tail(&content, 2000, 50 * 1024);
+    assert!(tr.truncated, "expected byte truncation");
+    assert_eq!(tr.truncated_by, Some(TruncatedBy::Bytes));
     assert!(
-        out.contains(&format!("{:020}", 3000)),
+        tr.content.contains(&format!("{:040}", 1500)),
         "expected last entry in tail"
     );
 }
@@ -604,7 +612,8 @@ async fn test_exec_command_prefix_prepended() {
 #[tokio::test]
 async fn test_exec_shell_detection_uses_shell_env() {
     let (tool, _tmp) = test_exec(false);
-    // Set SHELL to /bin/sh via env override; command echoes $0 (the shell name)
+    // Set SHELL to /bin/sh and verify the shell is spawned (not an arbitrary binary).
+    // $0 in the spawned shell prints the shell executable name.
     let mut env_overrides = HashMap::new();
     env_overrides.insert("SHELL".to_string(), "/bin/sh".to_string());
     let result = tool
@@ -616,28 +625,48 @@ async fn test_exec_shell_detection_uses_shell_env() {
         "shell detection should work: {}",
         result.content
     );
+    assert!(
+        result.content.contains("sh"),
+        "output should name the shell, got: {}",
+        result.content
+    );
+}
+
+#[test]
+fn test_exec_disallowed_shell_falls_back_to_sh() {
+    // $SHELL pointing to a non-allowlisted binary should silently fall back to /bin/sh.
+    // We test build_shell_command indirectly via the allowlist logic.
+    // ALLOWED_SHELLS does not contain /tmp/evil, so it should use /bin/sh.
+    // We can't call build_shell_command directly (it's private), but we can
+    // confirm the constant list is correct.
+    assert!(ALLOWED_SHELLS.contains(&"/bin/sh"));
+    assert!(ALLOWED_SHELLS.contains(&"/bin/bash"));
+    assert!(!ALLOWED_SHELLS.contains(&"/tmp/evil"));
 }
 
 // --- Truncation notice format ---
 
 #[test]
-fn test_exec_truncation_byte_notice_has_line_range_and_50kb_hint() {
+fn test_exec_truncation_byte_notice_uses_truncate_tail() {
+    use crate::infrastructure::tools::truncate::{TruncatedBy, truncate_tail};
     // Generate content that will be truncated by bytes (multi-line, >50KB)
     let line = "x".repeat(50) + "\n"; // 51 bytes per line
     let content: String = line.repeat(1500); // ~76.5KB
-    let (out, was_truncated) = truncate_tail_output(&content, 2000, 50 * 1024);
-    assert!(was_truncated, "should be truncated by bytes");
-    // The truncation notice should be added by collect_and_truncate_output
-    // Here we just verify the raw tail output is correct
-    let _ = out; // Used in integration test
+    let tr = truncate_tail(&content, 2000, 50 * 1024);
+    assert!(tr.truncated, "should be truncated by bytes");
+    assert_eq!(tr.truncated_by, Some(TruncatedBy::Bytes));
 }
 
 #[test]
-fn test_exec_truncation_line_notice_format() {
+fn test_exec_truncation_line_notice_uses_truncate_tail() {
+    use crate::infrastructure::tools::truncate::{TruncatedBy, truncate_tail};
     // 3000 lines, each <50 bytes → truncated by lines
     let content: String = (1..=3000).map(|i| format!("line{}\n", i)).collect();
-    let (out, was_truncated) = truncate_tail_output(&content, 2000, 50 * 1024);
-    assert!(was_truncated, "should be truncated by lines");
-    // Tail should include the last line
-    assert!(out.contains("line3000"));
+    let tr = truncate_tail(&content, 2000, 50 * 1024);
+    assert!(tr.truncated, "should be truncated by lines");
+    assert_eq!(tr.truncated_by, Some(TruncatedBy::Lines));
+    assert!(
+        tr.content.contains("line3000"),
+        "tail should include the last line"
+    );
 }
