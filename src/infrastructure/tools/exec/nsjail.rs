@@ -51,6 +51,17 @@ const NSJAIL_RO_ETC_FILES: &[&str] = &[
 /// (`/dev/sda`, `/dev/mem`, etc.).  Only the safe, universally-needed nodes are
 /// included here, resolved at `ExecTool` construction time just like
 /// `NSJAIL_RO_ETC_FILES`.
+///
+/// **`--bindmount_ro` semantics on character devices:** `--bindmount_ro` in
+/// nsjail prevents the mount-point itself from being unmounted or re-mounted,
+/// but `write(2)` / `read(2)` syscalls to the underlying character device
+/// still succeed.  This is the correct behaviour for `/dev/null` (discards
+/// writes), `/dev/urandom` (reads entropy), and `/dev/zero` (reads zeros).
+///
+/// **`/dev/random` note:** On Linux kernels < 5.6 `/dev/random` can block when
+/// the entropy pool is depleted.  Since kernel 5.6 it behaves identically to
+/// `/dev/urandom`.  Jailed processes needing non-blocking entropy should prefer
+/// `/dev/urandom`.
 const NSJAIL_RO_DEV_FILES: &[&str] = &["/dev/null", "/dev/urandom", "/dev/random", "/dev/zero"];
 
 // ---------------------------------------------------------------------------
@@ -229,28 +240,28 @@ fn apply_nsjail_env(cmd: &mut tokio::process::Command, source_env: &HashMap<Stri
 // Mount resolution (called once at ExecTool construction time)
 // ---------------------------------------------------------------------------
 
-pub(super) fn resolve_ro_bindmounts() -> Vec<&'static str> {
-    NSJAIL_RO_BINDMOUNTS
+/// Filter a static path list to those that actually exist on the host.
+///
+/// Called once at [`ExecTool`] construction time so per-invocation path
+/// resolution is avoided.
+fn resolve_existing(paths: &[&'static str]) -> Vec<&'static str> {
+    paths
         .iter()
         .copied()
         .filter(|p| Path::new(p).exists())
         .collect()
+}
+
+pub(super) fn resolve_ro_bindmounts() -> Vec<&'static str> {
+    resolve_existing(NSJAIL_RO_BINDMOUNTS)
 }
 
 pub(super) fn resolve_ro_etc_files() -> Vec<&'static str> {
-    NSJAIL_RO_ETC_FILES
-        .iter()
-        .copied()
-        .filter(|p| Path::new(p).exists())
-        .collect()
+    resolve_existing(NSJAIL_RO_ETC_FILES)
 }
 
 pub(super) fn resolve_ro_dev_files() -> Vec<&'static str> {
-    NSJAIL_RO_DEV_FILES
-        .iter()
-        .copied()
-        .filter(|p| Path::new(p).exists())
-        .collect()
+    resolve_existing(NSJAIL_RO_DEV_FILES)
 }
 
 // ---------------------------------------------------------------------------
