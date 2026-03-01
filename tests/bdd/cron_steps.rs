@@ -613,7 +613,8 @@ fn when_cron_tick_fires_and_delivers(world: &mut QuectoWorld) {
                     target: target.clone(),
                     text: result.response.clone(),
                 };
-                let _ = rt.block_on(outbound_tx.send(msg));
+                rt.block_on(outbound_tx.send(msg))
+                    .expect("outbound send failed");
             }
         }
     }

@@ -11,7 +11,7 @@ use quecto::domain::cron::{CronJob, CronJobResult, CronSchedule, CronStore};
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, Role, ToolCall};
 use quecto::domain::provider::LlmProvider;
-use quecto::domain::session::{ContextSpillStore, Session, SessionStore};
+use quecto::domain::session::{ContextSpillStore, Session, SessionStore, strip_tool_history};
 use quecto::domain::skill::{Skill, SkillLoader};
 use quecto::domain::tool::{Tool, ToolDefinition, ToolResult};
 use quecto::infrastructure::auth::credential_store::{
@@ -25,6 +25,7 @@ use quecto::infrastructure::channels::telegram::{
 use quecto::infrastructure::config::{Config, TelegramConfig};
 use quecto::infrastructure::health::server::StaticReadiness;
 
+use quecto::infrastructure::persistence::context_spill::FileContextSpillStore;
 use quecto::infrastructure::persistence::cron_store::FileCronStore;
 use quecto::infrastructure::persistence::memory_store::{self, MemoryStore};
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
@@ -650,6 +651,21 @@ pub struct QuectoWorld {
     pub find_workspace: Option<PathBuf>,
     /// Result from find tool execution
     pub find_result: Option<quecto::domain::tool::ToolResult>,
+    // --- /reload BDD fields ---
+    /// Messages passed to strip_tool_history in /reload scenarios
+    pub reload_input_messages: Option<Vec<Message>>,
+    /// Filtered messages returned by strip_tool_history
+    pub reload_filtered_messages: Option<Vec<Message>>,
+    /// Response text from /reload handler
+    pub reload_response: Option<String>,
+    /// Session store used in /reload scenarios
+    pub reload_session_store:
+        Option<Arc<quecto::infrastructure::persistence::session_store::FileSessionStore>>,
+    /// Spill store used in /reload scenarios
+    pub reload_spill_store:
+        Option<Arc<quecto::infrastructure::persistence::context_spill::FileContextSpillStore>>,
+    /// Temp dir for /reload scenarios (kept alive)
+    pub _reload_temp_dir: Option<TempDir>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.

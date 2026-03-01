@@ -231,6 +231,24 @@ impl ContextSpillStore for FileContextSpillStore {
                 .collect())
         })
     }
+
+    fn clear(
+        &self,
+        session_key: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
+        let path = self.spill_path(session_key);
+        Box::pin(async move {
+            match tokio::fs::write(&path, b"").await {
+                Ok(()) => Ok(()),
+                // If the file does not exist yet, nothing to clear — that's fine.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(DomainError::Session(format!(
+                    "failed to clear spill file: {}",
+                    e
+                ))),
+            }
+        })
+    }
 }
 
 #[cfg(test)]
@@ -336,5 +354,35 @@ mod tests {
         // Dots replaced (prevents path traversal via "..")
         assert_eq!(sanitize_filename(".."), "__");
         assert_eq!(sanitize_filename(".hidden"), "_hidden");
+    }
+
+    #[tokio::test]
+    async fn test_clear_truncates_spill_file() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+        let entry = test_entry();
+
+        store.append("test-session", &entry).await.unwrap();
+
+        // Verify entry is present before clearing
+        let entries = store.list_entries("test-session").await.unwrap();
+        assert_eq!(entries.len(), 1);
+
+        // Clear the spill
+        store.clear("test-session").await.unwrap();
+
+        // Verify the file is now empty
+        let entries_after = store.list_entries("test-session").await.unwrap();
+        assert!(entries_after.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_clear_nonexistent_file_is_noop() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+
+        // Clearing a non-existent session's spill file should not error
+        let result = store.clear("ghost-session").await;
+        assert!(result.is_ok());
     }
 }

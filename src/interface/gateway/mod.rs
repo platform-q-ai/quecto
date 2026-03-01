@@ -65,6 +65,7 @@ pub(super) struct EventLoopContext {
     pub(super) outbound_rx: mpsc::Receiver<OutboundMessage>,
     pub(super) agent: Arc<dyn AgentLoop>,
     pub(super) session_store: Arc<dyn SessionStore>,
+    pub(super) spill_store: Arc<dyn crate::domain::session::ContextSpillStore>,
     pub(super) outbound_channel: Arc<dyn Channel>,
     pub(super) telegram_poller: Arc<TelegramChannel>,
     pub(super) config: Config,
@@ -112,7 +113,14 @@ impl EventLoopContext {
         // Core messaging pipeline — select until one stops or shutdown.
         tokio::select! {
             _ = Gateway::run_telegram_polling(
-                self.telegram_poller, self.inbound_tx, polling_config, self.allow_insecure_voice,
+                self.telegram_poller,
+                telegram::TelegramPollingConfig {
+                    inbound_tx: self.inbound_tx,
+                    config: polling_config,
+                    allow_insecure_voice: self.allow_insecure_voice,
+                    session_store: self.session_store.clone(),
+                    spill_store: self.spill_store.clone(),
+                },
             ) => {
                 tracing::info!("Telegram polling stopped");
             }
@@ -215,6 +223,7 @@ impl Gateway {
             outbound_rx,
             agent,
             session_store: Arc::new(FileSessionStore::new(&self.base_dir)),
+            spill_store: Arc::new(FileContextSpillStore::new(self.base_dir.clone())),
             outbound_channel: telegram.clone(),
             telegram_poller: telegram,
             config: self.config.clone(),
@@ -376,12 +385,16 @@ impl Gateway {
     }
 }
 
-/// Handle a Telegram bot command (`/start`, `/help`, `/status`).
+/// Handle a Telegram bot command (`/start`, `/help`, `/status`, `/reload`).
 ///
 /// Returns `Some(response_text)` if the command is a known bot command,
 /// or `None` if the message should be routed to the agent as regular text.
 /// Only the first whitespace-delimited token is matched; trailing arguments are ignored
 /// (e.g. `/start deep_link_payload` still matches `/start`).
+///
+/// Note: `/reload` is a sentinel — its response is just a placeholder; the actual
+/// reload logic (session + spill clearing) is performed in `dispatch_update` where
+/// I/O access is available. Here we only signal that the command was recognized.
 pub fn handle_bot_command(text: &str, config: &Config) -> Option<String> {
     let command = text.split_whitespace().next().unwrap_or("");
     match command {
@@ -394,7 +407,8 @@ pub fn handle_bot_command(text: &str, config: &Config) -> Option<String> {
             "Available commands:\n\
              /start  — Show welcome message\n\
              /help   — Show this help\n\
-             /status — Show bot status\n\n\
+             /status — Show bot status\n\
+             /reload — Remove stale tool history, keep conversation\n\n\
              Or just type a message to chat with me."
                 .to_string(),
         ),
@@ -411,8 +425,69 @@ pub fn handle_bot_command(text: &str, config: &Config) -> Option<String> {
                  Telegram: {telegram_status}"
             ))
         }
+        // /reload is a recognized command — return a sentinel so dispatch_update
+        // can detect it and perform the actual I/O (session load/save + spill clear).
+        // The sentinel starts with "__reload__" so dispatch_update can replace it
+        // with the real result from execute_reload().
+        "/reload" => Some("__reload__".to_string()),
         _ => None,
     }
+}
+
+/// Execute the /reload command for a given Telegram chat.
+///
+/// 1. Loads the session for `telegram:<chat_id>`
+/// 2. Applies `strip_tool_history()` to messages
+/// 3. Saves the filtered session
+/// 4. Clears `spill.jsonl` for this session key
+/// 5. Returns a human-readable summary
+pub async fn execute_reload(
+    chat_id: &str,
+    session_store: &dyn crate::domain::session::SessionStore,
+    spill_store: &dyn crate::domain::session::ContextSpillStore,
+) -> String {
+    let session_key = crate::domain::session::Session::build_key("telegram", chat_id);
+
+    let session = match session_store.load(&session_key).await {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            return "Session reloaded. No existing session found — nothing to clean.".to_string();
+        }
+        Err(e) => {
+            tracing::error!(error = %e, key = session_key, "failed to load session for /reload");
+            return format!("Error: could not load session ({})", e);
+        }
+    };
+
+    let original_count = session.messages.len();
+    let filtered = crate::domain::session::strip_tool_history(&session.messages);
+    let filtered_count = filtered.len();
+    let removed = original_count.saturating_sub(filtered_count);
+
+    let new_session = crate::domain::session::Session {
+        key: session_key.clone(),
+        messages: filtered,
+    };
+
+    if let Err(e) = session_store.save(&new_session).await {
+        tracing::error!(error = %e, key = session_key, "failed to save session after /reload");
+        return format!("Error: could not save session ({})", e);
+    }
+
+    if let Err(e) = spill_store.clear(&session_key).await {
+        tracing::warn!(error = %e, key = session_key, "failed to clear spill on /reload");
+        // Non-fatal: continue and report partial success
+        return format!(
+            "Session reloaded. Kept {} messages, removed {} tool calls. \
+             Warning: recall history could not be cleared.",
+            filtered_count, removed
+        );
+    }
+
+    format!(
+        "Session reloaded. Kept {} messages, removed {} tool calls. Recall history cleared.",
+        filtered_count, removed
+    )
 }
 
 // Re-export shared credential resolution functions for backward compatibility.
