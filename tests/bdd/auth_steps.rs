@@ -456,6 +456,32 @@ fn given_mock_oauth_server(world: &mut QuectoWorld, _provider: String) {
     world.cli_context.oauth_base_url = Some(uri);
 }
 
+#[given(expr = "a mock OAuth server for {string} with token exchange")]
+fn given_mock_oauth_server_with_token_exchange(world: &mut QuectoWorld, _provider: String) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let uri = rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+
+        let token_response = serde_json::json!({
+            "access_token": "mock-access-token-xyz",
+            "refresh_token": "mock-refresh-token-xyz",
+            "expires_in": 3600
+        });
+
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/oauth/token"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(&token_response))
+            .mount(&server)
+            .await;
+
+        let uri = server.uri();
+        let _leaked: &'static wiremock::MockServer = Box::leak(Box::new(server));
+        uri
+    });
+    std::mem::forget(rt);
+    world.cli_context.oauth_base_url = Some(uri);
+}
+
 #[given(expr = "a mock OAuth server for {string} supporting device code flow")]
 fn given_mock_oauth_device_code(world: &mut QuectoWorld, _provider: String) {
     let rt = tokio::runtime::Runtime::new().unwrap();
