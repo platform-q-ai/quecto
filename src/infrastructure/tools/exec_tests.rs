@@ -14,10 +14,12 @@ fn nsjail_args_str(options: &NsjailOptions) -> String {
     let source_env = HashMap::new();
     let ro_dirs = resolve_ro_bindmounts();
     let ro_etc = resolve_ro_etc_files();
+    let ro_dev = resolve_ro_dev_files();
     let config = NsjailConfig {
         options,
         ro_dirs: &ro_dirs,
         ro_etc_files: &ro_etc,
+        ro_dev_files: &ro_dev,
     };
     let cmd = build_nsjail_command(&workspace, "echo hi", &source_env, &config);
     cmd.as_std()
@@ -271,10 +273,12 @@ fn test_nsjail_command_sets_tmpdir_env() {
     let options = NsjailOptions::default();
     let ro_dirs = resolve_ro_bindmounts();
     let ro_etc = resolve_ro_etc_files();
+    let ro_dev = resolve_ro_dev_files();
     let config = NsjailConfig {
         options: &options,
         ro_dirs: &ro_dirs,
         ro_etc_files: &ro_etc,
+        ro_dev_files: &ro_dev,
     };
     let cmd = build_nsjail_command(&workspace, "echo hi", &source_env, &config);
     let envs: Vec<(String, String)> = cmd
@@ -304,10 +308,12 @@ fn test_nsjail_command_respects_caller_tmpdir_override() {
     let options = NsjailOptions::default();
     let ro_dirs = resolve_ro_bindmounts();
     let ro_etc = resolve_ro_etc_files();
+    let ro_dev = resolve_ro_dev_files();
     let config = NsjailConfig {
         options: &options,
         ro_dirs: &ro_dirs,
         ro_etc_files: &ro_etc,
+        ro_dev_files: &ro_dev,
     };
     let cmd = build_nsjail_command(&workspace, "echo hi", &source_env, &config);
     let envs: Vec<(String, String)> = cmd
@@ -336,10 +342,12 @@ fn test_nsjail_command_sets_tmp_and_temp_env() {
     let options = NsjailOptions::default();
     let ro_dirs = resolve_ro_bindmounts();
     let ro_etc = resolve_ro_etc_files();
+    let ro_dev = resolve_ro_dev_files();
     let config = NsjailConfig {
         options: &options,
         ro_dirs: &ro_dirs,
         ro_etc_files: &ro_etc,
+        ro_dev_files: &ro_dev,
     };
     let cmd = build_nsjail_command(&workspace, "echo hi", &source_env, &config);
     let envs: Vec<(String, String)> = cmd
@@ -395,6 +403,88 @@ fn test_nsjail_command_includes_time_limit() {
         "missing --time_limit: {args}"
     );
     assert!(args.contains("20"), "missing value 20: {args}");
+}
+
+// --- /dev device node bindmount tests ---
+
+#[test]
+fn test_nsjail_command_includes_dev_null_bindmount() {
+    let args = nsjail_args_str(&NsjailOptions::default());
+    assert!(
+        args.contains("/dev/null:/dev/null"),
+        "missing /dev/null bindmount: {args}"
+    );
+}
+
+#[test]
+fn test_nsjail_command_includes_dev_urandom_bindmount() {
+    let args = nsjail_args_str(&NsjailOptions::default());
+    assert!(
+        args.contains("/dev/urandom:/dev/urandom"),
+        "missing /dev/urandom bindmount: {args}"
+    );
+}
+
+#[test]
+fn test_nsjail_command_includes_dev_zero_bindmount() {
+    let args = nsjail_args_str(&NsjailOptions::default());
+    assert!(
+        args.contains("/dev/zero:/dev/zero"),
+        "missing /dev/zero bindmount: {args}"
+    );
+}
+
+#[test]
+fn test_nsjail_command_includes_dev_random_bindmount() {
+    let args = nsjail_args_str(&NsjailOptions::default());
+    assert!(
+        args.contains("/dev/random:/dev/random"),
+        "missing /dev/random bindmount: {args}"
+    );
+}
+
+#[test]
+fn test_nsjail_command_does_not_mount_full_dev_directory() {
+    let args = nsjail_args_str(&NsjailOptions::default());
+    // Only specific device nodes should be mounted, not the whole /dev directory.
+    assert!(
+        !args.contains("/dev:/dev"),
+        "must NOT mount /dev as a whole directory: {args}"
+    );
+}
+
+#[test]
+fn test_nsjail_dev_files_are_bindmount_ro() {
+    // All /dev/* mounts must use --bindmount_ro (read-only).
+    let workspace = PathBuf::from("/tmp/test");
+    let source_env = HashMap::new();
+    let options = NsjailOptions::default();
+    let ro_dirs = resolve_ro_bindmounts();
+    let ro_etc = resolve_ro_etc_files();
+    let ro_dev = resolve_ro_dev_files();
+    let config = NsjailConfig {
+        options: &options,
+        ro_dirs: &ro_dirs,
+        ro_etc_files: &ro_etc,
+        ro_dev_files: &ro_dev,
+    };
+    let cmd = build_nsjail_command(&workspace, "echo hi", &source_env, &config);
+    let args: Vec<String> = cmd
+        .as_std()
+        .get_args()
+        .map(|a| a.to_string_lossy().to_string())
+        .collect();
+    // Find all --bindmount_ro entries and confirm /dev/* use that flag (not --bindmount).
+    for (i, arg) in args.iter().enumerate() {
+        if arg.starts_with("/dev/") && arg.contains(":/dev/") {
+            // The arg before it must be --bindmount_ro
+            assert!(
+                i > 0 && args[i - 1] == "--bindmount_ro",
+                "/dev mount '{arg}' must be preceded by --bindmount_ro, got {:?}",
+                args.get(i.saturating_sub(1))
+            );
+        }
+    }
 }
 
 #[test]

@@ -290,6 +290,41 @@ Feature: nsjail Exec Isolation
     Then no nsjail processes should remain running
     And no stale mount namespaces should remain
 
+  # --- /dev device node mounts ---
+
+  @done
+  Scenario: nsjail command includes bindmount_ro for /dev/null
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with a workspace
+    Then the nsjail command for "echo test" should contain "/dev/null:/dev/null"
+
+  @done
+  Scenario: nsjail command includes bindmount_ro for /dev/urandom
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with a workspace
+    Then the nsjail command for "echo test" should contain "/dev/urandom:/dev/urandom"
+
+  @done
+  Scenario: nsjail command includes bindmount_ro for /dev/zero
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with a workspace
+    Then the nsjail command for "echo test" should contain "/dev/zero:/dev/zero"
+
+  @done
+  Scenario: nsjail command includes bindmount_ro for /dev/random
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with a workspace
+    Then the nsjail command for "echo test" should contain "/dev/random:/dev/random"
+
+  @done
+  Scenario: Redirect to /dev/null succeeds inside nsjail
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with a workspace
+    When the agent executes nsjail tool "exec" with args:
+      | command | echo ok >/dev/null && echo done |
+    Then the tool result should contain "done"
+    And the tool result should not be an error
+
   # --- Output capture ---
 
   @done

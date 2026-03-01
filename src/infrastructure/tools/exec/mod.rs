@@ -21,7 +21,7 @@ use crate::infrastructure::security::sandbox::Sandbox;
 use nsjail::{
     DEFAULT_EXEC_TIMEOUT, EXEC_ENV_ALLOWLIST, ExecIsolationMode as Mode, MAX_CAPTURE_BYTES,
     NsjailConfig, SECRET_ENV_PREFIX, STREAM_DRAIN_TIMEOUT_ON_KILL, build_nsjail_command,
-    resolve_nsjail_binary, resolve_ro_bindmounts, resolve_ro_etc_files,
+    resolve_nsjail_binary, resolve_ro_bindmounts, resolve_ro_dev_files, resolve_ro_etc_files,
 };
 
 #[derive(Debug, Clone)]
@@ -55,6 +55,7 @@ pub struct ExecTool {
     /// System paths resolved at construction time to avoid per-execution stat() calls.
     ro_bindmounts: Vec<&'static str>,
     ro_etc_files: Vec<&'static str>,
+    ro_dev_files: Vec<&'static str>,
     startup_warning: Option<String>,
     startup_error: Option<String>,
 }
@@ -138,6 +139,7 @@ impl ExecTool {
         }
         let ro_bindmounts = resolve_ro_bindmounts();
         let ro_etc_files = resolve_ro_etc_files();
+        let ro_dev_files = resolve_ro_dev_files();
         Self {
             workspace,
             sandbox,
@@ -147,6 +149,7 @@ impl ExecTool {
             nsjail: options.nsjail,
             ro_bindmounts,
             ro_etc_files,
+            ro_dev_files,
             startup_warning: warning,
             startup_error,
         }
@@ -164,6 +167,7 @@ impl ExecTool {
     ) -> Self {
         let ro_bindmounts = resolve_ro_bindmounts();
         let ro_etc_files = resolve_ro_etc_files();
+        let ro_dev_files = resolve_ro_dev_files();
         Self {
             workspace,
             sandbox,
@@ -173,6 +177,7 @@ impl ExecTool {
             nsjail: options.nsjail,
             ro_bindmounts,
             ro_etc_files,
+            ro_dev_files,
             startup_warning: None,
             startup_error: None,
         }
@@ -210,6 +215,7 @@ impl ExecTool {
             options: &self.nsjail,
             ro_dirs: &self.ro_bindmounts,
             ro_etc_files: &self.ro_etc_files,
+            ro_dev_files: &self.ro_dev_files,
         };
         build_nsjail_command(workspace, command, &source_env, &config)
     }
@@ -257,6 +263,7 @@ impl ExecTool {
                     options: &self.nsjail,
                     ro_dirs: &self.ro_bindmounts,
                     ro_etc_files: &self.ro_etc_files,
+                    ro_dev_files: &self.ro_dev_files,
                 };
                 build_nsjail_command(&self.workspace, command, source_env, &config)
             }
