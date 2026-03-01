@@ -2,7 +2,7 @@
 // Supports text files with offset/limit pagination and image files as base64.
 
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -11,7 +11,7 @@ use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::path_utils::resolve_read_path;
 use crate::infrastructure::tools::truncate::{
-    DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, format_size, truncate_head,
+    DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, TruncatedBy, format_size, truncate_head,
 };
 
 pub struct ReadTool {
@@ -77,31 +77,40 @@ impl Tool for ReadTool {
                 }
             }
 
-            // Image detection: if the file is a supported image type, return as base64.
-            // Cap at 5 MiB — Anthropic's API rejects larger images in tool_result content.
-            const MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024;
-            if let Some(mime) = detect_image_mime(&resolved) {
-                if let Ok(meta) = tokio::fs::metadata(&resolved).await {
-                    if meta.len() > MAX_IMAGE_BYTES {
-                        let size = format_size(meta.len() as usize);
-                        return Ok(ToolResult {
-                            content: format!(
-                                "Image is {size} — too large to send inline (max 5 MiB for API). \
-                                 Describe what you need from the image instead.",
-                            ),
-                            is_error: true,
-                            image_blocks: vec![],
-                        });
-                    }
+            // Read entire file once (up to 10 MiB cap, already checked above).
+            // Peek magic bytes from the buffer — avoids TOCTOU and extra syscalls.
+            const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+            let raw_bytes = tokio::fs::read(&resolved)
+                .await
+                .map_err(|e| DomainError::Tool(format!("read failed: {}", e)))?;
+
+            // Magic-byte MIME detection. Extension-only fallback is intentionally
+            // absent — text files named .jpg should be read as text.
+            if let Some(orig_mime) = detect_mime_by_magic(&raw_bytes) {
+                if raw_bytes.len() > MAX_IMAGE_BYTES {
+                    let size = format_size(raw_bytes.len());
+                    return Ok(ToolResult {
+                        content: format!(
+                            "Image is {size} — too large to send inline (max 5 MiB for API). \
+                             Describe what you need from the image instead.",
+                        ),
+                        is_error: true,
+                        image_blocks: vec![],
+                    });
                 }
-                let bytes = tokio::fs::read(&resolved)
-                    .await
-                    .map_err(|e| DomainError::Tool(format!("read image failed: {}", e)))?;
+                // Auto-resize on a blocking thread (avoids blocking the Tokio runtime).
+                let raw_clone = raw_bytes.clone();
+                let (image_bytes, mime, resize_note) = tokio::task::spawn_blocking(move || {
+                    resize_image_if_needed(&raw_clone, orig_mime)
+                })
+                .await
+                .unwrap_or_else(|_| (raw_bytes.to_vec(), orig_mime, String::new()));
                 use base64::Engine as _;
-                let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                let size = format_size(bytes.len());
+                let data = base64::engine::general_purpose::STANDARD.encode(&image_bytes);
+                let size = format_size(raw_bytes.len());
+                let content = format!("Read image file [{}] ({size}){resize_note}", orig_mime);
                 return Ok(ToolResult {
-                    content: format!("Read image file [{}] ({size})", mime),
+                    content,
                     is_error: false,
                     image_blocks: vec![crate::domain::tool::ImageBlock {
                         mime_type: mime.to_string(),
@@ -110,10 +119,9 @@ impl Tool for ReadTool {
                 });
             }
 
-            // Load file content
-            let content = tokio::fs::read_to_string(&resolved)
-                .await
-                .map_err(|e| DomainError::Tool(format!("read failed: {}", e)))?;
+            // Not an image — interpret as UTF-8 text.
+            let content = String::from_utf8(raw_bytes)
+                .map_err(|e| DomainError::Tool(format!("read failed (not valid UTF-8): {}", e)))?;
 
             let output = apply_read_truncation(&content, path, offset, limit)?;
 
@@ -131,8 +139,36 @@ fn shell_escape_single(path: &str) -> String {
     format!("'{}'", path.replace('\'', "'\\''"))
 }
 
+/// Detect supported image MIME type by file magic bytes.
+///
+/// Checks the first few bytes of the file content against known image signatures.
+/// Returns `None` if no known image signature is found.
+///
+/// Signatures checked:
+/// - PNG:  `\x89PNG\r\n\x1a\n` (8 bytes)
+/// - JPEG: `\xFF\xD8\xFF` (3 bytes)
+/// - GIF:  `GIF87a` or `GIF89a` (6 bytes)
+/// - WebP: `RIFF....WEBP` (12 bytes)
+fn detect_mime_by_magic(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() >= 8 && bytes[..8] == [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A] {
+        return Some("image/png");
+    }
+    if bytes.len() >= 3 && bytes[..3] == [0xFF, 0xD8, 0xFF] {
+        return Some("image/jpeg");
+    }
+    if bytes.len() >= 6 && (bytes[..6] == *b"GIF87a" || bytes[..6] == *b"GIF89a") {
+        return Some("image/gif");
+    }
+    if bytes.len() >= 12 && bytes[..4] == *b"RIFF" && bytes[8..12] == *b"WEBP" {
+        return Some("image/webp");
+    }
+    None
+}
+
 /// Detect supported image MIME type by file extension (case-insensitive).
-fn detect_image_mime(path: &Path) -> Option<&'static str> {
+/// Production path uses magic-byte detection only; this helper is test-only.
+#[cfg(test)]
+fn detect_image_mime_by_ext(path: &std::path::Path) -> Option<&'static str> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
     match ext.as_str() {
         "jpg" | "jpeg" => Some("image/jpeg"),
@@ -141,6 +177,64 @@ fn detect_image_mime(path: &Path) -> Option<&'static str> {
         "webp" => Some("image/webp"),
         _ => None,
     }
+}
+
+/// Auto-resize an image to fit within 2000×2000 pixels.
+///
+/// Returns `(image_bytes, &'static mime, resize_note)`.
+/// - No resize needed: original bytes, original mime, empty note.
+/// - Resize needed: PNG-encoded bytes, `"image/png"`, dimension note.
+///
+/// Limits guard against decompression bombs (max 8192×8192 input).
+/// Uses CatmullRom filter — adequate for LLM vision, much faster than Lanczos3.
+/// Intended to run in `spawn_blocking`.
+fn resize_image_if_needed(bytes: &[u8], mime: &'static str) -> (Vec<u8>, &'static str, String) {
+    const MAX_DIM: u32 = 2_000;
+    const BOMB_MAX_W: u32 = 8_192;
+    const BOMB_MAX_H: u32 = 8_192;
+
+    let format = match mime {
+        "image/png" => image::ImageFormat::Png,
+        "image/jpeg" => image::ImageFormat::Jpeg,
+        "image/gif" => image::ImageFormat::Gif,
+        "image/webp" => image::ImageFormat::WebP,
+        _ => return (bytes.to_vec(), mime, String::new()),
+    };
+
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
+    let mut limits = image::Limits::no_limits();
+    limits.max_image_width = Some(BOMB_MAX_W);
+    limits.max_image_height = Some(BOMB_MAX_H);
+    reader.limits(limits);
+    let img = match reader.decode() {
+        Ok(img) => img,
+        Err(_) => return (bytes.to_vec(), mime, String::new()),
+    };
+
+    let (orig_w, orig_h) = (img.width(), img.height());
+    if orig_w <= MAX_DIM && orig_h <= MAX_DIM {
+        return (bytes.to_vec(), mime, String::new());
+    }
+
+    // Compute new dimensions preserving aspect ratio.
+    let scale = (MAX_DIM as f64 / orig_w.max(orig_h) as f64).min(1.0);
+    let new_w = ((orig_w as f64 * scale).round() as u32).max(1);
+    let new_h = ((orig_h as f64 * scale).round() as u32).max(1);
+
+    // CatmullRom: good quality, much faster than Lanczos3.
+    let resized = img.resize(new_w, new_h, image::imageops::FilterType::CatmullRom);
+
+    // Re-encode as PNG — ensures correct MIME after format change.
+    let mut buf = std::io::Cursor::new(Vec::new());
+    if resized.write_to(&mut buf, image::ImageFormat::Png).is_err() {
+        return (bytes.to_vec(), mime, String::new());
+    }
+
+    let note = format!(
+        " [resized from {}×{} to {}×{}]",
+        orig_w, orig_h, new_w, new_h
+    );
+    (buf.into_inner(), "image/png", note)
 }
 
 /// Apply offset/limit pagination and head-truncation to text file content.
@@ -218,11 +312,19 @@ fn apply_read_truncation(
             let remaining = total_lines.saturating_sub(shown_end);
 
             if limit.is_some() && remaining > 0 {
+                // User provided an explicit limit — tell them how many lines remain.
                 output.push_str(&format!(
                     "\n[{} more lines in file. Use offset={} to continue.]",
                     remaining, next_offset
                 ));
+            } else if tr.truncated_by == Some(TruncatedBy::Bytes) {
+                // Auto-truncation by byte limit — include the "(50KB limit)" hint.
+                output.push_str(&format!(
+                    "\n[Showing lines {}-{} of {} (50KB limit). Use offset={} to continue.]",
+                    shown_start, shown_end, total_lines, next_offset
+                ));
             } else {
+                // Auto-truncation by line limit.
                 output.push_str(&format!(
                     "\n[Showing lines {}-{} of {}. Use offset={} to continue.]",
                     shown_start, shown_end, total_lines, next_offset
@@ -318,7 +420,7 @@ mod tests {
     #[test]
     fn test_detect_image_mime_png() {
         assert_eq!(
-            detect_image_mime(Path::new("screenshot.png")),
+            detect_image_mime_by_ext(Path::new("screenshot.png")),
             Some("image/png")
         );
     }
@@ -326,40 +428,46 @@ mod tests {
     #[test]
     fn test_detect_image_mime_jpg() {
         assert_eq!(
-            detect_image_mime(Path::new("photo.jpg")),
+            detect_image_mime_by_ext(Path::new("photo.jpg")),
             Some("image/jpeg")
         );
         assert_eq!(
-            detect_image_mime(Path::new("photo.jpeg")),
+            detect_image_mime_by_ext(Path::new("photo.jpeg")),
             Some("image/jpeg")
         );
     }
 
     #[test]
     fn test_detect_image_mime_gif() {
-        assert_eq!(detect_image_mime(Path::new("anim.gif")), Some("image/gif"));
+        assert_eq!(
+            detect_image_mime_by_ext(Path::new("anim.gif")),
+            Some("image/gif")
+        );
     }
 
     #[test]
     fn test_detect_image_mime_webp() {
         assert_eq!(
-            detect_image_mime(Path::new("icon.webp")),
+            detect_image_mime_by_ext(Path::new("icon.webp")),
             Some("image/webp")
         );
     }
 
     #[test]
     fn test_detect_image_mime_text_file() {
-        assert_eq!(detect_image_mime(Path::new("notes.txt")), None);
-        assert_eq!(detect_image_mime(Path::new("main.rs")), None);
-        assert_eq!(detect_image_mime(Path::new("no_extension")), None);
+        assert_eq!(detect_image_mime_by_ext(Path::new("notes.txt")), None);
+        assert_eq!(detect_image_mime_by_ext(Path::new("main.rs")), None);
+        assert_eq!(detect_image_mime_by_ext(Path::new("no_extension")), None);
     }
 
     #[test]
     fn test_detect_image_mime_uppercase_ext() {
-        assert_eq!(detect_image_mime(Path::new("IMAGE.PNG")), Some("image/png"));
         assert_eq!(
-            detect_image_mime(Path::new("Photo.JPG")),
+            detect_image_mime_by_ext(Path::new("IMAGE.PNG")),
+            Some("image/png")
+        );
+        assert_eq!(
+            detect_image_mime_by_ext(Path::new("Photo.JPG")),
             Some("image/jpeg")
         );
     }
@@ -392,5 +500,174 @@ mod tests {
         assert!(!result.is_error);
         assert!(result.image_blocks.is_empty());
         assert!(result.content.contains("hello world"));
+    }
+
+    // --- Magic-byte MIME detection ---
+
+    #[test]
+    fn test_detect_mime_by_magic_png() {
+        const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0];
+        assert_eq!(detect_mime_by_magic(PNG), Some("image/png"));
+    }
+
+    #[test]
+    fn test_detect_mime_by_magic_jpeg() {
+        const JPEG: &[u8] = &[0xFF, 0xD8, 0xFF, 0xD9];
+        assert_eq!(detect_mime_by_magic(JPEG), Some("image/jpeg"));
+    }
+
+    #[test]
+    fn test_detect_mime_by_magic_gif89a() {
+        assert_eq!(detect_mime_by_magic(b"GIF89a\x01"), Some("image/gif"));
+    }
+
+    #[test]
+    fn test_detect_mime_by_magic_gif87a() {
+        assert_eq!(detect_mime_by_magic(b"GIF87a\x01"), Some("image/gif"));
+    }
+
+    #[test]
+    fn test_detect_mime_by_magic_webp() {
+        let webp = b"RIFF\x20\x00\x00\x00WEBPVP8L";
+        assert_eq!(detect_mime_by_magic(webp), Some("image/webp"));
+    }
+
+    #[test]
+    fn test_detect_mime_by_magic_text() {
+        assert_eq!(detect_mime_by_magic(b"hello world"), None);
+        assert_eq!(detect_mime_by_magic(b""), None);
+    }
+
+    #[tokio::test]
+    async fn test_magic_bytes_detect_png_no_extension() {
+        let (ws, sb, tmp) = test_tools();
+        let tool = ReadTool::new(ws, sb);
+        // Valid PNG magic bytes but no file extension
+        let png_bytes: &[u8] = &[
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52,
+        ];
+        std::fs::write(tmp.path().join("screenshot"), png_bytes).unwrap();
+        let result = tool.execute(r#"{"path": "screenshot"}"#).await.unwrap();
+        assert!(
+            !result.is_error,
+            "magic byte PNG should be detected: {}",
+            result.content
+        );
+        assert!(
+            result
+                .image_blocks
+                .iter()
+                .any(|b| b.mime_type == "image/png")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_magic_bytes_detect_jpeg_wrong_extension() {
+        let (ws, sb, tmp) = test_tools();
+        let tool = ReadTool::new(ws, sb);
+        // JPEG magic bytes with .dat extension
+        let jpeg_bytes: &[u8] = &[0xFF, 0xD8, 0xFF, 0xD9];
+        std::fs::write(tmp.path().join("photo.dat"), jpeg_bytes).unwrap();
+        let result = tool.execute(r#"{"path": "photo.dat"}"#).await.unwrap();
+        assert!(
+            !result.is_error,
+            "magic byte JPEG should be detected: {}",
+            result.content
+        );
+        assert!(
+            result
+                .image_blocks
+                .iter()
+                .any(|b| b.mime_type == "image/jpeg")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_text_jpg_not_detected_as_image() {
+        let (ws, sb, tmp) = test_tools();
+        let tool = ReadTool::new(ws, sb);
+        // Text content with .jpg extension — magic bytes are not image bytes
+        std::fs::write(tmp.path().join("not_image.jpg"), "hello world").unwrap();
+        let result = tool.execute(r#"{"path": "not_image.jpg"}"#).await.unwrap();
+        assert!(!result.is_error);
+        assert!(
+            result.image_blocks.is_empty(),
+            "text file should not produce image block"
+        );
+        assert!(result.content.contains("hello world"));
+    }
+
+    // --- Truncation notice format ---
+
+    #[test]
+    fn test_truncation_byte_limit_includes_50kb_hint() {
+        // Content > 50KB in multi-line format; should trigger byte truncation notice.
+        // Each line is ~50 bytes; 1500 lines = ~75KB total, truncation happens by bytes.
+        let line = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuv\n"; // 50 bytes
+        let content: String = line.repeat(1500); // ~75KB
+        let result = apply_read_truncation(&content, "f.txt", None, None).unwrap();
+        assert!(
+            result.contains("50KB limit"),
+            "byte-truncated notice should include '50KB limit', got: {}",
+            &result[result.len().saturating_sub(200)..]
+        );
+    }
+
+    #[test]
+    fn test_truncation_user_limit_shows_more_lines() {
+        // 100 lines, user requests 10 → "N more lines in file" notice.
+        let content: String = (1..=100).map(|i| format!("line{}\n", i)).collect();
+        let result = apply_read_truncation(&content, "f.txt", None, Some(10)).unwrap();
+        assert!(
+            result.contains("more lines in file"),
+            "user-limit notice should say 'more lines in file', got: {}",
+            &result[result.len().saturating_sub(200)..]
+        );
+    }
+
+    // --- Auto-resize ---
+
+    #[tokio::test]
+    async fn test_large_image_auto_resized() {
+        use image::{ImageBuffer, Rgb};
+        let (ws, sb, tmp) = test_tools();
+        let tool = ReadTool::new(ws, sb);
+        // Create a 3000×3000 PNG (exceeds 2000 max)
+        let img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::new(3000, 3000);
+        img.save(tmp.path().join("big.png")).unwrap();
+        let result = tool.execute(r#"{"path": "big.png"}"#).await.unwrap();
+        assert!(
+            !result.is_error,
+            "large image should be handled: {}",
+            result.content
+        );
+        assert!(
+            result.image_blocks.len() == 1,
+            "should return one image block"
+        );
+        assert!(
+            result.content.contains("resized"),
+            "content should mention resize, got: {}",
+            result.content
+        );
+    }
+
+    #[tokio::test]
+    async fn test_small_image_not_resized() {
+        let (ws, sb, tmp) = test_tools();
+        let tool = ReadTool::new(ws, sb);
+        let png_bytes: &[u8] = &[
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
+            0x00, 0x90, 0x77, 0x53, 0xDE,
+        ];
+        std::fs::write(tmp.path().join("small.png"), png_bytes).unwrap();
+        let result = tool.execute(r#"{"path": "small.png"}"#).await.unwrap();
+        assert!(!result.is_error);
+        assert!(
+            !result.content.contains("resized"),
+            "small image should not mention resize"
+        );
     }
 }
