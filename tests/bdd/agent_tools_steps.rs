@@ -429,3 +429,82 @@ fn then_search_used_ddg(world: &mut QuectoWorld) {
         Err(e) => panic!("search failed: {}", e),
     }
 }
+
+// --- Image support steps (issue #115) ---
+
+/// Minimal valid 1×1 PNG (67 bytes).
+const MINIMAL_PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+    0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08, 0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00,
+    0x00, 0x00, 0x02, 0x00, 0x01, 0xE2, 0x21, 0xBC, 0x33, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
+    0x44, 0xAE, 0x42, 0x60, 0x82,
+];
+const MINIMAL_JPEG: &[u8] = &[0xFF, 0xD8, 0xFF, 0xD9];
+const MINIMAL_GIF: &[u8] = b"GIF89a\x01\x00\x01\x00\x00\x00\x00\x3B";
+const MINIMAL_WEBP: &[u8] = b"RIFF\x24\x00\x00\x00WEBPVP8L";
+
+#[given(regex = r#"^a PNG image file "([^"]+)" exists in the workspace$"#)]
+fn given_png_file(world: &mut QuectoWorld, filename: String) {
+    let ws = world
+        .tool_workspace
+        .as_ref()
+        .expect("tool workspace not set");
+    std::fs::write(ws.join(&filename), MINIMAL_PNG).expect("write PNG");
+}
+
+#[given(regex = r#"^a JPEG image file "([^"]+)" exists in the workspace$"#)]
+fn given_jpeg_file(world: &mut QuectoWorld, filename: String) {
+    let ws = world
+        .tool_workspace
+        .as_ref()
+        .expect("tool workspace not set");
+    std::fs::write(ws.join(&filename), MINIMAL_JPEG).expect("write JPEG");
+}
+
+#[given(regex = r#"^a GIF image file "([^"]+)" exists in the workspace$"#)]
+fn given_gif_file(world: &mut QuectoWorld, filename: String) {
+    let ws = world
+        .tool_workspace
+        .as_ref()
+        .expect("tool workspace not set");
+    std::fs::write(ws.join(&filename), MINIMAL_GIF).expect("write GIF");
+}
+
+#[given(regex = r#"^a WebP image file "([^"]+)" exists in the workspace$"#)]
+fn given_webp_file(world: &mut QuectoWorld, filename: String) {
+    let ws = world
+        .tool_workspace
+        .as_ref()
+        .expect("tool workspace not set");
+    std::fs::write(ws.join(&filename), MINIMAL_WEBP).expect("write WebP");
+}
+
+#[then(regex = r#"^the tool result image blocks should contain a "([^"]+)" block$"#)]
+fn then_image_blocks_contain(world: &mut QuectoWorld, expected_mime: String) {
+    let result = world.tool_result.as_ref().expect("no tool result");
+    let tr = result.as_ref().expect("tool result was an error");
+    assert!(
+        tr.image_blocks.iter().any(|b| b.mime_type == expected_mime),
+        "expected image block with mime_type {:?}, got blocks: {:?}",
+        expected_mime,
+        tr.image_blocks
+            .iter()
+            .map(|b| &b.mime_type)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[then("the tool result image blocks should be empty")]
+fn then_image_blocks_empty(world: &mut QuectoWorld) {
+    let result = world.tool_result.as_ref().expect("no tool result");
+    let tr = result.as_ref().expect("tool result was an error");
+    assert!(
+        tr.image_blocks.is_empty(),
+        "expected no image blocks, got: {:?}",
+        tr.image_blocks
+            .iter()
+            .map(|b| &b.mime_type)
+            .collect::<Vec<_>>()
+    );
+}

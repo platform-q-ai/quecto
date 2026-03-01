@@ -194,10 +194,12 @@ impl Tool for CronTool {
                 Ok(content) => Ok(ToolResult {
                     content,
                     is_error: false,
+                    image_blocks: vec![],
                 }),
                 Err(e) => Ok(ToolResult {
                     content: e,
                     is_error: true,
+                    image_blocks: vec![],
                 }),
             }
         })

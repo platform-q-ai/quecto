@@ -70,6 +70,7 @@ impl Tool for MessageTool {
             Ok(ToolResult {
                 content: format!("Message sent to {}.", target),
                 is_error: false,
+                image_blocks: vec![],
             })
         })
     }

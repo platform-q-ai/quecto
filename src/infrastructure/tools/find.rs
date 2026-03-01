@@ -179,6 +179,7 @@ impl Tool for FindTool {
                 return Ok(ToolResult {
                     content: msg,
                     is_error: true,
+                    image_blocks: vec![],
                 });
             }
 
@@ -188,6 +189,7 @@ impl Tool for FindTool {
             Ok(ToolResult {
                 content: result,
                 is_error: false,
+                image_blocks: vec![],
             })
         })
     }

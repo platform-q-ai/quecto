@@ -1936,6 +1936,7 @@ dependencies = [
 name = "quecto"
 version = "0.12.0"
 dependencies = [
+ "base64",
  "chrono",
  "cucumber",
  "dirs",

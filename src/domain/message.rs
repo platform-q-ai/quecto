@@ -20,6 +20,9 @@ pub struct Message {
     pub input_preview: Option<String>,
     /// Spill ID for recall() lookup.
     pub spill_id: Option<String>,
+    /// Image blocks for tool result messages that return image data (e.g. `read` on images).
+    /// Empty for non-image messages. Not sent to context-pruning; passed directly to providers.
+    pub image_blocks: Vec<crate::domain::tool::ImageBlock>,
 }
 
 impl Message {
@@ -36,6 +39,7 @@ impl Message {
             tool_name: None,
             input_preview: None,
             spill_id: None,
+            image_blocks: vec![],
         }
     }
 
@@ -52,6 +56,7 @@ impl Message {
             tool_name: None,
             input_preview: None,
             spill_id: None,
+            image_blocks: vec![],
         }
     }
 
@@ -68,6 +73,7 @@ impl Message {
             tool_name: None,
             input_preview: None,
             spill_id: None,
+            image_blocks: vec![],
         }
     }
 
@@ -84,6 +90,7 @@ impl Message {
             tool_name: None,
             input_preview: None,
             spill_id: None,
+            image_blocks: vec![],
         }
     }
 }

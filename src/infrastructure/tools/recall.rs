@@ -83,10 +83,12 @@ impl Tool for RecallTool {
                 Some(entry) => Ok(ToolResult {
                     content: entry.content,
                     is_error: false,
+                    image_blocks: vec![],
                 }),
                 None => Ok(ToolResult {
                     content: format!("No spilled output found for id: {}", id),
                     is_error: true,
+                    image_blocks: vec![],
                 }),
             }
         })
@@ -101,6 +103,7 @@ impl RecallTool {
             return Ok(ToolResult {
                 content: "No spilled outputs in this session.".to_string(),
                 is_error: false,
+                image_blocks: vec![],
             });
         }
 
@@ -114,6 +117,7 @@ impl RecallTool {
         Ok(ToolResult {
             content: output,
             is_error: false,
+            image_blocks: vec![],
         })
     }
 }

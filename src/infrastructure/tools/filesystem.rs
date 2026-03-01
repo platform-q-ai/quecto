@@ -110,8 +110,42 @@ impl Tool for ReadTool {
                              Use bash: head -n 2000 {hint} | head -c 51200",
                         ),
                         is_error: true,
+                        image_blocks: vec![],
                     });
                 }
+            }
+
+            // Image detection: if the file is a supported image type, return as base64.
+            // Cap at 5 MiB — Anthropic's API rejects larger images in tool_result content.
+            const MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024;
+            if let Some(mime) = detect_image_mime(&resolved) {
+                if let Ok(meta) = tokio::fs::metadata(&resolved).await {
+                    if meta.len() > MAX_IMAGE_BYTES {
+                        let size = format_size(meta.len() as usize);
+                        return Ok(ToolResult {
+                            content: format!(
+                                "Image is {size} — too large to send inline (max 5 MiB for API). \
+                                 Describe what you need from the image instead.",
+                            ),
+                            is_error: true,
+                            image_blocks: vec![],
+                        });
+                    }
+                }
+                let bytes = tokio::fs::read(&resolved)
+                    .await
+                    .map_err(|e| DomainError::Tool(format!("read image failed: {}", e)))?;
+                use base64::Engine as _;
+                let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                let size = format_size(bytes.len());
+                return Ok(ToolResult {
+                    content: format!("Read image file [{}] ({size})", mime),
+                    is_error: false,
+                    image_blocks: vec![crate::domain::tool::ImageBlock {
+                        mime_type: mime.to_string(),
+                        data,
+                    }],
+                });
             }
 
             // Load file content
@@ -124,6 +158,7 @@ impl Tool for ReadTool {
             Ok(ToolResult {
                 content: output,
                 is_error: false,
+                image_blocks: vec![],
             })
         })
     }
@@ -133,6 +168,19 @@ impl Tool for ReadTool {
 /// Escapes any embedded single quotes using the standard `'\''` trick.
 fn shell_escape_single(path: &str) -> String {
     format!("'{}'", path.replace('\'', "'\\''"))
+}
+
+/// Detect whether a path points to a supported image file by extension.
+/// Returns the MIME type string if supported, None otherwise.
+fn detect_image_mime(path: &Path) -> Option<&'static str> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    match ext.as_str() {
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "png" => Some("image/png"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
 }
 
 /// Apply offset/limit pagination and truncation to file content.
@@ -291,6 +339,7 @@ impl Tool for WriteTool {
             Ok(ToolResult {
                 content: format!("Successfully wrote {} bytes to {}", content.len(), path),
                 is_error: false,
+                image_blocks: vec![],
             })
         })
     }
@@ -369,6 +418,7 @@ impl Tool for EditTool {
                 return Ok(ToolResult {
                     content: format!("oldText not found in {}", path),
                     is_error: true,
+                    image_blocks: vec![],
                 });
             }
             if count > 1 {
@@ -379,6 +429,7 @@ impl Tool for EditTool {
                         count, path
                     ),
                     is_error: true,
+                    image_blocks: vec![],
                 });
             }
 
@@ -416,6 +467,7 @@ impl Tool for EditTool {
             Ok(ToolResult {
                 content: diff,
                 is_error: false,
+                image_blocks: vec![],
             })
         })
     }
@@ -654,6 +706,7 @@ impl Tool for LsTool {
             Ok(ToolResult {
                 content: output,
                 is_error: false,
+                image_blocks: vec![],
             })
         })
     }
@@ -946,5 +999,92 @@ mod tests {
                 .to_string()
                 .contains("exceeds maximum allowed size")
         );
+    }
+
+    // --- detect_image_mime unit tests ---
+
+    #[test]
+    fn test_detect_image_mime_png() {
+        assert_eq!(
+            detect_image_mime(Path::new("screenshot.png")),
+            Some("image/png")
+        );
+    }
+
+    #[test]
+    fn test_detect_image_mime_jpg() {
+        assert_eq!(
+            detect_image_mime(Path::new("photo.jpg")),
+            Some("image/jpeg")
+        );
+        assert_eq!(
+            detect_image_mime(Path::new("photo.jpeg")),
+            Some("image/jpeg")
+        );
+    }
+
+    #[test]
+    fn test_detect_image_mime_gif() {
+        assert_eq!(detect_image_mime(Path::new("anim.gif")), Some("image/gif"));
+    }
+
+    #[test]
+    fn test_detect_image_mime_webp() {
+        assert_eq!(
+            detect_image_mime(Path::new("icon.webp")),
+            Some("image/webp")
+        );
+    }
+
+    #[test]
+    fn test_detect_image_mime_text_file() {
+        assert_eq!(detect_image_mime(Path::new("notes.txt")), None);
+        assert_eq!(detect_image_mime(Path::new("main.rs")), None);
+        assert_eq!(detect_image_mime(Path::new("no_extension")), None);
+    }
+
+    #[test]
+    fn test_detect_image_mime_uppercase_ext() {
+        // Case-insensitive extension matching
+        assert_eq!(detect_image_mime(Path::new("IMAGE.PNG")), Some("image/png"));
+        assert_eq!(
+            detect_image_mime(Path::new("Photo.JPG")),
+            Some("image/jpeg")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_read_png_returns_image_block() {
+        let (ws, sb, tmp) = test_tools();
+        let tool = ReadTool::new(ws, sb);
+
+        // Write minimal 1x1 PNG bytes (valid PNG header)
+        let png_bytes: &[u8] = &[
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
+            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, // IHDR chunk
+            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1x1
+            0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, // bit depth, color type
+            0xDE,
+        ];
+        std::fs::write(tmp.path().join("img.png"), png_bytes).unwrap();
+
+        let result = tool.execute(r#"{"path": "img.png"}"#).await.unwrap();
+        assert!(!result.is_error);
+        assert_eq!(result.image_blocks.len(), 1);
+        assert_eq!(result.image_blocks[0].mime_type, "image/png");
+        assert!(!result.image_blocks[0].data.is_empty());
+        assert!(result.content.contains("image/png"));
+    }
+
+    #[tokio::test]
+    async fn test_read_text_file_has_no_image_blocks() {
+        let (ws, sb, tmp) = test_tools();
+        let tool = ReadTool::new(ws, sb);
+        std::fs::write(tmp.path().join("hello.txt"), "hello world").unwrap();
+
+        let result = tool.execute(r#"{"path": "hello.txt"}"#).await.unwrap();
+        assert!(!result.is_error);
+        assert!(result.image_blocks.is_empty());
+        assert!(result.content.contains("hello world"));
     }
 }

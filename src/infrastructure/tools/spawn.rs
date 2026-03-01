@@ -146,6 +146,7 @@ impl SpawnTool {
                         Self::SUBAGENT_TIMEOUT_SECS
                     ),
                     is_error: true,
+                    image_blocks: vec![],
                 });
             }
         };
@@ -154,12 +155,14 @@ impl SpawnTool {
             Ok(ToolResult {
                 content: format!("Subagent '{}' completed successfully.", session_name),
                 is_error: false,
+                image_blocks: vec![],
             })
         } else {
             let code = status.code().unwrap_or(-1);
             Ok(ToolResult {
                 content: format!("Subagent '{}' failed (exit code {}).", session_name, code),
                 is_error: true,
+                image_blocks: vec![],
             })
         }
     }
@@ -193,6 +196,7 @@ impl Tool for SpawnTool {
                         Ok(ToolResult {
                             content: msg,
                             is_error: false,
+                            image_blocks: vec![],
                         })
                     } else {
                         self.run_subprocess(&config).await
@@ -201,6 +205,7 @@ impl Tool for SpawnTool {
                 Err(e) => Ok(ToolResult {
                     content: format!("Failed to spawn subagent: {}", e),
                     is_error: true,
+                    image_blocks: vec![],
                 }),
             }
         })

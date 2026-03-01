@@ -131,10 +131,12 @@ impl WasmToolWrapper {
             Ok(content) => Ok(ToolResult {
                 content,
                 is_error: false,
+                image_blocks: vec![],
             }),
             Err(content) => Ok(ToolResult {
                 content,
                 is_error: true,
+                image_blocks: vec![],
             }),
         }
     }
