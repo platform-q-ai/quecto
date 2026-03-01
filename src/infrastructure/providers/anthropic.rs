@@ -76,12 +76,25 @@ impl AnthropicProvider {
                     }
                 }
                 Role::Tool => {
+                    // Build the tool_result content array: text first, then image blocks.
+                    let mut result_content: Vec<serde_json::Value> =
+                        vec![serde_json::json!({"type": "text", "text": m.content})];
+                    for img in &m.image_blocks {
+                        result_content.push(serde_json::json!({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": img.mime_type,
+                                "data": img.data,
+                            }
+                        }));
+                    }
                     api_messages.push(serde_json::json!({
                         "role": "user",
                         "content": [{
                             "type": "tool_result",
                             "tool_use_id": m.tool_call_id.as_deref().unwrap_or(""),
-                            "content": m.content,
+                            "content": result_content,
                         }],
                     }));
                 }

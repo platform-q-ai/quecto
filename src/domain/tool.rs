@@ -12,11 +12,23 @@ pub struct ToolDefinition {
     pub parameters_schema: String,
 }
 
+/// A base64-encoded image block returned by a tool (e.g. `read` on an image file).
+#[derive(Debug, Clone)]
+pub struct ImageBlock {
+    /// MIME type: "image/png", "image/jpeg", "image/gif", or "image/webp".
+    pub mime_type: String,
+    /// Base64-encoded image bytes (standard encoding, no line breaks).
+    pub data: String,
+}
+
 /// The result of executing a tool.
 #[derive(Debug, Clone)]
 pub struct ToolResult {
     pub content: String,
     pub is_error: bool,
+    /// Optional image blocks (e.g. when `read` is called on an image file).
+    /// Empty for all non-image tools — zero-cost default.
+    pub image_blocks: Vec<ImageBlock>,
 }
 
 /// Port: a tool the agent can invoke.

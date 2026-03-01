@@ -53,6 +53,14 @@ impl std::fmt::Debug for AgentLoopImpl {
     }
 }
 
+/// Arguments for building a tool result message (avoids clippy 5-arg limit).
+struct ToolMessageArgs<'a> {
+    tc: &'a ToolCall,
+    content: String,
+    image_blocks: Vec<crate::domain::tool::ImageBlock>,
+    spill_id: String,
+}
+
 impl AgentLoopImpl {
     pub fn new(config: AgentLoopConfig) -> Self {
         Self {
@@ -143,24 +151,32 @@ impl AgentLoopImpl {
         ));
 
         for (idx, tc) in response.tool_calls.iter().enumerate() {
-            let content = self.execute_single_tool_call(tc).await;
+            let (content, image_blocks) = self.execute_single_tool_call(tc).await;
             let spill_id = format!("turn{}:{}:{}", current_turn, tc.name, idx);
-            let mut tool_msg = self.build_tool_message(tc, content, spill_id);
+            let mut tool_msg = self.build_tool_message(ToolMessageArgs {
+                tc,
+                content,
+                image_blocks,
+                spill_id,
+            });
             tool_msg.turn = Some(current_turn);
             self.spill_tool_message(&mut tool_msg).await;
             messages.push(tool_msg);
         }
     }
 
-    async fn execute_single_tool_call(&self, tc: &ToolCall) -> String {
+    async fn execute_single_tool_call(
+        &self,
+        tc: &ToolCall,
+    ) -> (String, Vec<crate::domain::tool::ImageBlock>) {
         let start = std::time::Instant::now();
         let tool_result = self.tool_registry.execute(&tc.name, &tc.arguments).await;
         let duration_ms = start.elapsed().as_millis() as u64;
 
         let is_err = tool_result.is_err();
-        let content = match tool_result {
-            Ok(tr) => tr.content,
-            Err(e) => format!("Error: {}", e),
+        let (content, image_blocks) = match tool_result {
+            Ok(tr) => (tr.content, tr.image_blocks),
+            Err(e) => (format!("Error: {}", e), vec![]),
         };
 
         tracing::info!(
@@ -170,14 +186,15 @@ impl AgentLoopImpl {
             is_error = is_err,
             "tool executed"
         );
-        content
+        (content, image_blocks)
     }
 
-    fn build_tool_message(&self, tc: &ToolCall, content: String, spill_id: String) -> Message {
-        let mut tool_msg = Message::tool(tc.id.clone(), content);
-        tool_msg.tool_name = Some(tc.name.clone());
-        tool_msg.input_preview = Some(context_pruning::truncate_utf8_safe(&tc.arguments, 100));
-        tool_msg.spill_id = Some(spill_id);
+    fn build_tool_message(&self, args: ToolMessageArgs) -> Message {
+        let mut tool_msg = Message::tool(args.tc.id.clone(), args.content);
+        tool_msg.tool_name = Some(args.tc.name.clone());
+        tool_msg.input_preview = Some(context_pruning::truncate_utf8_safe(&args.tc.arguments, 100));
+        tool_msg.spill_id = Some(args.spill_id);
+        tool_msg.image_blocks = args.image_blocks;
         tool_msg
     }
 
@@ -382,6 +399,7 @@ mod tests {
                 Ok(ToolResult {
                     content,
                     is_error: false,
+                    image_blocks: vec![],
                 })
             })
         }

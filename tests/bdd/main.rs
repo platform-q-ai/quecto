@@ -159,6 +159,7 @@ impl quecto::domain::tool::Tool for MockBddTool {
             Ok(ToolResult {
                 content,
                 is_error: false,
+                image_blocks: vec![],
             })
         })
     }

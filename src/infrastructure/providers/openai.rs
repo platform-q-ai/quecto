@@ -63,6 +63,9 @@ impl OpenAiProvider {
                 if let Some(ref id) = m.tool_call_id {
                     obj["tool_call_id"] = serde_json::Value::String(id.clone());
                 }
+                // image_blocks: OpenAI tool results only support string content;
+                // image blocks from `read` on image files are not forwarded here.
+                // Use Anthropic provider for image-aware tool results.
                 obj
             })
             .collect();

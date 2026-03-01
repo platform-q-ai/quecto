@@ -35,6 +35,7 @@ fn run_find(tool: FindTool, args: serde_json::Value) -> quecto::domain::tool::To
         .unwrap_or_else(|e| quecto::domain::tool::ToolResult {
             content: e.to_string(),
             is_error: true,
+            image_blocks: vec![],
         })
 }
 
@@ -88,6 +89,7 @@ fn when_find_pattern(world: &mut QuectoWorld, pattern: String) {
         world.find_result = Some(quecto::domain::tool::ToolResult {
             content: "fd not available — skipping".to_string(),
             is_error: false,
+            image_blocks: vec![],
         });
         return;
     }
@@ -102,6 +104,7 @@ fn when_find_default_path(world: &mut QuectoWorld, pattern: String) {
         world.find_result = Some(quecto::domain::tool::ToolResult {
             content: "fd not available — skipping".to_string(),
             is_error: false,
+            image_blocks: vec![],
         });
         return;
     }
@@ -118,6 +121,7 @@ fn when_find_with_limit(world: &mut QuectoWorld, pattern: String, limit: usize) 
             content: "[10 results limit reached. Use limit=20 for more, or refine pattern]"
                 .to_string(),
             is_error: false,
+            image_blocks: vec![],
         });
         return;
     }

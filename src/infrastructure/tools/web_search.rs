@@ -173,10 +173,12 @@ impl Tool for WebSearchTool {
                 Ok(content) => Ok(ToolResult {
                     content,
                     is_error: false,
+                    image_blocks: vec![],
                 }),
                 Err(e) => Ok(ToolResult {
                     content: format!("Search failed: {}", e),
                     is_error: true,
+                    image_blocks: vec![],
                 }),
             }
         })

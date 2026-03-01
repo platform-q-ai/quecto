@@ -36,6 +36,7 @@ fn run_tool(tool: GrepTool, args: serde_json::Value) -> quecto::domain::tool::To
         .unwrap_or_else(|e| quecto::domain::tool::ToolResult {
             content: e.to_string(),
             is_error: true,
+            image_blocks: vec![],
         })
 }
 

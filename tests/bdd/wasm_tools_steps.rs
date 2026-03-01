@@ -402,6 +402,7 @@ fn when_execute_wasm_tool(world: &mut QuectoWorld, tool_name: String, step: &ghe
             world.wasm_tool_result = Some(ToolResult {
                 content: format!("{e}"),
                 is_error: true,
+                image_blocks: vec![],
             });
         }
     }
@@ -428,6 +429,7 @@ fn when_parity_execute(world: &mut QuectoWorld, tool_name: String, step: &gherki
             world.wasm_native_result = Some(ToolResult {
                 content: format!("{e}"),
                 is_error: true,
+                image_blocks: vec![],
             });
         }
     }
@@ -440,6 +442,7 @@ fn when_parity_execute(world: &mut QuectoWorld, tool_name: String, step: &gherki
             world.wasm_tool_result = Some(ToolResult {
                 content: format!("{e}"),
                 is_error: true,
+                image_blocks: vec![],
             });
         }
     }

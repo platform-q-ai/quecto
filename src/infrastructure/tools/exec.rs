@@ -663,11 +663,13 @@ async fn run_child_with_timeout(
                 Ok(ToolResult {
                     content,
                     is_error: false,
+                    image_blocks: vec![],
                 })
             } else {
                 Ok(ToolResult {
                     content: format!("exit code {}\n{}", status.code().unwrap_or(-1), content),
                     is_error: true,
+                    image_blocks: vec![],
                 })
             }
         }
@@ -688,6 +690,7 @@ async fn run_child_with_timeout(
             Ok(ToolResult {
                 content: format!("command timed out after {}s", timeout_dur.as_secs()),
                 is_error: true,
+                image_blocks: vec![],
             })
         }
     }

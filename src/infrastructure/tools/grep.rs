@@ -203,6 +203,7 @@ impl Tool for GrepTool {
                 return Ok(ToolResult {
                     content: msg,
                     is_error: true,
+                    image_blocks: vec![],
                 });
             }
 
@@ -218,6 +219,7 @@ impl Tool for GrepTool {
             Ok(ToolResult {
                 content: result,
                 is_error: false,
+                image_blocks: vec![],
             })
         })
     }
