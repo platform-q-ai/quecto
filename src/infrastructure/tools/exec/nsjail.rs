@@ -45,6 +45,14 @@ const NSJAIL_RO_ETC_FILES: &[&str] = &[
     "/etc/alternatives",
 ];
 
+/// Essential `/dev` character devices to bind-mount read-only inside the jail.
+///
+/// Full `/dev` is intentionally **not** mounted — that would expose block devices
+/// (`/dev/sda`, `/dev/mem`, etc.).  Only the safe, universally-needed nodes are
+/// included here, resolved at `ExecTool` construction time just like
+/// `NSJAIL_RO_ETC_FILES`.
+const NSJAIL_RO_DEV_FILES: &[&str] = &["/dev/null", "/dev/urandom", "/dev/random", "/dev/zero"];
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -107,6 +115,8 @@ pub(super) struct NsjailConfig<'a> {
     pub ro_dirs: &'a [&'static str],
     /// Individual /etc file RO mounts, resolved at construction.
     pub ro_etc_files: &'a [&'static str],
+    /// Individual /dev character device RO mounts, resolved at construction.
+    pub ro_dev_files: &'a [&'static str],
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +159,10 @@ fn apply_base_nsjail_args(
     for etc_path in config.ro_etc_files {
         cmd.arg("--bindmount_ro")
             .arg(format!("{etc_path}:{etc_path}"));
+    }
+    for dev_path in config.ro_dev_files {
+        cmd.arg("--bindmount_ro")
+            .arg(format!("{dev_path}:{dev_path}"));
     }
 
     // Writable tmpfs at /tmp — ephemeral, bounded, POSIX-standard.
@@ -225,6 +239,14 @@ pub(super) fn resolve_ro_bindmounts() -> Vec<&'static str> {
 
 pub(super) fn resolve_ro_etc_files() -> Vec<&'static str> {
     NSJAIL_RO_ETC_FILES
+        .iter()
+        .copied()
+        .filter(|p| Path::new(p).exists())
+        .collect()
+}
+
+pub(super) fn resolve_ro_dev_files() -> Vec<&'static str> {
+    NSJAIL_RO_DEV_FILES
         .iter()
         .copied()
         .filter(|p| Path::new(p).exists())
