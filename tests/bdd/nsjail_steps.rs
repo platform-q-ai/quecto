@@ -42,6 +42,7 @@ fn setup_nsjail_exec_tool(world: &mut QuectoWorld, setup: NsjailSetup) {
         max_capture_bytes: setup.max_capture_bytes.unwrap_or(1024 * 1024),
         isolation_mode: ExecIsolationMode::Nsjail,
         allow_native_fallback: true,
+        command_prefix: None,
         nsjail: NsjailOptions {
             binary: binary.clone(),
             network_passthrough: setup.network_passthrough,
@@ -530,8 +531,11 @@ fn then_result_indicates_truncation(world: &mut QuectoWorld) {
         Ok(tr) => tr.content.clone(),
         Err(e) => e.clone(),
     };
+    // Accept both the old "[Output truncated...]" format and the new
+    // Pi-parity "[Showing lines X-Y of Z...]" format.
     assert!(
-        text.contains("truncated"),
-        "result did not indicate truncation"
+        text.contains("truncated") || text.contains("Showing lines"),
+        "result did not indicate truncation: {}",
+        &text[..text.len().min(200)]
     );
 }
