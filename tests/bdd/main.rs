@@ -910,7 +910,10 @@ fn table_to_json(table: &gherkin::Table) -> String {
         .map(|row| {
             let key = row[0].trim().to_string();
             let raw = row[1].trim();
-            // Coerce numeric strings to JSON numbers so tools can use as_u64()/as_i64().
+            // Coerce numeric-looking values to JSON numbers so tool handlers can use
+            // as_u64()/as_i64(). NOTE: string-only table values (e.g. paths) are not
+            // affected since paths never parse as i64. If a future test needs a string
+            // that looks numeric (e.g. "10"), use a Gherkin docstring instead of a table.
             let val = if let Ok(n) = raw.parse::<i64>() {
                 serde_json::json!(n)
             } else if let Ok(f) = raw.parse::<f64>() {

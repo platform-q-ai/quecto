@@ -2,7 +2,7 @@
 // Supports text files with offset/limit pagination and image files as base64.
 
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -77,51 +77,38 @@ impl Tool for ReadTool {
                 }
             }
 
-            // Image detection: read first 16 bytes for magic-byte MIME detection,
-            // then fall back to extension. If a supported image type is detected,
-            // auto-resize to 2000×2000 max and return as base64.
-            const MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024;
-            // Peek at the first 16 bytes without loading the whole file.
-            let peek = {
-                use tokio::io::AsyncReadExt as _;
-                let mut f = tokio::fs::File::open(&resolved)
-                    .await
-                    .map_err(|e| DomainError::Tool(format!("read failed: {}", e)))?;
-                let mut buf = [0u8; 16];
-                let n = f
-                    .read(&mut buf)
-                    .await
-                    .map_err(|e| DomainError::Tool(format!("read failed: {}", e)))?;
-                buf[..n].to_vec()
-            };
-            // Magic-byte detection: use file content signature.
-            // Extension-only fallback is intentionally NOT used — a text file
-            // named foo.jpg should be read as text, not mis-decoded as an image.
-            // For true image files the magic bytes are always present.
-            let mime = detect_mime_by_magic(&peek);
-            if let Some(mime) = mime {
-                if let Ok(meta) = tokio::fs::metadata(&resolved).await {
-                    if meta.len() > MAX_IMAGE_BYTES {
-                        let size = format_size(meta.len() as usize);
-                        return Ok(ToolResult {
-                            content: format!(
-                                "Image is {size} — too large to send inline (max 5 MiB for API). \
-                                 Describe what you need from the image instead.",
-                            ),
-                            is_error: true,
-                            image_blocks: vec![],
-                        });
-                    }
+            // Read entire file once (up to 10 MiB cap, already checked above).
+            // Peek magic bytes from the buffer — avoids TOCTOU and extra syscalls.
+            const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+            let raw_bytes = tokio::fs::read(&resolved)
+                .await
+                .map_err(|e| DomainError::Tool(format!("read failed: {}", e)))?;
+
+            // Magic-byte MIME detection. Extension-only fallback is intentionally
+            // absent — text files named .jpg should be read as text.
+            if let Some(orig_mime) = detect_mime_by_magic(&raw_bytes) {
+                if raw_bytes.len() > MAX_IMAGE_BYTES {
+                    let size = format_size(raw_bytes.len());
+                    return Ok(ToolResult {
+                        content: format!(
+                            "Image is {size} — too large to send inline (max 5 MiB for API). \
+                             Describe what you need from the image instead.",
+                        ),
+                        is_error: true,
+                        image_blocks: vec![],
+                    });
                 }
-                let bytes = tokio::fs::read(&resolved)
-                    .await
-                    .map_err(|e| DomainError::Tool(format!("read image failed: {}", e)))?;
-                // Auto-resize: shrink images larger than 2000×2000 max.
-                let (image_bytes, resize_note) = resize_image_if_needed(&bytes, mime);
+                // Auto-resize on a blocking thread (avoids blocking the Tokio runtime).
+                let raw_clone = raw_bytes.clone();
+                let (image_bytes, mime, resize_note) = tokio::task::spawn_blocking(move || {
+                    resize_image_if_needed(&raw_clone, orig_mime)
+                })
+                .await
+                .unwrap_or_else(|_| (raw_bytes.to_vec(), orig_mime, String::new()));
                 use base64::Engine as _;
                 let data = base64::engine::general_purpose::STANDARD.encode(&image_bytes);
-                let size = format_size(bytes.len());
-                let content = format!("Read image file [{}] ({size}){resize_note}", mime);
+                let size = format_size(raw_bytes.len());
+                let content = format!("Read image file [{}] ({size}){resize_note}", orig_mime);
                 return Ok(ToolResult {
                     content,
                     is_error: false,
@@ -132,10 +119,9 @@ impl Tool for ReadTool {
                 });
             }
 
-            // Load file content
-            let content = tokio::fs::read_to_string(&resolved)
-                .await
-                .map_err(|e| DomainError::Tool(format!("read failed: {}", e)))?;
+            // Not an image — interpret as UTF-8 text.
+            let content = String::from_utf8(raw_bytes)
+                .map_err(|e| DomainError::Tool(format!("read failed (not valid UTF-8): {}", e)))?;
 
             let output = apply_read_truncation(&content, path, offset, limit)?;
 
@@ -180,10 +166,9 @@ fn detect_mime_by_magic(bytes: &[u8]) -> Option<&'static str> {
 }
 
 /// Detect supported image MIME type by file extension (case-insensitive).
-/// Kept for unit tests and as a future extension point; production path
-/// uses magic-byte detection only via [`detect_mime_by_magic`].
-#[cfg_attr(not(test), allow(dead_code))]
-fn detect_image_mime_by_ext(path: &Path) -> Option<&'static str> {
+/// Production path uses magic-byte detection only; this helper is test-only.
+#[cfg(test)]
+fn detect_image_mime_by_ext(path: &std::path::Path) -> Option<&'static str> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
     match ext.as_str() {
         "jpg" | "jpeg" => Some("image/jpeg"),
@@ -196,47 +181,60 @@ fn detect_image_mime_by_ext(path: &Path) -> Option<&'static str> {
 
 /// Auto-resize an image to fit within 2000×2000 pixels.
 ///
-/// If the image dimensions exceed the limit, it is scaled down preserving
-/// aspect ratio and re-encoded as PNG. Returns `(image_bytes, resize_note)`
-/// where `resize_note` is empty if no resize was needed, or a formatted
-/// dimension string otherwise.
-fn resize_image_if_needed(bytes: &[u8], mime: &str) -> (Vec<u8>, String) {
+/// Returns `(image_bytes, &'static mime, resize_note)`.
+/// - No resize needed: original bytes, original mime, empty note.
+/// - Resize needed: PNG-encoded bytes, `"image/png"`, dimension note.
+///
+/// Limits guard against decompression bombs (max 8192×8192 input).
+/// Uses CatmullRom filter — adequate for LLM vision, much faster than Lanczos3.
+/// Intended to run in `spawn_blocking`.
+fn resize_image_if_needed(bytes: &[u8], mime: &'static str) -> (Vec<u8>, &'static str, String) {
     const MAX_DIM: u32 = 2_000;
+    const BOMB_MAX_W: u32 = 8_192;
+    const BOMB_MAX_H: u32 = 8_192;
 
     let format = match mime {
         "image/png" => image::ImageFormat::Png,
         "image/jpeg" => image::ImageFormat::Jpeg,
         "image/gif" => image::ImageFormat::Gif,
         "image/webp" => image::ImageFormat::WebP,
-        _ => return (bytes.to_vec(), String::new()),
+        _ => return (bytes.to_vec(), mime, String::new()),
     };
 
-    let img = match image::load_from_memory_with_format(bytes, format) {
+    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
+    let mut limits = image::Limits::no_limits();
+    limits.max_image_width = Some(BOMB_MAX_W);
+    limits.max_image_height = Some(BOMB_MAX_H);
+    reader.limits(limits);
+    let img = match reader.decode() {
         Ok(img) => img,
-        Err(_) => return (bytes.to_vec(), String::new()),
+        Err(_) => return (bytes.to_vec(), mime, String::new()),
     };
 
     let (orig_w, orig_h) = (img.width(), img.height());
     if orig_w <= MAX_DIM && orig_h <= MAX_DIM {
-        return (bytes.to_vec(), String::new());
+        return (bytes.to_vec(), mime, String::new());
     }
 
     // Compute new dimensions preserving aspect ratio.
     let scale = (MAX_DIM as f64 / orig_w.max(orig_h) as f64).min(1.0);
-    let new_w = (orig_w as f64 * scale).round() as u32;
-    let new_h = (orig_h as f64 * scale).round() as u32;
+    let new_w = ((orig_w as f64 * scale).round() as u32).max(1);
+    let new_h = ((orig_h as f64 * scale).round() as u32).max(1);
 
-    let resized = img.resize(new_w, new_h, image::imageops::FilterType::Lanczos3);
+    // CatmullRom: good quality, much faster than Lanczos3.
+    let resized = img.resize(new_w, new_h, image::imageops::FilterType::CatmullRom);
+
+    // Re-encode as PNG — ensures correct MIME after format change.
     let mut buf = std::io::Cursor::new(Vec::new());
     if resized.write_to(&mut buf, image::ImageFormat::Png).is_err() {
-        return (bytes.to_vec(), String::new());
+        return (bytes.to_vec(), mime, String::new());
     }
 
     let note = format!(
         " [resized from {}×{} to {}×{}]",
         orig_w, orig_h, new_w, new_h
     );
-    (buf.into_inner(), note)
+    (buf.into_inner(), "image/png", note)
 }
 
 /// Apply offset/limit pagination and head-truncation to text file content.
