@@ -90,14 +90,6 @@ Feature: Agent Tool System
     Then the file "win.txt" should contain "hi"
     And the tool result should not be an error
 
-  Scenario: Append to a file
-    Given a tool workspace
-    And a file "log.txt" exists with content "line1"
-    When the agent executes tool "append_file" with args:
-      | path    | log.txt |
-      | content | line2   |
-    Then the file "log.txt" should contain "line1"
-    And the file "log.txt" should contain "line2"
 
   Scenario: List a directory
     Given a tool workspace
@@ -128,7 +120,6 @@ Feature: Agent Tool System
     And the tool registry should contain "read"
     And the tool registry should contain "write"
     And the tool registry should contain "edit"
-    And the tool registry should contain "append_file"
     And the tool registry should contain "ls"
 
   Scenario: Message tool sends to channel via bus

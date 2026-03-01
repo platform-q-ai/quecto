@@ -22,17 +22,6 @@ Feature: End-to-End Agentic Loop
     And stdout should contain "Changed mode to release"
     And the file "config.txt" in the e2e workspace should contain "mode=release"
 
-  @done
-  Scenario: LLM appends to a file via append_file tool
-    Given a file "log.txt" in the e2e workspace with content "line1"
-    And the mock LLM first returns a tool call for "append_file" with args:
-      | path    | log.txt      |
-      | content | appended-line |
-    And the mock LLM then returns a text response "Appended to log"
-    When I run quecto agent -s - -m "Add a line to the log"
-    Then the exit code should be 0
-    And the file "log.txt" in the e2e workspace should contain "line1"
-    And the file "log.txt" in the e2e workspace should contain "appended-line"
 
   @done
   Scenario: edit error when substring not found is sent back to LLM

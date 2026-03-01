@@ -4,7 +4,6 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
 
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
@@ -543,67 +542,7 @@ fn make_edit_diff(a: EditDiffArgs<'_>) -> String {
 // AppendFileTool
 // ===========================================================================
 
-pub struct AppendFileTool {
-    workspace: Arc<PathBuf>,
-    sandbox: Arc<Sandbox>,
-}
-
-impl AppendFileTool {
-    pub fn new(workspace: Arc<PathBuf>, sandbox: Arc<Sandbox>) -> Self {
-        Self { workspace, sandbox }
-    }
-}
-
-impl Tool for AppendFileTool {
-    fn definition(&self) -> ToolDefinition {
-        ToolDefinition {
-            name: "append_file".to_string(),
-            description: "Append content to a file".to_string(),
-            parameters_schema: r#"{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}"#.to_string(),
-        }
-    }
-
-    fn execute(
-        &self,
-        arguments: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
-        let args_str = arguments.to_string();
-        let workspace = self.workspace.clone();
-        let sandbox = self.sandbox.clone();
-
-        Box::pin(async move {
-            let args: serde_json::Value =
-                serde_json::from_str(&args_str).map_err(|e| DomainError::Tool(e.to_string()))?;
-            let path = args["path"]
-                .as_str()
-                .ok_or_else(|| DomainError::Tool("missing 'path' argument".to_string()))?;
-            let content = args["content"]
-                .as_str()
-                .ok_or_else(|| DomainError::Tool("missing 'content' argument".to_string()))?;
-
-            let full_path = resolve_and_validate(&workspace, &sandbox, path)?;
-
-            let mut file = tokio::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&full_path)
-                .await
-                .map_err(|e| DomainError::Tool(format!("append_file failed: {}", e)))?;
-
-            file.write_all(content.as_bytes())
-                .await
-                .map_err(|e| DomainError::Tool(format!("append_file write failed: {}", e)))?;
-            file.flush()
-                .await
-                .map_err(|e| DomainError::Tool(format!("append_file flush failed: {}", e)))?;
-
-            Ok(ToolResult {
-                content: format!("appended {} bytes to {}", content.len(), path),
-                is_error: false,
-            })
-        })
-    }
-}
+// AppendFileTool removed in #118 — use write tool with concatenated content or bash with >>.
 
 // ===========================================================================
 // LsTool  (Pi name: "ls", was "list_dir")
@@ -853,23 +792,6 @@ mod tests {
             .await
             .unwrap();
         assert!(!result.is_error, "got error: {}", result.content);
-    }
-
-    #[tokio::test]
-    async fn test_append_file() {
-        let (ws, sb, tmp) = test_tools();
-        std::fs::write(tmp.path().join("log.txt"), "line1\n").unwrap();
-
-        let tool = AppendFileTool::new(ws, sb);
-        let result = tool
-            .execute(r#"{"path": "log.txt", "content": "line2\n"}"#)
-            .await
-            .unwrap();
-        assert!(!result.is_error);
-
-        let content = std::fs::read_to_string(tmp.path().join("log.txt")).unwrap();
-        assert!(content.contains("line1"));
-        assert!(content.contains("line2"));
     }
 
     #[tokio::test]
