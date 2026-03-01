@@ -251,22 +251,17 @@ impl ExecTool {
             return Err(DomainError::Config(startup_error.clone()));
         }
 
-        let (command, per_invocation_timeout) = match extract_command_and_timeout(arguments) {
-            Ok(v) => v,
-            Err(e) => {
-                let msg = e.to_string();
-                // Convert missing-param DomainError to ToolResult so the LLM
-                // gets an actionable error it can self-correct from.
-                if msg.contains("missing") {
-                    return Ok(ToolResult {
-                        content: msg.strip_prefix("tool error: ").unwrap_or(&msg).to_string(),
-                        is_error: true,
-                        image_blocks: vec![],
-                    });
-                }
-                return Err(e);
-            }
+        let args: serde_json::Value =
+            serde_json::from_str(arguments).map_err(|e| DomainError::Tool(e.to_string()))?;
+        let Some(command) = args["command"].as_str().map(str::to_string) else {
+            return Ok(ToolResult {
+                content: "missing 'command' argument. Example: {\"command\": \"ls -la\"}"
+                    .to_string(),
+                is_error: true,
+                image_blocks: vec![],
+            });
         };
+        let per_invocation_timeout = parse_timeout(&args);
 
         // Per-invocation timeout is capped at the configured maximum.
         let effective_timeout = match per_invocation_timeout {
@@ -335,33 +330,22 @@ impl ExecTool {
     }
 }
 
-/// Parse command and optional per-invocation timeout from JSON arguments.
+/// Parse optional per-invocation timeout from a JSON args value.
 ///
-/// Returns `(command, Some(timeout))` when a `timeout` key is present,
-/// or `(command, None)` otherwise. Callers cap the returned timeout at the
-/// configured maximum.
-fn extract_command_and_timeout(arguments: &str) -> Result<(String, Option<Duration>), DomainError> {
-    let args: serde_json::Value =
-        serde_json::from_str(arguments).map_err(|e| DomainError::Tool(e.to_string()))?;
-    let command = args["command"]
-        .as_str()
-        .map(|s| s.to_string())
-        .ok_or_else(|| {
-            DomainError::Tool(
-                "missing 'command' argument. Example: {\"command\": \"ls -la\"}".to_string(),
-            )
-        })?;
+/// Returns `Some(timeout)` when a `timeout` key is present and positive,
+/// or `None` otherwise. Callers cap the returned timeout at the configured
+/// maximum.
+fn parse_timeout(args: &serde_json::Value) -> Option<Duration> {
     // Accept both integer and float timeout values (schema says "number").
     // as_u64() returns None for floats; use as_f64() and round for broad compatibility.
-    let timeout = args["timeout"].as_f64().and_then(|f| {
+    args["timeout"].as_f64().and_then(|f| {
         let secs = f.round() as u64;
         if secs > 0 {
             Some(Duration::from_secs(secs))
         } else {
             None // timeout=0 → use default
         }
-    });
-    Ok((command, timeout))
+    })
 }
 
 fn build_source_env(env_overrides: Option<&HashMap<String, String>>) -> HashMap<String, String> {
