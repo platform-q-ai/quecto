@@ -25,8 +25,7 @@ const DEFAULT_NSJAIL_CPU_TIME_LIMIT_SECS: u64 = 30;
 const DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS: u64 = 30;
 const DEFAULT_NSJAIL_TMP_SIZE_MB: u64 = 64;
 
-pub(super) const TRUSTED_NSJAIL_PATHS: &[&str] =
-    &["/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin"];
+const TRUSTED_NSJAIL_PATHS: &[&str] = &["/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin"];
 
 pub(super) const EXEC_ENV_ALLOWLIST: &[&str] = &[
     "HOME", "PATH", "LANG", "TZ", "TERM", "SHELL", "USER", "LOGNAME", "TMPDIR",

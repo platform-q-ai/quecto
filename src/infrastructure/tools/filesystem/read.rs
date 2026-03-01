@@ -132,7 +132,7 @@ fn shell_escape_single(path: &str) -> String {
 }
 
 /// Detect supported image MIME type by file extension (case-insensitive).
-pub(crate) fn detect_image_mime(path: &Path) -> Option<&'static str> {
+fn detect_image_mime(path: &Path) -> Option<&'static str> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
     match ext.as_str() {
         "jpg" | "jpeg" => Some("image/jpeg"),
@@ -149,7 +149,7 @@ pub(crate) fn detect_image_mime(path: &Path) -> Option<&'static str> {
 /// - `None` → start from line 1
 /// - `Some(0)` → **error** (1-indexed; 0 is not valid)
 /// - `Some(n)` → start from line n (1-indexed)
-pub(crate) fn apply_read_truncation(
+fn apply_read_truncation(
     content: &str,
     path: &str,
     offset: Option<usize>,
