@@ -686,6 +686,12 @@ pub struct QuectoWorld {
     pub _gateway_session_temp_dir: Option<TempDir>,
     /// Stored command for multi-step exec scenarios (e.g. large output tests)
     pub stored_command: Option<String>,
+    /// Model routing: name of the provider that actually handled the request
+    pub routing_handled_by: Option<String>,
+    /// Model routing: whether the routing request succeeded
+    pub routing_succeeded: Option<bool>,
+    /// Model routing: response content from routing scenario
+    pub routing_response: Option<LlmResponse>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.

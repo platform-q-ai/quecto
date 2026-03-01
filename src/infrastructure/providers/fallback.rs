@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
-use crate::domain::provider::{ChatRequest, LlmProvider};
+use crate::domain::provider::{ChatRequest, LlmProvider, model_excluded_from_provider};
 
 use super::error::ErrorClass;
 
@@ -122,10 +122,21 @@ impl FallbackProvider {
     }
 
     /// Try to send a chat request, falling back through available providers.
+    ///
+    /// Model-aware routing: if the model name has a definitive owner (e.g.
+    /// `claude-*` → Anthropic), only that provider is tried. Unknown model
+    /// names fall through all providers in insertion order as before.
+    ///
+    /// See [`model_excluded_from_provider`] in `domain::provider` for routing rules.
     async fn try_chat(&self, request: &ChatRequest<'_>) -> Result<LlmResponse, DomainError> {
         let mut last_error: Option<DomainError> = None;
 
         for entry in &self.entries {
+            // Skip providers that definitely cannot serve this model.
+            if model_excluded_from_provider(request.model, entry.provider.name()) {
+                continue;
+            }
+
             if !entry.is_available() {
                 continue;
             }
@@ -462,5 +473,206 @@ mod tests {
     fn test_with_cooldown_secs() {
         let provider = FallbackProvider::new(vec![]).with_cooldown_secs(120);
         assert_eq!(provider.cooldown_secs, 120);
+    }
+
+    // ── Model routing tests ────────────────────────────────────────────────────
+
+    /// A TestProvider that also records the model name it received.
+    #[derive(Debug)]
+    struct TrackingProvider {
+        name: String,
+        response: Mutex<Result<LlmResponse, String>>,
+        received_model: Mutex<Option<String>>,
+    }
+
+    impl TrackingProvider {
+        fn succeeding(name: &str, content: &str) -> Arc<Self> {
+            Arc::new(Self {
+                name: name.to_string(),
+                response: Mutex::new(Ok(LlmResponse {
+                    content: Some(content.to_string()),
+                    tool_calls: vec![],
+                    usage: None,
+                })),
+                received_model: Mutex::new(None),
+            })
+        }
+
+        fn failing(name: &str, error: &str) -> Arc<Self> {
+            Arc::new(Self {
+                name: name.to_string(),
+                response: Mutex::new(Err(error.to_string())),
+                received_model: Mutex::new(None),
+            })
+        }
+
+        fn was_called(&self) -> bool {
+            self.received_model.lock().unwrap().is_some()
+        }
+    }
+
+    impl LlmProvider for TrackingProvider {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn chat(
+            &self,
+            request: ChatRequest<'_>,
+        ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+            *self.received_model.lock().unwrap() = Some(request.model.to_string());
+            let result = self.response.lock().unwrap().clone();
+            Box::pin(async move {
+                match result {
+                    Ok(r) => Ok(r),
+                    Err(e) => Err(DomainError::Provider(e)),
+                }
+            })
+        }
+    }
+
+    fn make_request<'a>(messages: &'a [Message], model: &'a str) -> ChatRequest<'a> {
+        ChatRequest {
+            messages,
+            tools: &[],
+            model,
+            max_tokens: 1024,
+            temperature: 0.7,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_claude_model_routes_to_anthropic_not_openai() {
+        let openai = TrackingProvider::succeeding("openai", "OpenAI response");
+        let anthropic = TrackingProvider::succeeding("anthropic", "Anthropic response");
+        let provider = FallbackProvider::new(vec![
+            openai.clone() as Arc<dyn LlmProvider>,
+            anthropic.clone() as Arc<dyn LlmProvider>,
+        ]);
+
+        let messages = test_messages();
+        let resp = provider
+            .chat(make_request(&messages, "claude-opus-4-5"))
+            .await
+            .unwrap();
+
+        assert_eq!(resp.content.unwrap(), "Anthropic response");
+        assert!(
+            !openai.was_called(),
+            "OpenAI should NOT be called for claude-* models"
+        );
+        assert!(
+            anthropic.was_called(),
+            "Anthropic should be called for claude-* models"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_gpt_model_routes_to_openai() {
+        let openai = TrackingProvider::succeeding("openai", "OpenAI response");
+        let anthropic = TrackingProvider::succeeding("anthropic", "Anthropic response");
+        let provider = FallbackProvider::new(vec![
+            openai.clone() as Arc<dyn LlmProvider>,
+            anthropic.clone() as Arc<dyn LlmProvider>,
+        ]);
+
+        let messages = test_messages();
+        let resp = provider
+            .chat(make_request(&messages, "gpt-4o"))
+            .await
+            .unwrap();
+
+        assert_eq!(resp.content.unwrap(), "OpenAI response");
+        assert!(
+            openai.was_called(),
+            "OpenAI should be called for gpt-* models"
+        );
+        assert!(
+            !anthropic.was_called(),
+            "Anthropic should NOT be called for gpt-* models"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_claude_model_bypasses_failing_openai() {
+        let openai = TrackingProvider::failing("openai", "HTTP 500 Internal Server Error");
+        let anthropic = TrackingProvider::succeeding("anthropic", "Claude response");
+        let provider = FallbackProvider::new(vec![
+            openai.clone() as Arc<dyn LlmProvider>,
+            anthropic.clone() as Arc<dyn LlmProvider>,
+        ]);
+
+        let messages = test_messages();
+        let resp = provider
+            .chat(make_request(&messages, "claude-sonnet-4-20250514"))
+            .await
+            .unwrap();
+
+        assert_eq!(resp.content.unwrap(), "Claude response");
+        assert!(
+            !openai.was_called(),
+            "OpenAI should NOT be called for claude-* models"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_unknown_model_falls_through_in_order() {
+        let openai = TrackingProvider::succeeding("openai", "OpenAI response");
+        let anthropic = TrackingProvider::succeeding("anthropic", "Anthropic response");
+        let provider = FallbackProvider::new(vec![
+            openai.clone() as Arc<dyn LlmProvider>,
+            anthropic.clone() as Arc<dyn LlmProvider>,
+        ]);
+
+        let messages = test_messages();
+        let resp = provider
+            .chat(make_request(&messages, "some-unknown-model"))
+            .await
+            .unwrap();
+
+        assert_eq!(resp.content.unwrap(), "OpenAI response");
+        assert!(openai.was_called());
+        assert!(!anthropic.was_called());
+    }
+
+    #[tokio::test]
+    async fn test_claude_model_with_no_anthropic_provider_fails() {
+        let openai = TrackingProvider::succeeding("openai", "OpenAI response");
+        let provider = FallbackProvider::new(vec![openai.clone() as Arc<dyn LlmProvider>]);
+
+        let messages = test_messages();
+        let result = provider
+            .chat(make_request(&messages, "claude-opus-4-5"))
+            .await;
+
+        assert!(
+            result.is_err(),
+            "should fail when no anthropic provider available"
+        );
+        assert!(
+            !openai.was_called(),
+            "OpenAI should NOT be called for claude-* models"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_claude_model_routing_is_case_insensitive() {
+        // Model names are typically lowercase but verify robustness
+        let openai = TrackingProvider::succeeding("openai", "OpenAI response");
+        let anthropic = TrackingProvider::succeeding("anthropic", "Anthropic response");
+        let provider = FallbackProvider::new(vec![
+            openai.clone() as Arc<dyn LlmProvider>,
+            anthropic.clone() as Arc<dyn LlmProvider>,
+        ]);
+
+        let messages = test_messages();
+        let resp = provider
+            .chat(make_request(&messages, "claude-3-5-sonnet"))
+            .await
+            .unwrap();
+
+        assert_eq!(resp.content.unwrap(), "Anthropic response");
+        assert!(!openai.was_called());
+        assert!(anthropic.was_called());
     }
 }

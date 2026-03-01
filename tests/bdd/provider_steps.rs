@@ -470,3 +470,143 @@ fn then_streaming_response_content(world: &mut QuectoWorld, expected: String) {
 }
 
 // ===========================================================================
+// Model Routing Steps
+// ===========================================================================
+
+/// A tracking provider that records the model it received and which provider name responded.
+#[derive(Debug)]
+struct RoutingTracker {
+    name: String,
+    response: Mutex<Result<LlmResponse, String>>,
+}
+
+impl RoutingTracker {
+    fn succeeding(name: &str, content: &str) -> Arc<Self> {
+        Arc::new(Self {
+            name: name.to_string(),
+            response: Mutex::new(Ok(LlmResponse {
+                content: Some(content.to_string()),
+                tool_calls: vec![],
+                usage: None,
+            })),
+        })
+    }
+
+    fn failing(name: &str, error: &str) -> Arc<Self> {
+        Arc::new(Self {
+            name: name.to_string(),
+            response: Mutex::new(Err(error.to_string())),
+        })
+    }
+}
+
+impl LlmProvider for RoutingTracker {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn chat(
+        &self,
+        _request: quecto::domain::provider::ChatRequest<'_>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+        let result = self.response.lock().unwrap().clone();
+        let name = self.name.clone();
+        Box::pin(async move {
+            match result {
+                Ok(mut r) => {
+                    // Embed handler name in content for step verification: "[provider_name] ..."
+                    r.content = Some(format!("[{}] {}", name, r.content.unwrap_or_default()));
+                    Ok(r)
+                }
+                Err(e) => Err(DomainError::Provider(e)),
+            }
+        })
+    }
+}
+
+#[given("a fallback provider with OpenAI first and Anthropic second")]
+fn given_fallback_openai_then_anthropic(world: &mut QuectoWorld) {
+    let openai = RoutingTracker::succeeding("openai", "response") as Arc<dyn LlmProvider>;
+    let anthropic = RoutingTracker::succeeding("anthropic", "response") as Arc<dyn LlmProvider>;
+    let fp = FallbackProvider::new(vec![openai, anthropic]);
+    world.fallback_provider = Some(Arc::new(fp));
+}
+
+#[given("a fallback provider with a failing OpenAI and a succeeding Anthropic")]
+fn given_fallback_failing_openai_succeeding_anthropic(world: &mut QuectoWorld) {
+    let openai =
+        RoutingTracker::failing("openai", "HTTP 500 Internal Server Error") as Arc<dyn LlmProvider>;
+    let anthropic =
+        RoutingTracker::succeeding("anthropic", "Claude response") as Arc<dyn LlmProvider>;
+    let fp = FallbackProvider::new(vec![openai, anthropic]);
+    world.fallback_provider = Some(Arc::new(fp));
+}
+
+#[when(expr = "I send a chat request with model {string}")]
+fn when_send_chat_with_model(world: &mut QuectoWorld, model: String) {
+    let fp = world
+        .fallback_provider
+        .as_ref()
+        .expect("fallback provider not set");
+    let messages = vec![Message::user("test message")];
+    let req = quecto::domain::provider::ChatRequest {
+        messages: &messages,
+        tools: &[],
+        model: &model,
+        max_tokens: 1024,
+        temperature: 0.7,
+    };
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    match rt.block_on(fp.chat(req)) {
+        Ok(response) => {
+            // Extract handler name from embedded content "[provider_name] ..."
+            let content = response.content.clone().unwrap_or_default();
+            let handled_by = if content.starts_with('[') {
+                if let Some(end) = content.find(']') {
+                    content[1..end].to_string()
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            };
+            world.routing_handled_by = Some(handled_by);
+            world.routing_succeeded = Some(true);
+            world.routing_response = Some(response);
+        }
+        Err(_) => {
+            world.routing_handled_by = None;
+            world.routing_succeeded = Some(false);
+        }
+    }
+}
+
+#[then(expr = "the request should be handled by the {string} provider")]
+fn then_handled_by_provider(world: &mut QuectoWorld, expected: String) {
+    let handled_by = world
+        .routing_handled_by
+        .as_deref()
+        .expect("no routing result — request may have failed");
+    assert_eq!(
+        handled_by, expected,
+        "expected model to be routed to '{}' but was handled by '{}'",
+        expected, handled_by
+    );
+}
+
+#[then("the request should succeed with the Anthropic response")]
+fn then_request_succeeds_with_anthropic(world: &mut QuectoWorld) {
+    assert!(
+        world.routing_succeeded == Some(true),
+        "expected routing to succeed but it failed"
+    );
+    let handled_by = world
+        .routing_handled_by
+        .as_deref()
+        .expect("no routing handler recorded");
+    assert_eq!(
+        handled_by, "anthropic",
+        "expected Anthropic to handle the request, got '{}'",
+        handled_by
+    );
+}
