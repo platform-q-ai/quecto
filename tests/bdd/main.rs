@@ -354,6 +354,8 @@ pub struct QuectoWorld {
     pub tool_registry: Option<ToolRegistryImpl>,
     /// Path to the tool workspace (for file assertions)
     pub tool_workspace: Option<PathBuf>,
+    /// Temp dir for tool workspace (kept alive)
+    pub _tool_workspace_tmp: Option<TempDir>,
     /// Result of the last tool execution
     pub tool_result: Option<Result<ToolResult, String>>,
     /// Created LLM provider
@@ -633,6 +635,13 @@ pub struct QuectoWorld {
     pub truncation_result: Option<quecto::infrastructure::tools::truncate::TruncationResult>,
     /// Result from truncate_line
     pub truncation_line_result: Option<(String, bool)>,
+    // --- Grep BDD fields ---
+    /// Temp dir for grep workspace (kept alive)
+    pub _grep_temp_dir: Option<TempDir>,
+    /// Workspace path for grep tests
+    pub grep_workspace: Option<PathBuf>,
+    /// Result from grep tool execution
+    pub grep_result: Option<quecto::domain::tool::ToolResult>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
@@ -884,6 +893,7 @@ mod context_pruning_steps;
 mod cron_steps;
 mod e2e_steps;
 mod gateway_steps;
+mod grep_steps;
 mod heartbeat_steps;
 mod nsjail_steps;
 mod observability_steps;

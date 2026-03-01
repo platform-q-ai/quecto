@@ -26,6 +26,7 @@ pub struct ExecRegistrySettings {
     pub wall_time_limit_secs: u64,
 }
 use super::filesystem::{EditTool, LsTool, ReadTool, WriteTool};
+use super::grep::GrepTool;
 
 /// Registry of all available tools, keyed by name.
 pub struct ToolRegistryImpl {
@@ -142,6 +143,7 @@ impl ToolRegistryImpl {
         reg.register(edit_tool.clone());
         let ls_tool = Arc::new(LsTool::new(workspace.clone(), sandbox.clone()));
         reg.register(ls_tool.clone());
+        reg.register(Arc::new(GrepTool::new(workspace.clone(), sandbox.clone())));
 
         // Backward-compat aliases inserted after all register() calls so that
         // definitions (rebuilt on each register) is not polluted by duplicate entries.
@@ -241,7 +243,7 @@ mod tests {
     fn test_registry_definitions() {
         let (reg, _tmp) = test_registry();
         let defs = reg.definitions();
-        assert_eq!(defs.len(), 5); // bash, read, write, edit, ls (append_file removed in #118)
+        assert_eq!(defs.len(), 6); // bash, read, write, edit, ls, grep
     }
 
     #[tokio::test]
