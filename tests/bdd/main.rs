@@ -666,6 +666,12 @@ pub struct QuectoWorld {
         Option<Arc<quecto::infrastructure::persistence::context_spill::FileContextSpillStore>>,
     /// Temp dir for /reload scenarios (kept alive)
     pub _reload_temp_dir: Option<TempDir>,
+    /// Captured session key derived by gateway inbound processor for session key tests
+    pub gateway_derived_session_key: Option<String>,
+    /// Session store used in gateway session key tests
+    pub gateway_session_store: Option<Arc<FileSessionStore>>,
+    /// Temp dir for gateway session key tests (kept alive)
+    pub _gateway_session_temp_dir: Option<TempDir>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.

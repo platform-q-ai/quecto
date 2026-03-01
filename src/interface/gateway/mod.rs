@@ -442,3 +442,7 @@ pub use crate::application::reload::execute_reload;
 
 // Re-export shared credential resolution functions for backward compatibility.
 pub use crate::interface::shared::{check_provider_readiness, resolve_api_key};
+
+/// Re-export session key helper for BDD tests.
+#[cfg(any(test, feature = "test-support"))]
+pub use services::session_key_for_source;

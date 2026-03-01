@@ -168,3 +168,22 @@ Feature: Telegram Gateway
     And the session has spill entries in the spill store
     When the reload command is executed for chat "99999"
     Then the spill file for session "telegram:99999" should be empty
+
+  # --- Gateway session key correctness ---
+
+  Scenario: Gateway session key uses chat_id without double-prefix
+    Given an inbound message from source "telegram:12345"
+    When the inbound processor loads the session
+    Then the session key should be "telegram:12345"
+    And the session key should not contain "telegram:telegram:"
+
+  Scenario: /reload finds the session saved by the inbound processor
+    Given a gateway inbound processor has handled one message from chat "55555"
+    When the reload command is executed for chat "55555"
+    Then the reload response should contain "reloaded"
+    And the reload response should not contain "No existing session found"
+
+  Scenario: Multi-turn gateway session persists history across two messages
+    Given a gateway inbound processor has handled one message from chat "77777"
+    When the gateway inbound processor handles a second message from chat "77777"
+    Then the session for "telegram:77777" should contain 4 messages

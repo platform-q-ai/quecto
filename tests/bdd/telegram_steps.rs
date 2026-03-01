@@ -569,9 +569,12 @@ fn when_reload_command_executed(world: &mut QuectoWorld, chat_id: String) {
         .expect("reload_spill_store not set")
         .clone();
 
+    // Build the session key the same way the gateway does: "telegram:<chat_id>"
+    let session_key = format!("telegram:{}", chat_id);
+
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     let response = rt.block_on(execute_reload(
-        &chat_id,
+        &session_key,
         session_store.as_ref(),
         spill_store.as_ref(),
     ));
@@ -657,3 +660,164 @@ fn then_spill_file_empty(world: &mut QuectoWorld, session_key: String) {
 }
 
 // ===========================================================================
+// Gateway Session Key Correctness Steps
+// ===========================================================================
+
+/// Given an inbound message from a source like "telegram:12345",
+/// capture what session key the inbound processor would derive.
+#[given(expr = "an inbound message from source {string}")]
+fn given_inbound_message_from_source(world: &mut QuectoWorld, source: String) {
+    // The inbound processor uses the source directly as the session key
+    // (source is already in "channel:id" form).
+    world.gateway_derived_session_key =
+        Some(quecto::interface::gateway::session_key_for_source(&source));
+}
+
+#[when("the inbound processor loads the session")]
+fn when_inbound_processor_loads_session(world: &mut QuectoWorld) {
+    // Verify the key was actually derived — panic if it wasn't, so the
+    // scenario fails loudly rather than silently passing with no assertion.
+    assert!(
+        world.gateway_derived_session_key.is_some(),
+        "session key was not derived — did the Given step run?"
+    );
+}
+
+#[then(expr = "the session key should be {string}")]
+fn then_session_key_should_be(world: &mut QuectoWorld, expected: String) {
+    let key = world
+        .gateway_derived_session_key
+        .as_ref()
+        .expect("no session key derived");
+    assert_eq!(
+        key, &expected,
+        "session key mismatch: expected '{}', got '{}'",
+        expected, key
+    );
+}
+
+#[then(expr = "the session key should not contain {string}")]
+fn then_session_key_should_not_contain(world: &mut QuectoWorld, unexpected: String) {
+    let key = world
+        .gateway_derived_session_key
+        .as_ref()
+        .expect("no session key derived");
+    assert!(
+        !key.contains(&unexpected),
+        "session key '{}' must not contain '{}' (double-prefix detected)",
+        key,
+        unexpected
+    );
+}
+
+/// Simulate the inbound processor handling one message from a chat,
+/// then verify /reload can find and clean that session.
+///
+/// This uses a real FileSessionStore and the same key the inbound processor
+/// would derive, verifying /reload and the inbound processor agree on the key.
+#[given(expr = "a gateway inbound processor has handled one message from chat {string}")]
+fn given_gateway_handled_one_message(world: &mut QuectoWorld, chat_id: String) {
+    ensure_temp_dir(world);
+    let base = base_path(world);
+
+    let session_store = Arc::new(FileSessionStore::new(&base));
+    let spill_store = Arc::new(FileContextSpillStore::new(base.clone()));
+
+    // Derive the session key the inbound processor uses (source is "telegram:<chat_id>")
+    let source = format!("telegram:{}", chat_id);
+    let session_key = quecto::interface::gateway::session_key_for_source(&source);
+
+    // Build a session that looks like what the inbound processor would save:
+    // one user message + one assistant response.
+    let messages = vec![
+        Message::user("hello"),
+        Message::assistant("hi there", vec![]),
+    ];
+    let session = Session {
+        key: session_key.clone(),
+        messages,
+    };
+
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    rt.block_on(async {
+        session_store.save(&session).await.expect("save session");
+    });
+
+    world.reload_session_store = Some(session_store.clone());
+    world.reload_spill_store = Some(spill_store);
+    world.gateway_session_store = Some(session_store);
+}
+
+#[then(expr = "the reload response should not contain {string}")]
+fn then_reload_response_not_contain(world: &mut QuectoWorld, unexpected: String) {
+    let response = world
+        .reload_response
+        .as_ref()
+        .expect("reload_response not set");
+    assert!(
+        !response.contains(&unexpected),
+        "expected response NOT to contain '{}', but got: {}",
+        unexpected,
+        response
+    );
+}
+
+/// Simulate the inbound processor handling a second message from the same chat,
+/// and verify the session accumulates history.
+#[when(expr = "the gateway inbound processor handles a second message from chat {string}")]
+fn when_gateway_handles_second_message(world: &mut QuectoWorld, chat_id: String) {
+    let session_store = world
+        .gateway_session_store
+        .as_ref()
+        .expect("gateway_session_store not set")
+        .clone();
+
+    let source = format!("telegram:{}", chat_id);
+    let session_key = quecto::interface::gateway::session_key_for_source(&source);
+
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    rt.block_on(async {
+        // Load existing session (2 messages from first turn)
+        let mut messages = match session_store
+            .load(&session_key)
+            .await
+            .expect("load session")
+        {
+            Some(s) => s.messages,
+            None => vec![],
+        };
+        // Add second turn: user message + assistant response
+        messages.push(Message::user("second question"));
+        messages.push(Message::assistant("second answer", vec![]));
+
+        let updated = Session {
+            key: session_key.clone(),
+            messages,
+        };
+        session_store.save(&updated).await.expect("save session");
+    });
+}
+
+#[then(expr = "the session for {string} should contain {int} messages")]
+fn then_session_contains_n_messages(world: &mut QuectoWorld, session_key: String, expected: usize) {
+    let session_store = world
+        .gateway_session_store
+        .as_ref()
+        .expect("gateway_session_store not set")
+        .clone();
+
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let session = rt
+        .block_on(session_store.load(&session_key))
+        .expect("load session")
+        .unwrap_or_else(|| panic!("session '{}' should exist", session_key));
+
+    assert_eq!(
+        session.messages.len(),
+        expected,
+        "expected {} messages in session '{}', got {}",
+        expected,
+        session_key,
+        session.messages.len()
+    );
+}
