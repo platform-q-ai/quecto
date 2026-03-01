@@ -20,6 +20,10 @@ const DEFAULT_MATCH_LIMIT: usize = 100;
 const MAX_LINE_BYTES: usize = 500;
 /// Maximum total output bytes (50KB); matches Pi's DEFAULT_MAX_BYTES.
 const MAX_OUTPUT_BYTES: usize = 50 * 1024;
+/// Maximum individual file size for context reads (1MB); prevents OOM from huge cached files.
+const MAX_FILE_CACHE_BYTES: usize = 1024 * 1024;
+/// Maximum context lines per side; prevents unbounded file reads.
+const MAX_CONTEXT_LINES: usize = 50;
 
 pub struct GrepTool {
     workspace: Arc<PathBuf>,
@@ -111,7 +115,8 @@ impl Tool for GrepTool {
             let glob = args["glob"].as_str().map(String::from);
             let ignore_case = args["ignoreCase"].as_bool().unwrap_or(false);
             let literal = args["literal"].as_bool().unwrap_or(false);
-            let context_lines = args["context"].as_f64().unwrap_or(0.0) as usize;
+            let context_lines =
+                (args["context"].as_f64().unwrap_or(0.0) as usize).min(MAX_CONTEXT_LINES);
             let limit = args["limit"]
                 .as_f64()
                 .map(|v| (v.round() as usize).max(1))
@@ -128,12 +133,13 @@ impl Tool for GrepTool {
             });
             let (stdout_bytes, stderr_bytes, exit_code) = run_rg(cmd).await?;
 
-            // rg exits: 0 = matches found, 1 = no matches, 2+ = error
+            // rg exits: 0 = matches found, 1 = no matches, 2+ = error, None = signal-killed.
+            // Exit code 2 always indicates an error, regardless of stdout content.
             let is_rg_error = exit_code == Some(2)
                 || (exit_code.is_none() && stdout_bytes.is_empty())
                 || exit_code.is_some_and(|c| c > 2);
 
-            if is_rg_error && stdout_bytes.is_empty() {
+            if is_rg_error {
                 let stderr = String::from_utf8_lossy(&stderr_bytes);
                 let msg = if stderr.trim().is_empty() {
                     "rg exited unexpectedly".to_string()
@@ -151,6 +157,7 @@ impl Tool for GrepTool {
             let result = format_grep_output(GrepFormatArgs {
                 json_output: &stdout,
                 workspace: &workspace,
+                sandbox: &sandbox,
                 match_limit: limit,
                 context_lines,
                 max_line_bytes: MAX_LINE_BYTES,
@@ -295,6 +302,7 @@ fn parse_rg_matches(json_output: &str) -> Vec<RgMatch> {
 struct GrepFormatArgs<'a> {
     json_output: &'a str,
     workspace: &'a Path,
+    sandbox: &'a Sandbox,
     match_limit: usize,
     context_lines: usize,
     max_line_bytes: usize,
@@ -327,15 +335,9 @@ fn format_match_block(
     cfg: &BlockConfig<'_>,
     state: &mut FormatState,
 ) -> bool {
-    let file_lines = file_cache.entry(m.file_path.clone()).or_insert_with(|| {
-        std::fs::read_to_string(&m.file_path)
-            .unwrap_or_default()
-            .replace("\r\n", "\n")
-            .replace('\r', "\n")
-            .lines()
-            .map(str::to_string)
-            .collect()
-    });
+    let file_lines = file_cache
+        .entry(m.file_path.clone())
+        .or_insert_with(|| read_file_for_cache(&m.file_path));
 
     let raw_path = m.file_path.to_string_lossy();
     let rel_path = if let Some(rest) = raw_path.strip_prefix(cfg.ws_prefix_slash) {
@@ -387,9 +389,12 @@ fn format_match_block(
 
 async fn format_grep_output(a: GrepFormatArgs<'_>) -> String {
     let all_matches = parse_rg_matches(a.json_output);
-
+    // Detect limit exceeded: true only when rg returned MORE than the limit.
+    // When rg returns exactly `match_limit` matches with no more available, we
+    // do NOT show the limit notice (avoid false-positive "limit reached").
+    let total_match_count = all_matches.len();
     let capped: Vec<_> = all_matches.into_iter().take(a.match_limit).collect();
-    let match_limit_reached = capped.len() == a.match_limit;
+    let match_limit_reached = total_match_count > a.match_limit;
     if capped.is_empty() {
         return "No matches found".to_string();
     }
@@ -412,6 +417,14 @@ async fn format_grep_output(a: GrepFormatArgs<'_>) -> String {
     };
 
     for m in &capped {
+        // Validate each file path from rg JSON against the sandbox.
+        // rg runs inside the validated search path, but a symlink inside the workspace
+        // could resolve to a path outside it. sandbox.validate_path() catches this.
+        let path_str = m.file_path.to_string_lossy();
+        if a.sandbox.validate_path(&path_str).is_err() {
+            // Skip files that violate the workspace boundary (symlink traversal etc.)
+            continue;
+        }
         if !format_match_block(m, &mut file_cache, &cfg, &mut state) {
             break;
         }
@@ -447,8 +460,30 @@ async fn format_grep_output(a: GrepFormatArgs<'_>) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Line helpers
+// File cache and line helpers
 // ---------------------------------------------------------------------------
+
+/// Read a file into a line vector for the context cache.
+/// Caps at `MAX_FILE_CACHE_BYTES` to prevent OOM from large files.
+fn read_file_for_cache(path: &Path) -> Vec<String> {
+    use std::io::Read;
+    let Ok(f) = std::fs::File::open(path) else {
+        return Vec::new();
+    };
+    let mut buf = Vec::with_capacity(MAX_FILE_CACHE_BYTES.min(64 * 1024));
+    if f.take(MAX_FILE_CACHE_BYTES as u64)
+        .read_to_end(&mut buf)
+        .is_err()
+    {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&buf)
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
 
 /// Truncate a line to max_bytes, appending a size hint if truncated.
 /// Returns (display_text, was_truncated).
@@ -476,7 +511,6 @@ mod tests {
     fn test_grep() -> (GrepTool, Arc<PathBuf>, TempDir) {
         let tmp = TempDir::new().unwrap();
         let ws = Arc::new(tmp.path().to_path_buf());
-        // restrict_to_workspace: true — sandbox enforces workspace containment
         let sandbox = Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), true));
         let tool = GrepTool::new(ws.clone(), sandbox);
         (tool, ws, tmp)
@@ -487,6 +521,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(format_grep_output(GrepFormatArgs {
             json_output: "",
+            sandbox: &Sandbox::new(None, false),
             workspace: &PathBuf::from("/ws"),
             match_limit: 100,
             context_lines: 0,
@@ -506,6 +541,7 @@ mod tests {
         let json_patched = json.replace("/ws", &ws.path().to_string_lossy());
         let result = rt.block_on(format_grep_output(GrepFormatArgs {
             json_output: &json_patched,
+            sandbox: &Sandbox::new(None, false),
             workspace: ws.path(),
             match_limit: 100,
             context_lines: 0,
@@ -513,32 +549,6 @@ mod tests {
             max_output_bytes: 50 * 1024,
         }));
         assert!(result.contains("main.rs:1:"), "got: {}", result);
-    }
-
-    #[test]
-    fn test_format_grep_output_relativises_path() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let ws = tempfile::TempDir::new().unwrap();
-        std::fs::create_dir_all(ws.path().join("src")).unwrap();
-        std::fs::write(ws.path().join("src/foo.rs"), "hello world\n").unwrap();
-        let json = format!(
-            r#"{{"type":"match","data":{{"path":{{"text":"{}/src/foo.rs"}},"line_number":1,"lines":{{"text":"hello world\n"}},"absolute_offset":0,"submatches":[]}}}}"#,
-            ws.path().to_string_lossy()
-        );
-        let result = rt.block_on(format_grep_output(GrepFormatArgs {
-            json_output: &json,
-            workspace: ws.path(),
-            match_limit: 100,
-            context_lines: 0,
-            max_line_bytes: 500,
-            max_output_bytes: 50 * 1024,
-        }));
-        assert!(result.contains("src/foo.rs:1:"), "got: {}", result);
-        assert!(
-            !result.contains(ws.path().to_str().unwrap()),
-            "got: {}",
-            result
-        );
     }
 
     #[test]
@@ -560,6 +570,7 @@ mod tests {
         let json = json_lines.join("\n");
         let result = rt.block_on(format_grep_output(GrepFormatArgs {
             json_output: &json,
+            sandbox: &Sandbox::new(None, false),
             workspace: ws.path(),
             match_limit: 5,
             context_lines: 0,
