@@ -642,6 +642,13 @@ pub struct QuectoWorld {
     pub grep_workspace: Option<PathBuf>,
     /// Result from grep tool execution
     pub grep_result: Option<quecto::domain::tool::ToolResult>,
+    // --- Find BDD fields ---
+    /// Temp dir for find workspace (kept alive)
+    pub _find_temp_dir: Option<TempDir>,
+    /// Workspace path for find tests
+    pub find_workspace: Option<PathBuf>,
+    /// Result from find tool execution
+    pub find_result: Option<quecto::domain::tool::ToolResult>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
@@ -892,6 +899,7 @@ mod config_steps;
 mod context_pruning_steps;
 mod cron_steps;
 mod e2e_steps;
+mod find_steps;
 mod gateway_steps;
 mod grep_steps;
 mod heartbeat_steps;
