@@ -366,10 +366,15 @@ fn find_binary_in_dir(dir: &std::path::Path, name: &str) -> Option<PathBuf> {
             continue;
         };
         for entry in entries.flatten() {
-            if entry.file_name() == name && entry.path().is_file() {
+            // Use DirEntry::metadata() which does NOT follow symlinks on Unix,
+            // preventing a malicious archive from escaping the extract directory.
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            if entry.file_name() == name && meta.is_file() {
                 return Some(entry.path());
             }
-            if entry.path().is_dir() {
+            if meta.is_dir() {
                 stack.push(entry.path());
             }
         }
