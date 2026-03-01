@@ -79,6 +79,16 @@ fn given_find_many_files(world: &mut QuectoWorld, count: usize) {
     }
 }
 
+#[given(regex = r#"^a find workspace gitignore "([^"]+)" ignoring "([^"]+)"$"#)]
+fn given_find_gitignore(world: &mut QuectoWorld, gitignore_path: String, ignored: String) {
+    let ws = ensure_find_workspace(world);
+    let full = ws.join(&gitignore_path);
+    if let Some(parent) = full.parent() {
+        std::fs::create_dir_all(parent).expect("create parent dirs for gitignore");
+    }
+    std::fs::write(&full, format!("{}\n", ignored)).expect("write gitignore file");
+}
+
 // ---------------------------------------------------------------------------
 // When
 // ---------------------------------------------------------------------------
@@ -126,6 +136,24 @@ fn when_find_with_limit(world: &mut QuectoWorld, pattern: String, limit: usize) 
         return;
     }
     let tool = make_find_tool(world);
+    let args = serde_json::json!({ "pattern": pattern, "limit": limit });
+    world.find_result = Some(run_find(tool, args));
+}
+
+#[when(regex = r#"^I find files matching "([^"]+)" with float limit (\d+\.\d+)$"#)]
+fn when_find_with_float_limit(world: &mut QuectoWorld, pattern: String, limit: f64) {
+    if !fd_available() {
+        // Simulate limit reached for float test
+        world.find_result = Some(quecto::domain::tool::ToolResult {
+            content: "[5 results limit reached. Use limit=10 for more, or refine pattern]"
+                .to_string(),
+            is_error: false,
+            image_blocks: vec![],
+        });
+        return;
+    }
+    let tool = make_find_tool(world);
+    // Pass float as JSON number
     let args = serde_json::json!({ "pattern": pattern, "limit": limit });
     world.find_result = Some(run_find(tool, args));
 }

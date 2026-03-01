@@ -55,3 +55,20 @@ Feature: Find Tool
     When I find files matching "**/*.rs"
     Then the find result should contain "deep.rs"
     And the find result should not be an error
+
+  @done
+  Scenario: Nested .gitignore in subdirectory is respected
+    Given a find workspace file "src/main.rs"
+    And a find workspace file "src/generated/auto.rs"
+    And a find workspace gitignore "src/.gitignore" ignoring "generated/"
+    When I find files matching "*.rs"
+    Then the find result should contain "main.rs"
+    And the find result should not contain "auto.rs"
+    And the find result should not be an error
+
+  @done
+  Scenario: Float limit parameter is accepted
+    Given a find workspace with 10 files named "file_NNN.txt"
+    When I find files matching "*.txt" with float limit 5.0
+    Then the find result should contain "limit"
+    And the find result should not be an error

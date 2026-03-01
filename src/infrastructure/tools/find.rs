@@ -97,21 +97,33 @@ impl Tool for FindTool {
                 .validate_path(&full_str)
                 .map_err(|e| DomainError::Security(e.to_string()))?;
 
+            // Accept float limits (JSON "number" type); cap at 100_000 to prevent
+            // pathological fd invocations.
+            const MAX_RESULT_LIMIT: usize = 100_000;
             let limit = args["limit"]
-                .as_u64()
-                .map(|v| v as usize)
+                .as_f64()
+                .map(|v| (v.round() as usize).clamp(1, MAX_RESULT_LIMIT))
                 .unwrap_or(DEFAULT_RESULT_LIMIT);
 
+            // Discover nested .gitignore files to pass via --ignore-file.
+            // Pi parity: fd's built-in .gitignore support works within git repos,
+            // but may miss nested .gitignore files outside git repos. By discovering
+            // them explicitly, we ensure consistent behaviour.
+            let gitignore_files = discover_gitignore_files(&full_path);
+
             // Build fd command:
-            //   fd --glob --color=never --hidden --max-results N -- <pattern> <path>
+            //   fd --glob --color=never --hidden --max-results N [--ignore-file ...] -- <pattern> <path>
             let mut cmd = tokio::process::Command::new(&fd_cmd);
             cmd.current_dir(workspace.as_ref())
                 .arg("--glob")
                 .arg("--color=never")
                 .arg("--hidden")
                 .arg("--max-results")
-                .arg(limit.to_string())
-                .arg("--")
+                .arg(limit.to_string());
+            for gitignore in &gitignore_files {
+                cmd.arg("--ignore-file").arg(gitignore);
+            }
+            cmd.arg("--")
                 .arg(pattern)
                 .arg(&full_path)
                 .stdout(std::process::Stdio::piped())
@@ -193,6 +205,61 @@ impl Tool for FindTool {
             })
         })
     }
+}
+
+/// Maximum .gitignore files to discover (prevents excessive fd startup overhead).
+const MAX_GITIGNORE_FILES: usize = 50;
+/// Maximum directory depth for .gitignore discovery (prevents DoS from deeply nested trees).
+const MAX_DISCOVER_DEPTH: usize = 20;
+
+/// Discover `.gitignore` files under `search_dir` (Pi parity).
+///
+/// fd respects `.gitignore` within git repos, but may miss nested `.gitignore`
+/// files outside git repos. Passing them explicitly via `--ignore-file` ensures
+/// consistent behaviour regardless of git repo status.
+///
+/// Safety:
+/// - Skips symlinks when deciding whether to recurse (prevents traversal outside workspace)
+/// - Caps at MAX_GITIGNORE_FILES and MAX_DISCOVER_DEPTH to prevent DoS
+/// - Skips `node_modules/` and `.git/` directories
+pub(crate) fn discover_gitignore_files(search_dir: &std::path::Path) -> Vec<PathBuf> {
+    let mut result = Vec::new();
+    // Stack entries: (directory path, current depth)
+    let mut stack = vec![(search_dir.to_path_buf(), 0usize)];
+    while let Some((dir, depth)) = stack.pop() {
+        if depth > MAX_DISCOVER_DEPTH {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            // Skip node_modules and .git
+            if name_str == "node_modules" || name_str == ".git" {
+                continue;
+            }
+            // Use symlink_metadata so we don't follow symlinks into subdirs
+            // (prevents escaping the workspace via symlink traversal).
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            let path = entry.path();
+            // DirEntry::metadata() does not follow symlinks on Unix,
+            // so is_dir() returns false for symlinks to directories.
+            // This prevents traversal outside the workspace via symlinks.
+            if meta.is_dir() {
+                stack.push((path, depth + 1));
+            } else if meta.is_file() && name_str == ".gitignore" {
+                result.push(path);
+                if result.len() >= MAX_GITIGNORE_FILES {
+                    return result;
+                }
+            }
+        }
+    }
+    result
 }
 
 /// Format fd output: relativise paths to the search dir, apply byte cap, append hints.
@@ -343,6 +410,58 @@ mod tests {
         let raw = "/ws/subdir/";
         let result = fmt(raw, "/ws", 1000, 50 * 1024);
         assert!(result.contains("subdir/"), "got: {}", result);
+    }
+
+    // --- Pi parity: nested .gitignore and float limit ---
+
+    #[test]
+    fn test_discover_nested_gitignore_finds_files() {
+        let tmp = TempDir::new().unwrap();
+        // Create nested .gitignore files
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        std::fs::write(tmp.path().join(".gitignore"), "target/\n").unwrap();
+        std::fs::write(tmp.path().join("src/.gitignore"), "generated/\n").unwrap();
+        let found = discover_gitignore_files(tmp.path());
+        // Should find both .gitignore files
+        assert!(!found.is_empty(), "should find at least root .gitignore");
+        let has_src = found.iter().any(|p| p.ends_with("src/.gitignore"));
+        assert!(has_src, "should find src/.gitignore, got: {:?}", found);
+    }
+
+    #[test]
+    fn test_discover_nested_gitignore_empty_dir() {
+        let tmp = TempDir::new().unwrap();
+        let found = discover_gitignore_files(tmp.path());
+        assert!(found.is_empty(), "no .gitignore → empty list");
+    }
+
+    #[tokio::test]
+    async fn test_find_float_limit_accepted() {
+        let (tool, _ws, tmp) = test_find();
+        for i in 0..10 {
+            std::fs::write(tmp.path().join(format!("file_{:04}.txt", i)), "").unwrap();
+        }
+        if !fd_available() {
+            return;
+        }
+        // Pass float limit via JSON
+        let result = tool
+            .execute(r#"{"pattern": "*.txt", "limit": 5.0}"#)
+            .await
+            .unwrap();
+        assert!(!result.is_error, "got: {}", result.content);
+        assert!(
+            result.content.contains("limit"),
+            "expected limit notice, got: {}",
+            result.content
+        );
+    }
+
+    fn fd_available() -> bool {
+        std::process::Command::new("fd")
+            .arg("--version")
+            .output()
+            .is_ok()
     }
 
     // --- tool integration tests (require fd on PATH) ---
