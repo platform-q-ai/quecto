@@ -70,14 +70,6 @@ Feature: End-to-End Safety and Limits
     Then the exit code should be 0
     And stdout should contain "Edit denied"
 
-  Scenario: Append_file outside workspace is blocked
-    Given the mock LLM first returns a tool call for "append_file" with args:
-      | path    | ../../var/log/syslog |
-      | content | injected             |
-    And the mock LLM then returns a text response "Append denied"
-    When I run quecto agent -s - -m "Append outside workspace"
-    Then the exit code should be 0
-    And stdout should contain "Append denied"
 
   Scenario: List_dir outside workspace is blocked
     Given the mock LLM first returns a tool call for "ls" with args:

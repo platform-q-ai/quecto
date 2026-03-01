@@ -68,23 +68,6 @@ Feature: WASM Tool Ports
       | newText | replacement |
     Then the WASM tool result should be an error
 
-  @done
-  Scenario: WASM AppendFileTool appends to an existing file
-    Given a WASM-containerized tool registry
-    And a WASM workspace file "log.txt" with content "line1\n"
-    When the agent executes WASM tool "append_file" with args:
-      | path    | log.txt |
-      | content | line2\n |
-    Then the WASM workspace file "log.txt" should contain "line1\nline2\n"
-
-  @done
-  Scenario: WASM AppendFileTool creates file if it does not exist
-    Given a WASM-containerized tool registry
-    When the agent executes WASM tool "append_file" with args:
-      | path    | new.txt     |
-      | content | first line  |
-    Then the WASM workspace file "new.txt" should exist
-    And the WASM workspace file "new.txt" should contain "first line"
 
   @done
   Scenario: WASM ListDirTool lists workspace directory contents

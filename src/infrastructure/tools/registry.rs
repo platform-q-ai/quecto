@@ -25,7 +25,7 @@ pub struct ExecRegistrySettings {
     pub cpu_time_limit_secs: u64,
     pub wall_time_limit_secs: u64,
 }
-use super::filesystem::{AppendFileTool, EditTool, LsTool, ReadTool, WriteTool};
+use super::filesystem::{EditTool, LsTool, ReadTool, WriteTool};
 
 /// Registry of all available tools, keyed by name.
 pub struct ToolRegistryImpl {
@@ -140,10 +140,6 @@ impl ToolRegistryImpl {
         reg.register(write_tool.clone());
         let edit_tool = Arc::new(EditTool::new(workspace.clone(), sandbox.clone()));
         reg.register(edit_tool.clone());
-        reg.register(Arc::new(AppendFileTool::new(
-            workspace.clone(),
-            sandbox.clone(),
-        )));
         let ls_tool = Arc::new(LsTool::new(workspace.clone(), sandbox.clone()));
         reg.register(ls_tool.clone());
 
@@ -231,7 +227,6 @@ mod tests {
         assert!(names.contains(&"read".to_string()));
         assert!(names.contains(&"write".to_string()));
         assert!(names.contains(&"edit".to_string()));
-        assert!(names.contains(&"append_file".to_string()));
         assert!(names.contains(&"ls".to_string()));
     }
 
@@ -246,7 +241,7 @@ mod tests {
     fn test_registry_definitions() {
         let (reg, _tmp) = test_registry();
         let defs = reg.definitions();
-        assert_eq!(defs.len(), 6);
+        assert_eq!(defs.len(), 5); // bash, read, write, edit, ls (append_file removed in #118)
     }
 
     #[tokio::test]
