@@ -1,24 +1,40 @@
 @wip
-Feature: Context pruning via 3-turn collapse
+Feature: Context pruning via sliding window (no tool-result collapse)
+
+  Tool outputs remain in full context until dropped by the sliding window
+  when the conversation exceeds the token budget. The old 3-turn collapse
+  behaviour is disabled by default — tool results age naturally alongside
+  all other messages. Users can re-enable collapse by setting
+  context_collapse_after_turns to a lower value. Spill-to-disk still
+  occurs at creation time so recall() can retrieve outputs that have been
+  dropped by the sliding window.
 
   Background:
     Given a configured agent with context pruning enabled
 
-  Scenario: Tool results are preserved for 3 turns
-    When the agent executes a bash tool on turn 1
-    And the agent completes turn 2
-    And the agent completes turn 3
-    Then the tool result from turn 1 is still in full context
+  # --- Tool results stay in full context ---
 
-  Scenario: Tool results collapse after 3 turns
+  Scenario: Tool results remain in full context regardless of age
     When the agent executes a bash tool on turn 1
     And the agent completes turn 2
     And the agent completes turn 3
     And the agent completes turn 4
-    Then the tool result from turn 1 is replaced with a collapse stub
-    And the collapse stub contains the tool name "bash"
-    And the collapse stub contains the estimated token count
-    And the collapse stub contains the recall ID "turn1:bash:0"
+    And the agent completes turn 10
+    And the agent completes turn 20
+    Then the tool result from turn 1 is still in full context
+
+  Scenario: User and assistant messages are never collapsed
+    When the agent processes 20 turns of mixed tool and text messages
+    Then all user messages remain in full context
+    And all assistant messages remain in full context
+    And no tool messages are collapsed
+
+  Scenario: System messages are never collapsed
+    Given a system prompt in the conversation
+    When the agent processes 20 turns
+    Then the system message remains in full context
+
+  # --- Spill-to-disk still works at creation time ---
 
   Scenario: Full tool output is spilled to disk on creation
     When the agent executes a bash tool on turn 1
@@ -29,29 +45,6 @@ Feature: Context pruning via 3-turn collapse
     Given a spilled tool result with id "turn5:bash:0"
     When the agent calls recall with id "turn5:bash:0"
     Then the recall result contains the full original output
-
-  Scenario: Recall result is itself subject to collapse
-    Given a spilled tool result with id "turn5:bash:0"
-    When the agent calls recall with id "turn5:bash:0" on turn 10
-    And the agent completes turns 11 through 13
-    Then the recall result from turn 10 is replaced with a collapse stub
-
-  Scenario: User and assistant messages are never collapsed
-    When the agent processes 20 turns of mixed tool and text messages
-    Then all user messages remain in full context
-    And all assistant messages remain in full context
-
-  Scenario: System messages are never collapsed
-    Given a system prompt in the conversation
-    When the agent processes 20 turns
-    Then the system message remains in full context
-
-  Scenario: Already-collapsed stubs are not re-collapsed
-    When the agent executes a bash tool on turn 1
-    And the agent completes turns 2 through 10
-    Then the collapse stub from turn 1 appears exactly once
-    And the message is_collapsed field is true
-    And its content has not been modified since turn 4
 
   Scenario: Recall with unknown ID returns error
     When the agent calls recall with id "nonexistent:id:0"
@@ -70,6 +63,8 @@ Feature: Context pruning via 3-turn collapse
     Then a warning is logged with target "context_prune"
     And the warning contains "repeated recall"
     And the warning contains recall_count 3
+
+  # --- Spill manifest ---
 
   Scenario: Spill manifest is injected after first spill
     Given no spill entries exist
@@ -99,6 +94,8 @@ Feature: Context pruning via 3-turn collapse
     When the agent processes 3 turns with no tool calls
     Then no manifest message exists in context
 
+  # --- Sliding window enforcement ---
+
   Scenario: Sliding window drops oldest messages when over budget
     Given max_context_tokens is set to 1000
     When the agent accumulates 2000 tokens of messages
@@ -118,15 +115,18 @@ Feature: Context pruning via 3-turn collapse
     Then the first user message remains in context
     And later user messages may be dropped
 
-  # --- Manifest persistence across save/load ---
+  # --- Default max context tokens is 190,000 ---
+
+  Scenario: Default max context tokens is 190000
+    Given a default agent configuration
+    Then the max_context_tokens is 190000
+
+  # --- Session persistence ---
 
   Scenario: Pruning metadata survives session save and load
     When the agent executes a bash tool on turn 1
-    And the agent completes turn 4
-    Then the tool result from turn 1 is replaced with a collapse stub
     When the session is saved and reloaded from disk
-    Then the tool result from turn 1 still has is_collapsed true
-    And the tool result from turn 1 still has turn 1
+    Then the tool result from turn 1 still has turn 1
     And the tool result from turn 1 still has tool_name "bash"
     And the tool result from turn 1 still has spill_id "turn1:bash:0"
 
@@ -138,11 +138,10 @@ Feature: Context pruning via 3-turn collapse
     Then only one manifest message exists in context
     And exactly one system message contains "spilled entries via recall()"
 
-  Scenario: Collapsed stubs remain collapsed after session round-trip
+  Scenario: Tool results remain uncollapsed after session round-trip
     When the agent executes a bash tool on turn 1
     And the agent completes turn 4
-    Then the tool result from turn 1 is replaced with a collapse stub
+    Then the tool result from turn 1 is still in full context
     When the session is saved and reloaded from disk
     And the agent completes turn 5
-    Then the collapse stub from turn 1 appears exactly once
-    And its content has not been modified since turn 4
+    Then the tool result from turn 1 is still in full context

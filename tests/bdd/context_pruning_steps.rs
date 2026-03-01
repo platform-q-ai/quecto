@@ -131,18 +131,14 @@ fn when_agent_executes_bash_turn_1(world: &mut QuectoWorld) {
 #[when(expr = "the agent completes turn {int}")]
 fn when_agent_completes_turn(world: &mut QuectoWorld, turn: u32) {
     world.context_current_turn = Some(turn);
-    // Run collapse on messages at this turn
-    let messages = world.context_messages.as_mut().unwrap();
-    context_pruning::collapse_old_tool_results(messages, turn, 3);
+    // No collapse — tool results stay in full context.
+    // Only enforce_context_ceiling would drop messages (if over budget).
 }
 
 #[when(expr = "the agent completes turns {int} through {int}")]
-fn when_agent_completes_turns_range(world: &mut QuectoWorld, start: u32, end: u32) {
-    for turn in start..=end {
-        world.context_current_turn = Some(turn);
-        let messages = world.context_messages.as_mut().unwrap();
-        context_pruning::collapse_old_tool_results(messages, turn, 3);
-    }
+fn when_agent_completes_turns_range(world: &mut QuectoWorld, _start: u32, end: u32) {
+    world.context_current_turn = Some(end);
+    // No collapse — tool results stay in full context.
 }
 
 #[when("the agent processes 20 turns of mixed tool and text messages")]
@@ -169,8 +165,7 @@ fn when_agent_processes_20_turns_mixed(world: &mut QuectoWorld) {
             messages.push(tool_msg);
         }
 
-        // Run collapse
-        context_pruning::collapse_old_tool_results(messages, turn, 3);
+        // No collapse — tool results stay in full context
     }
 
     world.context_current_turn = Some(20);
@@ -178,10 +173,7 @@ fn when_agent_processes_20_turns_mixed(world: &mut QuectoWorld) {
 
 #[when(expr = "the agent processes {int} turns")]
 fn when_agent_processes_n_turns(world: &mut QuectoWorld, turns: u32) {
-    let messages = world.context_messages.as_mut().unwrap();
-    for turn in 1..=turns {
-        context_pruning::collapse_old_tool_results(messages, turn, 3);
-    }
+    // No collapse — just advance the turn counter
     world.context_current_turn = Some(turns);
 }
 
@@ -465,70 +457,6 @@ fn then_tool_result_from_turn_1_still_full(world: &mut QuectoWorld) {
     );
 }
 
-#[then("the tool result from turn 1 is replaced with a collapse stub")]
-fn then_tool_result_from_turn_1_collapsed(world: &mut QuectoWorld) {
-    let messages = world.context_messages.as_ref().unwrap();
-    let tool_msg = messages
-        .iter()
-        .find(|m| m.role == Role::Tool && m.turn == Some(1))
-        .expect("should find tool result from turn 1");
-    assert!(
-        tool_msg.is_collapsed,
-        "tool result from turn 1 should be collapsed"
-    );
-    assert!(
-        tool_msg.content.starts_with('['),
-        "collapsed content should start with '[', got: {}",
-        tool_msg.content
-    );
-}
-
-#[then(expr = "the collapse stub contains the tool name {string}")]
-fn then_collapse_stub_contains_tool_name(world: &mut QuectoWorld, tool_name: String) {
-    let messages = world.context_messages.as_ref().unwrap();
-    let tool_msg = messages
-        .iter()
-        .find(|m| m.is_collapsed)
-        .expect("should find a collapsed message");
-    assert!(
-        tool_msg.content.contains(&format!("[{}:", tool_name)),
-        "collapse stub should contain tool name '{}', got: {}",
-        tool_name,
-        tool_msg.content
-    );
-}
-
-#[then("the collapse stub contains the estimated token count")]
-fn then_collapse_stub_contains_token_count(world: &mut QuectoWorld) {
-    let messages = world.context_messages.as_ref().unwrap();
-    let tool_msg = messages
-        .iter()
-        .find(|m| m.is_collapsed)
-        .expect("should find a collapsed message");
-    assert!(
-        tool_msg.content.contains("tokens)"),
-        "collapse stub should contain token count, got: {}",
-        tool_msg.content
-    );
-}
-
-#[then(expr = "the collapse stub contains the recall ID {string}")]
-fn then_collapse_stub_contains_recall_id(world: &mut QuectoWorld, recall_id: String) {
-    let messages = world.context_messages.as_ref().unwrap();
-    let tool_msg = messages
-        .iter()
-        .find(|m| m.is_collapsed)
-        .expect("should find a collapsed message");
-    assert!(
-        tool_msg
-            .content
-            .contains(&format!("recall(\"{}\")", recall_id)),
-        "collapse stub should contain recall ID '{}', got: {}",
-        recall_id,
-        tool_msg.content
-    );
-}
-
 #[then(expr = "the spill file contains an entry with id {string}")]
 fn then_spill_file_contains_entry(world: &mut QuectoWorld, id: String) {
     let store = world.context_spill_store.as_ref().unwrap().clone();
@@ -574,17 +502,37 @@ fn then_recall_result_contains_full_output(world: &mut QuectoWorld) {
     );
 }
 
-#[then("the recall result from turn 10 is replaced with a collapse stub")]
-fn then_recall_result_from_turn_10_collapsed(world: &mut QuectoWorld) {
+#[then("no tool messages are collapsed")]
+fn then_no_tool_messages_collapsed(world: &mut QuectoWorld) {
     let messages = world.context_messages.as_ref().unwrap();
-    let recall_msg = messages
-        .iter()
-        .find(|m| m.role == Role::Tool && m.turn == Some(10))
-        .expect("should find recall result from turn 10");
-    assert!(
-        recall_msg.is_collapsed,
-        "recall result from turn 10 should be collapsed"
+    for msg in messages {
+        if msg.role == Role::Tool {
+            assert!(
+                !msg.is_collapsed,
+                "tool message should not be collapsed: {}",
+                msg.content
+            );
+        }
+    }
+}
+
+#[given("a default agent configuration")]
+fn given_default_agent_configuration(world: &mut QuectoWorld) {
+    // Use defaults from config
+    world.context_max_tokens = None; // will use default
+}
+
+#[then(expr = "the max_context_tokens is {int}")]
+fn then_max_context_tokens_is(world: &mut QuectoWorld, expected: usize) {
+    // Check that the infrastructure config default matches
+    let config = quecto::infrastructure::config::Config::default();
+    let actual = config.agents.defaults.max_context_tokens;
+    assert_eq!(
+        actual, expected,
+        "default max_context_tokens should be {}, got {}",
+        expected, actual
     );
+    let _ = world; // suppress unused warning
 }
 
 #[then("all user messages remain in full context")]
@@ -622,44 +570,6 @@ fn then_system_message_remains(world: &mut QuectoWorld) {
         .iter()
         .any(|m| m.role == Role::System && !m.is_manifest);
     assert!(has_system, "system message should remain in context");
-}
-
-#[then("the collapse stub from turn 1 appears exactly once")]
-fn then_collapse_stub_appears_once(world: &mut QuectoWorld) {
-    let messages = world.context_messages.as_ref().unwrap();
-    let collapsed_count = messages
-        .iter()
-        .filter(|m| m.role == Role::Tool && m.turn == Some(1) && m.is_collapsed)
-        .count();
-    assert_eq!(
-        collapsed_count, 1,
-        "should have exactly one collapsed stub from turn 1"
-    );
-}
-
-#[then("the message is_collapsed field is true")]
-fn then_is_collapsed_is_true(world: &mut QuectoWorld) {
-    let messages = world.context_messages.as_ref().unwrap();
-    let msg = messages
-        .iter()
-        .find(|m| m.role == Role::Tool && m.turn == Some(1))
-        .expect("should find tool message from turn 1");
-    assert!(msg.is_collapsed, "is_collapsed should be true");
-}
-
-#[then("its content has not been modified since turn 4")]
-fn then_content_not_modified_since_turn_4(world: &mut QuectoWorld) {
-    let messages = world.context_messages.as_ref().unwrap();
-    let msg = messages
-        .iter()
-        .find(|m| m.role == Role::Tool && m.turn == Some(1))
-        .expect("should find tool message from turn 1");
-    // The stub should contain the original recall ID, proving it wasn't re-collapsed
-    assert!(
-        msg.content.contains("recall(\"turn1:bash:0\")"),
-        "stub should still reference original ID, got: {}",
-        msg.content
-    );
 }
 
 #[then(expr = "the recall result is an error containing {string}")]
@@ -987,28 +897,18 @@ fn when_spill_manifest_updated(world: &mut QuectoWorld) {
         ));
 }
 
-/// Find the collapsed tool result from turn 1 by structural criteria.
-fn find_collapsed_tool(messages: &[Message]) -> &Message {
+/// Find the tool result from turn 1 by structural criteria.
+fn find_tool_from_turn_1(messages: &[Message]) -> &Message {
     messages
         .iter()
-        .find(|m| m.role == Role::Tool && m.is_collapsed)
-        .expect("should find a collapsed tool result")
-}
-
-#[then("the tool result from turn 1 still has is_collapsed true")]
-fn then_tool_result_turn1_still_collapsed(world: &mut QuectoWorld) {
-    let messages = world.context_messages.as_ref().unwrap();
-    let tool_msg = find_collapsed_tool(messages);
-    assert!(
-        tool_msg.is_collapsed,
-        "is_collapsed should survive save/load round-trip"
-    );
+        .find(|m| m.role == Role::Tool && m.turn == Some(1))
+        .expect("should find a tool result from turn 1")
 }
 
 #[then(expr = "the tool result from turn 1 still has turn {int}")]
 fn then_tool_result_turn1_still_has_turn(world: &mut QuectoWorld, expected: u32) {
     let messages = world.context_messages.as_ref().unwrap();
-    let tool_msg = find_collapsed_tool(messages);
+    let tool_msg = find_tool_from_turn_1(messages);
     assert_eq!(
         tool_msg.turn,
         Some(expected),
@@ -1019,7 +919,7 @@ fn then_tool_result_turn1_still_has_turn(world: &mut QuectoWorld, expected: u32)
 #[then(expr = "the tool result from turn 1 still has tool_name {string}")]
 fn then_tool_result_turn1_still_has_tool_name(world: &mut QuectoWorld, expected: String) {
     let messages = world.context_messages.as_ref().unwrap();
-    let tool_msg = find_collapsed_tool(messages);
+    let tool_msg = find_tool_from_turn_1(messages);
     assert_eq!(
         tool_msg.tool_name.as_deref(),
         Some(expected.as_str()),
@@ -1044,7 +944,7 @@ fn then_exactly_one_system_msg_contains(world: &mut QuectoWorld, needle: String)
 #[then(expr = "the tool result from turn 1 still has spill_id {string}")]
 fn then_tool_result_turn1_still_has_spill_id(world: &mut QuectoWorld, expected: String) {
     let messages = world.context_messages.as_ref().unwrap();
-    let tool_msg = find_collapsed_tool(messages);
+    let tool_msg = find_tool_from_turn_1(messages);
     assert_eq!(
         tool_msg.spill_id.as_deref(),
         Some(expected.as_str()),

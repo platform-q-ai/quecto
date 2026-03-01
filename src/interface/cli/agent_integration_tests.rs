@@ -51,8 +51,8 @@ fn make_test_agent(base_dir: &std::path::Path) -> AgentLoopImpl {
         temperature: 0.0,
         spill_store: None,
         session_key: String::new(),
-        context_collapse_after_turns: 3,
-        max_context_tokens: 100_000,
+        context_collapse_after_turns: u32::MAX,
+        max_context_tokens: 190_000,
     })
     .with_max_tool_iterations(1)
 }
@@ -464,8 +464,8 @@ fn test_run_with_deadline_completes_before_timeout() {
         temperature: 0.0,
         spill_store: None,
         session_key: String::new(),
-        context_collapse_after_turns: 3,
-        max_context_tokens: 100_000,
+        context_collapse_after_turns: u32::MAX,
+        max_context_tokens: 190_000,
     })
     .with_max_tool_iterations(1);
 

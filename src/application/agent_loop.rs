@@ -96,11 +96,17 @@ impl AgentLoopImpl {
         current_turn: u32,
         spills_dirty: bool,
     ) {
-        let collapsed = context_pruning::collapse_old_tool_results(
-            messages,
-            current_turn,
-            self.context_collapse_after_turns,
-        );
+        // Collapse is disabled by default (COLLAPSE_DISABLED = u32::MAX).
+        // Still available for users who explicitly lower the config value.
+        let collapsed = if self.context_collapse_after_turns < context_pruning::COLLAPSE_DISABLED {
+            context_pruning::collapse_old_tool_results(
+                messages,
+                current_turn,
+                self.context_collapse_after_turns,
+            )
+        } else {
+            0
+        };
         let dropped = context_pruning::enforce_context_ceiling(messages, self.max_context_tokens);
         // Only rebuild manifest when spills have changed (new tool results spilled)
         if spills_dirty {
@@ -426,8 +432,8 @@ mod tests {
             temperature: 0.7,
             spill_store: None,
             session_key: String::new(),
-            context_collapse_after_turns: 3,
-            max_context_tokens: 100_000,
+            context_collapse_after_turns: u32::MAX,
+            max_context_tokens: 190_000,
         });
         (agent, provider)
     }
@@ -582,8 +588,8 @@ mod tests {
             temperature: 0.7,
             spill_store: None,
             session_key: String::new(),
-            context_collapse_after_turns: 3,
-            max_context_tokens: 100_000,
+            context_collapse_after_turns: u32::MAX,
+            max_context_tokens: 190_000,
         });
         let mut messages = vec![Message::user("use a tool")];
         let result = agent.run_loop(&mut messages).await.unwrap();

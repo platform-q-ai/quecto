@@ -175,8 +175,8 @@ mod tests {
             temperature: 0.7,
             spill_store: None,
             session_key: String::new(),
-            context_collapse_after_turns: 3,
-            max_context_tokens: 100_000,
+            context_collapse_after_turns: u32::MAX,
+            max_context_tokens: 190_000,
         });
         let session_store = FileSessionStore::new(tmp.path());
         let session = ReplSession {
