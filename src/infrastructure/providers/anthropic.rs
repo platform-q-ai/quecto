@@ -4,7 +4,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
+use crate::domain::message::{LlmResponse, Message, Role, ToolCall, UsageInfo};
 use crate::domain::provider::{ChatRequest, LlmProvider};
 
 /// Anthropic LLM provider.
@@ -25,118 +25,113 @@ impl AnthropicProvider {
     }
 
     /// Build the JSON request body for Anthropic Messages API.
-    #[allow(clippy::too_many_lines)]
     fn build_request_body(request: &ChatRequest<'_>) -> (Option<String>, serde_json::Value) {
-        let messages = request.messages;
-        let tools = request.tools;
-        let model = request.model;
-        let max_tokens = request.max_tokens;
-        let temperature = request.temperature;
+        let (system_prompt, api_messages) = Self::build_messages(request.messages);
+        let mut body = serde_json::json!({
+            "model": request.model,
+            "messages": api_messages,
+            "max_tokens": request.max_tokens,
+            "temperature": request.temperature,
+        });
+        if let Some(ref sys) = system_prompt {
+            body["system"] = serde_json::Value::String(sys.clone());
+        }
+        if !request.tools.is_empty() {
+            body["tools"] = serde_json::Value::Array(Self::build_tool_defs(request.tools));
+        }
+        (system_prompt, body)
+    }
+
+    /// Convert domain messages to Anthropic API message format.
+    fn build_messages(messages: &[Message]) -> (Option<String>, Vec<serde_json::Value>) {
         let mut system_prompt: Option<String> = None;
         let mut api_messages: Vec<serde_json::Value> = Vec::new();
-
         for m in messages {
             match m.role {
                 Role::System => {
                     system_prompt = Some(m.content.clone());
                 }
                 Role::User => {
-                    api_messages.push(serde_json::json!({
-                        "role": "user",
-                        "content": m.content,
-                    }));
+                    api_messages.push(serde_json::json!({"role": "user", "content": m.content}));
                 }
                 Role::Assistant => {
-                    if !m.tool_calls.is_empty() {
-                        let mut content_blocks: Vec<serde_json::Value> = Vec::new();
-                        if !m.content.is_empty() {
-                            content_blocks.push(serde_json::json!({
-                                "type": "text",
-                                "text": m.content,
-                            }));
-                        }
-                        for tc in &m.tool_calls {
-                            let input: serde_json::Value =
-                                serde_json::from_str(&tc.arguments).unwrap_or_default();
-                            content_blocks.push(serde_json::json!({
-                                "type": "tool_use",
-                                "id": tc.id,
-                                "name": tc.name,
-                                "input": input,
-                            }));
-                        }
-                        api_messages.push(serde_json::json!({
-                            "role": "assistant",
-                            "content": content_blocks,
-                        }));
-                    } else {
-                        api_messages.push(serde_json::json!({
-                            "role": "assistant",
-                            "content": m.content,
-                        }));
-                    }
+                    api_messages.push(Self::build_assistant_message(m));
                 }
                 Role::Tool => {
-                    // Build tool_result content.
-                    // When image blocks are present, use the array format so Anthropic can
-                    // render them. Otherwise use a plain string (avoids wrapping overhead).
-                    let content_value = if m.image_blocks.is_empty() {
-                        serde_json::Value::String(m.content.clone())
-                    } else {
-                        let mut result_content: Vec<serde_json::Value> =
-                            vec![serde_json::json!({"type": "text", "text": m.content})];
-                        for img in &m.image_blocks {
-                            result_content.push(serde_json::json!({
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": img.mime_type,
-                                    "data": img.data,
-                                }
-                            }));
-                        }
-                        serde_json::Value::Array(result_content)
-                    };
-                    api_messages.push(serde_json::json!({
-                        "role": "user",
-                        "content": [{
-                            "type": "tool_result",
-                            "tool_use_id": m.tool_call_id.as_deref().unwrap_or(""),
-                            "content": content_value,
-                        }],
-                    }));
+                    api_messages.push(Self::build_tool_result_message(m));
                 }
             }
         }
+        (system_prompt, api_messages)
+    }
 
-        let mut body = serde_json::json!({
-            "model": model,
-            "messages": api_messages,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-        });
-
-        if let Some(ref sys) = system_prompt {
-            body["system"] = serde_json::Value::String(sys.clone());
+    /// Build an Anthropic assistant message (with or without tool_use blocks).
+    fn build_assistant_message(m: &Message) -> serde_json::Value {
+        if m.tool_calls.is_empty() {
+            return serde_json::json!({"role": "assistant", "content": m.content});
         }
+        let mut content_blocks: Vec<serde_json::Value> = Vec::new();
+        if !m.content.is_empty() {
+            content_blocks.push(serde_json::json!({"type": "text", "text": m.content}));
+        }
+        for tc in &m.tool_calls {
+            let input: serde_json::Value = serde_json::from_str(&tc.arguments).unwrap_or_default();
+            content_blocks.push(serde_json::json!({
+                "type": "tool_use",
+                "id": tc.id,
+                "name": tc.name,
+                "input": input,
+            }));
+        }
+        serde_json::json!({"role": "assistant", "content": content_blocks})
+    }
 
-        if !tools.is_empty() {
-            let tool_defs: Vec<serde_json::Value> = tools
-                .iter()
-                .map(|t| {
-                    let input_schema: serde_json::Value =
-                        serde_json::from_str(&t.parameters_schema).unwrap_or_default();
-                    serde_json::json!({
-                        "name": t.name,
-                        "description": t.description,
-                        "input_schema": input_schema,
-                    })
+    /// Build an Anthropic tool_result message.
+    ///
+    /// When image blocks are present, uses the array format so Anthropic can
+    /// render them. Otherwise uses a plain string (avoids wrapping overhead).
+    fn build_tool_result_message(m: &Message) -> serde_json::Value {
+        let content_value = if m.image_blocks.is_empty() {
+            serde_json::Value::String(m.content.clone())
+        } else {
+            let mut result_content: Vec<serde_json::Value> =
+                vec![serde_json::json!({"type": "text", "text": m.content})];
+            for img in &m.image_blocks {
+                result_content.push(serde_json::json!({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": img.mime_type,
+                        "data": img.data,
+                    }
+                }));
+            }
+            serde_json::Value::Array(result_content)
+        };
+        serde_json::json!({
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": m.tool_call_id.as_deref().unwrap_or(""),
+                "content": content_value,
+            }],
+        })
+    }
+
+    /// Build Anthropic tool definitions from domain ToolDefinitions.
+    fn build_tool_defs(tools: &[crate::domain::tool::ToolDefinition]) -> Vec<serde_json::Value> {
+        tools
+            .iter()
+            .map(|t| {
+                let input_schema: serde_json::Value =
+                    serde_json::from_str(&t.parameters_schema).unwrap_or_default();
+                serde_json::json!({
+                    "name": t.name,
+                    "description": t.description,
+                    "input_schema": input_schema,
                 })
-                .collect();
-            body["tools"] = serde_json::Value::Array(tool_defs);
-        }
-
-        (system_prompt, body)
+            })
+            .collect()
     }
 
     /// Parse the Anthropic response JSON into our domain LlmResponse.
