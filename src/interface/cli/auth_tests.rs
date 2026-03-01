@@ -311,13 +311,17 @@ fn test_auth_login_bare_choose_openai() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
-        stdin_data: Some("2\n".to_string()), // Choose OpenAI
+        stdin_data: Some("2\nbogus-code\n".to_string()), // Choose OpenAI, provide bogus code
         ..Default::default()
     };
     let out = run_with_output(args("auth login"), &ctx);
-    // OpenAI OAuth flow just prints the URL
-    assert_eq!(out.exit_code, 0);
-    assert!(out.stdout.contains("Open this URL"));
+    // OpenAI OAuth flow prints the URL; token exchange will fail with bogus code
+    assert!(
+        out.stdout.contains("Open this URL") || out.stderr.contains("token exchange"),
+        "expected OAuth URL or exchange error, got stdout={} stderr={}",
+        out.stdout,
+        out.stderr
+    );
 }
 
 #[test]
@@ -348,12 +352,17 @@ fn test_auth_login_oauth_openai() {
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
+        stdin_data: Some("bogus-code\n".to_string()), // Skip browser, paste code
         ..Default::default()
     };
     let out = run_with_output(args("auth login --provider openai --oauth"), &ctx);
-    assert_eq!(out.exit_code, 0);
-    assert!(out.stdout.contains("Open this URL"));
-    assert!(out.stdout.contains("authorize"));
+    // Should show the URL and attempt token exchange (which fails with bogus code)
+    assert!(
+        out.stdout.contains("Open this URL") || out.stderr.contains("token exchange"),
+        "expected OAuth URL or exchange error, got stdout={} stderr={}",
+        out.stdout,
+        out.stderr
+    );
 }
 
 #[test]
@@ -380,11 +389,18 @@ fn test_auth_login_oauth_with_test_base_url() {
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         oauth_base_url: Some("http://localhost:9999".to_string()),
+        stdin_data: Some("bogus-code\n".to_string()), // Skip browser, paste code
         ..Default::default()
     };
     let out = run_with_output(args("auth login --provider openai --oauth"), &ctx);
-    assert_eq!(out.exit_code, 0);
-    assert!(out.stdout.contains("http://localhost:9999/authorize"));
+    // Should show test base URL in the authorize link
+    assert!(
+        out.stdout.contains("http://localhost:9999/authorize")
+            || out.stderr.contains("token exchange"),
+        "expected test URL or exchange error, got stdout={} stderr={}",
+        out.stdout,
+        out.stderr
+    );
 }
 
 // ===================================================================

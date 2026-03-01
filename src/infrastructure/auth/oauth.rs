@@ -496,7 +496,7 @@ mod tests {
         let config = OAuthConfig::for_provider("openai").unwrap();
         assert!(config.authorization_url.contains("openai.com"));
         assert!(config.device_code_url.contains("openai.com"));
-        assert_eq!(config.client_id, "quecto-cli");
+        assert_eq!(config.client_id, "app_EMoamEEZ73f0CkXaXp7hrann");
     }
 
     #[test]

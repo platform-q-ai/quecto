@@ -302,6 +302,17 @@ impl Gateway {
         if api_key.is_empty() {
             return Ok(());
         }
+
+        // For OpenAI OAuth tokens, use the Codex provider instead
+        if name == "openai" {
+            let account_id =
+                crate::infrastructure::auth::oauth::extract_openai_account_id(&api_key);
+            if let Some(acct) = account_id {
+                list.push(providers::create_codex_provider(api_key, acct));
+                return Ok(());
+            }
+        }
+
         let base = if api_base.is_empty() {
             None
         } else {

@@ -406,15 +406,22 @@ pub fn build_agent_provider(
         &rt,
     );
     if !openai_key.is_empty() {
-        let base = if config.providers.openai.api_base.is_empty() {
-            None
+        let account_id = crate::infrastructure::auth::oauth::extract_openai_account_id(&openai_key);
+        if let Some(acct) = account_id {
+            // OAuth token — use Codex provider (ChatGPT backend)
+            provider_list.push(providers::create_codex_provider(openai_key, acct));
         } else {
-            Some(config.providers.openai.api_base.clone())
-        };
-        match providers::create_provider("openai", openai_key, base) {
-            Ok(p) => provider_list.push(p),
-            Err(e) => {
-                return Err(format!("openai provider configuration error: {}", e));
+            // Regular API key — use standard OpenAI provider
+            let base = if config.providers.openai.api_base.is_empty() {
+                None
+            } else {
+                Some(config.providers.openai.api_base.clone())
+            };
+            match providers::create_provider("openai", openai_key, base) {
+                Ok(p) => provider_list.push(p),
+                Err(e) => {
+                    return Err(format!("openai provider configuration error: {}", e));
+                }
             }
         }
     }

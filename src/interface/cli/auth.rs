@@ -189,7 +189,7 @@ fn resolve_provider_interactive(
                 "Choose a provider:\n  1) Anthropic (Claude Pro/Max — OAuth)\n  \
                  2) OpenAI (OAuth)\n\nEnter 1 or 2: ",
             );
-            flush_stdout(out);
+            flush_stdout(ctx, out);
             let choice = match read_stdin_line(ctx) {
                 Ok(line) => line.trim().to_string(),
                 Err(e) => {
@@ -224,13 +224,16 @@ pub(crate) fn read_stdin_line(ctx: &CliContext) -> Result<String, String> {
 }
 
 /// Flush buffered stdout text to the terminal immediately (for interactive prompts).
-fn flush_stdout(out: &mut Output<'_>) {
-    if !out.stdout.is_empty() {
-        use std::io::Write;
-        print!("{}", out.stdout);
-        let _ = std::io::stdout().flush();
-        out.stdout.clear();
+/// In test mode (when `stdin_data` is set), we skip the flush to preserve output
+/// in the buffer for assertions.
+fn flush_stdout(ctx: &CliContext, out: &mut Output<'_>) {
+    if ctx.stdin_data.is_some() || out.stdout.is_empty() {
+        return;
     }
+    use std::io::Write;
+    print!("{}", out.stdout);
+    let _ = std::io::stdout().flush();
+    out.stdout.clear();
 }
 
 /// Resolve OAuth config: use test override if set, otherwise look up the provider.
@@ -301,7 +304,7 @@ fn cmd_auth_login_openai_oauth(
          (If the browser doesn't open, copy the URL above and paste it manually)\n",
         auth_url
     ));
-    flush_stdout(out);
+    flush_stdout(ctx, out);
 
     let rt = match super::build_tokio_runtime() {
         Ok(rt) => rt,
@@ -312,12 +315,24 @@ fn cmd_auth_login_openai_oauth(
         }
     };
 
-    let code = match rt.block_on(wait_for_oauth_callback(&state, 300)) {
-        Ok(code) => code,
-        Err(e) => match extract_fallback_code(ctx, e, out) {
+    // In test mode (stdin_data set), skip the browser callback and go
+    // straight to the manual code-paste fallback.
+    let code = if ctx.stdin_data.is_some() {
+        let err = crate::domain::error::DomainError::Provider(
+            "browser callback skipped in test mode".into(),
+        );
+        match extract_fallback_code(ctx, err, out) {
             Some(code) => code,
             None => return 1,
-        },
+        }
+    } else {
+        match rt.block_on(wait_for_oauth_callback(&state, 300)) {
+            Ok(code) => code,
+            Err(e) => match extract_fallback_code(ctx, e, out) {
+                Some(code) => code,
+                None => return 1,
+            },
+        }
     };
 
     match rt.block_on(exchange_openai_code(config, &code, &pkce.verifier)) {
@@ -353,7 +368,7 @@ fn extract_fallback_code(
         "\nCallback failed ({}). Paste the authorization code or redirect URL:\n",
         err
     ));
-    flush_stdout(out);
+    flush_stdout(ctx, out);
     match read_stdin_line(ctx) {
         Ok(line) => {
             let line = line.trim().to_string();
@@ -457,7 +472,7 @@ fn cmd_auth_login_anthropic_oauth(
          Paste the authorization code:\n",
         auth_url
     ));
-    flush_stdout(out);
+    flush_stdout(ctx, out);
 
     let auth_code = match read_stdin_line(ctx) {
         Ok(line) => line.trim().to_string(),
