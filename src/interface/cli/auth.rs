@@ -189,6 +189,7 @@ fn resolve_provider_interactive(
                 "Choose a provider:\n  1) Anthropic (Claude Pro/Max — OAuth)\n  \
                  2) OpenAI (OAuth)\n\nEnter 1 or 2: ",
             );
+            flush_stdout(out);
             let choice = match read_stdin_line(ctx) {
                 Ok(line) => line.trim().to_string(),
                 Err(e) => {
@@ -219,6 +220,16 @@ pub(crate) fn read_stdin_line(ctx: &CliContext) -> Result<String, String> {
             .read_line(&mut line)
             .map_err(|e| format!("failed to read from stdin: {}", e))?;
         Ok(line)
+    }
+}
+
+/// Flush buffered stdout text to the terminal immediately (for interactive prompts).
+fn flush_stdout(out: &mut Output<'_>) {
+    if !out.stdout.is_empty() {
+        use std::io::Write;
+        print!("{}", out.stdout);
+        let _ = std::io::stdout().flush();
+        out.stdout.clear();
     }
 }
 
@@ -290,6 +301,7 @@ fn cmd_auth_login_openai_oauth(
          (If the browser doesn't open, copy the URL above and paste it manually)\n",
         auth_url
     ));
+    flush_stdout(out);
 
     let rt = match super::build_tokio_runtime() {
         Ok(rt) => rt,
@@ -341,6 +353,7 @@ fn extract_fallback_code(
         "\nCallback failed ({}). Paste the authorization code or redirect URL:\n",
         err
     ));
+    flush_stdout(out);
     match read_stdin_line(ctx) {
         Ok(line) => {
             let line = line.trim().to_string();
@@ -444,6 +457,7 @@ fn cmd_auth_login_anthropic_oauth(
          Paste the authorization code:\n",
         auth_url
     ));
+    flush_stdout(out);
 
     let auth_code = match read_stdin_line(ctx) {
         Ok(line) => line.trim().to_string(),
