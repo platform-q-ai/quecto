@@ -33,6 +33,7 @@ fn setup_nsjail_exec_tool(world: &mut QuectoWorld, setup: NsjailSetup) {
         sandbox.command_allowlist = Some(allowlist);
     }
 
+    let default_nsjail = NsjailOptions::default();
     let opts = ExecOptions {
         timeout: std::time::Duration::from_secs(setup.timeout_secs.unwrap_or(30)),
         max_capture_bytes: setup.max_capture_bytes.unwrap_or(1024 * 1024),
@@ -41,10 +42,17 @@ fn setup_nsjail_exec_tool(world: &mut QuectoWorld, setup: NsjailSetup) {
         nsjail: NsjailOptions {
             binary: binary.clone(),
             network_passthrough: setup.network_passthrough,
-            memory_limit_mb: setup.memory_limit_mb,
-            pid_limit: setup.pid_limit,
-            cpu_time_limit_secs: setup.cpu_time_limit_secs,
-            wall_time_limit_secs: setup.wall_time_limit_secs,
+            // When a setup field is None, preserve the compiled default from
+            // NsjailOptions::default() so "default options" scenarios see the
+            // real default values (e.g. memory_limit_mb = 4096).
+            memory_limit_mb: setup.memory_limit_mb.or(default_nsjail.memory_limit_mb),
+            pid_limit: setup.pid_limit.or(default_nsjail.pid_limit),
+            cpu_time_limit_secs: setup
+                .cpu_time_limit_secs
+                .or(default_nsjail.cpu_time_limit_secs),
+            wall_time_limit_secs: setup
+                .wall_time_limit_secs
+                .or(default_nsjail.wall_time_limit_secs),
             ..NsjailOptions::default()
         },
     };
@@ -125,6 +133,11 @@ fn given_nsjail_unavailable(world: &mut QuectoWorld) {
 
 #[given("an nsjail-isolated exec tool with a workspace")]
 fn given_nsjail_workspace(world: &mut QuectoWorld) {
+    setup_nsjail_exec_tool(world, NsjailSetup::default());
+}
+
+#[given("an nsjail-isolated exec tool with default options")]
+fn given_nsjail_default_options(world: &mut QuectoWorld) {
     setup_nsjail_exec_tool(world, NsjailSetup::default());
 }
 

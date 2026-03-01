@@ -123,6 +123,22 @@ Feature: nsjail Exec Isolation
     And the nsjail command for "echo test" should contain "512"
 
   @done
+  Scenario: default nsjail memory limit is 4096 MB to allow Node/V8/JVM/Go runtimes
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with default options
+    Then the nsjail command for "echo test" should contain "--rlimit_as"
+    And the nsjail command for "echo test" should contain "4096"
+
+  @done
+  Scenario: Node.js can start inside nsjail with default memory limit
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with default options
+    When the agent executes nsjail tool "exec" with args:
+      | command | node -e "console.log('ok')" |
+    Then the tool result should contain "ok"
+    And the tool result should not be an error
+
+  @done
   Scenario: nsjail uses rlimit_nproc for PID enforcement
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with PID limit 128
