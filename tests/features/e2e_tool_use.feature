@@ -52,7 +52,7 @@ Feature: End-to-End Tool Execution
   Scenario: LLM lists a directory via tool call
     Given a file "a.txt" in the e2e workspace with content "a"
     And a file "b.txt" in the e2e workspace with content "b"
-    And the mock LLM first returns a tool call for "list_dir" with args:
+    And the mock LLM first returns a tool call for "ls" with args:
       | path | . |
     And the mock LLM then returns a text response "Directory contains: a.txt, b.txt"
     When I run quecto agent -s - -m "List the workspace"

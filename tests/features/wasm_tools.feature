@@ -90,7 +90,7 @@ Feature: WASM Tool Ports
   Scenario: WASM ListDirTool lists workspace directory contents
     Given a WASM-containerized tool registry
     And a WASM workspace containing files "a.txt", "b.txt", and directory "subdir"
-    When the agent executes WASM tool "list_dir" with args:
+    When the agent executes WASM tool "ls" with args:
       | path | . |
     Then the WASM tool result should contain "a.txt"
     And the WASM tool result should contain "b.txt"
@@ -211,6 +211,6 @@ Feature: WASM Tool Ports
   Scenario: WASM tools produce identical output to native tools for list_dir
     Given a native tool registry and a WASM-containerized tool registry
     And both registries share the same workspace with files "x.txt" and "y.txt"
-    When both registries execute "list_dir" with args:
+    When both registries execute "ls" with args:
       | path | . |
     Then the WASM parity results should be identical

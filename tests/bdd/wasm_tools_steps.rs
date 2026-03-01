@@ -45,7 +45,7 @@ fn tool_schemas() -> Vec<(&'static str, &'static str, &'static str)> {
             r#"{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}"#,
         ),
         (
-            "list_dir",
+            "ls",
             "List directory",
             r#"{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"#,
         ),

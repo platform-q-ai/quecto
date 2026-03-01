@@ -59,7 +59,7 @@ fn dispatch(params: &str) -> Result<String, String> {
         "write" | "write_file" => dispatch_write_file(&args),
         "edit" | "edit_file" => dispatch_edit_file(&args),
         "append_file" => dispatch_append_file(&args),
-        "list_dir" => dispatch_list_dir(&args),
+        "ls" | "list_dir" => dispatch_list_dir(&args),
         "cron" => dispatch_cron(&args),
         "recall" => dispatch_recall(&args),
         "message" => dispatch_message(&args),
@@ -135,7 +135,8 @@ fn dispatch_append_file(args: &serde_json::Value) -> Result<String, String> {
 }
 
 fn dispatch_list_dir(args: &serde_json::Value) -> Result<String, String> {
-    let path = get_str(args, "path")?;
+    // Default to "." when path is omitted (matches native LsTool behaviour)
+    let path = args["path"].as_str().unwrap_or(".");
     host::workspace_list_dir(path)
 }
 

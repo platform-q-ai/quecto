@@ -80,7 +80,7 @@ Feature: End-to-End Safety and Limits
     And stdout should contain "Append denied"
 
   Scenario: List_dir outside workspace is blocked
-    Given the mock LLM first returns a tool call for "list_dir" with args:
+    Given the mock LLM first returns a tool call for "ls" with args:
       | path | ../../ |
     And the mock LLM then returns a text response "Listing denied"
     When I run quecto agent -s - -m "List parent directories"

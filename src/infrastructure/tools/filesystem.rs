@@ -606,26 +606,34 @@ impl Tool for AppendFileTool {
 }
 
 // ===========================================================================
-// ListDirTool
+// LsTool  (Pi name: "ls", was "list_dir")
 // ===========================================================================
 
-pub struct ListDirTool {
+/// Maximum number of directory entries to show before truncating.
+const LS_MAX_ENTRIES: usize = 1000;
+/// Maximum output bytes before truncating.
+const LS_MAX_BYTES: usize = 50 * 1024;
+
+pub struct LsTool {
     workspace: Arc<PathBuf>,
     sandbox: Arc<Sandbox>,
 }
 
-impl ListDirTool {
+impl LsTool {
     pub fn new(workspace: Arc<PathBuf>, sandbox: Arc<Sandbox>) -> Self {
         Self { workspace, sandbox }
     }
 }
 
-impl Tool for ListDirTool {
+impl Tool for LsTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "list_dir".to_string(),
-            description: "List contents of a directory".to_string(),
-            parameters_schema: r#"{"type":"object","properties":{"path":{"type":"string","description":"Relative path to the directory"}},"required":["path"]}"#.to_string(),
+            name: "ls".to_string(),
+            description: "List directory contents. Defaults to the current working directory \
+                          when path is omitted. Entries are sorted; directories are suffixed with \
+                          '/'. Output is capped at 1000 entries or 50KB."
+                .to_string(),
+            parameters_schema: r#"{"type":"object","properties":{"path":{"type":"string","description":"Directory path to list (relative or absolute, defaults to '.')"}}}"#.to_string(),
         }
     }
 
@@ -640,39 +648,71 @@ impl Tool for ListDirTool {
         Box::pin(async move {
             let args: serde_json::Value =
                 serde_json::from_str(&args_str).map_err(|e| DomainError::Tool(e.to_string()))?;
-            let path = args["path"]
-                .as_str()
-                .ok_or_else(|| DomainError::Tool("missing 'path' argument".to_string()))?;
 
+            // Default path to "." when not provided
+            let path = args["path"].as_str().unwrap_or(".");
             let full_path = resolve_and_validate(&workspace, &sandbox, path)?;
 
-            let mut entries = tokio::fs::read_dir(&full_path)
+            let mut entries_raw = tokio::fs::read_dir(&full_path)
                 .await
-                .map_err(|e| DomainError::Tool(format!("list_dir failed: {}", e)))?;
+                .map_err(|e| DomainError::Tool(format!("ls failed: {}", e)))?;
 
-            let mut names: Vec<String> = Vec::new();
-            while let Some(entry) = entries
-                .next_entry()
-                .await
-                .map_err(|e| DomainError::Tool(format!("list_dir entry error: {}", e)))?
-            {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if entry
-                    .file_type()
+            // Collect at most LS_MAX_ENTRIES + 1 to detect truncation without
+            // reading the entire directory (prevents OOM on huge directories).
+            let read_cap = LS_MAX_ENTRIES + 1;
+            let mut names: Vec<String> = Vec::with_capacity(read_cap);
+            loop {
+                if names.len() >= read_cap {
+                    break;
+                }
+                match entries_raw
+                    .next_entry()
                     .await
-                    .map_err(|e| DomainError::Tool(format!("list_dir file_type error: {}", e)))?
-                    .is_dir()
+                    .map_err(|e| DomainError::Tool(format!("ls entry error: {}", e)))?
                 {
-                    names.push(format!("{}/", name));
-                } else {
-                    names.push(name);
+                    None => break,
+                    Some(entry) => {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        let is_dir = entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false);
+                        if is_dir {
+                            names.push(format!("{}/", name));
+                        } else {
+                            names.push(name);
+                        }
+                    }
                 }
             }
 
+            let over_limit = names.len() > LS_MAX_ENTRIES;
             names.sort();
+            let shown: &[String] = if over_limit {
+                &names[..LS_MAX_ENTRIES]
+            } else {
+                &names
+            };
+
+            // Build output and apply byte cap — scan backward to stay under cap
+            let mut output = shown.join("\n");
+            let truncated_bytes = output.len() > LS_MAX_BYTES;
+            if truncated_bytes {
+                let end = (0..=LS_MAX_BYTES)
+                    .rev()
+                    .find(|&i| output.is_char_boundary(i))
+                    .unwrap_or(0);
+                output.truncate(end);
+            }
+
+            if over_limit {
+                output.push_str(&format!(
+                    "\n[Showing {} of >={} entries. Use a more specific path to see more.]",
+                    LS_MAX_ENTRIES, LS_MAX_ENTRIES
+                ));
+            } else if truncated_bytes {
+                output.push_str(&format!("\n[Output truncated at {} bytes]", LS_MAX_BYTES));
+            }
 
             Ok(ToolResult {
-                content: names.join("\n"),
+                content: output,
                 is_error: false,
             })
         })
@@ -833,15 +873,45 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_list_dir() {
+    async fn test_ls_basic() {
         let (ws, sb, tmp) = test_tools();
         std::fs::write(tmp.path().join("a.txt"), "a").unwrap();
         std::fs::write(tmp.path().join("b.txt"), "b").unwrap();
 
-        let tool = ListDirTool::new(ws, sb);
+        let tool = LsTool::new(ws, sb);
         let result = tool.execute(r#"{"path": "."}"#).await.unwrap();
+        assert!(!result.is_error);
         assert!(result.content.contains("a.txt"));
         assert!(result.content.contains("b.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_ls_default_path() {
+        let (ws, sb, tmp) = test_tools();
+        std::fs::write(tmp.path().join("hello.txt"), "hi").unwrap();
+
+        let tool = LsTool::new(ws, sb);
+        // No path provided — should default to "."
+        let result = tool.execute(r#"{}"#).await.unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains("hello.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_ls_truncates_at_entry_limit() {
+        let (ws, sb, tmp) = test_tools();
+        for i in 0..1100 {
+            std::fs::write(tmp.path().join(format!("f{:04}.txt", i)), "x").unwrap();
+        }
+
+        let tool = LsTool::new(ws, sb);
+        let result = tool.execute(r#"{"path": "."}"#).await.unwrap();
+        assert!(!result.is_error);
+        assert!(
+            result.content.contains("[Showing"),
+            "expected truncation hint, got: {}",
+            &result.content[..result.content.len().min(200)]
+        );
     }
 
     #[tokio::test]

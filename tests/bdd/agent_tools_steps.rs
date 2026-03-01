@@ -45,6 +45,16 @@ fn given_crlf_file(world: &mut QuectoWorld, filename: String, content: String) {
     std::fs::write(ws.join(&filename), crlf_content).expect("write crlf file");
 }
 
+#[given(expr = "a tool workspace with {int} files")]
+fn given_workspace_with_many_files(world: &mut QuectoWorld, count: usize) {
+    let tmp = tempfile::TempDir::new().expect("create temp dir");
+    for i in 0..count {
+        std::fs::write(tmp.path().join(format!("file{:04}.txt", i)), "x").unwrap();
+    }
+    world.tool_workspace = Some(tmp.path().to_path_buf());
+    world._tool_workspace_tmp = Some(tmp);
+}
+
 #[given(expr = "a large file {string} exists with {int} lines")]
 fn given_large_file(world: &mut QuectoWorld, filename: String, lines: usize) {
     let ws = world
@@ -66,6 +76,15 @@ fn given_file_exists(world: &mut QuectoWorld, filename: String, content: String)
         std::fs::create_dir_all(parent).expect("create parent dirs");
     }
     std::fs::write(&path, &content).expect("write file");
+}
+
+#[when(expr = "the agent executes tool {string} with empty args")]
+fn when_agent_executes_tool_no_args(world: &mut QuectoWorld, tool_name: String) {
+    let registry = world.tool_registry.as_ref().expect("tool registry not set");
+    let result = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(registry.execute(&tool_name, "{}"));
+    world.tool_result = Some(result.map_err(|e| e.to_string()));
 }
 
 #[when(expr = "the agent executes tool {string} with args:")]
