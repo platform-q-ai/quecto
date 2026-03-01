@@ -78,6 +78,7 @@ impl Tool for GrepTool {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn execute(
         &self,
         arguments: &str,
@@ -370,6 +371,7 @@ mod tests {
         (tool, ws, tmp)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn grep_output(raw: &str, ws: &str, limit: usize, line: usize, bytes: usize) -> String {
         format_grep_output(GrepOutputArgs {
             raw,

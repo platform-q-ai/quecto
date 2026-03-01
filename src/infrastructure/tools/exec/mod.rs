@@ -340,6 +340,7 @@ struct StreamTasks {
     stderr_task: Option<tokio::task::JoinHandle<(String, bool)>>,
 }
 
+#[allow(clippy::cognitive_complexity)]
 async fn run_child_with_timeout(
     mut child: tokio::process::Child,
     mut stream_tasks: StreamTasks,

@@ -25,6 +25,7 @@ impl AnthropicProvider {
     }
 
     /// Build the JSON request body for Anthropic Messages API.
+    #[allow(clippy::too_many_lines)]
     fn build_request_body(request: &ChatRequest<'_>) -> (Option<String>, serde_json::Value) {
         let messages = request.messages;
         let tools = request.tools;

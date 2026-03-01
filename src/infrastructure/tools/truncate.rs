@@ -30,6 +30,7 @@ pub enum TruncatedBy {
 /// Whichever limit is hit first wins. Never returns partial lines.
 /// If the first line alone exceeds the byte limit, returns empty content
 /// with `first_line_exceeds_limit = true`.
+#[allow(clippy::cognitive_complexity)]
 pub fn truncate_head(content: &str, max_lines: usize, max_bytes: usize) -> TruncationResult {
     let total_bytes = content.len();
     let total_lines = if content.is_empty() {

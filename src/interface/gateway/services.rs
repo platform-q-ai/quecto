@@ -340,6 +340,7 @@ impl Gateway {
     /// Uses a short check interval (2s) so jobs fire promptly.
     /// When a job has a `deliver_to` target and produces a successful response,
     /// the result is sent to the outbound channel for delivery (issue #106).
+    #[allow(clippy::cognitive_complexity)]
     pub(super) async fn run_cron_tick(ctx: CronTickContext) {
         let agent = SystemPromptAgent {
             inner: ctx.agent,

@@ -113,6 +113,7 @@ pub(super) struct NsjailConfig<'a> {
 // Command builder
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::cognitive_complexity)]
 pub(super) fn build_nsjail_command(
     workspace: &Path,
     command: &str,

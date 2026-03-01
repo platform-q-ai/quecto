@@ -553,6 +553,7 @@ fn given_gateway_with_outbound_channel(world: &mut QuectoWorld) {
 #[given(
     expr = "a cron job {string} with interval {int} seconds and message {string} and deliver_to {string}"
 )]
+#[allow(clippy::too_many_arguments)]
 fn given_cron_job_with_message_and_deliver_to(
     world: &mut QuectoWorld,
     name: String,
