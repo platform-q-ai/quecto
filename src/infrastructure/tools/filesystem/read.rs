@@ -29,7 +29,7 @@ impl Tool for ReadTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "read".to_string(),
-            description: "Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.".to_string(),
+            description: "Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete. Example: {\"path\": \"src/main.rs\"}".to_string(),
             parameters_schema: r#"{"type":"object","properties":{"path":{"type":"string","description":"Path to the file to read (relative or absolute)"},"offset":{"type":"number","description":"Line number to start reading from (1-indexed)"},"limit":{"type":"number","description":"Maximum number of lines to read"}},"required":["path"]}"#.to_string(),
         }
     }
@@ -45,9 +45,14 @@ impl Tool for ReadTool {
         Box::pin(async move {
             let args: serde_json::Value =
                 serde_json::from_str(&args_str).map_err(|e| DomainError::Tool(e.to_string()))?;
-            let path = args["path"]
-                .as_str()
-                .ok_or_else(|| DomainError::Tool("missing 'path' argument".to_string()))?;
+            let Some(path) = args["path"].as_str() else {
+                return Ok(ToolResult {
+                    content: "missing 'path' argument. Example: {\"path\": \"src/main.rs\"}"
+                        .to_string(),
+                    is_error: true,
+                    image_blocks: vec![],
+                });
+            };
 
             // Resolve using read-path (macOS filename variant probing)
             let resolved = resolve_read_path(path, &workspace);
@@ -668,6 +673,36 @@ mod tests {
         assert!(
             !result.content.contains("resized"),
             "small image should not mention resize"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_read_empty_object_returns_actionable_error() {
+        let (ws, sb, _tmp) = test_tools();
+        let tool = ReadTool::new(ws, sb);
+        let result = tool.execute("{}").await.unwrap();
+        assert!(result.is_error, "expected error, got: {}", result.content);
+        assert!(
+            result.content.contains("path"),
+            "should mention 'path', got: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("Example"),
+            "should include example, got: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    fn test_read_description_includes_example() {
+        let (ws, sb, _tmp) = test_tools();
+        let tool = ReadTool::new(ws, sb);
+        let def = tool.definition();
+        assert!(
+            def.description.contains("Example"),
+            "read description should include Example, got: {}",
+            def.description
         );
     }
 }

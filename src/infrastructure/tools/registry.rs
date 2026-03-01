@@ -11,7 +11,7 @@ use crate::domain::tool::{Tool, ToolDefinition, ToolRegistry, ToolResult};
 use crate::infrastructure::config::{Config, ExecIsolationConfig};
 use crate::infrastructure::security::sandbox::Sandbox;
 
-use super::exec::{ExecIsolationMode, ExecOptions, ExecTool, NsjailOptions};
+use super::bash::{ExecIsolationMode, ExecOptions, ExecTool, NsjailOptions};
 
 #[derive(Debug, Clone)]
 pub struct ExecRegistrySettings {
@@ -188,11 +188,21 @@ impl ToolRegistryImpl {
     }
 
     /// Execute a tool by name with JSON arguments.
+    ///
+    /// Empty or whitespace-only argument strings are normalised to `"{}"` to
+    /// prevent cryptic `"EOF while parsing a value"` errors from serde_json.
+    /// This happens when an LLM returns a tool call with no argument deltas
+    /// during SSE streaming.
     pub async fn execute(&self, name: &str, arguments: &str) -> Result<ToolResult, DomainError> {
         let tool = self
             .get(name)
             .ok_or_else(|| DomainError::Tool(format!("unknown tool: {}", name)))?;
-        tool.execute(arguments).await
+        let normalised = if arguments.trim().is_empty() {
+            "{}"
+        } else {
+            arguments
+        };
+        tool.execute(normalised).await
     }
 }
 
@@ -291,5 +301,62 @@ mod tests {
         // Execute through trait
         let result = trait_reg.execute("nonexistent", "{}").await;
         assert!(result.is_err());
+    }
+
+    // --- Fix 1: Empty argument normalisation ---
+
+    #[tokio::test]
+    async fn test_execute_empty_string_args_normalised() {
+        // Empty string "" should be normalised to "{}" so tools don't get
+        // "EOF while parsing a value" from serde_json::from_str("").
+        let (reg, _tmp) = test_registry();
+        // ls accepts empty args (defaults to ".") so this should succeed
+        let result = reg.execute("ls", "").await;
+        assert!(result.is_ok(), "expected Ok, got: {:?}", result);
+        let tr = result.unwrap();
+        assert!(!tr.is_error, "expected non-error, got: {}", tr.content);
+    }
+
+    #[tokio::test]
+    async fn test_execute_whitespace_only_args_normalised() {
+        let (reg, _tmp) = test_registry();
+        let result = reg.execute("ls", "   ").await;
+        assert!(result.is_ok(), "expected Ok, got: {:?}", result);
+        let tr = result.unwrap();
+        assert!(!tr.is_error, "expected non-error, got: {}", tr.content);
+    }
+
+    #[tokio::test]
+    async fn test_execute_empty_args_no_eof_error() {
+        // Tools with required params should return actionable error, not EOF parse error
+        let (reg, _tmp) = test_registry();
+        let result = reg.execute("read", "").await.unwrap();
+        assert!(result.is_error, "expected error result");
+        assert!(
+            !result.content.contains("EOF while parsing"),
+            "should not contain EOF parse error, got: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("path"),
+            "should mention required param, got: {}",
+            result.content
+        );
+    }
+
+    // --- Fix 3: Tool descriptions include usage examples ---
+
+    #[test]
+    fn test_all_core_tool_descriptions_include_example() {
+        let (reg, _tmp) = test_registry();
+        let defs = reg.definitions();
+        for def in &defs {
+            assert!(
+                def.description.contains("Example"),
+                "tool '{}' description should contain an Example, got: {}",
+                def.name,
+                def.description
+            );
+        }
     }
 }

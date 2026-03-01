@@ -47,8 +47,17 @@ async fn test_exec_dangerous_command_blocked() {
 #[tokio::test]
 async fn test_exec_missing_command_arg() {
     let (tool, _tmp) = test_exec(false);
-    let result = tool.execute(r#"{}"#).await;
-    assert!(result.is_err());
+    let result = tool.execute(r#"{}"#).await.unwrap();
+    assert!(
+        result.is_error,
+        "expected error result, got: {}",
+        result.content
+    );
+    assert!(
+        result.content.contains("command"),
+        "should mention missing 'command', got: {}",
+        result.content
+    );
 }
 
 #[tokio::test]
@@ -668,5 +677,33 @@ fn test_exec_truncation_line_notice_uses_truncate_tail() {
     assert!(
         tr.content.contains("line3000"),
         "tail should include the last line"
+    );
+}
+
+#[tokio::test]
+async fn test_exec_empty_object_returns_actionable_error() {
+    let (tool, _tmp) = test_exec(false);
+    let result = tool.execute("{}").await.unwrap();
+    assert!(result.is_error, "expected error, got: {}", result.content);
+    assert!(
+        result.content.contains("command"),
+        "should mention 'command', got: {}",
+        result.content
+    );
+    assert!(
+        result.content.contains("Example"),
+        "should include example, got: {}",
+        result.content
+    );
+}
+
+#[test]
+fn test_exec_description_includes_example() {
+    let (tool, _tmp) = test_exec(false);
+    let def = tool.definition();
+    assert!(
+        def.description.contains("Example"),
+        "bash description should include Example, got: {}",
+        def.description
     );
 }

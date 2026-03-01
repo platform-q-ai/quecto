@@ -26,7 +26,7 @@ impl Tool for WriteTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "write".to_string(),
-            description: "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.".to_string(),
+            description: "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories. Example: {\"path\": \"output.txt\", \"content\": \"hello\"}".to_string(),
             parameters_schema: r#"{"type":"object","properties":{"path":{"type":"string","description":"Path to the file to write (relative or absolute)"},"content":{"type":"string","description":"Content to write to the file"}},"required":["path","content"]}"#.to_string(),
         }
     }
@@ -42,12 +42,24 @@ impl Tool for WriteTool {
         Box::pin(async move {
             let args: serde_json::Value =
                 serde_json::from_str(&args_str).map_err(|e| DomainError::Tool(e.to_string()))?;
-            let path = args["path"]
-                .as_str()
-                .ok_or_else(|| DomainError::Tool("missing 'path' argument".to_string()))?;
-            let content = args["content"]
-                .as_str()
-                .ok_or_else(|| DomainError::Tool("missing 'content' argument".to_string()))?;
+            let Some(path) = args["path"].as_str() else {
+                return Ok(ToolResult {
+                    content:
+                        "missing 'path' argument. Example: {\"path\": \"output.txt\", \"content\": \"hello\"}"
+                            .to_string(),
+                    is_error: true,
+                    image_blocks: vec![],
+                });
+            };
+            let Some(content) = args["content"].as_str() else {
+                return Ok(ToolResult {
+                    content:
+                        "missing 'content' argument. Example: {\"path\": \"output.txt\", \"content\": \"hello\"}"
+                            .to_string(),
+                    is_error: true,
+                    image_blocks: vec![],
+                });
+            };
 
             let full_path = resolve_and_validate(&workspace, &sandbox, path)?;
 
@@ -94,5 +106,35 @@ mod tests {
         assert!(!result.is_error);
         assert!(tmp.path().join("sub/dir/file.txt").exists());
         assert!(result.content.contains("bytes"));
+    }
+
+    #[tokio::test]
+    async fn test_write_empty_object_returns_actionable_error() {
+        let (ws, sb, _tmp) = test_tools();
+        let tool = WriteTool::new(ws, sb);
+        let result = tool.execute("{}").await.unwrap();
+        assert!(result.is_error, "expected error, got: {}", result.content);
+        assert!(
+            result.content.contains("path"),
+            "should mention 'path', got: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("Example"),
+            "should include example, got: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    fn test_write_description_includes_example() {
+        let (ws, sb, _tmp) = test_tools();
+        let tool = WriteTool::new(ws, sb);
+        let def = tool.definition();
+        assert!(
+            def.description.contains("Example"),
+            "write description should include Example, got: {}",
+            def.description
+        );
     }
 }
