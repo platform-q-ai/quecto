@@ -166,6 +166,16 @@ Feature: REPL — Interactive Conversational Mode
     And I type "/exit"
     Then stderr should contain "bash"
 
+  Scenario: REPL spinner renders tool arguments on TTY stderr during agentic run
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a tool call for "bash" with args '{"command": "echo hi"}'
+    And then the mock LLM returns a text response "Done"
+    When I start quecto in REPL mode as a TTY
+    And I type "Run it"
+    And I type "/exit"
+    Then stderr should contain "echo hi"
+
   @done
   Scenario: REPL progress output does not appear on stdout
     Given a temp base directory

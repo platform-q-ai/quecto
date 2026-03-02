@@ -173,8 +173,12 @@ pub fn run_repl_with_tty_captured(ctx: &CliContext, args: &[String], input: &[u8
     // in this path, so there is no deadlock risk. This ordering is only valid for
     // the single-threaded BDD test harness — do not use new_tty_capture in
     // multi-threaded production contexts.
+    let status_header = super::repl::progress::build_status_header_line();
     let renderer = Arc::new(Mutex::new(
-        super::repl::progress::ProgressRenderer::new_tty_capture(stderr_buf),
+        super::repl::progress::ProgressRenderer::new_tty_capture_with_status(
+            stderr_buf,
+            status_header,
+        ),
     ));
     let callback: crate::domain::agent::ProgressCallback = Arc::new(move |event| {
         // Recover from mutex poison rather than panicking (double-panic = abort).

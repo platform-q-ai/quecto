@@ -959,6 +959,7 @@ mod agent_msg_steps;
 mod agent_tools_steps;
 mod architecture_steps;
 mod auth_steps;
+mod codex_provider_steps;
 mod config_steps;
 mod context_pruning_steps;
 mod cron_steps;
