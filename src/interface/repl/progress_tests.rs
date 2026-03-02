@@ -87,15 +87,15 @@ fn test_progress_renderer_tty_tool_started_shows_tool_name() {
     let mut renderer = ProgressRenderer::new_with_writer(true, buf.clone());
 
     renderer.handle_event(AgentProgressEvent::ToolStarted {
-        name: "read_file".to_string(),
+        name: "read".to_string(),
         arguments: "src/main.rs".to_string(),
     });
 
     let output = buf.lock().unwrap();
     let text = String::from_utf8_lossy(&output);
     assert!(
-        text.contains("read_file"),
-        "expected tool name 'read_file' in output, got: {:?}",
+        text.contains("read"),
+        "expected tool name 'read' in output, got: {:?}",
         text
     );
 }
@@ -347,7 +347,7 @@ fn test_sanitize_strips_null_byte() {
 
 #[test]
 fn test_sanitize_passes_normal_tool_names() {
-    let names = ["bash", "read_file", "write_file", "web_search", "recall"];
+    let names = ["bash", "read", "write", "web_search", "recall"];
     for name in &names {
         let result = sanitize_for_terminal(name);
         assert_eq!(&result, name, "expected normal name to pass unchanged");

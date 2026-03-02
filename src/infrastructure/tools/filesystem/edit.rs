@@ -1,4 +1,4 @@
-// EditTool — Pi name: "edit" (was "edit_file")
+// EditTool — Pi name: "edit"
 // Two-stage exact→fuzzy matching, CRLF/BOM preservation, no-op detection,
 // LCS-based unified diff via the `similar` crate.
 

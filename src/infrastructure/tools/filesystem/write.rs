@@ -1,4 +1,4 @@
-// WriteTool — Pi name: "write" (was "write_file")
+// WriteTool — Pi name: "write"
 
 use std::future::Future;
 use std::path::PathBuf;
