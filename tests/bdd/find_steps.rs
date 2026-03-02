@@ -173,6 +173,21 @@ fn when_find_missing_binary(world: &mut QuectoWorld, pattern: String) {
 }
 
 #[when(regex = r#"^I find files matching "([^"]+)" in path "([^"]+)"$"#)]
+fn when_find_with_path(world: &mut QuectoWorld, pattern: String, path: String) {
+    if !fd_available() {
+        world.find_result = Some(quecto::domain::tool::ToolResult {
+            content: "fd not available — skipping".to_string(),
+            is_error: false,
+            image_blocks: vec![],
+        });
+        return;
+    }
+    let tool = make_find_tool(world);
+    let args = serde_json::json!({ "pattern": pattern, "path": path });
+    world.find_result = Some(run_find(tool, args));
+}
+
+#[when(regex = r#"^I find files matching "([^"]+)" outside workspace in path "([^"]+)"$"#)]
 fn when_find_outside_workspace(world: &mut QuectoWorld, pattern: String, path: String) {
     let tool = make_find_tool(world);
     let args = serde_json::json!({ "pattern": pattern, "path": path });
@@ -241,5 +256,23 @@ fn then_find_is_error(world: &mut QuectoWorld) {
         result.is_error,
         "find result should be an error, got:\n{}",
         result.content
+    );
+}
+
+#[then("the find tool description should support path-segment glob patterns")]
+fn then_find_description_supports_path_segments(world: &mut QuectoWorld) {
+    let ws = ensure_find_workspace(world);
+    let sandbox = Arc::new(Sandbox::new(Some(ws.clone()), true));
+    let tool = FindTool::new(Arc::new(ws), sandbox);
+    let def = tool.definition();
+    // The description should document that path-segment patterns like src/*.rs work.
+    // It must not only advertise **/*.json without mentioning that src/*.rs also works.
+    assert!(
+        def.parameters_schema.contains("src/*.rs")
+            || def.parameters_schema.contains("nested/")
+            || def.description.contains("src/"),
+        "find description/schema should demonstrate path-segment glob support (e.g. 'src/*.rs'), got description:\n{}\nschema:\n{}",
+        def.description,
+        def.parameters_schema
     );
 }
