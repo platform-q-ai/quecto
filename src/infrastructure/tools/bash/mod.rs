@@ -2,7 +2,7 @@
 
 mod nsjail;
 
-pub use nsjail::{ExecIsolationMode, NsjailOptions};
+pub use nsjail::{DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS, ExecIsolationMode, NsjailOptions};
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -41,8 +41,16 @@ pub struct ExecOptions {
 
 impl Default for ExecOptions {
     fn default() -> Self {
+        // The Tokio-side timeout must be >= the nsjail --time_limit so that
+        // nsjail's own wall-clock enforcer fires first (or simultaneously),
+        // rather than the outer kill making nsjail limits unreachable.
+        // We add DEFAULT_EXEC_TIMEOUT (30 s) as a grace period on top so
+        // nsjail has time to send SIGKILL and clean up before Tokio steps in.
+        let timeout = Duration::from_secs(
+            DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS + DEFAULT_EXEC_TIMEOUT.as_secs(),
+        );
         Self {
-            timeout: DEFAULT_EXEC_TIMEOUT,
+            timeout,
             max_capture_bytes: MAX_CAPTURE_BYTES,
             isolation_mode: ExecIsolationMode::Native,
             allow_native_fallback: false,
@@ -622,3 +630,7 @@ impl Tool for ExecTool {
 #[cfg(test)]
 #[path = "../bash_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../nsjail_tests.rs"]
+mod nsjail_tests;

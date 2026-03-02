@@ -24,6 +24,9 @@ pub struct ExecRegistrySettings {
     pub pid_limit: u64,
     pub cpu_time_limit_secs: u64,
     pub wall_time_limit_secs: u64,
+    /// Size of the writable `/tmp` tmpfs inside the jail in MB.
+    /// Threaded through from `ExecToolConfig::tmp_size_mb`.
+    pub tmp_size_mb: u64,
 }
 use super::filesystem::{EditTool, LsTool, ReadTool, WriteTool};
 use super::find::FindTool;
@@ -67,6 +70,7 @@ impl ToolRegistryImpl {
             pid_limit: exec.pid_limit,
             cpu_time_limit_secs: exec.cpu_time_limit_secs,
             wall_time_limit_secs: exec.wall_time_limit_secs,
+            tmp_size_mb: exec.tmp_size_mb,
         }
     }
 
@@ -113,7 +117,7 @@ impl ToolRegistryImpl {
                 pid_limit: Some(settings.pid_limit),
                 cpu_time_limit_secs: Some(settings.cpu_time_limit_secs),
                 wall_time_limit_secs: Some(settings.wall_time_limit_secs),
-                ..NsjailOptions::default()
+                tmp_size_mb: Some(settings.tmp_size_mb),
             },
             ..ExecOptions::default()
         };

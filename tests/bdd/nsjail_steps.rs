@@ -13,6 +13,7 @@ struct NsjailSetup {
     timeout_secs: Option<u64>,
     max_capture_bytes: Option<usize>,
     allowlist: Option<Vec<String>>,
+    tmp_size_mb: Option<u64>,
 }
 
 fn setup_nsjail_exec_tool(world: &mut QuectoWorld, setup: NsjailSetup) {
@@ -54,9 +55,7 @@ fn setup_nsjail_exec_tool(world: &mut QuectoWorld, setup: NsjailSetup) {
             wall_time_limit_secs: setup
                 .wall_time_limit_secs
                 .or(default_nsjail.wall_time_limit_secs),
-            // Reuse `default_nsjail` for remaining fields (tmp_size_mb, etc.)
-            // to avoid a second NsjailOptions::default() allocation.
-            ..default_nsjail
+            tmp_size_mb: setup.tmp_size_mb.or(default_nsjail.tmp_size_mb),
         },
     };
 
@@ -201,6 +200,17 @@ fn given_nsjail_cpu_limit(world: &mut QuectoWorld, secs: u64) {
     );
 }
 
+#[given(expr = "an nsjail-isolated exec tool with tmp size {int} MB")]
+fn given_nsjail_tmp_size(world: &mut QuectoWorld, mb: u64) {
+    setup_nsjail_exec_tool(
+        world,
+        NsjailSetup {
+            tmp_size_mb: Some(mb),
+            ..NsjailSetup::default()
+        },
+    );
+}
+
 #[given("an nsjail-isolated exec tool with PID namespace")]
 fn given_nsjail_pid_namespace(world: &mut QuectoWorld) {
     setup_nsjail_exec_tool(world, NsjailSetup::default());
@@ -333,7 +343,7 @@ fn when_registry_constructed(world: &mut QuectoWorld) {
             pid_limit: Some(settings.pid_limit),
             cpu_time_limit_secs: Some(settings.cpu_time_limit_secs),
             wall_time_limit_secs: Some(settings.wall_time_limit_secs),
-            ..NsjailOptions::default()
+            tmp_size_mb: Some(settings.tmp_size_mb),
         },
         ..ExecOptions::default()
     };
@@ -347,6 +357,19 @@ fn when_registry_constructed(world: &mut QuectoWorld) {
     world.nsjail_registry_mode = Some(exec.mode());
     world.nsjail_startup_warning = exec.startup_warning().map(str::to_string);
     world._extra_temp_dirs.push(td);
+}
+
+#[then("the exec tool default tokio timeout should equal the nsjail wall-clock limit")]
+fn then_exec_default_timeout_matches_wall_limit(_world: &mut QuectoWorld) {
+    use quecto::infrastructure::tools::bash::DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS;
+    let default_opts = ExecOptions::default();
+    let nsjail_wall = std::time::Duration::from_secs(DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS);
+    assert!(
+        default_opts.timeout >= nsjail_wall,
+        "ExecOptions default timeout ({:?}) must be >= nsjail wall limit ({:?})",
+        default_opts.timeout,
+        nsjail_wall
+    );
 }
 
 #[then("the exec tool should use nsjail isolation")]
