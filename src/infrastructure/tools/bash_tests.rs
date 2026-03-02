@@ -414,18 +414,58 @@ fn test_nsjail_command_includes_time_limit() {
     assert!(args.contains("20"), "missing value 20: {args}");
 }
 
-// --- Default memory limit test ---
+// --- Default resource limit tests ---
 
 #[test]
 fn test_nsjail_default_memory_limit_is_4096_mb() {
-    // The default RLIMIT_AS must be 4096 MB so that Node/V8, JVM, and Go
-    // runtimes — which reserve large virtual address ranges at startup —
-    // can start inside the sandbox without hitting ENOMEM.
+    // RLIMIT_AS must be 4096 MB so Node/V8, JVM, and Go can start.
     let args = nsjail_args_str(&NsjailOptions::default());
     assert!(args.contains("--rlimit_as"), "missing --rlimit_as: {args}");
     assert!(
         args.contains("4096"),
         "default rlimit_as should be 4096 MB (was 512), got: {args}"
+    );
+}
+
+#[test]
+fn test_nsjail_default_cpu_time_limit_is_28800_secs() {
+    // 2 cores × 14 400 s wall budget = 28 800 CPU-seconds.
+    let args = nsjail_args_str(&NsjailOptions::default());
+    assert!(
+        args.contains("--rlimit_cpu"),
+        "missing --rlimit_cpu: {args}"
+    );
+    assert!(
+        args.contains("28800"),
+        "default rlimit_cpu should be 28800 CPU-s (2 cores × 4 h), got: {args}"
+    );
+}
+
+#[test]
+fn test_nsjail_default_wall_time_limit_is_14400_secs() {
+    // 4 hours = 14 400 wall-clock seconds.
+    let args = nsjail_args_str(&NsjailOptions::default());
+    assert!(
+        args.contains("--time_limit"),
+        "missing --time_limit: {args}"
+    );
+    assert!(
+        args.contains("14400"),
+        "default --time_limit should be 14400 s (4 h), got: {args}"
+    );
+}
+
+#[test]
+fn test_nsjail_default_tmp_size_is_2048_mb() {
+    // /tmp tmpfs: 2 GiB = 2_147_483_648 bytes.
+    let args = nsjail_args_str(&NsjailOptions::default());
+    assert!(
+        args.contains("none:/tmp:tmpfs:size="),
+        "missing tmpfs mount: {args}"
+    );
+    assert!(
+        args.contains("2147483648"),
+        "default tmp size should be 2_147_483_648 bytes (2 GiB), got: {args}"
     );
 }
 

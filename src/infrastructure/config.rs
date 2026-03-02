@@ -358,10 +358,12 @@ fn default_nsjail_pid_limit() -> u64 {
     256
 }
 fn default_nsjail_cpu_time_limit_secs() -> u64 {
-    30
+    // 2 cores × 4-hour wall budget = 28 800 CPU-seconds.
+    28_800
 }
 fn default_nsjail_wall_time_limit_secs() -> u64 {
-    30
+    // 4 hours = 14 400 wall-clock seconds.
+    14_400
 }
 fn default_heartbeat_interval() -> u32 {
     30
@@ -520,8 +522,8 @@ mod tests {
         assert!(!config.tools.exec.allow_native_fallback);
         assert_eq!(config.tools.exec.memory_limit_mb, 4096);
         assert_eq!(config.tools.exec.pid_limit, 256);
-        assert_eq!(config.tools.exec.cpu_time_limit_secs, 30);
-        assert_eq!(config.tools.exec.wall_time_limit_secs, 30);
+        assert_eq!(config.tools.exec.cpu_time_limit_secs, 28800);
+        assert_eq!(config.tools.exec.wall_time_limit_secs, 14400);
     }
 
     #[test]

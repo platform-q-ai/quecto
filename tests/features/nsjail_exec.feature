@@ -129,6 +129,24 @@ Feature: nsjail Exec Isolation
     Then the nsjail command for "echo test" should contain "--rlimit_as"
     And the nsjail command for "echo test" should contain "4096"
 
+  Scenario: default nsjail CPU time limit is 28800 seconds (2 cores x 4-hour wall budget)
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with default options
+    Then the nsjail command for "echo test" should contain "--rlimit_cpu"
+    And the nsjail command for "echo test" should contain "28800"
+
+  Scenario: default nsjail wall-clock time limit is 14400 seconds (4 hours)
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with default options
+    Then the nsjail command for "echo test" should contain "--time_limit"
+    And the nsjail command for "echo test" should contain "14400"
+
+  Scenario: default nsjail tmp filesystem limit is 2048 MB (2 GB)
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with default options
+    Then the nsjail command for "echo test" should contain "none:/tmp:tmpfs:size="
+    And the nsjail command for "echo test" should contain "2147483648"
+
   @done
   Scenario: Node.js can start inside nsjail with default memory limit
     Given nsjail is available on the system
