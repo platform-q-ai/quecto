@@ -1,6 +1,6 @@
 # Quecto
 
-A single-binary personal AI assistant that runs on minimal Linux systems. Quecto receives messages via Telegram or the command line, routes them through an LLM (OpenAI or Anthropic), executes tools (shell commands, file operations, web search, scheduled tasks), and persists conversations to disk.
+A single-binary personal AI assistant that runs on minimal Linux systems. Quecto receives messages via Telegram or the command line, routes them through an LLM (OpenAI, Anthropic, or ChatGPT Codex), executes tools (shell commands, file operations, search, scheduled tasks), and persists conversations to disk.
 
 Built in Rust. No runtime dependencies. Runs on a VPS, Raspberry Pi, or container.
 
@@ -33,7 +33,7 @@ When run with no arguments, quecto enters an interactive read-eval-print loop:
 quecto
 ```
 
-The REPL reads input line by line, sends each to the LLM agent, prints the response, and repeats.
+The REPL reads input line by line, sends each to the LLM agent, prints the response, and repeats. While the agent is processing, a live progress spinner shows current activity (thinking, tool execution with arguments and status). The spinner renders on stderr at ~12fps using pure ANSI escape codes (no external crates). Non-TTY output (pipes, CI) is silently suppressed.
 
 | Flag | Description |
 |---|---|
@@ -67,6 +67,7 @@ quecto agent -m "Write a Python script that generates primes"
 |---|---|---|
 | `-m` / `--message` | Yes | The message to send |
 | `-s` / `--session` | No | Session name for persistence. Omit for `cli:default`. Use `-` for ephemeral |
+| `--no-session` | No | Ephemeral mode — nothing saved or loaded (mutually exclusive with `-s`) |
 | `--system` | No | System prompt prepended to conversation |
 | `--model` | No | Override model (default: `gpt-5.2`) |
 | `--max-iterations` | No | Max tool call rounds before stopping |
@@ -79,7 +80,7 @@ quecto agent -s myproject -m "I'm working on a web scraper in Python"
 quecto agent -s myproject -m "Add error handling to what we discussed"
 ```
 
-Use `-s -` for one-off questions that don't need history.
+Use `-s -` or `--no-session` for one-off questions that don't need history.
 
 ### `quecto gateway` — Run as a Telegram bot
 
@@ -102,6 +103,7 @@ The gateway intercepts the following bot commands directly, without routing them
 | `/start` | Welcome message |
 | `/help` | Lists available bot commands |
 | `/status` | Shows current model and Telegram status |
+| `/reload` | Remove stale tool history from the session, keep conversation. Clears spill index |
 
 Any other message (including unknown `/commands`) is forwarded to the agent for processing.
 
@@ -241,10 +243,9 @@ Config file: `~/.quecto/config.json`
       "model": "gpt-5.2",
       "workspace": "~/Documents/quecto-workspace",
       "max_tokens": 8192,
-      "max_tool_iterations": 20,
+      "max_tool_iterations": 999999,
       "max_session_messages": 200,
-      "context_collapse_after_turns": 3,
-      "max_context_tokens": 100000,
+      "max_context_tokens": 190000,
       "restrict_to_workspace": true
     }
   },
@@ -263,7 +264,8 @@ Config file: `~/.quecto/config.json`
       "enabled": true,
       "token": "your-bot-token-from-botfather",
       "api_base": "https://api.telegram.org",
-      "allow_from": ["123456789"]
+      "allow_from": ["123456789"],
+      "default_send_to": "telegram:123456789"
     }
   },
   "tools": {
@@ -272,10 +274,11 @@ Config file: `~/.quecto/config.json`
       "nsjail_binary": "nsjail",
       "allow_native_fallback": false,
       "network_passthrough": false,
-      "memory_limit_mb": 512,
+      "memory_limit_mb": 4096,
       "pid_limit": 256,
-      "cpu_time_limit_secs": 30,
-      "wall_time_limit_secs": 30
+      "cpu_time_limit_secs": 28800,
+      "wall_time_limit_secs": 14400,
+      "tmp_size_mb": 512
     },
     "web": {
       "brave": {
@@ -311,18 +314,31 @@ Set `providers.<name>.api_base` only when you need a non-default endpoint (for e
 
 - `tools.exec.isolation`: `nsjail` (default) or `native`
 - `tools.exec.nsjail_binary`: binary name or absolute path used when `isolation` is `nsjail` (default `nsjail`)
-- `tools.exec.allow_native_fallback`: when `true`, missing/unexecutable nsjail falls back to native mode; when `false` (default), `exec` calls fail with a config error
+- `tools.exec.allow_native_fallback`: when `true`, missing/unexecutable nsjail falls back to native mode; when `false` (default), `bash` calls fail with a config error
 - `tools.exec.network_passthrough`: allow outbound network inside nsjail (`false` by default)
-- `tools.exec.memory_limit_mb`: virtual address-space limit via `--rlimit_as` (MB). Limits virtual reservations, not physical RSS — runtimes with large virtual mappings (Go, JVM) may need higher values
-- `tools.exec.pid_limit`: max processes via `--rlimit_nproc`. Per-UID limit, not per-jail — budget is shared across concurrent jails running as the same UID
-- `tools.exec.cpu_time_limit_secs`: CPU time limit via `--rlimit_cpu` (seconds per process)
-- `tools.exec.wall_time_limit_secs`: wall-clock timeout via `--time_limit` (seconds)
+- `tools.exec.memory_limit_mb`: virtual address-space limit via `--rlimit_as` (MB, default `4096`). Limits virtual reservations, not physical RSS — runtimes with large virtual mappings (Go, JVM) may need higher values
+- `tools.exec.pid_limit`: max processes via `--rlimit_nproc` (default `256`). Per-UID limit, not per-jail — budget is shared across concurrent jails running as the same UID
+- `tools.exec.cpu_time_limit_secs`: CPU time limit via `--rlimit_cpu` (default `28800` — 8 hours across 2 cores)
+- `tools.exec.wall_time_limit_secs`: wall-clock timeout via `--time_limit` (default `14400` — 4 hours)
+- `tools.exec.tmp_size_mb`: size of writable `/tmp` tmpfs inside the jail in MB (default `512`). Each concurrent jail gets its own tmpfs, so N jails consume N × `tmp_size_mb` of RAM
 - `tools.exec.nsjail_binary`: must resolve to an executable under trusted system paths (`/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`, `/usr/local/bin`); relative paths are rejected
 - exec child environment is allowlisted by default (`PATH`, locale vars, and basic shell/runtime vars), preventing broad secret env leakage
 
 nsjail resource limits use rlimits (`--rlimit_as`, `--rlimit_nproc`, `--rlimit_cpu`) instead of cgroups, so no root access or cgroup write permissions are required. The cgroup namespace is always disabled (`--disable_clone_newcgroup`). This means nsjail works in containers, on unprivileged users, and in any environment without `/sys/fs/cgroup/` access.
 
 nsjail mounts `/bin`, `/usr`, `/lib`, `/lib64` read-only inside the jail, plus individual `/etc` files needed by the dynamic linker and NSS (`ld.so.cache`, `ld.so.conf`, `nsswitch.conf`, `passwd`, `group`, `ssl`, `alternatives`). Only paths that exist on the host are mounted.
+
+### Telegram configuration
+
+| Field | Description |
+|---|---|
+| `channels.telegram.enabled` | Enable Telegram channel |
+| `channels.telegram.token` | Bot token from BotFather |
+| `channels.telegram.api_base` | API endpoint (default: `https://api.telegram.org`) |
+| `channels.telegram.allow_from` | User ID allowlist (empty `[]` disables the channel) |
+| `channels.telegram.default_send_to` | Default outbound address for `message` tool and cron delivery (format: `"telegram:<chat_id>"`) |
+
+`default_send_to` is intended for single-user deployments. When set, cron jobs and heartbeat tasks fall back to this address if no explicit `deliver_to` or `target` is specified.
 
 ### Environment variable overrides
 
@@ -337,6 +353,7 @@ nsjail mounts `/bin`, `/usr`, `/lib`, `/lib64` read-only inside the jail, plus i
 | `QUECTO_MAX_CONTEXT_TOKENS` | `agents.defaults.max_context_tokens` |
 | `QUECTO_PROVIDERS_OPENAI_API_KEY` | `providers.openai.api_key` |
 | `QUECTO_PROVIDERS_ANTHROPIC_API_KEY` | `providers.anthropic.api_key` |
+| `QUECTO_OFFLINE` | Set to `1`/`true`/`yes` to disable auto-download of tool binaries (rg, fd) |
 
 ## Tools
 
@@ -344,19 +361,23 @@ The agent has access to tools it can call autonomously to accomplish tasks.
 
 Tool definitions are cached in the registry at registration time (sorted once, reused for subsequent definition lookups).
 
+External tool binaries (`rg`, `fd`) are resolved via `ensure_tool`: system PATH → cache dir (`~/.local/share/quecto/tools/`) → auto-download from GitHub releases. Set `QUECTO_OFFLINE=1` to disable downloads.
+
 ### CLI mode tools
 
 | Tool | Description |
 |---|---|
-| `exec` | Execute a shell command (30s timeout, dangerous commands blocked, captures up to 1 MiB each for stdout/stderr) |
-| `read_file` | Read file contents |
-| `write_file` | Create or overwrite a file (auto-creates parent directories) |
-| `edit_file` | Replace a substring in a file |
-| `append_file` | Append content to a file |
-| `list_dir` | List directory contents |
+| `bash` | Execute a shell command. Per-invocation timeout, 1 MiB stdout/stderr capture, dangerous commands blocked. Supports `commandPrefix` for environment setup. Output truncated with Pi-compatible notices |
+| `read` | Read file contents (text or image). Text: 2000-line / 50KB truncation with offset/limit pagination. Images (jpg/png/gif/webp): base64-encoded, auto-resized to 2000px max dimension. Magic-byte MIME detection |
+| `write` | Create or overwrite a file (auto-creates parent directories) |
+| `edit` | Replace text in a file. Two-stage exact→fuzzy matching, CRLF/BOM preservation, no-op detection, LCS-based unified diff output |
+| `ls` | List directory contents. Case-insensitive sort, `/` suffix for directories, configurable limit (default 500, max 5000), 50KB output cap |
+| `grep` | Search file contents with ripgrep (`rg --json`). Regex or literal, case-insensitive option, context lines from file cache, 100-match / 50KB limit, 500-char line truncation |
+| `find` | Find files by glob pattern with fd. Respects nested `.gitignore` files, path-segment patterns via `--full-path`, configurable limit (default 1000), 50KB output cap |
 | `recall` | Retrieve a previously collapsed tool output by its spill ID (e.g. `turn20:bash:0`). Use `recall("list")` for the full index |
+| `spawn` | Spawn a background subagent for long-running tasks |
 
-Filesystem tools (`read_file`, `write_file`, `edit_file`, `append_file`, `list_dir`) run on async `tokio::fs` adapters.
+Filesystem tools (`read`, `write`, `edit`, `ls`) run on async `tokio::fs` adapters.
 
 ### Gateway-only tools
 
@@ -367,7 +388,7 @@ These are available when running `quecto gateway` but not in CLI or REPL mode:
 | `web_search` | Search the web via Brave Search or DuckDuckGo |
 | `cron` | Manage scheduled tasks (add, remove, list, enable, disable). Interval schedules execute; cron-expression schedules are currently skipped and marked with `last_error` |
 | `spawn` | Spawn a background subagent for long-running tasks |
-| `message` | Send a message to the user's channel |
+| `message` | Send a message to the user's channel. Falls back to `default_send_to` when no explicit target |
 
 ## Security
 
@@ -375,19 +396,31 @@ The agent operates inside a sandbox:
 
 - **Workspace restriction**: When `restrict_to_workspace` is `true` (default), all file operations are confined to the workspace directory. Symlinks pointing outside are blocked. Path traversal (`../`) is caught.
 - **Dangerous commands blocked**: `rm -rf /`, `rm -r -f /`, `mkfs`, `dd`, `shutdown`, `reboot`, `chmod -R 777 /`, fork bombs, and pipe-to-shell patterns (`curl|sh`) are always blocked regardless of other settings. Command checks normalize whitespace/casing, so equivalent variants like `rm  -rf /` are also blocked.
-- **Exec runtime isolation**: The `exec` tool runs in `nsjail` mode by default with rlimit-based resource bounds (no cgroup access required); `native` remains available as an explicit opt-in via `tools.exec.isolation`.
-- **Environment isolation**: `QUECTO_*` environment variables (including API keys) are stripped from child processes spawned by the `exec` tool.
+- **Exec runtime isolation**: The `bash` tool runs in `nsjail` mode by default with rlimit-based resource bounds (no cgroup access required); `native` remains available as an explicit opt-in via `tools.exec.isolation`.
+- **Environment isolation**: `QUECTO_*` environment variables (including API keys) are stripped from child processes spawned by the `bash` tool.
 - **Secret redaction**: Log/status output redacts OpenAI/Anthropic (`sk-*`), Groq (`gsk_*`/`gsk-*`), and Telegram bot token values.
 
 ## Provider Fallback
 
-Quecto supports OpenAI and Anthropic as LLM providers. Both providers support SSE streaming (`chat_stream()`) for incremental response assembly, with automatic fallback to non-streaming mode. If both are configured, it uses automatic fallback:
+Quecto supports OpenAI, Anthropic, and ChatGPT Codex as LLM providers. OpenAI and Anthropic support SSE streaming (`chat_stream()`) for incremental response assembly, with automatic fallback to non-streaming mode. The Codex provider uses the Responses API with SSE streaming.
+
+If multiple providers are configured, automatic fallback applies:
 
 - Tries the primary provider first
 - On rate-limit or server errors, falls back to the secondary provider
 - Authentication errors (wrong API key) do not trigger fallback
 - Providers enter a cooldown period after failures
-- Classification is provider-scoped (`DomainError::Provider`), using extracted HTTP status codes first, then semantic message matching.
+- Classification is provider-scoped (`DomainError::Provider`), using extracted HTTP status codes first, then semantic message matching
+- Model routing: `claude-*` models (case-insensitive) are automatically routed to the Anthropic provider, skipping OpenAI
+
+### ChatGPT Codex provider
+
+OAuth tokens from `auth.openai.com` (obtained via `quecto auth login --provider openai --oauth`) are routed to the ChatGPT Codex backend using the Responses API. Features:
+
+- SSE streaming with accumulator-based response assembly
+- `prompt_cache_key` support: session keys are FNV-1a hashed with type-prefix preservation for privacy (e.g. `telegram:12345` → `telegram:c3d7e1f2`)
+- Orphaned tool call pair repair: mismatched `function_call`/`function_call_output` pairs (from context pruning or mid-turn interruption) are detected and dropped before sending to the API
+- Parallel tool calls enabled
 
 API key resolution order: credential store (`quecto auth login`) > config file > environment variable.
 
@@ -414,7 +447,8 @@ The health server uses raw tokio TCP (no hyper/axum) for minimal binary footprin
           "enabled": true,
           "token": "your-bot-token",
           "api_base": "https://api.telegram.org",
-          "allow_from": ["your-telegram-user-id"]
+          "allow_from": ["your-telegram-user-id"],
+          "default_send_to": "telegram:your-telegram-user-id"
         }
       }
     }
@@ -476,6 +510,13 @@ Coverage is intentionally not part of git hooks. Run coverage in nightly CI (rec
         SKILL.md
     HEARTBEAT.md           # Periodic task list (for gateway heartbeat)
     ...                    # Agent working directory (files created by the agent)
+```
+
+Tool binary cache (auto-downloaded `rg`, `fd`):
+```
+~/.local/share/quecto/tools/
+  rg
+  fd
 ```
 
 ## License
