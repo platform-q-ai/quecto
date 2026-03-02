@@ -1,7 +1,7 @@
 @done
 Feature: E2E Real LLM Tool Coverage
   End-to-end tests for tools that previously had zero real-LLM coverage.
-  Validates that a real LLM can correctly invoke grep, find, and cron tools,
+  Validates that a real LLM can correctly invoke grep and find tools,
   and that the find tool handles path-segment globs with nested .gitignore
   files correctly.
 

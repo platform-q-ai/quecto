@@ -313,17 +313,23 @@ async fn run_fd(a: FdArgs<'_>) -> Result<(Vec<u8>, Vec<u8>, Option<i32>), Domain
 /// fd already handles nested `.gitignore` scoping correctly via git's
 /// native ignore machinery.
 ///
+/// **Tradeoff**: In non-git workspaces, nested `.gitignore` files are no
+/// longer respected. This is acceptable because (a) the global application
+/// bug caused incorrect results (files missing from find output), and
+/// (b) non-git workspaces with meaningful nested `.gitignore` are rare.
+///
 /// **Catch-all filtering** still applies: a root `.gitignore` whose only
 /// rules are `*`, `**`, `**/`, or `**/*` (plus negations/comments) is
 /// excluded to prevent blanket suppression.
 ///
 /// Safety:
 /// - Only reads the search root directory (no recursive traversal)
-/// - Skips symlinks (prevents traversal outside workspace)
+/// - Uses `symlink_metadata` to reject symlinks (prevents traversal outside workspace)
 pub(crate) fn discover_gitignore_files(search_dir: &std::path::Path) -> Vec<PathBuf> {
     let gitignore_path = search_dir.join(".gitignore");
-    // Check that it's a regular file (not a symlink) and not a catch-all.
-    match std::fs::metadata(&gitignore_path) {
+    // Use symlink_metadata so a symlink to a .gitignore outside the workspace
+    // is rejected (is_file() returns false for symlinks).
+    match std::fs::symlink_metadata(&gitignore_path) {
         Ok(meta) if meta.is_file() && !is_catch_all_gitignore(&gitignore_path) => {
             vec![gitignore_path]
         }

@@ -121,6 +121,7 @@ Feature: Find Tool
     Then the find result should contain "readme.md"
     And the find result should not be an error
 
+  @done
   Scenario: Nested gitignore with specific patterns does not suppress files globally
     Given a find workspace file "root.json"
     And a find workspace file "project/data.json"
@@ -130,6 +131,7 @@ Feature: Find Tool
     And the find result should contain "data.json"
     And the find result should not be an error
 
+  @done
   Scenario: Path-segment glob not suppressed by unrelated nested gitignore
     Given a find workspace file "app/src/config.json"
     And a find workspace file "app/src/main.rs"
