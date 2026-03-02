@@ -4,6 +4,7 @@
 // only work against `chatgpt.com/backend-api/codex/responses`, using
 // the Responses API format (not Chat Completions).
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -116,6 +117,7 @@ impl CodexProvider {
                     "name": t.name,
                     "description": t.description,
                     "parameters": params,
+                    "strict": false,
                 })
             })
             .collect()
@@ -130,6 +132,16 @@ impl CodexProvider {
             "input": input,
             "store": false,
             "stream": true,
+            "tool_choice": "auto",
+            "parallel_tool_calls": true,
+            "reasoning": {
+                "effort": "medium",
+                "summary": "auto",
+            },
+            "text": {
+                "verbosity": "medium",
+            },
+            "include": ["reasoning.encrypted_content"],
         });
 
         if let Some(inst) = instructions {
@@ -217,13 +229,34 @@ impl CodexProvider {
 
         Ok(acc.into_response())
     }
+
+    /// Public accessor for `build_request_body` (for BDD/integration tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn build_request_body_public(request: &ChatRequest<'_>) -> serde_json::Value {
+        Self::build_request_body(request)
+    }
+
+    /// Public accessor for `parse_sse_response` (for BDD/integration tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn parse_sse_response_public(raw: &str) -> Result<LlmResponse, DomainError> {
+        Self::parse_sse_response(raw)
+    }
 }
 
 /// Accumulator for assembling Responses API SSE events into a response.
+///
+/// The Responses API emits `output_index` values that reflect the position
+/// of each item in the full output array, which may include reasoning items
+/// that are not tracked in our dense `tool_calls` vector. We maintain a
+/// `HashMap<usize, usize>` mapping `output_index → tool_calls index` so
+/// that `response.function_call_arguments.delta` events are routed to the
+/// correct tool call regardless of intervening non-tool output items.
 #[derive(Default)]
 struct SseAccumulator {
     content: String,
     tool_calls: Vec<ToolCall>,
+    /// Maps SSE `output_index` to the index in `tool_calls`.
+    output_index_to_tool: HashMap<usize, usize>,
     usage: Option<UsageInfo>,
 }
 
@@ -238,9 +271,11 @@ impl SseAccumulator {
             Some("response.output_item.added") => self.handle_item_added(event),
             Some("response.function_call_arguments.delta") => {
                 if let Some(delta) = event["delta"].as_str() {
-                    let idx = event["output_index"].as_u64().unwrap_or(0) as usize;
-                    if let Some(tc) = self.tool_calls.get_mut(idx) {
-                        tc.arguments.push_str(delta);
+                    let output_idx = event["output_index"].as_u64().unwrap_or(0) as usize;
+                    if let Some(&tc_idx) = self.output_index_to_tool.get(&output_idx) {
+                        if let Some(tc) = self.tool_calls.get_mut(tc_idx) {
+                            tc.arguments.push_str(delta);
+                        }
                     }
                 }
             }
@@ -259,6 +294,9 @@ impl SseAccumulator {
     fn handle_item_added(&mut self, event: &serde_json::Value) {
         if let Some(item) = event.get("item") {
             if item["type"].as_str() == Some("function_call") {
+                let output_idx = event["output_index"].as_u64().unwrap_or(0) as usize;
+                let tc_idx = self.tool_calls.len();
+                self.output_index_to_tool.insert(output_idx, tc_idx);
                 self.tool_calls.push(ToolCall {
                     id: item["call_id"].as_str().unwrap_or_default().to_string(),
                     name: item["name"].as_str().unwrap_or_default().to_string(),
@@ -408,6 +446,80 @@ mod tests {
         assert_eq!(body["stream"], true);
         assert_eq!(body["input"].as_array().unwrap().len(), 1);
         assert!(body.get("tools").is_none());
+    }
+
+    #[test]
+    fn test_build_request_body_responses_api_fields() {
+        let messages = vec![Message::user("Hi")];
+        let tools = vec![];
+        let request = ChatRequest {
+            messages: &messages,
+            tools: &tools,
+            model: "gpt-5.3-codex",
+            max_tokens: 4096,
+            temperature: 0.7,
+        };
+        let body = CodexProvider::build_request_body(&request);
+        assert_eq!(body["tool_choice"], "auto");
+        assert_eq!(body["parallel_tool_calls"], true);
+        assert_eq!(body["reasoning"]["effort"], "medium");
+        assert_eq!(body["reasoning"]["summary"], "auto");
+        assert_eq!(body["text"]["verbosity"], "medium");
+        let include = body["include"].as_array().unwrap();
+        assert!(
+            include
+                .iter()
+                .any(|v| v.as_str() == Some("reasoning.encrypted_content"))
+        );
+        assert!(body.get("max_completion_tokens").is_none());
+    }
+
+    #[test]
+    fn test_build_tools_includes_strict_false() {
+        let tools = vec![ToolDefinition {
+            name: "exec".to_string(),
+            description: "Execute a command".to_string(),
+            parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#
+                .to_string(),
+        }];
+        let result = CodexProvider::build_tools(&tools);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["strict"], false);
+    }
+
+    #[test]
+    fn test_parse_sse_tool_call_after_reasoning_item() {
+        // Reasoning item at output_index 0, function_call at output_index 1
+        let sse = r#"data: {"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning"}}
+data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"call_x","name":"exec","arguments":""}}
+data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"cmd\""}
+data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":":\"ls\"}"}
+data: {"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":3}}}
+data: [DONE]
+"#;
+        let resp = CodexProvider::parse_sse_response(sse).unwrap();
+        assert!(resp.content.is_none());
+        assert_eq!(resp.tool_calls.len(), 1);
+        assert_eq!(resp.tool_calls[0].id, "call_x");
+        assert_eq!(resp.tool_calls[0].name, "exec");
+        assert_eq!(resp.tool_calls[0].arguments, r#"{"cmd":"ls"}"#);
+    }
+
+    #[test]
+    fn test_parse_sse_multiple_tool_calls_after_reasoning() {
+        let sse = r#"data: {"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning"}}
+data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"c1","name":"read","arguments":""}}
+data: {"type":"response.output_item.added","output_index":2,"item":{"type":"function_call","call_id":"c2","name":"write","arguments":""}}
+data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"path\":\"a.rs\"}"}
+data: {"type":"response.function_call_arguments.delta","output_index":2,"delta":"{\"content\":\"hi\"}"}
+data: [DONE]
+"#;
+        let resp = CodexProvider::parse_sse_response(sse).unwrap();
+        assert_eq!(resp.tool_calls.len(), 2);
+        assert_eq!(resp.tool_calls[0].name, "read");
+        assert_eq!(resp.tool_calls[0].arguments, r#"{"path":"a.rs"}"#);
+        assert_eq!(resp.tool_calls[1].name, "write");
+        assert_eq!(resp.tool_calls[1].arguments, r#"{"content":"hi"}"#);
     }
 
     #[test]
