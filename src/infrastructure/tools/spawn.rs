@@ -25,7 +25,7 @@ pub struct SpawnTool {
 }
 
 impl SpawnTool {
-    const SUBAGENT_TIMEOUT_SECS: u64 = 120;
+    const SUBAGENT_TIMEOUT_SECS: u64 = 86_400; // 24 hours
 
     pub fn new(allowed_agents: Vec<String>, restrict_to_workspace: bool) -> Self {
         Self {
@@ -530,5 +530,18 @@ mod tests {
         let tool = SpawnTool::with_base_dir(vec![], false, PathBuf::from("/some/path"));
         let debug_str = format!("{:?}", tool);
         assert!(debug_str.contains("/some/path"));
+    }
+
+    // --- Timeout constant ---
+
+    #[test]
+    fn test_subagent_timeout_is_24_hours() {
+        // Subagent tasks can be long-running; 24 hours is the intended ceiling.
+        assert_eq!(
+            SpawnTool::SUBAGENT_TIMEOUT_SECS,
+            86_400,
+            "expected SUBAGENT_TIMEOUT_SECS to be 86400 (24 h), got {}",
+            SpawnTool::SUBAGENT_TIMEOUT_SECS
+        );
     }
 }

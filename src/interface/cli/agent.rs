@@ -17,6 +17,7 @@ use crate::infrastructure::providers::fallback::FallbackProvider;
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::recall::RecallTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
+use crate::infrastructure::tools::spawn::SpawnTool;
 
 /// Parsed flags for the `agent` subcommand.
 pub(crate) struct AgentFlags {
@@ -237,6 +238,10 @@ pub(crate) fn build_agent_from_config(
     registry.register(Arc::new(RecallTool::new(
         spill_store.clone(),
         session_key.clone(),
+    )));
+    registry.register(Arc::new(SpawnTool::new(
+        vec![],
+        config.agents.defaults.restrict_to_workspace,
     )));
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
