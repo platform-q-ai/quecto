@@ -10,5 +10,4 @@ pub mod recall;
 pub mod registry;
 pub mod spawn;
 pub mod truncate;
-pub mod wasm;
 pub mod web_search;

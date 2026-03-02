@@ -185,7 +185,6 @@ Quecto registers 6 **core** tools automatically and 4 **domain-specific** tools 
 | Module | Purpose |
 |--------|---------|
 | **sandbox.rs** | Path validation (workspace restriction, symlink-following canonicalization), dangerous command blocklist (rm -rf /, fork bombs, dd, etc.), optional command allowlist, shell metacharacter detection. |
-| **wasm/** | WASM Component Model runtime (Wasmtime). Tools can be loaded as `.wasm` components with WIT interface. Capability-gated (filesystem, network, env access). Fresh store per invocation. |
 | **registry.rs** | `ToolRegistryImpl` — HashMap-based registry. `with_core_tools()` registers the 6 core tools. Dynamic registration via `register()`. |
 
 ---
