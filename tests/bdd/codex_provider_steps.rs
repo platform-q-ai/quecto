@@ -73,6 +73,40 @@ fn given_codex_request_body_without_session_id(world: &mut QuectoWorld, model: S
         .insert("_codex_body".to_string(), body.to_string());
 }
 
+#[then(expr = "the request body should contain a sanitized {string} with prefix {string}")]
+fn then_body_contains_sanitized_cache_key(world: &mut QuectoWorld, field: String, prefix: String) {
+    let body_str = world
+        .env_overrides
+        .get("_codex_body")
+        .expect("codex body not set");
+    let body: serde_json::Value = serde_json::from_str(body_str).expect("invalid json");
+    let value = body[&field]
+        .as_str()
+        .unwrap_or_else(|| panic!("expected body[\"{}\"] to be a string", field));
+    let expected_prefix = format!("{}:", prefix);
+    assert!(
+        value.starts_with(&expected_prefix),
+        "expected body[\"{}\"] to start with '{}', got: {}",
+        field,
+        expected_prefix,
+        value
+    );
+    // Digest part should be 8 hex characters
+    let digest = &value[expected_prefix.len()..];
+    assert_eq!(
+        digest.len(),
+        8,
+        "expected 8-char hex digest after prefix, got '{}' in: {}",
+        digest,
+        value
+    );
+    assert!(
+        digest.chars().all(|c| c.is_ascii_hexdigit()),
+        "expected digest to be hex chars, got: {}",
+        digest
+    );
+}
+
 #[then(expr = "the request body should contain {string} set to {string}")]
 fn then_body_contains_string_value(world: &mut QuectoWorld, key: String, expected: String) {
     let body_str = world

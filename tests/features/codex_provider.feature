@@ -62,7 +62,7 @@ Feature: Codex Responses API Provider
 
   Scenario: Codex request body includes prompt_cache_key when session ID is set
     Given a Codex request body for model "gpt-5.3-codex" with session ID "cli:default"
-    Then the request body should contain "prompt_cache_key" set to "cli:default"
+    Then the request body should contain a sanitized "prompt_cache_key" with prefix "cli"
 
   Scenario: Codex request body omits prompt_cache_key when no session ID is set
     Given a Codex request body for model "gpt-5.3-codex" without a session ID
