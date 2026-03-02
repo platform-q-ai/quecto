@@ -15,8 +15,12 @@ pub enum AgentProgressEvent {
     ToolStarted {
         /// The name of the tool being called.
         name: String,
-        /// A short preview of the tool arguments (truncated).
-        input_preview: String,
+        /// Raw tool arguments JSON (not pre-truncated).
+        ///
+        /// Consumers (e.g. `ProgressRenderer`) are responsible for any
+        /// display-width truncation. Keeping the raw value here avoids baking
+        /// a terminal-width concern into the application layer.
+        arguments: String,
     },
     /// A tool call has completed.
     ToolFinished {

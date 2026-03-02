@@ -89,12 +89,15 @@ impl AgentLoopImpl {
 
     /// Fire a progress event to the registered callback, if any.
     ///
-    /// This is a synchronous, non-blocking call. If no callback is registered
-    /// (the common headless/gateway case), this is a zero-cost no-op.
+    /// Accepts a closure that constructs the event so it is only evaluated
+    /// when a callback is actually registered. On the headless/gateway path
+    /// (`progress_callback = None`) the closure is never called — no String
+    /// allocations, no truncation scans. This keeps the hot tool-execution
+    /// path zero-cost when progress reporting is disabled.
     #[inline]
-    fn notify(&self, event: AgentProgressEvent) {
+    fn notify(&self, make_event: impl FnOnce() -> AgentProgressEvent) {
         if let Some(ref cb) = self.progress_callback {
-            cb(event);
+            cb(make_event());
         }
     }
 
@@ -197,9 +200,12 @@ impl AgentLoopImpl {
     ) -> (String, Vec<crate::domain::tool::ImageBlock>) {
         // Emit ToolStarted before executing so the REPL can show the tool name
         // immediately, even if the tool itself takes a long time.
-        self.notify(AgentProgressEvent::ToolStarted {
-            name: tc.name.clone(),
-            input_preview: context_pruning::truncate_utf8_safe(&tc.arguments, 80),
+        // The closure is only evaluated when a callback is registered (zero-cost otherwise).
+        let name_for_started = tc.name.clone();
+        let args_for_started = tc.arguments.clone();
+        self.notify(|| AgentProgressEvent::ToolStarted {
+            name: name_for_started,
+            arguments: args_for_started,
         });
 
         let start = std::time::Instant::now();
@@ -214,8 +220,9 @@ impl AgentLoopImpl {
 
         // Emit ToolFinished so the REPL can replace the spinner line with a
         // checkmark/duration before moving on to the next tool or LLM call.
-        self.notify(AgentProgressEvent::ToolFinished {
-            name: tc.name.clone(),
+        let name_for_finished = tc.name.clone();
+        self.notify(|| AgentProgressEvent::ToolFinished {
+            name: name_for_finished,
             duration_ms,
             is_error: is_err,
         });
@@ -289,15 +296,23 @@ impl AgentLoopImpl {
 
             // Emit Thinking before every LLM call so the REPL spinner activates
             // immediately, including during multi-turn tool loops.
-            self.notify(AgentProgressEvent::Thinking);
+            self.notify(|| AgentProgressEvent::Thinking);
 
             let request = self.build_chat_request(messages, &tool_defs);
-            let response = self.provider.chat(request).await?;
+            // Propagate provider errors — emit Done first so the spinner is cleared
+            // before the REPL prints the error message.
+            let response = match self.provider.chat(request).await {
+                Ok(r) => r,
+                Err(e) => {
+                    self.notify(|| AgentProgressEvent::Done);
+                    return Err(e);
+                }
+            };
 
             if response.tool_calls.is_empty() {
                 // Emit Done before finalising so the REPL can clear the spinner
                 // line before the final response is printed to stdout.
-                self.notify(AgentProgressEvent::Done);
+                self.notify(|| AgentProgressEvent::Done);
                 return Ok(self.finalize_text_response(messages, response, iterations));
             }
 
@@ -309,6 +324,8 @@ impl AgentLoopImpl {
             current_turn += 1;
 
             if iterations >= self.max_tool_iterations {
+                // Emit Done so the spinner is cleared before the limit message.
+                self.notify(|| AgentProgressEvent::Done);
                 return Ok(AgentResult {
                     response: format!(
                         "Tool iteration limit ({}) reached. Stopping.",
@@ -338,7 +355,6 @@ impl AgentLoop for AgentLoopImpl {
         }
     }
 }
-
 
 #[cfg(test)]
 #[path = "agent_loop_tests.rs"]

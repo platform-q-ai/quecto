@@ -396,6 +396,15 @@ pub fn run_repl<R: BufRead, W: Write>(
 /// Returns `(callback, Option<SpinnerHandle>)`. The caller must call
 /// `SpinnerHandle::stop()` when the REPL loop exits so the spinner thread is
 /// cleanly joined and the terminal line is erased.
+///
+/// ### Thread lifetime
+///
+/// The spinner thread lives for the entire REPL session, including idle time
+/// between user inputs. The thread blocks on `mpsc::recv_timeout(80ms)` and
+/// consumes negligible CPU when no events are flowing. On resource-constrained
+/// targets (RPi, containers) the idle cost is ~1 wakeup/80ms — acceptable for
+/// an interactive terminal tool. Future optimization: spawn per `process_input()`
+/// call and stop immediately after if tighter resource bounds are needed.
 fn resolve_progress_callback(
     ctx: &ReplContext<'_>,
     is_tty: bool,

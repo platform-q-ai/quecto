@@ -156,18 +156,30 @@ pub fn run_repl_with_output(
 /// Unlike [`run_repl_with_output`], this variant intercepts the spinner thread's
 /// output into a captured stderr buffer so BDD tests can assert on rendered
 /// tool names, spinner frames, etc. without touching the real process stderr.
+///
+/// This function exists solely for the BDD test harness and is gated on the
+/// `test-support` feature to prevent it from shipping in release binaries.
+#[cfg(any(test, feature = "test-support"))]
 pub fn run_repl_with_tty_captured(ctx: &CliContext, args: &[String], input: &[u8]) -> CliOutput {
     use std::sync::{Arc, Mutex};
 
     let stderr_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
     let stderr_clone = stderr_buf.clone();
 
-    // Build a progress callback that renders into the capture buffer (not real stderr)
+    // Build a progress callback that renders into the capture buffer (not real stderr).
+    //
+    // Lock ordering: renderer_mutex → inner buffer_mutex (inside MutexVecWriter).
+    // Both locks are held briefly and never acquired in the reverse order anywhere
+    // in this path, so there is no deadlock risk. This ordering is only valid for
+    // the single-threaded BDD test harness — do not use new_tty_capture in
+    // multi-threaded production contexts.
     let renderer = Arc::new(Mutex::new(
         super::repl::progress::ProgressRenderer::new_tty_capture(stderr_buf),
     ));
     let callback: crate::domain::agent::ProgressCallback = Arc::new(move |event| {
-        renderer.lock().unwrap().handle_event(event);
+        // Recover from mutex poison rather than panicking (double-panic = abort).
+        let mut guard = renderer.lock().unwrap_or_else(|e| e.into_inner());
+        guard.handle_event(event);
     });
 
     let mut output = Vec::new();
@@ -187,6 +199,9 @@ pub fn run_repl_with_tty_captured(ctx: &CliContext, args: &[String], input: &[u8
 }
 
 /// Options for [`run_repl_with_progress_recorder`].
+///
+/// See [`run_repl_with_progress_recorder`] for usage.
+#[cfg(any(test, feature = "test-support"))]
 pub struct ReplRecorderOptions<'a> {
     pub ctx: &'a CliContext,
     pub args: &'a [String],
@@ -201,7 +216,11 @@ pub struct ReplRecorderOptions<'a> {
 /// [`AgentProgressEvent`] during processing. This allows BDD tests to assert
 /// that the right events were fired without needing to inspect TTY output.
 ///
+/// This function exists solely for the BDD test harness and is gated on the
+/// `test-support` feature to prevent it from shipping in release binaries.
+///
 /// [`AgentProgressEvent`]: crate::domain::agent::AgentProgressEvent
+#[cfg(any(test, feature = "test-support"))]
 pub fn run_repl_with_progress_recorder(opts: ReplRecorderOptions<'_>) -> CliOutput {
     let mut output = Vec::new();
     let io = ReplIo {

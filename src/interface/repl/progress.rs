@@ -25,7 +25,9 @@
 //!   older terminals the `\r\x1b[K` erase will degrade gracefully.
 
 use std::io::Write;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+#[cfg(any(test, feature = "test-support"))]
+use std::sync::Mutex;
 use std::time::Duration;
 
 use crate::domain::agent::{AgentProgressEvent, ProgressCallback};
@@ -46,6 +48,26 @@ const TICK_INTERVAL: Duration = Duration::from_millis(80);
 // ANSI escape: carriage return + erase to end of line.
 // Moves the cursor to column 0 and clears everything after it.
 const ERASE_LINE: &str = "\r\x1b[K";
+
+// ---------------------------------------------------------------------------
+// Terminal safety
+// ---------------------------------------------------------------------------
+
+/// Sanitize a string for safe rendering in terminal output.
+///
+/// Strips all ASCII control characters (0x00–0x1F, 0x7F) including ANSI ESC
+/// (`\x1b`), carriage returns, and null bytes. This prevents terminal escape
+/// sequence injection via LLM-controlled tool names.
+///
+/// Only printable ASCII and valid UTF-8 above U+007E are allowed through.
+pub(crate) fn sanitize_for_terminal(s: &str) -> String {
+    s.chars()
+        .filter(|&c| {
+            // Keep printable ASCII (0x20–0x7E) and all non-ASCII Unicode
+            c >= '\u{0020}' && c != '\u{007F}'
+        })
+        .collect()
+}
 
 // ---------------------------------------------------------------------------
 // ProgressRenderer
@@ -83,7 +105,10 @@ impl<W: Write + Send> ProgressRenderer<W> {
                 self.render_status("Thinking...");
             }
             AgentProgressEvent::ToolStarted { name, .. } => {
-                self.render_status(&name);
+                // Sanitize before writing — the tool name comes from LLM output
+                // and could contain ANSI escape sequences via prompt injection.
+                let safe_name = sanitize_for_terminal(&name);
+                self.render_status(&safe_name);
             }
             AgentProgressEvent::ToolFinished {
                 name,
@@ -91,9 +116,11 @@ impl<W: Write + Send> ProgressRenderer<W> {
                 is_error,
             } => {
                 let icon = if is_error { "✗" } else { "✓" };
+                // Sanitize tool name before writing to persistent terminal output.
+                let safe_name = sanitize_for_terminal(&name);
                 // Print a completed line (newline-terminated so it persists)
                 self.clear_current_line();
-                let line = format!("  {} {}  {}ms\n", icon, name, duration_ms);
+                let line = format!("  {} {}  {}ms\n", icon, safe_name, duration_ms);
                 let _ = self.writer.write_all(line.as_bytes());
                 let _ = self.writer.flush();
                 self.current_line = None;
@@ -110,9 +137,15 @@ impl<W: Write + Send> ProgressRenderer<W> {
             return;
         }
         self.frame = (self.frame + 1) % SPINNER_FRAMES.len();
-        // Re-render the current status with the new frame
-        if let Some(status) = self.current_line.clone() {
-            self.render_status_with_frame(&status, self.frame);
+        // Re-render only if there is an active status line.
+        // Borrow as &str to avoid allocating a clone of `current_line` every 80ms.
+        if self.current_line.is_some() {
+            let spinner = SPINNER_FRAMES[self.frame % SPINNER_FRAMES.len()];
+            // Build the line from the stored status without cloning the String.
+            let status = self.current_line.as_deref().unwrap_or("");
+            let line = format!("{}{} {}", ERASE_LINE, spinner, status);
+            let _ = self.writer.write_all(line.as_bytes());
+            let _ = self.writer.flush();
         }
     }
 
@@ -120,20 +153,15 @@ impl<W: Write + Send> ProgressRenderer<W> {
     // Private helpers
     // -----------------------------------------------------------------------
 
-    /// Render a status line using the current spinner frame.
+    /// Render a status line using the current spinner frame and store it
+    /// as the active line (so ticks know what to redraw).
     fn render_status(&mut self, status: &str) {
-        let frame = self.frame;
-        self.render_status_with_frame(status, frame);
-        self.current_line = Some(status.to_string());
-    }
-
-    /// Render a status line with the given spinner frame index.
-    fn render_status_with_frame(&mut self, status: &str, frame: usize) {
-        let spinner = SPINNER_FRAMES[frame % SPINNER_FRAMES.len()];
+        let spinner = SPINNER_FRAMES[self.frame % SPINNER_FRAMES.len()];
         // \r moves to column 0; \x1b[K erases to EOL — overwrites in place
         let line = format!("{}{} {}", ERASE_LINE, spinner, status);
         let _ = self.writer.write_all(line.as_bytes());
         let _ = self.writer.flush();
+        self.current_line = Some(status.to_string());
     }
 
     /// Erase the current spinner line from the terminal.
@@ -179,16 +207,31 @@ pub struct SpinnerHandle {
 }
 
 impl SpinnerHandle {
-    /// Send a Done event and wait for the spinner thread to exit.
+    /// Send a Done event and wait for the spinner thread to exit cleanly.
     ///
     /// This ensures the spinner line is cleared before the final response
-    /// is printed to stdout.
+    /// is printed to stdout. Prefer calling `stop()` explicitly; the `Drop`
+    /// impl provides a best-effort fallback for panic paths.
     pub fn stop(mut self) {
         // Sending Done causes the thread to clear the line and exit its loop.
         let _ = self._tx.send(AgentProgressEvent::Done);
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
+    }
+}
+
+impl Drop for SpinnerHandle {
+    /// Best-effort cleanup on drop (e.g. panic unwind).
+    ///
+    /// Sends `Done` so the spinner thread exits and clears the terminal line.
+    /// Does not join the thread (joining in `Drop` can deadlock). The thread
+    /// will exit naturally once the channel closes.
+    fn drop(&mut self) {
+        // Ignore send errors — receiver may already be gone.
+        let _ = self._tx.send(AgentProgressEvent::Done);
+        // Do NOT join here — joining in Drop risks deadlock if the thread
+        // is waiting on something the dropping context holds.
     }
 }
 
@@ -238,18 +281,25 @@ pub fn spawn_spinner_thread() -> (ProgressCallback, SpinnerHandle) {
 }
 
 // ---------------------------------------------------------------------------
-// Arc<Mutex<Vec<u8>>> writer adapter (for unit tests)
+// Arc<Mutex<Vec<u8>>> writer adapter (for test-support and unit tests)
 // ---------------------------------------------------------------------------
 
-/// A `Write` adapter over `Arc<Mutex<Vec<u8>>>` for unit testing.
+/// A `Write` adapter over `Arc<Mutex<Vec<u8>>>` for test capture.
 ///
 /// Allows `ProgressRenderer` to be created with an in-memory buffer so tests
 /// can assert on the rendered output without touching real stderr.
+///
+/// Gated on `test-support` feature and `test` cfg — not present in release builds.
+#[cfg(any(test, feature = "test-support"))]
 pub struct MutexVecWriter(pub Arc<Mutex<Vec<u8>>>);
 
+#[cfg(any(test, feature = "test-support"))]
 impl Write for MutexVecWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buf);
+        // Recover from mutex poison: if a prior panic poisoned the lock,
+        // extract the guard anyway rather than panicking again (double-panic = abort).
+        let mut guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        guard.extend_from_slice(buf);
         Ok(buf.len())
     }
 
@@ -258,6 +308,7 @@ impl Write for MutexVecWriter {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ProgressRenderer<MutexVecWriter> {
     /// Create a TTY-mode renderer that writes to a captured buffer.
     ///

@@ -23,7 +23,7 @@ fn test_progress_renderer_non_tty_produces_no_output() {
     renderer.handle_event(AgentProgressEvent::Thinking);
     renderer.handle_event(AgentProgressEvent::ToolStarted {
         name: "bash".to_string(),
-        input_preview: "echo hi".to_string(),
+        arguments: "echo hi".to_string(),
     });
     renderer.handle_event(AgentProgressEvent::ToolFinished {
         name: "bash".to_string(),
@@ -78,7 +78,7 @@ fn test_progress_renderer_tty_tool_started_shows_tool_name() {
 
     renderer.handle_event(AgentProgressEvent::ToolStarted {
         name: "read_file".to_string(),
-        input_preview: "src/main.rs".to_string(),
+        arguments: "src/main.rs".to_string(),
     });
 
     let output = buf.lock().unwrap();
@@ -234,7 +234,7 @@ fn test_progress_channel_sends_events() {
     callback(AgentProgressEvent::Thinking);
     callback(AgentProgressEvent::ToolStarted {
         name: "bash".to_string(),
-        input_preview: "echo hi".to_string(),
+        arguments: "echo hi".to_string(),
     });
     callback(AgentProgressEvent::Done);
 
@@ -267,6 +267,78 @@ fn test_progress_channel_send_after_receiver_dropped_does_not_panic() {
 }
 
 // ---------------------------------------------------------------------------
+// sanitize_for_terminal
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_sanitize_strips_ansi_escape() {
+    // ESC sequence: clear screen
+    let input = "bash\x1b[2Jclean";
+    let result = sanitize_for_terminal(input);
+    assert!(
+        !result.contains('\x1b'),
+        "expected ESC to be stripped, got: {:?}",
+        result
+    );
+    assert!(
+        result.contains("bash"),
+        "expected 'bash' to remain, got: {:?}",
+        result
+    );
+}
+
+#[test]
+fn test_sanitize_strips_carriage_return() {
+    let input = "bash\rmalicious";
+    let result = sanitize_for_terminal(input);
+    assert!(
+        !result.contains('\r'),
+        "expected \\r to be stripped, got: {:?}",
+        result
+    );
+}
+
+#[test]
+fn test_sanitize_strips_null_byte() {
+    let input = "bash\x00evil";
+    let result = sanitize_for_terminal(input);
+    assert!(
+        !result.contains('\x00'),
+        "expected null byte to be stripped, got: {:?}",
+        result
+    );
+}
+
+#[test]
+fn test_sanitize_passes_normal_tool_names() {
+    let names = ["bash", "read_file", "write_file", "web_search", "recall"];
+    for name in &names {
+        let result = sanitize_for_terminal(name);
+        assert_eq!(&result, name, "expected normal name to pass unchanged");
+    }
+}
+
+#[test]
+fn test_sanitize_passes_unicode() {
+    // Non-ASCII Unicode (e.g. emoji in tool names) should pass through
+    let input = "tool_✓";
+    let result = sanitize_for_terminal(input);
+    assert_eq!(result, input, "expected unicode to pass through");
+}
+
+#[test]
+fn test_sanitize_strips_osc_sequence() {
+    // OSC 52 clipboard injection attempt
+    let input = "bash\x1b]52;c;dGVzdA==\x07real";
+    let result = sanitize_for_terminal(input);
+    assert!(
+        !result.contains('\x1b'),
+        "expected ESC to be stripped from OSC, got: {:?}",
+        result
+    );
+}
+
+// ---------------------------------------------------------------------------
 // AgentProgressEvent: Debug / Clone
 // ---------------------------------------------------------------------------
 
@@ -276,7 +348,7 @@ fn test_agent_progress_event_debug_and_clone() {
         AgentProgressEvent::Thinking,
         AgentProgressEvent::ToolStarted {
             name: "bash".to_string(),
-            input_preview: "echo hi".to_string(),
+            arguments: "echo hi".to_string(),
         },
         AgentProgressEvent::ToolFinished {
             name: "bash".to_string(),

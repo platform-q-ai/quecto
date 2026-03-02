@@ -224,8 +224,7 @@ async fn test_iteration_limit() {
 
 #[tokio::test]
 async fn test_tool_definitions_sent_to_llm() {
-    let (agent, provider) =
-        make_agent(vec![text_response("ok")], vec![("bash", ""), ("read", "")]);
+    let (agent, provider) = make_agent(vec![text_response("ok")], vec![("bash", ""), ("read", "")]);
     let mut messages = vec![Message::user("test")];
     let _ = agent.run_loop(&mut messages).await.unwrap();
     let defs = provider.last_tool_defs();
@@ -544,7 +543,7 @@ async fn test_progress_callback_none_does_not_panic() {
 }
 
 #[tokio::test]
-async fn test_progress_callback_tool_started_includes_input_preview() {
+async fn test_progress_callback_tool_started_includes_arguments() {
     let (agent, _, events) = make_agent_with_callback(
         vec![
             tool_call_response("bash", r#"{"command":"echo hello world"}"#),
@@ -556,20 +555,20 @@ async fn test_progress_callback_tool_started_includes_input_preview() {
     agent.run_loop(&mut messages).await.unwrap();
 
     let fired = events.lock().unwrap();
-    if let Some(crate::domain::agent::AgentProgressEvent::ToolStarted {
-        name,
-        input_preview,
-    }) = fired.iter().find(|e| {
-        matches!(
-            e,
-            crate::domain::agent::AgentProgressEvent::ToolStarted { .. }
-        )
-    }) {
+    if let Some(crate::domain::agent::AgentProgressEvent::ToolStarted { name, arguments }) =
+        fired.iter().find(|e| {
+            matches!(
+                e,
+                crate::domain::agent::AgentProgressEvent::ToolStarted { .. }
+            )
+        })
+    {
         assert_eq!(name, "bash");
-        // input_preview should be a truncated version of the arguments
+        // arguments should be the raw JSON — not truncated at the domain level
+        assert!(!arguments.is_empty(), "arguments should not be empty");
         assert!(
-            !input_preview.is_empty(),
-            "input_preview should not be empty"
+            arguments.contains("echo hello world"),
+            "arguments should contain the command, got: {arguments}"
         );
     } else {
         panic!("expected ToolStarted event, got: {:?}", *fired);
