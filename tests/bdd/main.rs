@@ -644,6 +644,9 @@ pub struct QuectoWorld {
     pub routing_succeeded: Option<bool>,
     /// Model routing: response content from routing scenario
     pub routing_response: Option<LlmResponse>,
+    // --- Issue #193: default_send_to fallback ---
+    /// Default send-to address configured for cron delivery fallback
+    pub cron_default_send_to: Option<String>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.

@@ -12,6 +12,7 @@ fn given_telegram_enabled(world: &mut QuectoWorld, token: String) {
         token,
         api_base: String::new(),
         allow_from: vec![],
+        default_send_to: None,
     });
 }
 
@@ -22,6 +23,7 @@ fn given_telegram_enabled_with_allow_from(world: &mut QuectoWorld, token: String
         token,
         api_base: String::new(),
         allow_from: vec![user_id],
+        default_send_to: None,
     });
 }
 
@@ -32,6 +34,7 @@ fn given_telegram_disabled(world: &mut QuectoWorld) {
         token: String::new(),
         api_base: String::new(),
         allow_from: vec![],
+        default_send_to: None,
     });
 }
 
@@ -42,6 +45,7 @@ fn given_telegram_with_allow_from(world: &mut QuectoWorld, user1: String, user2:
         token: "test-token".to_string(),
         api_base: String::new(),
         allow_from: vec![user1, user2],
+        default_send_to: None,
     };
     world.telegram_channel = Some(TelegramChannel::new(&config));
 }
@@ -53,6 +57,7 @@ fn given_telegram_empty_allow_from(world: &mut QuectoWorld) {
         token: "test-token".to_string(),
         api_base: String::new(),
         allow_from: vec![],
+        default_send_to: None,
     };
     world.telegram_channel = Some(TelegramChannel::new(&config));
 }

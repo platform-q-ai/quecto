@@ -4,6 +4,113 @@ use super::*;
 // Codex Provider BDD Steps
 // ===========================================================================
 
+// --- Issue #192: Orphaned function_call/function_call_output repair ---
+
+#[given("a message list with an assistant function_call \"call_orphan\" but no matching output")]
+fn given_orphaned_function_call(world: &mut QuectoWorld) {
+    let mut assistant_msg = Message::assistant("", vec![]);
+    assistant_msg.tool_calls = vec![quecto::domain::message::ToolCall {
+        id: "call_orphan".to_string(),
+        name: "bash".to_string(),
+        arguments: "{}".to_string(),
+    }];
+    world.context_messages = Some(vec![Message::user("go"), assistant_msg]);
+}
+
+#[given("a message list with a tool result for \"call_orphan\" but no matching function_call")]
+fn given_orphaned_function_call_output(world: &mut QuectoWorld) {
+    let tool_msg = Message::tool("call_orphan", "some result");
+    world.context_messages = Some(vec![Message::user("go"), tool_msg]);
+}
+
+#[given("a message list with a matched function_call \"call_valid\" and its output")]
+fn given_matched_pair(world: &mut QuectoWorld) {
+    let mut assistant_msg = Message::assistant("", vec![]);
+    assistant_msg.tool_calls = vec![quecto::domain::message::ToolCall {
+        id: "call_valid".to_string(),
+        name: "read".to_string(),
+        arguments: r#"{"path":"foo.rs"}"#.to_string(),
+    }];
+    let tool_msg = Message::tool("call_valid", "file content");
+    world.context_messages = Some(vec![Message::user("read it"), assistant_msg, tool_msg]);
+}
+
+#[given(
+    "a message list with a matched pair \"call_good\" and an orphaned function_call \"call_bad\""
+)]
+fn given_mixed_valid_and_orphaned(world: &mut QuectoWorld) {
+    let mut good_assistant = Message::assistant("", vec![]);
+    good_assistant.tool_calls = vec![quecto::domain::message::ToolCall {
+        id: "call_good".to_string(),
+        name: "read".to_string(),
+        arguments: "{}".to_string(),
+    }];
+    let good_tool = Message::tool("call_good", "result");
+    let mut bad_assistant = Message::assistant("", vec![]);
+    bad_assistant.tool_calls = vec![quecto::domain::message::ToolCall {
+        id: "call_bad".to_string(),
+        name: "bash".to_string(),
+        arguments: "{}".to_string(),
+    }];
+    world.context_messages = Some(vec![
+        Message::user("start"),
+        good_assistant,
+        good_tool,
+        bad_assistant,
+    ]);
+}
+
+#[when("I build the Codex input")]
+fn when_build_codex_input(world: &mut QuectoWorld) {
+    let messages = world
+        .context_messages
+        .as_ref()
+        .expect("message list not set by Given step");
+    let (_instructions, input) =
+        quecto::infrastructure::providers::codex::CodexProvider::build_input_public(messages);
+    world.env_overrides.insert(
+        "_codex_input".to_string(),
+        serde_json::to_string(&input).unwrap(),
+    );
+}
+
+#[then(expr = "the input should not contain any item with call_id {string}")]
+fn then_input_not_contain_call_id(world: &mut QuectoWorld, call_id: String) {
+    let input_str = world
+        .env_overrides
+        .get("_codex_input")
+        .expect("codex input not set");
+    let input: serde_json::Value = serde_json::from_str(input_str).expect("invalid json");
+    let arr = input.as_array().expect("input should be an array");
+    let found = arr
+        .iter()
+        .any(|item| item.get("call_id").and_then(|v| v.as_str()) == Some(call_id.as_str()));
+    assert!(
+        !found,
+        "expected input not to contain call_id '{}', but found it in: {:?}",
+        call_id, arr
+    );
+}
+
+#[then(expr = "the input should contain an item with call_id {string} of type {string}")]
+fn then_input_contain_call_id_type(world: &mut QuectoWorld, call_id: String, item_type: String) {
+    let input_str = world
+        .env_overrides
+        .get("_codex_input")
+        .expect("codex input not set");
+    let input: serde_json::Value = serde_json::from_str(input_str).expect("invalid json");
+    let arr = input.as_array().expect("input should be an array");
+    let found = arr.iter().any(|item| {
+        item.get("call_id").and_then(|v| v.as_str()) == Some(call_id.as_str())
+            && item.get("type").and_then(|v| v.as_str()) == Some(item_type.as_str())
+    });
+    assert!(
+        found,
+        "expected input to contain call_id '{}' of type '{}', got: {:?}",
+        call_id, item_type, arr
+    );
+}
+
 // --- Request body formation steps ---
 
 #[given(expr = "a Codex request body for model {string} with tools")]

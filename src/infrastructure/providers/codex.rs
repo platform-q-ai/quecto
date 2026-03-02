@@ -48,39 +48,81 @@ impl CodexProvider {
             .header("accept", "text/event-stream")
     }
 
+    /// Scan messages and return the set of call IDs that appear on BOTH the
+    /// assistant side (function_call) and the tool side (function_call_output).
+    /// Logs a warning for any orphaned IDs that will be dropped.
+    fn valid_call_id_pairs(messages: &[Message]) -> std::collections::HashSet<String> {
+        use std::collections::HashSet;
+
+        let mut sent: HashSet<String> = HashSet::new();
+        let mut received: HashSet<String> = HashSet::new();
+
+        for msg in messages {
+            match msg.role {
+                Role::Assistant => {
+                    for tc in &msg.tool_calls {
+                        sent.insert(tc.id.clone());
+                    }
+                }
+                Role::Tool => {
+                    if let Some(ref cid) = msg.tool_call_id {
+                        received.insert(cid.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let orphaned_calls: Vec<_> = sent.iter().filter(|id| !received.contains(*id)).collect();
+        let orphaned_outputs: Vec<_> = received.iter().filter(|id| !sent.contains(*id)).collect();
+
+        if !orphaned_calls.is_empty() || !orphaned_outputs.is_empty() {
+            tracing::warn!(
+                orphaned_calls = ?orphaned_calls,
+                orphaned_outputs = ?orphaned_outputs,
+                "Codex: orphaned function_call/output pairs removed \
+                 (session corrupted mid-turn or by context pruning)"
+            );
+        }
+
+        sent.into_iter()
+            .filter(|id| received.contains(id))
+            .collect()
+    }
+
     /// Convert our domain messages into Responses API `input` array.
+    ///
+    /// Performs orphaned-pair repair via [`Self::valid_call_id_pairs`] so the
+    /// Responses API never sees a mismatched function_call/function_call_output
+    /// (which would cause HTTP 400).
     fn build_input(messages: &[Message]) -> (Option<String>, Vec<serde_json::Value>) {
+        let valid_pairs = Self::valid_call_id_pairs(messages);
         let mut instructions: Option<String> = None;
         let mut input = Vec::new();
 
         for msg in messages {
             match msg.role {
-                Role::System => {
-                    // Collect system messages as instructions
-                    match &mut instructions {
-                        Some(existing) => {
-                            existing.push('\n');
-                            existing.push_str(&msg.content);
-                        }
-                        None => instructions = Some(msg.content.clone()),
+                Role::System => match &mut instructions {
+                    Some(existing) => {
+                        existing.push('\n');
+                        existing.push_str(&msg.content);
                     }
-                }
+                    None => instructions = Some(msg.content.clone()),
+                },
                 Role::User => {
-                    input.push(serde_json::json!({
-                        "role": "user",
-                        "content": msg.content,
-                    }));
+                    input.push(serde_json::json!({ "role": "user", "content": msg.content }));
                 }
                 Role::Assistant => {
                     if !msg.tool_calls.is_empty() {
-                        // Emit function_call items for each tool call
                         for tc in &msg.tool_calls {
-                            input.push(serde_json::json!({
-                                "type": "function_call",
-                                "call_id": tc.id,
-                                "name": tc.name,
-                                "arguments": tc.arguments,
-                            }));
+                            if valid_pairs.contains(&tc.id) {
+                                input.push(serde_json::json!({
+                                    "type": "function_call",
+                                    "call_id": tc.id,
+                                    "name": tc.name,
+                                    "arguments": tc.arguments,
+                                }));
+                            }
                         }
                     } else {
                         input.push(serde_json::json!({
@@ -90,13 +132,14 @@ impl CodexProvider {
                     }
                 }
                 Role::Tool => {
-                    // Tool results become function_call_output items
                     if let Some(ref call_id) = msg.tool_call_id {
-                        input.push(serde_json::json!({
-                            "type": "function_call_output",
-                            "call_id": call_id,
-                            "output": msg.content,
-                        }));
+                        if valid_pairs.contains(call_id) {
+                            input.push(serde_json::json!({
+                                "type": "function_call_output",
+                                "call_id": call_id,
+                                "output": msg.content,
+                            }));
+                        }
                     }
                 }
             }
@@ -263,6 +306,12 @@ impl CodexProvider {
     #[cfg(any(test, feature = "test-support"))]
     pub fn build_request_body_public(request: &ChatRequest<'_>) -> serde_json::Value {
         Self::build_request_body(request)
+    }
+
+    /// Public accessor for `build_input` (for BDD/integration tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn build_input_public(messages: &[Message]) -> (Option<String>, Vec<serde_json::Value>) {
+        Self::build_input(messages)
     }
 
     /// Public accessor for `sanitize_cache_key` (for tests).

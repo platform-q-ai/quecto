@@ -67,3 +67,28 @@ Feature: Codex Responses API Provider
   Scenario: Codex request body omits prompt_cache_key when no session ID is set
     Given a Codex request body for model "gpt-5.3-codex" without a session ID
     Then the request body should not contain "prompt_cache_key"
+
+  # --- Issue #192: orphaned function_call/function_call_output repair ---
+
+  Scenario: Orphaned function_call without output is removed from input
+    Given a message list with an assistant function_call "call_orphan" but no matching output
+    When I build the Codex input
+    Then the input should not contain any item with call_id "call_orphan"
+
+  Scenario: Orphaned function_call_output without call is removed from input
+    Given a message list with a tool result for "call_orphan" but no matching function_call
+    When I build the Codex input
+    Then the input should not contain any item with call_id "call_orphan"
+
+  Scenario: Valid matched function_call and output pairs are preserved
+    Given a message list with a matched function_call "call_valid" and its output
+    When I build the Codex input
+    Then the input should contain an item with call_id "call_valid" of type "function_call"
+    And the input should contain an item with call_id "call_valid" of type "function_call_output"
+
+  Scenario: Mixed valid and orphaned pairs — only orphans are removed
+    Given a message list with a matched pair "call_good" and an orphaned function_call "call_bad"
+    When I build the Codex input
+    Then the input should contain an item with call_id "call_good" of type "function_call"
+    And the input should contain an item with call_id "call_good" of type "function_call_output"
+    And the input should not contain any item with call_id "call_bad"

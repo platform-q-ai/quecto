@@ -139,3 +139,14 @@ Feature: Scheduled Tasks (Cron)
     And a cron job "internal" with interval 1 seconds and message "Internal task"
     When the cron tick fires and results are delivered
     Then the outbound channel should not have received any messages
+
+  # --- Issue #193: default_send_to fallback for cron jobs ---
+
+  Scenario: Cron job without deliver_to uses config default_send_to
+    Given a running gateway with a mock LLM provider and outbound channel
+    And the gateway is configured with default_send_to "telegram:999"
+    And a cron job "broadcast" with interval 1 seconds and message "Broadcast task" and no deliver_to
+    And the gateway agent responds with "Broadcast done"
+    When the cron tick fires and results are delivered
+    Then the outbound channel should have received a message to "telegram:999"
+    And the outbound message should contain "Broadcast done"

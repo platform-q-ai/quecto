@@ -101,6 +101,7 @@ impl EventLoopContext {
             timeout_minutes: self.config.tools.cron.exec_timeout_minutes,
             skill_prompt: self.skill_prompt.clone(),
             outbound_tx: self.outbound_tx.clone(),
+            default_send_to: self.config.channels.telegram.default_send_to.clone(),
         }));
         let max_session_messages = self
             .config
