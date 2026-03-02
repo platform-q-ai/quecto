@@ -55,7 +55,7 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 |---|---|
 | `config.rs` | `Config` with serde, env overrides, exec isolation settings (nsjail binary/limits/fallback) |
 | `providers/` | `OpenAiProvider`, `AnthropicProvider` (SSE streaming), `FallbackProvider` (cooldown + error classification). URL validation: https required for non-loopback |
-| `tools/` | `ExecTool` (shell, 1MiB cap, native/nsjail modes), `ReadFile/WriteFile/EditFile/AppendFile/ListDir` (async tokio::fs), `SpawnTool`, `CronTool` (name-based lookup via `find_by_name`, duplicate name rejection, zero-interval validation), `MessageTool`, `WebSearchTool` (Brave+DDG), `RecallTool` (spill retrieval), `ToolRegistryImpl`, `tools/wasm/` (wasm32-wasip2 via Wasmtime Component Model) |
+| `tools/` | `ExecTool` (shell, 1MiB cap, native/nsjail modes), `ReadFile/WriteFile/EditFile/AppendFile/ListDir` (async tokio::fs), `SpawnTool`, `CronTool` (name-based lookup via `find_by_name`, duplicate name rejection, zero-interval validation), `MessageTool`, `WebSearchTool` (Brave+DDG), `RecallTool` (spill retrieval), `ToolRegistryImpl` |
 | `persistence/` | `FileSessionStore` (round-trips all Message fields), `MemoryStore`, `FileCronStore` (Mutex-serialized read-modify-write, atomic temp-file rename), `FileSkillLoader`, `FileHeartbeatTaskSource`, `FileOnboardStore`, `FileContextSpillStore` (JSONL append-only) |
 | `security/` | `Sandbox` — workspace path validation + command filtering |
 | `auth/` | `CredentialStore` (file-based), `oauth.rs` (browser + device code flows) |
@@ -67,9 +67,9 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 
 ### Tool isolation
 
-**WASM** (all tools except exec/spawn): Real wasm32-wasip2 via Wasmtime Component Model. Fresh `Store<HostState>` per invocation, fuel metering, memory limits, epoch interruption. Guest crate at `guest/` exports `quecto:tools/tool`.
+**Filesystem tools** (`read`, `write`, `edit`, `append`, `ls`): `Sandbox::validate_path` — canonicalises the path, follows symlinks at every component, and rejects anything outside `canonical_workspace`. Called before any I/O.
 
-**nsjail** (exec only): Linux process isolation via kernel namespaces + rlimits. Workspace RW, toolchain RO, memory/PID/CPU limits via `--rlimit_as`/`--rlimit_nproc`/`--rlimit_cpu` (no cgroup access required). Configure via `tools.exec.isolation`, `tools.exec.nsjail_binary`, `tools.exec.allow_native_fallback`.
+**bash** (exec only): nsjail for process isolation via Linux kernel namespaces + rlimits. Workspace RW, toolchain RO, memory/PID/CPU limits via `--rlimit_as`/`--rlimit_nproc`/`--rlimit_cpu` (no cgroup access required). Configure via `tools.exec.isolation`, `tools.exec.nsjail_binary`, `tools.exec.allow_native_fallback`.
 
 ### interface/ — CLI + Gateway (composition root)
 Manual arg parsing (no clap). Entry point: `cli::run(args) -> i32`.
