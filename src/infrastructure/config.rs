@@ -153,6 +153,14 @@ pub struct ExecToolConfig {
     pub cpu_time_limit_secs: u64,
     #[serde(default = "default_nsjail_wall_time_limit_secs")]
     pub wall_time_limit_secs: u64,
+    /// Size of the writable `/tmp` tmpfs in MB.
+    ///
+    /// Defaults to 512 MB — safe for RPi/VPS targets with 1–2 GB RAM.
+    /// Each concurrent jail gets its own tmpfs, so N jails can consume
+    /// N × `tmp_size_mb` MB of RAM from `/tmp` alone.  Raise this on hosts
+    /// with ample RAM to accommodate large build artefacts.
+    #[serde(default = "default_nsjail_tmp_size_mb")]
+    pub tmp_size_mb: u64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -174,6 +182,7 @@ impl Default for ExecToolConfig {
             pid_limit: default_nsjail_pid_limit(),
             cpu_time_limit_secs: default_nsjail_cpu_time_limit_secs(),
             wall_time_limit_secs: default_nsjail_wall_time_limit_secs(),
+            tmp_size_mb: default_nsjail_tmp_size_mb(),
         }
     }
 }
@@ -358,12 +367,19 @@ fn default_nsjail_pid_limit() -> u64 {
     256
 }
 fn default_nsjail_cpu_time_limit_secs() -> u64 {
+    // Canonical value: DEFAULT_NSJAIL_CPU_TIME_LIMIT_SECS in nsjail.rs.
     // 2 cores × 4-hour wall budget = 28 800 CPU-seconds.
     28_800
 }
 fn default_nsjail_wall_time_limit_secs() -> u64 {
+    // Canonical value: DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS in nsjail.rs.
     // 4 hours = 14 400 wall-clock seconds.
     14_400
+}
+fn default_nsjail_tmp_size_mb() -> u64 {
+    // Canonical value: DEFAULT_NSJAIL_TMP_SIZE_MB in nsjail.rs.
+    // 512 MB — conservative default safe for RPi/VPS (1–2 GB RAM).
+    512
 }
 fn default_heartbeat_interval() -> u32 {
     30
@@ -524,6 +540,7 @@ mod tests {
         assert_eq!(config.tools.exec.pid_limit, 256);
         assert_eq!(config.tools.exec.cpu_time_limit_secs, 28800);
         assert_eq!(config.tools.exec.wall_time_limit_secs, 14400);
+        assert_eq!(config.tools.exec.tmp_size_mb, 512);
     }
 
     #[test]
@@ -538,7 +555,8 @@ mod tests {
                     "memory_limit_mb": 1024,
                     "pid_limit": 128,
                     "cpu_time_limit_secs": 20,
-                    "wall_time_limit_secs": 25
+                    "wall_time_limit_secs": 25,
+                    "tmp_size_mb": 2048
                 }
             }
         }"#;
@@ -551,6 +569,7 @@ mod tests {
         assert_eq!(config.tools.exec.pid_limit, 128);
         assert_eq!(config.tools.exec.cpu_time_limit_secs, 20);
         assert_eq!(config.tools.exec.wall_time_limit_secs, 25);
+        assert_eq!(config.tools.exec.tmp_size_mb, 2048);
     }
 
     #[test]
