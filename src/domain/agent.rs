@@ -10,7 +10,16 @@ use super::error::DomainError;
 #[derive(Debug, Clone)]
 pub enum AgentProgressEvent {
     /// The agent is waiting on the LLM for a response (thinking).
-    Thinking,
+    Thinking {
+        /// Estimated tokens currently in the conversation context.
+        context_tokens: usize,
+        /// Configured maximum context token budget.
+        max_context_tokens: usize,
+        /// Provider name serving the request (e.g. "openai").
+        provider: String,
+        /// Model name serving the request (e.g. "gpt-5.2").
+        model: String,
+    },
     /// A tool call has been dispatched.
     ToolStarted {
         /// The name of the tool being called.
@@ -26,6 +35,8 @@ pub enum AgentProgressEvent {
     ToolFinished {
         /// The name of the tool that finished.
         name: String,
+        /// Raw tool arguments JSON (not pre-truncated).
+        arguments: String,
         /// How long the tool took to execute in milliseconds.
         duration_ms: u64,
         /// Whether the tool returned an error.

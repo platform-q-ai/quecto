@@ -418,7 +418,8 @@ fn resolve_progress_callback(
     }
     // TTY session: spawn the live spinner thread.
     if is_tty {
-        let (cb, handle) = progress::spawn_spinner_thread();
+        let status_header = progress::build_status_header_line();
+        let (cb, handle) = progress::spawn_spinner_thread_with_status(status_header);
         return (Some(cb), Some(handle));
     }
     // Non-TTY: no progress output.

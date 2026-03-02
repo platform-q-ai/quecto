@@ -905,7 +905,9 @@ fn execute_repl_with_recorder(world: &mut QuectoWorld) {
         is_tty: false,
         progress_callback: Arc::new(move |ev: quecto::domain::agent::AgentProgressEvent| {
             let label = match &ev {
-                quecto::domain::agent::AgentProgressEvent::Thinking => "Thinking".to_string(),
+                quecto::domain::agent::AgentProgressEvent::Thinking { .. } => {
+                    "Thinking".to_string()
+                }
                 quecto::domain::agent::AgentProgressEvent::ToolStarted { name, .. } => {
                     format!("ToolStarted:{}", name)
                 }
