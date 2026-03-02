@@ -139,6 +139,10 @@ impl SpawnTool {
                 .map_err(|e| DomainError::Tool(format!("subagent process error: {}", e)))?,
             Err(_) => {
                 let _ = child.kill().await;
+                // Reap deterministically — avoids zombie if the runtime is
+                // shutting down (e.g. parent hit --max-time) before Tokio's
+                // background reaper can run.
+                let _ = child.wait().await;
                 return Ok(ToolResult {
                     content: format!(
                         "Subagent '{}' timed out after {}s.",
@@ -535,12 +539,22 @@ mod tests {
     // --- Timeout constant ---
 
     #[test]
+    fn test_subagent_timeout_is_at_least_one_hour() {
+        // Subagent tasks are long-running; the timeout must be ≥ 1 h (3600s).
+        // The intended default is 24 h (86400s) but this guards against the
+        // timeout being accidentally dropped back to a short value.
+        const { assert!(SpawnTool::SUBAGENT_TIMEOUT_SECS >= 3_600) };
+    }
+
+    #[test]
     fn test_subagent_timeout_is_24_hours() {
-        // Subagent tasks can be long-running; 24 hours is the intended ceiling.
+        // Confirms the current intended default is exactly 24 h.
+        const EXPECTED: u64 = 86_400;
         assert_eq!(
             SpawnTool::SUBAGENT_TIMEOUT_SECS,
-            86_400,
-            "expected SUBAGENT_TIMEOUT_SECS to be 86400 (24 h), got {}",
+            EXPECTED,
+            "expected SUBAGENT_TIMEOUT_SECS to be {} (24 h), got {}",
+            EXPECTED,
             SpawnTool::SUBAGENT_TIMEOUT_SECS
         );
     }

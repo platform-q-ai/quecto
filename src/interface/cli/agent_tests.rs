@@ -690,13 +690,25 @@ fn test_headless_agent_registry_includes_spawn_tool() {
         exec_settings,
     );
 
-    // Simulate what build_agent_from_config does — add SpawnTool
+    // Match what build_agent_from_config does: with_base_dir so spawn is
+    // not in stub mode and will actually launch subagents.
     use crate::infrastructure::tools::spawn::SpawnTool;
     use std::sync::Arc;
-    registry.register(Arc::new(SpawnTool::new(
+    let spawn = SpawnTool::with_base_dir(
         vec![],
         config.agents.defaults.restrict_to_workspace,
-    )));
+        tmp.path().to_path_buf(),
+    );
+
+    // Assert the constructed tool has a real base_dir (not stub mode).
+    let debug_str = format!("{:?}", spawn);
+    assert!(
+        debug_str.contains(tmp.path().to_str().unwrap()),
+        "SpawnTool must be constructed with a real base_dir, got: {}",
+        debug_str
+    );
+
+    registry.register(Arc::new(spawn));
 
     let names = registry.names();
     assert!(

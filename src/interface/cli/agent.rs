@@ -239,9 +239,10 @@ pub(crate) fn build_agent_from_config(
         spill_store.clone(),
         session_key.clone(),
     )));
-    registry.register(Arc::new(SpawnTool::new(
+    registry.register(Arc::new(SpawnTool::with_base_dir(
         vec![],
         config.agents.defaults.restrict_to_workspace,
+        base_dir.to_path_buf(),
     )));
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
