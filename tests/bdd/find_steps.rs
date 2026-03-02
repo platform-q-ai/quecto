@@ -21,6 +21,17 @@ fn ensure_find_workspace(world: &mut QuectoWorld) -> PathBuf {
     world.find_workspace.clone().unwrap()
 }
 
+#[given("a find tool git workspace")]
+fn given_find_git_workspace(world: &mut QuectoWorld) {
+    let ws = ensure_find_workspace(world);
+    // Initialize a git repo so fd natively respects nested .gitignore files.
+    std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&ws)
+        .status()
+        .expect("git init failed");
+}
+
 fn make_find_tool(world: &mut QuectoWorld) -> FindTool {
     let ws = ensure_find_workspace(world);
     let ws_arc = Arc::new(ws.clone());
