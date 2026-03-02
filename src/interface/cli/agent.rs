@@ -418,6 +418,9 @@ pub fn build_agent_provider(
 
     let mut provider_list: Vec<Arc<dyn crate::domain::provider::LlmProvider>> = Vec::new();
 
+    // Shared HTTP client for all providers — avoids duplicate connection pools and TLS contexts.
+    let http_client = reqwest::Client::new();
+
     // Try OpenAI (with auto-refresh for expired OAuth tokens)
     let openai_key = crate::interface::shared::resolve_api_key_with_refresh(
         &config.providers.openai.api_key,
@@ -429,7 +432,11 @@ pub fn build_agent_provider(
         let account_id = crate::infrastructure::auth::oauth::extract_openai_account_id(&openai_key);
         if let Some(acct) = account_id {
             // OAuth token — use Codex provider (ChatGPT backend)
-            provider_list.push(providers::create_codex_provider(openai_key, acct));
+            provider_list.push(providers::create_codex_provider_with_client(
+                openai_key,
+                acct,
+                http_client.clone(),
+            ));
         } else {
             // Regular API key — use standard OpenAI provider
             let base = if config.providers.openai.api_base.is_empty() {
@@ -437,7 +444,12 @@ pub fn build_agent_provider(
             } else {
                 Some(config.providers.openai.api_base.clone())
             };
-            match providers::create_provider("openai", openai_key, base) {
+            match providers::create_provider_with_client(
+                "openai",
+                openai_key,
+                base,
+                http_client.clone(),
+            ) {
                 Ok(p) => provider_list.push(p),
                 Err(e) => {
                     return Err(format!("openai provider configuration error: {}", e));
@@ -459,7 +471,12 @@ pub fn build_agent_provider(
         } else {
             Some(config.providers.anthropic.api_base.clone())
         };
-        match providers::create_provider("anthropic", anthropic_key, base) {
+        match providers::create_provider_with_client(
+            "anthropic",
+            anthropic_key,
+            base,
+            http_client.clone(),
+        ) {
             Ok(p) => provider_list.push(p),
             Err(e) => {
                 return Err(format!("anthropic provider configuration error: {}", e));

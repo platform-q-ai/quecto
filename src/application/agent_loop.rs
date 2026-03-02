@@ -180,14 +180,15 @@ impl AgentLoopImpl {
         &self,
         messages: &mut Vec<Message>,
         current_turn: u32,
-        response: &LlmResponse,
+        response: LlmResponse,
     ) {
-        messages.push(Message::assistant(
-            response.content.clone().unwrap_or_default(),
-            response.tool_calls.clone(),
-        ));
+        // Move content out (no clone). Clone tool_calls once — needed because
+        // Message::assistant takes ownership but we iterate the calls below.
+        let content = response.content.unwrap_or_default();
+        let tool_calls = response.tool_calls;
+        messages.push(Message::assistant(content, tool_calls.clone()));
 
-        for (idx, tc) in response.tool_calls.iter().enumerate() {
+        for (idx, tc) in tool_calls.iter().enumerate() {
             let (content, image_blocks) = self.execute_single_tool_call(tc).await;
             let spill_id = format!("turn{}:{}:{}", current_turn, tc.name, idx);
             let mut tool_msg = self.build_tool_message(ToolMessageArgs {
@@ -208,13 +209,15 @@ impl AgentLoopImpl {
     ) -> (String, Vec<crate::domain::tool::ImageBlock>) {
         // Emit ToolStarted before executing so the REPL can show the tool name
         // immediately, even if the tool itself takes a long time.
-        // The closure is only evaluated when a callback is registered (zero-cost otherwise).
-        let name_for_started = tc.name.clone();
-        let args_for_started = tc.arguments.clone();
-        self.notify(|| AgentProgressEvent::ToolStarted {
-            name: name_for_started,
-            arguments: args_for_started,
-        });
+        // Only clone name/args when a progress callback is registered.
+        if self.progress_callback.is_some() {
+            let name = tc.name.clone();
+            let args = tc.arguments.clone();
+            self.notify(|| AgentProgressEvent::ToolStarted {
+                name,
+                arguments: args,
+            });
+        }
 
         let start = std::time::Instant::now();
         let tool_result = self.tool_registry.execute(&tc.name, &tc.arguments).await;
@@ -226,16 +229,17 @@ impl AgentLoopImpl {
             Err(e) => (format!("Error: {}", e), vec![]),
         };
 
-        // Emit ToolFinished so the REPL can replace the spinner line with a
-        // checkmark/duration before moving on to the next tool or LLM call.
-        let name_for_finished = tc.name.clone();
-        let args_for_finished = tc.arguments.clone();
-        self.notify(|| AgentProgressEvent::ToolFinished {
-            name: name_for_finished,
-            arguments: args_for_finished,
-            duration_ms,
-            is_error: is_err,
-        });
+        // Emit ToolFinished — only clone when callback is registered.
+        if self.progress_callback.is_some() {
+            let name = tc.name.clone();
+            let args = tc.arguments.clone();
+            self.notify(|| AgentProgressEvent::ToolFinished {
+                name,
+                arguments: args,
+                duration_ms,
+                is_error: is_err,
+            });
+        }
 
         tracing::info!(
             target: "tool_exec",
@@ -317,7 +321,7 @@ impl AgentLoopImpl {
                 model,
             });
 
-            let request = self.build_chat_request(messages, &tool_defs);
+            let request = self.build_chat_request(messages, tool_defs);
             // Propagate provider errors — emit Done first so the spinner is cleared
             // before the REPL prints the error message.
             let response = match self.provider.chat(request).await {
@@ -335,7 +339,7 @@ impl AgentLoopImpl {
                 return Ok(self.finalize_text_response(messages, response, iterations));
             }
 
-            self.execute_tool_calls_for_response(messages, current_turn, &response)
+            self.execute_tool_calls_for_response(messages, current_turn, response)
                 .await;
             // Tool calls were executed and spilled — mark dirty for next iteration
             spills_dirty = self.spill_store.is_some();
@@ -369,7 +373,7 @@ impl AgentLoop for AgentLoopImpl {
 
     fn info(&self) -> AgentInfo {
         AgentInfo {
-            tool_count: self.tool_registry.definitions().len(),
+            tool_count: self.tool_registry.tool_count(),
             skill_count: self.skill_count,
         }
     }

@@ -19,11 +19,16 @@ pub struct OpenAiProvider {
 
 impl OpenAiProvider {
     pub fn new(api_key: String, api_base: Option<String>) -> Self {
+        Self::with_client(api_key, api_base, reqwest::Client::new())
+    }
+
+    /// Create with a shared `reqwest::Client` (avoids duplicate connection pools).
+    pub fn with_client(api_key: String, api_base: Option<String>, client: reqwest::Client) -> Self {
         let account_id = crate::infrastructure::auth::oauth::extract_openai_account_id(&api_key);
         Self {
             api_key,
             api_base: api_base.unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
-            client: reqwest::Client::new(),
+            client,
             account_id,
         }
     }
@@ -159,15 +164,15 @@ impl OpenAiProvider {
 }
 
 impl OpenAiProvider {
-    /// Send a streaming chat request and assemble the response from SSE chunks.
-    async fn stream_chat(&self, request: ChatRequest<'_>) -> Result<LlmResponse, DomainError> {
-        let mut body = Self::build_request_body(&request);
-        body["stream"] = serde_json::Value::Bool(true);
-        let url = format!("{}/chat/completions", self.api_base);
-
+    /// Send a streaming chat request with a pre-built JSON body.
+    async fn stream_chat_with_body(
+        &self,
+        body: serde_json::Value,
+        url: &str,
+    ) -> Result<LlmResponse, DomainError> {
         let request_builder = self
             .client
-            .post(&url)
+            .post(url)
             .header("Content-Type", "application/json")
             .json(&body);
         let request_builder = self.apply_auth_headers(request_builder);
@@ -319,23 +324,13 @@ impl LlmProvider for OpenAiProvider {
         &self,
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
-        // Clone request data to avoid lifetime conflicts.
-        let messages = request.messages.to_vec();
-        let tools = request.tools.to_vec();
-        let model = request.model.to_string();
-        let max_tokens = request.max_tokens;
-        let temperature = request.temperature;
-        Box::pin(async move {
-            let req = ChatRequest {
-                messages: &messages,
-                tools: &tools,
-                model: &model,
-                max_tokens,
-                temperature,
-                session_id: request.session_id.clone(),
-            };
-            self.stream_chat(req).await
-        })
+        // Build the request body synchronously before entering the async block
+        // to avoid cloning messages/tools into the future.
+        let mut body = Self::build_request_body(&request);
+        body["stream"] = serde_json::Value::Bool(true);
+        let url = format!("{}/chat/completions", self.api_base);
+
+        Box::pin(async move { self.stream_chat_with_body(body, &url).await })
     }
 }
 
@@ -585,5 +580,14 @@ data: [DONE]\n\n";
         };
         let result = provider.chat(req).await;
         assert!(result.is_ok());
+    }
+
+    // --- #209: Shared reqwest::Client ---
+
+    #[test]
+    fn test_openai_provider_accepts_shared_client() {
+        let client = reqwest::Client::new();
+        let provider = OpenAiProvider::with_client("sk-test".to_string(), None, client);
+        assert_eq!(provider.name(), "openai");
     }
 }

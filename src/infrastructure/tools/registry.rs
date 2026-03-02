@@ -158,21 +158,12 @@ impl ToolRegistryImpl {
         self.rebuild_definitions();
     }
 
-    /// Rebuild the cached definitions list, deduplicating by tool name.
+    /// Rebuild the cached definitions list from all registered tools.
+    ///
+    /// Deduplication is unnecessary: `self.tools` is a `HashMap<String, _>`
+    /// keyed by `tool.definition().name`, so keys are inherently unique.
     fn rebuild_definitions(&mut self) {
-        let mut seen = std::collections::HashSet::new();
-        self.definitions = self
-            .tools
-            .values()
-            .filter_map(|t| {
-                let def = t.definition();
-                if seen.insert(def.name.clone()) {
-                    Some(def)
-                } else {
-                    None
-                }
-            })
-            .collect();
+        self.definitions = self.tools.values().map(|t| t.definition()).collect();
         self.definitions.sort_by(|a, b| a.name.cmp(&b.name));
     }
 
@@ -182,8 +173,8 @@ impl ToolRegistryImpl {
     }
 
     /// Return all tool definitions (for injection into the LLM system prompt).
-    pub fn definitions(&self) -> Vec<ToolDefinition> {
-        self.definitions.clone()
+    pub fn definitions(&self) -> &[ToolDefinition] {
+        &self.definitions
     }
 
     /// List all registered tool names.
@@ -211,7 +202,7 @@ impl ToolRegistryImpl {
 }
 
 impl ToolRegistry for ToolRegistryImpl {
-    fn definitions(&self) -> Vec<ToolDefinition> {
+    fn definitions(&self) -> &[ToolDefinition] {
         self.definitions()
     }
 
@@ -354,7 +345,7 @@ mod tests {
     fn test_all_core_tool_descriptions_include_example() {
         let (reg, _tmp) = test_registry();
         let defs = reg.definitions();
-        for def in &defs {
+        for def in defs {
             assert!(
                 def.description.contains("Example"),
                 "tool '{}' description should contain an Example, got: {}",
@@ -362,5 +353,63 @@ mod tests {
                 def.description
             );
         }
+    }
+
+    // --- #210: definitions() returns borrowed slice ---
+
+    #[test]
+    fn test_definitions_returns_borrowed_slice() {
+        let (reg, _tmp) = test_registry();
+        // definitions() should return &[ToolDefinition], not Vec<ToolDefinition>.
+        // This test verifies it compiles as a slice reference.
+        let defs: &[ToolDefinition] = reg.definitions();
+        assert_eq!(defs.len(), 7);
+    }
+
+    #[test]
+    fn test_trait_definitions_returns_borrowed_slice() {
+        let (reg, _tmp) = test_registry();
+        let trait_reg: &dyn ToolRegistry = &reg;
+        let defs: &[ToolDefinition] = trait_reg.definitions();
+        assert!(!defs.is_empty());
+    }
+
+    // --- #214: tool_count() method ---
+
+    #[test]
+    fn test_tool_count_returns_correct_count() {
+        let (reg, _tmp) = test_registry();
+        let trait_reg: &dyn ToolRegistry = &reg;
+        assert_eq!(trait_reg.tool_count(), 7);
+    }
+
+    #[test]
+    fn test_tool_count_empty_registry() {
+        let reg = ToolRegistryImpl::new();
+        let trait_reg: &dyn ToolRegistry = &reg;
+        assert_eq!(trait_reg.tool_count(), 0);
+    }
+
+    // --- #215: rebuild_definitions works without HashSet ---
+
+    #[test]
+    fn test_rebuild_definitions_no_duplicates_after_re_register() {
+        let tmp = TempDir::new().unwrap();
+        let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), true);
+        let mut reg = ToolRegistryImpl::with_core_tools(tmp.path().to_path_buf(), sandbox.clone());
+        let initial_count = reg.definitions().len();
+
+        // Re-register a tool that already exists — should not duplicate
+        reg.register(Arc::new(
+            crate::infrastructure::tools::filesystem::ReadTool::new(
+                Arc::new(tmp.path().to_path_buf()),
+                Arc::new(sandbox),
+            ),
+        ));
+        assert_eq!(
+            reg.definitions().len(),
+            initial_count,
+            "re-registering a tool should not create duplicates"
+        );
     }
 }

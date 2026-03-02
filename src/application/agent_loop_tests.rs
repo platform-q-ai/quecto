@@ -65,21 +65,27 @@ impl LlmProvider for MockProvider {
 #[derive(Default)]
 struct MockRegistry {
     tools: Vec<Arc<dyn Tool>>,
+    cached_definitions: Vec<ToolDefinition>,
 }
 
 impl MockRegistry {
     fn new() -> Self {
-        Self { tools: Vec::new() }
+        Self {
+            tools: Vec::new(),
+            cached_definitions: Vec::new(),
+        }
     }
 
     fn register(&mut self, tool: Arc<dyn Tool>) {
+        let def = tool.definition();
+        self.cached_definitions.push(def);
         self.tools.push(tool);
     }
 }
 
 impl ToolRegistry for MockRegistry {
-    fn definitions(&self) -> Vec<ToolDefinition> {
-        self.tools.iter().map(|tool| tool.definition()).collect()
+    fn definitions(&self) -> &[ToolDefinition] {
+        &self.cached_definitions
     }
 
     fn execute(
@@ -619,4 +625,22 @@ async fn test_progress_callback_tool_started_includes_arguments() {
     } else {
         panic!("expected ToolStarted event, got: {:?}", *fired);
     }
+}
+
+// --- #214: tool_count() on ToolRegistry trait ---
+
+#[tokio::test]
+async fn test_tool_count_on_registry_trait() {
+    let mut registry = MockRegistry::new();
+    registry.register(Arc::new(MockTool::new("bash", "")));
+    registry.register(Arc::new(MockTool::new("read", "")));
+    let trait_reg: &dyn ToolRegistry = &registry;
+    assert_eq!(trait_reg.tool_count(), 2);
+}
+
+#[tokio::test]
+async fn test_tool_count_empty() {
+    let registry = MockRegistry::new();
+    let trait_reg: &dyn ToolRegistry = &registry;
+    assert_eq!(trait_reg.tool_count(), 0);
 }

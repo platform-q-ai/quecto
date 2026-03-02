@@ -282,24 +282,26 @@ impl Gateway {
         creds: &std::collections::HashMap<String, Credential>,
     ) -> Result<FallbackProvider, GatewayError> {
         let mut provider_list = Vec::new();
-        self.maybe_add_provider(&mut provider_list, "openai", creds)?;
-        self.maybe_add_provider(&mut provider_list, "anthropic", creds)?;
+        // Shared HTTP client for all providers — avoids duplicate connection pools.
+        let http_client = reqwest::Client::new();
+        for name in &["openai", "anthropic"] {
+            if let Some(p) = self.resolve_provider(name, creds, &http_client)? {
+                provider_list.push(p);
+            }
+        }
         if provider_list.is_empty() {
             return Err(GatewayError::NoProviders);
         }
         Ok(FallbackProvider::new(provider_list))
     }
 
-    /// Try to create a provider and add it to the list.
-    ///
-    /// Resolves the API key from the credential snapshot (takes priority over config),
-    /// falling back to the config file key if no valid credential is stored.
-    fn maybe_add_provider(
+    /// Resolve a single provider by name, returning `None` if no key is configured.
+    fn resolve_provider(
         &self,
-        list: &mut Vec<Arc<dyn LlmProvider>>,
         name: &str,
         creds: &std::collections::HashMap<String, Credential>,
-    ) -> Result<(), GatewayError> {
+        http_client: &reqwest::Client,
+    ) -> Result<Option<Arc<dyn LlmProvider>>, GatewayError> {
         let (config_key, api_base) = match name {
             "openai" => (
                 &self.config.providers.openai.api_key,
@@ -309,11 +311,11 @@ impl Gateway {
                 &self.config.providers.anthropic.api_key,
                 &self.config.providers.anthropic.api_base,
             ),
-            _ => return Ok(()),
+            _ => return Ok(None),
         };
         let api_key = resolve_api_key(config_key, creds, name);
         if api_key.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
 
         // For OpenAI OAuth tokens, use the Codex provider instead
@@ -321,8 +323,11 @@ impl Gateway {
             let account_id =
                 crate::infrastructure::auth::oauth::extract_openai_account_id(&api_key);
             if let Some(acct) = account_id {
-                list.push(providers::create_codex_provider(api_key, acct));
-                return Ok(());
+                return Ok(Some(providers::create_codex_provider_with_client(
+                    api_key,
+                    acct,
+                    http_client.clone(),
+                )));
             }
         }
 
@@ -331,16 +336,13 @@ impl Gateway {
         } else {
             Some(api_base.clone())
         };
-        match providers::create_provider(name, api_key, base) {
-            Ok(p) => list.push(p),
-            Err(e) => {
-                return Err(GatewayError::Config(format!(
-                    "{} provider configuration error: {}",
-                    name, e
-                )));
-            }
+        match providers::create_provider_with_client(name, api_key, base, http_client.clone()) {
+            Ok(p) => Ok(Some(p)),
+            Err(e) => Err(GatewayError::Config(format!(
+                "{} provider configuration error: {}",
+                name, e
+            ))),
         }
-        Ok(())
     }
 
     /// Build agent loop with tool registry and message bus.

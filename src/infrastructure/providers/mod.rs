@@ -135,6 +135,16 @@ pub fn create_provider(
     api_key: String,
     api_base: Option<String>,
 ) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    create_provider_with_client(name, api_key, api_base, reqwest::Client::new())
+}
+
+/// Create a provider by name and API key with a shared `reqwest::Client`.
+pub fn create_provider_with_client(
+    name: &str,
+    api_key: String,
+    api_base: Option<String>,
+    client: reqwest::Client,
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
     match name {
         "openai" | "anthropic" => {}
         _ => return Err(ProviderFactoryError::UnknownProvider(name.to_string())),
@@ -145,9 +155,11 @@ pub fn create_provider(
     }
 
     match name {
-        "openai" => Ok(Arc::new(openai::OpenAiProvider::new(api_key, api_base))),
-        "anthropic" => Ok(Arc::new(anthropic::AnthropicProvider::new(
-            api_key, api_base,
+        "openai" => Ok(Arc::new(openai::OpenAiProvider::with_client(
+            api_key, api_base, client,
+        ))),
+        "anthropic" => Ok(Arc::new(anthropic::AnthropicProvider::with_client(
+            api_key, api_base, client,
         ))),
         _ => unreachable!("provider name validated above"),
     }
@@ -159,7 +171,18 @@ pub fn create_provider(
 /// backend using the Responses API. Requires an `account_id` extracted
 /// from the JWT.
 pub fn create_codex_provider(api_key: String, account_id: String) -> Arc<dyn LlmProvider> {
-    Arc::new(codex::CodexProvider::new(api_key, account_id, None))
+    create_codex_provider_with_client(api_key, account_id, reqwest::Client::new())
+}
+
+/// Create a Codex provider with a shared `reqwest::Client`.
+pub fn create_codex_provider_with_client(
+    api_key: String,
+    account_id: String,
+    client: reqwest::Client,
+) -> Arc<dyn LlmProvider> {
+    Arc::new(codex::CodexProvider::with_client(
+        api_key, account_id, None, client,
+    ))
 }
 
 #[cfg(test)]

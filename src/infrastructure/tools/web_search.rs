@@ -19,9 +19,14 @@ pub struct WebSearchTool {
 
 impl WebSearchTool {
     pub fn new(api_key: Option<String>) -> Self {
+        Self::with_client(api_key, reqwest::Client::new())
+    }
+
+    /// Create with a shared `reqwest::Client` (avoids duplicate connection pools).
+    pub fn with_client(api_key: Option<String>, client: reqwest::Client) -> Self {
         Self {
             api_key,
-            client: reqwest::Client::new(),
+            client,
             brave_base: Cow::Borrowed("https://api.search.brave.com"),
             ddg_base: Cow::Borrowed("https://api.duckduckgo.com"),
         }
@@ -400,5 +405,14 @@ mod tests {
         let result = tool.execute(r#"{"query":"xyzzy"}"#).await.unwrap();
         assert!(!result.is_error);
         assert!(result.content.contains("No results found"));
+    }
+
+    // --- #209: Shared reqwest::Client ---
+
+    #[test]
+    fn test_web_search_accepts_shared_client() {
+        let client = reqwest::Client::new();
+        let tool = WebSearchTool::with_client(None, client);
+        assert_eq!(tool.definition().name, "web_search");
     }
 }

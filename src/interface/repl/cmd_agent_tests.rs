@@ -39,8 +39,8 @@ impl LlmProvider for StubProvider {
 struct EmptyRegistry;
 
 impl ToolRegistry for EmptyRegistry {
-    fn definitions(&self) -> Vec<ToolDefinition> {
-        vec![]
+    fn definitions(&self) -> &[ToolDefinition] {
+        &[]
     }
 
     fn execute(

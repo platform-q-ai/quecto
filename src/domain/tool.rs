@@ -51,7 +51,12 @@ pub trait Tool: Send + Sync {
 /// Uses `Pin<Box<dyn Future>>` for dyn-compatibility.
 pub trait ToolRegistry: Send + Sync {
     /// Return all tool definitions (for injection into LLM prompts).
-    fn definitions(&self) -> Vec<ToolDefinition>;
+    fn definitions(&self) -> &[ToolDefinition];
+
+    /// Return the number of registered tools without cloning definitions.
+    fn tool_count(&self) -> usize {
+        self.definitions().len()
+    }
 
     /// Execute a tool by name with JSON arguments.
     fn execute(
