@@ -148,6 +148,50 @@ fn test_discover_gitignore_excludes_bare_star_only() {
     );
 }
 
+#[test]
+fn test_discover_gitignore_excludes_double_star_variants() {
+    let tmp = TempDir::new().unwrap();
+    // ** is equivalent to * in gitignore scope
+    std::fs::write(tmp.path().join(".gitignore"), "**\n!.gitignore\n").unwrap();
+    let found = discover_gitignore_files(tmp.path());
+    assert!(
+        found.is_empty(),
+        "'**' catch-all gitignore should be excluded, got: {:?}",
+        found
+    );
+}
+
+#[test]
+fn test_is_catch_all_gitignore_double_star_slash_variants() {
+    use crate::infrastructure::tools::find::is_catch_all_gitignore;
+    let tmp = TempDir::new().unwrap();
+
+    for pattern in &["**", "**/", "**/*"] {
+        let p = tmp.path().join(".gitignore");
+        std::fs::write(&p, format!("{}\n!.gitignore\n", pattern)).unwrap();
+        assert!(
+            is_catch_all_gitignore(&p),
+            "pattern '{}' should be detected as catch-all",
+            pattern
+        );
+    }
+}
+
+#[test]
+fn test_is_catch_all_gitignore_oversized_file_is_not_excluded() {
+    use crate::infrastructure::tools::find::is_catch_all_gitignore;
+    let tmp = TempDir::new().unwrap();
+    let p = tmp.path().join(".gitignore");
+    // Write a file larger than 64 KiB — should not be treated as catch-all
+    // (safe default: include it, let fd decide)
+    let big = "target/\n".repeat(10_000); // ~80 KiB
+    std::fs::write(&p, big).unwrap();
+    assert!(
+        !is_catch_all_gitignore(&p),
+        "oversized gitignore should default to non-catch-all (include it)"
+    );
+}
+
 #[tokio::test]
 async fn test_find_not_suppressed_by_catchall_gitignore_in_subdir() {
     let (tool, _ws, tmp) = test_find();
