@@ -500,3 +500,34 @@ fn test_build_input_mixed_valid_and_orphaned() {
     assert!(has_good_output, "matched output should be kept");
     assert!(!has_bad, "orphaned call_bad should be removed");
 }
+
+#[test]
+fn test_build_input_all_tool_calls_orphaned_fallback_to_text() {
+    // When ALL tool calls on an assistant message are orphaned, the assistant's
+    // narrative text content must not be silently dropped.
+    let mut assistant_msg = Message::assistant("I was going to call a tool.", vec![]);
+    assistant_msg.tool_calls = vec![ToolCall {
+        id: "call_orphan".to_string(),
+        name: "bash".to_string(),
+        arguments: "{}".to_string(),
+    }];
+    // Deliberately no matching tool result message.
+
+    let messages = vec![Message::user("Do something"), assistant_msg];
+    let (_instructions, input) = CodexProvider::build_input(&messages);
+
+    // The orphaned function_call must be absent.
+    let has_orphan = input
+        .iter()
+        .any(|item| item["type"] == "function_call" && item["call_id"] == "call_orphan");
+    assert!(!has_orphan, "orphaned function_call should be removed");
+
+    // The assistant text content must be preserved.
+    let has_text = input.iter().any(|item| {
+        item["role"] == "assistant" && item["content"] == "I was going to call a tool."
+    });
+    assert!(
+        has_text,
+        "assistant text content must not be silently dropped"
+    );
+}

@@ -73,15 +73,22 @@ impl CodexProvider {
             }
         }
 
-        let orphaned_calls: Vec<_> = sent.iter().filter(|id| !received.contains(*id)).collect();
-        let orphaned_outputs: Vec<_> = received.iter().filter(|id| !sent.contains(*id)).collect();
+        // Lazy allocation: only build diagnostic Vecs when orphans are actually
+        // present — the happy path (no orphans) is zero-alloc beyond the sets.
+        let has_orphan_calls = sent.iter().any(|id| !received.contains(id));
+        let has_orphan_outputs = received.iter().any(|id| !sent.contains(id));
 
-        if !orphaned_calls.is_empty() || !orphaned_outputs.is_empty() {
+        if has_orphan_calls || has_orphan_outputs {
+            let orphaned_calls: Vec<_> = sent.iter().filter(|id| !received.contains(*id)).collect();
+            let orphaned_outputs: Vec<_> =
+                received.iter().filter(|id| !sent.contains(*id)).collect();
             tracing::warn!(
                 orphaned_calls = ?orphaned_calls,
                 orphaned_outputs = ?orphaned_outputs,
                 "Codex: orphaned function_call/output pairs removed \
-                 (session corrupted mid-turn or by context pruning)"
+                 (session corrupted mid-turn or by context pruning). \
+                 TODO: extract repair logic to application layer so all providers benefit \
+                 (tracked as follow-up — OpenAI and Anthropic have the same pairing constraint)."
             );
         }
 
@@ -114,6 +121,8 @@ impl CodexProvider {
                 }
                 Role::Assistant => {
                     if !msg.tool_calls.is_empty() {
+                        // Emit only the valid (matched) tool calls.
+                        let mut emitted = 0usize;
                         for tc in &msg.tool_calls {
                             if valid_pairs.contains(&tc.id) {
                                 input.push(serde_json::json!({
@@ -122,7 +131,17 @@ impl CodexProvider {
                                     "name": tc.name,
                                     "arguments": tc.arguments,
                                 }));
+                                emitted += 1;
                             }
+                        }
+                        // If every tool call was orphaned and dropped, fall back to
+                        // emitting the assistant text content (if any) so narrative
+                        // context is not silently lost.
+                        if emitted == 0 && !msg.content.is_empty() {
+                            input.push(serde_json::json!({
+                                "role": "assistant",
+                                "content": msg.content,
+                            }));
                         }
                     } else {
                         input.push(serde_json::json!({

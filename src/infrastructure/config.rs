@@ -113,8 +113,17 @@ pub struct TelegramConfig {
     #[serde(default)]
     pub allow_from: Vec<String>,
     /// Default outbound address for `MessageTool` and cron job delivery
-    /// when no explicit target/deliver_to is specified.
+    /// when no explicit `target`/`deliver_to` is specified.
+    ///
     /// Format: `"telegram:<chat_id>"` (e.g. `"telegram:123456789"`).
+    ///
+    /// **Single-user deployments only.** Setting this in a multi-user gateway
+    /// could leak responses from one user's session to another if the LLM omits
+    /// the `target` argument in a `MessageTool` call. The `allow_from` filter
+    /// still gates actual delivery.
+    ///
+    /// TODO: consider hoisting to `ChannelsConfig.default_send_to` once a second
+    /// channel type is added, so the fallback stays channel-agnostic.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_send_to: Option<String>,
 }
