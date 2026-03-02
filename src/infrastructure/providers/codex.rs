@@ -277,12 +277,15 @@ impl CodexProvider {
         let usage = body["usage"].as_object().map(|u| UsageInfo {
             prompt_tokens: u["input_tokens"].as_u64().unwrap_or(0) as u32,
             completion_tokens: u["output_tokens"].as_u64().unwrap_or(0) as u32,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
         });
 
         Ok(LlmResponse {
             content,
             tool_calls,
             usage,
+            stop_reason: None,
         })
     }
 
@@ -397,6 +400,8 @@ impl SseAccumulator {
                     self.usage = resp["usage"].as_object().map(|u| UsageInfo {
                         prompt_tokens: u["input_tokens"].as_u64().unwrap_or(0) as u32,
                         completion_tokens: u["output_tokens"].as_u64().unwrap_or(0) as u32,
+                        cache_read_tokens: None,
+                        cache_write_tokens: None,
                     });
                 }
             }
@@ -428,6 +433,7 @@ impl SseAccumulator {
             },
             tool_calls: self.tool_calls,
             usage: self.usage,
+            stop_reason: None,
         }
     }
 }

@@ -67,6 +67,7 @@ struct ToolMessageArgs<'a> {
     content: String,
     image_blocks: Vec<crate::domain::tool::ImageBlock>,
     spill_id: String,
+    is_error: bool,
 }
 
 impl AgentLoopImpl {
@@ -173,6 +174,8 @@ impl AgentLoopImpl {
             max_tokens: self.max_tokens,
             temperature: self.temperature,
             session_id,
+            tool_choice: None,
+            metadata: None,
         }
     }
 
@@ -190,13 +193,14 @@ impl AgentLoopImpl {
         messages.push(Message::assistant(content, tool_calls.clone()));
 
         for (idx, tc) in tool_calls.iter().enumerate() {
-            let (content, image_blocks) = self.execute_single_tool_call(tc).await;
+            let (content, image_blocks, is_error) = self.execute_single_tool_call(tc).await;
             let spill_id = format!("turn{}:{}:{}", current_turn, tc.name, idx);
             let mut tool_msg = self.build_tool_message(ToolMessageArgs {
                 tc,
                 content,
                 image_blocks,
                 spill_id,
+                is_error,
             });
             tool_msg.turn = Some(current_turn);
             self.spill_tool_message(&mut tool_msg).await;
@@ -207,7 +211,7 @@ impl AgentLoopImpl {
     async fn execute_single_tool_call(
         &self,
         tc: &ToolCall,
-    ) -> (String, Vec<crate::domain::tool::ImageBlock>) {
+    ) -> (String, Vec<crate::domain::tool::ImageBlock>, bool) {
         // Emit ToolStarted before executing so the REPL can show the tool name
         // immediately, even if the tool itself takes a long time.
         // Clones inside the closure are only evaluated when a callback is
@@ -242,7 +246,7 @@ impl AgentLoopImpl {
             is_error = is_err,
             "tool executed"
         );
-        (content, image_blocks)
+        (content, image_blocks, is_err)
     }
 
     fn build_tool_message(&self, args: ToolMessageArgs) -> Message {
@@ -251,6 +255,7 @@ impl AgentLoopImpl {
         tool_msg.input_preview = Some(context_pruning::truncate_utf8_safe(&args.tc.arguments, 100));
         tool_msg.spill_id = Some(args.spill_id);
         tool_msg.image_blocks = args.image_blocks;
+        tool_msg.is_error = args.is_error;
         tool_msg
     }
 

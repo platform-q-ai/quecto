@@ -153,12 +153,15 @@ impl OpenAiProvider {
         let usage = body["usage"].as_object().map(|u| UsageInfo {
             prompt_tokens: u["prompt_tokens"].as_u64().unwrap_or(0) as u32,
             completion_tokens: u["completion_tokens"].as_u64().unwrap_or(0) as u32,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
         });
 
         Ok(LlmResponse {
             content,
             tool_calls,
             usage,
+            stop_reason: None,
         })
     }
 }
@@ -231,6 +234,7 @@ impl OpenAiProvider {
             content: content_opt,
             tool_calls,
             usage: None,
+            stop_reason: None,
         })
     }
 
@@ -386,6 +390,8 @@ mod tests {
             max_tokens: 1024,
             temperature: 0.7,
             session_id: None,
+            tool_choice: None,
+            metadata: None,
         };
         let result = provider.chat(req).await;
         assert!(result.is_ok(), "chat should succeed: {:?}", result);
@@ -443,6 +449,8 @@ mod tests {
             max_tokens: 1024,
             temperature: 0.7,
             session_id: None,
+            tool_choice: None,
+            metadata: None,
         };
         let result = provider.chat(req).await;
         assert!(result.is_ok());
@@ -471,6 +479,8 @@ mod tests {
             max_tokens: 1024,
             temperature: 0.7,
             session_id: None,
+            tool_choice: None,
+            metadata: None,
         };
         let result = provider.chat(req).await;
         assert!(result.is_err());
@@ -538,6 +548,8 @@ data: [DONE]\n\n";
             max_tokens: 1024,
             temperature: 0.7,
             session_id: None,
+            tool_choice: None,
+            metadata: None,
         };
         let result = provider.chat_stream(req).await;
         assert!(result.is_ok(), "stream should succeed: {:?}", result);
@@ -577,6 +589,8 @@ data: [DONE]\n\n";
             max_tokens: 1024,
             temperature: 0.7,
             session_id: None,
+            tool_choice: None,
+            metadata: None,
         };
         let result = provider.chat(req).await;
         assert!(result.is_ok());

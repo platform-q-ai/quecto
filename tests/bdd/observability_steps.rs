@@ -104,12 +104,14 @@ fn given_agent_with_mock_for_logging(world: &mut QuectoWorld) {
             arguments: r#"{"command":"echo hi"}"#.to_string(),
         }],
         usage: None,
+        stop_reason: None,
     });
     // Second response: text
     mock_llm.push_response(LlmResponse {
         content: Some("Done".to_string()),
         tool_calls: vec![],
         usage: None,
+        stop_reason: None,
     });
     world.mock_llm = Some(mock_llm);
 

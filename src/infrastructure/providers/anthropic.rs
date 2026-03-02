@@ -4,7 +4,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Message, Role, ToolCall, UsageInfo};
+use crate::domain::message::{LlmResponse, Message, Role, StopReason, ToolCall, UsageInfo};
 use crate::domain::provider::{ChatRequest, LlmProvider};
 
 /// Anthropic LLM provider.
@@ -42,49 +42,165 @@ impl AnthropicProvider {
                 .header("user-agent", "quecto/0.12.0 (external, cli)")
                 .header("x-app", "cli")
         } else {
-            builder.header("x-api-key", &self.api_key)
+            builder
+                .header("x-api-key", &self.api_key)
+                .header("anthropic-beta", "fine-grained-tool-streaming-2025-05-14")
         }
     }
 
     /// Build the JSON request body for Anthropic Messages API.
     fn build_request_body(request: &ChatRequest<'_>) -> (Option<String>, serde_json::Value) {
-        let (system_prompt, api_messages) = Self::build_messages(request.messages);
+        let (system_prompt, mut api_messages) = Self::build_messages(request.messages);
         let mut body = serde_json::json!({
             "model": request.model,
-            "messages": api_messages,
+            "messages": [],
             "max_tokens": request.max_tokens,
             "temperature": request.temperature,
         });
+
+        // System prompt as content block array with cache_control for prompt caching (#176).
         if let Some(ref sys) = system_prompt {
-            body["system"] = serde_json::Value::String(sys.clone());
+            body["system"] = serde_json::json!([{
+                "type": "text",
+                "text": sys,
+                "cache_control": { "type": "ephemeral" }
+            }]);
         }
+
+        // Apply cache_control to the last user message's content block (#176).
+        Self::apply_cache_control_to_last_user_message(&mut api_messages);
+
+        body["messages"] = serde_json::Value::Array(api_messages);
+
         if !request.tools.is_empty() {
             body["tools"] = serde_json::Value::Array(Self::build_tool_defs(request.tools));
         }
+
+        // tool_choice (#183)
+        if let Some(ref tc) = request.tool_choice {
+            body["tool_choice"] = match tc {
+                crate::domain::provider::ToolChoice::Auto => {
+                    serde_json::json!({"type": "auto"})
+                }
+                crate::domain::provider::ToolChoice::Any => {
+                    serde_json::json!({"type": "any"})
+                }
+                crate::domain::provider::ToolChoice::Specific(name) => {
+                    serde_json::json!({"type": "tool", "name": name})
+                }
+            };
+        }
+
+        // metadata (#186)
+        if let Some(ref meta) = request.metadata {
+            if let Some(ref user_id) = meta.user_id {
+                body["metadata"] = serde_json::json!({"user_id": user_id});
+            }
+        }
+
         (system_prompt, body)
     }
 
+    /// Apply `cache_control: { type: "ephemeral" }` to the last user message.
+    ///
+    /// If the last user message content is a plain string, converts it to a
+    /// content block array so cache_control can be attached.
+    fn apply_cache_control_to_last_user_message(api_messages: &mut [serde_json::Value]) {
+        // Find the last user message by scanning backwards.
+        let last_user_idx = api_messages
+            .iter()
+            .rposition(|m| m["role"].as_str() == Some("user"));
+
+        if let Some(idx) = last_user_idx {
+            let msg = &mut api_messages[idx];
+            let content = msg
+                .get_mut("content")
+                .expect("user message must have content");
+
+            if content.is_string() {
+                // Convert string to content block array.
+                let text = content.as_str().unwrap_or("").to_string();
+                *content = serde_json::json!([{
+                    "type": "text",
+                    "text": text,
+                    "cache_control": { "type": "ephemeral" }
+                }]);
+            } else if let Some(blocks) = content.as_array_mut() {
+                // Add cache_control to the last block.
+                if let Some(last_block) = blocks.last_mut() {
+                    last_block["cache_control"] = serde_json::json!({"type": "ephemeral"});
+                }
+            }
+        }
+    }
+
     /// Convert domain messages to Anthropic API message format.
+    ///
+    /// Batches consecutive tool result messages into a single user message (#187).
     fn build_messages(messages: &[Message]) -> (Option<String>, Vec<serde_json::Value>) {
         let mut system_prompt: Option<String> = None;
         let mut api_messages: Vec<serde_json::Value> = Vec::new();
-        for m in messages {
+        let mut i = 0;
+
+        while i < messages.len() {
+            let m = &messages[i];
             match m.role {
                 Role::System => {
                     system_prompt = Some(m.content.clone());
+                    i += 1;
                 }
                 Role::User => {
                     api_messages.push(serde_json::json!({"role": "user", "content": m.content}));
+                    i += 1;
                 }
                 Role::Assistant => {
                     api_messages.push(Self::build_assistant_message(m));
+                    i += 1;
                 }
                 Role::Tool => {
-                    api_messages.push(Self::build_tool_result_message(m));
+                    // Batch consecutive tool results into a single user message (#187).
+                    let mut tool_results: Vec<serde_json::Value> = Vec::new();
+                    while i < messages.len() && messages[i].role == Role::Tool {
+                        tool_results.push(Self::build_tool_result_block(&messages[i]));
+                        i += 1;
+                    }
+                    api_messages.push(serde_json::json!({
+                        "role": "user",
+                        "content": tool_results,
+                    }));
                 }
             }
         }
         (system_prompt, api_messages)
+    }
+
+    /// Build a single `tool_result` content block (without the outer role wrapper).
+    ///
+    /// Used by `build_messages` to batch consecutive tool results.
+    fn build_tool_result_block(m: &Message) -> serde_json::Value {
+        let content_value = if m.image_blocks.is_empty() {
+            serde_json::Value::String(m.content.clone())
+        } else {
+            let mut result_content: Vec<serde_json::Value> =
+                vec![serde_json::json!({"type": "text", "text": m.content})];
+            for img in &m.image_blocks {
+                result_content.push(serde_json::json!({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": img.mime_type,
+                        "data": img.data,
+                    }
+                }));
+            }
+            serde_json::Value::Array(result_content)
+        };
+        serde_json::json!({
+            "type": "tool_result",
+            "tool_use_id": m.tool_call_id.as_deref().unwrap_or(""),
+            "content": content_value,
+            "is_error": m.is_error,
+        })
     }
 
     /// Build an Anthropic assistant message (with or without tool_use blocks).
@@ -108,35 +224,16 @@ impl AnthropicProvider {
         serde_json::json!({"role": "assistant", "content": content_blocks})
     }
 
-    /// Build an Anthropic tool_result message.
+    /// Build an Anthropic tool_result as a complete user message (single tool result).
     ///
-    /// When image blocks are present, uses the array format so Anthropic can
-    /// render them. Otherwise uses a plain string (avoids wrapping overhead).
+    /// Delegates to `build_tool_result_block` and wraps in `{ role: "user" }`.
+    /// Note: for batched tool results, `build_messages` uses `build_tool_result_block`
+    /// directly to group consecutive results into one user message.
+    #[cfg(test)]
     fn build_tool_result_message(m: &Message) -> serde_json::Value {
-        let content_value = if m.image_blocks.is_empty() {
-            serde_json::Value::String(m.content.clone())
-        } else {
-            let mut result_content: Vec<serde_json::Value> =
-                vec![serde_json::json!({"type": "text", "text": m.content})];
-            for img in &m.image_blocks {
-                result_content.push(serde_json::json!({
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": img.mime_type,
-                        "data": img.data,
-                    }
-                }));
-            }
-            serde_json::Value::Array(result_content)
-        };
         serde_json::json!({
             "role": "user",
-            "content": [{
-                "type": "tool_result",
-                "tool_use_id": m.tool_call_id.as_deref().unwrap_or(""),
-                "content": content_value,
-            }],
+            "content": [Self::build_tool_result_block(m)],
         })
     }
 
@@ -196,12 +293,23 @@ impl AnthropicProvider {
         let usage = body["usage"].as_object().map(|u| UsageInfo {
             prompt_tokens: u["input_tokens"].as_u64().unwrap_or(0) as u32,
             completion_tokens: u["output_tokens"].as_u64().unwrap_or(0) as u32,
+            cache_read_tokens: u
+                .get("cache_read_input_tokens")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32),
+            cache_write_tokens: u
+                .get("cache_creation_input_tokens")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32),
         });
+
+        let stop_reason = body["stop_reason"].as_str().map(StopReason::from_anthropic);
 
         Ok(LlmResponse {
             content,
             tool_calls,
             usage,
+            stop_reason,
         })
     }
 }
@@ -245,13 +353,7 @@ impl AnthropicProvider {
 
     /// Parse Anthropic SSE events into an assembled LlmResponse.
     fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> {
-        let mut content = String::new();
-        let mut tool_calls: Vec<ToolCall> = Vec::new();
-        let mut current_tool_id = String::new();
-        let mut current_tool_name = String::new();
-        let mut current_tool_input = String::new();
-        let mut in_tool_input = false;
-
+        let mut acc = SseAccumulator::default();
         let mut current_event = String::new();
 
         for line in raw.lines() {
@@ -267,62 +369,146 @@ impl AnthropicProvider {
             let chunk: serde_json::Value = serde_json::from_str(data).unwrap_or_default();
 
             match current_event.as_str() {
-                "content_block_start" => {
-                    if chunk["content_block"]["type"].as_str() == Some("tool_use") {
-                        current_tool_id = chunk["content_block"]["id"]
-                            .as_str()
-                            .unwrap_or_default()
-                            .to_string();
-                        current_tool_name = chunk["content_block"]["name"]
-                            .as_str()
-                            .unwrap_or_default()
-                            .to_string();
-                        current_tool_input.clear();
-                        in_tool_input = true;
-                    }
-                }
-                "content_block_delta" => {
-                    let delta = &chunk["delta"];
-                    match delta["type"].as_str() {
-                        Some("text_delta") => {
-                            if let Some(text) = delta["text"].as_str() {
-                                content.push_str(text);
-                            }
-                        }
-                        Some("input_json_delta") => {
-                            if let Some(json) = delta["partial_json"].as_str() {
-                                current_tool_input.push_str(json);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                "content_block_stop" => {
-                    if in_tool_input {
-                        tool_calls.push(ToolCall {
-                            id: std::mem::take(&mut current_tool_id),
-                            name: std::mem::take(&mut current_tool_name),
-                            arguments: std::mem::take(&mut current_tool_input),
-                        });
-                        in_tool_input = false;
-                    }
-                }
+                "message_start" => acc.handle_message_start(&chunk),
+                "content_block_start" => acc.handle_block_start(&chunk),
+                "content_block_delta" => acc.handle_block_delta(&chunk),
+                "content_block_stop" => acc.handle_block_stop(),
+                "message_delta" => acc.handle_message_delta(&chunk),
                 "message_stop" => break,
                 _ => {}
             }
         }
 
-        let content_opt = if content.is_empty() {
+        Ok(acc.into_response())
+    }
+}
+
+/// Accumulates SSE events into a final `LlmResponse`.
+///
+/// Extracted from `parse_sse_response` to reduce cognitive complexity.
+#[derive(Default)]
+struct SseAccumulator {
+    content: String,
+    tool_calls: Vec<ToolCall>,
+    current_tool_id: String,
+    current_tool_name: String,
+    current_tool_input: String,
+    in_tool_input: bool,
+    prompt_tokens: Option<u32>,
+    completion_tokens: Option<u32>,
+    cache_read_tokens: Option<u32>,
+    cache_write_tokens: Option<u32>,
+    stop_reason: Option<StopReason>,
+}
+
+impl SseAccumulator {
+    fn handle_message_start(&mut self, chunk: &serde_json::Value) {
+        if let Some(usage) = chunk["message"]["usage"].as_object() {
+            self.update_usage_fields(usage);
+        }
+    }
+
+    fn handle_block_start(&mut self, chunk: &serde_json::Value) {
+        if chunk["content_block"]["type"].as_str() == Some("tool_use") {
+            self.current_tool_id = chunk["content_block"]["id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            self.current_tool_name = chunk["content_block"]["name"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            self.current_tool_input.clear();
+            self.in_tool_input = true;
+        }
+    }
+
+    fn handle_block_delta(&mut self, chunk: &serde_json::Value) {
+        let delta = &chunk["delta"];
+        match delta["type"].as_str() {
+            Some("text_delta") => {
+                if let Some(text) = delta["text"].as_str() {
+                    self.content.push_str(text);
+                }
+            }
+            Some("input_json_delta") => {
+                if let Some(json) = delta["partial_json"].as_str() {
+                    self.current_tool_input.push_str(json);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_block_stop(&mut self) {
+        if self.in_tool_input {
+            self.tool_calls.push(ToolCall {
+                id: std::mem::take(&mut self.current_tool_id),
+                name: std::mem::take(&mut self.current_tool_name),
+                arguments: std::mem::take(&mut self.current_tool_input),
+            });
+            self.in_tool_input = false;
+        }
+    }
+
+    fn handle_message_delta(&mut self, chunk: &serde_json::Value) {
+        if let Some(reason) = chunk["delta"]["stop_reason"].as_str() {
+            self.stop_reason = Some(StopReason::from_anthropic(reason));
+        }
+        if let Some(usage) = chunk["usage"].as_object() {
+            if let Some(v) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
+                self.completion_tokens = Some(v as u32);
+            }
+            if let Some(v) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
+                self.prompt_tokens = Some(v as u32);
+            }
+        }
+    }
+
+    /// Extract usage fields from an Anthropic usage object.
+    fn update_usage_fields(&mut self, usage: &serde_json::Map<String, serde_json::Value>) {
+        if let Some(v) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
+            self.prompt_tokens = Some(v as u32);
+        }
+        if let Some(v) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
+            self.completion_tokens = Some(v as u32);
+        }
+        if let Some(v) = usage
+            .get("cache_read_input_tokens")
+            .and_then(|v| v.as_u64())
+        {
+            self.cache_read_tokens = Some(v as u32);
+        }
+        if let Some(v) = usage
+            .get("cache_creation_input_tokens")
+            .and_then(|v| v.as_u64())
+        {
+            self.cache_write_tokens = Some(v as u32);
+        }
+    }
+
+    fn into_response(self) -> LlmResponse {
+        let content = if self.content.is_empty() {
             None
         } else {
-            Some(content)
+            Some(self.content)
         };
-
-        Ok(LlmResponse {
-            content: content_opt,
-            tool_calls,
-            usage: None,
-        })
+        let usage = if self.prompt_tokens.is_some() || self.completion_tokens.is_some() {
+            Some(UsageInfo {
+                prompt_tokens: self.prompt_tokens.unwrap_or(0),
+                completion_tokens: self.completion_tokens.unwrap_or(0),
+                cache_read_tokens: self.cache_read_tokens,
+                cache_write_tokens: self.cache_write_tokens,
+            })
+        } else {
+            None
+        };
+        LlmResponse {
+            content,
+            tool_calls: self.tool_calls,
+            usage,
+            stop_reason: self.stop_reason,
+        }
     }
 }
 
@@ -388,248 +574,30 @@ impl LlmProvider for AnthropicProvider {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::domain::message::Message;
-    use crate::domain::provider::ChatRequest;
-    use crate::domain::tool::ToolDefinition;
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    #[test]
-    fn test_anthropic_provider_name() {
-        let provider = AnthropicProvider::new("sk-ant-test".to_string(), None);
-        assert_eq!(provider.name(), "anthropic");
+/// Public test-support methods (BDD steps need access to internal builders).
+#[cfg(any(test, feature = "test-support"))]
+impl AnthropicProvider {
+    /// Public wrapper for `build_request_body` (for BDD tests).
+    pub fn build_request_body_public(
+        request: &ChatRequest<'_>,
+    ) -> (Option<String>, serde_json::Value) {
+        Self::build_request_body(request)
     }
 
-    #[tokio::test]
-    async fn test_chat_text_response() {
-        let server = MockServer::start().await;
-        let response_body = serde_json::json!({
-            "id": "msg_123",
-            "type": "message",
-            "role": "assistant",
-            "content": [{ "type": "text", "text": "Hello from Claude!" }],
-            "stop_reason": "end_turn",
-            "usage": { "input_tokens": 12, "output_tokens": 8 }
-        });
-        Mock::given(method("POST"))
-            .and(path("/v1/messages"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(&response_body))
-            .mount(&server)
-            .await;
-
-        let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
-        let messages = vec![Message::user("Hi")];
-        let req = ChatRequest {
-            messages: &messages,
-            tools: &[],
-            model: "claude-sonnet-4-20250514",
-            max_tokens: 1024,
-            temperature: 0.7,
-            session_id: None,
-        };
-        let result = provider.chat(req).await;
-        assert!(result.is_ok(), "chat should succeed: {:?}", result);
-        let response = result.unwrap();
-        assert_eq!(response.content.as_deref(), Some("Hello from Claude!"));
-        assert!(response.tool_calls.is_empty());
-        let usage = response.usage.unwrap();
-        assert_eq!(usage.prompt_tokens, 12);
-        assert_eq!(usage.completion_tokens, 8);
+    /// Public wrapper for `build_messages` (for BDD tests).
+    pub fn build_messages_public(messages: &[Message]) -> (Option<String>, Vec<serde_json::Value>) {
+        Self::build_messages(messages)
     }
 
-    #[tokio::test]
-    async fn test_chat_with_tool_use() {
-        let server = MockServer::start().await;
-        let response_body = serde_json::json!({
-            "id": "msg_456",
-            "type": "message",
-            "role": "assistant",
-            "content": [{
-                "type": "tool_use",
-                "id": "toolu_abc",
-                "name": "bash",
-                "input": { "command": "ls" }
-            }],
-            "stop_reason": "tool_use",
-            "usage": { "input_tokens": 20, "output_tokens": 15 }
-        });
-        Mock::given(method("POST"))
-            .and(path("/v1/messages"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(&response_body))
-            .mount(&server)
-            .await;
-
-        let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
-        let messages = vec![Message::user("list files")];
-        let tools = vec![ToolDefinition {
-            name: "bash".to_string(),
-            description: "Execute a command".to_string(),
-            parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#
-                .to_string(),
-        }];
-        let req = ChatRequest {
-            messages: &messages,
-            tools: &tools,
-            model: "claude-sonnet-4-20250514",
-            max_tokens: 1024,
-            temperature: 0.7,
-            session_id: None,
-        };
-        let result = provider.chat(req).await;
-        assert!(result.is_ok());
-        let response = result.unwrap();
-        assert_eq!(response.tool_calls.len(), 1);
-        assert_eq!(response.tool_calls[0].id, "toolu_abc");
-        assert_eq!(response.tool_calls[0].name, "bash");
-        assert!(response.tool_calls[0].arguments.contains("ls"));
-    }
-
-    #[tokio::test]
-    async fn test_chat_server_error() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/v1/messages"))
-            .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
-            .mount(&server)
-            .await;
-
-        let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
-        let messages = vec![Message::user("Hi")];
-        let req = ChatRequest {
-            messages: &messages,
-            tools: &[],
-            model: "claude-sonnet-4-20250514",
-            max_tokens: 1024,
-            temperature: 0.7,
-            session_id: None,
-        };
-        let result = provider.chat(req).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("500"), "error should mention status: {}", err);
-    }
-
-    #[test]
-    fn test_parse_sse_text_response() {
-        let sse = "\
-event: content_block_delta\n\
-data: {\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n\
-event: content_block_delta\n\
-data: {\"delta\":{\"type\":\"text_delta\",\"text\":\" from Claude\"}}\n\n\
-event: message_stop\n\
-data: {}\n";
-        let result = AnthropicProvider::parse_sse_response(sse).unwrap();
-        assert_eq!(result.content.as_deref(), Some("Hello from Claude"));
-        assert!(result.tool_calls.is_empty());
-    }
-
-    #[test]
-    fn test_parse_sse_tool_use() {
-        let sse = "\
-event: content_block_start\n\
-data: {\"content_block\":{\"type\":\"tool_use\",\"id\":\"tu_1\",\"name\":\"bash\"}}\n\n\
-event: content_block_delta\n\
-data: {\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"cmd\\\"\"}}\n\n\
-event: content_block_delta\n\
-data: {\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\": \\\"ls\\\"}\"}}\n\n\
-event: content_block_stop\n\
-data: {}\n\n\
-event: message_stop\n\
-data: {}\n";
-        let result = AnthropicProvider::parse_sse_response(sse).unwrap();
-        assert!(result.content.is_none());
-        assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0].id, "tu_1");
-        assert_eq!(result.tool_calls[0].name, "bash");
-        assert!(result.tool_calls[0].arguments.contains("ls"));
-    }
-
-    #[test]
-    fn test_parse_sse_empty_stops() {
-        let sse = "event: message_stop\ndata: {}\n";
-        let result = AnthropicProvider::parse_sse_response(sse).unwrap();
-        assert!(result.content.is_none());
-        assert!(result.tool_calls.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_chat_stream_with_mock() {
-        let server = MockServer::start().await;
-        let sse_body = "\
-event: content_block_delta\n\
-data: {\"delta\":{\"type\":\"text_delta\",\"text\":\"Hi\"}}\n\n\
-event: content_block_delta\n\
-data: {\"delta\":{\"type\":\"text_delta\",\"text\":\" there\"}}\n\n\
-event: message_stop\n\
-data: {}\n\n";
-        Mock::given(method("POST"))
-            .and(path("/v1/messages"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_string(sse_body)
-                    .insert_header("content-type", "text/event-stream"),
-            )
-            .mount(&server)
-            .await;
-
-        let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
-        let messages = vec![Message::user("Hi")];
-        let req = ChatRequest {
-            messages: &messages,
-            tools: &[],
-            model: "claude-sonnet-4-20250514",
-            max_tokens: 1024,
-            temperature: 0.7,
-            session_id: None,
-        };
-        let result = provider.chat_stream(req).await;
-        assert!(result.is_ok(), "stream should succeed: {:?}", result);
-        let resp = result.unwrap();
-        assert_eq!(resp.content.as_deref(), Some("Hi there"));
-    }
-
-    #[tokio::test]
-    async fn test_chat_with_system_prompt() {
-        let server = MockServer::start().await;
-        let response_body = serde_json::json!({
-            "id": "msg_789",
-            "type": "message",
-            "role": "assistant",
-            "content": [{ "type": "text", "text": "I am helpful." }],
-            "stop_reason": "end_turn",
-            "usage": { "input_tokens": 15, "output_tokens": 5 }
-        });
-        Mock::given(method("POST"))
-            .and(path("/v1/messages"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(&response_body))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
-        let messages = vec![Message::system("You are helpful."), Message::user("Hi")];
-        let req = ChatRequest {
-            messages: &messages,
-            tools: &[],
-            model: "claude-sonnet-4-20250514",
-            max_tokens: 1024,
-            temperature: 0.7,
-            session_id: None,
-        };
-        let result = provider.chat(req).await;
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().content.as_deref(), Some("I am helpful."));
-    }
-
-    // --- #209: Shared reqwest::Client ---
-
-    #[test]
-    fn test_anthropic_provider_accepts_shared_client() {
-        let client = reqwest::Client::new();
-        let provider = AnthropicProvider::with_client("sk-ant-test".to_string(), None, client);
-        assert_eq!(provider.name(), "anthropic");
+    /// Public wrapper for `build_tool_result_message` (for BDD tests).
+    pub fn build_tool_result_message_public(m: &Message) -> serde_json::Value {
+        serde_json::json!({
+            "role": "user",
+            "content": [Self::build_tool_result_block(m)],
+        })
     }
 }
+
+#[cfg(test)]
+#[path = "anthropic_tests.rs"]
+mod tests;

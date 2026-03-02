@@ -148,6 +148,8 @@ impl FallbackProvider {
                 max_tokens: request.max_tokens,
                 temperature: request.temperature,
                 session_id: request.session_id.clone(),
+                tool_choice: request.tool_choice.clone(),
+                metadata: request.metadata.clone(),
             };
             match entry.provider.chat(req).await {
                 Ok(response) => {
@@ -240,6 +242,8 @@ impl LlmProvider for FallbackProvider {
                 max_tokens: request.max_tokens,
                 temperature: request.temperature,
                 session_id: request.session_id.clone(),
+                tool_choice: request.tool_choice.clone(),
+                metadata: request.metadata.clone(),
             };
             self.try_chat(&req).await
         })
@@ -267,6 +271,7 @@ mod tests {
                     content: Some(content.to_string()),
                     tool_calls: vec![],
                     usage: None,
+                    stop_reason: None,
                 })),
             })
         }
@@ -310,6 +315,8 @@ mod tests {
             max_tokens: 1024,
             temperature: 0.7,
             session_id: None,
+            tool_choice: None,
+            metadata: None,
         }
     }
 
@@ -496,6 +503,7 @@ mod tests {
                     content: Some(content.to_string()),
                     tool_calls: vec![],
                     usage: None,
+                    stop_reason: None,
                 })),
                 received_model: Mutex::new(None),
             })
@@ -542,6 +550,8 @@ mod tests {
             max_tokens: 1024,
             temperature: 0.7,
             session_id: None,
+            tool_choice: None,
+            metadata: None,
         }
     }
 

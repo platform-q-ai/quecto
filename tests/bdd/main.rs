@@ -98,6 +98,7 @@ impl LlmProvider for MockLlmProvider {
                     content: Some("(no more responses)".to_string()),
                     tool_calls: vec![],
                     usage: None,
+                    stop_reason: None,
                 }
             } else {
                 responses.remove(0)

@@ -23,6 +23,8 @@ pub struct Message {
     /// Image blocks for tool result messages that return image data (e.g. `read` on images).
     /// Empty for non-image messages. Not sent to context-pruning; passed directly to providers.
     pub image_blocks: Vec<crate::domain::tool::ImageBlock>,
+    /// Whether this tool result represents an error (propagated to Anthropic `is_error` field).
+    pub is_error: bool,
 }
 
 impl Message {
@@ -40,6 +42,7 @@ impl Message {
             input_preview: None,
             spill_id: None,
             image_blocks: vec![],
+            is_error: false,
         }
     }
 
@@ -57,6 +60,7 @@ impl Message {
             input_preview: None,
             spill_id: None,
             image_blocks: vec![],
+            is_error: false,
         }
     }
 
@@ -74,6 +78,7 @@ impl Message {
             input_preview: None,
             spill_id: None,
             image_blocks: vec![],
+            is_error: false,
         }
     }
 
@@ -91,6 +96,7 @@ impl Message {
             input_preview: None,
             spill_id: None,
             image_blocks: vec![],
+            is_error: false,
         }
     }
 }
@@ -119,6 +125,40 @@ pub struct LlmResponse {
     pub content: Option<String>,
     pub tool_calls: Vec<ToolCall>,
     pub usage: Option<UsageInfo>,
+    /// The reason the model stopped generating (e.g. end_turn, max_tokens, tool_use).
+    pub stop_reason: Option<StopReason>,
+}
+
+/// Why the model stopped generating output.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StopReason {
+    /// Normal end of response.
+    EndTurn,
+    /// Response was truncated due to max_tokens limit.
+    MaxTokens,
+    /// Model is requesting tool execution.
+    ToolUse,
+    /// Model refused the request.
+    Refusal,
+    /// An error occurred (e.g. safety filter).
+    Error,
+    /// Unknown stop reason (future-proofing).
+    Unknown(String),
+}
+
+impl StopReason {
+    /// Parse an Anthropic stop_reason string.
+    pub fn from_anthropic(reason: &str) -> Self {
+        match reason {
+            "end_turn" => Self::EndTurn,
+            "max_tokens" => Self::MaxTokens,
+            "tool_use" => Self::ToolUse,
+            "refusal" => Self::Refusal,
+            "pause_turn" | "stop_sequence" => Self::EndTurn,
+            "sensitive" => Self::Error,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
 }
 
 /// Token usage information from an LLM call.
@@ -126,4 +166,8 @@ pub struct LlmResponse {
 pub struct UsageInfo {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
+    /// Tokens served from prompt cache (Anthropic `cache_read_input_tokens`).
+    pub cache_read_tokens: Option<u32>,
+    /// Tokens written to prompt cache (Anthropic `cache_creation_input_tokens`).
+    pub cache_write_tokens: Option<u32>,
 }
