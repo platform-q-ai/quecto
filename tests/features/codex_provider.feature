@@ -57,3 +57,13 @@ Feature: Codex Responses API Provider
     Then the parsed response should have 2 tool calls
     And tool call 0 should have name "read" and arguments containing "file.txt"
     And tool call 1 should have name "write" and arguments containing "output"
+
+  # --- prompt_cache_key (session-based prompt caching) ---
+
+  Scenario: Codex request body includes prompt_cache_key when session ID is set
+    Given a Codex request body for model "gpt-5.3-codex" with session ID "cli:default"
+    Then the request body should contain a sanitized "prompt_cache_key" with prefix "cli"
+
+  Scenario: Codex request body omits prompt_cache_key when no session ID is set
+    Given a Codex request body for model "gpt-5.3-codex" without a session ID
+    Then the request body should not contain "prompt_cache_key"

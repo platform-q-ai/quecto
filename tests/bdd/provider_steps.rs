@@ -161,6 +161,7 @@ fn when_send_through_fallback(world: &mut QuectoWorld) {
         model: "test-model",
         max_tokens: 1024,
         temperature: 0.7,
+        session_id: None,
     };
     let result = tokio::runtime::Runtime::new()
         .unwrap()
@@ -183,6 +184,7 @@ fn when_send_second_through_fallback(world: &mut QuectoWorld) {
         model: "test-model",
         max_tokens: 1024,
         temperature: 0.7,
+        session_id: None,
     };
     let result = tokio::runtime::Runtime::new()
         .unwrap()
@@ -291,6 +293,7 @@ fn when_send_chat_with_tool(world: &mut QuectoWorld, message: String, tool_name:
         model: "gpt-4",
         max_tokens: 1024,
         temperature: 0.7,
+        session_id: None,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     let result = rt.block_on(provider.chat(req));
@@ -444,6 +447,7 @@ fn when_send_streaming_chat(world: &mut QuectoWorld, message: String) {
         model: "test-model",
         max_tokens: 1024,
         temperature: 0.7,
+        session_id: None,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     let result = rt
@@ -555,6 +559,7 @@ fn when_send_chat_with_model(world: &mut QuectoWorld, model: String) {
         model: &model,
         max_tokens: 1024,
         temperature: 0.7,
+        session_id: None,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     match rt.block_on(fp.chat(req)) {

@@ -21,6 +21,7 @@ fn given_codex_request_body_with_tools(world: &mut QuectoWorld, model: String) {
         model: &model,
         max_tokens: 4096,
         temperature: 0.7,
+        session_id: None,
     };
     let body = quecto::infrastructure::providers::codex::CodexProvider::build_request_body_public(
         &request,
@@ -28,6 +29,82 @@ fn given_codex_request_body_with_tools(world: &mut QuectoWorld, model: String) {
     world
         .env_overrides
         .insert("_codex_body".to_string(), body.to_string());
+}
+
+#[given(expr = "a Codex request body for model {string} with session ID {string}")]
+fn given_codex_request_body_with_session_id(
+    world: &mut QuectoWorld,
+    model: String,
+    session_id: String,
+) {
+    let messages = vec![Message::user("Hi")];
+    let request = quecto::domain::provider::ChatRequest {
+        messages: &messages,
+        tools: &[],
+        model: &model,
+        max_tokens: 4096,
+        temperature: 0.7,
+        session_id: Some(session_id),
+    };
+    let body = quecto::infrastructure::providers::codex::CodexProvider::build_request_body_public(
+        &request,
+    );
+    world
+        .env_overrides
+        .insert("_codex_body".to_string(), body.to_string());
+}
+
+#[given(expr = "a Codex request body for model {string} without a session ID")]
+fn given_codex_request_body_without_session_id(world: &mut QuectoWorld, model: String) {
+    let messages = vec![Message::user("Hi")];
+    let request = quecto::domain::provider::ChatRequest {
+        messages: &messages,
+        tools: &[],
+        model: &model,
+        max_tokens: 4096,
+        temperature: 0.7,
+        session_id: None,
+    };
+    let body = quecto::infrastructure::providers::codex::CodexProvider::build_request_body_public(
+        &request,
+    );
+    world
+        .env_overrides
+        .insert("_codex_body".to_string(), body.to_string());
+}
+
+#[then(expr = "the request body should contain a sanitized {string} with prefix {string}")]
+fn then_body_contains_sanitized_cache_key(world: &mut QuectoWorld, field: String, prefix: String) {
+    let body_str = world
+        .env_overrides
+        .get("_codex_body")
+        .expect("codex body not set");
+    let body: serde_json::Value = serde_json::from_str(body_str).expect("invalid json");
+    let value = body[&field]
+        .as_str()
+        .unwrap_or_else(|| panic!("expected body[\"{}\"] to be a string", field));
+    let expected_prefix = format!("{}:", prefix);
+    assert!(
+        value.starts_with(&expected_prefix),
+        "expected body[\"{}\"] to start with '{}', got: {}",
+        field,
+        expected_prefix,
+        value
+    );
+    // Digest part should be 8 hex characters
+    let digest = &value[expected_prefix.len()..];
+    assert_eq!(
+        digest.len(),
+        8,
+        "expected 8-char hex digest after prefix, got '{}' in: {}",
+        digest,
+        value
+    );
+    assert!(
+        digest.chars().all(|c| c.is_ascii_hexdigit()),
+        "expected digest to be hex chars, got: {}",
+        digest
+    );
 }
 
 #[then(expr = "the request body should contain {string} set to {string}")]

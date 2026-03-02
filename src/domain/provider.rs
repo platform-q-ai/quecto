@@ -15,6 +15,9 @@ pub struct ChatRequest<'a> {
     pub model: &'a str,
     pub max_tokens: u32,
     pub temperature: f32,
+    /// Optional session identifier for providers that support prompt caching
+    /// keyed by session (e.g. Codex `prompt_cache_key`).
+    pub session_id: Option<String>,
 }
 
 /// Determine whether a model name is definitively owned by a named provider family,

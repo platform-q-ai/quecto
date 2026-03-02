@@ -159,12 +159,20 @@ impl AgentLoopImpl {
         messages: &'a Vec<Message>,
         tool_defs: &'a [crate::domain::tool::ToolDefinition],
     ) -> ChatRequest<'a> {
+        // Pass session_key as session_id so providers that support prompt
+        // caching (e.g. Codex prompt_cache_key) can use it.
+        let session_id = if self.session_key.is_empty() {
+            None
+        } else {
+            Some(self.session_key.clone())
+        };
         ChatRequest {
             messages,
             tools: tool_defs,
             model: &self.model,
             max_tokens: self.max_tokens,
             temperature: self.temperature,
+            session_id,
         }
     }
 
