@@ -5,7 +5,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::application::context_pruning;
-use crate::domain::agent::{AgentInfo, AgentLoop, AgentResult};
+use crate::domain::agent::{
+    AgentInfo, AgentLoop, AgentProgressEvent, AgentResult, ProgressCallback,
+};
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
 use crate::domain::provider::{ChatRequest, LlmProvider};
@@ -26,6 +28,10 @@ pub struct AgentLoopConfig {
     pub session_key: String,
     pub context_collapse_after_turns: u32,
     pub max_context_tokens: usize,
+    /// Optional callback to receive live progress events during agent processing.
+    /// Used by the REPL progress renderer to display tool activity to the user.
+    /// Pass `None` for headless/gateway operation (no-op, zero overhead).
+    pub progress_callback: Option<ProgressCallback>,
 }
 
 /// Concrete implementation of the agent loop.
@@ -41,6 +47,8 @@ pub struct AgentLoopImpl {
     session_key: String,
     context_collapse_after_turns: u32,
     max_context_tokens: usize,
+    /// Optional live progress callback wired by the REPL progress renderer.
+    progress_callback: Option<ProgressCallback>,
 }
 
 impl std::fmt::Debug for AgentLoopImpl {
@@ -75,6 +83,21 @@ impl AgentLoopImpl {
             session_key: config.session_key,
             context_collapse_after_turns: config.context_collapse_after_turns,
             max_context_tokens: config.max_context_tokens,
+            progress_callback: config.progress_callback,
+        }
+    }
+
+    /// Fire a progress event to the registered callback, if any.
+    ///
+    /// Accepts a closure that constructs the event so it is only evaluated
+    /// when a callback is actually registered. On the headless/gateway path
+    /// (`progress_callback = None`) the closure is never called — no String
+    /// allocations, no truncation scans. This keeps the hot tool-execution
+    /// path zero-cost when progress reporting is disabled.
+    #[inline]
+    fn notify(&self, make_event: impl FnOnce() -> AgentProgressEvent) {
+        if let Some(ref cb) = self.progress_callback {
+            cb(make_event());
         }
     }
 
@@ -175,6 +198,16 @@ impl AgentLoopImpl {
         &self,
         tc: &ToolCall,
     ) -> (String, Vec<crate::domain::tool::ImageBlock>) {
+        // Emit ToolStarted before executing so the REPL can show the tool name
+        // immediately, even if the tool itself takes a long time.
+        // The closure is only evaluated when a callback is registered (zero-cost otherwise).
+        let name_for_started = tc.name.clone();
+        let args_for_started = tc.arguments.clone();
+        self.notify(|| AgentProgressEvent::ToolStarted {
+            name: name_for_started,
+            arguments: args_for_started,
+        });
+
         let start = std::time::Instant::now();
         let tool_result = self.tool_registry.execute(&tc.name, &tc.arguments).await;
         let duration_ms = start.elapsed().as_millis() as u64;
@@ -184,6 +217,15 @@ impl AgentLoopImpl {
             Ok(tr) => (tr.content, tr.image_blocks),
             Err(e) => (format!("Error: {}", e), vec![]),
         };
+
+        // Emit ToolFinished so the REPL can replace the spinner line with a
+        // checkmark/duration before moving on to the next tool or LLM call.
+        let name_for_finished = tc.name.clone();
+        self.notify(|| AgentProgressEvent::ToolFinished {
+            name: name_for_finished,
+            duration_ms,
+            is_error: is_err,
+        });
 
         tracing::info!(
             target: "tool_exec",
@@ -252,10 +294,25 @@ impl AgentLoopImpl {
             self.apply_context_pruning(messages, current_turn, spills_dirty)
                 .await;
 
+            // Emit Thinking before every LLM call so the REPL spinner activates
+            // immediately, including during multi-turn tool loops.
+            self.notify(|| AgentProgressEvent::Thinking);
+
             let request = self.build_chat_request(messages, &tool_defs);
-            let response = self.provider.chat(request).await?;
+            // Propagate provider errors — emit Done first so the spinner is cleared
+            // before the REPL prints the error message.
+            let response = match self.provider.chat(request).await {
+                Ok(r) => r,
+                Err(e) => {
+                    self.notify(|| AgentProgressEvent::Done);
+                    return Err(e);
+                }
+            };
 
             if response.tool_calls.is_empty() {
+                // Emit Done before finalising so the REPL can clear the spinner
+                // line before the final response is printed to stdout.
+                self.notify(|| AgentProgressEvent::Done);
                 return Ok(self.finalize_text_response(messages, response, iterations));
             }
 
@@ -267,6 +324,8 @@ impl AgentLoopImpl {
             current_turn += 1;
 
             if iterations >= self.max_tool_iterations {
+                // Emit Done so the spinner is cleared before the limit message.
+                self.notify(|| AgentProgressEvent::Done);
                 return Ok(AgentResult {
                     response: format!(
                         "Tool iteration limit ({}) reached. Stopping.",
@@ -298,309 +357,5 @@ impl AgentLoop for AgentLoopImpl {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
-    use crate::domain::tool::{ToolDefinition, ToolResult};
-    use crate::infrastructure::tools::registry::ToolRegistryImpl;
-    use std::sync::Mutex;
-
-    // -----------------------------------------------------------------------
-    // Mock LLM Provider for unit tests
-    // -----------------------------------------------------------------------
-
-    #[derive(Debug)]
-    struct MockProvider {
-        responses: Mutex<Vec<LlmResponse>>,
-        /// Captured tool definitions from the last chat() call.
-        last_tool_defs: Mutex<Vec<ToolDefinition>>,
-    }
-
-    impl MockProvider {
-        fn new(responses: Vec<LlmResponse>) -> Self {
-            Self {
-                responses: Mutex::new(responses),
-                last_tool_defs: Mutex::new(vec![]),
-            }
-        }
-
-        fn last_tool_defs(&self) -> Vec<ToolDefinition> {
-            self.last_tool_defs.lock().unwrap().clone()
-        }
-    }
-
-    impl LlmProvider for MockProvider {
-        fn name(&self) -> &str {
-            "mock"
-        }
-
-        fn chat(
-            &self,
-            request: ChatRequest<'_>,
-        ) -> Pin<Box<dyn std::future::Future<Output = Result<LlmResponse, DomainError>> + Send + '_>>
-        {
-            // Capture tool defs
-            *self.last_tool_defs.lock().unwrap() = request.tools.to_vec();
-
-            let response = {
-                let mut responses = self.responses.lock().unwrap();
-                if responses.is_empty() {
-                    return Box::pin(async {
-                        Ok(LlmResponse {
-                            content: Some("(no more responses)".to_string()),
-                            tool_calls: vec![],
-                            usage: None,
-                        })
-                    });
-                }
-                responses.remove(0)
-            };
-
-            Box::pin(async move { Ok(response) })
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Mock Tool for unit tests
-    // -----------------------------------------------------------------------
-
-    struct MockTool {
-        def: ToolDefinition,
-        response: Mutex<String>,
-    }
-
-    impl MockTool {
-        fn new(name: &str, response: &str) -> Self {
-            Self {
-                def: ToolDefinition {
-                    name: name.to_string(),
-                    description: format!("Mock {} tool", name),
-                    parameters_schema: r#"{"type":"object"}"#.to_string(),
-                },
-                response: Mutex::new(response.to_string()),
-            }
-        }
-    }
-
-    impl std::fmt::Debug for MockTool {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.debug_struct("MockTool")
-                .field("name", &self.def.name)
-                .finish()
-        }
-    }
-
-    impl crate::domain::tool::Tool for MockTool {
-        fn definition(&self) -> ToolDefinition {
-            self.def.clone()
-        }
-
-        fn execute(
-            &self,
-            _arguments: &str,
-        ) -> Pin<Box<dyn std::future::Future<Output = Result<ToolResult, DomainError>> + Send + '_>>
-        {
-            let content = self.response.lock().unwrap().clone();
-            Box::pin(async move {
-                Ok(ToolResult {
-                    content,
-                    is_error: false,
-                    image_blocks: vec![],
-                })
-            })
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Helper to build an AgentLoopImpl with mock components
-    // -----------------------------------------------------------------------
-
-    fn make_agent(
-        responses: Vec<LlmResponse>,
-        tools: Vec<(&str, &str)>,
-    ) -> (AgentLoopImpl, Arc<MockProvider>) {
-        let provider = Arc::new(MockProvider::new(responses));
-        let mut registry = ToolRegistryImpl::new();
-        for (name, response) in tools {
-            registry.register(Arc::new(MockTool::new(name, response)));
-        }
-        let agent = AgentLoopImpl::new(AgentLoopConfig {
-            provider: provider.clone(),
-            tool_registry: Box::new(registry),
-            model: "test-model".to_string(),
-            max_tokens: 1024,
-            temperature: 0.7,
-            spill_store: None,
-            session_key: String::new(),
-            context_collapse_after_turns: u32::MAX,
-            max_context_tokens: 190_000,
-        });
-        (agent, provider)
-    }
-
-    fn text_response(content: &str) -> LlmResponse {
-        LlmResponse {
-            content: Some(content.to_string()),
-            tool_calls: vec![],
-            usage: Some(UsageInfo {
-                prompt_tokens: 10,
-                completion_tokens: 20,
-            }),
-        }
-    }
-
-    fn tool_call_response(name: &str, args: &str) -> LlmResponse {
-        LlmResponse {
-            content: None,
-            tool_calls: vec![ToolCall {
-                id: format!("call_{}", name),
-                name: name.to_string(),
-                arguments: args.to_string(),
-            }],
-            usage: None,
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Unit tests
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn test_simple_text_response() {
-        let (agent, _) = make_agent(vec![text_response("Hello, world!")], vec![]);
-        let mut messages = vec![Message::user("Hi")];
-        let result = agent.run_loop(&mut messages).await.unwrap();
-        assert_eq!(result.response, "Hello, world!");
-        assert_eq!(result.tool_iterations, 0);
-        assert!(!result.iteration_limit_reached);
-    }
-
-    #[tokio::test]
-    async fn test_single_tool_call() {
-        let (agent, _) = make_agent(
-            vec![
-                tool_call_response("read", r#"{"path":"notes.txt"}"#),
-                text_response("Your notes say: Buy groceries"),
-            ],
-            vec![("read", "Buy groceries")],
-        );
-        let mut messages = vec![Message::user("What are my notes?")];
-        let result = agent.run_loop(&mut messages).await.unwrap();
-        assert_eq!(result.response, "Your notes say: Buy groceries");
-        assert_eq!(result.tool_iterations, 1);
-    }
-
-    #[tokio::test]
-    async fn test_multiple_tool_calls_in_sequence() {
-        let (agent, _) = make_agent(
-            vec![
-                tool_call_response("read", r#"{"path":"a.txt"}"#),
-                tool_call_response("write", r#"{"path":"b.txt","content":"data"}"#),
-                text_response("Done copying"),
-            ],
-            vec![("read", "file content"), ("write", "ok")],
-        );
-        let mut messages = vec![Message::user("Copy files")];
-        let result = agent.run_loop(&mut messages).await.unwrap();
-        assert_eq!(result.response, "Done copying");
-        assert_eq!(result.tool_iterations, 2);
-    }
-
-    #[tokio::test]
-    async fn test_iteration_limit() {
-        // LLM always returns tool calls — should stop at limit
-        let responses: Vec<LlmResponse> = (0..10)
-            .map(|i| tool_call_response("bash", &format!(r#"{{"cmd":"echo {}"}}"#, i)))
-            .collect();
-        let (agent, _) = make_agent(responses, vec![("bash", "output")]);
-        let agent = agent.with_max_tool_iterations(3);
-
-        let mut messages = vec![Message::user("Loop forever")];
-        let result = agent.run_loop(&mut messages).await.unwrap();
-        assert!(result.iteration_limit_reached);
-        assert_eq!(result.tool_iterations, 3);
-        assert!(result.response.contains("limit"));
-    }
-
-    #[tokio::test]
-    async fn test_tool_definitions_sent_to_llm() {
-        let (agent, provider) =
-            make_agent(vec![text_response("ok")], vec![("bash", ""), ("read", "")]);
-        let mut messages = vec![Message::user("test")];
-        let _ = agent.run_loop(&mut messages).await.unwrap();
-        let defs = provider.last_tool_defs();
-        assert_eq!(defs.len(), 2);
-        let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
-        assert!(names.contains(&"bash"));
-        assert!(names.contains(&"read"));
-    }
-
-    #[tokio::test]
-    async fn test_agent_info() {
-        let (agent, _) = make_agent(vec![], vec![("bash", ""), ("read", ""), ("write", "")]);
-        let agent = agent.with_skill_count(2);
-        let info = agent.info();
-        assert_eq!(info.tool_count, 3);
-        assert_eq!(info.skill_count, 2);
-    }
-
-    #[tokio::test]
-    async fn test_messages_appended_during_loop() {
-        let (agent, _) = make_agent(
-            vec![
-                tool_call_response("read", r#"{"path":"x"}"#),
-                text_response("final"),
-            ],
-            vec![("read", "content")],
-        );
-        let mut messages = vec![Message::user("read")];
-        let _ = agent.run_loop(&mut messages).await.unwrap();
-        // Should have: User, Assistant(tool_call), Tool(result), Assistant(final)
-        assert_eq!(messages.len(), 4);
-        assert_eq!(messages[1].role, Role::Assistant);
-        assert_eq!(messages[2].role, Role::Tool);
-        assert_eq!(messages[3].role, Role::Assistant);
-        assert_eq!(messages[3].content, "final");
-    }
-
-    #[tokio::test]
-    async fn test_tool_error_is_sent_back() {
-        // Use a tool that doesn't exist in registry — the loop should handle gracefully
-        let responses = vec![
-            LlmResponse {
-                content: None,
-                tool_calls: vec![ToolCall {
-                    id: "call_1".to_string(),
-                    name: "nonexistent_tool".to_string(),
-                    arguments: "{}".to_string(),
-                }],
-                usage: None,
-            },
-            text_response("I got an error"),
-        ];
-        let provider = Arc::new(MockProvider::new(responses));
-        let registry = ToolRegistryImpl::new(); // empty
-        let agent = AgentLoopImpl::new(AgentLoopConfig {
-            provider,
-            tool_registry: Box::new(registry),
-            model: "test-model".to_string(),
-            max_tokens: 1024,
-            temperature: 0.7,
-            spill_store: None,
-            session_key: String::new(),
-            context_collapse_after_turns: u32::MAX,
-            max_context_tokens: 190_000,
-        });
-        let mut messages = vec![Message::user("use a tool")];
-        let result = agent.run_loop(&mut messages).await.unwrap();
-        assert_eq!(result.response, "I got an error");
-        // The tool result message should contain the error
-        assert!(messages[2].content.contains("Error"));
-    }
-
-    #[tokio::test]
-    async fn test_default_max_iterations() {
-        let (agent, _) = make_agent(vec![], vec![]);
-        assert_eq!(agent.max_tool_iterations, DEFAULT_MAX_TOOL_ITERATIONS);
-    }
-}
+#[path = "agent_loop_tests.rs"]
+mod tests;

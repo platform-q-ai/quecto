@@ -374,6 +374,7 @@ impl Gateway {
             session_key,
             context_collapse_after_turns: self.config.agents.defaults.context_collapse_after_turns,
             max_context_tokens: self.config.agents.defaults.max_context_tokens,
+            progress_callback: None,
         })
         .with_max_tool_iterations(self.config.agents.defaults.max_tool_iterations);
 

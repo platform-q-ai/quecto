@@ -46,7 +46,14 @@ fn when_type_line(world: &mut QuectoWorld, line: String) {
     if is_exit {
         // /exit is the last input — execute the REPL now
         // so stdout/stderr/exit_code are ready for Then steps.
-        execute_repl(world);
+        if world.repl_use_progress_recorder {
+            execute_repl_with_recorder(world);
+        } else if world.repl_force_tty {
+            execute_repl_with_progress(world, true);
+        } else {
+            // Default: simulate TTY so banner/prompt appear (matches original behaviour).
+            execute_repl(world);
+        }
     }
 }
 
@@ -57,7 +64,13 @@ fn when_send_eof(world: &mut QuectoWorld) {
     // We don't add any more lines — the reader will return EOF
     // after all accumulated lines are consumed.
     // Mark as ready to execute (no /exit needed).
-    execute_repl(world);
+    if world.repl_use_progress_recorder {
+        execute_repl_with_recorder(world);
+    } else if world.repl_force_tty {
+        execute_repl_with_progress(world, true);
+    } else {
+        execute_repl(world);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -808,4 +821,161 @@ fn then_no_child_session_files(world: &mut QuectoWorld) {
         "expected no child session files, found: {:?}",
         child_files
     );
+}
+
+// ===========================================================================
+// REPL Progress Steps — spinner / tool activity display
+// ===========================================================================
+
+/// Execute the REPL with progress callback recorder / TTY mode as requested.
+fn execute_repl_with_progress(world: &mut QuectoWorld, is_tty: bool) {
+    if world.repl_executed {
+        return;
+    }
+    world.repl_executed = true;
+
+    let input = world.repl_input_lines.join("\n") + "\n";
+    let flags = world.repl_flags.clone();
+
+    if is_tty {
+        // Use the TTY-captured variant so spinner output is captured into stderr
+        // and available for "Then stderr should contain ..." assertions.
+        let output = cli::run_repl_with_tty_captured(&world.cli_context, &flags, input.as_bytes());
+        world.exit_code = output.exit_code;
+        world.stdout = output.stdout;
+        world.stderr = output.stderr;
+    } else {
+        let output = cli::run_repl_with_output(&world.cli_context, &flags, input.as_bytes(), false);
+        world.exit_code = output.exit_code;
+        world.stdout = output.stdout;
+        world.stderr = output.stderr;
+    }
+}
+
+/// Run the REPL with a progress recorder (injects a recording callback via the
+/// `QUECTO_REPL_PROGRESS_RECORD=1` env var, which the run_repl_with_output path
+/// recognises in test-support mode).
+#[when("I run the REPL with a progress recorder")]
+fn when_run_repl_with_progress_recorder(world: &mut QuectoWorld) {
+    world.repl_input_lines = Vec::new();
+    world.repl_flags = Vec::new();
+    world.repl_executed = false;
+    world.repl_use_progress_recorder = true;
+}
+
+#[when("I start quecto in REPL mode as a TTY")]
+fn when_start_repl_as_tty(world: &mut QuectoWorld) {
+    world.repl_input_lines = Vec::new();
+    world.repl_flags = Vec::new();
+    world.repl_executed = false;
+    world.repl_force_tty = true;
+}
+
+/// Override execute_repl to handle progress-recorder and force-tty modes.
+fn execute_repl_smart(world: &mut QuectoWorld) {
+    if world.repl_executed {
+        return;
+    }
+
+    if world.repl_use_progress_recorder {
+        execute_repl_with_recorder(world);
+    } else {
+        let is_tty = world.repl_force_tty;
+        execute_repl_with_progress(world, is_tty);
+    }
+}
+
+/// Execute the REPL wiring a progress recorder callback so events are captured.
+fn execute_repl_with_recorder(world: &mut QuectoWorld) {
+    if world.repl_executed {
+        return;
+    }
+    world.repl_executed = true;
+
+    let input = world.repl_input_lines.join("\n") + "\n";
+    let flags = world.repl_flags.clone();
+
+    let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let events_clone = events.clone();
+
+    let output = cli::run_repl_with_progress_recorder(cli::ReplRecorderOptions {
+        ctx: &world.cli_context,
+        args: &flags,
+        input: input.as_bytes(),
+        is_tty: false,
+        progress_callback: Arc::new(move |ev: quecto::domain::agent::AgentProgressEvent| {
+            let label = match &ev {
+                quecto::domain::agent::AgentProgressEvent::Thinking => "Thinking".to_string(),
+                quecto::domain::agent::AgentProgressEvent::ToolStarted { name, .. } => {
+                    format!("ToolStarted:{}", name)
+                }
+                quecto::domain::agent::AgentProgressEvent::ToolFinished { name, .. } => {
+                    format!("ToolFinished:{}", name)
+                }
+                quecto::domain::agent::AgentProgressEvent::Done => "Done".to_string(),
+            };
+            events_clone.lock().unwrap().push(label);
+        }),
+    });
+
+    world.exit_code = output.exit_code;
+    world.stdout = output.stdout;
+    world.stderr = output.stderr;
+    world.repl_progress_events = events.lock().unwrap().clone();
+}
+
+// ---------------------------------------------------------------------------
+// Then steps for progress recorder assertions
+// ---------------------------------------------------------------------------
+
+#[then(expr = "the progress recorder should have received a {string} event for tool {string}")]
+fn then_progress_event_for_tool(world: &mut QuectoWorld, event_type: String, tool_name: String) {
+    ensure_repl_smart_executed(world);
+    let expected = format!("{}:{}", event_type, tool_name);
+    assert!(
+        world.repl_progress_events.iter().any(|e| e == &expected),
+        "expected progress event '{}', got: {:?}",
+        expected,
+        world.repl_progress_events
+    );
+}
+
+#[then(expr = "the progress recorder should have received a {string} event")]
+fn then_progress_event(world: &mut QuectoWorld, event_type: String) {
+    ensure_repl_smart_executed(world);
+    assert!(
+        world.repl_progress_events.iter().any(|e| e == &event_type),
+        "expected progress event '{}', got: {:?}",
+        event_type,
+        world.repl_progress_events
+    );
+}
+
+#[then(expr = "the progress recorder should have received {int} progress events")]
+fn then_progress_event_count(world: &mut QuectoWorld, expected: usize) {
+    ensure_repl_smart_executed(world);
+    assert_eq!(
+        world.repl_progress_events.len(),
+        expected,
+        "expected {} progress events, got: {:?}",
+        expected,
+        world.repl_progress_events
+    );
+}
+
+#[then(expr = "stdout should not contain {string}")]
+fn then_stdout_not_contains(world: &mut QuectoWorld, text: String) {
+    assert!(
+        !world.stdout.contains(&text),
+        "expected stdout NOT to contain '{}', but it did.\nstdout: {}",
+        text,
+        world.stdout
+    );
+}
+
+/// Ensure the "smart" execute path (progress recorder / force-tty) has run.
+fn ensure_repl_smart_executed(world: &mut QuectoWorld) {
+    if !world.repl_executed {
+        execute_repl_smart(world);
+    }
 }

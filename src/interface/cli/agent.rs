@@ -248,6 +248,7 @@ pub(crate) fn build_agent_from_config(
         session_key,
         context_collapse_after_turns: config.agents.defaults.context_collapse_after_turns,
         max_context_tokens: config.agents.defaults.max_context_tokens,
+        progress_callback: None,
     })
     .with_max_tool_iterations(
         flags

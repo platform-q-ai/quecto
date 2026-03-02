@@ -122,3 +122,59 @@ Feature: REPL — Interactive Conversational Mode
     And I type ""
     And I type "/exit"
     Then the exit code should be 0
+
+  @done
+  Scenario: REPL progress callback fires ToolStarted and ToolFinished events during tool call
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a tool call for "bash" with args '{"command": "echo hi"}'
+    And then the mock LLM returns a text response "Done"
+    When I run the REPL with a progress recorder
+    And I type "Run echo hi"
+    And I type "/exit"
+    Then the progress recorder should have received a "ToolStarted" event for tool "bash"
+    And the progress recorder should have received a "ToolFinished" event for tool "bash"
+
+  @done
+  Scenario: REPL progress callback fires Thinking and Done events
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "Hello!"
+    When I run the REPL with a progress recorder
+    And I type "Say hi"
+    And I type "/exit"
+    Then the progress recorder should have received a "Thinking" event
+    And the progress recorder should have received a "Done" event
+
+  @done
+  Scenario: REPL progress callback is not fired for non-agent slash commands
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I run the REPL with a progress recorder
+    And I type "/help"
+    And I type "/exit"
+    Then the progress recorder should have received 0 progress events
+
+  @done
+  Scenario: REPL spinner renders tool names on TTY stderr during agentic run
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a tool call for "bash" with args '{"command": "echo hi"}'
+    And then the mock LLM returns a text response "Done"
+    When I start quecto in REPL mode as a TTY
+    And I type "Run it"
+    And I type "/exit"
+    Then stderr should contain "bash"
+
+  @done
+  Scenario: REPL progress output does not appear on stdout
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a tool call for "bash" with args '{"command": "echo hi"}'
+    And then the mock LLM returns a text response "All done"
+    When I start quecto in REPL mode as a TTY
+    And I type "Run it"
+    And I type "/exit"
+    Then stdout should contain "All done"
+    And stdout should not contain "⠋"
+    And stdout should not contain "⠙"

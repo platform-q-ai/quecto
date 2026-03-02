@@ -1,4 +1,45 @@
+use std::sync::Arc;
+
 use super::error::DomainError;
+
+/// A live progress event emitted by the agent loop during processing.
+///
+/// Used by the REPL progress renderer to display tool activity and a spinner
+/// to the user while the agent is thinking or executing tools. Events are
+/// delivered via a [`ProgressCallback`] registered in [`AgentLoopConfig`].
+#[derive(Debug, Clone)]
+pub enum AgentProgressEvent {
+    /// The agent is waiting on the LLM for a response (thinking).
+    Thinking,
+    /// A tool call has been dispatched.
+    ToolStarted {
+        /// The name of the tool being called.
+        name: String,
+        /// Raw tool arguments JSON (not pre-truncated).
+        ///
+        /// Consumers (e.g. `ProgressRenderer`) are responsible for any
+        /// display-width truncation. Keeping the raw value here avoids baking
+        /// a terminal-width concern into the application layer.
+        arguments: String,
+    },
+    /// A tool call has completed.
+    ToolFinished {
+        /// The name of the tool that finished.
+        name: String,
+        /// How long the tool took to execute in milliseconds.
+        duration_ms: u64,
+        /// Whether the tool returned an error.
+        is_error: bool,
+    },
+    /// The agent loop has produced a final text response and is done.
+    Done,
+}
+
+/// A synchronous, non-blocking callback that receives live agent progress events.
+///
+/// The callback must be `Send + Sync` because it is called from an async context.
+/// It must not block — use a channel send or mutex push, never I/O.
+pub type ProgressCallback = Arc<dyn Fn(AgentProgressEvent) + Send + Sync>;
 
 /// Information about a configured agent at startup.
 #[derive(Debug, Clone)]

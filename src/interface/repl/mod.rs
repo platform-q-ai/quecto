@@ -3,6 +3,7 @@ mod cmd_cron;
 mod cmd_heartbeat;
 mod cmd_spawn;
 mod parsers;
+pub(crate) mod progress;
 
 use std::io::{BufRead, Write};
 use std::path::Path;
@@ -317,6 +318,13 @@ pub fn run_repl<R: BufRead, W: Write>(
         spill_store.clone(),
         session_key.clone(),
     )));
+
+    // Resolve the progress callback:
+    // 1. If the caller injected an explicit callback (e.g. BDD test recorder), use it.
+    // 2. If this is a real TTY session, spawn the background spinner thread.
+    // 3. Otherwise (non-TTY pipe/redirect), use None (silent).
+    let (progress_callback, spinner_handle) = resolve_progress_callback(ctx, is_tty);
+
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider: ctx.provider.clone(),
         tool_registry: Box::new(registry),
@@ -327,6 +335,7 @@ pub fn run_repl<R: BufRead, W: Write>(
         session_key: session_key.clone(),
         context_collapse_after_turns: ctx.config.agents.defaults.context_collapse_after_turns,
         max_context_tokens: ctx.config.agents.defaults.max_context_tokens,
+        progress_callback,
     });
 
     let session_store = FileSessionStore::new(ctx.base_dir);
@@ -346,7 +355,11 @@ pub fn run_repl<R: BufRead, W: Write>(
                 system_prompt: build_system_prompt(ctx),
                 base_dir: ctx.base_dir.to_path_buf(),
             };
-            return ReplLoop::new(reader, writer, is_tty, session).run();
+            let code = ReplLoop::new(reader, writer, is_tty, session).run();
+            if let Some(handle) = spinner_handle {
+                handle.stop();
+            }
+            return code;
         }
     };
 
@@ -365,7 +378,51 @@ pub fn run_repl<R: BufRead, W: Write>(
     // Drop the pre-built runtime so ReplLoop::run() can create its own
     // (current_thread runtimes cannot be nested).
     drop(rt);
-    ReplLoop::new(reader, writer, is_tty, session).run()
+    let code = ReplLoop::new(reader, writer, is_tty, session).run();
+    // Stop the spinner thread cleanly — it clears the last spinner line before exiting.
+    if let Some(handle) = spinner_handle {
+        handle.stop();
+    }
+    code
+}
+
+/// Resolve which progress callback to use for this REPL session.
+///
+/// Priority:
+/// 1. An explicit callback in `ctx.progress_callback` (BDD test recorder).
+/// 2. A freshly spawned spinner thread when `is_tty = true` (interactive terminal).
+/// 3. `None` when `is_tty = false` (pipe / redirect / non-interactive).
+///
+/// Returns `(callback, Option<SpinnerHandle>)`. The caller must call
+/// `SpinnerHandle::stop()` when the REPL loop exits so the spinner thread is
+/// cleanly joined and the terminal line is erased.
+///
+/// ### Thread lifetime
+///
+/// The spinner thread lives for the entire REPL session, including idle time
+/// between user inputs. The thread blocks on `mpsc::recv_timeout(80ms)` and
+/// consumes negligible CPU when no events are flowing. On resource-constrained
+/// targets (RPi, containers) the idle cost is ~1 wakeup/80ms — acceptable for
+/// an interactive terminal tool. Future optimization: spawn per `process_input()`
+/// call and stop immediately after if tighter resource bounds are needed.
+fn resolve_progress_callback(
+    ctx: &ReplContext<'_>,
+    is_tty: bool,
+) -> (
+    Option<crate::domain::agent::ProgressCallback>,
+    Option<progress::SpinnerHandle>,
+) {
+    // Explicit callback takes precedence (e.g. injected by BDD test recorder).
+    if let Some(cb) = ctx.progress_callback.clone() {
+        return (Some(cb), None);
+    }
+    // TTY session: spawn the live spinner thread.
+    if is_tty {
+        let (cb, handle) = progress::spawn_spinner_thread();
+        return (Some(cb), Some(handle));
+    }
+    // Non-TTY: no progress output.
+    (None, None)
 }
 
 /// Build the system prompt by loading skills and merging with user prompt.
@@ -386,6 +443,10 @@ pub struct ReplContext<'a> {
     pub provider: Arc<dyn LlmProvider>,
     pub config: &'a Config,
     pub flags: &'a ReplFlags,
+    /// Optional progress callback injected by the caller (e.g. BDD test recorder
+    /// or the live TTY spinner). When `None`, the REPL builds its own spinner
+    /// for TTY sessions or skips progress reporting for non-TTY.
+    pub progress_callback: Option<crate::domain::agent::ProgressCallback>,
 }
 
 /// Load existing session messages using a provided runtime.
