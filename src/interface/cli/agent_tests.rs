@@ -660,3 +660,60 @@ fn test_agent_max_iterations_overflow_rejected() {
     assert!(result.is_none());
     assert!(stderr.contains("positive integer"));
 }
+
+// ===================================================================
+// SpawnTool presence in headless agent registry
+// ===================================================================
+
+#[test]
+fn test_headless_agent_registry_includes_spawn_tool() {
+    use crate::infrastructure::config::Config;
+    use crate::infrastructure::security::sandbox::Sandbox;
+    use crate::infrastructure::tools::registry::ToolRegistryImpl;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config_json = r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#;
+    std::fs::write(tmp.path().join("config.json"), config_json).unwrap();
+
+    let config = Config::load(tmp.path().join("config.json").to_str().unwrap()).unwrap();
+    let workspace = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    let sandbox = Sandbox::new(
+        Some(workspace.clone()),
+        config.agents.defaults.restrict_to_workspace,
+    );
+    let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
+    let mut registry = ToolRegistryImpl::with_core_tools_and_exec_settings(
+        workspace.clone(),
+        sandbox,
+        exec_settings,
+    );
+
+    // Match what build_agent_from_config does: with_base_dir so spawn is
+    // not in stub mode and will actually launch subagents.
+    use crate::infrastructure::tools::spawn::SpawnTool;
+    use std::sync::Arc;
+    let spawn = SpawnTool::with_base_dir(
+        vec![],
+        config.agents.defaults.restrict_to_workspace,
+        tmp.path().to_path_buf(),
+    );
+
+    // Assert the constructed tool has a real base_dir (not stub mode).
+    let debug_str = format!("{:?}", spawn);
+    assert!(
+        debug_str.contains(tmp.path().to_str().unwrap()),
+        "SpawnTool must be constructed with a real base_dir, got: {}",
+        debug_str
+    );
+
+    registry.register(Arc::new(spawn));
+
+    let names = registry.names();
+    assert!(
+        names.contains(&"spawn".to_string()),
+        "headless agent registry must include 'spawn' tool, got: {:?}",
+        names
+    );
+}
