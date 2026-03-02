@@ -48,6 +48,7 @@ impl LlmProvider for MockProvider {
                         content: Some("(no more responses)".to_string()),
                         tool_calls: vec![],
                         usage: None,
+                        stop_reason: None,
                     })
                 });
             }
@@ -192,7 +193,10 @@ fn text_response(content: &str) -> LlmResponse {
         usage: Some(UsageInfo {
             prompt_tokens: 10,
             completion_tokens: 20,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
         }),
+        stop_reason: None,
     }
 }
 
@@ -205,6 +209,7 @@ fn tool_call_response(name: &str, args: &str) -> LlmResponse {
             arguments: args.to_string(),
         }],
         usage: None,
+        stop_reason: None,
     }
 }
 
@@ -321,6 +326,7 @@ async fn test_tool_error_is_sent_back() {
                 arguments: "{}".to_string(),
             }],
             usage: None,
+            stop_reason: None,
         },
         text_response("I got an error"),
     ];

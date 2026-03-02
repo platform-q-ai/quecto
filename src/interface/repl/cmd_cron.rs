@@ -193,6 +193,7 @@ mod tests {
                     content: Some("stub".to_string()),
                     tool_calls: vec![],
                     usage: None,
+                    stop_reason: None,
                 })
             })
         }

@@ -18,6 +18,28 @@ pub struct ChatRequest<'a> {
     /// Optional session identifier for providers that support prompt caching
     /// keyed by session (e.g. Codex `prompt_cache_key`).
     pub session_id: Option<String>,
+    /// Optional tool_choice parameter to control how the model selects tools.
+    pub tool_choice: Option<ToolChoice>,
+    /// Optional metadata (e.g. user_id for multi-tenant rate limiting).
+    pub metadata: Option<RequestMetadata>,
+}
+
+/// Controls how the model selects which tool to call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolChoice {
+    /// Model decides freely whether to call a tool (default).
+    Auto,
+    /// Model must call some tool.
+    Any,
+    /// Model must call the specified tool.
+    Specific(String),
+}
+
+/// Request metadata for provider-side tracking (e.g. per-user rate limiting).
+#[derive(Debug, Clone)]
+pub struct RequestMetadata {
+    /// User identifier for per-user rate limiting (Anthropic `metadata.user_id`).
+    pub user_id: Option<String>,
 }
 
 /// Determine whether a model name is definitively owned by a named provider family,

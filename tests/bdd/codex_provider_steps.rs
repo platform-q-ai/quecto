@@ -129,6 +129,8 @@ fn given_codex_request_body_with_tools(world: &mut QuectoWorld, model: String) {
         max_tokens: 4096,
         temperature: 0.7,
         session_id: None,
+        tool_choice: None,
+        metadata: None,
     };
     let body = quecto::infrastructure::providers::codex::CodexProvider::build_request_body_public(
         &request,
@@ -152,6 +154,8 @@ fn given_codex_request_body_with_session_id(
         max_tokens: 4096,
         temperature: 0.7,
         session_id: Some(session_id),
+        tool_choice: None,
+        metadata: None,
     };
     let body = quecto::infrastructure::providers::codex::CodexProvider::build_request_body_public(
         &request,
@@ -171,6 +175,8 @@ fn given_codex_request_body_without_session_id(world: &mut QuectoWorld, model: S
         max_tokens: 4096,
         temperature: 0.7,
         session_id: None,
+        tool_choice: None,
+        metadata: None,
     };
     let body = quecto::infrastructure::providers::codex::CodexProvider::build_request_body_public(
         &request,

@@ -64,6 +64,7 @@ fn given_llm_returns_text(world: &mut QuectoWorld, text: String) {
         content: Some(text),
         tool_calls: vec![],
         usage: None,
+        stop_reason: None,
     });
 }
 
@@ -80,6 +81,7 @@ fn given_llm_returns_tool_call(world: &mut QuectoWorld, tool_name: String, step:
             arguments: args_json,
         }],
         usage: None,
+        stop_reason: None,
     });
 }
 
@@ -96,6 +98,7 @@ fn given_llm_then_returns(world: &mut QuectoWorld, text: String) {
         content: Some(text),
         tool_calls: vec![],
         usage: None,
+        stop_reason: None,
     });
 }
 
@@ -112,6 +115,7 @@ fn given_llm_returns_tool_calls_in_sequence(world: &mut QuectoWorld, tool1: Stri
             arguments: "{}".to_string(),
         }],
         usage: None,
+        stop_reason: None,
     });
 
     // Second call returns tool2
@@ -123,6 +127,7 @@ fn given_llm_returns_tool_calls_in_sequence(world: &mut QuectoWorld, tool1: Stri
             arguments: "{}".to_string(),
         }],
         usage: None,
+        stop_reason: None,
     });
 
     // Third call returns final text
@@ -130,6 +135,7 @@ fn given_llm_returns_tool_calls_in_sequence(world: &mut QuectoWorld, tool1: Stri
         content: Some("Done".to_string()),
         tool_calls: vec![],
         usage: None,
+        stop_reason: None,
     });
 
     // Register mock tools if not already present
@@ -167,6 +173,7 @@ fn given_llm_always_returns_tool_call(world: &mut QuectoWorld) {
                 arguments: r#"{"command":"echo hi"}"#.to_string(),
             }],
             usage: None,
+            stop_reason: None,
         });
     }
     // Register the exec mock tool
@@ -231,6 +238,7 @@ fn when_agent_sends_request(world: &mut QuectoWorld) {
         content: Some("ok".to_string()),
         tool_calls: vec![],
         usage: None,
+        stop_reason: None,
     });
 
     let mut messages = vec![Message::user("test")];

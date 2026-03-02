@@ -49,6 +49,8 @@ struct MessageRecord {
     input_preview: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     spill_id: Option<String>,
+    #[serde(default, skip_serializing_if = "skip_if_false")]
+    is_error: bool,
 }
 
 fn skip_if_false(v: &bool) -> bool {
@@ -200,6 +202,7 @@ fn message_to_record(msg: &Message) -> MessageRecord {
         tool_name: msg.tool_name.clone(),
         input_preview: msg.input_preview.clone(),
         spill_id: msg.spill_id.clone(),
+        is_error: msg.is_error,
     }
 }
 
@@ -229,6 +232,7 @@ fn record_to_message(rec: MessageRecord) -> Message {
     // is_pinned: `Some(v)` = explicitly persisted, use it.
     // `None` = absent (old session file), keep constructor default
     // (true for System, false for others).
+    msg.is_error = rec.is_error;
     if let Some(pinned) = rec.is_pinned {
         msg.is_pinned = pinned;
     }
