@@ -21,10 +21,10 @@ Zero deps except `thiserror`, `serde` (derive), `serde_yaml`. Defines system voc
 | File | Purpose |
 |---|---|
 | `message.rs` | `Message` (constructors `::system/user/assistant/tool`; pruning fields: `turn`, `is_pinned`, `is_manifest`, `is_collapsed`, `tool_name`, `input_preview`, `spill_id`), `Role`, `ToolCall`, `LlmResponse`, `UsageInfo` |
-| `provider.rs` | `LlmProvider` trait (dyn-compatible), `chat()` + `chat_stream()` (SSE with non-streaming fallback) |
-| `tool.rs` | `Tool` trait, `ToolRegistry` trait, `ToolDefinition`, `ToolResult` |
-| `agent.rs` | `AgentLoop` trait, `AgentInfo`, `AgentResult` |
-| `session.rs` | `Session`, `SessionStore` trait, `SpillEntry`, `SpillIndex`, `ContextSpillStore` trait |
+| `provider.rs` | `LlmProvider` trait (dyn-compatible), `ChatRequest` (with `session_id` for prompt caching), `chat()` + `chat_stream()` (SSE with non-streaming fallback), `model_excluded_from_provider()` (routes `claude-*` → Anthropic) |
+| `tool.rs` | `Tool` trait, `ToolRegistry` trait, `ToolDefinition`, `ToolResult` (with `image_blocks` for base64 images) |
+| `agent.rs` | `AgentLoop` trait, `AgentInfo`, `AgentResult`, `AgentProgressEvent`, `ProgressCallback` |
+| `session.rs` | `Session`, `SessionStore` trait, `SpillEntry`, `SpillIndex`, `ContextSpillStore` trait, `strip_tool_history()` |
 | `skill.rs` | `Skill`, `SkillSource`, `SkillFrontmatter`, `SkillLoader` trait, `split_skill_md()`, `validate_frontmatter()` |
 | `cron.rs` | `CronJob`, `CronJobResult`, `CronSchedule`, `CronStore` trait, `is_job_due()` (saturating arithmetic) |
 | `channel.rs` | `Channel` trait (outbound delivery port) |
@@ -40,12 +40,13 @@ Depends only on `domain/`. Orchestration logic, no I/O.
 
 | File | Purpose |
 |---|---|
-| `agent_loop.rs` | Core LLM-tool loop: send → execute tools → repeat. Traces `tool_name`, `duration_ms`, `is_error` |
-| `context_pruning.rs` | Token estimation, 3-turn tool result collapse with spill-to-disk, sliding window, pinned manifest |
-| `onboard.rs` | Onboarding orchestration via `OnboardStore` |
-| `subagent.rs` | `SubagentContext` — child agent contexts with inherited sandbox |
+| `agent_loop.rs` | Core LLM-tool loop: send → execute tools → repeat. Traces `tool_name`, `duration_ms`, `is_error`. Progress callbacks for REPL spinner |
+| `context_pruning.rs` | Token estimation, sliding window, pinned manifest. Collapse disabled by default (`context_collapse_after_turns = u32::MAX`); spill-to-disk when enabled |
 | `cron_executor.rs` | Runs due cron jobs with timeout, records `last_error`, propagates `deliver_to` |
 | `heartbeat.rs` | Task parsing, scheduling, dispatch through agent |
+| `onboard.rs` | Onboarding orchestration via `OnboardStore` |
+| `reload.rs` | `/reload` use case: strips stale tool history via `strip_tool_history()`, clears spill index, coordinates `SessionStore` + `ContextSpillStore` |
+| `subagent.rs` | `SubagentContext` — child agent contexts with inherited sandbox |
 | `voice.rs` | Transcribes audio via `VoiceTranscriber`, routes text through agent |
 
 ### infrastructure/ — Concrete adapters
@@ -53,13 +54,13 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 
 | Component | Contents |
 |---|---|
-| `config.rs` | `Config` with serde, env overrides, exec isolation settings (nsjail binary/limits/fallback) |
-| `providers/` | `OpenAiProvider`, `AnthropicProvider` (SSE streaming), `FallbackProvider` (cooldown + error classification). URL validation: https required for non-loopback |
-| `tools/` | `ExecTool` (shell, 1MiB cap, native/nsjail modes), `ReadFile/WriteFile/EditFile/AppendFile/ListDir` (async tokio::fs), `SpawnTool`, `CronTool` (name-based lookup via `find_by_name`, duplicate name rejection, zero-interval validation), `MessageTool`, `WebSearchTool` (Brave+DDG), `RecallTool` (spill retrieval), `ToolRegistryImpl` |
+| `config.rs` | `Config` with serde, env overrides, exec isolation settings (nsjail binary/limits/fallback), `TelegramConfig.default_send_to` |
+| `providers/` | `OpenAiProvider`, `AnthropicProvider` (SSE streaming), `CodexProvider` (Responses API, SSE, `prompt_cache_key`, orphan pair repair), `FallbackProvider` (cooldown + error classification + `claude-*` model routing). URL validation: https required for non-loopback |
+| `tools/` | `bash/` (shell, 1MiB cap, per-invocation timeout, `commandPrefix`, native/nsjail modes), `filesystem/` (`ReadTool` with image base64+auto-resize, `WriteTool`, `EditTool` with fuzzy match+CRLF/BOM+LCS diff, `LsTool` with limit+case-insensitive sort), `grep.rs` (rg JSON output, file-cache context), `find.rs` (fd, nested .gitignore, path-segment globs via `--full-path`), `ensure_tool.rs` (auto-download rg/fd from GitHub), `spawn.rs`, `cron_tool.rs`, `message.rs` (with `default_send_to` fallback), `web_search.rs` (Brave+DDG), `recall.rs` (spill retrieval), `path_utils.rs`, `truncate.rs`, `registry.rs` (`ToolRegistryImpl`) |
 | `persistence/` | `FileSessionStore` (round-trips all Message fields), `MemoryStore`, `FileCronStore` (Mutex-serialized read-modify-write, atomic temp-file rename), `FileSkillLoader`, `FileHeartbeatTaskSource`, `FileOnboardStore`, `FileContextSpillStore` (JSONL append-only) |
 | `security/` | `Sandbox` — workspace path validation + command filtering |
-| `auth/` | `CredentialStore` (file-based), `oauth.rs` (browser + device code flows) |
-| `channels/` | `TelegramChannel` — send/receive, user allowlist, configurable `api_base` |
+| `auth/` | `CredentialStore` (file-based), `oauth.rs` (browser + device code flows, Anthropic OAuth) |
+| `channels/` | `TelegramChannel` — send/receive, user allowlist, configurable `api_base`, `default_send_to` |
 | `voice/` | `GroqWhisperClient` — Groq API speech-to-text |
 | `logging.rs` | `redact_api_keys()` — pattern-based secret redaction |
 | `bus.rs` | `MessageBus` — async channel for message passing |
@@ -67,17 +68,19 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 
 ### Tool isolation
 
-**Filesystem tools** (`read`, `write`, `edit`, `append`, `ls`): `Sandbox::validate_path` — canonicalises the path, follows symlinks at every component, and rejects anything outside `canonical_workspace`. Called before any I/O.
+**Filesystem tools** (`read`, `write`, `edit`, `ls`): `Sandbox::validate_path` — canonicalises the path, follows symlinks at every component, and rejects anything outside `canonical_workspace`. Called before any I/O.
 
-**bash** (exec only): nsjail for process isolation via Linux kernel namespaces + rlimits. Workspace RW, toolchain RO, memory/PID/CPU limits via `--rlimit_as`/`--rlimit_nproc`/`--rlimit_cpu` (no cgroup access required). Configure via `tools.exec.isolation`, `tools.exec.nsjail_binary`, `tools.exec.allow_native_fallback`.
+**bash** (exec only): nsjail for process isolation via Linux kernel namespaces + rlimits. Workspace RW, toolchain RO, memory/PID/CPU limits via `--rlimit_as`/`--rlimit_nproc`/`--rlimit_cpu` (no cgroup access required). Defaults: 4 GB AS, 256 PIDs, 28 800s CPU, 14 400s wall (4h), 512 MB tmpfs. Configure via `tools.exec.isolation`, `tools.exec.nsjail_binary`, `tools.exec.allow_native_fallback`.
+
+**Tool binary resolution** (`rg`, `fd`): `ensure_tool` resolves via system PATH → cache dir (`~/.local/share/quecto/tools/`) → auto-download from GitHub releases. Set `QUECTO_OFFLINE=1` to disable downloads.
 
 ### interface/ — CLI + Gateway (composition root)
 Manual arg parsing (no clap). Entry point: `cli::run(args) -> i32`.
 
 | Command | Description |
 |---|---|
-| `quecto` | Interactive REPL (`-s` session, `--system` prompt, `--model` override) |
-| `quecto agent -m <msg>` | Headless one-shot (`-s`, `--system`, `--model`, `--max-iterations`, `--max-time`) |
+| `quecto` | Interactive REPL (`-s` session, `--system` prompt, `--model` override) with live progress spinner |
+| `quecto agent -m <msg>` | Headless one-shot (`-s`, `--no-session`, `--system`, `--model`, `--max-iterations`, `--max-time`) |
 | `quecto onboard` | Creates workspace + default config |
 | `quecto skills list\|remove\|install` | Skill management |
 | `quecto status` | Config summary, provider availability |
@@ -87,9 +90,13 @@ Manual arg parsing (no clap). Entry point: `cli::run(args) -> i32`.
 
 REPL commands: `/help`, `/clear`, `/cron`, `/heartbeat`, `/agent`, `/spawn`, `/exit`. Uses abstracted I/O for testing.
 
+REPL progress: `ProgressRenderer` drives a braille spinner at ~12fps on stderr (TTY only). Shows thinking state, tool name, arguments preview, and execution status. Pure ANSI escape codes — no external crates.
+
 All entry points (REPL, CLI agent, gateway) prepend a datetime preamble to the system prompt via `build_system_prompt()` so the agent always knows the current date/time/timezone — critical for cron scheduling and time-aware tasks.
 
-Gateway: `EventLoopContext` holds runtime state. Telegram polling, bot commands (`/start`, `/help`, `/status`), credential snapshot for efficiency, session trimming via `max_session_messages`, graceful shutdown via `tokio::select!`. Gateway services use a `SystemPromptAgent` wrapper that injects a transient datetime+skills system prompt before each `process()` call and strips it after — never persisted in session history. Applied to inbound message processing, heartbeat ticks, and cron ticks.
+Gateway: `EventLoopContext` holds runtime state. Telegram polling, bot commands (`/start`, `/help`, `/status`, `/reload`), credential snapshot for efficiency, session trimming via `max_session_messages`, graceful shutdown via `tokio::select!`. Gateway services use a `SystemPromptAgent` wrapper that injects a transient datetime+skills system prompt before each `process()` call and strips it after — never persisted in session history. Applied to inbound message processing, heartbeat ticks, and cron ticks.
+
+Headless CLI agent includes `SpawnTool` for background subagent spawning. Subagent timeout: 24 hours.
 
 ## Dependency rule
 - `domain/` imports nothing from project
@@ -164,7 +171,7 @@ QUECTO_TAG=focus cargo test --no-fail-fast --features test-support --test bdd 2>
 Remove the tag before committing.
 
 ## Tech stack
-Rust 2024, Tokio, reqwest+rustls, serde/serde_json/serde_yaml, uuid, chrono, tracing, dirs, thiserror. Dev: cucumber 0.21, futures, tempfile, wiremock 0.6.
+Rust 2024, Tokio, reqwest+rustls, serde/serde_json/serde_yaml, uuid, chrono, tracing, dirs, thiserror, similar, base64, sha2, image, flate2, tar. Dev: cucumber 0.21, futures, tempfile, wiremock 0.6.
 
 **ALWAYS FOLLOW BDD/TDD RED, GREEN, REFACTOR PROCESS WHEN MAKING CHANGES**
 **ALWAYS USE FULL DEVELOPMENT WORKFLOW**
