@@ -148,6 +148,10 @@ impl CodexProvider {
             body["instructions"] = serde_json::Value::String(inst);
         }
 
+        if let Some(ref session_id) = request.session_id {
+            body["prompt_cache_key"] = serde_json::Value::String(session_id.clone());
+        }
+
         let tools = Self::build_tools(request.tools);
         if !tools.is_empty() {
             body["tools"] = serde_json::Value::Array(tools);
@@ -438,6 +442,7 @@ mod tests {
             model: "gpt-5.1-codex",
             max_tokens: 4096,
             temperature: 0.7,
+            session_id: None,
         };
         let body = CodexProvider::build_request_body(&request);
         assert_eq!(body["model"], "gpt-5.1-codex");
@@ -446,6 +451,47 @@ mod tests {
         assert_eq!(body["stream"], true);
         assert_eq!(body["input"].as_array().unwrap().len(), 1);
         assert!(body.get("tools").is_none());
+    }
+
+    // --- prompt_cache_key ---
+
+    #[test]
+    fn test_build_request_body_includes_prompt_cache_key_when_session_id_set() {
+        let messages = vec![Message::user("Hi")];
+        let request = ChatRequest {
+            messages: &messages,
+            tools: &[],
+            model: "gpt-5.3-codex",
+            max_tokens: 4096,
+            temperature: 0.7,
+            session_id: Some("cli:default".to_string()),
+        };
+        let body = CodexProvider::build_request_body(&request);
+        assert_eq!(
+            body["prompt_cache_key"].as_str(),
+            Some("cli:default"),
+            "expected prompt_cache_key to be 'cli:default', got: {:?}",
+            body.get("prompt_cache_key")
+        );
+    }
+
+    #[test]
+    fn test_build_request_body_omits_prompt_cache_key_when_no_session_id() {
+        let messages = vec![Message::user("Hi")];
+        let request = ChatRequest {
+            messages: &messages,
+            tools: &[],
+            model: "gpt-5.3-codex",
+            max_tokens: 4096,
+            temperature: 0.7,
+            session_id: None,
+        };
+        let body = CodexProvider::build_request_body(&request);
+        assert!(
+            body.get("prompt_cache_key").is_none(),
+            "expected prompt_cache_key to be absent, got: {:?}",
+            body.get("prompt_cache_key")
+        );
     }
 
     #[test]
@@ -458,6 +504,7 @@ mod tests {
             model: "gpt-5.3-codex",
             max_tokens: 4096,
             temperature: 0.7,
+            session_id: None,
         };
         let body = CodexProvider::build_request_body(&request);
         assert_eq!(body["tool_choice"], "auto");
@@ -618,6 +665,7 @@ data: [DONE]
                 model: "gpt-5.1-codex",
                 max_tokens: 1024,
                 temperature: 0.7,
+                session_id: None,
             })
             .await;
         assert!(result.is_err());
@@ -649,6 +697,7 @@ data: [DONE]
                 model: "gpt-5.1-codex",
                 max_tokens: 1024,
                 temperature: 0.7,
+                session_id: None,
             })
             .await;
         let resp = result.unwrap();

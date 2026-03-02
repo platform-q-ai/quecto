@@ -147,6 +147,7 @@ impl FallbackProvider {
                 model: request.model,
                 max_tokens: request.max_tokens,
                 temperature: request.temperature,
+                session_id: request.session_id.clone(),
             };
             match entry.provider.chat(req).await {
                 Ok(response) => {
@@ -238,6 +239,7 @@ impl LlmProvider for FallbackProvider {
                 model: &model,
                 max_tokens: request.max_tokens,
                 temperature: request.temperature,
+                session_id: request.session_id.clone(),
             };
             self.try_chat(&req).await
         })
@@ -307,6 +309,7 @@ mod tests {
             model: "gpt-4",
             max_tokens: 1024,
             temperature: 0.7,
+            session_id: None,
         }
     }
 
@@ -538,6 +541,7 @@ mod tests {
             model,
             max_tokens: 1024,
             temperature: 0.7,
+            session_id: None,
         }
     }
 

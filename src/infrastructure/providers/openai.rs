@@ -332,6 +332,7 @@ impl LlmProvider for OpenAiProvider {
                 model: &model,
                 max_tokens,
                 temperature,
+                session_id: request.session_id.clone(),
             };
             self.stream_chat(req).await
         })
@@ -389,6 +390,7 @@ mod tests {
             model: "gpt-4",
             max_tokens: 1024,
             temperature: 0.7,
+            session_id: None,
         };
         let result = provider.chat(req).await;
         assert!(result.is_ok(), "chat should succeed: {:?}", result);
@@ -445,6 +447,7 @@ mod tests {
             model: "gpt-4",
             max_tokens: 1024,
             temperature: 0.7,
+            session_id: None,
         };
         let result = provider.chat(req).await;
         assert!(result.is_ok());
@@ -472,6 +475,7 @@ mod tests {
             model: "gpt-4",
             max_tokens: 1024,
             temperature: 0.7,
+            session_id: None,
         };
         let result = provider.chat(req).await;
         assert!(result.is_err());
@@ -538,6 +542,7 @@ data: [DONE]\n\n";
             model: "gpt-4",
             max_tokens: 1024,
             temperature: 0.7,
+            session_id: None,
         };
         let result = provider.chat_stream(req).await;
         assert!(result.is_ok(), "stream should succeed: {:?}", result);
@@ -576,6 +581,7 @@ data: [DONE]\n\n";
             model: "gpt-4",
             max_tokens: 1024,
             temperature: 0.7,
+            session_id: None,
         };
         let result = provider.chat(req).await;
         assert!(result.is_ok());

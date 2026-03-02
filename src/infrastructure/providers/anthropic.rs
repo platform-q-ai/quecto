@@ -386,6 +386,7 @@ impl LlmProvider for AnthropicProvider {
                 model: &model,
                 max_tokens,
                 temperature,
+                session_id: request.session_id.clone(),
             };
             self.stream_chat(req).await
         })
@@ -432,6 +433,7 @@ mod tests {
             model: "claude-sonnet-4-20250514",
             max_tokens: 1024,
             temperature: 0.7,
+            session_id: None,
         };
         let result = provider.chat(req).await;
         assert!(result.is_ok(), "chat should succeed: {:?}", result);
@@ -479,6 +481,7 @@ mod tests {
             model: "claude-sonnet-4-20250514",
             max_tokens: 1024,
             temperature: 0.7,
+            session_id: None,
         };
         let result = provider.chat(req).await;
         assert!(result.is_ok());
@@ -506,6 +509,7 @@ mod tests {
             model: "claude-sonnet-4-20250514",
             max_tokens: 1024,
             temperature: 0.7,
+            session_id: None,
         };
         let result = provider.chat(req).await;
         assert!(result.is_err());
@@ -584,6 +588,7 @@ data: {}\n\n";
             model: "claude-sonnet-4-20250514",
             max_tokens: 1024,
             temperature: 0.7,
+            session_id: None,
         };
         let result = provider.chat_stream(req).await;
         assert!(result.is_ok(), "stream should succeed: {:?}", result);
@@ -617,6 +622,7 @@ data: {}\n\n";
             model: "claude-sonnet-4-20250514",
             max_tokens: 1024,
             temperature: 0.7,
+            session_id: None,
         };
         let result = provider.chat(req).await;
         assert!(result.is_ok());

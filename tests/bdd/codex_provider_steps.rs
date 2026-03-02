@@ -21,6 +21,49 @@ fn given_codex_request_body_with_tools(world: &mut QuectoWorld, model: String) {
         model: &model,
         max_tokens: 4096,
         temperature: 0.7,
+        session_id: None,
+    };
+    let body = quecto::infrastructure::providers::codex::CodexProvider::build_request_body_public(
+        &request,
+    );
+    world
+        .env_overrides
+        .insert("_codex_body".to_string(), body.to_string());
+}
+
+#[given(expr = "a Codex request body for model {string} with session ID {string}")]
+fn given_codex_request_body_with_session_id(
+    world: &mut QuectoWorld,
+    model: String,
+    session_id: String,
+) {
+    let messages = vec![Message::user("Hi")];
+    let request = quecto::domain::provider::ChatRequest {
+        messages: &messages,
+        tools: &[],
+        model: &model,
+        max_tokens: 4096,
+        temperature: 0.7,
+        session_id: Some(session_id),
+    };
+    let body = quecto::infrastructure::providers::codex::CodexProvider::build_request_body_public(
+        &request,
+    );
+    world
+        .env_overrides
+        .insert("_codex_body".to_string(), body.to_string());
+}
+
+#[given(expr = "a Codex request body for model {string} without a session ID")]
+fn given_codex_request_body_without_session_id(world: &mut QuectoWorld, model: String) {
+    let messages = vec![Message::user("Hi")];
+    let request = quecto::domain::provider::ChatRequest {
+        messages: &messages,
+        tools: &[],
+        model: &model,
+        max_tokens: 4096,
+        temperature: 0.7,
+        session_id: None,
     };
     let body = quecto::infrastructure::providers::codex::CodexProvider::build_request_body_public(
         &request,
