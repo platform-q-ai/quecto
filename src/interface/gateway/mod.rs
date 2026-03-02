@@ -101,6 +101,7 @@ impl EventLoopContext {
             timeout_minutes: self.config.tools.cron.exec_timeout_minutes,
             skill_prompt: self.skill_prompt.clone(),
             outbound_tx: self.outbound_tx.clone(),
+            default_send_to: self.config.channels.telegram.default_send_to.clone(),
         }));
         let max_session_messages = self
             .config
@@ -192,6 +193,18 @@ impl Gateway {
                 provider = provider_name.as_str(),
                 "credential expired — run `quecto auth login` to re-authenticate"
             );
+        }
+
+        // Validate default_send_to at startup: must be "channel:id" format if set.
+        if let Some(ref dst) = self.config.channels.telegram.default_send_to {
+            if !dst.contains(':') || dst.ends_with(':') {
+                tracing::warn!(
+                    default_send_to = dst.as_str(),
+                    "channels.telegram.default_send_to does not match expected \
+                     'channel:id' format (e.g. 'telegram:123456789'). \
+                     Delivery may fail silently at runtime."
+                );
+            }
         }
 
         let provider_impl = Arc::new(self.build_fallback_provider(&creds)?);
@@ -347,7 +360,11 @@ impl Gateway {
         let bus = MessageBus::new(256);
         let outbound_tx = bus.outbound_sender();
 
-        registry.register(Arc::new(MessageTool::new(outbound_tx, None)));
+        // Wire default_send_to so cron/heartbeat agent tool calls can deliver
+        // without an explicit target — closes the gap where deliver_cron_result
+        // handles post-processing delivery but in-loop MessageTool calls did not.
+        let default_send_to = self.config.channels.telegram.default_send_to.clone();
+        registry.register(Arc::new(MessageTool::new(outbound_tx, default_send_to)));
         registry.register(Arc::new(WebSearchTool::new(self.brave_api_key())));
         registry.register(Arc::new(CronTool::new(cron_store)));
         registry.register(Arc::new(SpawnTool::with_base_dir(

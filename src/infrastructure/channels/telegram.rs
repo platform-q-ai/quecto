@@ -425,6 +425,7 @@ mod tests {
             token: token.to_string(),
             api_base: String::new(),
             allow_from: allow_from.into_iter().map(|s| s.to_string()).collect(),
+            default_send_to: None,
         }
     }
 

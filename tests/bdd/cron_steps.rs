@@ -618,6 +618,7 @@ fn when_cron_tick_fires_and_delivers(world: &mut QuectoWorld) {
         .as_ref()
         .expect("outbound_tx not set")
         .clone();
+    let default_send_to = world.cron_default_send_to.clone();
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let results = rt
@@ -628,12 +629,14 @@ fn when_cron_tick_fires_and_delivers(world: &mut QuectoWorld) {
         ))
         .unwrap();
 
-    // Simulate gateway delivery logic (mirrors run_cron_tick)
+    // Simulate gateway delivery logic (mirrors deliver_cron_result in services.rs)
+    // Uses default_send_to as fallback when job has no deliver_to — Issue #193.
     for result in &results {
         if result.ok {
-            if let Some(ref target) = result.deliver_to {
+            let target = result.deliver_to.as_deref().or(default_send_to.as_deref());
+            if let Some(target) = target {
                 let msg = OutboundMessage {
-                    target: target.clone(),
+                    target: target.to_string(),
                     text: result.response.clone(),
                 };
                 rt.block_on(outbound_tx.send(msg))
@@ -690,4 +693,40 @@ fn then_outbound_no_messages(world: &mut QuectoWorld) {
         msg.is_err(),
         "expected no outbound messages, but received one"
     );
+}
+
+// ===========================================================================
+// Issue #193: default_send_to fallback for cron jobs
+// ===========================================================================
+
+#[given(expr = "the gateway is configured with default_send_to {string}")]
+fn given_gateway_default_send_to(world: &mut QuectoWorld, target: String) {
+    world.cron_default_send_to = Some(target);
+}
+
+#[given(
+    expr = "a cron job {string} with interval {int} seconds and message {string} and no deliver_to"
+)]
+fn given_cron_job_no_deliver_to(
+    world: &mut QuectoWorld,
+    name: String,
+    seconds: u64,
+    message: String,
+) {
+    let store = world
+        .gateway_cron_store
+        .as_ref()
+        .expect("gateway cron store not set");
+    let job = CronJob {
+        id: name.to_lowercase().replace(' ', "-"),
+        name,
+        message,
+        schedule: CronSchedule::Interval { seconds },
+        enabled: true,
+        deliver_to: None,
+        last_error: None,
+        last_run_at: 0,
+        run_once: false,
+    };
+    store.add(job).unwrap();
 }

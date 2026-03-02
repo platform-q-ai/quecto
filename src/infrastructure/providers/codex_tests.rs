@@ -389,3 +389,145 @@ async fn test_codex_provider_success() {
     let resp = result.unwrap();
     assert_eq!(resp.content.unwrap(), "Hi!");
 }
+
+// ===================================================================
+// Issue #192: Orphaned function_call/function_call_output repair
+// ===================================================================
+
+#[test]
+fn test_build_input_orphaned_function_call_removed() {
+    // Assistant sends function_call but no matching tool result exists
+    let mut assistant_msg = Message::assistant("", vec![]);
+    assistant_msg.tool_calls = vec![ToolCall {
+        id: "call_orphan".to_string(),
+        name: "bash".to_string(),
+        arguments: "{}".to_string(),
+    }];
+    let messages = vec![Message::user("go"), assistant_msg];
+    let (_instructions, input) = CodexProvider::build_input(&messages);
+    // Orphaned function_call must be removed
+    let orphan_present = input
+        .iter()
+        .any(|item| item["type"] == "function_call" && item["call_id"] == "call_orphan");
+    assert!(
+        !orphan_present,
+        "orphaned function_call should be removed from input, got: {:?}",
+        input
+    );
+}
+
+#[test]
+fn test_build_input_orphaned_function_call_output_removed() {
+    // Tool result exists but no matching function_call assistant message
+    let tool_msg = Message::tool("call_orphan", "some result");
+    let messages = vec![Message::user("go"), tool_msg];
+    let (_instructions, input) = CodexProvider::build_input(&messages);
+    // Orphaned function_call_output must be removed
+    let orphan_present = input
+        .iter()
+        .any(|item| item["type"] == "function_call_output" && item["call_id"] == "call_orphan");
+    assert!(
+        !orphan_present,
+        "orphaned function_call_output should be removed from input, got: {:?}",
+        input
+    );
+}
+
+#[test]
+fn test_build_input_valid_matched_pair_preserved() {
+    // Both function_call and function_call_output present — should be kept
+    let mut assistant_msg = Message::assistant("", vec![]);
+    assistant_msg.tool_calls = vec![ToolCall {
+        id: "call_valid".to_string(),
+        name: "read".to_string(),
+        arguments: r#"{"path":"foo.rs"}"#.to_string(),
+    }];
+    let tool_msg = Message::tool("call_valid", "file content");
+    let messages = vec![Message::user("read it"), assistant_msg, tool_msg];
+    let (_instructions, input) = CodexProvider::build_input(&messages);
+
+    let has_call = input
+        .iter()
+        .any(|item| item["type"] == "function_call" && item["call_id"] == "call_valid");
+    let has_output = input
+        .iter()
+        .any(|item| item["type"] == "function_call_output" && item["call_id"] == "call_valid");
+    assert!(has_call, "matched function_call should be preserved");
+    assert!(
+        has_output,
+        "matched function_call_output should be preserved"
+    );
+}
+
+#[test]
+fn test_build_input_mixed_valid_and_orphaned() {
+    // One valid pair + one orphaned function_call
+    let mut good_assistant = Message::assistant("", vec![]);
+    good_assistant.tool_calls = vec![ToolCall {
+        id: "call_good".to_string(),
+        name: "read".to_string(),
+        arguments: "{}".to_string(),
+    }];
+    let good_tool = Message::tool("call_good", "result");
+
+    let mut bad_assistant = Message::assistant("", vec![]);
+    bad_assistant.tool_calls = vec![ToolCall {
+        id: "call_bad".to_string(),
+        name: "bash".to_string(),
+        arguments: "{}".to_string(),
+    }];
+    // No matching tool result for call_bad
+
+    let messages = vec![
+        Message::user("start"),
+        good_assistant,
+        good_tool,
+        bad_assistant,
+    ];
+    let (_instructions, input) = CodexProvider::build_input(&messages);
+
+    let has_good_call = input
+        .iter()
+        .any(|item| item["type"] == "function_call" && item["call_id"] == "call_good");
+    let has_good_output = input
+        .iter()
+        .any(|item| item["type"] == "function_call_output" && item["call_id"] == "call_good");
+    let has_bad = input
+        .iter()
+        .any(|item| item.get("call_id").and_then(|v| v.as_str()) == Some("call_bad"));
+
+    assert!(has_good_call, "matched call should be kept");
+    assert!(has_good_output, "matched output should be kept");
+    assert!(!has_bad, "orphaned call_bad should be removed");
+}
+
+#[test]
+fn test_build_input_all_tool_calls_orphaned_fallback_to_text() {
+    // When ALL tool calls on an assistant message are orphaned, the assistant's
+    // narrative text content must not be silently dropped.
+    let mut assistant_msg = Message::assistant("I was going to call a tool.", vec![]);
+    assistant_msg.tool_calls = vec![ToolCall {
+        id: "call_orphan".to_string(),
+        name: "bash".to_string(),
+        arguments: "{}".to_string(),
+    }];
+    // Deliberately no matching tool result message.
+
+    let messages = vec![Message::user("Do something"), assistant_msg];
+    let (_instructions, input) = CodexProvider::build_input(&messages);
+
+    // The orphaned function_call must be absent.
+    let has_orphan = input
+        .iter()
+        .any(|item| item["type"] == "function_call" && item["call_id"] == "call_orphan");
+    assert!(!has_orphan, "orphaned function_call should be removed");
+
+    // The assistant text content must be preserved.
+    let has_text = input.iter().any(|item| {
+        item["role"] == "assistant" && item["content"] == "I was going to call a tool."
+    });
+    assert!(
+        has_text,
+        "assistant text content must not be silently dropped"
+    );
+}

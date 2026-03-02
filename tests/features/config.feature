@@ -49,6 +49,39 @@ Feature: Configuration
     Then the workspace path should start with "/"
     And the workspace path should end with ".quecto/workspace"
 
+  # --- Issue #193: default_send_to in TelegramConfig ---
+
+  Scenario: TelegramConfig default_send_to is absent when not set
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {
+        "channels": {
+          "telegram": {
+            "enabled": true,
+            "token": "bot-token"
+          }
+        }
+      }
+      """
+    When I load the config
+    Then the telegram default_send_to should be absent
+
+  Scenario: TelegramConfig default_send_to is loaded from config
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {
+        "channels": {
+          "telegram": {
+            "enabled": true,
+            "token": "bot-token",
+            "default_send_to": "telegram:123456789"
+          }
+        }
+      }
+      """
+    When I load the config
+    Then the telegram default_send_to should be "telegram:123456789"
+
   @pr3-performance
   Scenario: Max session messages default and override are loaded
     Given a config file at "~/.quecto/config.json" with content:

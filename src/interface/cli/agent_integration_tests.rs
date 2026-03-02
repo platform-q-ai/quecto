@@ -350,6 +350,7 @@ fn test_run_agent_session_ephemeral_no_save() {
     let agent = make_test_agent(tmp.path());
     let flags = AgentFlags {
         session_name: Some("-".to_string()),
+        no_session: false,
         message: Some("hello ephemeral".to_string()),
         system_prompt: None,
         model_override: None,
@@ -381,6 +382,7 @@ fn test_run_agent_session_default_session_key() {
     let agent = make_test_agent(tmp.path());
     let flags = AgentFlags {
         session_name: None,
+        no_session: false,
         message: Some("hello default".to_string()),
         system_prompt: None,
         model_override: None,
@@ -404,6 +406,7 @@ fn test_run_agent_session_with_system_prompt_injection() {
     let agent = make_test_agent(tmp.path());
     let flags = AgentFlags {
         session_name: Some("-".to_string()),
+        no_session: false,
         message: Some("hello".to_string()),
         system_prompt: Some("You are a test bot".to_string()),
         model_override: None,
@@ -427,6 +430,7 @@ fn test_run_agent_session_with_deadline() {
     let agent = make_test_agent(tmp.path());
     let flags = AgentFlags {
         session_name: Some("-".to_string()),
+        no_session: false,
         message: Some("hello deadline".to_string()),
         system_prompt: None,
         model_override: None,
@@ -520,6 +524,7 @@ fn test_run_agent_session_loads_existing_session() {
     let agent = make_test_agent(tmp.path());
     let flags = AgentFlags {
         session_name: Some("existing".to_string()),
+        no_session: false,
         message: Some("follow-up".to_string()),
         system_prompt: None,
         model_override: None,
@@ -554,6 +559,7 @@ fn test_run_agent_session_loads_existing_with_system_prompt() {
     let agent = make_test_agent(tmp.path());
     let flags = AgentFlags {
         session_name: Some("sysprompt".to_string()),
+        no_session: false,
         message: Some("new message".to_string()),
         system_prompt: Some("New system instructions".to_string()),
         model_override: None,
@@ -587,6 +593,7 @@ fn test_build_agent_from_config_with_workspace_path() {
     std::fs::write(tmp.path().join("config.json"), config_json).unwrap();
     let flags = AgentFlags {
         session_name: None,
+        no_session: false,
         message: Some("hi".into()),
         system_prompt: None,
         model_override: None,
@@ -608,6 +615,7 @@ fn test_build_agent_from_config_with_max_iterations() {
     .unwrap();
     let flags = AgentFlags {
         session_name: None,
+        no_session: false,
         message: Some("hi".into()),
         system_prompt: None,
         model_override: None,

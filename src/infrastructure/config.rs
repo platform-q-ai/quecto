@@ -112,6 +112,20 @@ pub struct TelegramConfig {
     pub api_base: String,
     #[serde(default)]
     pub allow_from: Vec<String>,
+    /// Default outbound address for `MessageTool` and cron job delivery
+    /// when no explicit `target`/`deliver_to` is specified.
+    ///
+    /// Format: `"telegram:<chat_id>"` (e.g. `"telegram:123456789"`).
+    ///
+    /// **Single-user deployments only.** Setting this in a multi-user gateway
+    /// could leak responses from one user's session to another if the LLM omits
+    /// the `target` argument in a `MessageTool` call. The `allow_from` filter
+    /// still gates actual delivery.
+    ///
+    /// TODO: consider hoisting to `ChannelsConfig.default_send_to` once a second
+    /// channel type is added, so the fallback stays channel-agnostic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_send_to: Option<String>,
 }
 
 impl std::fmt::Debug for TelegramConfig {
@@ -121,6 +135,7 @@ impl std::fmt::Debug for TelegramConfig {
             .field("token", &"[REDACTED]")
             .field("api_base", &self.api_base)
             .field("allow_from", &self.allow_from)
+            .field("default_send_to", &self.default_send_to)
             .finish()
     }
 }
@@ -719,3 +734,7 @@ mod tests {
         assert_eq!(config.agents.defaults.max_session_messages, 12);
     }
 }
+
+#[cfg(test)]
+#[path = "config_tests.rs"]
+mod extended_tests;

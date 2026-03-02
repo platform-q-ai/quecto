@@ -23,6 +23,9 @@ use crate::infrastructure::tools::spawn::SpawnTool;
 pub(crate) struct AgentFlags {
     /// Session name for persistence. `None` = "default", `Some("-")` = ephemeral.
     pub(crate) session_name: Option<String>,
+    /// When true, run in ephemeral mode: no session is loaded or saved.
+    /// Mutually exclusive with `session_name`.
+    pub(crate) no_session: bool,
     pub(crate) message: Option<String>,
     pub(crate) system_prompt: Option<String>,
     pub(crate) model_override: Option<String>,
@@ -46,8 +49,46 @@ pub(crate) enum DeadlineResult {
     TimedOut,
 }
 
+/// Return `args[i+1]` or push `err_msg` to stderr and return `None`.
+fn next_arg<'a>(
+    args: &'a [String],
+    i: usize,
+    err_msg: &str,
+    stderr: &mut String,
+) -> Option<&'a str> {
+    if i + 1 < args.len() {
+        Some(args[i + 1].as_str())
+    } else {
+        stderr.push_str(&format!("agent: {err_msg}\n"));
+        None
+    }
+}
+
+/// Parse a positive non-zero u32 for `--max-iterations`.
+fn parse_pos_u32(val: &str, flag: &str, stderr: &mut String) -> Option<u32> {
+    match val.parse::<u32>() {
+        Ok(n) if n > 0 => Some(n),
+        _ => {
+            stderr.push_str(&format!("agent: {flag} requires a positive integer\n"));
+            None
+        }
+    }
+}
+
+/// Parse a positive non-zero u64 for `--max-time`.
+fn parse_pos_u64(val: &str, flag: &str, stderr: &mut String) -> Option<u64> {
+    match val.parse::<u64>() {
+        Ok(n) if n > 0 => Some(n),
+        _ => {
+            stderr.push_str(&format!("agent: {flag} requires a positive integer\n"));
+            None
+        }
+    }
+}
+
 pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<AgentFlags> {
     let mut session_name: Option<String> = None;
+    let mut no_session = false;
     let mut message: Option<String> = None;
     let mut system_prompt: Option<String> = None;
     let mut model_override: Option<String> = None;
@@ -57,79 +98,45 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
 
     while i < args.len() {
         match args[i].as_str() {
+            "--no-session" => {
+                no_session = true;
+                i += 1;
+            }
             "-s" | "--session" => {
-                if i + 1 < args.len() {
-                    let name = &args[i + 1];
-                    if !super::is_valid_session_name(name) {
-                        stderr.push_str(
-                            "agent: session name must contain only alphanumeric, '-', or '_'\n",
-                        );
-                        return None;
-                    }
-                    session_name = Some(name.clone());
-                    i += 2;
-                } else {
-                    stderr.push_str("agent: -s requires a session name\n");
+                let name = next_arg(args, i, "-s requires a session name", stderr)?;
+                if !super::is_valid_session_name(name) {
+                    stderr.push_str(
+                        "agent: session name must contain only alphanumeric, '-', or '_'\n",
+                    );
                     return None;
                 }
+                session_name = Some(name.to_string());
+                i += 2;
             }
             "-m" | "--message" => {
-                if i + 1 < args.len() {
-                    message = Some(args[i + 1].clone());
-                    i += 2;
-                } else {
-                    stderr.push_str("agent: -m requires a message\n");
-                    return None;
-                }
+                let val = next_arg(args, i, "-m requires a message", stderr)?;
+                message = Some(val.to_string());
+                i += 2;
             }
             "--system" => {
-                if i + 1 < args.len() {
-                    system_prompt = Some(args[i + 1].clone());
-                    i += 2;
-                } else {
-                    stderr.push_str("agent: --system requires a value\n");
-                    return None;
-                }
+                let val = next_arg(args, i, "--system requires a value", stderr)?;
+                system_prompt = Some(val.to_string());
+                i += 2;
             }
             "--model" => {
-                if i + 1 < args.len() {
-                    model_override = Some(args[i + 1].clone());
-                    i += 2;
-                } else {
-                    stderr.push_str("agent: --model requires a value\n");
-                    return None;
-                }
+                let val = next_arg(args, i, "--model requires a value", stderr)?;
+                model_override = Some(val.to_string());
+                i += 2;
             }
             "--max-iterations" => {
-                if i + 1 < args.len() {
-                    match args[i + 1].parse::<u32>() {
-                        Ok(0) | Err(_) => {
-                            stderr
-                                .push_str("agent: --max-iterations requires a positive integer\n");
-                            return None;
-                        }
-                        Ok(n) => max_iterations = Some(n),
-                    }
-                    i += 2;
-                } else {
-                    stderr.push_str("agent: --max-iterations requires a value\n");
-                    return None;
-                }
+                let val = next_arg(args, i, "--max-iterations requires a value", stderr)?;
+                max_iterations = Some(parse_pos_u32(val, "--max-iterations", stderr)?);
+                i += 2;
             }
             "--max-time" => {
-                if i + 1 < args.len() {
-                    match args[i + 1].parse::<u64>() {
-                        Ok(0) | Err(_) => {
-                            stderr.push_str("agent: --max-time requires a positive integer\n");
-                            return None;
-                        }
-                        Ok(n) => max_time = Some(n),
-                    }
-                    i += 2;
-                } else {
-                    stderr.push_str("agent: --max-time requires a value\n");
-                    return None;
-                }
+                let val = next_arg(args, i, "--max-time requires a value", stderr)?;
+                max_time = Some(parse_pos_u64(val, "--max-time", stderr)?);
+                i += 2;
             }
             _ => {
                 i += 1;
@@ -137,8 +144,14 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         }
     }
 
+    if no_session && session_name.is_some() {
+        stderr.push_str("agent: --no-session and -s are mutually exclusive\n");
+        return None;
+    }
+
     Some(AgentFlags {
         session_name,
+        no_session,
         message,
         system_prompt,
         model_override,
@@ -228,7 +241,7 @@ pub(crate) fn build_agent_from_config(
     let registry =
         ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
     let mut registry = registry;
-    let session_key = if flags.session_name.as_deref() == Some("-") {
+    let session_key = if flags.no_session || flags.session_name.as_deref() == Some("-") {
         String::new()
     } else {
         let name = flags.session_name.as_deref().unwrap_or("default");
@@ -272,7 +285,7 @@ pub(crate) fn run_agent_session(
     flags: &AgentFlags,
     out: &mut AgentOutput<'_>,
 ) -> i32 {
-    let ephemeral = flags.session_name.as_deref() == Some("-");
+    let ephemeral = flags.no_session || flags.session_name.as_deref() == Some("-");
     let session_key = if ephemeral {
         String::new()
     } else {
@@ -470,3 +483,7 @@ mod tests;
 #[cfg(test)]
 #[path = "agent_integration_tests.rs"]
 mod integration_tests;
+
+#[cfg(test)]
+#[path = "agent_no_session_tests.rs"]
+mod no_session_tests;

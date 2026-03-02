@@ -405,6 +405,12 @@ fn help_text(out: &mut String) {
     out.push_str("\nCommands:\n");
     out.push_str("  onboard     Initialize configuration and workspace\n");
     out.push_str("  agent       Run a one-shot agent session (-m required)\n");
+    out.push_str("              Options: -s <name>  Named session (default: \"default\")\n");
+    out.push_str("                       --no-session  Ephemeral mode — nothing saved or loaded\n");
+    out.push_str("                       --model <m>   Override model\n");
+    out.push_str("                       --system <p>  System prompt\n");
+    out.push_str("                       --max-iterations <n>  Max tool iterations\n");
+    out.push_str("                       --max-time <s>  Wall-clock timeout in seconds\n");
     out.push_str("  auth        Manage authentication (login, logout, status)\n");
     out.push_str("  gateway     Start the Telegram gateway\n");
     out.push_str("  status      Show status\n");

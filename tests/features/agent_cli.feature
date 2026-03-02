@@ -65,3 +65,26 @@ Feature: Agent CLI — Headless One-Shot Mode
     When I run quecto agent -m "hello"
     Then the exit code should be 1
     And stderr should contain "Error"
+
+  # --- Issue #191: --no-session flag ---
+
+  Scenario: --no-session flag is accepted and runs ephemerally
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "ephemeral reply"
+    When I run quecto agent --no-session -m "hello"
+    Then the exit code should be 0
+    And stdout should contain "ephemeral reply"
+
+  Scenario: --no-session and -s are mutually exclusive
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I run quecto agent --no-session -s mysession -m "hello"
+    Then the exit code should be 1
+    And stderr should contain "--no-session and -s are mutually exclusive"
+
+  Scenario: --no-session flag is documented in help
+    Given a temp base directory
+    When I run quecto help
+    Then the exit code should be 0
+    And stdout should contain "--no-session"

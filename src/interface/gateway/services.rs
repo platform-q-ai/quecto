@@ -76,6 +76,9 @@ pub(super) struct CronTickContext {
     pub(super) timeout_minutes: u32,
     pub(super) skill_prompt: String,
     pub(super) outbound_tx: mpsc::Sender<OutboundMessage>,
+    /// Fallback delivery target when a cron job has no `deliver_to` set.
+    /// Comes from `config.channels.telegram.default_send_to`.
+    pub(super) default_send_to: Option<String>,
 }
 
 pub(super) struct InboundProcessorContext {
@@ -110,7 +113,8 @@ impl InboundAgentBuilder {
         let mut registry =
             ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
 
-        registry.register(Arc::new(MessageTool::new(outbound_tx, None)));
+        let default_send_to = self.config.channels.telegram.default_send_to.clone();
+        registry.register(Arc::new(MessageTool::new(outbound_tx, default_send_to)));
         let brave = &self.config.tools.web.brave;
         let brave_api_key = if brave.enabled && !brave.api_key.is_empty() {
             Some(brave.api_key.clone())
@@ -356,6 +360,7 @@ impl Gateway {
         let store = ctx.store;
         let timeout_minutes = ctx.timeout_minutes;
         let outbound_tx = ctx.outbound_tx;
+        let default_send_to = ctx.default_send_to;
         let check_interval = std::time::Duration::from_secs(2);
         let timeout = std::time::Duration::from_secs(u64::from(timeout_minutes) * 60);
         tracing::info!(
@@ -375,7 +380,7 @@ impl Gateway {
                             ok = result.ok,
                             "cron job executed"
                         );
-                        deliver_cron_result(result, &outbound_tx).await;
+                        deliver_cron_result(result, &outbound_tx, default_send_to.as_deref()).await;
                     }
                 }
                 Err(e) => {
@@ -396,25 +401,27 @@ pub fn session_key_for_source(source: &str) -> String {
     source.to_string()
 }
 
-/// Deliver a successful cron result to its configured outbound target.
+/// Deliver a successful cron result: job `deliver_to` → config `default_send_to` → drop.
 async fn deliver_cron_result(
     result: &crate::domain::cron::CronJobResult,
     outbound_tx: &mpsc::Sender<OutboundMessage>,
+    default_send_to: Option<&str>,
 ) {
     if !result.ok {
         return;
     }
-    let Some(ref target) = result.deliver_to else {
+    let target = result.deliver_to.as_deref().or(default_send_to);
+    let Some(target) = target else {
         return;
     };
     let msg = OutboundMessage {
-        target: target.clone(),
+        target: target.to_string(),
         text: result.response.clone(),
     };
     if let Err(e) = outbound_tx.send(msg).await {
         tracing::error!(
             job_id = result.job_id.as_str(),
-            target = target.as_str(),
+            target = target,
             error = %e,
             "failed to deliver cron result"
         );
