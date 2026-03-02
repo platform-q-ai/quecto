@@ -57,8 +57,9 @@ Feature: Find Tool
     And the find result should not be an error
 
   @done
-  Scenario: Nested .gitignore in subdirectory is respected
-    Given a find workspace file "src/main.rs"
+  Scenario: Nested .gitignore in subdirectory is respected in git repo
+    Given a find tool git workspace
+    And a find workspace file "src/main.rs"
     And a find workspace file "src/generated/auto.rs"
     And a find workspace gitignore "src/.gitignore" ignoring "generated/"
     When I find files matching "*.rs"
@@ -118,4 +119,23 @@ Feature: Find Tool
     And a find workspace file "deep/nested/.gitignore" with content "*\n"
     When I find files matching "*.md" in path "."
     Then the find result should contain "readme.md"
+    And the find result should not be an error
+
+  @done
+  Scenario: Nested gitignore with specific patterns does not suppress files globally
+    Given a find workspace file "root.json"
+    And a find workspace file "project/data.json"
+    And a find workspace file "vendor/.gitignore" with content "*.json\n"
+    When I find files matching "*.json"
+    Then the find result should contain "root.json"
+    And the find result should contain "data.json"
+    And the find result should not be an error
+
+  @done
+  Scenario: Path-segment glob not suppressed by unrelated nested gitignore
+    Given a find workspace file "app/src/config.json"
+    And a find workspace file "app/src/main.rs"
+    And a find workspace file "other/.gitignore" with content "*.json\n"
+    When I find files matching "app/src/*.json" in path "."
+    Then the find result should contain "config.json"
     And the find result should not be an error

@@ -95,10 +95,19 @@ fn test_discover_nested_gitignore_finds_files() {
     std::fs::write(tmp.path().join(".gitignore"), "target/\n").unwrap();
     std::fs::write(tmp.path().join("src/.gitignore"), "generated/\n").unwrap();
     let found = discover_gitignore_files(tmp.path());
-    // Should find both .gitignore files
-    assert!(!found.is_empty(), "should find at least root .gitignore");
-    let has_src = found.iter().any(|p| p.ends_with("src/.gitignore"));
-    assert!(has_src, "should find src/.gitignore, got: {:?}", found);
+    // Should find only the root .gitignore (nested ones are not returned
+    // because --ignore-file applies globally, not scoped to the directory)
+    assert_eq!(
+        found.len(),
+        1,
+        "should find exactly root .gitignore, got: {:?}",
+        found
+    );
+    assert!(
+        found[0].ends_with(".gitignore") && !found[0].ends_with("src/.gitignore"),
+        "should be root .gitignore, got: {:?}",
+        found
+    );
 }
 
 #[test]
@@ -509,5 +518,72 @@ fn test_find_schema_includes_path_segment_example() {
             || def.description.contains("src/"),
         "schema should demonstrate path-segment glob (e.g. 'src/*.rs'), got:\n{}",
         def.parameters_schema
+    );
+}
+
+// --- Nested gitignore global application bug ---
+// A .gitignore with specific patterns (e.g. *.json) in a subdirectory
+// must NOT suppress matching files outside that subdirectory.
+// Previously, discover_gitignore_files passed all nested .gitignore files
+// via --ignore-file, which fd applies globally.
+
+#[tokio::test]
+async fn test_find_not_suppressed_by_nested_gitignore_with_specific_patterns() {
+    let (tool, _ws, tmp) = test_find();
+    // Create a .json file at project root
+    std::fs::write(tmp.path().join("root.json"), "{}").unwrap();
+    // Create a subdirectory with a .gitignore that blocks *.json
+    std::fs::create_dir_all(tmp.path().join("vendor")).unwrap();
+    std::fs::write(tmp.path().join("vendor/.gitignore"), "*.json\n").unwrap();
+    // Create a .json file in another subdirectory
+    std::fs::create_dir_all(tmp.path().join("project")).unwrap();
+    std::fs::write(tmp.path().join("project/data.json"), "{}").unwrap();
+
+    if !fd_available() {
+        return;
+    }
+
+    let result = tool.execute(r#"{"pattern": "*.json"}"#).await.unwrap();
+    assert!(!result.is_error, "got: {}", result.content);
+    // root.json should be found — vendor/.gitignore should not suppress it
+    assert!(
+        result.content.contains("root.json"),
+        "root.json should not be suppressed by vendor/.gitignore, got: {}",
+        result.content
+    );
+    // project/data.json should also be found
+    assert!(
+        result.content.contains("data.json"),
+        "project/data.json should not be suppressed by vendor/.gitignore, got: {}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn test_find_path_glob_not_suppressed_by_nested_gitignore() {
+    let (tool, _ws, tmp) = test_find();
+    // Create files in a nested structure
+    std::fs::create_dir_all(tmp.path().join("tool_test_suite/stress")).unwrap();
+    std::fs::write(tmp.path().join("tool_test_suite/stress/.hidden"), "").unwrap();
+    std::fs::write(tmp.path().join("tool_test_suite/stress/config.json"), "{}").unwrap();
+    std::fs::write(tmp.path().join("tool_test_suite/stress/sample.txt"), "").unwrap();
+    // A nested .gitignore in an unrelated directory that blocks *.json
+    std::fs::create_dir_all(tmp.path().join("other")).unwrap();
+    std::fs::write(tmp.path().join("other/.gitignore"), "*.json\n").unwrap();
+
+    if !fd_available() {
+        return;
+    }
+
+    // Path-segment glob from root should find config.json
+    let result = tool
+        .execute(r#"{"pattern": "tool_test_suite/stress/*.json", "path": "."}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error, "got: {}", result.content);
+    assert!(
+        result.content.contains("config.json"),
+        "config.json should not be suppressed by other/.gitignore, got: {}",
+        result.content
     );
 }

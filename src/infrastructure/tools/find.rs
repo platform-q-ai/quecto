@@ -300,65 +300,41 @@ async fn run_fd(a: FdArgs<'_>) -> Result<(Vec<u8>, Vec<u8>, Option<i32>), Domain
     Ok((stdout_bytes, stderr_bytes, exit_code))
 }
 
-/// Maximum .gitignore files to discover (prevents excessive fd startup overhead).
-const MAX_GITIGNORE_FILES: usize = 50;
-/// Maximum directory depth for .gitignore discovery (prevents DoS from deeply nested trees).
-const MAX_DISCOVER_DEPTH: usize = 20;
-
-/// Discover `.gitignore` files under `search_dir` (Pi parity).
+/// Discover the `.gitignore` file at the root of `search_dir`.
 ///
-/// fd respects `.gitignore` within git repos, but may miss nested `.gitignore`
-/// files outside git repos. Passing them explicitly via `--ignore-file` ensures
-/// consistent behaviour regardless of git repo status.
+/// fd natively respects `.gitignore` files inside git repositories. For
+/// non-git-repo trees, we pass the **root-level** `.gitignore` via
+/// `--ignore-file` so its rules are applied.
 ///
-/// **Catch-all filtering**: `.gitignore` files whose only rules are catch-all
-/// patterns (`*`, `**`, `**/`, `**/*`) plus negations/comments are excluded.
-/// When such files from nested repos are passed globally to fd via `--ignore-file`,
-/// they suppress every file in the search tree — for example `*\n!.gitignore` in a
-/// sub-repo's tooling directory would cause `find(path=".")` to return nothing.
+/// **Only the root `.gitignore` is returned.** Nested `.gitignore` files are
+/// NOT passed via `--ignore-file` because fd applies `--ignore-file` rules
+/// **globally** — a `*.json` rule in `vendor/.gitignore` would suppress
+/// `.json` files everywhere, not just under `vendor/`. Within a git repo,
+/// fd already handles nested `.gitignore` scoping correctly via git's
+/// native ignore machinery.
+///
+/// **Tradeoff**: In non-git workspaces, nested `.gitignore` files are no
+/// longer respected. This is acceptable because (a) the global application
+/// bug caused incorrect results (files missing from find output), and
+/// (b) non-git workspaces with meaningful nested `.gitignore` are rare.
+///
+/// **Catch-all filtering** still applies: a root `.gitignore` whose only
+/// rules are `*`, `**`, `**/`, or `**/*` (plus negations/comments) is
+/// excluded to prevent blanket suppression.
 ///
 /// Safety:
-/// - Skips symlinks when deciding whether to recurse (prevents traversal outside workspace)
-/// - Caps at MAX_GITIGNORE_FILES and MAX_DISCOVER_DEPTH to prevent DoS
-/// - Skips `node_modules/` and `.git/` directories
+/// - Only reads the search root directory (no recursive traversal)
+/// - Uses `symlink_metadata` to reject symlinks (prevents traversal outside workspace)
 pub(crate) fn discover_gitignore_files(search_dir: &std::path::Path) -> Vec<PathBuf> {
-    let mut result = Vec::new();
-    // Stack entries: (directory path, current depth)
-    let mut stack = vec![(search_dir.to_path_buf(), 0usize)];
-    while let Some((dir, depth)) = stack.pop() {
-        if depth > MAX_DISCOVER_DEPTH {
-            continue;
+    let gitignore_path = search_dir.join(".gitignore");
+    // Use symlink_metadata so a symlink to a .gitignore outside the workspace
+    // is rejected (is_file() returns false for symlinks).
+    match std::fs::symlink_metadata(&gitignore_path) {
+        Ok(meta) if meta.is_file() && !is_catch_all_gitignore(&gitignore_path) => {
+            vec![gitignore_path]
         }
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            // Skip node_modules and .git
-            if name_str == "node_modules" || name_str == ".git" {
-                continue;
-            }
-            // Use symlink_metadata so we don't follow symlinks into subdirs
-            // (prevents escaping the workspace via symlink traversal).
-            let Ok(meta) = entry.metadata() else {
-                continue;
-            };
-            let path = entry.path();
-            // DirEntry::metadata() does not follow symlinks on Unix,
-            // so is_dir() returns false for symlinks to directories.
-            // This prevents traversal outside the workspace via symlinks.
-            if meta.is_dir() {
-                stack.push((path, depth + 1));
-            } else if meta.is_file() && name_str == ".gitignore" && !is_catch_all_gitignore(&path) {
-                result.push(path);
-                if result.len() >= MAX_GITIGNORE_FILES {
-                    return result;
-                }
-            }
-        }
+        _ => Vec::new(),
     }
-    result
 }
 
 /// Maximum bytes read from a single `.gitignore` file when checking for catch-all rules.
