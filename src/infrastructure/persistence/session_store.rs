@@ -337,7 +337,7 @@ mod tests {
                     String::new(),
                     vec![ToolCall {
                         id: "call_1".to_string(),
-                        name: "exec".to_string(),
+                        name: "bash".to_string(),
                         arguments: r#"{"command":"ls"}"#.to_string(),
                     }],
                 ),
@@ -349,7 +349,7 @@ mod tests {
         let loaded = store.load("test:tools").await.unwrap().unwrap();
         assert_eq!(loaded.messages.len(), 3);
         assert_eq!(loaded.messages[1].tool_calls.len(), 1);
-        assert_eq!(loaded.messages[1].tool_calls[0].name, "exec");
+        assert_eq!(loaded.messages[1].tool_calls[0].name, "bash");
         assert_eq!(loaded.messages[2].tool_call_id.as_deref(), Some("call_1"));
     }
 
@@ -486,7 +486,7 @@ mod tests {
         let store = FileSessionStore::new(tmp.path());
 
         let mut tool_msg = Message::tool("call_1", "output");
-        tool_msg.tool_name = Some("exec".to_string());
+        tool_msg.tool_name = Some("bash".to_string());
 
         let session = Session {
             key: "test:toolname".to_string(),
@@ -496,7 +496,7 @@ mod tests {
         let loaded = store.load("test:toolname").await.unwrap().unwrap();
         assert_eq!(
             loaded.messages[0].tool_name.as_deref(),
-            Some("exec"),
+            Some("bash"),
             "tool_name should survive save/load"
         );
     }

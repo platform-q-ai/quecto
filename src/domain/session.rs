@@ -195,8 +195,8 @@ mod tests {
     fn test_strip_drops_non_recall_tool_results() {
         let messages = vec![
             Message::user("do something"),
-            Message::assistant("", vec![make_tool_call("exec")]),
-            tool_msg("exec", "exec output"),
+            Message::assistant("", vec![make_tool_call("bash")]),
+            tool_msg("bash", "bash output"),
         ];
         let filtered = strip_tool_history(&messages);
         // Only the user message survives (assistant has empty content + tool_call → dropped)
@@ -222,14 +222,14 @@ mod tests {
     fn test_strip_preserves_narrative_text_from_mixed_assistant() {
         let messages = vec![
             Message::user("do something"),
-            Message::assistant("I will run exec", vec![make_tool_call("exec")]),
-            tool_msg("exec", "exec output"),
+            Message::assistant("I will run bash", vec![make_tool_call("bash")]),
+            tool_msg("bash", "bash output"),
         ];
         let filtered = strip_tool_history(&messages);
         assert_eq!(filtered.len(), 2);
         assert_eq!(filtered[0].role, Role::User);
         assert_eq!(filtered[1].role, Role::Assistant);
-        assert_eq!(filtered[1].content, "I will run exec");
+        assert_eq!(filtered[1].content, "I will run bash");
         // tool_calls must be cleared
         assert!(filtered[1].tool_calls.is_empty());
     }
@@ -238,8 +238,8 @@ mod tests {
     fn test_strip_drops_pure_dispatch_assistant_with_no_text() {
         let messages = vec![
             Message::user("run it"),
-            Message::assistant("", vec![make_tool_call("exec")]),
-            tool_msg("exec", "tool result"),
+            Message::assistant("", vec![make_tool_call("bash")]),
+            tool_msg("bash", "tool result"),
         ];
         let filtered = strip_tool_history(&messages);
         assert_eq!(filtered.len(), 1);

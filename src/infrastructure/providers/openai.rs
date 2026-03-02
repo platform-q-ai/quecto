@@ -418,7 +418,7 @@ mod tests {
                         "id": "call_abc",
                         "type": "function",
                         "function": {
-                            "name": "exec",
+                            "name": "bash",
                             "arguments": "{\"command\":\"ls\"}"
                         }
                     }]
@@ -436,7 +436,7 @@ mod tests {
         let provider = OpenAiProvider::new("sk-test".to_string(), Some(server.uri()));
         let messages = vec![Message::user("list files")];
         let tools = vec![ToolDefinition {
-            name: "exec".to_string(),
+            name: "bash".to_string(),
             description: "Execute a command".to_string(),
             parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#
                 .to_string(),
@@ -454,7 +454,7 @@ mod tests {
         let response = result.unwrap();
         assert_eq!(response.tool_calls.len(), 1);
         assert_eq!(response.tool_calls[0].id, "call_abc");
-        assert_eq!(response.tool_calls[0].name, "exec");
+        assert_eq!(response.tool_calls[0].name, "bash");
         assert!(response.tool_calls[0].arguments.contains("ls"));
     }
 
@@ -497,7 +497,7 @@ data: [DONE]\n";
     #[test]
     fn test_parse_sse_tool_call() {
         let sse = "\
-data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"exec\",\"arguments\":\"\"}}]}}]}\n\
+data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"bash\",\"arguments\":\"\"}}]}}]}\n\
 data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"cmd\\\"\"}}]}}]}\n\
 data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\": \\\"ls\\\"}\"}}]}}]}\n\
 data: [DONE]\n";
@@ -505,7 +505,7 @@ data: [DONE]\n";
         assert!(result.content.is_none());
         assert_eq!(result.tool_calls.len(), 1);
         assert_eq!(result.tool_calls[0].id, "call_1");
-        assert_eq!(result.tool_calls[0].name, "exec");
+        assert_eq!(result.tool_calls[0].name, "bash");
         assert!(result.tool_calls[0].arguments.contains("ls"));
     }
 

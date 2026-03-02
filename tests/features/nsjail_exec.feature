@@ -10,7 +10,7 @@ Feature: nsjail Exec Isolation
   Scenario: Command runs successfully inside nsjail
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with a workspace
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | echo hello from jail |
     Then the tool result should contain "hello from jail"
     And the tool result should not be an error
@@ -19,7 +19,7 @@ Feature: nsjail Exec Isolation
   Scenario: Command exit code is captured correctly
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with a workspace
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | exit 42 |
     Then the tool result should be an error
     And the tool result should mention exit code 42
@@ -28,7 +28,7 @@ Feature: nsjail Exec Isolation
   Scenario: Command stderr is captured
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with a workspace
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | echo oops >&2 && exit 1 |
     Then the tool result should be an error
     And the tool result should contain "oops"
@@ -39,7 +39,7 @@ Feature: nsjail Exec Isolation
   Scenario: Command can read and write files in the workspace
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with a workspace containing "input.txt" with content "data"
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | cat input.txt > output.txt && echo done |
     Then the tool result should contain "done"
     And the file "output.txt" should exist in the workspace
@@ -49,7 +49,7 @@ Feature: nsjail Exec Isolation
   Scenario: Command cannot read files outside the workspace
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with a workspace
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | cat /etc/shadow |
     Then the tool result should be an error
 
@@ -57,7 +57,7 @@ Feature: nsjail Exec Isolation
   Scenario: Command cannot write files outside the workspace
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with a workspace
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | echo pwned > /var/escape.txt |
     Then the tool result should be an error
     And the file "/var/escape.txt" should not exist on the host
@@ -66,7 +66,7 @@ Feature: nsjail Exec Isolation
   Scenario: Host toolchain is available read-only
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with a workspace
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | which git |
     Then the tool result should contain "/usr/bin/git" or similar
     And the tool result should not be an error
@@ -75,7 +75,7 @@ Feature: nsjail Exec Isolation
   Scenario: Command cannot modify host toolchain
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with a workspace
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | touch /usr/bin/evil |
     Then the tool result should be an error
 
@@ -85,7 +85,7 @@ Feature: nsjail Exec Isolation
   Scenario: Memory limit kills a memory-hogging command
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with memory limit 50 MB
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | python3 -c "x = 'a' * (100 * 1024 * 1024)" |
     Then the tool result should be an error
 
@@ -93,7 +93,7 @@ Feature: nsjail Exec Isolation
   Scenario: PID limit prevents fork bombs
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with PID limit 32
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | :(){ :\|:& };: |
     Then the tool result should be an error
     And the host should not be affected
@@ -102,7 +102,7 @@ Feature: nsjail Exec Isolation
   Scenario: Time limit kills a long-running command
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with time limit 2 seconds
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | sleep 60 |
     Then the tool result should be an error
     And the nsjail execution should complete within 5 seconds
@@ -111,7 +111,7 @@ Feature: nsjail Exec Isolation
   Scenario: CPU time limit kills a CPU-hogging command
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with CPU time limit 2 seconds
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | while true; do :; done |
     Then the tool result should be an error
 
@@ -133,7 +133,7 @@ Feature: nsjail Exec Isolation
   Scenario: Node.js can start inside nsjail with default memory limit
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with default options
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | node -e "console.log('ok')" |
     Then the tool result should contain "ok"
     And the tool result should not be an error
@@ -170,7 +170,7 @@ Feature: nsjail Exec Isolation
   Scenario: Command cannot see host processes
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with PID namespace
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | ps aux |
     Then the tool result should not contain host process names
     And the process list should only show jail-internal processes
@@ -179,7 +179,7 @@ Feature: nsjail Exec Isolation
   Scenario: Command cannot signal host processes
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with PID namespace
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | kill -9 1 |
     Then the tool result should be an error
     And the host init process should not be affected
@@ -190,7 +190,7 @@ Feature: nsjail Exec Isolation
   Scenario: Network passthrough allows outbound access when configured
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with network passthrough enabled
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | curl -s -o /dev/null -w '%{http_code}' https://example.com |
     Then the tool result should contain "200"
 
@@ -198,7 +198,7 @@ Feature: nsjail Exec Isolation
   Scenario: Network isolation blocks outbound access when configured
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with network isolation enabled
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | curl -s --max-time 2 https://example.com |
     Then the tool result should be an error
 
@@ -208,7 +208,7 @@ Feature: nsjail Exec Isolation
   Scenario: Sandbox denylist is applied before nsjail invocation
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with sandbox denylist
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | rm -rf / |
     Then the tool result should be an error
     And the nsjail error should mention "dangerous pattern"
@@ -218,7 +218,7 @@ Feature: nsjail Exec Isolation
   Scenario: Sandbox allowlist is enforced before nsjail invocation
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with sandbox allowlist "echo,ls,cat"
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | curl http://evil.com |
     Then the tool result should be an error
     And the nsjail error should mention "not in allowlist"
@@ -254,7 +254,7 @@ Feature: nsjail Exec Isolation
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with a workspace
     And the environment has QUECTO_SECRET_KEY set to "hunter2"
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | env |
     Then the tool result should not contain "QUECTO_SECRET_KEY"
     And the tool result should not contain "hunter2"
@@ -265,7 +265,7 @@ Feature: nsjail Exec Isolation
   Scenario: Command can write to /tmp inside the sandbox
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with a workspace
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | echo hello > /tmp/test.txt && cat /tmp/test.txt |
     Then the tool result should contain "hello"
     And the tool result should not be an error
@@ -274,7 +274,7 @@ Feature: nsjail Exec Isolation
   Scenario: mktemp works inside the sandbox
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with a workspace
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | mktemp && echo ok |
     Then the tool result should contain "ok"
     And the tool result should not be an error
@@ -290,7 +290,7 @@ Feature: nsjail Exec Isolation
   Scenario: TMPDIR is set to /tmp inside the sandbox
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with a workspace
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | echo $TMPDIR |
     Then the tool result should contain "/tmp"
     And the tool result should not be an error
@@ -301,7 +301,7 @@ Feature: nsjail Exec Isolation
   Scenario: nsjail sandbox is cleaned up after command completes
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with a workspace
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | echo done |
     Then no nsjail processes should remain running
     And no stale mount namespaces should remain
@@ -336,7 +336,7 @@ Feature: nsjail Exec Isolation
   Scenario: Redirect to /dev/null succeeds inside nsjail
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with a workspace
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | echo ok >/dev/null && echo done |
     Then the tool result should contain "done"
     And the tool result should not be an error
@@ -347,7 +347,7 @@ Feature: nsjail Exec Isolation
   Scenario: Large stdout is captured up to the configured limit
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with output capture limit 1 MiB
-    When the agent executes nsjail tool "exec" with args:
+    When the agent executes nsjail tool "bash" with args:
       | command | python3 -c "print('A' * 1500000)" |
     Then the tool result should be truncated to approximately 1 MiB
     And the tool result should indicate truncation

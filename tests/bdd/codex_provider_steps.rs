@@ -10,7 +10,7 @@ use super::*;
 fn given_codex_request_body_with_tools(world: &mut QuectoWorld, model: String) {
     let messages = vec![Message::system("You are helpful."), Message::user("Run ls")];
     let tools = vec![ToolDefinition {
-        name: "exec".to_string(),
+        name: "bash".to_string(),
         description: "Execute a command".to_string(),
         parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#
             .to_string(),
@@ -225,7 +225,7 @@ fn then_tools_have_strict_false(world: &mut QuectoWorld, key: String) {
 )]
 fn given_codex_sse_with_reasoning_then_tool(world: &mut QuectoWorld) {
     let sse = r#"data: {"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning"}}
-data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"call_abc","name":"exec","arguments":""}}
+data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"call_abc","name":"bash","arguments":""}}
 data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"command\""}
 data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":":\"ls\"}"}
 data: {"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":5}}}
@@ -242,7 +242,7 @@ data: [DONE]
 fn given_codex_sse_with_reasoning_then_two_tools(world: &mut QuectoWorld) {
     let sse = r#"data: {"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning"}}
 data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"call_1","name":"read","arguments":""}}
-data: {"type":"response.output_item.added","output_index":2,"item":{"type":"function_call","call_id":"call_2","name":"exec","arguments":""}}
+data: {"type":"response.output_item.added","output_index":2,"item":{"type":"function_call","call_id":"call_2","name":"bash","arguments":""}}
 data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"path\":\"main.rs\"}"}
 data: {"type":"response.function_call_arguments.delta","output_index":2,"delta":"{\"command\":\"cargo build\"}"}
 data: {"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":5}}}
