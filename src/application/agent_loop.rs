@@ -183,7 +183,8 @@ impl AgentLoopImpl {
         response: LlmResponse,
     ) {
         // Move content out (no clone). Clone tool_calls once — needed because
-        // Message::assistant takes ownership but we iterate the calls below.
+        // Message::assistant takes ownership but we push tool results to messages
+        // below, requiring mutable access that conflicts with borrowing back.
         let content = response.content.unwrap_or_default();
         let tool_calls = response.tool_calls;
         messages.push(Message::assistant(content, tool_calls.clone()));
@@ -209,15 +210,12 @@ impl AgentLoopImpl {
     ) -> (String, Vec<crate::domain::tool::ImageBlock>) {
         // Emit ToolStarted before executing so the REPL can show the tool name
         // immediately, even if the tool itself takes a long time.
-        // Only clone name/args when a progress callback is registered.
-        if self.progress_callback.is_some() {
-            let name = tc.name.clone();
-            let args = tc.arguments.clone();
-            self.notify(|| AgentProgressEvent::ToolStarted {
-                name,
-                arguments: args,
-            });
-        }
+        // Clones inside the closure are only evaluated when a callback is
+        // registered (zero-cost on headless paths via notify's guard).
+        self.notify(|| AgentProgressEvent::ToolStarted {
+            name: tc.name.clone(),
+            arguments: tc.arguments.clone(),
+        });
 
         let start = std::time::Instant::now();
         let tool_result = self.tool_registry.execute(&tc.name, &tc.arguments).await;
@@ -229,17 +227,13 @@ impl AgentLoopImpl {
             Err(e) => (format!("Error: {}", e), vec![]),
         };
 
-        // Emit ToolFinished — only clone when callback is registered.
-        if self.progress_callback.is_some() {
-            let name = tc.name.clone();
-            let args = tc.arguments.clone();
-            self.notify(|| AgentProgressEvent::ToolFinished {
-                name,
-                arguments: args,
-                duration_ms,
-                is_error: is_err,
-            });
-        }
+        // Emit ToolFinished so the REPL can replace the spinner line.
+        self.notify(|| AgentProgressEvent::ToolFinished {
+            name: tc.name.clone(),
+            arguments: tc.arguments.clone(),
+            duration_ms,
+            is_error: is_err,
+        });
 
         tracing::info!(
             target: "tool_exec",

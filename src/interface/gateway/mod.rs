@@ -207,11 +207,16 @@ impl Gateway {
             }
         }
 
-        let provider_impl = Arc::new(self.build_fallback_provider(&creds)?);
+        // Shared HTTP client for all providers and HTTP-using tools.
+        let http_client = reqwest::Client::new();
+        let provider_impl = Arc::new(self.build_fallback_provider(&creds, &http_client)?);
         let provider: Arc<dyn LlmProvider> = provider_impl.clone();
         let cron_store = Arc::new(FileCronStore::new(&self.base_dir));
-        let (agent_impl, mut bus) =
-            self.build_agent(workspace.clone(), provider.clone(), cron_store.clone());
+        let (agent_impl, mut bus) = self.build_agent(
+            workspace.clone(),
+            provider.clone(),
+            (cron_store.clone(), &http_client),
+        );
         let agent: Arc<dyn AgentLoop> = Arc::new(agent_impl);
 
         let info = agent.info();
@@ -280,12 +285,11 @@ impl Gateway {
     fn build_fallback_provider(
         &self,
         creds: &std::collections::HashMap<String, Credential>,
+        http_client: &reqwest::Client,
     ) -> Result<FallbackProvider, GatewayError> {
         let mut provider_list = Vec::new();
-        // Shared HTTP client for all providers — avoids duplicate connection pools.
-        let http_client = reqwest::Client::new();
         for name in &["openai", "anthropic"] {
-            if let Some(p) = self.resolve_provider(name, creds, &http_client)? {
+            if let Some(p) = self.resolve_provider(name, creds, http_client)? {
                 provider_list.push(p);
             }
         }
@@ -350,8 +354,9 @@ impl Gateway {
         &self,
         workspace: PathBuf,
         provider: Arc<dyn LlmProvider>,
-        cron_store: Arc<FileCronStore>,
+        ctx: (Arc<FileCronStore>, &reqwest::Client),
     ) -> (AgentLoopImpl, MessageBus) {
+        let (cron_store, http_client) = ctx;
         let sandbox = Sandbox::new(
             Some(workspace.clone()),
             self.config.agents.defaults.restrict_to_workspace,
@@ -367,7 +372,10 @@ impl Gateway {
         // handles post-processing delivery but in-loop MessageTool calls did not.
         let default_send_to = self.config.channels.telegram.default_send_to.clone();
         registry.register(Arc::new(MessageTool::new(outbound_tx, default_send_to)));
-        registry.register(Arc::new(WebSearchTool::new(self.brave_api_key())));
+        registry.register(Arc::new(WebSearchTool::with_client(
+            self.brave_api_key(),
+            http_client.clone(),
+        )));
         registry.register(Arc::new(CronTool::new(cron_store)));
         registry.register(Arc::new(SpawnTool::with_base_dir(
             vec![],

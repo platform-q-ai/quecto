@@ -54,6 +54,8 @@ pub trait ToolRegistry: Send + Sync {
     fn definitions(&self) -> &[ToolDefinition];
 
     /// Return the number of registered tools without cloning definitions.
+    ///
+    /// Override if `definitions()` is not O(1) (e.g. lazy-building implementations).
     fn tool_count(&self) -> usize {
         self.definitions().len()
     }

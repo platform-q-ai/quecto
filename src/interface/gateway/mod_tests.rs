@@ -537,7 +537,7 @@ fn test_build_fallback_provider_no_keys() {
     let tmp = tempfile::TempDir::new().unwrap();
     let gw = Gateway::new(config, tmp.path().to_path_buf());
     let creds = std::collections::HashMap::new();
-    let result = gw.build_fallback_provider(&creds);
+    let result = gw.build_fallback_provider(&creds, &reqwest::Client::new());
     assert!(result.is_err(), "should fail with no providers configured");
     let err = result.unwrap_err();
     assert!(
@@ -555,7 +555,7 @@ fn test_build_fallback_provider_openai_only() {
     let tmp = tempfile::TempDir::new().unwrap();
     let gw = Gateway::new(config, tmp.path().to_path_buf());
     let creds = std::collections::HashMap::new();
-    let result = gw.build_fallback_provider(&creds);
+    let result = gw.build_fallback_provider(&creds, &reqwest::Client::new());
     assert!(result.is_ok(), "should succeed with openai key");
 }
 
@@ -567,7 +567,7 @@ fn test_build_fallback_provider_anthropic_only() {
     let tmp = tempfile::TempDir::new().unwrap();
     let gw = Gateway::new(config, tmp.path().to_path_buf());
     let creds = std::collections::HashMap::new();
-    let result = gw.build_fallback_provider(&creds);
+    let result = gw.build_fallback_provider(&creds, &reqwest::Client::new());
     assert!(result.is_ok(), "should succeed with anthropic key");
 }
 
@@ -580,6 +580,6 @@ fn test_build_fallback_provider_both_providers() {
     let tmp = tempfile::TempDir::new().unwrap();
     let gw = Gateway::new(config, tmp.path().to_path_buf());
     let creds = std::collections::HashMap::new();
-    let result = gw.build_fallback_provider(&creds);
+    let result = gw.build_fallback_provider(&creds, &reqwest::Client::new());
     assert!(result.is_ok(), "should succeed with both providers");
 }
