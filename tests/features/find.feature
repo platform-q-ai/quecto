@@ -105,3 +105,17 @@ Feature: Find Tool
 
   Scenario: Pattern description does not mislead about path-segment support
     Then the find tool description should support path-segment glob patterns
+
+  Scenario: Catch-all gitignore in workspace subdirectory does not suppress root search
+    Given a find workspace file "notes.txt"
+    And a find workspace file "sub/.gitignore" with content "*\n!.gitignore\n"
+    When I find files matching "*.txt"
+    Then the find result should contain "notes.txt"
+    And the find result should not be an error
+
+  Scenario: Root path search finds files despite nested gitignore
+    Given a find workspace file "readme.md"
+    And a find workspace file "deep/nested/.gitignore" with content "*\n"
+    When I find files matching "*.md" in path "."
+    Then the find result should contain "readme.md"
+    And the find result should not be an error

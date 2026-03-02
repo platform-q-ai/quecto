@@ -108,6 +108,67 @@ fn test_discover_nested_gitignore_empty_dir() {
     assert!(found.is_empty(), "no .gitignore → empty list");
 }
 
+#[test]
+fn test_discover_gitignore_excludes_catch_all() {
+    let tmp = TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("sub")).unwrap();
+    // Legitimate gitignore
+    std::fs::write(tmp.path().join(".gitignore"), "target/\n").unwrap();
+    // Catch-all gitignore (blocks everything)
+    std::fs::write(tmp.path().join("sub/.gitignore"), "*\n!.gitignore\n").unwrap();
+    let found = discover_gitignore_files(tmp.path());
+    // The catch-all should be excluded
+    let catch_all = found.iter().any(|p| p.ends_with("sub/.gitignore"));
+    assert!(
+        !catch_all,
+        "catch-all gitignore (*) should be excluded from --ignore-file list, got: {:?}",
+        found
+    );
+    // The legitimate one should be included
+    let has_root = found
+        .iter()
+        .any(|p| p.ends_with(".gitignore") && !p.ends_with("sub/.gitignore"));
+    assert!(
+        has_root,
+        "legitimate gitignore should be included, got: {:?}",
+        found
+    );
+}
+
+#[test]
+fn test_discover_gitignore_excludes_bare_star_only() {
+    let tmp = TempDir::new().unwrap();
+    // A gitignore that is just "*" with no negations
+    std::fs::write(tmp.path().join(".gitignore"), "*\n").unwrap();
+    let found = discover_gitignore_files(tmp.path());
+    assert!(
+        found.is_empty(),
+        "bare '*' gitignore should be excluded, got: {:?}",
+        found
+    );
+}
+
+#[tokio::test]
+async fn test_find_not_suppressed_by_catchall_gitignore_in_subdir() {
+    let (tool, _ws, tmp) = test_find();
+    std::fs::write(tmp.path().join("notes.txt"), "").unwrap();
+    std::fs::create_dir_all(tmp.path().join("sub")).unwrap();
+    // Catch-all gitignore in a subdirectory
+    std::fs::write(tmp.path().join("sub/.gitignore"), "*\n!.gitignore\n").unwrap();
+
+    if !fd_available() {
+        return;
+    }
+
+    let result = tool.execute(r#"{"pattern": "*.txt"}"#).await.unwrap();
+    assert!(!result.is_error, "got: {}", result.content);
+    assert!(
+        result.content.contains("notes.txt"),
+        "notes.txt should be found despite catch-all gitignore in sub/, got: {}",
+        result.content
+    );
+}
+
 #[tokio::test]
 async fn test_find_float_limit_accepted() {
     let (tool, _ws, tmp) = test_find();

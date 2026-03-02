@@ -89,6 +89,18 @@ fn given_find_gitignore(world: &mut QuectoWorld, gitignore_path: String, ignored
     std::fs::write(&full, format!("{}\n", ignored)).expect("write gitignore file");
 }
 
+#[given(regex = r#"^a find workspace file "([^"]+)" with content "([^"]+)"$"#)]
+fn given_find_file_with_content(world: &mut QuectoWorld, filepath: String, content: String) {
+    let ws = ensure_find_workspace(world);
+    let full = ws.join(&filepath);
+    if let Some(parent) = full.parent() {
+        std::fs::create_dir_all(parent).expect("create parent dirs");
+    }
+    // Unescape \n sequences from the Gherkin string
+    let content = content.replace("\\n", "\n");
+    std::fs::write(&full, content).expect("write find workspace file with content");
+}
+
 // ---------------------------------------------------------------------------
 // When
 // ---------------------------------------------------------------------------
