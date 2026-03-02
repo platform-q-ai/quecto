@@ -17,6 +17,40 @@ const DEFAULT_RESULT_LIMIT: usize = 1000;
 /// Maximum total output bytes (50 KiB).
 const MAX_OUTPUT_BYTES: usize = 50 * 1024;
 
+/// Returns `true` when a glob pattern contains a `/`, meaning it encodes a
+/// directory path segment (e.g. `src/*.rs`, `nested/*.txt`, `a/b/c.json`).
+///
+/// fd's `--glob` mode by default matches only against the **filename** (last
+/// path component). To match path-segment patterns we must add `--full-path`
+/// to the fd invocation and ensure the pattern starts with `**/` so it is
+/// anchored against any prefix.
+pub(crate) fn pattern_has_path_segment(pattern: &str) -> bool {
+    pattern.contains('/')
+}
+
+/// Prepare a glob pattern for use with `fd --glob --full-path`.
+///
+/// When a pattern contains a path segment but does not already start with
+/// `**` or `/`, prepend `**/` so it matches at any depth within the search
+/// directory. Patterns that already start with `**` or `/` are returned
+/// unchanged.
+///
+/// Examples:
+/// - `"src/*.rs"`   → `"**/src/*.rs"`   (path-segment, not anchored)
+/// - `"**/*.rs"`    → `"**/*.rs"`       (already uses **)
+/// - `"*.rs"`       → `"*.rs"`          (no slash — full-path mode unused)
+pub(crate) fn build_full_path_pattern(pattern: &str) -> String {
+    if !pattern_has_path_segment(pattern) {
+        // No slash — full-path mode is not used; return unchanged.
+        return pattern.to_string();
+    }
+    if pattern.starts_with("**") || pattern.starts_with('/') {
+        // Already anchored — return unchanged.
+        return pattern.to_string();
+    }
+    format!("**/{}", pattern)
+}
+
 fn missing_pattern_error() -> ToolResult {
     ToolResult {
         content: "missing 'pattern' argument. Example: {\"pattern\": \"*.rs\"}".to_string(),
@@ -72,7 +106,7 @@ impl Tool for FindTool {
             parameters_schema: r#"{
                 "type": "object",
                 "properties": {
-                    "pattern": {"type":"string","description":"Glob pattern, e.g. '*.rs' or '**/*.json'"},
+                    "pattern": {"type":"string","description":"Glob pattern, e.g. '*.rs', '**/*.json', or 'src/*.rs' (path-segment patterns work)"},
                     "path":    {"type":"string","description":"Directory to search (defaults to '.')"},
                     "limit":   {"type":"number","description":"Maximum results (default 1000)"}
                 },
@@ -101,9 +135,8 @@ impl Tool for FindTool {
 
             let search_path = args["path"].as_str().unwrap_or(".");
             let full_path = resolve_to_cwd(search_path, &workspace);
-            let full_str = full_path.to_string_lossy().to_string();
             sandbox
-                .validate_path(&full_str)
+                .validate_path(full_path.to_string_lossy().as_ref())
                 .map_err(|e| DomainError::Security(e.to_string()))?;
 
             // Accept float limits (JSON "number" type); cap at 100_000 to prevent
@@ -114,74 +147,16 @@ impl Tool for FindTool {
                 .map(|v| (v.round() as usize).clamp(1, MAX_RESULT_LIMIT))
                 .unwrap_or(DEFAULT_RESULT_LIMIT);
 
-            // Discover nested .gitignore files to pass via --ignore-file.
-            // Pi parity: fd's built-in .gitignore support works within git repos,
-            // but may miss nested .gitignore files outside git repos. By discovering
-            // them explicitly, we ensure consistent behaviour.
             let gitignore_files = discover_gitignore_files(&full_path);
-
-            // Build fd command:
-            //   fd --glob --color=never --hidden --max-results N [--ignore-file ...] -- <pattern> <path>
-            let mut cmd = tokio::process::Command::new(&fd_cmd);
-            cmd.current_dir(workspace.as_ref())
-                .arg("--glob")
-                .arg("--color=never")
-                .arg("--hidden")
-                .arg("--max-results")
-                .arg(limit.to_string());
-            for gitignore in &gitignore_files {
-                cmd.arg("--ignore-file").arg(gitignore);
-            }
-            cmd.arg("--")
-                .arg(pattern)
-                .arg(&full_path)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped());
-
-            let mut child = cmd.spawn().map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    DomainError::Tool(
-                        "fd not found on PATH — install fd-find: https://github.com/sharkdp/fd#installation".to_string()
-                    )
-                } else {
-                    DomainError::Tool(format!("find failed to spawn fd: {}", e))
-                }
-            })?;
-
-            // Read stdout up to 2×cap before the formatter trims to MAX_OUTPUT_BYTES.
-            use tokio::io::AsyncReadExt;
-            let cap = MAX_OUTPUT_BYTES * 2;
-            let mut stdout_bytes = Vec::with_capacity(cap.min(64 * 1024));
-            if let Some(mut out) = child.stdout.take() {
-                let mut buf = vec![0u8; 8192];
-                loop {
-                    let n = out.read(&mut buf).await.unwrap_or(0);
-                    if n == 0 {
-                        break;
-                    }
-                    let remaining = cap.saturating_sub(stdout_bytes.len());
-                    let take = n.min(remaining);
-                    stdout_bytes.extend_from_slice(&buf[..take]);
-                    if stdout_bytes.len() >= cap {
-                        break;
-                    }
-                }
-            }
-
-            let stderr_bytes = {
-                let mut buf = Vec::with_capacity(0);
-                if let Some(mut err) = child.stderr.take() {
-                    // Cap stderr at 4 KiB — enough for any error message, prevents OOM.
-                    let mut tmp = vec![0u8; 4096];
-                    let n = err.read(&mut tmp).await.unwrap_or(0);
-                    buf.extend_from_slice(&tmp[..n]);
-                }
-                buf
-            };
-
-            let _ = child.kill().await;
-            let status = child.wait().await;
-            let exit_code = status.ok().and_then(|s| s.code());
+            let (stdout_bytes, stderr_bytes, exit_code) = run_fd(FdArgs {
+                fd_cmd: &fd_cmd,
+                workspace: &workspace,
+                pattern,
+                full_path: &full_path,
+                limit,
+                gitignore_files: &gitignore_files,
+            })
+            .await?;
 
             let stdout = String::from_utf8_lossy(&stdout_bytes);
             let stderr = String::from_utf8_lossy(&stderr_bytes);
@@ -204,9 +179,7 @@ impl Tool for FindTool {
                 });
             }
 
-            // Format output: relativise paths, apply byte cap, append hints.
             let result = format_find_output(&stdout, &full_path, limit, MAX_OUTPUT_BYTES);
-
             Ok(ToolResult {
                 content: result,
                 is_error: false,
@@ -214,6 +187,99 @@ impl Tool for FindTool {
             })
         })
     }
+}
+
+// ---------------------------------------------------------------------------
+// fd invocation
+// ---------------------------------------------------------------------------
+
+struct FdArgs<'a> {
+    fd_cmd: &'a str,
+    workspace: &'a std::path::Path,
+    pattern: &'a str,
+    full_path: &'a std::path::Path,
+    limit: usize,
+    gitignore_files: &'a [PathBuf],
+}
+
+/// Spawn fd, read capped stdout/stderr, reap child.
+///
+/// When the pattern contains a path separator (e.g. `"src/*.rs"`), fd's
+/// default `--glob` mode only tests the pattern against the filename component
+/// and would silently return nothing. We add `--full-path` and prepend `**/`
+/// to non-anchored patterns so they match at any depth.
+async fn run_fd(a: FdArgs<'_>) -> Result<(Vec<u8>, Vec<u8>, Option<i32>), DomainError> {
+    use tokio::io::AsyncReadExt;
+
+    let needs_full_path = pattern_has_path_segment(a.pattern);
+    let effective_pattern = if needs_full_path {
+        build_full_path_pattern(a.pattern)
+    } else {
+        a.pattern.to_string()
+    };
+
+    // Build: fd --glob [--full-path] --color=never --hidden --max-results N
+    //           [--ignore-file ...] -- <pattern> <path>
+    let mut cmd = tokio::process::Command::new(a.fd_cmd);
+    cmd.current_dir(a.workspace)
+        .arg("--glob")
+        .arg("--color=never")
+        .arg("--hidden")
+        .arg("--max-results")
+        .arg(a.limit.to_string());
+    if needs_full_path {
+        cmd.arg("--full-path");
+    }
+    for gitignore in a.gitignore_files {
+        cmd.arg("--ignore-file").arg(gitignore);
+    }
+    cmd.arg("--")
+        .arg(&effective_pattern)
+        .arg(a.full_path)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let mut child = cmd.spawn().map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            DomainError::Tool(
+                "fd not found on PATH — install fd-find: https://github.com/sharkdp/fd#installation".to_string()
+            )
+        } else {
+            DomainError::Tool(format!("find failed to spawn fd: {}", e))
+        }
+    })?;
+
+    // Read stdout up to 2×cap before the formatter trims to MAX_OUTPUT_BYTES.
+    let cap = MAX_OUTPUT_BYTES * 2;
+    let mut stdout_bytes = Vec::with_capacity(cap.min(64 * 1024));
+    if let Some(mut out) = child.stdout.take() {
+        let mut buf = vec![0u8; 8192];
+        loop {
+            let n = out.read(&mut buf).await.unwrap_or(0);
+            if n == 0 {
+                break;
+            }
+            let remaining = cap.saturating_sub(stdout_bytes.len());
+            let take = n.min(remaining);
+            stdout_bytes.extend_from_slice(&buf[..take]);
+            if stdout_bytes.len() >= cap {
+                break;
+            }
+        }
+    }
+
+    let mut stderr_bytes = Vec::new();
+    if let Some(mut err) = child.stderr.take() {
+        // Cap stderr at 4 KiB — enough for any error message, prevents OOM.
+        let mut tmp = vec![0u8; 4096];
+        let n = err.read(&mut tmp).await.unwrap_or(0);
+        stderr_bytes.extend_from_slice(&tmp[..n]);
+    }
+
+    let _ = child.kill().await;
+    let status = child.wait().await;
+    let exit_code = status.ok().and_then(|s| s.code());
+    Ok((stdout_bytes, stderr_bytes, exit_code))
 }
 
 /// Maximum .gitignore files to discover (prevents excessive fd startup overhead).
@@ -340,232 +406,5 @@ fn format_find_output(
 // ===========================================================================
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::Path;
-    use tempfile::TempDir;
-
-    fn test_find() -> (FindTool, Arc<PathBuf>, TempDir) {
-        let tmp = TempDir::new().unwrap();
-        let ws = Arc::new(tmp.path().to_path_buf());
-        let sandbox = Arc::new(Sandbox::new(Some(tmp.path().to_path_buf()), true));
-        let tool = FindTool::new(ws.clone(), sandbox);
-        (tool, ws, tmp)
-    }
-
-    // --- format_find_output unit tests ---
-
-    fn fmt(raw: &str, dir: &str, limit: usize, cap: usize) -> String {
-        format_find_output(raw, Path::new(dir), limit, cap)
-    }
-
-    #[test]
-    fn test_format_find_empty() {
-        assert_eq!(
-            fmt("", "/ws", 1000, 50 * 1024),
-            "No files found matching pattern"
-        );
-    }
-
-    #[test]
-    fn test_format_find_whitespace_only() {
-        assert_eq!(
-            fmt("   \n\n", "/ws", 1000, 50 * 1024),
-            "No files found matching pattern"
-        );
-    }
-
-    #[test]
-    fn test_format_find_relativises_path() {
-        let raw = "/ws/src/main.rs\n/ws/lib.rs";
-        let result = fmt(raw, "/ws", 1000, 50 * 1024);
-        assert!(result.contains("src/main.rs"), "got: {}", result);
-        assert!(result.contains("lib.rs"), "got: {}", result);
-        assert!(
-            !result.contains("/ws/"),
-            "should not contain absolute ws prefix: {}",
-            result
-        );
-    }
-
-    #[test]
-    fn test_format_find_limit_hint() {
-        // Simulate exactly `limit` lines returned — fd capped at limit.
-        let lines: Vec<String> = (1..=10).map(|i| format!("/ws/file{}.rs", i)).collect();
-        let raw = lines.join("\n");
-        let result = fmt(&raw, "/ws", 10, 50 * 1024);
-        assert!(
-            result.contains("10 results limit reached"),
-            "expected limit hint, got: {}",
-            result
-        );
-    }
-
-    #[test]
-    fn test_format_find_byte_cap() {
-        let lines: Vec<String> = (1..=200).map(|i| format!("/ws/file{}.txt", i)).collect();
-        let raw = lines.join("\n");
-        let result = fmt(&raw, "/ws", 1000, 512);
-        assert!(
-            result.contains("limit reached"),
-            "expected byte-cap hint, got: {}",
-            result
-        );
-    }
-
-    #[test]
-    fn test_format_find_directory_trailing_slash() {
-        // fd outputs "subdir/" for directory entries — we preserve the slash.
-        let raw = "/ws/subdir/";
-        let result = fmt(raw, "/ws", 1000, 50 * 1024);
-        assert!(result.contains("subdir/"), "got: {}", result);
-    }
-
-    // --- Pi parity: nested .gitignore and float limit ---
-
-    #[test]
-    fn test_discover_nested_gitignore_finds_files() {
-        let tmp = TempDir::new().unwrap();
-        // Create nested .gitignore files
-        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
-        std::fs::write(tmp.path().join(".gitignore"), "target/\n").unwrap();
-        std::fs::write(tmp.path().join("src/.gitignore"), "generated/\n").unwrap();
-        let found = discover_gitignore_files(tmp.path());
-        // Should find both .gitignore files
-        assert!(!found.is_empty(), "should find at least root .gitignore");
-        let has_src = found.iter().any(|p| p.ends_with("src/.gitignore"));
-        assert!(has_src, "should find src/.gitignore, got: {:?}", found);
-    }
-
-    #[test]
-    fn test_discover_nested_gitignore_empty_dir() {
-        let tmp = TempDir::new().unwrap();
-        let found = discover_gitignore_files(tmp.path());
-        assert!(found.is_empty(), "no .gitignore → empty list");
-    }
-
-    #[tokio::test]
-    async fn test_find_float_limit_accepted() {
-        let (tool, _ws, tmp) = test_find();
-        for i in 0..10 {
-            std::fs::write(tmp.path().join(format!("file_{:04}.txt", i)), "").unwrap();
-        }
-        if !fd_available() {
-            return;
-        }
-        // Pass float limit via JSON
-        let result = tool
-            .execute(r#"{"pattern": "*.txt", "limit": 5.0}"#)
-            .await
-            .unwrap();
-        assert!(!result.is_error, "got: {}", result.content);
-        assert!(
-            result.content.contains("limit"),
-            "expected limit notice, got: {}",
-            result.content
-        );
-    }
-
-    fn fd_available() -> bool {
-        std::process::Command::new("fd")
-            .arg("--version")
-            .output()
-            .is_ok()
-    }
-
-    // --- tool integration tests (require fd on PATH) ---
-
-    #[tokio::test]
-    async fn test_find_glob_matches() {
-        let (tool, _ws, tmp) = test_find();
-        std::fs::write(tmp.path().join("hello.rs"), "fn main() {}").unwrap();
-        std::fs::write(tmp.path().join("notes.txt"), "notes").unwrap();
-
-        if std::process::Command::new("fd")
-            .arg("--version")
-            .output()
-            .is_err()
-        {
-            return; // fd not installed — skip
-        }
-
-        let result = tool.execute(r#"{"pattern": "*.rs"}"#).await.unwrap();
-        assert!(!result.is_error, "got: {}", result.content);
-        assert!(
-            result.content.contains("hello.rs"),
-            "got: {}",
-            result.content
-        );
-        assert!(
-            !result.content.contains("notes.txt"),
-            "got: {}",
-            result.content
-        );
-    }
-
-    #[tokio::test]
-    async fn test_find_no_matches() {
-        let (tool, _ws, tmp) = test_find();
-        std::fs::write(tmp.path().join("only.txt"), "text").unwrap();
-
-        if std::process::Command::new("fd")
-            .arg("--version")
-            .output()
-            .is_err()
-        {
-            return;
-        }
-
-        let result = tool
-            .execute(r#"{"pattern": "*.xyz_nonexistent"}"#)
-            .await
-            .unwrap();
-        assert!(!result.is_error, "got: {}", result.content);
-        assert!(
-            result.content.contains("No files found"),
-            "got: {}",
-            result.content
-        );
-    }
-
-    #[tokio::test]
-    async fn test_find_outside_workspace_blocked() {
-        let (tool, _ws, _tmp) = test_find();
-        let result = tool
-            .execute(r#"{"pattern": "*.conf", "path": "/etc"}"#)
-            .await;
-        assert!(result.is_err() || result.unwrap().is_error);
-    }
-
-    // --- Fix 2: Actionable missing-parameter error ---
-
-    #[tokio::test]
-    async fn test_find_empty_object_returns_actionable_error() {
-        let (tool, _ws, _tmp) = test_find();
-        let result = tool.execute("{}").await.unwrap();
-        assert!(result.is_error, "expected error, got: {}", result.content);
-        assert!(
-            result.content.contains("pattern"),
-            "should mention missing 'pattern', got: {}",
-            result.content
-        );
-        assert!(
-            result.content.contains("Example"),
-            "should include example, got: {}",
-            result.content
-        );
-    }
-
-    // --- Fix 3: Description includes example ---
-
-    #[test]
-    fn test_find_description_includes_example() {
-        let (tool, _ws, _tmp) = test_find();
-        let def = tool.definition();
-        assert!(
-            def.description.contains("Example"),
-            "find description should include Example, got: {}",
-            def.description
-        );
-    }
-}
+#[path = "find_tests.rs"]
+mod tests;

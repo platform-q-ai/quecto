@@ -47,7 +47,7 @@ Feature: Find Tool
     And the find result should contain "fd"
 
   Scenario: Search path outside workspace is blocked
-    When I find files matching "*.conf" in path "/etc"
+    When I find files matching "*.conf" outside workspace in path "/etc"
     Then the find result should be an error
 
   Scenario: Nested glob pattern matches deeply
@@ -72,3 +72,36 @@ Feature: Find Tool
     When I find files matching "*.txt" with float limit 5.0
     Then the find result should contain "limit"
     And the find result should not be an error
+
+  Scenario: Path-segment glob matches files in named subdirectory
+    Given a find workspace file "src/main.rs"
+    And a find workspace file "src/lib.rs"
+    And a find workspace file "docs/readme.md"
+    When I find files matching "src/*.rs"
+    Then the find result should contain "main.rs"
+    And the find result should contain "lib.rs"
+    And the find result should not contain "readme.md"
+    And the find result should not be an error
+
+  Scenario: Path-segment glob with explicit path narrows search
+    Given a find workspace file "nested/a.txt"
+    And a find workspace file "nested/b.log"
+    And a find workspace file "other/c.txt"
+    When I find files matching "nested/*.txt" in path "."
+    Then the find result should contain "a.txt"
+    And the find result should not contain "b.log"
+    And the find result should not contain "c.txt"
+    And the find result should not be an error
+
+  Scenario: Exact relative path pattern matches single file
+    Given a find workspace file "src/config.json"
+    And a find workspace file "src/other.json"
+    And a find workspace file "top.json"
+    When I find files matching "src/config.json"
+    Then the find result should contain "config.json"
+    And the find result should not contain "other.json"
+    And the find result should not contain "top.json"
+    And the find result should not be an error
+
+  Scenario: Pattern description does not mislead about path-segment support
+    Then the find tool description should support path-segment glob patterns
