@@ -112,8 +112,8 @@ Feature: Telegram Gateway
     Given a session with messages:
       | role      | content         | is_manifest | tool_name |
       | User      | do something    | false       |           |
-      | Assistant |                 | false       | exec      |
-      | Tool      | exec output     | false       | exec      |
+      | Assistant |                 | false       | bash      |
+      | Tool      | bash output     | false       | bash      |
     When strip_tool_history is applied
     Then the filtered messages should have 1 messages
     And message 0 should have role "User" and content "do something"
@@ -136,20 +136,20 @@ Feature: Telegram Gateway
     Given a session with messages:
       | role      | content            | is_manifest | tool_name |
       | User      | do something       | false       |           |
-      | Assistant | I will run exec    | false       | exec      |
-      | Tool      | exec output        | false       | exec      |
+      | Assistant | I will run bash    | false       | bash      |
+      | Tool      | bash output        | false       | bash      |
     When strip_tool_history is applied
     Then the filtered messages should have 2 messages
     And message 0 should have role "User" and content "do something"
-    And message 1 should have role "Assistant" and content "I will run exec"
+    And message 1 should have role "Assistant" and content "I will run bash"
 
   @done
   Scenario: strip_tool_history drops pure tool-dispatch assistant messages with no text
     Given a session with messages:
       | role      | content       | is_manifest | tool_name |
       | User      | run it        | false       |           |
-      | Assistant |               | false       | exec      |
-      | Tool      | tool result   | false       | exec      |
+      | Assistant |               | false       | bash      |
+      | Tool      | tool result   | false       | bash      |
     When strip_tool_history is applied
     Then the filtered messages should have 1 messages
     And message 0 should have role "User" and content "run it"

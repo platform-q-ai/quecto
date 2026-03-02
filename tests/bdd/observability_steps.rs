@@ -100,7 +100,7 @@ fn given_agent_with_mock_for_logging(world: &mut QuectoWorld) {
         content: None,
         tool_calls: vec![ToolCall {
             id: "call_test".to_string(),
-            name: "exec".to_string(),
+            name: "bash".to_string(),
             arguments: r#"{"command":"echo hi"}"#.to_string(),
         }],
         usage: None,
@@ -114,7 +114,7 @@ fn given_agent_with_mock_for_logging(world: &mut QuectoWorld) {
     world.mock_llm = Some(mock_llm);
 
     // Register a mock tool
-    let tool = Arc::new(MockBddTool::new("exec", "hi"));
+    let tool = Arc::new(MockBddTool::new("bash", "hi"));
     let mut registry = quecto::infrastructure::tools::registry::ToolRegistryImpl::new();
     registry.register(tool);
     world.tool_registry = Some(registry);

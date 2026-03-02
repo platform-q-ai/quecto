@@ -41,7 +41,7 @@ Feature: Codex Responses API Provider
     Given a Codex SSE stream with a reasoning item at output_index 0 and a function call at output_index 1
     When I parse the Codex SSE stream
     Then the parsed response should have 1 tool call
-    And the tool call should have name "exec"
+    And the tool call should have name "bash"
     And the tool call should have arguments containing "ls"
 
   Scenario: Codex SSE parser handles multiple tool calls after reasoning
@@ -49,7 +49,7 @@ Feature: Codex Responses API Provider
     When I parse the Codex SSE stream
     Then the parsed response should have 2 tool calls
     And tool call 0 should have name "read" and arguments containing "main.rs"
-    And tool call 1 should have name "exec" and arguments containing "cargo"
+    And tool call 1 should have name "bash" and arguments containing "cargo"
 
   Scenario: Codex SSE parser handles tool calls without reasoning items
     Given a Codex SSE stream with function calls at output_index 0 and 1 without reasoning

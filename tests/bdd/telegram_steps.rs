@@ -499,13 +499,13 @@ fn given_session_with_stale_tool_calls(world: &mut QuectoWorld, session_key: Str
             "",
             vec![ToolCall {
                 id: "tc-1".to_string(),
-                name: "exec".to_string(),
+                name: "bash".to_string(),
                 arguments: r#"{"command":"ls"}"#.to_string(),
             }],
         ),
         {
             let mut m = Message::tool("tc-1", "file1.txt\nfile2.txt");
-            m.tool_name = Some("exec".to_string());
+            m.tool_name = Some("bash".to_string());
             m
         },
         Message::user("thanks"),
@@ -542,8 +542,8 @@ fn given_session_has_spill_entries(world: &mut QuectoWorld) {
             .append(
                 "telegram:99999",
                 &SpillEntry {
-                    id: "turn1:exec:0".to_string(),
-                    tool: "exec".to_string(),
+                    id: "turn1:bash:0".to_string(),
+                    tool: "bash".to_string(),
                     input_preview: "ls".to_string(),
                     tokens: 50,
                     content: "file1.txt\nfile2.txt".to_string(),

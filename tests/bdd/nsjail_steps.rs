@@ -266,7 +266,7 @@ fn given_environment_has_unquoted(world: &mut QuectoWorld, key: String, value: S
 
 #[when(expr = "the agent executes nsjail tool {string} with args:")]
 fn when_executes_nsjail_tool(world: &mut QuectoWorld, tool_name: String, step: &gherkin::Step) {
-    assert_eq!(tool_name, "exec", "nsjail scenarios expect exec tool");
+    assert_eq!(tool_name, "bash", "nsjail scenarios expect bash tool");
     let table = step.table.as_ref().expect("step should have table");
     let args_json = table_to_json(table);
     let tool = world.exec_tool.as_ref().expect("exec tool not set");

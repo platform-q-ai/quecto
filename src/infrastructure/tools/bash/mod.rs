@@ -122,7 +122,7 @@ impl ExecTool {
                 && options.nsjail.wall_time_limit_secs.is_none()
             {
                 tracing::warn!(
-                    target: "exec",
+                    target: "bash",
                     "nsjail isolation is active but all resource limits are disabled."
                 );
             }
@@ -136,13 +136,13 @@ impl ExecTool {
                 if options.allow_native_fallback {
                     mode = Mode::Native;
                     warning = Some(format!("{}; falling back to native exec", missing));
-                    tracing::warn!(target: "exec", "{}", warning.as_deref().unwrap_or_default());
+                    tracing::warn!(target: "bash", "{}", warning.as_deref().unwrap_or_default());
                 } else {
                     startup_error = Some(format!(
                         "{}; set tools.exec.allow_native_fallback=true to permit native fallback",
                         missing
                     ));
-                    tracing::error!(target: "exec", "{}", startup_error.as_deref().unwrap_or_default());
+                    tracing::error!(target: "bash", "{}", startup_error.as_deref().unwrap_or_default());
                 }
             }
         }

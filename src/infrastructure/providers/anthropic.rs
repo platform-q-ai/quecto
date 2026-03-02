@@ -455,7 +455,7 @@ mod tests {
             "content": [{
                 "type": "tool_use",
                 "id": "toolu_abc",
-                "name": "exec",
+                "name": "bash",
                 "input": { "command": "ls" }
             }],
             "stop_reason": "tool_use",
@@ -470,7 +470,7 @@ mod tests {
         let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
         let messages = vec![Message::user("list files")];
         let tools = vec![ToolDefinition {
-            name: "exec".to_string(),
+            name: "bash".to_string(),
             description: "Execute a command".to_string(),
             parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#
                 .to_string(),
@@ -488,7 +488,7 @@ mod tests {
         let response = result.unwrap();
         assert_eq!(response.tool_calls.len(), 1);
         assert_eq!(response.tool_calls[0].id, "toolu_abc");
-        assert_eq!(response.tool_calls[0].name, "exec");
+        assert_eq!(response.tool_calls[0].name, "bash");
         assert!(response.tool_calls[0].arguments.contains("ls"));
     }
 
@@ -535,7 +535,7 @@ data: {}\n";
     fn test_parse_sse_tool_use() {
         let sse = "\
 event: content_block_start\n\
-data: {\"content_block\":{\"type\":\"tool_use\",\"id\":\"tu_1\",\"name\":\"exec\"}}\n\n\
+data: {\"content_block\":{\"type\":\"tool_use\",\"id\":\"tu_1\",\"name\":\"bash\"}}\n\n\
 event: content_block_delta\n\
 data: {\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"cmd\\\"\"}}\n\n\
 event: content_block_delta\n\
@@ -548,7 +548,7 @@ data: {}\n";
         assert!(result.content.is_none());
         assert_eq!(result.tool_calls.len(), 1);
         assert_eq!(result.tool_calls[0].id, "tu_1");
-        assert_eq!(result.tool_calls[0].name, "exec");
+        assert_eq!(result.tool_calls[0].name, "bash");
         assert!(result.tool_calls[0].arguments.contains("ls"));
     }
 

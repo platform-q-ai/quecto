@@ -210,7 +210,7 @@ fn test_build_request_body_responses_api_fields() {
 #[test]
 fn test_build_tools_includes_strict_false() {
     let tools = vec![ToolDefinition {
-        name: "exec".to_string(),
+        name: "bash".to_string(),
         description: "Execute a command".to_string(),
         parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#
             .to_string(),
@@ -224,7 +224,7 @@ fn test_build_tools_includes_strict_false() {
 fn test_parse_sse_tool_call_after_reasoning_item() {
     // Reasoning item at output_index 0, function_call at output_index 1
     let sse = r#"data: {"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning"}}
-data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"call_x","name":"exec","arguments":""}}
+data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"call_x","name":"bash","arguments":""}}
 data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"cmd\""}
 data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":":\"ls\"}"}
 data: {"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":3}}}
@@ -234,7 +234,7 @@ data: [DONE]
     assert!(resp.content.is_none());
     assert_eq!(resp.tool_calls.len(), 1);
     assert_eq!(resp.tool_calls[0].id, "call_x");
-    assert_eq!(resp.tool_calls[0].name, "exec");
+    assert_eq!(resp.tool_calls[0].name, "bash");
     assert_eq!(resp.tool_calls[0].arguments, r#"{"cmd":"ls"}"#);
 }
 
