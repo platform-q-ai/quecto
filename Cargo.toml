@@ -35,10 +35,6 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 flate2 = "1"
 tar = "0.4"
 
-# WASM tool isolation
-wasmtime = { version = "42", features = ["component-model"] }
-wasmtime-wasi = "42"
-
 [features]
 default = []
 test-support = []

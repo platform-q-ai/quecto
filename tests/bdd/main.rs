@@ -39,10 +39,6 @@ use quecto::infrastructure::tools::cron_tool::CronTool;
 use quecto::infrastructure::tools::message::MessageTool;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 use quecto::infrastructure::tools::spawn::SpawnTool;
-use quecto::infrastructure::tools::wasm::host::SentMessage;
-use quecto::infrastructure::tools::wasm::loader;
-use quecto::infrastructure::tools::wasm::runtime::WasmToolRuntime;
-use quecto::infrastructure::tools::wasm::wrapper::WasmToolWrapper;
 use quecto::infrastructure::tools::web_search::WebSearchTool;
 use quecto::infrastructure::voice::groq_whisper::{GroqWhisperClient, TranscriptionResult};
 use quecto::interface::cli::{self, CliContext};
@@ -574,56 +570,6 @@ pub struct QuectoWorld {
     pub gateway_mock_server: Option<&'static wiremock::MockServer>,
     /// Groq Whisper mock server (separate from Telegram mock) for voice e2e tests
     pub groq_mock_server: Option<&'static wiremock::MockServer>,
-    // --- WASM tool runtime BDD fields ---
-    /// WASM tool runtime instance
-    pub wasm_runtime: Option<Arc<WasmToolRuntime>>,
-    /// WASM tool wrapper for execution tests
-    pub wasm_wrapper: Option<Arc<WasmToolWrapper>>,
-    /// WASM execution results (for multi-execution tests)
-    pub wasm_execution_results:
-        Option<Vec<Result<quecto::domain::tool::ToolResult, quecto::domain::error::DomainError>>>,
-    /// WASM single execution result
-    pub wasm_single_result:
-        Option<Result<quecto::domain::tool::ToolResult, quecto::domain::error::DomainError>>,
-    /// WASM host result (from direct host function calls)
-    pub wasm_host_result: Option<Result<String, String>>,
-    /// WASM workspace path for host tests
-    pub wasm_workspace: Option<PathBuf>,
-    /// WASM temp dir (kept alive)
-    pub _wasm_temp_dir: Option<TempDir>,
-    /// WASM HTTP allowlist
-    pub wasm_http_allowlist: Option<Vec<String>>,
-    /// WASM HTTP stubs (host -> response)
-    pub wasm_http_stubs: HashMap<String, String>,
-    /// WASM sent messages (from send-message host calls)
-    pub wasm_sent_messages: Option<Vec<SentMessage>>,
-    /// WASM cron operations performed
-    pub wasm_cron_ops: Option<Vec<quecto::infrastructure::tools::wasm::host::StoreOp>>,
-    /// WASM spill data (pre-loaded for recall)
-    pub wasm_spill_data: HashMap<String, String>,
-    /// WASM log count (after rate-limited logging)
-    pub wasm_log_count: Option<usize>,
-    /// WASM tool registry for wrapper integration tests
-    pub wasm_tool_registry: Option<ToolRegistryImpl>,
-    /// WASM tools directory for loader tests
-    pub wasm_tools_dir: Option<PathBuf>,
-    /// WASM load result from directory scan
-    pub wasm_load_result: Option<Result<loader::LoadResult, String>>,
-    /// WASM registration error (for missing exports scenario)
-    pub wasm_registration_error: Option<String>,
-    // --- WASM tool port BDD fields ---
-    /// WASM tool port: tool result from WASM execution
-    pub wasm_tool_result: Option<quecto::domain::tool::ToolResult>,
-    /// WASM tool port: native tool result for parity comparison
-    pub wasm_native_result: Option<quecto::domain::tool::ToolResult>,
-    /// WASM tool port: native tool registry for parity tests
-    pub wasm_native_registry: Option<ToolRegistryImpl>,
-    /// WASM tool port: WASM tool registry for port tests
-    pub wasm_port_registry: Option<ToolRegistryImpl>,
-    /// WASM tool port: shared workspace path for parity tests
-    pub wasm_parity_workspace: Option<PathBuf>,
-    /// WASM tool port: temp dir for parity tests
-    pub _wasm_parity_temp_dir: Option<TempDir>,
     // --- Issue #105/#106: Cron run-once and delivery ---
     /// Cron tool list output for assertion
     pub cron_tool_list_output: Option<String>,
@@ -987,8 +933,6 @@ mod telegram_steps;
 mod tool_empty_args_steps;
 mod truncate_steps;
 mod voice_steps;
-mod wasm_steps;
-mod wasm_tools_steps;
 
 // Runner
 // ===========================================================================
