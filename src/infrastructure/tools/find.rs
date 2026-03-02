@@ -311,6 +311,12 @@ const MAX_DISCOVER_DEPTH: usize = 20;
 /// files outside git repos. Passing them explicitly via `--ignore-file` ensures
 /// consistent behaviour regardless of git repo status.
 ///
+/// **Catch-all filtering**: `.gitignore` files whose only rules are catch-all
+/// patterns (`*`, `**`, `**/`, `**/*`) plus negations/comments are excluded.
+/// When such files from nested repos are passed globally to fd via `--ignore-file`,
+/// they suppress every file in the search tree — for example `*\n!.gitignore` in a
+/// sub-repo's tooling directory would cause `find(path=".")` to return nothing.
+///
 /// Safety:
 /// - Skips symlinks when deciding whether to recurse (prevents traversal outside workspace)
 /// - Caps at MAX_GITIGNORE_FILES and MAX_DISCOVER_DEPTH to prevent DoS
@@ -344,7 +350,7 @@ pub(crate) fn discover_gitignore_files(search_dir: &std::path::Path) -> Vec<Path
             // This prevents traversal outside the workspace via symlinks.
             if meta.is_dir() {
                 stack.push((path, depth + 1));
-            } else if meta.is_file() && name_str == ".gitignore" {
+            } else if meta.is_file() && name_str == ".gitignore" && !is_catch_all_gitignore(&path) {
                 result.push(path);
                 if result.len() >= MAX_GITIGNORE_FILES {
                     return result;
@@ -353,6 +359,55 @@ pub(crate) fn discover_gitignore_files(search_dir: &std::path::Path) -> Vec<Path
         }
     }
     result
+}
+
+/// Maximum bytes read from a single `.gitignore` file when checking for catch-all rules.
+/// Guards against OOM from a malformed or adversarially crafted file with no newlines.
+const MAX_GITIGNORE_READ_BYTES: u64 = 64 * 1024;
+
+/// Returns `true` when a `.gitignore` file contains a catch-all rule that
+/// would suppress every file if applied globally via `--ignore-file`.
+///
+/// Catch-all patterns detected: `*`, `**`, `**/`, `**/*`.
+/// A gitignore is considered catch-all when it contains only such patterns
+/// plus blank lines, comments, and negations — no real content rules.
+///
+/// Examples that are catch-all (excluded):
+/// - `*`
+/// - `*\n!.gitignore`
+/// - `**\n# comment\n!README.md`
+///
+/// Examples that are NOT catch-all (included):
+/// - `target/\n*.log`
+/// - `node_modules/`
+pub(crate) fn is_catch_all_gitignore(path: &std::path::Path) -> bool {
+    use std::io::{BufRead, BufReader, Read};
+    // Size guard: skip unreasonably large files rather than risk OOM.
+    // A legitimate .gitignore is never 64 KiB.
+    if let Ok(meta) = std::fs::metadata(path) {
+        if meta.len() > MAX_GITIGNORE_READ_BYTES {
+            return false;
+        }
+    }
+    let Ok(f) = std::fs::File::open(path) else {
+        return false;
+    };
+    // Wrap in a byte-capped reader as a second safety net.
+    let capped = f.take(MAX_GITIGNORE_READ_BYTES);
+    let mut has_catch_all = false;
+    for line in BufReader::new(capped).lines().map_while(Result::ok) {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue; // blank or comment — skip
+        }
+        if matches!(trimmed, "*" | "**" | "**/" | "**/*") {
+            has_catch_all = true;
+        } else if !trimmed.starts_with('!') {
+            // A real content rule (not a negation) — cannot be a pure catch-all.
+            return false;
+        }
+    }
+    has_catch_all
 }
 
 /// Format fd output: relativise paths to the search dir, apply byte cap, append hints.
