@@ -10,9 +10,9 @@
 //! - [`make_channel_callback`] — creates a [`ProgressCallback`] that sends
 //!   events over a `std::sync::mpsc::Sender` for testing or background threads.
 //!
-//! - [`spawn_spinner_thread`] — spawns a background OS thread that receives
-//!   [`AgentProgressEvent`]s from a channel and drives `ProgressRenderer` at
-//!   ~12fps, giving the terminal a live animated spinner.
+//! - [`spawn_spinner_thread_with_status`] — spawns a background OS thread that
+//!   receives [`AgentProgressEvent`]s from a channel and drives `ProgressRenderer`
+//!   at ~12fps, giving the terminal a live animated spinner.
 //!
 //! ## Design constraints
 //!
@@ -25,6 +25,7 @@
 //!   older terminals the `\r\x1b[K` erase will degrade gracefully.
 
 use std::io::Write;
+use std::path::Path;
 use std::sync::Arc;
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::Mutex;
@@ -49,6 +50,11 @@ const TICK_INTERVAL: Duration = Duration::from_millis(80);
 // Moves the cursor to column 0 and clears everything after it.
 const ERASE_LINE: &str = "\r\x1b[K";
 
+/// Max characters to render for status/detail lines.
+const MAX_STATUS_LINE_CHARS: usize = 140;
+/// Max characters to render for tool status lines (name + args).
+const MAX_TOOL_STATUS_CHARS: usize = 160;
+
 // ---------------------------------------------------------------------------
 // Terminal safety
 // ---------------------------------------------------------------------------
@@ -69,6 +75,61 @@ pub(crate) fn sanitize_for_terminal(s: &str) -> String {
         .collect()
 }
 
+fn truncate_for_terminal(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
+    }
+    let trimmed: String = s.chars().take(max_chars.saturating_sub(3)).collect();
+    format!("{}...", trimmed)
+}
+
+fn sanitize_and_truncate(s: &str, max_chars: usize) -> String {
+    let sanitized = sanitize_for_terminal(s);
+    truncate_for_terminal(&sanitized, max_chars)
+}
+
+fn format_compact_tokens(tokens: usize) -> String {
+    if tokens >= 1000 {
+        let exact = tokens as f64 / 1000.0;
+        if (exact.fract() - 0.0).abs() < f64::EPSILON {
+            format!("{}k", tokens / 1000)
+        } else {
+            format!("{:.1}k", exact)
+        }
+    } else {
+        tokens.to_string()
+    }
+}
+
+fn format_context_usage(context_tokens: usize, max_context_tokens: usize) -> String {
+    if max_context_tokens == 0 {
+        return "0.0%/0".to_string();
+    }
+    let pct = (context_tokens as f64 / max_context_tokens as f64) * 100.0;
+    format!("{:.1}%/{}", pct, format_compact_tokens(max_context_tokens))
+}
+
+fn format_status_detail(
+    context_tokens: usize,
+    max_context_tokens: usize,
+    provider: &str,
+    model: &str,
+) -> String {
+    let usage = format_context_usage(context_tokens, max_context_tokens);
+    format!("{} ({}) {}", usage, provider, model)
+}
+
+fn format_tool_status(name: &str, arguments: &str) -> String {
+    let safe_name = sanitize_for_terminal(name);
+    let safe_args = sanitize_for_terminal(arguments);
+    let combined = if safe_args.trim().is_empty() {
+        safe_name
+    } else {
+        format!("{} {}", safe_name, safe_args)
+    };
+    truncate_for_terminal(&combined, MAX_TOOL_STATUS_CHARS)
+}
+
 // ---------------------------------------------------------------------------
 // ProgressRenderer
 // ---------------------------------------------------------------------------
@@ -82,6 +143,12 @@ pub struct ProgressRenderer<W: Write + Send> {
     frame: usize,
     /// The last status line currently visible on the terminal (for erase).
     current_line: Option<String>,
+    /// Number of status lines rendered beneath the spinner line.
+    current_line_count: usize,
+    /// Optional static status header (e.g. workspace path).
+    status_header: Option<String>,
+    /// Optional dynamic status detail line (e.g. model, context usage).
+    status_detail: Option<String>,
 }
 
 impl<W: Write + Send> ProgressRenderer<W> {
@@ -92,7 +159,19 @@ impl<W: Write + Send> ProgressRenderer<W> {
             is_tty,
             frame: 0,
             current_line: None,
+            current_line_count: 0,
+            status_header: None,
+            status_detail: None,
         }
+    }
+
+    /// Create a renderer with an optional static status header line.
+    pub fn new_with_status(is_tty: bool, writer: W, status_header: Option<String>) -> Self {
+        let mut renderer = Self::new(is_tty, writer);
+        renderer.status_header = status_header
+            .as_deref()
+            .map(|line| sanitize_and_truncate(line, MAX_STATUS_LINE_CHARS));
+        renderer
     }
 
     /// Handle an incoming [`AgentProgressEvent`].
@@ -101,26 +180,32 @@ impl<W: Write + Send> ProgressRenderer<W> {
             return;
         }
         match event {
-            AgentProgressEvent::Thinking => {
+            AgentProgressEvent::Thinking {
+                context_tokens,
+                max_context_tokens,
+                provider,
+                model,
+            } => {
+                let detail =
+                    format_status_detail(context_tokens, max_context_tokens, &provider, &model);
+                self.status_detail = Some(sanitize_and_truncate(&detail, MAX_STATUS_LINE_CHARS));
                 self.render_status("Thinking...");
             }
-            AgentProgressEvent::ToolStarted { name, .. } => {
-                // Sanitize before writing — the tool name comes from LLM output
-                // and could contain ANSI escape sequences via prompt injection.
-                let safe_name = sanitize_for_terminal(&name);
-                self.render_status(&safe_name);
+            AgentProgressEvent::ToolStarted { name, arguments } => {
+                let status = format_tool_status(&name, &arguments);
+                self.render_status(&status);
             }
             AgentProgressEvent::ToolFinished {
                 name,
+                arguments,
                 duration_ms,
                 is_error,
             } => {
                 let icon = if is_error { "✗" } else { "✓" };
-                // Sanitize tool name before writing to persistent terminal output.
-                let safe_name = sanitize_for_terminal(&name);
+                let safe_tool = format_tool_status(&name, &arguments);
                 // Print a completed line (newline-terminated so it persists)
                 self.clear_current_line();
-                let line = format!("  {} {}  {}ms\n", icon, safe_name, duration_ms);
+                let line = format!("  {} {}  {}ms\n", icon, safe_tool, duration_ms);
                 let _ = self.writer.write_all(line.as_bytes());
                 let _ = self.writer.flush();
                 self.current_line = None;
@@ -156,20 +241,56 @@ impl<W: Write + Send> ProgressRenderer<W> {
     /// Render a status line using the current spinner frame and store it
     /// as the active line (so ticks know what to redraw).
     fn render_status(&mut self, status: &str) {
+        self.clear_current_line();
         let spinner = SPINNER_FRAMES[self.frame % SPINNER_FRAMES.len()];
+        let status_lines = self.status_lines();
         // \r moves to column 0; \x1b[K erases to EOL — overwrites in place
-        let line = format!("{}{} {}", ERASE_LINE, spinner, status);
+        let mut line = format!("{}{} {}", ERASE_LINE, spinner, status);
+        for status_line in &status_lines {
+            line.push('\n');
+            line.push_str(status_line);
+        }
+        if !status_lines.is_empty() {
+            line.push_str(&format!("\x1b[{}A\r", status_lines.len()));
+        }
         let _ = self.writer.write_all(line.as_bytes());
         let _ = self.writer.flush();
         self.current_line = Some(status.to_string());
+        self.current_line_count = status_lines.len();
+    }
+
+    /// Return the status lines rendered beneath the spinner (if any).
+    fn status_lines(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        if let Some(header) = self.status_header.as_deref() {
+            if !header.is_empty() {
+                lines.push(header.to_string());
+            }
+        }
+        if let Some(detail) = self.status_detail.as_deref() {
+            if !detail.is_empty() {
+                lines.push(detail.to_string());
+            }
+        }
+        lines
     }
 
     /// Erase the current spinner line from the terminal.
     fn clear_current_line(&mut self) {
         if self.current_line.is_some() {
-            let _ = self.writer.write_all(ERASE_LINE.as_bytes());
+            let mut line = String::new();
+            line.push_str(ERASE_LINE);
+            if self.current_line_count > 0 {
+                for _ in 0..self.current_line_count {
+                    line.push('\n');
+                    line.push_str(ERASE_LINE);
+                }
+                line.push_str(&format!("\x1b[{}A\r", self.current_line_count));
+            }
+            let _ = self.writer.write_all(line.as_bytes());
             let _ = self.writer.flush();
             self.current_line = None;
+            self.current_line_count = 0;
         }
     }
 }
@@ -235,6 +356,27 @@ impl Drop for SpinnerHandle {
     }
 }
 
+/// Build a status header line showing the current working directory and git branch.
+pub fn build_status_header_line() -> Option<String> {
+    let cwd = std::env::current_dir().ok()?;
+    let path = cwd.display().to_string();
+    let branch = read_git_branch(&cwd);
+    Some(match branch {
+        Some(b) if !b.is_empty() => format!("{} ({})", path, b),
+        _ => path,
+    })
+}
+
+fn read_git_branch(dir: &Path) -> Option<String> {
+    let head_path = dir.join(".git").join("HEAD");
+    let content = std::fs::read_to_string(head_path).ok()?;
+    let trimmed = content.trim();
+    if let Some(reference) = trimmed.strip_prefix("ref: ") {
+        return reference.rsplit('/').next().map(|s| s.to_string());
+    }
+    None
+}
+
 /// Spawn a background OS thread that drives a `ProgressRenderer<Stderr>` at
 /// ~12fps, receiving [`AgentProgressEvent`]s from the returned channel.
 ///
@@ -243,13 +385,15 @@ impl Drop for SpinnerHandle {
 ///
 /// **Only call on TTY sessions** — the renderer is a no-op for non-TTY, but
 /// spawning an unnecessary thread wastes resources.
-pub fn spawn_spinner_thread() -> (ProgressCallback, SpinnerHandle) {
+pub fn spawn_spinner_thread_with_status(
+    status_header: Option<String>,
+) -> (ProgressCallback, SpinnerHandle) {
     let (tx, rx) = std::sync::mpsc::channel::<AgentProgressEvent>();
     let tx_clone = tx.clone();
 
     let thread = std::thread::spawn(move || {
         let stderr = std::io::stderr();
-        let mut renderer = ProgressRenderer::new(true, stderr);
+        let mut renderer = ProgressRenderer::new_with_status(true, stderr, status_header);
 
         loop {
             match rx.recv_timeout(TICK_INTERVAL) {
@@ -314,8 +458,12 @@ impl ProgressRenderer<MutexVecWriter> {
     ///
     /// Used by [`crate::interface::cli::run_repl_with_tty_captured`] so BDD
     /// tests can assert on spinner output without touching the real process stderr.
-    pub fn new_tty_capture(buf: Arc<Mutex<Vec<u8>>>) -> Self {
-        ProgressRenderer::new(true, MutexVecWriter(buf))
+    /// Create a TTY-mode renderer with a status header line.
+    pub fn new_tty_capture_with_status(
+        buf: Arc<Mutex<Vec<u8>>>,
+        status_header: Option<String>,
+    ) -> Self {
+        ProgressRenderer::new_with_status(true, MutexVecWriter(buf), status_header)
     }
 
     /// Test-only constructor allowing explicit TTY control over the capture buffer.

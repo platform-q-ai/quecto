@@ -11,6 +11,15 @@ use super::*;
 use crate::domain::agent::AgentProgressEvent;
 use std::sync::{Arc, Mutex};
 
+fn sample_thinking_event() -> AgentProgressEvent {
+    AgentProgressEvent::Thinking {
+        context_tokens: 0,
+        max_context_tokens: 100,
+        provider: "openai".to_string(),
+        model: "gpt-5.2".to_string(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // ProgressRenderer: non-TTY mode
 // ---------------------------------------------------------------------------
@@ -20,13 +29,14 @@ fn test_progress_renderer_non_tty_produces_no_output() {
     let buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
     let mut renderer = ProgressRenderer::new_with_writer(false, buf.clone());
 
-    renderer.handle_event(AgentProgressEvent::Thinking);
+    renderer.handle_event(sample_thinking_event());
     renderer.handle_event(AgentProgressEvent::ToolStarted {
         name: "bash".to_string(),
         arguments: "echo hi".to_string(),
     });
     renderer.handle_event(AgentProgressEvent::ToolFinished {
         name: "bash".to_string(),
+        arguments: "{\"command\": \"echo hi\"}".to_string(),
         duration_ms: 42,
         is_error: false,
     });
@@ -49,7 +59,7 @@ fn test_progress_renderer_tty_thinking_writes_output() {
     let buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
     let mut renderer = ProgressRenderer::new_with_writer(true, buf.clone());
 
-    renderer.handle_event(AgentProgressEvent::Thinking);
+    renderer.handle_event(sample_thinking_event());
 
     let output = buf.lock().unwrap();
     let text = String::from_utf8_lossy(&output);
@@ -91,12 +101,32 @@ fn test_progress_renderer_tty_tool_started_shows_tool_name() {
 }
 
 #[test]
+fn test_progress_renderer_tty_tool_started_shows_tool_arguments() {
+    let buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut renderer = ProgressRenderer::new_with_writer(true, buf.clone());
+
+    renderer.handle_event(AgentProgressEvent::ToolStarted {
+        name: "bash".to_string(),
+        arguments: "{\"command\": \"echo hi\"}".to_string(),
+    });
+
+    let output = buf.lock().unwrap();
+    let text = String::from_utf8_lossy(&output);
+    assert!(
+        text.contains("echo hi"),
+        "expected tool arguments in output, got: {:?}",
+        text
+    );
+}
+
+#[test]
 fn test_progress_renderer_tty_tool_finished_shows_tool_name_and_duration() {
     let buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
     let mut renderer = ProgressRenderer::new_with_writer(true, buf.clone());
 
     renderer.handle_event(AgentProgressEvent::ToolFinished {
         name: "bash".to_string(),
+        arguments: "{\"command\": \"echo hi\"}".to_string(),
         duration_ms: 1234,
         is_error: false,
     });
@@ -106,6 +136,11 @@ fn test_progress_renderer_tty_tool_finished_shows_tool_name_and_duration() {
     assert!(
         text.contains("bash"),
         "expected 'bash' in finished output, got: {:?}",
+        text
+    );
+    assert!(
+        text.contains("echo hi"),
+        "expected tool arguments in finished output, got: {:?}",
         text
     );
     assert!(
@@ -122,6 +157,7 @@ fn test_progress_renderer_tty_tool_finished_error_indicates_failure() {
 
     renderer.handle_event(AgentProgressEvent::ToolFinished {
         name: "bash".to_string(),
+        arguments: "{\"command\": \"echo fail\"}".to_string(),
         duration_ms: 50,
         is_error: true,
     });
@@ -143,7 +179,7 @@ fn test_progress_renderer_tty_done_clears_line() {
     let mut renderer = ProgressRenderer::new_with_writer(true, buf.clone());
 
     // Simulate a thinking event first, then done
-    renderer.handle_event(AgentProgressEvent::Thinking);
+    renderer.handle_event(sample_thinking_event());
     {
         let mut locked = buf.lock().unwrap();
         locked.clear(); // reset buffer to check only the Done output
@@ -188,7 +224,7 @@ fn test_progress_renderer_tick_advances_frame() {
     let mut renderer = ProgressRenderer::new_with_writer(true, buf.clone());
 
     // First set an active status line so there's something to redraw
-    renderer.handle_event(AgentProgressEvent::Thinking);
+    renderer.handle_event(sample_thinking_event());
     {
         let mut locked = buf.lock().unwrap();
         locked.clear(); // reset to measure only tick output
@@ -231,7 +267,7 @@ fn test_progress_channel_sends_events() {
     let (tx, rx) = std::sync::mpsc::channel::<AgentProgressEvent>();
     let callback = make_channel_callback(tx);
 
-    callback(AgentProgressEvent::Thinking);
+    callback(sample_thinking_event());
     callback(AgentProgressEvent::ToolStarted {
         name: "bash".to_string(),
         arguments: "echo hi".to_string(),
@@ -241,7 +277,7 @@ fn test_progress_channel_sends_events() {
     let events: Vec<AgentProgressEvent> = rx.try_iter().collect();
     assert_eq!(events.len(), 3, "expected 3 events, got {:?}", events.len());
     assert!(
-        matches!(events[0], AgentProgressEvent::Thinking),
+        matches!(events[0], AgentProgressEvent::Thinking { .. }),
         "first event should be Thinking"
     );
     assert!(
@@ -261,7 +297,7 @@ fn test_progress_channel_send_after_receiver_dropped_does_not_panic() {
 
     // Drop receiver — sends should silently fail, not panic
     drop(rx);
-    callback(AgentProgressEvent::Thinking);
+    callback(sample_thinking_event());
     callback(AgentProgressEvent::Done);
     // Should reach here without panicking
 }
@@ -345,13 +381,14 @@ fn test_sanitize_strips_osc_sequence() {
 #[test]
 fn test_agent_progress_event_debug_and_clone() {
     let events = vec![
-        AgentProgressEvent::Thinking,
+        sample_thinking_event(),
         AgentProgressEvent::ToolStarted {
             name: "bash".to_string(),
             arguments: "echo hi".to_string(),
         },
         AgentProgressEvent::ToolFinished {
             name: "bash".to_string(),
+            arguments: "{\"command\": \"echo hi\"}".to_string(),
             duration_ms: 100,
             is_error: false,
         },

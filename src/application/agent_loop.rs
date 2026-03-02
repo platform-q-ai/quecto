@@ -221,8 +221,10 @@ impl AgentLoopImpl {
         // Emit ToolFinished so the REPL can replace the spinner line with a
         // checkmark/duration before moving on to the next tool or LLM call.
         let name_for_finished = tc.name.clone();
+        let args_for_finished = tc.arguments.clone();
         self.notify(|| AgentProgressEvent::ToolFinished {
             name: name_for_finished,
+            arguments: args_for_finished,
             duration_ms,
             is_error: is_err,
         });
@@ -296,7 +298,16 @@ impl AgentLoopImpl {
 
             // Emit Thinking before every LLM call so the REPL spinner activates
             // immediately, including during multi-turn tool loops.
-            self.notify(|| AgentProgressEvent::Thinking);
+            let context_tokens = context_pruning::estimate_total_tokens(messages);
+            let provider = self.provider.name().to_string();
+            let model = self.model.clone();
+            let max_context_tokens = self.max_context_tokens;
+            self.notify(|| AgentProgressEvent::Thinking {
+                context_tokens,
+                max_context_tokens,
+                provider,
+                model,
+            });
 
             let request = self.build_chat_request(messages, &tool_defs);
             // Propagate provider errors — emit Done first so the spinner is cleared

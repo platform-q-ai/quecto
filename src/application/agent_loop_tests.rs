@@ -1,8 +1,7 @@
 use super::*;
 use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
-use crate::domain::tool::{ToolDefinition, ToolResult};
-use crate::infrastructure::tools::registry::ToolRegistryImpl;
-use std::sync::Mutex;
+use crate::domain::tool::{Tool, ToolDefinition, ToolRegistry, ToolResult};
+use std::sync::{Arc, Mutex};
 
 // -----------------------------------------------------------------------
 // Mock LLM Provider for unit tests
@@ -56,6 +55,48 @@ impl LlmProvider for MockProvider {
         };
 
         Box::pin(async move { Ok(response) })
+    }
+}
+
+// -----------------------------------------------------------------------
+// Mock Tool Registry for unit tests (application layer only)
+// -----------------------------------------------------------------------
+
+#[derive(Default)]
+struct MockRegistry {
+    tools: Vec<Arc<dyn Tool>>,
+}
+
+impl MockRegistry {
+    fn new() -> Self {
+        Self { tools: Vec::new() }
+    }
+
+    fn register(&mut self, tool: Arc<dyn Tool>) {
+        self.tools.push(tool);
+    }
+}
+
+impl ToolRegistry for MockRegistry {
+    fn definitions(&self) -> Vec<ToolDefinition> {
+        self.tools.iter().map(|tool| tool.definition()).collect()
+    }
+
+    fn execute(
+        &self,
+        name: &str,
+        arguments: &str,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ToolResult, DomainError>> + Send + '_>>
+    {
+        if let Some(tool) = self
+            .tools
+            .iter()
+            .find(|tool| tool.definition().name == name)
+        {
+            return tool.execute(arguments);
+        }
+        let err = DomainError::Tool(format!("unknown tool: {}", name));
+        Box::pin(async move { Err(err) })
     }
 }
 
@@ -119,7 +160,7 @@ fn make_agent(
     tools: Vec<(&str, &str)>,
 ) -> (AgentLoopImpl, Arc<MockProvider>) {
     let provider = Arc::new(MockProvider::new(responses));
-    let mut registry = ToolRegistryImpl::new();
+    let mut registry = MockRegistry::new();
     for (name, response) in tools {
         registry.register(Arc::new(MockTool::new(name, response)));
     }
@@ -278,7 +319,7 @@ async fn test_tool_error_is_sent_back() {
         text_response("I got an error"),
     ];
     let provider = Arc::new(MockProvider::new(responses));
-    let registry = ToolRegistryImpl::new(); // empty
+    let registry = MockRegistry::new(); // empty
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),
@@ -318,7 +359,7 @@ fn make_agent_with_callback(
     Arc<Mutex<Vec<crate::domain::agent::AgentProgressEvent>>>,
 ) {
     let provider = Arc::new(MockProvider::new(responses));
-    let mut registry = ToolRegistryImpl::new();
+    let mut registry = MockRegistry::new();
     for (name, response) in tools {
         registry.register(Arc::new(MockTool::new(name, response)));
     }
@@ -352,7 +393,7 @@ async fn test_progress_callback_thinking_fired_before_llm_call() {
     let fired = events.lock().unwrap();
     let has_thinking = fired
         .iter()
-        .any(|e| matches!(e, crate::domain::agent::AgentProgressEvent::Thinking));
+        .any(|e| matches!(e, crate::domain::agent::AgentProgressEvent::Thinking { .. }));
     assert!(has_thinking, "expected Thinking event, got: {:?}", *fired);
 }
 
@@ -433,7 +474,7 @@ async fn test_progress_callback_event_order_thinking_tool_started_tool_finished_
     // Find positions of key event types
     let thinking_pos = fired
         .iter()
-        .position(|e| matches!(e, crate::domain::agent::AgentProgressEvent::Thinking));
+        .position(|e| matches!(e, crate::domain::agent::AgentProgressEvent::Thinking { .. }));
     let tool_started_pos = fired.iter().position(|e| {
         matches!(
             e,
@@ -480,6 +521,7 @@ async fn test_progress_callback_tool_finished_captures_duration_and_error_flag()
     let fired = events.lock().unwrap();
     if let Some(crate::domain::agent::AgentProgressEvent::ToolFinished {
         name,
+        arguments,
         duration_ms,
         is_error,
     }) = fired.iter().find(|e| {
@@ -489,6 +531,10 @@ async fn test_progress_callback_tool_finished_captures_duration_and_error_flag()
         )
     }) {
         assert_eq!(name, "bash");
+        assert!(
+            arguments.contains("echo hi"),
+            "expected ToolFinished arguments to include command, got: {arguments}"
+        );
         // duration_ms may be 0 in test environments, but must not panic
         let _ = *duration_ms;
         assert!(!is_error, "mock tool should not be an error");
