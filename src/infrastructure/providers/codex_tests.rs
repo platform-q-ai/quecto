@@ -531,3 +531,13 @@ fn test_build_input_all_tool_calls_orphaned_fallback_to_text() {
         "assistant text content must not be silently dropped"
     );
 }
+
+// --- #209: Shared reqwest::Client ---
+
+#[test]
+fn test_codex_provider_accepts_shared_client() {
+    let client = reqwest::Client::new();
+    let provider =
+        CodexProvider::with_client("sk-test".to_string(), "acct-123".to_string(), None, client);
+    assert_eq!(provider.name(), "codex");
+}

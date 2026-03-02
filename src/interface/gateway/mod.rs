@@ -207,11 +207,16 @@ impl Gateway {
             }
         }
 
-        let provider_impl = Arc::new(self.build_fallback_provider(&creds)?);
+        // Shared HTTP client for all providers and HTTP-using tools.
+        let http_client = reqwest::Client::new();
+        let provider_impl = Arc::new(self.build_fallback_provider(&creds, &http_client)?);
         let provider: Arc<dyn LlmProvider> = provider_impl.clone();
         let cron_store = Arc::new(FileCronStore::new(&self.base_dir));
-        let (agent_impl, mut bus) =
-            self.build_agent(workspace.clone(), provider.clone(), cron_store.clone());
+        let (agent_impl, mut bus) = self.build_agent(
+            workspace.clone(),
+            provider.clone(),
+            (cron_store.clone(), &http_client),
+        );
         let agent: Arc<dyn AgentLoop> = Arc::new(agent_impl);
 
         let info = agent.info();
@@ -280,26 +285,27 @@ impl Gateway {
     fn build_fallback_provider(
         &self,
         creds: &std::collections::HashMap<String, Credential>,
+        http_client: &reqwest::Client,
     ) -> Result<FallbackProvider, GatewayError> {
         let mut provider_list = Vec::new();
-        self.maybe_add_provider(&mut provider_list, "openai", creds)?;
-        self.maybe_add_provider(&mut provider_list, "anthropic", creds)?;
+        for name in &["openai", "anthropic"] {
+            if let Some(p) = self.resolve_provider(name, creds, http_client)? {
+                provider_list.push(p);
+            }
+        }
         if provider_list.is_empty() {
             return Err(GatewayError::NoProviders);
         }
         Ok(FallbackProvider::new(provider_list))
     }
 
-    /// Try to create a provider and add it to the list.
-    ///
-    /// Resolves the API key from the credential snapshot (takes priority over config),
-    /// falling back to the config file key if no valid credential is stored.
-    fn maybe_add_provider(
+    /// Resolve a single provider by name, returning `None` if no key is configured.
+    fn resolve_provider(
         &self,
-        list: &mut Vec<Arc<dyn LlmProvider>>,
         name: &str,
         creds: &std::collections::HashMap<String, Credential>,
-    ) -> Result<(), GatewayError> {
+        http_client: &reqwest::Client,
+    ) -> Result<Option<Arc<dyn LlmProvider>>, GatewayError> {
         let (config_key, api_base) = match name {
             "openai" => (
                 &self.config.providers.openai.api_key,
@@ -309,11 +315,11 @@ impl Gateway {
                 &self.config.providers.anthropic.api_key,
                 &self.config.providers.anthropic.api_base,
             ),
-            _ => return Ok(()),
+            _ => return Ok(None),
         };
         let api_key = resolve_api_key(config_key, creds, name);
         if api_key.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
 
         // For OpenAI OAuth tokens, use the Codex provider instead
@@ -321,8 +327,11 @@ impl Gateway {
             let account_id =
                 crate::infrastructure::auth::oauth::extract_openai_account_id(&api_key);
             if let Some(acct) = account_id {
-                list.push(providers::create_codex_provider(api_key, acct));
-                return Ok(());
+                return Ok(Some(providers::create_codex_provider_with_client(
+                    api_key,
+                    acct,
+                    http_client.clone(),
+                )));
             }
         }
 
@@ -331,16 +340,13 @@ impl Gateway {
         } else {
             Some(api_base.clone())
         };
-        match providers::create_provider(name, api_key, base) {
-            Ok(p) => list.push(p),
-            Err(e) => {
-                return Err(GatewayError::Config(format!(
-                    "{} provider configuration error: {}",
-                    name, e
-                )));
-            }
+        match providers::create_provider_with_client(name, api_key, base, http_client.clone()) {
+            Ok(p) => Ok(Some(p)),
+            Err(e) => Err(GatewayError::Config(format!(
+                "{} provider configuration error: {}",
+                name, e
+            ))),
         }
-        Ok(())
     }
 
     /// Build agent loop with tool registry and message bus.
@@ -348,8 +354,9 @@ impl Gateway {
         &self,
         workspace: PathBuf,
         provider: Arc<dyn LlmProvider>,
-        cron_store: Arc<FileCronStore>,
+        ctx: (Arc<FileCronStore>, &reqwest::Client),
     ) -> (AgentLoopImpl, MessageBus) {
+        let (cron_store, http_client) = ctx;
         let sandbox = Sandbox::new(
             Some(workspace.clone()),
             self.config.agents.defaults.restrict_to_workspace,
@@ -365,7 +372,10 @@ impl Gateway {
         // handles post-processing delivery but in-loop MessageTool calls did not.
         let default_send_to = self.config.channels.telegram.default_send_to.clone();
         registry.register(Arc::new(MessageTool::new(outbound_tx, default_send_to)));
-        registry.register(Arc::new(WebSearchTool::new(self.brave_api_key())));
+        registry.register(Arc::new(WebSearchTool::with_client(
+            self.brave_api_key(),
+            http_client.clone(),
+        )));
         registry.register(Arc::new(CronTool::new(cron_store)));
         registry.register(Arc::new(SpawnTool::with_base_dir(
             vec![],

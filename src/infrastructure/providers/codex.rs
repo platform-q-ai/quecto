@@ -30,10 +30,20 @@ impl CodexProvider {
     /// `account_id` is extracted from the OAuth JWT's
     /// `https://api.openai.com/auth` claim.
     pub fn new(api_key: String, account_id: String, api_base: Option<String>) -> Self {
+        Self::with_client(api_key, account_id, api_base, reqwest::Client::new())
+    }
+
+    /// Create with a shared `reqwest::Client` (avoids duplicate connection pools).
+    pub fn with_client(
+        api_key: String,
+        account_id: String,
+        api_base: Option<String>,
+        client: reqwest::Client,
+    ) -> Self {
         Self {
             api_key,
             api_base: api_base.unwrap_or_else(|| CODEX_BASE_URL.to_string()),
-            client: reqwest::Client::new(),
+            client,
             account_id,
         }
     }
