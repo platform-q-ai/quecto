@@ -1,4 +1,4 @@
-// LsTool — Pi name: "ls" (was "list_dir")
+// LsTool — Pi name: "ls"
 
 use std::future::Future;
 use std::path::PathBuf;
