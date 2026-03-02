@@ -251,6 +251,34 @@ fn test_prepend_glob_star_for_non_anchored_patterns() {
     assert_eq!(build_full_path_pattern("*.rs"), "*.rs");
 }
 
+#[test]
+fn test_dot_slash_prefix_stripped() {
+    // LLMs sometimes emit ./relative paths; strip ./ before anchoring.
+    assert_eq!(build_full_path_pattern("./src/*.rs"), "**/src/*.rs");
+    assert_eq!(build_full_path_pattern("./nested/*.txt"), "**/nested/*.txt");
+    // ./ prefix on an already-anchored pattern — strip ./ then pass through.
+    assert_eq!(build_full_path_pattern("./**/*.rs"), "**/*.rs");
+}
+
+#[test]
+fn test_absolute_slash_prefix_stripped() {
+    // Patterns starting with / are stripped so they can be anchored with **/.
+    // An unstripped /src/*.rs would never match /workspace/src/foo.rs.
+    assert_eq!(build_full_path_pattern("/src/*.rs"), "**/src/*.rs");
+    assert_eq!(build_full_path_pattern("/nested/*.txt"), "**/nested/*.txt");
+}
+
+#[test]
+fn test_traversal_pattern_gets_star_prepend() {
+    // Even traversal-looking patterns are safe — fd treats .. as a literal glob
+    // segment and never traverses outside the specified search directory.
+    // We document the invariant: these patterns are normalised, not rejected.
+    assert_eq!(
+        build_full_path_pattern("../../etc/*.conf"),
+        "**/../../etc/*.conf"
+    );
+}
+
 #[tokio::test]
 async fn test_find_path_segment_glob_matches() {
     let (tool, _ws, tmp) = test_find();

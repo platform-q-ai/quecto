@@ -30,25 +30,40 @@ pub(crate) fn pattern_has_path_segment(pattern: &str) -> bool {
 
 /// Prepare a glob pattern for use with `fd --glob --full-path`.
 ///
-/// When a pattern contains a path segment but does not already start with
-/// `**` or `/`, prepend `**/` so it matches at any depth within the search
-/// directory. Patterns that already start with `**` or `/` are returned
-/// unchanged.
+/// Normalises and anchors path-segment patterns so fd matches them correctly
+/// against absolute paths:
+///
+/// 1. Strip a leading `./` — fd's glob engine does not normalise `./` in
+///    full-path mode, so `**/./src/*.rs` silently matches nothing.
+/// 2. Strip a leading `/` — an absolute-looking pattern (e.g. `/src/*.rs`)
+///    would never match a file whose full path starts with the workspace root.
+/// 3. Prepend `**/` to non-anchored patterns so they match at any depth.
+///    Patterns already starting with `**` are returned unchanged.
+///
+/// Patterns without a `/` (e.g. `*.rs`) are returned unchanged because
+/// full-path mode is not used for them.
 ///
 /// Examples:
-/// - `"src/*.rs"`   → `"**/src/*.rs"`   (path-segment, not anchored)
-/// - `"**/*.rs"`    → `"**/*.rs"`       (already uses **)
-/// - `"*.rs"`       → `"*.rs"`          (no slash — full-path mode unused)
+/// - `"src/*.rs"`    → `"**/src/*.rs"`   (path-segment, not anchored)
+/// - `"./src/*.rs"`  → `"**/src/*.rs"`   (leading ./ stripped)
+/// - `"/src/*.rs"`   → `"**/src/*.rs"`   (leading / stripped)
+/// - `"**/*.rs"`     → `"**/*.rs"`       (already anchored with **)
+/// - `"*.rs"`        → `"*.rs"`          (no slash — full-path mode unused)
 pub(crate) fn build_full_path_pattern(pattern: &str) -> String {
     if !pattern_has_path_segment(pattern) {
         // No slash — full-path mode is not used; return unchanged.
         return pattern.to_string();
     }
-    if pattern.starts_with("**") || pattern.starts_with('/') {
-        // Already anchored — return unchanged.
-        return pattern.to_string();
+    // Normalise: strip leading ./ or / so the pattern can be anchored with **/.
+    let pat = pattern
+        .strip_prefix("./")
+        .or_else(|| pattern.strip_prefix('/'))
+        .unwrap_or(pattern);
+    if pat.starts_with("**") {
+        // Already anchored — return the normalised form.
+        return pat.to_string();
     }
-    format!("**/{}", pattern)
+    format!("**/{}", pat)
 }
 
 fn missing_pattern_error() -> ToolResult {
@@ -152,7 +167,7 @@ impl Tool for FindTool {
                 fd_cmd: &fd_cmd,
                 workspace: &workspace,
                 pattern,
-                full_path: &full_path,
+                search_dir: &full_path,
                 limit,
                 gitignore_files: &gitignore_files,
             })
@@ -197,7 +212,8 @@ struct FdArgs<'a> {
     fd_cmd: &'a str,
     workspace: &'a std::path::Path,
     pattern: &'a str,
-    full_path: &'a std::path::Path,
+    /// The resolved, sandbox-validated directory to search.
+    search_dir: &'a std::path::Path,
     limit: usize,
     gitignore_files: &'a [PathBuf],
 }
@@ -206,20 +222,22 @@ struct FdArgs<'a> {
 ///
 /// When the pattern contains a path separator (e.g. `"src/*.rs"`), fd's
 /// default `--glob` mode only tests the pattern against the filename component
-/// and would silently return nothing. We add `--full-path` and prepend `**/`
-/// to non-anchored patterns so they match at any depth.
+/// and would silently return nothing. We add `--full-path` and use
+/// `build_full_path_pattern` to anchor the pattern so it matches at any depth.
 async fn run_fd(a: FdArgs<'_>) -> Result<(Vec<u8>, Vec<u8>, Option<i32>), DomainError> {
+    use std::borrow::Cow;
     use tokio::io::AsyncReadExt;
 
     let needs_full_path = pattern_has_path_segment(a.pattern);
-    let effective_pattern = if needs_full_path {
-        build_full_path_pattern(a.pattern)
+    // Avoid heap allocation in the common case (no path segment).
+    let effective_pattern: Cow<'_, str> = if needs_full_path {
+        Cow::Owned(build_full_path_pattern(a.pattern))
     } else {
-        a.pattern.to_string()
+        Cow::Borrowed(a.pattern)
     };
 
     // Build: fd --glob [--full-path] --color=never --hidden --max-results N
-    //           [--ignore-file ...] -- <pattern> <path>
+    //           [--ignore-file ...] -- <pattern> <search_dir>
     let mut cmd = tokio::process::Command::new(a.fd_cmd);
     cmd.current_dir(a.workspace)
         .arg("--glob")
@@ -234,8 +252,8 @@ async fn run_fd(a: FdArgs<'_>) -> Result<(Vec<u8>, Vec<u8>, Option<i32>), Domain
         cmd.arg("--ignore-file").arg(gitignore);
     }
     cmd.arg("--")
-        .arg(&effective_pattern)
-        .arg(a.full_path)
+        .arg(effective_pattern.as_ref())
+        .arg(a.search_dir)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
