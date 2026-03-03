@@ -287,10 +287,9 @@ fn when_send_chat_with_tool(world: &mut QuectoWorld, message: String, tool_name:
     let provider = world.provider.as_ref().expect("provider not set");
     let messages = vec![Message::user(message)];
     let tools = vec![quecto::domain::tool::ToolDefinition {
-        name: tool_name,
-        description: "Execute a command".to_string(),
-        parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#
-            .to_string(),
+        name: tool_name.into(),
+        description: "Execute a command".into(),
+        parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#.into(),
     }];
     let req = quecto::domain::provider::ChatRequest {
         messages: &messages,

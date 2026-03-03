@@ -175,10 +175,10 @@ impl SpawnTool {
 impl Tool for SpawnTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "spawn".to_string(),
+            name: "spawn".into(),
             description: "Spawn a subagent to handle a task. The subagent runs as a child process."
-                .to_string(),
-            parameters_schema: r#"{"type":"object","properties":{"task":{"type":"string","description":"The task description for the subagent"},"agent_id":{"type":"string","description":"Optional agent ID for the subagent session"},"system":{"type":"string","description":"Optional system prompt for the subagent"}},"required":["task"]}"#.to_string(),
+                .into(),
+            parameters_schema: r#"{"type":"object","properties":{"task":{"type":"string","description":"The task description for the subagent"},"agent_id":{"type":"string","description":"Optional agent ID for the subagent session"},"system":{"type":"string","description":"Optional system prompt for the subagent"}},"required":["task"]}"#.into(),
         }
     }
 

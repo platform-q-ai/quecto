@@ -120,9 +120,9 @@ impl MockTool {
     fn new(name: &str, response: &str) -> Self {
         Self {
             def: ToolDefinition {
-                name: name.to_string(),
-                description: format!("Mock {} tool", name),
-                parameters_schema: r#"{"type":"object"}"#.to_string(),
+                name: name.to_string().into(),
+                description: format!("Mock {} tool", name).into(),
+                parameters_schema: r#"{"type":"object"}"#.into(),
             },
             response: Mutex::new(response.to_string()),
         }
@@ -281,7 +281,7 @@ async fn test_tool_definitions_sent_to_llm() {
     let _ = agent.run_loop(&mut messages).await.unwrap();
     let defs = provider.last_tool_defs();
     assert_eq!(defs.len(), 2);
-    let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
+    let names: Vec<&str> = defs.iter().map(|d| d.name.as_ref()).collect();
     assert!(names.contains(&"bash"));
     assert!(names.contains(&"read"));
 }
@@ -649,4 +649,93 @@ async fn test_tool_count_empty() {
     let registry = MockRegistry::new();
     let trait_reg: &dyn ToolRegistry = &registry;
     assert_eq!(trait_reg.tool_count(), 0);
+}
+
+// --- #222: spill_tool_message uses take-and-restore (no clone) ---
+
+/// Mock spill store that records appended entries.
+#[derive(Debug, Default)]
+struct MockSpillStore {
+    entries: Mutex<Vec<SpillEntry>>,
+}
+
+impl ContextSpillStore for MockSpillStore {
+    fn append(
+        &self,
+        _session_key: &str,
+        entry: &SpillEntry,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + '_>> {
+        self.entries.lock().unwrap().push(entry.clone());
+        Box::pin(async { Ok(()) })
+    }
+
+    fn recall(
+        &self,
+        _session_key: &str,
+        _id: &str,
+    ) -> Pin<
+        Box<dyn std::future::Future<Output = Result<Option<SpillEntry>, DomainError>> + Send + '_>,
+    > {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn list_entries(
+        &self,
+        _session_key: &str,
+    ) -> Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<Vec<crate::domain::session::SpillIndex>, DomainError>,
+                > + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async { Ok(vec![]) })
+    }
+
+    fn clear(
+        &self,
+        _session_key: &str,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + '_>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+#[tokio::test]
+async fn test_spill_preserves_message_content_after_spill() {
+    let spill_store = Arc::new(MockSpillStore::default());
+    let provider = Arc::new(MockProvider::new(vec![
+        tool_call_response("bash", r#"{"command":"echo hi"}"#),
+        text_response("done"),
+    ]));
+    let mut registry = MockRegistry::new();
+    registry.register(Arc::new(MockTool::new("bash", "big output here")));
+
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider,
+        tool_registry: Box::new(registry),
+        model: "test-model".to_string(),
+        max_tokens: 1024,
+        temperature: 0.7,
+        spill_store: Some(spill_store.clone()),
+        session_key: "test-session".to_string(),
+        context_collapse_after_turns: u32::MAX,
+        max_context_tokens: 190_000,
+        progress_callback: None,
+    });
+
+    let mut messages = vec![Message::user("run it")];
+    agent.run_loop(&mut messages).await.unwrap();
+
+    // The tool message content must be preserved in the conversation history
+    let tool_msg = messages.iter().find(|m| m.role == Role::Tool).unwrap();
+    assert_eq!(
+        tool_msg.content, "big output here",
+        "tool message content must be preserved after spill"
+    );
+
+    // The spill store should have received the content
+    let entries = spill_store.entries.lock().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].content, "big output here");
 }

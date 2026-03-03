@@ -32,14 +32,15 @@ impl LsTool {
 impl Tool for LsTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "ls".to_string(),
+            name: "ls".into(),
             description: format!(
                 "List directory contents. Defaults to the current working directory \
                  when path is omitted. Entries are sorted case-insensitively; directories \
                  are suffixed with '/'. Output capped at {} entries or 50KB. \
                  Example: {{\"path\": \"src\"}}",
                 LS_DEFAULT_LIMIT
-            ),
+            )
+            .into(),
             parameters_schema: format!(
                 r#"{{
                 "type": "object",
@@ -49,7 +50,8 @@ impl Tool for LsTool {
                 }}
             }}"#,
                 LS_DEFAULT_LIMIT, LS_MAX_LIMIT
-            ),
+            )
+            .into(),
         }
     }
 

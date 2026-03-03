@@ -25,9 +25,9 @@ impl WriteTool {
 impl Tool for WriteTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "write".to_string(),
-            description: "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories. Example: {\"path\": \"output.txt\", \"content\": \"hello\"}".to_string(),
-            parameters_schema: r#"{"type":"object","properties":{"path":{"type":"string","description":"Path to the file to write (relative or absolute)"},"content":{"type":"string","description":"Content to write to the file"}},"required":["path","content"]}"#.to_string(),
+            name: "write".into(),
+            description: "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories. Example: {\"path\": \"output.txt\", \"content\": \"hello\"}".into(),
+            parameters_schema: r#"{"type":"object","properties":{"path":{"type":"string","description":"Path to the file to write (relative or absolute)"},"content":{"type":"string","description":"Content to write to the file"}},"required":["path","content"]}"#.into(),
         }
     }
 
@@ -35,13 +35,12 @@ impl Tool for WriteTool {
         &self,
         arguments: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
-        let args_str = arguments.to_string();
+        let args: Result<serde_json::Value, _> = serde_json::from_str(arguments);
         let workspace = self.workspace.clone();
         let sandbox = self.sandbox.clone();
 
         Box::pin(async move {
-            let args: serde_json::Value =
-                serde_json::from_str(&args_str).map_err(|e| DomainError::Tool(e.to_string()))?;
+            let args = args.map_err(|e| DomainError::Tool(e.to_string()))?;
             let Some(path) = args["path"].as_str() else {
                 return Ok(ToolResult {
                     content:

@@ -58,17 +58,17 @@ impl EditTool {
 impl Tool for EditTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "edit".to_string(),
+            name: "edit".into(),
             description: "Edit a file by replacing exact text. The oldText must match exactly \
                           (including whitespace). Use this for precise, surgical edits. \
                           Example: {\"path\": \"file.txt\", \"oldText\": \"old\", \"newText\": \"new\"}"
-                .to_string(),
+                .into(),
             parameters_schema: r#"{"type":"object","properties":{
                 "path":{"type":"string","description":"Path to the file to edit (relative or absolute)"},
                 "oldText":{"type":"string","description":"Exact text to find and replace (must match exactly)"},
                 "newText":{"type":"string","description":"New text to replace the old text with"}
             },"required":["path","oldText","newText"]}"#
-                .to_string(),
+                .into(),
         }
     }
 
@@ -76,13 +76,12 @@ impl Tool for EditTool {
         &self,
         arguments: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
-        let args_str = arguments.to_string();
+        let args: Result<serde_json::Value, _> = serde_json::from_str(arguments);
         let workspace = self.workspace.clone();
         let sandbox = self.sandbox.clone();
 
         Box::pin(async move {
-            let args: serde_json::Value =
-                serde_json::from_str(&args_str).map_err(|e| DomainError::Tool(e.to_string()))?;
+            let args = args.map_err(|e| DomainError::Tool(e.to_string()))?;
             let Some(path) = args["path"].as_str() else {
                 return Ok(missing_edit_arg("path"));
             };

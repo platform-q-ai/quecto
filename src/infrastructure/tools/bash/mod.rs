@@ -606,14 +606,14 @@ async fn save_to_temp_file(content: String) -> Option<String> {
 impl Tool for ExecTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "bash".to_string(),
+            name: "bash".into(),
             description: "Execute a bash command in the current working directory. Returns stdout \
                           and stderr. Output is truncated to last 2000 lines or 50KB (whichever is \
                           hit first). If truncated, full output is saved to a temp file. \
                           Optionally provide a timeout in seconds. \
                           Example: {\"command\": \"ls -la\"}"
-                .to_string(),
-            parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string","description":"Bash command to execute"},"timeout":{"type":"number","description":"Timeout in seconds (optional, capped at configured maximum)"}},"required":["command"]}"#.to_string(),
+                .into(),
+            parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string","description":"Bash command to execute"},"timeout":{"type":"number","description":"Timeout in seconds (optional, capped at configured maximum)"}},"required":["command"]}"#.into(),
         }
     }
 

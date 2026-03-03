@@ -264,6 +264,10 @@ impl AgentLoopImpl {
             return;
         };
 
+        // Take content out of the message to avoid cloning up to 1MB of tool output.
+        // The content is moved into the SpillEntry, used for the append (which borrows),
+        // then moved back into the message.
+        let content = std::mem::take(&mut tool_msg.content);
         let entry = SpillEntry {
             id: tool_msg.spill_id.clone().unwrap_or_default(),
             tool: tool_msg
@@ -271,12 +275,14 @@ impl AgentLoopImpl {
                 .clone()
                 .unwrap_or_else(|| "tool".to_string()),
             input_preview: tool_msg.input_preview.clone().unwrap_or_default(),
-            tokens: context_pruning::estimate_tokens(&tool_msg.content),
-            content: tool_msg.content.clone(),
+            tokens: context_pruning::estimate_tokens(&content),
+            content,
         };
         if let Err(e) = spill_store.append(&self.session_key, &entry).await {
             tracing::warn!(target: "context_prune", error = %e, "failed to spill tool output");
         }
+        // Restore content back into the message (entry is consumed here).
+        tool_msg.content = entry.content;
     }
 
     fn finalize_text_response(

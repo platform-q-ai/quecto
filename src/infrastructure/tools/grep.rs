@@ -63,7 +63,7 @@ impl GrepTool {
 impl Tool for GrepTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "grep".to_string(),
+            name: "grep".into(),
             description: format!(
                 "Search file contents using ripgrep (rg). Requires rg on PATH. \
                  Returns file:line:content matches with optional context lines (file-N- format). \
@@ -71,7 +71,8 @@ impl Tool for GrepTool {
                  Example: {{\"pattern\": \"search_term\"}}",
                 DEFAULT_MATCH_LIMIT,
                 MAX_OUTPUT_BYTES / 1024
-            ),
+            )
+            .into(),
             parameters_schema: r#"{
                 "type": "object",
                 "properties": {
@@ -85,7 +86,7 @@ impl Tool for GrepTool {
                 },
                 "required": ["pattern"]
             }"#
-            .to_string(),
+            .into(),
         }
     }
 
@@ -93,14 +94,13 @@ impl Tool for GrepTool {
         &self,
         arguments: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
-        let args_str = arguments.to_string();
+        let args: Result<serde_json::Value, _> = serde_json::from_str(arguments);
         let workspace = self.workspace.clone();
         let sandbox = self.sandbox.clone();
         let rg_cmd = self.rg_cmd();
 
         Box::pin(async move {
-            let args: serde_json::Value =
-                serde_json::from_str(&args_str).map_err(|e| DomainError::Tool(e.to_string()))?;
+            let args = args.map_err(|e| DomainError::Tool(e.to_string()))?;
 
             let Some(pattern) = args["pattern"].as_str() else {
                 return Ok(ToolResult {
@@ -414,7 +414,30 @@ async fn format_grep_output(a: GrepFormatArgs<'_>) -> String {
         max_line_bytes: a.max_line_bytes,
         max_output_bytes: a.max_output_bytes,
     };
+    // Pre-populate file cache via spawn_blocking to avoid blocking the Tokio
+    // runtime thread. Each file read can be up to MAX_FILE_CACHE_BYTES (1MB).
+    let unique_paths: Vec<PathBuf> = {
+        let mut seen = std::collections::HashSet::new();
+        capped
+            .iter()
+            .filter(|m| {
+                a.sandbox
+                    .validate_path(&m.file_path.to_string_lossy())
+                    .is_ok()
+            })
+            .filter(|m| seen.insert(m.file_path.clone()))
+            .map(|m| m.file_path.clone())
+            .collect()
+    };
     let mut file_cache: HashMap<PathBuf, Vec<String>> = HashMap::new();
+    for path in unique_paths {
+        let p = path.clone();
+        let lines = tokio::task::spawn_blocking(move || read_file_for_cache(&p))
+            .await
+            .unwrap_or_default();
+        file_cache.insert(path, lines);
+    }
+
     let mut state = FormatState {
         output_lines: Vec::new(),
         byte_total: 0,

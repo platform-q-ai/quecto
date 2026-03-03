@@ -112,12 +112,12 @@ impl FindTool {
 impl Tool for FindTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "find".to_string(),
+            name: "find".into(),
             description: "Find files by glob pattern using fd. Requires fd on PATH. \
                           Returns newline-separated relative paths. Respects .gitignore. \
                           Output capped at 1000 results or 50KB. \
                           Example: {\"pattern\": \"*.rs\"}"
-                .to_string(),
+                .into(),
             parameters_schema: r#"{
                 "type": "object",
                 "properties": {
@@ -127,7 +127,7 @@ impl Tool for FindTool {
                 },
                 "required": ["pattern"]
             }"#
-            .to_string(),
+            .into(),
         }
     }
 
@@ -135,14 +135,13 @@ impl Tool for FindTool {
         &self,
         arguments: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
-        let args_str = arguments.to_string();
+        let args: Result<serde_json::Value, _> = serde_json::from_str(arguments);
         let workspace = self.workspace.clone();
         let sandbox = self.sandbox.clone();
         let fd_cmd = self.fd_cmd();
 
         Box::pin(async move {
-            let args: serde_json::Value =
-                serde_json::from_str(&args_str).map_err(|e| DomainError::Tool(e.to_string()))?;
+            let args = args.map_err(|e| DomainError::Tool(e.to_string()))?;
 
             let Some(pattern) = args["pattern"].as_str() else {
                 return Ok(missing_pattern_error());

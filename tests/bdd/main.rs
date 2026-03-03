@@ -121,9 +121,9 @@ impl MockBddTool {
     fn new(name: &str, response: &str) -> Self {
         Self {
             def: ToolDefinition {
-                name: name.to_string(),
-                description: format!("Mock {} tool", name),
-                parameters_schema: r#"{"type":"object","properties":{}}"#.to_string(),
+                name: name.to_string().into(),
+                description: format!("Mock {} tool", name).into(),
+                parameters_schema: r#"{"type":"object","properties":{}}"#.into(),
             },
             response: Mutex::new(response.to_string()),
         }

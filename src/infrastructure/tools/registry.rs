@@ -152,7 +152,7 @@ impl ToolRegistryImpl {
     /// Register a tool.
     pub fn register(&mut self, tool: Arc<dyn Tool>) {
         let def = tool.definition();
-        let name = def.name.clone();
+        let name = def.name.clone().into_owned();
         self.tools.insert(name, tool);
 
         self.rebuild_definitions();

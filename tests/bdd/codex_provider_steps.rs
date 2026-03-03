@@ -11,7 +11,7 @@ fn given_orphaned_function_call(world: &mut QuectoWorld) {
     let mut assistant_msg = Message::assistant("", vec![]);
     assistant_msg.tool_calls = vec![quecto::domain::message::ToolCall {
         id: "call_orphan".to_string(),
-        name: "bash".to_string(),
+        name: "bash".into(),
         arguments: "{}".to_string(),
     }];
     world.context_messages = Some(vec![Message::user("go"), assistant_msg]);
@@ -28,7 +28,7 @@ fn given_matched_pair(world: &mut QuectoWorld) {
     let mut assistant_msg = Message::assistant("", vec![]);
     assistant_msg.tool_calls = vec![quecto::domain::message::ToolCall {
         id: "call_valid".to_string(),
-        name: "read".to_string(),
+        name: "read".into(),
         arguments: r#"{"path":"foo.rs"}"#.to_string(),
     }];
     let tool_msg = Message::tool("call_valid", "file content");
@@ -42,14 +42,14 @@ fn given_mixed_valid_and_orphaned(world: &mut QuectoWorld) {
     let mut good_assistant = Message::assistant("", vec![]);
     good_assistant.tool_calls = vec![quecto::domain::message::ToolCall {
         id: "call_good".to_string(),
-        name: "read".to_string(),
+        name: "read".into(),
         arguments: "{}".to_string(),
     }];
     let good_tool = Message::tool("call_good", "result");
     let mut bad_assistant = Message::assistant("", vec![]);
     bad_assistant.tool_calls = vec![quecto::domain::message::ToolCall {
         id: "call_bad".to_string(),
-        name: "bash".to_string(),
+        name: "bash".into(),
         arguments: "{}".to_string(),
     }];
     world.context_messages = Some(vec![
@@ -117,10 +117,9 @@ fn then_input_contain_call_id_type(world: &mut QuectoWorld, call_id: String, ite
 fn given_codex_request_body_with_tools(world: &mut QuectoWorld, model: String) {
     let messages = vec![Message::system("You are helpful."), Message::user("Run ls")];
     let tools = vec![ToolDefinition {
-        name: "bash".to_string(),
-        description: "Execute a command".to_string(),
-        parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#
-            .to_string(),
+        name: "bash".into(),
+        description: "Execute a command".into(),
+        parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#.into(),
     }];
     let request = quecto::domain::provider::ChatRequest {
         messages: &messages,

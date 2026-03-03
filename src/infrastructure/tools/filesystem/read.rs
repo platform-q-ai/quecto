@@ -28,9 +28,9 @@ impl ReadTool {
 impl Tool for ReadTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "read".to_string(),
-            description: "Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete. Example: {\"path\": \"src/main.rs\"}".to_string(),
-            parameters_schema: r#"{"type":"object","properties":{"path":{"type":"string","description":"Path to the file to read (relative or absolute)"},"offset":{"type":"number","description":"Line number to start reading from (1-indexed)"},"limit":{"type":"number","description":"Maximum number of lines to read"}},"required":["path"]}"#.to_string(),
+            name: "read".into(),
+            description: "Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete. Example: {\"path\": \"src/main.rs\"}".into(),
+            parameters_schema: r#"{"type":"object","properties":{"path":{"type":"string","description":"Path to the file to read (relative or absolute)"},"offset":{"type":"number","description":"Line number to start reading from (1-indexed)"},"limit":{"type":"number","description":"Maximum number of lines to read"}},"required":["path"]}"#.into(),
         }
     }
 
@@ -38,13 +38,12 @@ impl Tool for ReadTool {
         &self,
         arguments: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
-        let args_str = arguments.to_string();
+        let args: Result<serde_json::Value, _> = serde_json::from_str(arguments);
         let workspace = self.workspace.clone();
         let sandbox = self.sandbox.clone();
 
         Box::pin(async move {
-            let args: serde_json::Value =
-                serde_json::from_str(&args_str).map_err(|e| DomainError::Tool(e.to_string()))?;
+            let args = args.map_err(|e| DomainError::Tool(e.to_string()))?;
             let Some(path) = args["path"].as_str() else {
                 return Ok(ToolResult {
                     content: "missing 'path' argument. Example: {\"path\": \"src/main.rs\"}"
@@ -118,7 +117,7 @@ impl Tool for ReadTool {
                     content,
                     is_error: false,
                     image_blocks: vec![crate::domain::tool::ImageBlock {
-                        mime_type: mime.to_string(),
+                        mime_type: mime,
                         data,
                     }],
                 });

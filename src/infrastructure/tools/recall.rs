@@ -42,12 +42,12 @@ impl std::fmt::Debug for RecallTool {
 impl Tool for RecallTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "recall".to_string(),
+            name: "recall".into(),
             description: "Retrieve a previously collapsed tool output by its ID. \
                 Use the ID shown in collapse stubs like: recall(\"turn20:bash:0\"). \
                 Use recall(\"list\") for the full index."
-                .to_string(),
-            parameters_schema: r#"{"type":"object","properties":{"id":{"type":"string","description":"The spill ID from the collapse stub, or \"list\" for the full index"}},"required":["id"]}"#.to_string(),
+                .into(),
+            parameters_schema: r#"{"type":"object","properties":{"id":{"type":"string","description":"The spill ID from the collapse stub, or \"list\" for the full index"}},"required":["id"]}"#.into(),
         }
     }
 
