@@ -191,3 +191,32 @@ Feature: LLM Providers
     Given an Anthropic request without metadata
     When I build the Anthropic request body with metadata
     Then the request body should not contain a metadata field
+
+  # --- #175: Extended thinking support ---
+
+  Scenario: Anthropic provider sends adaptive thinking for supported models
+    Given an Anthropic request with model "claude-sonnet-4-20250514" and thinking level "medium"
+    When I build the Anthropic request body with thinking
+    Then the request body should contain thinking type "enabled" with budget_tokens 10000
+    And the request body should not contain a temperature field
+
+  Scenario: Anthropic provider sends budget-based thinking for older models
+    Given an Anthropic request with model "claude-3-5-sonnet-20241022" and thinking level "high"
+    When I build the Anthropic request body with thinking
+    Then the request body should contain thinking type "enabled" with budget_tokens 16384
+
+  Scenario: Anthropic provider skips thinking when level is none
+    Given an Anthropic request with model "claude-sonnet-4-20250514" and no thinking level
+    When I build the Anthropic request body with thinking
+    Then the request body should not contain a thinking field
+    And the request body should contain a temperature field
+
+  Scenario: Anthropic provider handles thinking content blocks in SSE
+    Given an Anthropic SSE response with thinking content blocks
+    When I parse the SSE response
+    Then the response should contain text content only (thinking blocks excluded from content)
+
+  Scenario: Anthropic provider sets max_tokens to at least budget_tokens
+    Given an Anthropic request with model "claude-3-5-sonnet-20241022" and thinking level "high" and max_tokens 4096
+    When I build the Anthropic request body with thinking
+    Then the request body max_tokens should be at least 16384

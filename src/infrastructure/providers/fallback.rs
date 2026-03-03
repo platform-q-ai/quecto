@@ -150,6 +150,7 @@ impl FallbackProvider {
                 session_id: request.session_id.clone(),
                 tool_choice: request.tool_choice.clone(),
                 metadata: request.metadata.clone(),
+                thinking_level: request.thinking_level,
             };
             match entry.provider.chat(req).await {
                 Ok(response) => {
@@ -244,6 +245,7 @@ impl LlmProvider for FallbackProvider {
                 session_id: request.session_id.clone(),
                 tool_choice: request.tool_choice.clone(),
                 metadata: request.metadata.clone(),
+                thinking_level: request.thinking_level,
             };
             self.try_chat(&req).await
         })
@@ -317,6 +319,7 @@ mod tests {
             session_id: None,
             tool_choice: None,
             metadata: None,
+            thinking_level: None,
         }
     }
 
@@ -552,6 +555,7 @@ mod tests {
             session_id: None,
             tool_choice: None,
             metadata: None,
+            thinking_level: None,
         }
     }
 

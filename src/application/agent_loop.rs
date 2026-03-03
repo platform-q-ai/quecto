@@ -176,6 +176,7 @@ impl AgentLoopImpl {
             session_id,
             tool_choice: None,
             metadata: None,
+            thinking_level: None,
         }
     }
 
