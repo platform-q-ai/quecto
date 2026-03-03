@@ -71,6 +71,7 @@ fn test_build_request_body() {
         session_id: None,
         tool_choice: None,
         metadata: None,
+        thinking_level: None,
     };
     let body = CodexProvider::build_request_body(&request);
     assert_eq!(body["model"], "gpt-5.1-codex");
@@ -95,6 +96,7 @@ fn test_build_request_body_includes_prompt_cache_key_when_session_id_set() {
         session_id: Some("cli:default".to_string()),
         tool_choice: None,
         metadata: None,
+        thinking_level: None,
     };
     let body = CodexProvider::build_request_body(&request);
     let key = body["prompt_cache_key"]
@@ -126,6 +128,7 @@ fn test_build_request_body_omits_prompt_cache_key_when_no_session_id() {
         session_id: None,
         tool_choice: None,
         metadata: None,
+        thinking_level: None,
     };
     let body = CodexProvider::build_request_body(&request);
     assert!(
@@ -198,6 +201,7 @@ fn test_build_request_body_responses_api_fields() {
         session_id: None,
         tool_choice: None,
         metadata: None,
+        thinking_level: None,
     };
     let body = CodexProvider::build_request_body(&request);
     assert_eq!(body["tool_choice"], "auto");
@@ -360,6 +364,7 @@ async fn test_codex_provider_http_error() {
             session_id: None,
             tool_choice: None,
             metadata: None,
+            thinking_level: None,
         })
         .await;
     assert!(result.is_err());
@@ -394,6 +399,7 @@ async fn test_codex_provider_success() {
             session_id: None,
             tool_choice: None,
             metadata: None,
+            thinking_level: None,
         })
         .await;
     let resp = result.unwrap();

@@ -22,6 +22,36 @@ pub struct ChatRequest<'a> {
     pub tool_choice: Option<ToolChoice>,
     /// Optional metadata (e.g. user_id for multi-tenant rate limiting).
     pub metadata: Option<RequestMetadata>,
+    /// Optional thinking level for extended thinking support.
+    /// When set, the Anthropic provider adds a `thinking` parameter to the request.
+    pub thinking_level: Option<ThinkingLevel>,
+}
+
+/// Effort levels for extended thinking.
+///
+/// Maps to Anthropic's thinking budget tokens:
+/// - `Low` → 1024 tokens
+/// - `Medium` → 10000 tokens
+/// - `High` → 16384 tokens
+/// - `Max` → 32768 tokens
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThinkingLevel {
+    Low,
+    Medium,
+    High,
+    Max,
+}
+
+impl ThinkingLevel {
+    /// Return the thinking budget in tokens for this level.
+    pub fn budget_tokens(self) -> u32 {
+        match self {
+            Self::Low => 1024,
+            Self::Medium => 10_000,
+            Self::High => 16_384,
+            Self::Max => 32_768,
+        }
+    }
 }
 
 /// Controls how the model selects which tool to call.

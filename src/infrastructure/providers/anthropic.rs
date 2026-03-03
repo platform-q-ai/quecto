@@ -54,9 +54,21 @@ impl AnthropicProvider {
         let mut body = serde_json::json!({
             "model": request.model,
             "messages": [],
-            "max_tokens": request.max_tokens,
-            "temperature": request.temperature,
         });
+
+        // When thinking is enabled, temperature must be excluded (Anthropic API requirement)
+        // and max_tokens must be at least budget_tokens.
+        if let Some(level) = request.thinking_level {
+            let budget = level.budget_tokens();
+            body["max_tokens"] = serde_json::json!(request.max_tokens.max(budget));
+            body["thinking"] = serde_json::json!({
+                "type": "enabled",
+                "budget_tokens": budget,
+            });
+        } else {
+            body["max_tokens"] = serde_json::json!(request.max_tokens);
+            body["temperature"] = serde_json::json!(request.temperature);
+        }
 
         // System prompt as content block array with cache_control for prompt caching (#176).
         if let Some(ref sys) = system_prompt {
@@ -587,6 +599,11 @@ impl AnthropicProvider {
     /// Public wrapper for `build_messages` (for BDD tests).
     pub fn build_messages_public(messages: &[Message]) -> (Option<String>, Vec<serde_json::Value>) {
         Self::build_messages(messages)
+    }
+
+    /// Public wrapper for `parse_sse_response` (for BDD tests).
+    pub fn parse_sse_response_public(raw: &str) -> Result<LlmResponse, DomainError> {
+        Self::parse_sse_response(raw)
     }
 
     /// Public wrapper for `build_tool_result_message` (for BDD tests).

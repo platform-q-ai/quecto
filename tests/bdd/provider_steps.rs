@@ -165,6 +165,7 @@ fn when_send_through_fallback(world: &mut QuectoWorld) {
         session_id: None,
         tool_choice: None,
         metadata: None,
+        thinking_level: None,
     };
     let result = tokio::runtime::Runtime::new()
         .unwrap()
@@ -190,6 +191,7 @@ fn when_send_second_through_fallback(world: &mut QuectoWorld) {
         session_id: None,
         tool_choice: None,
         metadata: None,
+        thinking_level: None,
     };
     let result = tokio::runtime::Runtime::new()
         .unwrap()
@@ -300,6 +302,7 @@ fn when_send_chat_with_tool(world: &mut QuectoWorld, message: String, tool_name:
         session_id: None,
         tool_choice: None,
         metadata: None,
+        thinking_level: None,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     let result = rt.block_on(provider.chat(req));
@@ -456,6 +459,7 @@ fn when_send_streaming_chat(world: &mut QuectoWorld, message: String) {
         session_id: None,
         tool_choice: None,
         metadata: None,
+        thinking_level: None,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     let result = rt
@@ -571,6 +575,7 @@ fn when_send_chat_with_model(world: &mut QuectoWorld, model: String) {
         session_id: None,
         tool_choice: None,
         metadata: None,
+        thinking_level: None,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     match rt.block_on(fp.chat(req)) {
@@ -728,6 +733,7 @@ fn when_send_anthropic_chat(world: &mut QuectoWorld) {
         session_id: None,
         tool_choice: None,
         metadata: None,
+        thinking_level: None,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     match rt.block_on(provider.chat(req)) {
@@ -836,6 +842,7 @@ fn when_send_anthropic_streaming(world: &mut QuectoWorld) {
         session_id: None,
         tool_choice: None,
         metadata: None,
+        thinking_level: None,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     match rt.block_on(provider.chat_stream(req)) {
@@ -999,6 +1006,7 @@ fn when_build_anthropic_request_body(world: &mut QuectoWorld) {
         session_id: None,
         tool_choice: None,
         metadata: None,
+        thinking_level: None,
     };
     let (_sys, body) =
         quecto::infrastructure::providers::anthropic::AnthropicProvider::build_request_body_public(
@@ -1174,6 +1182,7 @@ fn when_build_with_tool_choice(world: &mut QuectoWorld) {
         session_id: None,
         tool_choice,
         metadata: None,
+        thinking_level: None,
     };
     let (_sys, body) =
         quecto::infrastructure::providers::anthropic::AnthropicProvider::build_request_body_public(
@@ -1238,6 +1247,7 @@ fn when_build_with_metadata(world: &mut QuectoWorld) {
         session_id: None,
         tool_choice: None,
         metadata,
+        thinking_level: None,
     };
     let (_sys, body) =
         quecto::infrastructure::providers::anthropic::AnthropicProvider::build_request_body_public(
@@ -1262,5 +1272,206 @@ fn then_no_metadata(world: &mut QuectoWorld) {
     assert!(
         body.get("metadata").is_none() || body["metadata"].is_null(),
         "metadata should not be present"
+    );
+}
+
+// --- #175: Extended thinking support ---
+
+#[given(expr = "an Anthropic request with model {string} and thinking level {string}")]
+fn given_anthropic_request_with_thinking(world: &mut QuectoWorld, model: String, level: String) {
+    let thinking_level = match level.as_str() {
+        "low" => Some(quecto::domain::provider::ThinkingLevel::Low),
+        "medium" => Some(quecto::domain::provider::ThinkingLevel::Medium),
+        "high" => Some(quecto::domain::provider::ThinkingLevel::High),
+        "max" => Some(quecto::domain::provider::ThinkingLevel::Max),
+        _ => panic!("unknown thinking level: {}", level),
+    };
+    world.env_overrides.insert("_thinking_model".into(), model);
+    world.env_overrides.insert("_thinking_level".into(), level);
+    world.env_overrides.insert(
+        "_thinking_level_value".into(),
+        serde_json::to_string(&thinking_level.map(|l| l.budget_tokens())).unwrap(),
+    );
+    // Store messages for later
+    world
+        .env_overrides
+        .insert("_thinking_messages".into(), "Think".into());
+}
+
+#[given(expr = "an Anthropic request with model {string} and no thinking level")]
+fn given_anthropic_request_no_thinking(world: &mut QuectoWorld, model: String) {
+    world.env_overrides.insert("_thinking_model".into(), model);
+    world
+        .env_overrides
+        .insert("_thinking_level".into(), "none".into());
+}
+
+#[given(
+    expr = "an Anthropic request with model {string} and thinking level {string} and max_tokens {int}"
+)]
+fn given_anthropic_request_thinking_with_max_tokens(
+    world: &mut QuectoWorld,
+    model: String,
+    level: String,
+    max_tokens: u32,
+) {
+    world.env_overrides.insert("_thinking_model".into(), model);
+    world.env_overrides.insert("_thinking_level".into(), level);
+    world
+        .env_overrides
+        .insert("_thinking_max_tokens".into(), max_tokens.to_string());
+}
+
+#[when("I build the Anthropic request body with thinking")]
+fn when_build_request_body_with_thinking(world: &mut QuectoWorld) {
+    let model = world.env_overrides.get("_thinking_model").cloned().unwrap();
+    let level_str = world.env_overrides.get("_thinking_level").cloned().unwrap();
+    let max_tokens: u32 = world
+        .env_overrides
+        .get("_thinking_max_tokens")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(16000);
+
+    let thinking_level = match level_str.as_str() {
+        "low" => Some(quecto::domain::provider::ThinkingLevel::Low),
+        "medium" => Some(quecto::domain::provider::ThinkingLevel::Medium),
+        "high" => Some(quecto::domain::provider::ThinkingLevel::High),
+        "max" => Some(quecto::domain::provider::ThinkingLevel::Max),
+        _ => None,
+    };
+
+    let messages = vec![quecto::domain::message::Message::user("Think hard")];
+    let req = quecto::domain::provider::ChatRequest {
+        messages: &messages,
+        tools: &[],
+        model: &model,
+        max_tokens,
+        temperature: 0.7,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level,
+    };
+    let (_sys, body) =
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::build_request_body_public(
+            &req,
+        );
+    world
+        .env_overrides
+        .insert("_anthropic_body".into(), body.to_string());
+}
+
+#[then(expr = "the request body should contain thinking type {string} with budget_tokens {int}")]
+fn then_thinking_type_with_budget(world: &mut QuectoWorld, thinking_type: String, budget: u32) {
+    let body_str = world.env_overrides.get("_anthropic_body").expect("no body");
+    let body: serde_json::Value = serde_json::from_str(body_str).expect("invalid json");
+    assert_eq!(
+        body["thinking"]["type"], thinking_type,
+        "thinking.type mismatch: body={body}"
+    );
+    assert_eq!(
+        body["thinking"]["budget_tokens"], budget,
+        "thinking.budget_tokens mismatch: body={body}"
+    );
+}
+
+#[then("the request body should not contain a thinking field")]
+fn then_no_thinking(world: &mut QuectoWorld) {
+    let body_str = world.env_overrides.get("_anthropic_body").expect("no body");
+    let body: serde_json::Value = serde_json::from_str(body_str).expect("invalid json");
+    assert!(
+        body.get("thinking").is_none() || body["thinking"].is_null(),
+        "thinking should not be present, got: {}",
+        body
+    );
+}
+
+#[then("the request body should not contain a temperature field")]
+fn then_no_temperature(world: &mut QuectoWorld) {
+    let body_str = world.env_overrides.get("_anthropic_body").expect("no body");
+    let body: serde_json::Value = serde_json::from_str(body_str).expect("invalid json");
+    assert!(
+        body.get("temperature").is_none() || body["temperature"].is_null(),
+        "temperature should not be present when thinking is enabled, got: {}",
+        body
+    );
+}
+
+#[then("the request body should contain a temperature field")]
+fn then_has_temperature(world: &mut QuectoWorld) {
+    let body_str = world.env_overrides.get("_anthropic_body").expect("no body");
+    let body: serde_json::Value = serde_json::from_str(body_str).expect("invalid json");
+    assert!(
+        body.get("temperature").is_some() && !body["temperature"].is_null(),
+        "temperature should be present, got: {}",
+        body
+    );
+}
+
+#[given("an Anthropic SSE response with thinking content blocks")]
+fn given_sse_with_thinking(world: &mut QuectoWorld) {
+    let raw = "\
+event: message_start\n\
+data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10}}}\n\
+\n\
+event: content_block_start\n\
+data: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\
+\n\
+event: content_block_delta\n\
+data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"Reasoning...\"}}\n\
+\n\
+event: content_block_stop\n\
+data: {\"type\":\"content_block_stop\"}\n\
+\n\
+event: content_block_start\n\
+data: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\
+\n\
+event: content_block_delta\n\
+data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Final answer\"}}\n\
+\n\
+event: content_block_stop\n\
+data: {\"type\":\"content_block_stop\"}\n\
+\n\
+event: message_delta\n\
+data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":5}}\n\
+\n\
+event: message_stop\n\
+data: {\"type\":\"message_stop\"}\n";
+    world
+        .env_overrides
+        .insert("_sse_raw".into(), raw.to_string());
+}
+
+#[when("I parse the SSE response")]
+fn when_parse_sse(world: &mut QuectoWorld) {
+    let raw = world.env_overrides.get("_sse_raw").expect("no SSE data");
+    let result =
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::parse_sse_response_public(
+            raw,
+        )
+        .expect("SSE parse failed");
+    world
+        .env_overrides
+        .insert("_sse_content".into(), result.content.unwrap_or_default());
+}
+
+#[then("the response should contain text content only (thinking blocks excluded from content)")]
+fn then_text_only(world: &mut QuectoWorld) {
+    let content = world.env_overrides.get("_sse_content").expect("no content");
+    assert_eq!(content, "Final answer");
+    assert!(
+        !content.contains("Reasoning"),
+        "thinking content should not appear in response text"
+    );
+}
+
+#[then(expr = "the request body max_tokens should be at least {int}")]
+fn then_max_tokens_at_least(world: &mut QuectoWorld, min: u32) {
+    let body_str = world.env_overrides.get("_anthropic_body").expect("no body");
+    let body: serde_json::Value = serde_json::from_str(body_str).expect("invalid json");
+    let max_tokens = body["max_tokens"].as_u64().expect("max_tokens not found");
+    assert!(
+        max_tokens >= min as u64,
+        "max_tokens should be at least {min}, got: {max_tokens}"
     );
 }
