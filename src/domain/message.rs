@@ -170,4 +170,149 @@ pub struct UsageInfo {
     pub cache_read_tokens: Option<u32>,
     /// Tokens written to prompt cache (Anthropic `cache_creation_input_tokens`).
     pub cache_write_tokens: Option<u32>,
+    /// Per-call cost breakdown, if model pricing is available.
+    pub cost: Option<CostInfo>,
+}
+
+/// Per-call cost breakdown calculated from token usage and model pricing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CostInfo {
+    /// Cost of input tokens in USD.
+    pub input_cost: f64,
+    /// Cost of output tokens in USD.
+    pub output_cost: f64,
+    /// Cost of cache-read input tokens in USD.
+    pub cache_read_cost: f64,
+    /// Cost of cache-write input tokens in USD.
+    pub cache_write_cost: f64,
+    /// Total cost in USD (sum of all components).
+    pub total_cost: f64,
+}
+
+/// Per-million-token pricing for a model.
+#[derive(Debug, Clone, Copy)]
+pub struct ModelPricing {
+    /// Input token cost per million tokens.
+    pub input_per_million: f64,
+    /// Output token cost per million tokens.
+    pub output_per_million: f64,
+    /// Cache-read input token cost per million tokens.
+    pub cache_read_per_million: f64,
+    /// Cache-write input token cost per million tokens.
+    pub cache_write_per_million: f64,
+}
+
+impl CostInfo {
+    /// Calculate cost from usage data and model pricing.
+    pub fn from_usage(usage: &UsageInfo, pricing: &ModelPricing) -> Self {
+        let per_m = |tokens: u32, rate: f64| (tokens as f64 / 1_000_000.0) * rate;
+        let input_cost = per_m(usage.prompt_tokens, pricing.input_per_million);
+        let output_cost = per_m(usage.completion_tokens, pricing.output_per_million);
+        let cache_read_cost = per_m(
+            usage.cache_read_tokens.unwrap_or(0),
+            pricing.cache_read_per_million,
+        );
+        let cache_write_cost = per_m(
+            usage.cache_write_tokens.unwrap_or(0),
+            pricing.cache_write_per_million,
+        );
+        Self {
+            input_cost,
+            output_cost,
+            cache_read_cost,
+            cache_write_cost,
+            total_cost: input_cost + output_cost + cache_read_cost + cache_write_cost,
+        }
+    }
+}
+
+/// Look up pricing for a known model. Returns `None` for unknown models.
+///
+/// Only `claude-sonnet-4` and `claude-opus-4` families are tracked.
+pub fn model_pricing(model: &str) -> Option<ModelPricing> {
+    // Normalise to lowercase for matching.
+    let m = model.to_ascii_lowercase();
+    // Match on model family prefix (covers dated variants like claude-sonnet-4-5, claude-sonnet-4-6).
+    if m.starts_with("claude-sonnet-4") {
+        Some(ModelPricing {
+            input_per_million: 3.0,
+            output_per_million: 15.0,
+            cache_read_per_million: 0.30,
+            cache_write_per_million: 3.75,
+        })
+    } else if m.starts_with("claude-opus-4") {
+        Some(ModelPricing {
+            input_per_million: 15.0,
+            output_per_million: 75.0,
+            cache_read_per_million: 1.50,
+            cache_write_per_million: 18.75,
+        })
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cost_calculation_sonnet_4() {
+        let usage = UsageInfo {
+            prompt_tokens: 1000,
+            completion_tokens: 500,
+            cache_read_tokens: Some(200),
+            cache_write_tokens: Some(100),
+            cost: None,
+        };
+        let pricing = model_pricing("claude-sonnet-4-6").unwrap();
+        let cost = CostInfo::from_usage(&usage, &pricing);
+        // Input: 1000/1M * $3.00 = $0.003
+        assert!((cost.input_cost - 0.003).abs() < 1e-9);
+        // Output: 500/1M * $15.00 = $0.0075
+        assert!((cost.output_cost - 0.0075).abs() < 1e-9);
+        // Cache read: 200/1M * $0.30 = $0.00006
+        assert!((cost.cache_read_cost - 0.00006).abs() < 1e-9);
+        // Cache write: 100/1M * $3.75 = $0.000375
+        assert!((cost.cache_write_cost - 0.000375).abs() < 1e-9);
+        // Total
+        let expected_total = 0.003 + 0.0075 + 0.00006 + 0.000375;
+        assert!((cost.total_cost - expected_total).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_cost_calculation_opus_4() {
+        let usage = UsageInfo {
+            prompt_tokens: 1_000_000,
+            completion_tokens: 100_000,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
+            cost: None,
+        };
+        let pricing = model_pricing("claude-opus-4-6").unwrap();
+        let cost = CostInfo::from_usage(&usage, &pricing);
+        // Input: 1M/1M * $15.00 = $15.00
+        assert!((cost.input_cost - 15.0).abs() < 1e-6);
+        // Output: 100K/1M * $75.00 = $7.50
+        assert!((cost.output_cost - 7.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_model_pricing_unknown_returns_none() {
+        assert!(model_pricing("gpt-4o").is_none());
+        assert!(model_pricing("unknown-model").is_none());
+        assert!(model_pricing("claude-3-5-sonnet-20241022").is_none());
+        assert!(model_pricing("claude-3-5-haiku-20241022").is_none());
+        assert!(model_pricing("claude-haiku-4-20250514").is_none());
+        assert!(model_pricing("claude-3-7-sonnet-20250219").is_none());
+    }
+
+    #[test]
+    fn test_model_pricing_known_models() {
+        assert!(model_pricing("claude-sonnet-4-6").is_some());
+        assert!(model_pricing("claude-opus-4-6").is_some());
+        // Prefix match covers all dated variants of the two supported families
+        assert!(model_pricing("claude-sonnet-4-20250514").is_some());
+        assert!(model_pricing("claude-opus-4-20250514").is_some());
+    }
 }

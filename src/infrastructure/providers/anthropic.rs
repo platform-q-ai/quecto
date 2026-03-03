@@ -4,7 +4,9 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Message, Role, StopReason, ToolCall, UsageInfo};
+use crate::domain::message::{
+    CostInfo, LlmResponse, Message, Role, StopReason, ToolCall, UsageInfo,
+};
 use crate::domain::provider::{ChatRequest, LlmProvider};
 
 /// Anthropic LLM provider.
@@ -265,6 +267,15 @@ impl AnthropicProvider {
             .collect()
     }
 
+    /// Attach cost info to the response's usage data based on model pricing.
+    fn attach_cost(response: &mut LlmResponse, model: &str) {
+        if let Some(ref mut usage) = response.usage {
+            if let Some(pricing) = crate::domain::message::model_pricing(model) {
+                usage.cost = Some(CostInfo::from_usage(usage, &pricing));
+            }
+        }
+    }
+
     /// Parse the Anthropic response JSON into our domain LlmResponse.
     fn parse_response(body: &serde_json::Value) -> Result<LlmResponse, DomainError> {
         let content_blocks = body["content"]
@@ -313,6 +324,7 @@ impl AnthropicProvider {
                 .get("cache_creation_input_tokens")
                 .and_then(|v| v.as_u64())
                 .map(|v| v as u32),
+            cost: None,
         });
 
         let stop_reason = body["stop_reason"].as_str().map(StopReason::from_anthropic);
@@ -511,6 +523,7 @@ impl SseAccumulator {
                 completion_tokens: self.completion_tokens.unwrap_or(0),
                 cache_read_tokens: self.cache_read_tokens,
                 cache_write_tokens: self.cache_write_tokens,
+                cost: None,
             })
         } else {
             None
@@ -533,6 +546,7 @@ impl LlmProvider for AnthropicProvider {
         &self,
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+        let model = request.model.to_string();
         let (_system, body) = Self::build_request_body(&request);
         let url = format!("{}/v1/messages", self.api_base);
 
@@ -568,7 +582,9 @@ impl LlmProvider for AnthropicProvider {
                     DomainError::Provider(format!("failed to parse response JSON: {}", e))
                 })?;
 
-            Self::parse_response(&response_json)
+            let mut resp = Self::parse_response(&response_json)?;
+            Self::attach_cost(&mut resp, &model);
+            Ok(resp)
         })
     }
 
@@ -578,11 +594,16 @@ impl LlmProvider for AnthropicProvider {
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         // Build the request body synchronously before entering the async block
         // to avoid cloning messages/tools into the future.
+        let model = request.model.to_string();
         let (_system, mut body) = Self::build_request_body(&request);
         body["stream"] = serde_json::Value::Bool(true);
         let url = format!("{}/v1/messages", self.api_base);
 
-        Box::pin(async move { self.stream_chat_with_body(body, &url).await })
+        Box::pin(async move {
+            let mut resp = self.stream_chat_with_body(body, &url).await?;
+            Self::attach_cost(&mut resp, &model);
+            Ok(resp)
+        })
     }
 }
 

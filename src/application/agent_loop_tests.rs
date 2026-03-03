@@ -195,6 +195,7 @@ fn text_response(content: &str) -> LlmResponse {
             completion_tokens: 20,
             cache_read_tokens: None,
             cache_write_tokens: None,
+            cost: None,
         }),
         stop_reason: None,
     }
