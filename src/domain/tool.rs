@@ -1,22 +1,28 @@
+use std::borrow::Cow;
 use std::future::Future;
 use std::pin::Pin;
 
 use super::error::DomainError;
 
 /// Metadata describing a tool for the LLM.
+///
+/// Fields use `Cow<'static, str>` so that static tool schemas (the common
+/// case — 11 of 12 tools) are zero-cost clones (pointer copy), while
+/// dynamic schemas (`ls` with runtime limits) use `Cow::Owned`.
 #[derive(Debug, Clone)]
 pub struct ToolDefinition {
-    pub name: String,
-    pub description: String,
+    pub name: Cow<'static, str>,
+    pub description: Cow<'static, str>,
     /// JSON Schema string describing the parameters.
-    pub parameters_schema: String,
+    pub parameters_schema: Cow<'static, str>,
 }
 
 /// A base64-encoded image block returned by a tool (e.g. `read` on an image file).
 #[derive(Debug, Clone)]
 pub struct ImageBlock {
-    /// MIME type: "image/png", "image/jpeg", "image/gif", or "image/webp".
-    pub mime_type: String,
+    /// MIME type: one of `"image/png"`, `"image/jpeg"`, `"image/gif"`, `"image/webp"`.
+    /// Always a static literal — avoids a heap allocation per image block.
+    pub mime_type: &'static str,
     /// Base64-encoded image bytes (standard encoding, no line breaks).
     pub data: String,
 }

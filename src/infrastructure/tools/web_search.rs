@@ -46,7 +46,7 @@ impl WebSearchTool {
         let url = format!(
             "{}/res/v1/web/search?q={}",
             self.brave_base,
-            urlencoding::encode(query)
+            encode_query_param(query)
         );
         let resp = self
             .client
@@ -98,7 +98,7 @@ impl WebSearchTool {
         let url = format!(
             "{}/?q={}&format=json&no_html=1",
             self.ddg_base,
-            urlencoding::encode(query)
+            encode_query_param(query)
         );
         let resp = self
             .client
@@ -147,10 +147,10 @@ impl WebSearchTool {
 impl Tool for WebSearchTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "web_search".to_string(),
+            name: "web_search".into(),
             description: "Search the web for information using Brave Search or DuckDuckGo"
-                .to_string(),
-            parameters_schema: r#"{"type":"object","properties":{"query":{"type":"string","description":"The search query"}},"required":["query"]}"#.to_string(),
+                .into(),
+            parameters_schema: r#"{"type":"object","properties":{"query":{"type":"string","description":"The search query"}},"required":["query"]}"#.into(),
         }
     }
 
@@ -190,23 +190,27 @@ impl Tool for WebSearchTool {
     }
 }
 
-// URL-encoding helper (minimal implementation to avoid adding a dependency)
-mod urlencoding {
-    pub fn encode(input: &str) -> String {
-        let mut output = String::new();
-        for byte in input.bytes() {
-            match byte {
-                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                    output.push(byte as char);
-                }
-                b' ' => output.push('+'),
-                _ => {
-                    output.push_str(&format!("%{:02X}", byte));
-                }
+/// Encode a query parameter for use in search engine URLs.
+///
+/// Uses `+` for spaces (HTML form encoding / `application/x-www-form-urlencoded`)
+/// rather than `%20` (RFC 3986). Search engine query parameters conventionally
+/// use `+` encoding. This differs from the `urlencoding` crate in `Cargo.toml`
+/// which uses `%20`.
+fn encode_query_param(input: &str) -> String {
+    use std::fmt::Write;
+    let mut output = String::with_capacity(input.len());
+    for byte in input.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                output.push(byte as char);
+            }
+            b' ' => output.push('+'),
+            _ => {
+                let _ = write!(output, "%{:02X}", byte);
             }
         }
-        output
     }
+    output
 }
 
 #[cfg(test)]
@@ -222,10 +226,10 @@ mod tests {
     }
 
     #[test]
-    fn test_url_encoding() {
-        assert_eq!(urlencoding::encode("hello world"), "hello+world");
-        assert_eq!(urlencoding::encode("rust lang"), "rust+lang");
-        assert_eq!(urlencoding::encode("a&b=c"), "a%26b%3Dc");
+    fn test_encode_query_param() {
+        assert_eq!(encode_query_param("hello world"), "hello+world");
+        assert_eq!(encode_query_param("rust lang"), "rust+lang");
+        assert_eq!(encode_query_param("a&b=c"), "a%26b%3Dc");
     }
 
     #[tokio::test]

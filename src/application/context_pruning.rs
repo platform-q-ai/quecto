@@ -9,6 +9,7 @@
 // Never imports infrastructure.
 
 use std::collections::HashSet;
+use std::fmt::Write;
 
 use crate::domain::message::{Message, Role};
 use crate::domain::session::{ContextSpillStore, SpillIndex};
@@ -201,10 +202,11 @@ pub fn build_manifest_text(entries: &[SpillIndex]) -> String {
         latest.tokens,
     );
     for entry in recent.iter().rev() {
-        manifest.push_str(&format!(
-            "  {} — {} ({} tokens)\n",
+        let _ = writeln!(
+            manifest,
+            "  {} — {} ({} tokens)",
             entry.id, entry.input_preview, entry.tokens
-        ));
+        );
     }
     manifest.push_str("Use recall(\"<id>\") to retrieve. Use recall(\"list\") for full index.");
     manifest
@@ -387,7 +389,7 @@ mod tests {
         use crate::domain::tool::ImageBlock;
         let mut msg = Message::tool("call_1", "abc"); // 1 token text
         msg.image_blocks = vec![ImageBlock {
-            mime_type: "image/png".to_string(),
+            mime_type: "image/png",
             data: "x".repeat(300), // 100 tokens image
         }];
         assert_eq!(estimate_message_tokens(&msg), 101); // 1 text + 100 image
@@ -398,7 +400,7 @@ mod tests {
         use crate::domain::tool::ImageBlock;
         let mut msg1 = Message::tool("call_1", "abc");
         msg1.image_blocks = vec![ImageBlock {
-            mime_type: "image/png".to_string(),
+            mime_type: "image/png",
             data: "x".repeat(600), // 200 tokens
         }];
         let msg2 = Message::user("y".repeat(300)); // 100 tokens

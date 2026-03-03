@@ -22,7 +22,7 @@ fn test_build_input_tool_calls() {
     let mut assistant_msg = Message::assistant("", vec![]);
     assistant_msg.tool_calls = vec![ToolCall {
         id: "call_123".to_string(),
-        name: "get_weather".to_string(),
+        name: "get_weather".into(),
         arguments: r#"{"location":"Paris"}"#.to_string(),
     }];
 
@@ -47,10 +47,9 @@ fn test_build_input_tool_calls() {
 #[test]
 fn test_build_tools() {
     let tools = vec![ToolDefinition {
-        name: "read".to_string(),
-        description: "Read a file".to_string(),
-        parameters_schema: r#"{"type":"object","properties":{"path":{"type":"string"}}}"#
-            .to_string(),
+        name: "read".into(),
+        description: "Read a file".into(),
+        parameters_schema: r#"{"type":"object","properties":{"path":{"type":"string"}}}"#.into(),
     }];
     let result = CodexProvider::build_tools(&tools);
     assert_eq!(result.len(), 1);
@@ -218,10 +217,9 @@ fn test_build_request_body_responses_api_fields() {
 #[test]
 fn test_build_tools_includes_strict_false() {
     let tools = vec![ToolDefinition {
-        name: "bash".to_string(),
-        description: "Execute a command".to_string(),
-        parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#
-            .to_string(),
+        name: "bash".into(),
+        description: "Execute a command".into(),
+        parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#.into(),
     }];
     let result = CodexProvider::build_tools(&tools);
     assert_eq!(result.len(), 1);
@@ -412,7 +410,7 @@ fn test_build_input_orphaned_function_call_removed() {
     let mut assistant_msg = Message::assistant("", vec![]);
     assistant_msg.tool_calls = vec![ToolCall {
         id: "call_orphan".to_string(),
-        name: "bash".to_string(),
+        name: "bash".into(),
         arguments: "{}".to_string(),
     }];
     let messages = vec![Message::user("go"), assistant_msg];
@@ -451,7 +449,7 @@ fn test_build_input_valid_matched_pair_preserved() {
     let mut assistant_msg = Message::assistant("", vec![]);
     assistant_msg.tool_calls = vec![ToolCall {
         id: "call_valid".to_string(),
-        name: "read".to_string(),
+        name: "read".into(),
         arguments: r#"{"path":"foo.rs"}"#.to_string(),
     }];
     let tool_msg = Message::tool("call_valid", "file content");
@@ -477,7 +475,7 @@ fn test_build_input_mixed_valid_and_orphaned() {
     let mut good_assistant = Message::assistant("", vec![]);
     good_assistant.tool_calls = vec![ToolCall {
         id: "call_good".to_string(),
-        name: "read".to_string(),
+        name: "read".into(),
         arguments: "{}".to_string(),
     }];
     let good_tool = Message::tool("call_good", "result");
@@ -485,7 +483,7 @@ fn test_build_input_mixed_valid_and_orphaned() {
     let mut bad_assistant = Message::assistant("", vec![]);
     bad_assistant.tool_calls = vec![ToolCall {
         id: "call_bad".to_string(),
-        name: "bash".to_string(),
+        name: "bash".into(),
         arguments: "{}".to_string(),
     }];
     // No matching tool result for call_bad
@@ -520,7 +518,7 @@ fn test_build_input_all_tool_calls_orphaned_fallback_to_text() {
     let mut assistant_msg = Message::assistant("I was going to call a tool.", vec![]);
     assistant_msg.tool_calls = vec![ToolCall {
         id: "call_orphan".to_string(),
-        name: "bash".to_string(),
+        name: "bash".into(),
         arguments: "{}".to_string(),
     }];
     // Deliberately no matching tool result message.

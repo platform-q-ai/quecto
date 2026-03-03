@@ -177,10 +177,10 @@ impl CronTool {
 impl Tool for CronTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "cron".to_string(),
+            name: "cron".into(),
             description: "Manage scheduled cron jobs (add, remove, list, enable, disable)"
-                .to_string(),
-            parameters_schema: r#"{"type":"object","properties":{"action":{"type":"string","enum":["add","remove","list","enable","disable"],"description":"The cron action to perform"},"name":{"type":"string","description":"Job name (for add/remove/enable/disable)"},"message":{"type":"string","description":"The message/prompt to execute (for add)"},"interval_seconds":{"type":"integer","description":"Interval in seconds (for add with interval)"},"cron_expression":{"type":"string","description":"Cron expression (for add with cron schedule)"},"deliver_to":{"type":"string","description":"Optional delivery target in format 'telegram:<chat_id>', e.g. 'telegram:123456789'"},"run_once":{"type":"boolean","description":"If true, job auto-removes after one successful execution (for reminders/delayed actions)"}},"required":["action"]}"#.to_string(),
+                .into(),
+            parameters_schema: r#"{"type":"object","properties":{"action":{"type":"string","enum":["add","remove","list","enable","disable"],"description":"The cron action to perform"},"name":{"type":"string","description":"Job name (for add/remove/enable/disable)"},"message":{"type":"string","description":"The message/prompt to execute (for add)"},"interval_seconds":{"type":"integer","description":"Interval in seconds (for add with interval)"},"cron_expression":{"type":"string","description":"Cron expression (for add with cron schedule)"},"deliver_to":{"type":"string","description":"Optional delivery target in format 'telegram:<chat_id>', e.g. 'telegram:123456789'"},"run_once":{"type":"boolean","description":"If true, job auto-removes after one successful execution (for reminders/delayed actions)"}},"required":["action"]}"#.into(),
         }
     }
 

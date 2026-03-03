@@ -437,10 +437,10 @@ mod tests {
         let provider = OpenAiProvider::new("sk-test".to_string(), Some(server.uri()));
         let messages = vec![Message::user("list files")];
         let tools = vec![ToolDefinition {
-            name: "bash".to_string(),
-            description: "Execute a command".to_string(),
+            name: "bash".into(),
+            description: "Execute a command".into(),
             parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#
-                .to_string(),
+                .into(),
         }];
         let req = ChatRequest {
             messages: &messages,
@@ -578,9 +578,9 @@ data: [DONE]\n\n";
         let provider = OpenAiProvider::new("sk-test".to_string(), Some(server.uri()));
         let messages = vec![Message::user("test")];
         let tools = vec![ToolDefinition {
-            name: "read".to_string(),
-            description: "Read a file".to_string(),
-            parameters_schema: r#"{"type":"object"}"#.to_string(),
+            name: "read".into(),
+            description: "Read a file".into(),
+            parameters_schema: r#"{"type":"object"}"#.into(),
         }];
         let req = ChatRequest {
             messages: &messages,

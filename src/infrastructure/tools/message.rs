@@ -29,9 +29,9 @@ impl MessageTool {
 impl Tool for MessageTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-            name: "message".to_string(),
-            description: "Send a message to the user on their channel".to_string(),
-            parameters_schema: r#"{"type":"object","properties":{"text":{"type":"string","description":"The message text to send"},"target":{"type":"string","description":"Optional target in 'channel:chat_id' format (defaults to current conversation)"}},"required":["text"]}"#.to_string(),
+            name: "message".into(),
+            description: "Send a message to the user on their channel".into(),
+            parameters_schema: r#"{"type":"object","properties":{"text":{"type":"string","description":"The message text to send"},"target":{"type":"string","description":"Optional target in 'channel:chat_id' format (defaults to current conversation)"}},"required":["text"]}"#.into(),
         }
     }
 

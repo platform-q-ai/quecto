@@ -75,10 +75,9 @@ async fn test_chat_with_tool_use() {
     let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
     let messages = vec![Message::user("list files")];
     let tools = vec![ToolDefinition {
-        name: "bash".to_string(),
-        description: "Execute a command".to_string(),
-        parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#
-            .to_string(),
+        name: "bash".into(),
+        description: "Execute a command".into(),
+        parameters_schema: r#"{"type":"object","properties":{"command":{"type":"string"}}}"#.into(),
     }];
     let req = ChatRequest {
         messages: &messages,

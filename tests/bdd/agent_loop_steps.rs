@@ -316,7 +316,7 @@ fn then_response_indicates_limit(world: &mut QuectoWorld) {
 fn then_request_includes_tool_defs(world: &mut QuectoWorld, tool1: String, tool2: String) {
     let mock = world.mock_llm.as_ref().expect("no mock LLM");
     let defs = mock.last_tool_defs();
-    let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
+    let names: Vec<&str> = defs.iter().map(|d| d.name.as_ref()).collect();
     assert!(
         names.contains(&tool1.as_str()),
         "expected tool definitions to include '{}', got: {:?}",
