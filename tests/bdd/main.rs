@@ -495,6 +495,18 @@ pub struct QuectoWorld {
     pub subprocess_stdout: Option<String>,
     /// Subprocess captured stderr
     pub subprocess_stderr: Option<String>,
+    /// RPC agent: accumulated stdin lines to send (built up by "I send RPC command" steps)
+    pub rpc_stdin_lines: Vec<String>,
+    /// RPC agent: captured stdout lines after execution
+    pub rpc_stdout_lines: Vec<String>,
+    /// RPC agent: captured stderr after execution
+    pub rpc_stderr: String,
+    /// RPC agent: exit code after execution
+    pub rpc_exit_code: Option<i32>,
+    /// RPC agent: session name flag (None = no session, Some(name) = named, Some("-") = ephemeral)
+    pub rpc_session_name: Option<String>,
+    /// RPC agent: use --no-session flag
+    pub rpc_no_session: bool,
     /// REPL: accumulated input lines (built up by "I type" steps)
     pub repl_input_lines: Vec<String>,
     /// REPL: flags to pass (built up by "with flags" steps)
@@ -928,6 +940,7 @@ mod path_utils_steps;
 mod provider_steps;
 mod read_tool_steps;
 mod repl_steps;
+mod rpc_steps;
 mod sandbox_steps;
 mod security_steps;
 mod session_steps;
