@@ -291,3 +291,64 @@ Feature: LLM Providers
     Given an Anthropic mock server that streams a complete response with text and tool call
     When I send both a streaming and an incremental streaming chat request
     Then both responses should have identical content and tool calls
+
+  # --- #184: Cross-provider message normalization pipeline ---
+
+  # Tool call ID normalization
+  Scenario: Tool call IDs with invalid characters are normalized before sending
+    Given a message history with an assistant tool call id "call|with|pipes" for tool "bash"
+    And a matching tool result for id "call|with|pipes"
+    When I build Anthropic messages from that history
+    Then the tool_use block should have id "call_with_pipes"
+    And the tool_result block should have tool_use_id "call_with_pipes"
+
+  Scenario: Tool call IDs longer than 64 characters are truncated
+    Given a message history with an assistant tool call id "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaXXX" for tool "bash"
+    And a matching tool result for id "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaXXX"
+    When I build Anthropic messages from that history
+    Then the tool_use block should have id "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    And the tool_result block should have tool_use_id "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+  Scenario: Tool call IDs with valid characters pass through unchanged
+    Given a message history with an assistant tool call id "valid-ID_123" for tool "bash"
+    And a matching tool result for id "valid-ID_123"
+    When I build Anthropic messages from that history
+    Then the tool_use block should have id "valid-ID_123"
+    And the tool_result block should have tool_use_id "valid-ID_123"
+
+  Scenario: Codex-style long pipe-delimited tool call IDs are normalized
+    Given a message history with an assistant tool call id "call_abc123|call_abc123|0" for tool "grep"
+    And a matching tool result for id "call_abc123|call_abc123|0"
+    When I build Anthropic messages from that history
+    Then the tool_use block should have id "call_abc123_call_abc123_0"
+    And the tool_result block should have tool_use_id "call_abc123_call_abc123_0"
+
+  # Orphaned tool call detection
+  Scenario: Orphaned tool call without a matching result gets a synthetic error result
+    Given a message history with an assistant tool call id "orphan-id-1" for tool "bash" and no tool result
+    When I build Anthropic messages from that history
+    Then a synthetic tool result with tool_use_id "orphan-id-1" is injected
+    And the synthetic result has content "No result provided" and is_error true
+
+  Scenario: Multiple orphaned tool calls each get a synthetic error result
+    Given a message history with two orphaned assistant tool calls "orphan-a" and "orphan-b"
+    When I build Anthropic messages from that history
+    Then a synthetic tool result with tool_use_id "orphan-a" is injected
+    And a synthetic tool result with tool_use_id "orphan-b" is injected
+
+  Scenario: Tool call with a matching result is not treated as orphaned
+    Given a message history with an assistant tool call id "matched-id" for tool "bash"
+    And a matching tool result for id "matched-id"
+    When I build Anthropic messages from that history
+    Then no synthetic tool result is injected for id "matched-id"
+
+  # Message filtering
+  Scenario: Assistant message with stop_reason error is filtered out before sending
+    Given a message history containing an assistant message with stop_reason "error"
+    When I build Anthropic messages from that history
+    Then the errored assistant message is not present in the API payload
+
+  Scenario: Assistant message with no stop_reason is not filtered out
+    Given a message history containing an assistant message with stop_reason ""
+    When I build Anthropic messages from that history
+    Then the assistant message is present in the API payload

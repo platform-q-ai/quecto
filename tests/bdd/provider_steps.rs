@@ -2269,3 +2269,261 @@ fn then_responses_identical(world: &mut QuectoWorld) {
         );
     }
 }
+
+// ===========================================================================
+// #184: Cross-provider message normalization pipeline
+// ===========================================================================
+
+// ---- Given steps for building message histories ----------------------------
+
+#[given(expr = "a message history with an assistant tool call id {string} for tool {string}")]
+fn given_assistant_tool_call_with_id(world: &mut QuectoWorld, raw_id: String, tool_name: String) {
+    let msgs = vec![
+        Message::user("do something"),
+        Message::assistant(
+            "",
+            vec![ToolCall {
+                id: raw_id.clone(),
+                name: tool_name,
+                arguments: "{}".into(),
+            }],
+        ),
+        Message::tool(raw_id, "tool output"),
+    ];
+    world.context_messages = Some(msgs);
+}
+
+#[given(expr = "a matching tool result for id {string}")]
+fn given_matching_tool_result_for_id(_world: &mut QuectoWorld, _id: String) {
+    // The tool result is already included by `given_assistant_tool_call_with_id`.
+    // This step exists for readability; no additional state needed.
+}
+
+#[given(
+    expr = "a message history with an assistant tool call id {string} for tool {string} and no tool result"
+)]
+fn given_orphaned_assistant_tool_call(world: &mut QuectoWorld, raw_id: String, tool_name: String) {
+    let msgs = vec![
+        Message::user("do something"),
+        Message::assistant(
+            "",
+            vec![ToolCall {
+                id: raw_id,
+                name: tool_name,
+                arguments: "{}".into(),
+            }],
+        ),
+        // No Tool message — orphaned tool call.
+    ];
+    world.context_messages = Some(msgs);
+}
+
+#[given(expr = "a message history with two orphaned assistant tool calls {string} and {string}")]
+fn given_two_orphaned_tool_calls(world: &mut QuectoWorld, id_a: String, id_b: String) {
+    let msgs = vec![
+        Message::user("do two things"),
+        Message::assistant(
+            "",
+            vec![
+                ToolCall {
+                    id: id_a,
+                    name: "bash".into(),
+                    arguments: "{}".into(),
+                },
+                ToolCall {
+                    id: id_b,
+                    name: "bash".into(),
+                    arguments: "{}".into(),
+                },
+            ],
+        ),
+        // No Tool messages — both orphaned.
+    ];
+    world.context_messages = Some(msgs);
+}
+
+#[given(expr = "a message history containing an assistant message with stop_reason {string}")]
+fn given_assistant_message_with_stop_reason(world: &mut QuectoWorld, stop_reason: String) {
+    use quecto::domain::message::StopReason;
+    let mut asst = Message::assistant("I will help", vec![]);
+    asst.stop_reason = if stop_reason.is_empty() {
+        None
+    } else {
+        Some(StopReason::from_anthropic(&stop_reason))
+    };
+    world.context_messages = Some(vec![Message::user("hello"), asst]);
+}
+
+// ---- When step: build Anthropic messages (reuse existing step) -------------
+
+#[when("I build Anthropic messages from that history")]
+fn when_build_anthropic_messages_from_history(world: &mut QuectoWorld) {
+    let msgs = world.context_messages.as_ref().expect("no messages set");
+    let (_sys, api_msgs) =
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::build_messages_public(
+            msgs,
+        );
+    world.env_overrides.insert(
+        "_anthropic_msgs".into(),
+        serde_json::to_string(&api_msgs).unwrap(),
+    );
+}
+
+// ---- Then steps: tool_use block ID assertions ------------------------------
+
+/// Extract the first `tool_use` content block from the stored API messages.
+fn extract_tool_use_id(world: &QuectoWorld) -> String {
+    let msgs_str = world.env_overrides.get("_anthropic_msgs").expect("no msgs");
+    let msgs: Vec<serde_json::Value> = serde_json::from_str(msgs_str).expect("invalid json");
+    for msg in &msgs {
+        if let Some(content) = msg["content"].as_array() {
+            for block in content {
+                if block["type"] == "tool_use" {
+                    return block["id"].as_str().unwrap_or("").to_string();
+                }
+            }
+        }
+    }
+    panic!("no tool_use block found in API messages: {}", msgs_str);
+}
+
+/// Extract the first `tool_result` `tool_use_id` from the stored API messages.
+fn extract_tool_result_id(world: &QuectoWorld) -> String {
+    let msgs_str = world.env_overrides.get("_anthropic_msgs").expect("no msgs");
+    let msgs: Vec<serde_json::Value> = serde_json::from_str(msgs_str).expect("invalid json");
+    for msg in &msgs {
+        if let Some(content) = msg["content"].as_array() {
+            for block in content {
+                if block["type"] == "tool_result" {
+                    return block["tool_use_id"].as_str().unwrap_or("").to_string();
+                }
+            }
+        }
+    }
+    panic!("no tool_result block found in API messages: {}", msgs_str);
+}
+
+#[then(expr = "the tool_use block should have id {string}")]
+fn then_tool_use_id_is(world: &mut QuectoWorld, expected: String) {
+    let actual = extract_tool_use_id(world);
+    assert_eq!(
+        actual, expected,
+        "tool_use id: expected '{}', got '{}'",
+        expected, actual
+    );
+}
+
+#[then(expr = "the tool_result block should have tool_use_id {string}")]
+fn then_tool_result_id_is(world: &mut QuectoWorld, expected: String) {
+    let actual = extract_tool_result_id(world);
+    assert_eq!(
+        actual, expected,
+        "tool_result tool_use_id: expected '{}', got '{}'",
+        expected, actual
+    );
+}
+
+// ---- Then steps: orphaned tool call injection -----------------------------
+
+#[then(expr = "a synthetic tool result with tool_use_id {string} is injected")]
+fn then_synthetic_tool_result_injected(world: &mut QuectoWorld, expected_id: String) {
+    let msgs_str = world.env_overrides.get("_anthropic_msgs").expect("no msgs");
+    let msgs: Vec<serde_json::Value> = serde_json::from_str(msgs_str).expect("invalid json");
+    let found = msgs.iter().any(|msg| {
+        msg["content"]
+            .as_array()
+            .map(|blocks| {
+                blocks.iter().any(|b| {
+                    // Synthetic results: is_error=true + content="No result provided"
+                    b["type"] == "tool_result"
+                        && b["tool_use_id"].as_str() == Some(expected_id.as_str())
+                        && b["is_error"].as_bool().unwrap_or(false)
+                        && b["content"].as_str() == Some("No result provided")
+                })
+            })
+            .unwrap_or(false)
+    });
+    assert!(
+        found,
+        "expected synthetic tool_result for id '{}' but not found in:\n{}",
+        expected_id, msgs_str
+    );
+}
+
+#[then(expr = "the synthetic result has content {string} and is_error true")]
+fn then_synthetic_result_content(world: &mut QuectoWorld, expected_content: String) {
+    let msgs_str = world.env_overrides.get("_anthropic_msgs").expect("no msgs");
+    let msgs: Vec<serde_json::Value> = serde_json::from_str(msgs_str).expect("invalid json");
+    let found = msgs.iter().any(|msg| {
+        msg["content"]
+            .as_array()
+            .map(|blocks| {
+                blocks.iter().any(|b| {
+                    if b["type"] != "tool_result" {
+                        return false;
+                    }
+                    let is_error = b["is_error"].as_bool().unwrap_or(false);
+                    let content_match = b["content"].as_str() == Some(expected_content.as_str());
+                    is_error && content_match
+                })
+            })
+            .unwrap_or(false)
+    });
+    assert!(
+        found,
+        "expected synthetic tool_result with content='{}' and is_error=true, not found in:\n{}",
+        expected_content, msgs_str
+    );
+}
+
+#[then(expr = "no synthetic tool result is injected for id {string}")]
+fn then_no_synthetic_tool_result(world: &mut QuectoWorld, id: String) {
+    let msgs_str = world.env_overrides.get("_anthropic_msgs").expect("no msgs");
+    let msgs: Vec<serde_json::Value> = serde_json::from_str(msgs_str).expect("invalid json");
+    let found = msgs.iter().any(|msg| {
+        msg["content"]
+            .as_array()
+            .map(|blocks| {
+                blocks.iter().any(|b| {
+                    // A synthetic result has is_error=true + content="No result provided"
+                    b["type"] == "tool_result"
+                        && b["tool_use_id"].as_str() == Some(id.as_str())
+                        && b["is_error"].as_bool().unwrap_or(false)
+                        && b["content"].as_str() == Some("No result provided")
+                })
+            })
+            .unwrap_or(false)
+    });
+    assert!(
+        !found,
+        "expected no synthetic tool_result for id '{}', but one was injected",
+        id
+    );
+}
+
+// ---- Then steps: message filtering ----------------------------------------
+
+#[then("the errored assistant message is not present in the API payload")]
+fn then_errored_assistant_filtered(world: &mut QuectoWorld) {
+    let msgs_str = world.env_overrides.get("_anthropic_msgs").expect("no msgs");
+    let msgs: Vec<serde_json::Value> = serde_json::from_str(msgs_str).expect("invalid json");
+    // There should be no assistant message in the output (the errored one was filtered).
+    let has_assistant = msgs.iter().any(|m| m["role"] == "assistant");
+    assert!(
+        !has_assistant,
+        "errored assistant message should have been filtered but is present in:\n{}",
+        msgs_str
+    );
+}
+
+#[then("the assistant message is present in the API payload")]
+fn then_assistant_message_present(world: &mut QuectoWorld) {
+    let msgs_str = world.env_overrides.get("_anthropic_msgs").expect("no msgs");
+    let msgs: Vec<serde_json::Value> = serde_json::from_str(msgs_str).expect("invalid json");
+    let has_assistant = msgs.iter().any(|m| m["role"] == "assistant");
+    assert!(
+        has_assistant,
+        "expected assistant message to be present but not found in:\n{}",
+        msgs_str
+    );
+}

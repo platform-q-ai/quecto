@@ -25,6 +25,11 @@ pub struct Message {
     pub image_blocks: Vec<crate::domain::tool::ImageBlock>,
     /// Whether this tool result represents an error (propagated to Anthropic `is_error` field).
     pub is_error: bool,
+    /// Stop reason from the LLM for assistant messages.
+    ///
+    /// Used by the normalization pipeline to filter out incomplete assistant
+    /// messages (e.g. those that ended with an error) before sending to the API.
+    pub stop_reason: Option<StopReason>,
 }
 
 impl Message {
@@ -43,6 +48,7 @@ impl Message {
             spill_id: None,
             image_blocks: vec![],
             is_error: false,
+            stop_reason: None,
         }
     }
 
@@ -61,6 +67,7 @@ impl Message {
             spill_id: None,
             image_blocks: vec![],
             is_error: false,
+            stop_reason: None,
         }
     }
 
@@ -79,6 +86,7 @@ impl Message {
             spill_id: None,
             image_blocks: vec![],
             is_error: false,
+            stop_reason: None,
         }
     }
 
@@ -97,6 +105,7 @@ impl Message {
             spill_id: None,
             image_blocks: vec![],
             is_error: false,
+            stop_reason: None,
         }
     }
 }
@@ -155,7 +164,7 @@ impl StopReason {
             "tool_use" => Self::ToolUse,
             "refusal" => Self::Refusal,
             "pause_turn" | "stop_sequence" => Self::EndTurn,
-            "sensitive" => Self::Error,
+            "sensitive" | "error" => Self::Error,
             other => Self::Unknown(other.to_string()),
         }
     }
