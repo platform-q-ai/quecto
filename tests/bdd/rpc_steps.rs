@@ -144,6 +144,7 @@ fn execute_rpc(world: &mut QuectoWorld) {
             ephemeral,
             stdin_override: Some(Box::new(stdin_cursor)),
             stdout_override: Some(Box::new(VecWriter(stdout_clone))),
+            session_store_override: None,
         })
     })
     .join()
@@ -540,5 +541,48 @@ fn then_no_session_file_exists(world: &mut QuectoWorld, _session_name: String) {
         entries.is_empty(),
         "expected no session files\nfound: {:#?}",
         entries.iter().map(|e| e.path()).collect::<Vec<_>>(),
+    );
+}
+
+// ─── #233: Additional step implementations ────────────────────────────────────
+
+#[then(expr = "the RPC stdout should contain a response command {string} with success false")]
+fn then_rpc_stdout_response_command_failure(world: &mut QuectoWorld, command: String) {
+    let resp = find_response(world, &command);
+    assert!(
+        resp.is_some(),
+        "no response for {command:?}\nlines: {:#?}",
+        world.rpc_stdout_lines,
+    );
+    assert_eq!(
+        resp.unwrap()["success"],
+        serde_json::Value::Bool(false),
+        "expected success=false for {command:?}"
+    );
+}
+
+#[then(expr = "the RPC get_session_stats userMessages should equal {int}")]
+fn then_rpc_get_session_stats_user_messages_eq(world: &mut QuectoWorld, expected: usize) {
+    execute_rpc(world);
+    let resp = find_response(world, "get_session_stats").expect("no get_session_stats response");
+    let actual = resp["data"]["userMessages"]
+        .as_u64()
+        .expect("userMessages not a number") as usize;
+    assert_eq!(
+        actual, expected,
+        "expected userMessages={expected}, got {actual}"
+    );
+}
+
+#[then(expr = "the RPC get_session_stats assistantMessages should equal {int}")]
+fn then_rpc_get_session_stats_assistant_messages_eq(world: &mut QuectoWorld, expected: usize) {
+    execute_rpc(world);
+    let resp = find_response(world, "get_session_stats").expect("no get_session_stats response");
+    let actual = resp["data"]["assistantMessages"]
+        .as_u64()
+        .expect("assistantMessages not a number") as usize;
+    assert_eq!(
+        actual, expected,
+        "expected assistantMessages={expected}, got {actual}"
     );
 }

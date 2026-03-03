@@ -481,6 +481,7 @@ fn cmd_agent_rpc(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         ephemeral,
         stdin_override: None,
         stdout_override: None,
+        session_store_override: None,
     })
 }
 

@@ -75,7 +75,7 @@ impl AgentLoopImpl {
         Self {
             provider: config.provider,
             tool_registry: config.tool_registry,
-            model: config.model,
+            model: config.model.clone(),
             max_tokens: config.max_tokens,
             temperature: config.temperature,
             max_tool_iterations: DEFAULT_MAX_TOOL_ITERATIONS,
@@ -86,6 +86,18 @@ impl AgentLoopImpl {
             max_context_tokens: config.max_context_tokens,
             progress_callback: config.progress_callback,
         }
+    }
+
+    /// Switch the model used for all subsequent LLM calls.
+    ///
+    /// The model name is validated only by the underlying provider at call time.
+    pub fn set_model(&mut self, model: String) {
+        self.model = model;
+    }
+
+    /// Return the currently configured model name.
+    pub fn model(&self) -> &str {
+        &self.model
     }
 
     /// Fire a progress event to the registered callback, if any.

@@ -5,7 +5,7 @@ Feature: RPC mode for headless agent operation
 
   # ─── Flag parsing ───────────────────────────────────────────────────────────
 
-  @wip
+  @done
   Scenario: --mode rpc is accepted as a valid flag
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -15,14 +15,14 @@ Feature: RPC mode for headless agent operation
     And I close RPC stdin
     Then the RPC process exits with code 0
 
-  @wip
+  @done
   Scenario: --mode rpc is documented in help
     Given a temp base directory
     When I run quecto help
     Then the exit code should be 0
     And stdout should contain "--mode rpc"
 
-  @wip
+  @done
   Scenario: --mode rpc without config shows error
     Given a temp base directory
     When I start the RPC agent with no session
@@ -30,7 +30,7 @@ Feature: RPC mode for headless agent operation
     Then the RPC stderr should contain "config not found"
     And the RPC process exits with code 1
 
-  @wip
+  @done
   Scenario: --mode rpc with invalid value shows error
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -40,7 +40,7 @@ Feature: RPC mode for headless agent operation
 
   # ─── prompt command ─────────────────────────────────────────────────────────
 
-  @wip
+  @done
   Scenario: prompt command triggers agent_start and agent_end events
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -52,7 +52,7 @@ Feature: RPC mode for headless agent operation
     And the RPC stdout should contain an event of type "agent_end"
     And the RPC process exits with code 0
 
-  @wip
+  @done
   Scenario: prompt command emits turn_start and turn_end events
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -63,7 +63,7 @@ Feature: RPC mode for headless agent operation
     Then the RPC stdout should contain an event of type "turn_start"
     And the RPC stdout should contain an event of type "turn_end"
 
-  @wip
+  @done
   Scenario: prompt command emits tool_execution_start and tool_execution_end for tool calls
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -74,7 +74,7 @@ Feature: RPC mode for headless agent operation
     Then the RPC stdout should contain an event of type "tool_execution_start"
     And the RPC stdout should contain an event of type "tool_execution_end"
 
-  @wip
+  @done
   Scenario: prompt command with request id echoes id in response
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -84,7 +84,7 @@ Feature: RPC mode for headless agent operation
     And I close RPC stdin
     Then the RPC stdout should contain a response with id "req-42"
 
-  @wip
+  @done
   Scenario: multiple sequential prompts are processed in order
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -98,7 +98,7 @@ Feature: RPC mode for headless agent operation
 
   # ─── get_state command ──────────────────────────────────────────────────────
 
-  @wip
+  @done
   Scenario: get_state returns current session state
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -114,7 +114,7 @@ Feature: RPC mode for headless agent operation
 
   # ─── get_messages command ───────────────────────────────────────────────────
 
-  @wip
+  @done
   Scenario: get_messages returns conversation history
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -128,7 +128,7 @@ Feature: RPC mode for headless agent operation
 
   # ─── get_session_stats command ──────────────────────────────────────────────
 
-  @wip
+  @done
   Scenario: get_session_stats returns token usage counts
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -145,7 +145,7 @@ Feature: RPC mode for headless agent operation
 
   # ─── set_model command ──────────────────────────────────────────────────────
 
-  @wip
+  @done
   Scenario: set_model switches the active model
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -159,7 +159,10 @@ Feature: RPC mode for headless agent operation
 
   # ─── abort command ──────────────────────────────────────────────────────────
 
-  @wip
+  @done
+  # Note: abort is always a no-op in the current sequential implementation —
+  # commands can only arrive between prompts, so the agent is never mid-run.
+  # Abort-during-streaming requires CancelFlag wiring (follow-up PR).
   Scenario: abort while idle returns success
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -170,7 +173,7 @@ Feature: RPC mode for headless agent operation
 
   # ─── follow_up command ──────────────────────────────────────────────────────
 
-  @wip
+  @done
   Scenario: follow_up while idle is queued and acknowledged
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -181,7 +184,7 @@ Feature: RPC mode for headless agent operation
 
   # ─── steer command ──────────────────────────────────────────────────────────
 
-  @wip
+  @done
   Scenario: steer while idle is acknowledged
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -192,7 +195,7 @@ Feature: RPC mode for headless agent operation
 
   # ─── error handling ─────────────────────────────────────────────────────────
 
-  @wip
+  @done
   Scenario: malformed JSON line produces an error response
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -201,7 +204,7 @@ Feature: RPC mode for headless agent operation
     And I close RPC stdin
     Then the RPC stdout should contain a parse error response
 
-  @wip
+  @done
   Scenario: unknown command type produces an error response
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -212,7 +215,7 @@ Feature: RPC mode for headless agent operation
 
   # ─── session persistence ─────────────────────────────────────────────────────
 
-  @wip
+  @done
   Scenario: session is saved on process exit when using named session
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -223,7 +226,7 @@ Feature: RPC mode for headless agent operation
     Then the RPC process exits with code 0
     And a session file for "rpc-test" should exist
 
-  @wip
+  @done
   Scenario: RPC mode with --no-session does not persist session
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -236,10 +239,37 @@ Feature: RPC mode for headless agent operation
 
   # ─── EOF / shutdown ──────────────────────────────────────────────────────────
 
-  @wip
+  @done
   Scenario: EOF on stdin causes clean shutdown
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     When I start the RPC agent with no session
     And I close RPC stdin
     Then the RPC process exits with code 0
+
+  # ─── parse_error event shape ─────────────────────────────────────────────────
+
+  @wip
+  Scenario: parse error response uses type response with command parse_error
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the RPC agent with no session
+    And I queue RPC raw line "{{not json"
+    And I close RPC stdin
+    Then the RPC stdout should contain a parse error response
+    And the RPC stdout should contain a response command "parse_error" with success false
+
+  # ─── compute_session_stats correctness ───────────────────────────────────────
+
+  @wip
+  Scenario: get_session_stats message counts are accurate after a prompt
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "counted"
+    When I start the RPC agent with no session
+    And I queue RPC prompt "count me"
+    And I queue RPC command "get_session_stats" with id "stats-2"
+    And I close RPC stdin
+    Then the RPC stdout should contain a response command "get_session_stats" with success true
+    And the RPC get_session_stats userMessages should equal 1
+    And the RPC get_session_stats assistantMessages should equal 1
