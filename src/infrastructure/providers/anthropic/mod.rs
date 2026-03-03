@@ -312,10 +312,6 @@ impl AnthropicProvider {
         }));
     }
 
-    /// Returns `true` for models known to support image inputs.
-    ///
-    /// Defaults to `true` for unknown models (fail-open: send images unless
-    /// we know the model can't handle them).
     /// Convert domain messages to Anthropic API message format.
     ///
     /// Applies the #184 normalization pipeline (ID normalization, orphaned tool

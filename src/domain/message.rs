@@ -34,6 +34,11 @@ pub struct Message {
     ///
     /// Distinct from `image_blocks` (which is for tool results). When non-empty,
     /// the provider builds a structured content block array instead of a plain string.
+    ///
+    /// **Transient** — intentionally not persisted in `FileSessionStore`.
+    /// Session files store only the text portion of user messages; if a session
+    /// is reloaded the image content will not be replayed. This matches the
+    /// expected usage pattern (images are sent once in the active session).
     pub user_image_blocks: Vec<UserImageBlock>,
 }
 

@@ -37,12 +37,18 @@ pub fn estimate_total_tokens(messages: &[Message]) -> usize {
 /// Estimate tokens for a single message including image blocks.
 pub fn estimate_message_tokens(msg: &Message) -> usize {
     let text_tokens = estimate_tokens(&msg.content);
+    // Count user-message inline images.
+    let user_image_tokens: usize = msg
+        .user_image_blocks
+        .iter()
+        .map(|img| estimate_tokens(&img.data))
+        .sum();
     let image_tokens: usize = msg
         .image_blocks
         .iter()
         .map(|img| estimate_tokens(&img.data))
         .sum();
-    text_tokens + image_tokens
+    text_tokens + image_tokens + user_image_tokens
 }
 
 /// Truncate a string to at most `max_chars` characters, appending "..."

@@ -6,10 +6,11 @@ use crate::domain::message::Message;
 
 /// Returns `true` for models known to support image inputs.
 ///
-/// Defaults to `true` for unknown models (fail-open: send images unless
-/// we know the model can't handle them).
+/// Defaults to `true` for unknown models (fail-open). Legacy models that
+/// predate vision support are explicitly denied. Uses exact match to avoid
+/// false positives from future models with similar prefixes (e.g. "claude-2025-x").
 pub(super) fn model_supports_vision(model: &str) -> bool {
-    // Models known NOT to support vision.
+    // Exact model identifiers known NOT to support vision.
     const NON_VISION: &[&str] = &[
         "claude-instant-1",
         "claude-instant-1.2",
@@ -17,7 +18,7 @@ pub(super) fn model_supports_vision(model: &str) -> bool {
         "claude-2.0",
         "claude-2.1",
     ];
-    !NON_VISION.iter().any(|&prefix| model.starts_with(prefix))
+    !NON_VISION.contains(&model)
 }
 
 /// Build the Anthropic API content value for a user message.
@@ -25,7 +26,10 @@ pub(super) fn model_supports_vision(model: &str) -> bool {
 /// Returns:
 /// - `Some(String)` — plain text (no images, non-empty)
 /// - `Some(Array)` — structured content blocks (text + images)
-/// - `None` — message is empty after filtering; caller should skip it
+/// - `None` — message is empty after filtering; **caller must skip it** to
+///   avoid sending an empty-content message that the Anthropic API rejects.
+///   Note: callers are responsible for ensuring role alternation is maintained
+///   when messages are dropped.
 pub(super) fn build_user_content(m: &Message, supports_vision: bool) -> Option<serde_json::Value> {
     let has_images = !m.user_image_blocks.is_empty();
 
@@ -47,9 +51,14 @@ pub(super) fn build_user_content(m: &Message, supports_vision: bool) -> Option<s
         blocks.push(serde_json::json!({"type": "text", "text": text}));
     }
 
-    // Add image blocks, filtered by vision capability.
+    // Add image blocks, filtered by vision capability and MIME type allowlist.
+    // Anthropic only accepts these four MIME types; others are silently skipped.
+    const ALLOWED_MIME: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
     if supports_vision {
         for img in &m.user_image_blocks {
+            if !ALLOWED_MIME.contains(&img.mime_type.as_str()) {
+                continue;
+            }
             blocks.push(serde_json::json!({
                 "type": "image",
                 "source": {
