@@ -13,13 +13,13 @@ use super::{
 /// enabling real-time token rendering without buffering the full response.
 #[derive(Debug)]
 pub enum StreamEvent {
-    /// A text token arrived (maps to Anthropic `text_delta`).
+    /// A text token arrived from the LLM.
     TextDelta(String),
-    /// A thinking token arrived (maps to Anthropic `thinking_delta`).
+    /// An extended-thinking token arrived (supported by select models).
     ThinkingDelta(String),
     /// A tool call started; the model is about to stream its arguments.
     ToolCallStart { id: String, name: String },
-    /// A partial JSON fragment of tool arguments arrived (`input_json_delta`).
+    /// A partial JSON fragment of tool call arguments arrived.
     ToolCallDelta(String),
     /// A tool call finished; `arguments` is the fully assembled JSON string.
     ToolCallEnd {
@@ -29,7 +29,7 @@ pub enum StreamEvent {
     },
     /// The LLM turn is complete. Contains the fully assembled `LlmResponse`.
     Done(LlmResponse),
-    /// A terminal error occurred during streaming (error message string).
+    /// A terminal error occurred during streaming (human-readable message).
     Error(String),
 }
 

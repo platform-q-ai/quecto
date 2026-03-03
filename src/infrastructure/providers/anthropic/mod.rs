@@ -418,10 +418,33 @@ impl LlmProvider for AnthropicProvider {
         body["stream"] = serde_json::Value::Bool(true);
         let url = format!("{}/v1/messages", self.api_base);
 
+        // Clone all fields needed so the background task can be 'static.
+        let api_key = self.api_key.clone();
+        let api_base = self.api_base.clone();
+        let is_oauth = self.is_oauth;
+        let client = self.client.clone();
+
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
-            self.stream_chat_incremental_with_body(body, &url, tx).await;
-            drop(model); // Suppress unused warning until cost attachment is wired.
+
+            // Spawn the byte-stream pump as a detached task so the receiver
+            // is returned immediately — callers get events as they arrive
+            // rather than after the full response has been consumed.
+            tokio::spawn(async move {
+                let provider = AnthropicProvider {
+                    api_key,
+                    api_base,
+                    client,
+                    is_oauth,
+                };
+                provider
+                    .stream_chat_incremental_with_body(body, &url, tx)
+                    .await;
+                // Cost attachment for Done(LlmResponse) is a future enhancement;
+                // model is kept here to avoid a dead-code warning.
+                drop(model);
+            });
+
             rx
         })
     }

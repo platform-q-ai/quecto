@@ -11,8 +11,8 @@ use crate::domain::provider::StreamEvent;
 /// the assembled response from event fragments.
 #[derive(Default)]
 pub(super) struct SseAccumulator {
-    pub(super) content: String,
-    pub(super) tool_calls: Vec<ToolCall>,
+    content: String,
+    tool_calls: Vec<ToolCall>,
     pub(super) current_tool_id: String,
     pub(super) current_tool_name: String,
     pub(super) current_tool_input: String,
@@ -271,7 +271,11 @@ impl AnthropicProvider {
 
         let status = response.status().as_u16();
         if status != 200 {
-            let text = response.text().await.unwrap_or_default();
+            // Cap error body to avoid unbounded memory usage on malformed responses.
+            const MAX_ERROR_BODY: usize = 4096;
+            let body_bytes = response.bytes().await.unwrap_or_default();
+            let truncated = &body_bytes[..body_bytes.len().min(MAX_ERROR_BODY)];
+            let text = String::from_utf8_lossy(truncated);
             let _ = tx
                 .send(StreamEvent::Error(format!(
                     "HTTP {} from Anthropic: {}",
@@ -295,7 +299,10 @@ async fn pump_sse_bytes(
     response: &mut reqwest::Response,
     tx: &tokio::sync::mpsc::Sender<StreamEvent>,
 ) {
-    let mut line_buf = String::new();
+    // `carry` holds an incomplete line fragment from the previous chunk.
+    // Using a Vec<u8> avoids re-encoding and handles UTF-8 boundaries:
+    // we only decode to &str once a complete '\n'-terminated line is ready.
+    let mut carry: Vec<u8> = Vec::new();
     let mut current_event = String::new();
     let mut acc = SseAccumulator::default();
 
@@ -311,21 +318,27 @@ async fn pump_sse_bytes(
             }
         };
 
-        // SSE lines are ASCII; skip malformed UTF-8 chunks.
-        let text = match std::str::from_utf8(&bytes) {
-            Ok(s) => s.to_string(),
-            Err(_) => continue,
-        };
+        // Guard against unbounded line growth from a misbehaving server.
+        const MAX_LINE_BYTES: usize = 1024 * 1024; // 1 MiB
+        if carry.len() + bytes.len() > MAX_LINE_BYTES && !carry.contains(&b'\n') {
+            let _ = tx
+                .send(StreamEvent::Error("SSE line exceeded 1 MiB".to_string()))
+                .await;
+            return;
+        }
+        // Extend the carry buffer with this chunk, then scan for complete lines.
+        // This correctly handles UTF-8 sequences split across chunk boundaries.
+        carry.extend_from_slice(&bytes);
 
-        for ch in text.as_str().chars() {
-            if ch == '\n' {
-                let line = std::mem::take(&mut line_buf);
-                let line = line.trim_end_matches('\r');
+        while let Some(pos) = carry.iter().position(|&b| b == b'\n') {
+            // Extract the complete line (including the newline).
+            let raw_line = carry.drain(..=pos).collect::<Vec<u8>>();
+            // Decode to str; SSE is always valid UTF-8 — skip malformed lines.
+            if let Ok(line) = std::str::from_utf8(&raw_line) {
+                let line = line.trim_end_matches(['\n', '\r']);
                 if process_sse_line(line, &mut current_event, &mut acc, tx).await {
                     return; // message_stop received
                 }
-            } else {
-                line_buf.push(ch);
             }
         }
     }
