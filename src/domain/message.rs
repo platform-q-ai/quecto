@@ -30,6 +30,24 @@ pub struct Message {
     /// Used by the normalization pipeline to filter out incomplete assistant
     /// messages (e.g. those that ended with an error) before sending to the API.
     pub stop_reason: Option<StopReason>,
+    /// Inline image blocks attached to a **user** message.
+    ///
+    /// Distinct from `image_blocks` (which is for tool results). When non-empty,
+    /// the provider builds a structured content block array instead of a plain string.
+    pub user_image_blocks: Vec<UserImageBlock>,
+}
+
+/// An image block attached directly to a user message.
+///
+/// Unlike `crate::domain::tool::ImageBlock` (which uses `&'static str` for
+/// `mime_type`), this variant owns its strings to support runtime MIME types
+/// from user-provided files.
+#[derive(Debug, Clone)]
+pub struct UserImageBlock {
+    /// MIME type string, e.g. `"image/png"`, `"image/jpeg"`.
+    pub mime_type: String,
+    /// Base64-encoded image bytes (standard encoding, no line breaks).
+    pub data: String,
 }
 
 impl Message {
@@ -49,6 +67,7 @@ impl Message {
             image_blocks: vec![],
             is_error: false,
             stop_reason: None,
+            user_image_blocks: vec![],
         }
     }
 
@@ -68,6 +87,7 @@ impl Message {
             image_blocks: vec![],
             is_error: false,
             stop_reason: None,
+            user_image_blocks: vec![],
         }
     }
 
@@ -87,6 +107,7 @@ impl Message {
             image_blocks: vec![],
             is_error: false,
             stop_reason: None,
+            user_image_blocks: vec![],
         }
     }
 
@@ -106,6 +127,7 @@ impl Message {
             image_blocks: vec![],
             is_error: false,
             stop_reason: None,
+            user_image_blocks: vec![],
         }
     }
 }

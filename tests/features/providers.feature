@@ -352,3 +352,56 @@ Feature: LLM Providers
     Given a message history containing an assistant message with stop_reason ""
     When I build Anthropic messages from that history
     Then the assistant message is present in the API payload
+
+  # --- #188: User message content block support (inline images + capability filtering) ---
+
+  # Plain text user messages — backward compat (no image blocks)
+  Scenario: Plain text user message is sent as a simple string
+    Given a user message with text "hello world" and no image blocks
+    When I build Anthropic messages from that history for model "claude-opus-4-5"
+    Then the user message content should be the string "hello world"
+
+  # User message with image blocks — structured content array
+  Scenario: User message with one image block is sent as a content block array
+    Given a user message with text "look at this" and one image block of type "image/png"
+    When I build Anthropic messages from that history for model "claude-opus-4-5"
+    Then the user message content should be a block array
+    And the block array should contain a text block "look at this"
+    And the block array should contain an image block of media_type "image/png"
+
+  Scenario: User message with multiple image blocks emits one text block and multiple image blocks
+    Given a user message with text "compare these" and two image blocks of type "image/jpeg"
+    When I build Anthropic messages from that history for model "claude-opus-4-5"
+    Then the user message content should be a block array
+    And the block array should contain a text block "compare these"
+    And the block array should contain 2 image blocks
+
+  # Vision capability filtering
+  Scenario: Image blocks are filtered out for non-vision models
+    Given a user message with text "look at this" and one image block of type "image/png"
+    When I build Anthropic messages from that history for model "claude-instant-1"
+    Then the user message content should be the string "look at this"
+
+  Scenario: Image blocks are kept for vision-capable models
+    Given a user message with text "look at this" and one image block of type "image/png"
+    When I build Anthropic messages from that history for model "claude-3-opus-20240229"
+    Then the user message content should be a block array
+    And the block array should contain an image block of media_type "image/png"
+
+  # Empty content filtering
+  Scenario: User message with only whitespace text and no images is skipped
+    Given a user message with text "   " and no image blocks
+    When I build Anthropic messages from that history for model "claude-opus-4-5"
+    Then the Anthropic payload should contain no user messages
+
+  Scenario: User message with image but empty text emits only the image block
+    Given a user message with text "" and one image block of type "image/webp"
+    When I build Anthropic messages from that history for model "claude-opus-4-5"
+    Then the user message content should be a block array
+    And the block array should contain 1 image blocks
+    And the block array should contain no text blocks
+
+  Scenario: User message filtered to empty after removing images for non-vision model is skipped
+    Given a user message with text "" and one image block of type "image/png"
+    When I build Anthropic messages from that history for model "claude-instant-1"
+    Then the Anthropic payload should contain no user messages

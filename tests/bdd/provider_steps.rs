@@ -2527,3 +2527,155 @@ fn then_assistant_message_present(world: &mut QuectoWorld) {
         msgs_str
     );
 }
+
+// ===========================================================================
+// #188: User message content block support (inline images + capability filtering)
+// ===========================================================================
+
+// ---- Given steps -----------------------------------------------------------
+
+#[given(expr = "a user message with text {string} and no image blocks")]
+fn given_user_message_text_only(world: &mut QuectoWorld, text: String) {
+    world.context_messages = Some(vec![Message::user(text)]);
+}
+
+#[given(expr = "a user message with text {string} and one image block of type {string}")]
+fn given_user_message_with_one_image(world: &mut QuectoWorld, text: String, mime: String) {
+    use quecto::domain::message::UserImageBlock;
+    let mut m = Message::user(text);
+    m.user_image_blocks = vec![UserImageBlock {
+        mime_type: mime,
+        data: "aGVsbG8=".into(), // base64 "hello"
+    }];
+    world.context_messages = Some(vec![m]);
+}
+
+#[given(expr = "a user message with text {string} and two image blocks of type {string}")]
+fn given_user_message_with_two_images(world: &mut QuectoWorld, text: String, mime: String) {
+    use quecto::domain::message::UserImageBlock;
+    let mut m = Message::user(text);
+    m.user_image_blocks = vec![
+        UserImageBlock {
+            mime_type: mime.clone(),
+            data: "aGVsbG8=".into(),
+        },
+        UserImageBlock {
+            mime_type: mime,
+            data: "d29ybGQ=".into(),
+        },
+    ];
+    world.context_messages = Some(vec![m]);
+}
+
+// ---- When step (model-aware) -----------------------------------------------
+
+#[when(expr = "I build Anthropic messages from that history for model {string}")]
+fn when_build_anthropic_messages_for_model(world: &mut QuectoWorld, model: String) {
+    let msgs = world.context_messages.as_ref().expect("no messages set");
+    let (_sys, api_msgs) =
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::build_messages_for_model_public(
+            msgs, &model,
+        );
+    world.env_overrides.insert(
+        "_anthropic_msgs".into(),
+        serde_json::to_string(&api_msgs).unwrap(),
+    );
+}
+
+// ---- Then steps ------------------------------------------------------------
+
+/// Get the first user message's content value from stored API messages.
+fn first_user_content(world: &QuectoWorld) -> serde_json::Value {
+    let msgs_str = world.env_overrides.get("_anthropic_msgs").expect("no msgs");
+    let msgs: Vec<serde_json::Value> = serde_json::from_str(msgs_str).expect("invalid json");
+    msgs.iter()
+        .find(|m| m["role"] == "user")
+        .map(|m| m["content"].clone())
+        .unwrap_or(serde_json::Value::Null)
+}
+
+#[then(expr = "the user message content should be the string {string}")]
+fn then_user_content_is_string(world: &mut QuectoWorld, expected: String) {
+    let content = first_user_content(world);
+    assert_eq!(
+        content.as_str(),
+        Some(expected.as_str()),
+        "expected plain string content '{}', got: {}",
+        expected,
+        content
+    );
+}
+
+#[then("the user message content should be a block array")]
+fn then_user_content_is_array(world: &mut QuectoWorld) {
+    let content = first_user_content(world);
+    assert!(
+        content.is_array(),
+        "expected content block array, got: {}",
+        content
+    );
+}
+
+#[then(expr = "the block array should contain a text block {string}")]
+fn then_block_array_has_text(world: &mut QuectoWorld, expected_text: String) {
+    let content = first_user_content(world);
+    let blocks = content.as_array().expect("content is not an array");
+    let found = blocks
+        .iter()
+        .any(|b| b["type"] == "text" && b["text"].as_str() == Some(expected_text.as_str()));
+    assert!(
+        found,
+        "expected text block '{}' not found in: {}",
+        expected_text, content
+    );
+}
+
+#[then(expr = "the block array should contain an image block of media_type {string}")]
+fn then_block_array_has_image(world: &mut QuectoWorld, media_type: String) {
+    let content = first_user_content(world);
+    let blocks = content.as_array().expect("content is not an array");
+    let found = blocks.iter().any(|b| {
+        b["type"] == "image" && b["source"]["media_type"].as_str() == Some(media_type.as_str())
+    });
+    assert!(
+        found,
+        "expected image block with media_type '{}' not found in: {}",
+        media_type, content
+    );
+}
+
+#[then(expr = "the block array should contain {int} image blocks")]
+fn then_block_array_has_n_images(world: &mut QuectoWorld, expected: usize) {
+    let content = first_user_content(world);
+    let blocks = content.as_array().expect("content is not an array");
+    let count = blocks.iter().filter(|b| b["type"] == "image").count();
+    assert_eq!(
+        count, expected,
+        "expected {} image blocks, found {}: {}",
+        expected, count, content
+    );
+}
+
+#[then("the block array should contain no text blocks")]
+fn then_block_array_has_no_text(world: &mut QuectoWorld) {
+    let content = first_user_content(world);
+    let blocks = content.as_array().expect("content is not an array");
+    let count = blocks.iter().filter(|b| b["type"] == "text").count();
+    assert_eq!(
+        count, 0,
+        "expected no text blocks, found {}: {}",
+        count, content
+    );
+}
+
+#[then("the Anthropic payload should contain no user messages")]
+fn then_no_user_messages(world: &mut QuectoWorld) {
+    let msgs_str = world.env_overrides.get("_anthropic_msgs").expect("no msgs");
+    let msgs: Vec<serde_json::Value> = serde_json::from_str(msgs_str).expect("invalid json");
+    let user_count = msgs.iter().filter(|m| m["role"] == "user").count();
+    assert_eq!(
+        user_count, 0,
+        "expected no user messages, found {}: {}",
+        user_count, msgs_str
+    );
+}

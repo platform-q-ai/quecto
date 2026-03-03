@@ -8,6 +8,7 @@ use crate::domain::message::{LlmResponse, Message, Role, StopReason, ToolCall, U
 use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
 
 mod anthropic_sse;
+mod anthropic_user_msg;
 #[cfg(any(test, feature = "test-support"))]
 use anthropic_sse::SseAccumulator;
 
@@ -54,7 +55,8 @@ impl AnthropicProvider {
 
     /// Build the JSON request body for Anthropic Messages API.
     fn build_request_body(request: &ChatRequest<'_>) -> (Option<String>, serde_json::Value) {
-        let (system_prompt, mut api_messages) = Self::build_messages(request.messages);
+        let (system_prompt, mut api_messages) =
+            Self::build_messages(request.messages, request.model);
         let mut body = serde_json::json!({
             "model": request.model,
             "messages": [],
@@ -236,7 +238,6 @@ impl AnthropicProvider {
             .collect()
     }
 
-    /// Collect IDs of all `tool_use` blocks from assistant messages.
     fn collect_tool_use_ids(api_messages: &[serde_json::Value]) -> Vec<String> {
         api_messages
             .iter()
@@ -247,7 +248,6 @@ impl AnthropicProvider {
             .collect()
     }
 
-    /// Collect IDs of all `tool_result` blocks from user messages.
     fn collect_tool_result_ids(
         api_messages: &[serde_json::Value],
     ) -> std::collections::HashSet<String> {
@@ -259,9 +259,7 @@ impl AnthropicProvider {
             .collect()
     }
 
-    /// Build a synthetic `tool_result` block for an orphaned tool call.
-    ///
-    /// Only standard Anthropic API fields are included — no non-standard markers.
+    /// Synthetic `tool_result` for an orphaned tool call (no non-standard fields).
     fn synthetic_tool_result(tool_use_id: String) -> serde_json::Value {
         serde_json::json!({
             "type": "tool_result",
@@ -314,12 +312,21 @@ impl AnthropicProvider {
         }));
     }
 
+    /// Returns `true` for models known to support image inputs.
+    ///
+    /// Defaults to `true` for unknown models (fail-open: send images unless
+    /// we know the model can't handle them).
     /// Convert domain messages to Anthropic API message format.
     ///
     /// Applies the #184 normalization pipeline (ID normalization, orphaned tool
     /// call injection, errored message filtering) then batches consecutive tool
     /// result messages into a single user message (#187).
-    fn build_messages(messages: &[Message]) -> (Option<String>, Vec<serde_json::Value>) {
+    /// Applies #188 user message content block support (images + capability filtering).
+    fn build_messages(
+        messages: &[Message],
+        model: &str,
+    ) -> (Option<String>, Vec<serde_json::Value>) {
+        let supports_vision = anthropic_user_msg::model_supports_vision(model);
         let normalized = Self::normalize_messages(messages);
         let mut system_prompt: Option<String> = None;
         let mut api_messages: Vec<serde_json::Value> = Vec::new();
@@ -333,7 +340,11 @@ impl AnthropicProvider {
                     i += 1;
                 }
                 Role::User => {
-                    api_messages.push(serde_json::json!({"role": "user", "content": m.content}));
+                    if let Some(content) =
+                        anthropic_user_msg::build_user_content(m, supports_vision)
+                    {
+                        api_messages.push(serde_json::json!({"role": "user", "content": content}));
+                    }
                     i += 1;
                 }
                 Role::Assistant => {
@@ -631,7 +642,15 @@ impl AnthropicProvider {
 
     /// Public wrapper for `build_messages` (for BDD tests).
     pub fn build_messages_public(messages: &[Message]) -> (Option<String>, Vec<serde_json::Value>) {
-        Self::build_messages(messages)
+        Self::build_messages(messages, "claude-opus-4-5")
+    }
+
+    /// Public wrapper for `build_messages` with explicit model (for BDD tests — #188).
+    pub fn build_messages_for_model_public(
+        messages: &[Message],
+        model: &str,
+    ) -> (Option<String>, Vec<serde_json::Value>) {
+        Self::build_messages(messages, model)
     }
 
     /// Public wrapper for `parse_sse_response` (for BDD tests).

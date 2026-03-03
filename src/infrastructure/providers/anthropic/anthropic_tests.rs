@@ -491,7 +491,7 @@ fn test_build_messages_batches_consecutive_tool_results() {
         Message::tool("tc_2", "output 2"),
         Message::tool("tc_3", "output 3"),
     ];
-    let (_sys, api_messages) = AnthropicProvider::build_messages(&messages);
+    let (_sys, api_messages) = AnthropicProvider::build_messages(&messages, "claude-opus-4-5");
     // user, assistant, then ONE user message with 3 tool_result blocks
     assert_eq!(
         api_messages.len(),
@@ -523,7 +523,7 @@ fn test_build_messages_single_tool_result_in_single_message() {
         ),
         Message::tool("tc_1", "output"),
     ];
-    let (_sys, api_messages) = AnthropicProvider::build_messages(&messages);
+    let (_sys, api_messages) = AnthropicProvider::build_messages(&messages, "claude-opus-4-5");
     assert_eq!(api_messages.len(), 3);
     let tool_msg = &api_messages[2];
     let content = tool_msg["content"]
