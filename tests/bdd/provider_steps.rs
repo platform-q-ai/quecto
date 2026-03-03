@@ -1578,3 +1578,694 @@ fn then_cost_none(world: &mut QuectoWorld) {
     let val = world.env_overrides.get("_cost_total").unwrap();
     assert_eq!(val, "none", "expected no cost, got: {val}");
 }
+
+// ===========================================================================
+// #181: True incremental SSE streaming
+// ===========================================================================
+
+/// Helper: build a default ChatRequest for incremental streaming tests.
+fn make_incremental_request(messages: &[Message]) -> quecto::domain::provider::ChatRequest<'_> {
+    quecto::domain::provider::ChatRequest {
+        messages,
+        tools: &[],
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1024,
+        temperature: 0.7,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+    }
+}
+
+/// Helper: run chat_stream_incremental and collect all events.
+fn collect_stream_events(
+    provider: &Arc<dyn LlmProvider>,
+    messages: &[Message],
+) -> Vec<quecto::domain::provider::StreamEvent> {
+    use quecto::domain::provider::StreamEvent;
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let req = make_incremental_request(messages);
+    rt.block_on(async {
+        let mut rx = provider.chat_stream_incremental(req).await;
+        let mut events = Vec::new();
+        while let Some(ev) = rx.recv().await {
+            let done = matches!(ev, StreamEvent::Done(_) | StreamEvent::Error(_));
+            events.push(ev);
+            if done {
+                break;
+            }
+        }
+        events
+    })
+}
+
+// --- Single-event parse scenarios (unit-like, no HTTP) ---
+
+#[given(expr = "an Anthropic SSE chunk with a text_delta event containing {string}")]
+fn given_sse_text_delta(world: &mut QuectoWorld, text: String) {
+    world
+        .env_overrides
+        .insert("_sse181_type".into(), "text_delta".into());
+    world.env_overrides.insert("_sse181_text".into(), text);
+}
+
+#[given(expr = "an Anthropic SSE chunk with a thinking_delta event containing {string}")]
+fn given_sse_thinking_delta(world: &mut QuectoWorld, text: String) {
+    world
+        .env_overrides
+        .insert("_sse181_type".into(), "thinking_delta".into());
+    world.env_overrides.insert("_sse181_text".into(), text);
+}
+
+#[given(
+    expr = "an Anthropic SSE chunk with a content_block_start for tool {string} with id {string}"
+)]
+fn given_sse_tool_block_start(world: &mut QuectoWorld, name: String, id: String) {
+    world
+        .env_overrides
+        .insert("_sse181_type".into(), "tool_block_start".into());
+    world.env_overrides.insert("_sse181_tool_name".into(), name);
+    world.env_overrides.insert("_sse181_tool_id".into(), id);
+}
+
+#[given(expr = "an Anthropic SSE chunk with an input_json_delta containing {string}")]
+fn given_sse_input_json_delta(world: &mut QuectoWorld, partial: String) {
+    world
+        .env_overrides
+        .insert("_sse181_type".into(), "input_json_delta".into());
+    world
+        .env_overrides
+        .insert("_sse181_partial".into(), partial);
+}
+
+#[given(
+    expr = "an Anthropic SSE chunk with a content_block_stop for tool {string} id {string} and accumulated input {string}"
+)]
+fn given_sse_tool_block_stop(world: &mut QuectoWorld, name: String, id: String, input: String) {
+    world
+        .env_overrides
+        .insert("_sse181_type".into(), "tool_block_stop".into());
+    world.env_overrides.insert("_sse181_tool_name".into(), name);
+    world.env_overrides.insert("_sse181_tool_id".into(), id);
+    world
+        .env_overrides
+        .insert("_sse181_tool_input".into(), input);
+}
+
+#[when("I parse the SSE chunk as a stream event")]
+fn when_parse_sse_chunk_as_stream_event(world: &mut QuectoWorld) {
+    use quecto::infrastructure::providers::anthropic::AnthropicProvider;
+
+    let ev_type = world
+        .env_overrides
+        .get("_sse181_type")
+        .cloned()
+        .unwrap_or_default();
+
+    // Build a minimal SSE string that parse_sse_events_public can handle,
+    // then take the first meaningful event.
+    let sse = match ev_type.as_str() {
+        "text_delta" => {
+            let text = world
+                .env_overrides
+                .get("_sse181_text")
+                .cloned()
+                .unwrap_or_default();
+            format!(
+                "event: content_block_delta\ndata: {{\"delta\":{{\"type\":\"text_delta\",\"text\":\"{}\"}}}}\n\nevent: message_stop\ndata: {{}}\n\n",
+                text
+            )
+        }
+        "thinking_delta" => {
+            let text = world
+                .env_overrides
+                .get("_sse181_text")
+                .cloned()
+                .unwrap_or_default();
+            format!(
+                "event: content_block_delta\ndata: {{\"delta\":{{\"type\":\"thinking_delta\",\"thinking\":\"{}\"}}}}\n\nevent: message_stop\ndata: {{}}\n\n",
+                text
+            )
+        }
+        "tool_block_start" => {
+            let name = world
+                .env_overrides
+                .get("_sse181_tool_name")
+                .cloned()
+                .unwrap_or_default();
+            let id = world
+                .env_overrides
+                .get("_sse181_tool_id")
+                .cloned()
+                .unwrap_or_default();
+            format!(
+                "event: content_block_start\ndata: {{\"content_block\":{{\"type\":\"tool_use\",\"id\":\"{}\",\"name\":\"{}\"}}}}\n\nevent: message_stop\ndata: {{}}\n\n",
+                id, name
+            )
+        }
+        "input_json_delta" => {
+            let partial = world
+                .env_overrides
+                .get("_sse181_partial")
+                .cloned()
+                .unwrap_or_default();
+            // Escape for JSON string embedding
+            let escaped = partial.replace('\\', "\\\\").replace('"', "\\\"");
+            format!(
+                "event: content_block_delta\ndata: {{\"delta\":{{\"type\":\"input_json_delta\",\"partial_json\":\"{}\"}}}}\n\nevent: message_stop\ndata: {{}}\n\n",
+                escaped
+            )
+        }
+        "tool_block_stop" => {
+            let name = world
+                .env_overrides
+                .get("_sse181_tool_name")
+                .cloned()
+                .unwrap_or_default();
+            let id = world
+                .env_overrides
+                .get("_sse181_tool_id")
+                .cloned()
+                .unwrap_or_default();
+            let input = world
+                .env_overrides
+                .get("_sse181_tool_input")
+                .cloned()
+                .unwrap_or_default();
+            // Simulate start + delta + stop
+            let escaped_input = input.replace('\\', "\\\\").replace('"', "\\\"");
+            format!(
+                "event: content_block_start\ndata: {{\"content_block\":{{\"type\":\"tool_use\",\"id\":\"{}\",\"name\":\"{}\"}}}}\n\nevent: content_block_delta\ndata: {{\"delta\":{{\"type\":\"input_json_delta\",\"partial_json\":\"{}\"}}}}\n\nevent: content_block_stop\ndata: {{}}\n\nevent: message_stop\ndata: {{}}\n\n",
+                id, name, escaped_input
+            )
+        }
+        _ => String::new(),
+    };
+
+    let events = AnthropicProvider::parse_sse_events_public(&sse);
+    world.stream_events = events;
+}
+
+#[then(expr = "the stream event should be a TextDelta with text {string}")]
+fn then_stream_event_text_delta(world: &mut QuectoWorld, expected: String) {
+    use quecto::domain::provider::StreamEvent;
+    let found = world
+        .stream_events
+        .iter()
+        .any(|ev| matches!(ev, StreamEvent::TextDelta(t) if t == &expected));
+    assert!(
+        found,
+        "expected TextDelta({:?}), got: {:?}",
+        expected, world.stream_events
+    );
+}
+
+#[then(expr = "the stream event should be a ThinkingDelta with text {string}")]
+fn then_stream_event_thinking_delta(world: &mut QuectoWorld, expected: String) {
+    use quecto::domain::provider::StreamEvent;
+    let found = world
+        .stream_events
+        .iter()
+        .any(|ev| matches!(ev, StreamEvent::ThinkingDelta(t) if t == &expected));
+    assert!(
+        found,
+        "expected ThinkingDelta({:?}), got: {:?}",
+        expected, world.stream_events
+    );
+}
+
+#[then(expr = "the stream event should be a ToolCallStart with id {string} and name {string}")]
+fn then_stream_event_tool_call_start(world: &mut QuectoWorld, id: String, name: String) {
+    use quecto::domain::provider::StreamEvent;
+    let found = world.stream_events.iter().any(
+        |ev| matches!(ev, StreamEvent::ToolCallStart { id: i, name: n } if i == &id && n == &name),
+    );
+    assert!(
+        found,
+        "expected ToolCallStart(id={:?}, name={:?}), got: {:?}",
+        id, name, world.stream_events
+    );
+}
+
+#[then(expr = "the stream event should be a ToolCallDelta with partial {string}")]
+fn then_stream_event_tool_call_delta(world: &mut QuectoWorld, expected: String) {
+    use quecto::domain::provider::StreamEvent;
+    let found = world
+        .stream_events
+        .iter()
+        .any(|ev| matches!(ev, StreamEvent::ToolCallDelta(p) if p == &expected));
+    assert!(
+        found,
+        "expected ToolCallDelta({:?}), got: {:?}",
+        expected, world.stream_events
+    );
+}
+
+#[then(
+    expr = "the stream event should be a ToolCallEnd with id {string} name {string} and arguments {string}"
+)]
+fn then_stream_event_tool_call_end(
+    world: &mut QuectoWorld,
+    id: String,
+    name: String,
+    arguments: String,
+) {
+    use quecto::domain::provider::StreamEvent;
+    let found = world.stream_events.iter().any(|ev| {
+        matches!(ev, StreamEvent::ToolCallEnd { id: i, name: n, arguments: a } if i == &id && n == &name && a == &arguments)
+    });
+    assert!(
+        found,
+        "expected ToolCallEnd(id={:?}, name={:?}, args={:?}), got: {:?}",
+        id, name, arguments, world.stream_events
+    );
+}
+
+// --- HTTP-based incremental streaming scenarios ---
+
+#[given(expr = "an Anthropic mock server that streams text {string} in {int} chunks")]
+fn given_anthropic_mock_text_chunks(world: &mut QuectoWorld, text: String, chunks: u32) {
+    // Split text into N equal(-ish) chunks
+    let chars: Vec<char> = text.chars().collect();
+    let len = chars.len();
+    let mut sse = String::new();
+    for i in 0..chunks {
+        let start = (len * i as usize) / chunks as usize;
+        let end = (len * (i as usize + 1)) / chunks as usize;
+        let chunk_text: String = chars[start..end].iter().collect();
+        // Escape for JSON
+        let escaped = chunk_text.replace('\\', "\\\\").replace('"', "\\\"");
+        sse.push_str(&format!(
+            "event: content_block_delta\ndata: {{\"delta\":{{\"type\":\"text_delta\",\"text\":\"{}\"}}}}\n\n",
+            escaped
+        ));
+    }
+    sse.push_str("event: message_delta\ndata: {\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":10}}\n\n");
+    sse.push_str("event: message_stop\ndata: {}\n\n");
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (uri, _server) = rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/v1/messages"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_string(sse)
+                    .insert_header("content-type", "text/event-stream"),
+            )
+            .mount(&server)
+            .await;
+        let uri = server.uri();
+        (uri, server)
+    });
+    world.provider = Some(Arc::new(
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::new(
+            "sk-ant-test".to_string(),
+            Some(uri.clone()),
+        ),
+    ));
+    world._wiremock_server_uri = Some(uri);
+    world.env_overrides.insert("_expected_text".into(), text);
+    std::mem::forget(_server);
+    std::mem::forget(rt);
+}
+
+#[given(
+    expr = "an Anthropic mock server that streams a tool call for {string} with arguments {string}"
+)]
+fn given_anthropic_mock_tool_call_stream(world: &mut QuectoWorld, tool: String, args: String) {
+    let escaped_args = args.replace('\\', "\\\\").replace('"', "\\\"");
+    let sse = format!(
+        "event: content_block_start\ndata: {{\"content_block\":{{\"type\":\"tool_use\",\"id\":\"toolu_001\",\"name\":\"{}\"}}}}\n\n\
+         event: content_block_delta\ndata: {{\"delta\":{{\"type\":\"input_json_delta\",\"partial_json\":\"{}\"}}}}\n\n\
+         event: content_block_stop\ndata: {{}}\n\n\
+         event: message_delta\ndata: {{\"delta\":{{\"stop_reason\":\"tool_use\"}},\"usage\":{{\"output_tokens\":15}}}}\n\n\
+         event: message_stop\ndata: {{}}\n\n",
+        tool, escaped_args
+    );
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (uri, _server) = rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/v1/messages"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_string(sse)
+                    .insert_header("content-type", "text/event-stream"),
+            )
+            .mount(&server)
+            .await;
+        let uri = server.uri();
+        (uri, server)
+    });
+    world.provider = Some(Arc::new(
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::new(
+            "sk-ant-test".to_string(),
+            Some(uri.clone()),
+        ),
+    ));
+    world._wiremock_server_uri = Some(uri);
+    world.env_overrides.insert("_expected_tool".into(), tool);
+    world.env_overrides.insert("_expected_args".into(), args);
+    std::mem::forget(_server);
+    std::mem::forget(rt);
+}
+
+#[given("an Anthropic mock server that sends SSE lines split across byte chunks")]
+fn given_anthropic_mock_chunked_bytes(world: &mut QuectoWorld) {
+    // The full SSE would be split but since we're using wiremock which sends the body at once,
+    // we test that parse_sse_events_public handles line-by-line parsing correctly
+    // by using a string with the correct SSE format.
+    let sse = "event: content_block_delta\ndata: {\"delta\":{\"type\":\"text_delta\",\"text\":\"Split\"}}\n\nevent: content_block_delta\ndata: {\"delta\":{\"type\":\"text_delta\",\"text\":\" text\"}}\n\nevent: message_stop\ndata: {}\n\n".to_string();
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (uri, _server) = rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/v1/messages"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_string(sse)
+                    .insert_header("content-type", "text/event-stream"),
+            )
+            .mount(&server)
+            .await;
+        let uri = server.uri();
+        (uri, server)
+    });
+    world.provider = Some(Arc::new(
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::new(
+            "sk-ant-test".to_string(),
+            Some(uri.clone()),
+        ),
+    ));
+    world._wiremock_server_uri = Some(uri);
+    world
+        .env_overrides
+        .insert("_expected_text".into(), "Split text".into());
+    std::mem::forget(_server);
+    std::mem::forget(rt);
+}
+
+#[given("an Anthropic mock server that returns an HTTP 500 error")]
+fn given_anthropic_mock_500(world: &mut QuectoWorld) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (uri, _server) = rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/v1/messages"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(500).set_body_string("Internal Server Error"),
+            )
+            .mount(&server)
+            .await;
+        let uri = server.uri();
+        (uri, server)
+    });
+    world.provider = Some(Arc::new(
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::new(
+            "sk-ant-test".to_string(),
+            Some(uri.clone()),
+        ),
+    ));
+    world._wiremock_server_uri = Some(uri);
+    std::mem::forget(_server);
+    std::mem::forget(rt);
+}
+
+#[given("an Anthropic mock server that streams a complete response with text and tool call")]
+fn given_anthropic_mock_text_and_tool(world: &mut QuectoWorld) {
+    let sse = "event: content_block_delta\ndata: {\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n\
+               event: content_block_start\ndata: {\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_abc\",\"name\":\"bash\"}}\n\n\
+               event: content_block_delta\ndata: {\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\\\"command\\\\\":\\\\\"ls\\\\\"}\"}}\n\n\
+               event: content_block_stop\ndata: {}\n\n\
+               event: message_delta\ndata: {\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":20}}\n\n\
+               event: message_stop\ndata: {}\n\n".to_string();
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (uri, _server) = rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/v1/messages"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_string(sse)
+                    .insert_header("content-type", "text/event-stream"),
+            )
+            .mount(&server)
+            .await;
+        let uri = server.uri();
+        (uri, server)
+    });
+    world.provider = Some(Arc::new(
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::new(
+            "sk-ant-test".to_string(),
+            Some(uri.clone()),
+        ),
+    ));
+    world._wiremock_server_uri = Some(uri);
+    std::mem::forget(_server);
+    std::mem::forget(rt);
+}
+
+#[when("I send an incremental streaming chat request")]
+fn when_send_incremental_streaming(world: &mut QuectoWorld) {
+    use quecto::domain::provider::StreamEvent;
+    let provider = world.provider.as_ref().expect("provider not set").clone();
+    let messages = vec![Message::user("Hi")];
+    let events = collect_stream_events(&provider, &messages);
+    world.stream_had_parse_error = events.iter().any(|e| matches!(e, StreamEvent::Error(_)));
+    world.stream_events = events;
+}
+
+#[when("I send both a streaming and an incremental streaming chat request")]
+fn when_send_both_streaming_and_incremental(world: &mut QuectoWorld) {
+    use quecto::domain::provider::StreamEvent;
+    let provider = world.provider.as_ref().expect("provider not set").clone();
+    let messages = vec![Message::user("Hi")];
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let req = make_incremental_request(&messages);
+    let stream_result = rt.block_on(provider.chat_stream(req));
+
+    // Also collect incremental events — provider is cloned above, use the clone
+    let events = collect_stream_events(&provider, &messages);
+
+    // Extract LlmResponse from Done event
+    let incremental_response = events.into_iter().find_map(|ev| {
+        if let StreamEvent::Done(resp) = ev {
+            Some(resp)
+        } else {
+            None
+        }
+    });
+
+    // Store both for comparison
+    if let Ok(resp) = stream_result {
+        world.streaming_response = Some(resp);
+    }
+    if let Some(resp) = incremental_response {
+        world.env_overrides.insert(
+            "_incremental_content".into(),
+            resp.content.unwrap_or_default(),
+        );
+        world.env_overrides.insert(
+            "_incremental_tool_count".into(),
+            resp.tool_calls.len().to_string(),
+        );
+        world.env_overrides.insert(
+            "_incremental_first_tool".into(),
+            resp.tool_calls
+                .first()
+                .map(|t| t.name.clone())
+                .unwrap_or_default(),
+        );
+    }
+}
+
+#[then(expr = "I should receive TextDelta events totalling {string}")]
+fn then_text_delta_total(world: &mut QuectoWorld, expected: String) {
+    use quecto::domain::provider::StreamEvent;
+    let collected: String = world
+        .stream_events
+        .iter()
+        .filter_map(|ev| {
+            if let StreamEvent::TextDelta(t) = ev {
+                Some(t.as_str())
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(
+        collected, expected,
+        "expected combined TextDelta text {:?}, got {:?}",
+        expected, collected
+    );
+}
+
+#[then(expr = "the final event should be Done with content {string}")]
+fn then_final_event_done_with_content(world: &mut QuectoWorld, expected: String) {
+    use quecto::domain::provider::StreamEvent;
+    let last = world.stream_events.last().expect("no events");
+    match last {
+        StreamEvent::Done(resp) => {
+            let content = resp.content.as_deref().unwrap_or("");
+            assert_eq!(
+                content, expected,
+                "expected Done content {:?}, got {:?}",
+                expected, content
+            );
+        }
+        other => panic!("expected Done event, got: {:?}", other),
+    }
+}
+
+#[then(expr = "the final event should be Done with a tool call for {string}")]
+fn then_final_event_done_with_tool(world: &mut QuectoWorld, tool: String) {
+    use quecto::domain::provider::StreamEvent;
+    let last = world.stream_events.last().expect("no events");
+    match last {
+        StreamEvent::Done(resp) => {
+            let found = resp.tool_calls.iter().any(|tc| tc.name == tool);
+            assert!(
+                found,
+                "expected Done to contain tool call for {:?}, got: {:?}",
+                tool, resp.tool_calls
+            );
+        }
+        other => panic!("expected Done event, got: {:?}", other),
+    }
+}
+
+#[then(expr = "I should receive a ToolCallStart event for tool {string}")]
+fn then_received_tool_call_start(world: &mut QuectoWorld, tool: String) {
+    use quecto::domain::provider::StreamEvent;
+    let found = world
+        .stream_events
+        .iter()
+        .any(|ev| matches!(ev, StreamEvent::ToolCallStart { name, .. } if name == &tool));
+    assert!(
+        found,
+        "expected ToolCallStart for {:?}, got: {:?}",
+        tool, world.stream_events
+    );
+}
+
+#[then("I should receive ToolCallDelta events")]
+fn then_received_tool_call_delta(world: &mut QuectoWorld) {
+    use quecto::domain::provider::StreamEvent;
+    let found = world
+        .stream_events
+        .iter()
+        .any(|ev| matches!(ev, StreamEvent::ToolCallDelta(_)));
+    assert!(
+        found,
+        "expected at least one ToolCallDelta, got: {:?}",
+        world.stream_events
+    );
+}
+
+#[then(expr = "I should receive a ToolCallEnd event for tool {string} with arguments {string}")]
+fn then_received_tool_call_end(world: &mut QuectoWorld, tool: String, args: String) {
+    use quecto::domain::provider::StreamEvent;
+    let found = world.stream_events.iter().any(|ev| {
+        matches!(ev, StreamEvent::ToolCallEnd { name, arguments, .. } if name == &tool && arguments == &args)
+    });
+    assert!(
+        found,
+        "expected ToolCallEnd for {:?} with args {:?}, got: {:?}",
+        tool, args, world.stream_events
+    );
+}
+
+#[then("I should receive an Error stream event")]
+fn then_received_error_event(world: &mut QuectoWorld) {
+    use quecto::domain::provider::StreamEvent;
+    let found = world
+        .stream_events
+        .iter()
+        .any(|ev| matches!(ev, StreamEvent::Error(_)));
+    assert!(
+        found,
+        "expected Error event, got: {:?}",
+        world.stream_events
+    );
+}
+
+#[then("I should receive TextDelta events totalling the expected text")]
+fn then_text_delta_total_expected(world: &mut QuectoWorld) {
+    use quecto::domain::provider::StreamEvent;
+    let expected = world
+        .env_overrides
+        .get("_expected_text")
+        .cloned()
+        .unwrap_or_default();
+    let collected: String = world
+        .stream_events
+        .iter()
+        .filter_map(|ev| {
+            if let StreamEvent::TextDelta(t) = ev {
+                Some(t.as_str())
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(
+        collected, expected,
+        "expected combined TextDelta text {:?}, got {:?}",
+        expected, collected
+    );
+}
+
+#[then("no parse errors should occur")]
+fn then_no_parse_errors(world: &mut QuectoWorld) {
+    assert!(
+        !world.stream_had_parse_error,
+        "unexpected parse error in stream events"
+    );
+}
+
+#[then("both responses should have identical content and tool calls")]
+fn then_responses_identical(world: &mut QuectoWorld) {
+    let streaming = world
+        .streaming_response
+        .as_ref()
+        .expect("no streaming response");
+    let inc_content = world
+        .env_overrides
+        .get("_incremental_content")
+        .cloned()
+        .unwrap_or_default();
+    let inc_tool_count: usize = world
+        .env_overrides
+        .get("_incremental_tool_count")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let inc_first_tool = world
+        .env_overrides
+        .get("_incremental_first_tool")
+        .cloned()
+        .unwrap_or_default();
+
+    let stream_content = streaming.content.as_deref().unwrap_or("");
+    assert_eq!(
+        stream_content, inc_content,
+        "content mismatch: streaming={:?} incremental={:?}",
+        stream_content, inc_content
+    );
+    assert_eq!(
+        streaming.tool_calls.len(),
+        inc_tool_count,
+        "tool call count mismatch"
+    );
+    if !streaming.tool_calls.is_empty() {
+        assert_eq!(
+            streaming.tool_calls[0].name, inc_first_tool,
+            "first tool name mismatch"
+        );
+    }
+}
