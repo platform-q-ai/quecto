@@ -2434,11 +2434,11 @@ fn then_synthetic_tool_result_injected(world: &mut QuectoWorld, expected_id: Str
             .as_array()
             .map(|blocks| {
                 blocks.iter().any(|b| {
+                    // Synthetic results: is_error=true + content="No result provided"
                     b["type"] == "tool_result"
                         && b["tool_use_id"].as_str() == Some(expected_id.as_str())
-                        && b.get("_synthetic")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false)
+                        && b["is_error"].as_bool().unwrap_or(false)
+                        && b["content"].as_str() == Some("No result provided")
                 })
             })
             .unwrap_or(false)
@@ -2485,11 +2485,11 @@ fn then_no_synthetic_tool_result(world: &mut QuectoWorld, id: String) {
             .as_array()
             .map(|blocks| {
                 blocks.iter().any(|b| {
+                    // A synthetic result has is_error=true + content="No result provided"
                     b["type"] == "tool_result"
                         && b["tool_use_id"].as_str() == Some(id.as_str())
-                        && b.get("_synthetic")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false)
+                        && b["is_error"].as_bool().unwrap_or(false)
+                        && b["content"].as_str() == Some("No result provided")
                 })
             })
             .unwrap_or(false)

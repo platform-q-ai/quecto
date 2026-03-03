@@ -60,6 +60,10 @@ fn skip_if_false(v: &bool) -> bool {
     !v
 }
 
+/// Serialise `StopReason` to a stable canonical string for persistence.
+///
+/// Uses the same strings that `StopReason::from_anthropic` accepts so that
+/// round-trips are lossless regardless of which provider produced the value.
 fn stop_reason_to_str(sr: &StopReason) -> String {
     match sr {
         StopReason::EndTurn => "end_turn".into(),

@@ -171,14 +171,25 @@ impl AnthropicProvider {
     /// Pre-process messages for the Anthropic API (#184 normalization pipeline):
     ///
     /// 1. Normalize tool call IDs (strip invalid chars, truncate to 64).
-    /// 2. Filter out assistant messages whose `stop_reason` is `Error`
-    ///    (incomplete turns that should not be replayed).
+    /// 2. Filter out assistant messages whose `stop_reason` is `Error` **and**
+    ///    the tool-result messages that reference those dropped tool calls —
+    ///    preventing the inverse-orphan problem (tool_result with no tool_use).
     ///
     /// Returns a new `Vec<Message>` with IDs normalised consistently across
     /// both the `tool_use` blocks (assistant) and `tool_result` blocks (tool).
     fn normalize_messages(messages: &[Message]) -> Vec<Message> {
         use crate::domain::message::StopReason;
-        use std::collections::HashMap;
+        use std::collections::{HashMap, HashSet};
+
+        // Collect IDs from assistant messages that will be dropped so we can
+        // also drop their orphaned tool_result counterparts.
+        let dropped_tool_ids: HashSet<String> = messages
+            .iter()
+            .filter(|m| {
+                m.role == Role::Assistant && matches!(m.stop_reason, Some(StopReason::Error))
+            })
+            .flat_map(|m| m.tool_calls.iter().map(|tc| tc.id.clone()))
+            .collect();
 
         // Build a map from original tool call ID → normalised ID.
         let id_map: HashMap<String, String> = messages
@@ -190,8 +201,19 @@ impl AnthropicProvider {
         messages
             .iter()
             .filter(|m| {
-                // Drop assistant messages that ended with an error stop reason.
-                !(m.role == Role::Assistant && matches!(m.stop_reason, Some(StopReason::Error)))
+                // Drop errored assistant messages.
+                if m.role == Role::Assistant && matches!(m.stop_reason, Some(StopReason::Error)) {
+                    return false;
+                }
+                // Drop tool results whose tool call was dropped above.
+                if m.role == Role::Tool {
+                    if let Some(id) = &m.tool_call_id {
+                        if dropped_tool_ids.contains(id) {
+                            return false;
+                        }
+                    }
+                }
+                true
             })
             .map(|m| {
                 let mut out = m.clone();
@@ -238,13 +260,14 @@ impl AnthropicProvider {
     }
 
     /// Build a synthetic `tool_result` block for an orphaned tool call.
+    ///
+    /// Only standard Anthropic API fields are included — no non-standard markers.
     fn synthetic_tool_result(tool_use_id: String) -> serde_json::Value {
         serde_json::json!({
             "type": "tool_result",
             "tool_use_id": tool_use_id,
             "content": "No result provided",
             "is_error": true,
-            "_synthetic": true,
         })
     }
 
@@ -268,13 +291,20 @@ impl AnthropicProvider {
             return;
         }
 
-        // Append into the last user message if it already has tool_result blocks;
-        // otherwise push a new user message.
+        // Append into the last user message only if it already contains
+        // tool_result blocks (not a plain text user message — mixing them
+        // would produce an invalid payload).
         if let Some(last) = api_messages.last_mut() {
             if last["role"] == "user" {
-                if let Some(arr) = last["content"].as_array_mut() {
-                    arr.append(&mut synthetic_blocks);
-                    return;
+                let has_tool_results = last["content"]
+                    .as_array()
+                    .map(|arr| arr.iter().any(|b| b["type"] == "tool_result"))
+                    .unwrap_or(false);
+                if has_tool_results {
+                    if let Some(arr) = last["content"].as_array_mut() {
+                        arr.append(&mut synthetic_blocks);
+                        return;
+                    }
                 }
             }
         }
