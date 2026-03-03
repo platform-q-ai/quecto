@@ -356,6 +356,7 @@ fn test_run_agent_session_ephemeral_no_save() {
         model_override: None,
         max_iterations: None,
         max_time: None,
+        mode: super::AgentMode::OneShot,
     };
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -388,6 +389,7 @@ fn test_run_agent_session_default_session_key() {
         model_override: None,
         max_iterations: None,
         max_time: None,
+        mode: super::AgentMode::OneShot,
     };
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -412,6 +414,7 @@ fn test_run_agent_session_with_system_prompt_injection() {
         model_override: None,
         max_iterations: None,
         max_time: None,
+        mode: super::AgentMode::OneShot,
     };
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -436,6 +439,7 @@ fn test_run_agent_session_with_deadline() {
         model_override: None,
         max_iterations: None,
         max_time: Some(2),
+        mode: super::AgentMode::OneShot,
     };
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -530,6 +534,7 @@ fn test_run_agent_session_loads_existing_session() {
         model_override: None,
         max_iterations: None,
         max_time: None,
+        mode: super::AgentMode::OneShot,
     };
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -565,6 +570,7 @@ fn test_run_agent_session_loads_existing_with_system_prompt() {
         model_override: None,
         max_iterations: None,
         max_time: None,
+        mode: super::AgentMode::OneShot,
     };
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -599,6 +605,7 @@ fn test_build_agent_from_config_with_workspace_path() {
         model_override: None,
         max_iterations: None,
         max_time: None,
+        mode: super::AgentMode::OneShot,
     };
     let mut stderr = String::new();
     let result = build_agent_from_config(tmp.path(), &flags, &mut stderr);
@@ -621,6 +628,7 @@ fn test_build_agent_from_config_with_max_iterations() {
         model_override: None,
         max_iterations: Some(7),
         max_time: None,
+        mode: super::AgentMode::OneShot,
     };
     let mut stderr = String::new();
     let result = build_agent_from_config(tmp.path(), &flags, &mut stderr);

@@ -19,6 +19,16 @@ use crate::infrastructure::tools::recall::RecallTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use crate::infrastructure::tools::spawn::SpawnTool;
 
+/// Operating mode for the `agent` subcommand.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) enum AgentMode {
+    /// One-shot mode (default): run one prompt then exit.
+    #[default]
+    OneShot,
+    /// RPC mode: read JSON commands from stdin, stream events to stdout.
+    Rpc,
+}
+
 /// Parsed flags for the `agent` subcommand.
 pub(crate) struct AgentFlags {
     /// Session name for persistence. `None` = "default", `Some("-")` = ephemeral.
@@ -33,6 +43,8 @@ pub(crate) struct AgentFlags {
     pub(crate) max_iterations: Option<u32>,
     /// Wall-clock timeout in seconds for the entire agent run.
     pub(crate) max_time: Option<u64>,
+    /// Operating mode (default: one-shot).
+    pub(crate) mode: AgentMode,
 }
 
 /// Bundles the stdout/stderr pair passed through the agent pipeline.
@@ -94,6 +106,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut model_override: Option<String> = None;
     let mut max_iterations: Option<u32> = None;
     let mut max_time: Option<u64> = None;
+    let mut mode = AgentMode::OneShot;
     let mut i = 0;
 
     while i < args.len() {
@@ -138,6 +151,19 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                 max_time = Some(parse_pos_u64(val, "--max-time", stderr)?);
                 i += 2;
             }
+            "--mode" => {
+                let val = next_arg(args, i, "--mode requires a value (e.g. rpc)", stderr)?;
+                mode = match val {
+                    "rpc" => AgentMode::Rpc,
+                    other => {
+                        stderr.push_str(&format!(
+                            "agent: --mode '{other}' is not valid; supported: rpc\n"
+                        ));
+                        return None;
+                    }
+                };
+                i += 2;
+            }
             _ => {
                 i += 1;
             }
@@ -157,6 +183,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         model_override,
         max_iterations,
         max_time,
+        mode,
     })
 }
 
@@ -171,6 +198,12 @@ pub(crate) fn cmd_agent(
         None => return 1,
     };
 
+    // ── RPC mode ──────────────────────────────────────────────────────────────
+    if flags.mode == AgentMode::Rpc {
+        return cmd_agent_rpc(ctx, flags, stderr);
+    }
+
+    // ── One-shot mode (default) ───────────────────────────────────────────────
     if flags.message.is_none() {
         stderr.push_str("agent: -m is required for non-interactive mode\n");
         return 1;
@@ -400,6 +433,54 @@ pub(crate) fn run_with_deadline(
             Ok(result) => DeadlineResult::Completed(result),
             Err(_) => DeadlineResult::TimedOut,
         }
+    })
+}
+
+/// Run the agent in RPC mode.
+///
+/// Validates config/provider, then enters the async JSON-lines loop.
+/// Returns an exit code.
+fn cmd_agent_rpc(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i32 {
+    let base_dir = ctx.base_dir();
+    let agent = match build_agent_from_config(&base_dir, &flags, stderr) {
+        Some(a) => a,
+        None => return 1,
+    };
+
+    let ephemeral = flags.no_session || flags.session_name.as_deref() == Some("-");
+    let session_key = if ephemeral {
+        String::new()
+    } else {
+        let name = flags.session_name.as_deref().unwrap_or("default");
+        crate::domain::session::Session::build_key("cli", name)
+    };
+
+    let model = flags
+        .model_override
+        .clone()
+        .or_else(|| {
+            // Re-read config to get the default model.
+            let config_path = base_dir.join("config.json");
+            let env_overrides: HashMap<String, String> = std::env::vars()
+                .filter(|(k, _)| k.starts_with("QUECTO_"))
+                .collect();
+            crate::infrastructure::config::Config::load_with_env(
+                config_path.to_str().unwrap_or(""),
+                &env_overrides,
+            )
+            .ok()
+            .map(|c| c.agents.defaults.model)
+        })
+        .unwrap_or_else(|| "default".to_string());
+
+    crate::interface::cli::rpc::run_rpc_loop(crate::interface::cli::rpc::RpcLoopArgs {
+        agent,
+        base_dir: &base_dir,
+        session_key,
+        model,
+        ephemeral,
+        stdin_override: None,
+        stdout_override: None,
     })
 }
 

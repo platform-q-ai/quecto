@@ -505,6 +505,7 @@ fn test_build_agent_from_config_no_config_file() {
         model_override: None,
         max_iterations: None,
         max_time: None,
+        mode: super::AgentMode::OneShot,
     };
     let mut stderr = String::new();
     let result = build_agent_from_config(tmp.path(), &flags, &mut stderr);
@@ -524,6 +525,7 @@ fn test_build_agent_from_config_invalid_json() {
         model_override: None,
         max_iterations: None,
         max_time: None,
+        mode: super::AgentMode::OneShot,
     };
     let mut stderr = String::new();
     let result = build_agent_from_config(tmp.path(), &flags, &mut stderr);
@@ -547,6 +549,7 @@ fn test_build_agent_from_config_no_providers() {
         model_override: None,
         max_iterations: None,
         max_time: None,
+        mode: super::AgentMode::OneShot,
     };
     let mut stderr = String::new();
     let result = build_agent_from_config(tmp.path(), &flags, &mut stderr);
@@ -570,6 +573,7 @@ fn test_build_agent_from_config_with_model_override() {
         model_override: Some("gpt-custom".into()),
         max_iterations: Some(5),
         max_time: None,
+        mode: super::AgentMode::OneShot,
     };
     let mut stderr = String::new();
     let result = build_agent_from_config(tmp.path(), &flags, &mut stderr);

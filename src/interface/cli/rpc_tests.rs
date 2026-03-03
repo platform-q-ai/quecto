@@ -1,0 +1,172 @@
+use super::*;
+/// Unit tests for the RPC agent loop.
+///
+/// These tests exercise the RPC session state management, stats computation,
+/// model switching, and event emission — all without real I/O or a real agent.
+// This file is compiled as `mod tests` inside `rpc.rs`, so `super` = `rpc`.
+// `rpc_types` lives as a sibling at `cli::rpc_types`.
+use crate::interface::cli::rpc_types::*;
+
+// ─── RpcSession unit tests ───────────────────────────────────────────────────
+
+#[test]
+fn test_initial_state_not_streaming() {
+    let session = RpcSession::new("gpt-5".to_string(), "cli:test".to_string());
+    assert!(!session.is_streaming());
+}
+
+#[test]
+fn test_set_model_changes_model() {
+    let mut session = RpcSession::new("gpt-5".to_string(), "cli:test".to_string());
+    session.set_model("gpt-5-mini".to_string());
+    assert_eq!(session.model(), "gpt-5-mini");
+}
+
+#[test]
+fn test_session_state_snapshot() {
+    let session = RpcSession::new("gpt-5".to_string(), "cli:my".to_string());
+    let state = session.state_snapshot(4);
+    assert_eq!(state.model, "gpt-5");
+    assert!(!state.is_streaming);
+    assert_eq!(state.session_key, "cli:my");
+    assert_eq!(state.message_count, 4);
+    assert_eq!(state.pending_message_count, 0);
+}
+
+#[test]
+fn test_pending_message_count_after_enqueue() {
+    let mut session = RpcSession::new("m".to_string(), "k".to_string());
+    session.enqueue_pending("first".to_string());
+    session.enqueue_pending("second".to_string());
+    let state = session.state_snapshot(0);
+    assert_eq!(state.pending_message_count, 2);
+}
+
+#[test]
+fn test_drain_pending_messages() {
+    let mut session = RpcSession::new("m".to_string(), "k".to_string());
+    session.enqueue_pending("a".to_string());
+    session.enqueue_pending("b".to_string());
+    let drained = session.drain_pending();
+    assert_eq!(drained, vec!["a".to_string(), "b".to_string()]);
+    assert_eq!(session.state_snapshot(0).pending_message_count, 0);
+}
+
+// ─── compute_session_stats ───────────────────────────────────────────────────
+
+#[test]
+fn test_stats_empty_messages() {
+    use crate::domain::message::Message;
+    let msgs: Vec<Message> = vec![];
+    let stats = compute_session_stats("cli:test", &msgs);
+    assert_eq!(stats.user_messages, 0);
+    assert_eq!(stats.assistant_messages, 0);
+    assert_eq!(stats.tool_calls, 0);
+    assert_eq!(stats.tool_results, 0);
+    assert_eq!(stats.total_messages, 0);
+    assert_eq!(stats.cost, 0.0);
+}
+
+#[test]
+fn test_stats_counts_user_and_assistant() {
+    use crate::domain::message::Message;
+    let msgs = vec![
+        Message::user("hello".to_string()),
+        Message::assistant("hi".to_string(), vec![]),
+        Message::user("bye".to_string()),
+    ];
+    let stats = compute_session_stats("k", &msgs);
+    assert_eq!(stats.user_messages, 2);
+    assert_eq!(stats.assistant_messages, 1);
+    assert_eq!(stats.total_messages, 3);
+}
+
+#[test]
+fn test_stats_counts_tool_calls_and_results() {
+    use crate::domain::message::{Message, ToolCall};
+    let msgs = vec![
+        Message::user("hi".to_string()),
+        Message::assistant(
+            String::new(),
+            vec![
+                ToolCall {
+                    id: "c1".to_string(),
+                    name: "bash".to_string(),
+                    arguments: "{}".to_string(),
+                },
+                ToolCall {
+                    id: "c2".to_string(),
+                    name: "read".to_string(),
+                    arguments: "{}".to_string(),
+                },
+            ],
+        ),
+        Message::tool("c1".to_string(), "out1".to_string()),
+        Message::tool("c2".to_string(), "out2".to_string()),
+    ];
+    let stats = compute_session_stats("k", &msgs);
+    assert_eq!(stats.tool_calls, 2);
+    assert_eq!(stats.tool_results, 2);
+    assert_eq!(stats.total_messages, 4);
+}
+
+#[test]
+fn test_stats_tokens_zeroed_without_usage_on_message() {
+    // Token usage is not stored on Message objects; stats returns zeroed tokens.
+    use crate::domain::message::Message;
+    let msgs = vec![
+        Message::user("hi".to_string()),
+        Message::assistant("reply".to_string(), vec![]),
+    ];
+    let stats = compute_session_stats("k", &msgs);
+    assert_eq!(stats.tokens.input, 0);
+    assert_eq!(stats.tokens.output, 0);
+    assert_eq!(stats.tokens.total, 0);
+    assert_eq!(stats.cost, 0.0);
+}
+
+// ─── parse_rpc_line ──────────────────────────────────────────────────────────
+
+#[test]
+fn test_parse_valid_prompt_line() {
+    let line = r#"{"type":"prompt","message":"hello"}"#;
+    let result = parse_rpc_line(line);
+    assert!(result.is_ok());
+    matches!(result.unwrap(), RpcCommand::Prompt { .. });
+}
+
+#[test]
+fn test_parse_invalid_json_returns_err() {
+    let result = parse_rpc_line("not json{");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_parse_unknown_type_returns_err() {
+    let result = parse_rpc_line(r#"{"type":"unknown"}"#);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_parse_empty_line_returns_err() {
+    let result = parse_rpc_line("");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_parse_abort_command() {
+    let line = r#"{"type":"abort","id":"ab-1"}"#;
+    let cmd = parse_rpc_line(line).unwrap();
+    assert_eq!(cmd.id(), Some("ab-1"));
+    assert_eq!(cmd.type_name(), "abort");
+}
+
+#[test]
+fn test_parse_set_model_command() {
+    let line = r#"{"type":"set_model","model":"gpt-5-mini"}"#;
+    let cmd = parse_rpc_line(line).unwrap();
+    match cmd {
+        RpcCommand::SetModel { model, .. } => assert_eq!(model, "gpt-5-mini"),
+        _ => panic!("expected SetModel"),
+    }
+}
