@@ -166,6 +166,7 @@ fn when_send_through_fallback(world: &mut QuectoWorld) {
         tool_choice: None,
         metadata: None,
         thinking_level: None,
+        cancel_flag: None,
     };
     let result = tokio::runtime::Runtime::new()
         .unwrap()
@@ -192,6 +193,7 @@ fn when_send_second_through_fallback(world: &mut QuectoWorld) {
         tool_choice: None,
         metadata: None,
         thinking_level: None,
+        cancel_flag: None,
     };
     let result = tokio::runtime::Runtime::new()
         .unwrap()
@@ -303,6 +305,7 @@ fn when_send_chat_with_tool(world: &mut QuectoWorld, message: String, tool_name:
         tool_choice: None,
         metadata: None,
         thinking_level: None,
+        cancel_flag: None,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     let result = rt.block_on(provider.chat(req));
@@ -460,6 +463,7 @@ fn when_send_streaming_chat(world: &mut QuectoWorld, message: String) {
         tool_choice: None,
         metadata: None,
         thinking_level: None,
+        cancel_flag: None,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     let result = rt
@@ -576,6 +580,7 @@ fn when_send_chat_with_model(world: &mut QuectoWorld, model: String) {
         tool_choice: None,
         metadata: None,
         thinking_level: None,
+        cancel_flag: None,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     match rt.block_on(fp.chat(req)) {
@@ -734,6 +739,7 @@ fn when_send_anthropic_chat(world: &mut QuectoWorld) {
         tool_choice: None,
         metadata: None,
         thinking_level: None,
+        cancel_flag: None,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     match rt.block_on(provider.chat(req)) {
@@ -843,6 +849,7 @@ fn when_send_anthropic_streaming(world: &mut QuectoWorld) {
         tool_choice: None,
         metadata: None,
         thinking_level: None,
+        cancel_flag: None,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     match rt.block_on(provider.chat_stream(req)) {
@@ -1007,6 +1014,7 @@ fn when_build_anthropic_request_body(world: &mut QuectoWorld) {
         tool_choice: None,
         metadata: None,
         thinking_level: None,
+        cancel_flag: None,
     };
     let (_sys, body) =
         quecto::infrastructure::providers::anthropic::AnthropicProvider::build_request_body_public(
@@ -1183,6 +1191,7 @@ fn when_build_with_tool_choice(world: &mut QuectoWorld) {
         tool_choice,
         metadata: None,
         thinking_level: None,
+        cancel_flag: None,
     };
     let (_sys, body) =
         quecto::infrastructure::providers::anthropic::AnthropicProvider::build_request_body_public(
@@ -1248,6 +1257,7 @@ fn when_build_with_metadata(world: &mut QuectoWorld) {
         tool_choice: None,
         metadata,
         thinking_level: None,
+        cancel_flag: None,
     };
     let (_sys, body) =
         quecto::infrastructure::providers::anthropic::AnthropicProvider::build_request_body_public(
@@ -1351,6 +1361,7 @@ fn when_build_request_body_with_thinking(world: &mut QuectoWorld) {
         tool_choice: None,
         metadata: None,
         thinking_level,
+        cancel_flag: None,
     };
     let (_sys, body) =
         quecto::infrastructure::providers::anthropic::AnthropicProvider::build_request_body_public(
@@ -1595,6 +1606,7 @@ fn make_incremental_request(messages: &[Message]) -> quecto::domain::provider::C
         tool_choice: None,
         metadata: None,
         thinking_level: None,
+        cancel_flag: None,
     }
 }
 
@@ -2677,5 +2689,228 @@ fn then_no_user_messages(world: &mut QuectoWorld) {
         user_count, 0,
         "expected no user messages, found {}: {}",
         user_count, msgs_str
+    );
+}
+
+// ===========================================================================
+// #182: Abort/cancellation support via CancelFlag
+// ===========================================================================
+
+#[given("an Anthropic mock server that returns a successful text response")]
+fn given_anthropic_mock_success_182(world: &mut QuectoWorld) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (uri, _server) = rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let response_body = serde_json::json!({
+            "id": "msg_ok",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Hello"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 5, "output_tokens": 3}
+        });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/v1/messages"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(response_body))
+            .mount(&server)
+            .await;
+        let uri = server.uri();
+        (uri, server)
+    });
+    world.provider = Some(Arc::new(
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::new(
+            "sk-ant-test-key".to_string(),
+            Some(uri.clone()),
+        ),
+    ));
+    world._wiremock_server_uri = Some(uri);
+    std::mem::forget(_server);
+    std::mem::forget(rt);
+}
+
+#[given("a cancel flag that is already set")]
+fn given_cancel_flag_set(world: &mut QuectoWorld) {
+    use std::sync::atomic::Ordering;
+    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    flag.store(true, Ordering::SeqCst);
+    world.cancel_flag = Some(flag);
+}
+
+#[given("a cancel flag that is not set")]
+fn given_cancel_flag_not_set(world: &mut QuectoWorld) {
+    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    world.cancel_flag = Some(flag);
+}
+
+#[when("I send a chat request with the cancel flag")]
+fn when_chat_with_cancel_flag(world: &mut QuectoWorld) {
+    use quecto::domain::provider::ChatRequest;
+    let provider = world.provider.as_ref().expect("no provider").clone();
+    let cancel = world.cancel_flag.clone();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let messages = vec![Message::user("hello")];
+    let result = rt.block_on(async move {
+        let request = ChatRequest {
+            messages: &messages,
+            tools: &[],
+            model: "claude-opus-4-5",
+            max_tokens: 100,
+            temperature: 0.0,
+            session_id: None,
+            tool_choice: None,
+            metadata: None,
+            thinking_level: None,
+            cancel_flag: cancel,
+        };
+        provider.chat(request).await
+    });
+    world.chat_result = Some(result.map_err(|e| e.to_string()));
+}
+
+#[when("I send a streaming chat request with the cancel flag")]
+fn when_streaming_chat_with_cancel_flag(world: &mut QuectoWorld) {
+    use quecto::domain::provider::ChatRequest;
+    let provider = world.provider.as_ref().expect("no provider").clone();
+    let cancel = world.cancel_flag.clone();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let messages = vec![Message::user("hello")];
+    let result = rt.block_on(async move {
+        let request = ChatRequest {
+            messages: &messages,
+            tools: &[],
+            model: "claude-opus-4-5",
+            max_tokens: 100,
+            temperature: 0.0,
+            session_id: None,
+            tool_choice: None,
+            metadata: None,
+            thinking_level: None,
+            cancel_flag: cancel,
+        };
+        provider.chat_stream(request).await
+    });
+    world.chat_stream_result = Some(result.map_err(|e| e.to_string()));
+}
+
+#[when("I send an incremental streaming chat request with the cancel flag")]
+fn when_incremental_chat_with_cancel_flag(world: &mut QuectoWorld) {
+    use quecto::domain::provider::{ChatRequest, StreamEvent};
+    let provider = world.provider.as_ref().expect("no provider").clone();
+    let cancel = world.cancel_flag.clone();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let messages = vec![Message::user("hello")];
+    let events = rt.block_on(async move {
+        let request = ChatRequest {
+            messages: &messages,
+            tools: &[],
+            model: "claude-opus-4-5",
+            max_tokens: 100,
+            temperature: 0.0,
+            session_id: None,
+            tool_choice: None,
+            metadata: None,
+            thinking_level: None,
+            cancel_flag: cancel,
+        };
+        let mut rx = provider.chat_stream_incremental(request).await;
+        let mut collected: Vec<StreamEvent> = Vec::new();
+        while let Some(ev) = rx.recv().await {
+            collected.push(ev);
+        }
+        collected
+    });
+    world.stream_events = events;
+}
+
+#[then("the chat request should return a cancellation error")]
+fn then_chat_returns_cancellation_error(world: &mut QuectoWorld) {
+    let result = world.chat_result.as_ref().expect("no chat result");
+    assert!(
+        result.is_err(),
+        "expected cancellation error, got: {:?}",
+        result
+    );
+    let msg = result.as_ref().unwrap_err();
+    assert!(
+        msg.to_lowercase().contains("cancel") || msg.to_lowercase().contains("abort"),
+        "expected 'cancel' or 'abort' in error message, got: {}",
+        msg
+    );
+}
+
+#[then("the streaming chat request should return a cancellation error")]
+fn then_streaming_returns_cancellation_error(world: &mut QuectoWorld) {
+    let result = world.chat_stream_result.as_ref().expect("no stream result");
+    assert!(
+        result.is_err(),
+        "expected cancellation error, got: {:?}",
+        result
+    );
+    let msg = result.as_ref().unwrap_err();
+    assert!(
+        msg.to_lowercase().contains("cancel") || msg.to_lowercase().contains("abort"),
+        "expected 'cancel' or 'abort' in error, got: {}",
+        msg
+    );
+}
+
+#[then("the chat request should succeed with a response")]
+fn then_chat_succeeds(world: &mut QuectoWorld) {
+    let result = world.chat_result.as_ref().expect("no chat result");
+    assert!(result.is_ok(), "expected success, got error: {:?}", result);
+}
+
+#[then(expr = "I should receive an Error stream event containing {string}")]
+fn then_stream_has_error_containing(world: &mut QuectoWorld, expected: String) {
+    use quecto::domain::provider::StreamEvent;
+    let found = world.stream_events.iter().any(|ev| {
+        if let StreamEvent::Error(msg) = ev {
+            msg.to_lowercase().contains(&expected.to_lowercase())
+        } else {
+            false
+        }
+    });
+    assert!(
+        found,
+        "expected Error event containing '{}', got: {:?}",
+        expected, world.stream_events
+    );
+}
+
+#[given(expr = "a stop reason string {string}")]
+fn given_stop_reason_string(world: &mut QuectoWorld, reason: String) {
+    use quecto::domain::message::StopReason;
+    world.parsed_stop_reason = Some(StopReason::from_anthropic(&reason));
+}
+
+#[when("I parse the stop reason")]
+fn when_parse_stop_reason(world: &mut QuectoWorld) {
+    // Re-assert the parsed stop reason is present (parsing was done in the given step).
+    assert!(
+        world.parsed_stop_reason.is_some(),
+        "stop reason should have been parsed in the given step"
+    );
+}
+
+#[then(expr = "the stop reason should be {word}")]
+fn then_stop_reason_variant(world: &mut QuectoWorld, expected_variant: String) {
+    use quecto::domain::message::StopReason;
+    let sr = world
+        .parsed_stop_reason
+        .as_ref()
+        .expect("no parsed stop reason");
+    let matches = match expected_variant.as_str() {
+        "Aborted" => matches!(sr, StopReason::Aborted),
+        "EndTurn" => matches!(sr, StopReason::EndTurn),
+        "MaxTokens" => matches!(sr, StopReason::MaxTokens),
+        "ToolUse" => matches!(sr, StopReason::ToolUse),
+        "Error" => matches!(sr, StopReason::Error),
+        "Refusal" => matches!(sr, StopReason::Refusal),
+        other => panic!("unknown stop reason variant '{}'", other),
+    };
+    assert!(
+        matches,
+        "expected StopReason::{}, got: {:?}",
+        expected_variant, sr
     );
 }

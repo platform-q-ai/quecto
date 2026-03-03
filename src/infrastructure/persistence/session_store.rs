@@ -71,6 +71,7 @@ fn stop_reason_to_str(sr: &StopReason) -> String {
         StopReason::ToolUse => "tool_use".into(),
         StopReason::Refusal => "refusal".into(),
         StopReason::Error => "error".into(),
+        StopReason::Aborted => "aborted".into(),
         StopReason::Unknown(s) => s.clone(),
     }
 }

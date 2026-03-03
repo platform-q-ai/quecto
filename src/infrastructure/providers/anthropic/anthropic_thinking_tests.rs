@@ -18,6 +18,7 @@ fn test_build_request_body_with_thinking_adds_thinking_param() {
         tool_choice: None,
         metadata: None,
         thinking_level: Some(crate::domain::provider::ThinkingLevel::Medium),
+        cancel_flag: None,
     };
     let (_sys, body) = AnthropicProvider::build_request_body(&req);
     assert_eq!(body["thinking"]["type"], "enabled");
@@ -43,6 +44,7 @@ fn test_build_request_body_without_thinking_includes_temperature() {
         tool_choice: None,
         metadata: None,
         thinking_level: None,
+        cancel_flag: None,
     };
     let (_sys, body) = AnthropicProvider::build_request_body(&req);
     assert!(body.get("thinking").is_none());
@@ -65,6 +67,7 @@ fn test_build_request_body_thinking_bumps_max_tokens() {
         tool_choice: None,
         metadata: None,
         thinking_level: Some(crate::domain::provider::ThinkingLevel::High),
+        cancel_flag: None,
     };
     let (_sys, body) = AnthropicProvider::build_request_body(&req);
     // max_tokens must be at least budget_tokens (16384) when thinking is enabled

@@ -51,6 +51,10 @@ pub struct ChatRequest<'a> {
     /// Optional thinking level for extended thinking support.
     /// When set, the Anthropic provider adds a `thinking` parameter to the request.
     pub thinking_level: Option<ThinkingLevel>,
+    /// Optional cancellation flag. When `Some`, the provider checks this flag
+    /// before and during processing and returns `DomainError::Provider("cancelled")`
+    /// immediately if the flag is set. Set to `true` to cancel an in-flight request.
+    pub cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 /// Effort levels for extended thinking.

@@ -85,8 +85,7 @@ impl AnthropicProvider {
             }]);
         }
 
-        // Apply cache_control to the last user message's content block (#176).
-        Self::apply_cache_control_to_last_user_message(&mut api_messages);
+        Self::apply_cache_control_to_last_user_message(&mut api_messages); // #176
 
         body["messages"] = serde_json::Value::Array(api_messages);
 
@@ -528,8 +527,12 @@ impl LlmProvider for AnthropicProvider {
         let model = request.model.to_string();
         let (_system, body) = Self::build_request_body(&request);
         let url = format!("{}/v1/messages", self.api_base);
+        let cancel = request.cancel_flag.clone();
 
         Box::pin(async move {
+            if anthropic_user_msg::is_cancelled(&cancel) {
+                return Err(DomainError::Provider("request cancelled".into()));
+            }
             let request_builder = self
                 .client
                 .post(&url)
@@ -571,14 +574,16 @@ impl LlmProvider for AnthropicProvider {
         &self,
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
-        // Build the request body synchronously before entering the async block
-        // to avoid cloning messages/tools into the future.
         let model = request.model.to_string();
         let (_system, mut body) = Self::build_request_body(&request);
         body["stream"] = serde_json::Value::Bool(true);
         let url = format!("{}/v1/messages", self.api_base);
+        let cancel = request.cancel_flag.clone();
 
         Box::pin(async move {
+            if anthropic_user_msg::is_cancelled(&cancel) {
+                return Err(DomainError::Provider("request cancelled".into()));
+            }
             let mut resp = self.stream_chat_with_body(body, &url).await?;
             Self::attach_cost(&mut resp, &model);
             Ok(resp)
@@ -593,6 +598,7 @@ impl LlmProvider for AnthropicProvider {
         let (_system, mut body) = Self::build_request_body(&request);
         body["stream"] = serde_json::Value::Bool(true);
         let url = format!("{}/v1/messages", self.api_base);
+        let cancel = request.cancel_flag.clone();
 
         // Clone all fields needed so the background task can be 'static.
         let api_key = self.api_key.clone();
@@ -602,10 +608,13 @@ impl LlmProvider for AnthropicProvider {
 
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
-
-            // Spawn the byte-stream pump as a detached task so the receiver
-            // is returned immediately — callers get events as they arrive
-            // rather than after the full response has been consumed.
+            if anthropic_user_msg::is_cancelled(&cancel) {
+                let _ = tx
+                    .send(StreamEvent::Error("request cancelled".into()))
+                    .await;
+                return rx;
+            }
+            // Spawn the pump as a detached task so rx is returned immediately.
             tokio::spawn(async move {
                 let provider = AnthropicProvider {
                     api_key,
@@ -616,9 +625,7 @@ impl LlmProvider for AnthropicProvider {
                 provider
                     .stream_chat_incremental_with_body(body, &url, tx)
                     .await;
-                // Cost attachment for Done(LlmResponse) is a future enhancement;
-                // model is kept here to avoid a dead-code warning.
-                drop(model);
+                drop(model); // suppress unused-variable warning; cost attachment is future work.
             });
 
             rx
@@ -629,19 +636,16 @@ impl LlmProvider for AnthropicProvider {
 /// Public test-support methods (BDD steps need access to internal builders).
 #[cfg(any(test, feature = "test-support"))]
 impl AnthropicProvider {
-    /// Public wrapper for `build_request_body` (for BDD tests).
     pub fn build_request_body_public(
         request: &ChatRequest<'_>,
     ) -> (Option<String>, serde_json::Value) {
         Self::build_request_body(request)
     }
 
-    /// Public wrapper for `build_messages` (for BDD tests).
     pub fn build_messages_public(messages: &[Message]) -> (Option<String>, Vec<serde_json::Value>) {
         Self::build_messages(messages, "claude-opus-4-5")
     }
 
-    /// Public wrapper for `build_messages` with explicit model (for BDD tests — #188).
     pub fn build_messages_for_model_public(
         messages: &[Message],
         model: &str,

@@ -151,6 +151,7 @@ impl FallbackProvider {
                 tool_choice: request.tool_choice.clone(),
                 metadata: request.metadata.clone(),
                 thinking_level: request.thinking_level,
+                cancel_flag: request.cancel_flag.clone(),
             };
             match entry.provider.chat(req).await {
                 Ok(response) => {
@@ -246,6 +247,7 @@ impl LlmProvider for FallbackProvider {
                 tool_choice: request.tool_choice.clone(),
                 metadata: request.metadata.clone(),
                 thinking_level: request.thinking_level,
+                cancel_flag: request.cancel_flag.clone(),
             };
             self.try_chat(&req).await
         })
@@ -320,6 +322,7 @@ mod tests {
             tool_choice: None,
             metadata: None,
             thinking_level: None,
+            cancel_flag: None,
         }
     }
 
@@ -556,6 +559,7 @@ mod tests {
             tool_choice: None,
             metadata: None,
             thinking_level: None,
+            cancel_flag: None,
         }
     }
 

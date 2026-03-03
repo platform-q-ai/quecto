@@ -394,6 +394,7 @@ mod tests {
             tool_choice: None,
             metadata: None,
             thinking_level: None,
+            cancel_flag: None,
         };
         let result = provider.chat(req).await;
         assert!(result.is_ok(), "chat should succeed: {:?}", result);
@@ -454,6 +455,7 @@ mod tests {
             tool_choice: None,
             metadata: None,
             thinking_level: None,
+            cancel_flag: None,
         };
         let result = provider.chat(req).await;
         assert!(result.is_ok());
@@ -485,6 +487,7 @@ mod tests {
             tool_choice: None,
             metadata: None,
             thinking_level: None,
+            cancel_flag: None,
         };
         let result = provider.chat(req).await;
         assert!(result.is_err());
@@ -555,6 +558,7 @@ data: [DONE]\n\n";
             tool_choice: None,
             metadata: None,
             thinking_level: None,
+            cancel_flag: None,
         };
         let result = provider.chat_stream(req).await;
         assert!(result.is_ok(), "stream should succeed: {:?}", result);
@@ -597,6 +601,7 @@ data: [DONE]\n\n";
             tool_choice: None,
             metadata: None,
             thinking_level: None,
+            cancel_flag: None,
         };
         let result = provider.chat(req).await;
         assert!(result.is_ok());

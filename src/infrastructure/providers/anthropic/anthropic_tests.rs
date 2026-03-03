@@ -40,6 +40,7 @@ async fn test_chat_text_response() {
         tool_choice: None,
         metadata: None,
         thinking_level: None,
+        cancel_flag: None,
     };
     let result = provider.chat(req).await;
     assert!(result.is_ok(), "chat should succeed: {:?}", result);
@@ -90,6 +91,7 @@ async fn test_chat_with_tool_use() {
         tool_choice: None,
         metadata: None,
         thinking_level: None,
+        cancel_flag: None,
     };
     let result = provider.chat(req).await;
     assert!(result.is_ok());
@@ -121,6 +123,7 @@ async fn test_chat_server_error() {
         tool_choice: None,
         metadata: None,
         thinking_level: None,
+        cancel_flag: None,
     };
     let result = provider.chat(req).await;
     assert!(result.is_err());
@@ -203,6 +206,7 @@ data: {}\n\n";
         tool_choice: None,
         metadata: None,
         thinking_level: None,
+        cancel_flag: None,
     };
     let result = provider.chat_stream(req).await;
     assert!(result.is_ok(), "stream should succeed: {:?}", result);
@@ -240,6 +244,7 @@ async fn test_chat_with_system_prompt() {
         tool_choice: None,
         metadata: None,
         thinking_level: None,
+        cancel_flag: None,
     };
     let result = provider.chat(req).await;
     assert!(result.is_ok());
@@ -404,6 +409,7 @@ fn test_build_request_body_system_prompt_has_cache_control() {
         tool_choice: None,
         metadata: None,
         thinking_level: None,
+        cancel_flag: None,
     };
     let (_sys, body) = AnthropicProvider::build_request_body(&req);
     // System prompt should be an array of content blocks with cache_control
@@ -441,6 +447,7 @@ fn test_build_request_body_last_user_message_has_cache_control() {
         tool_choice: None,
         metadata: None,
         thinking_level: None,
+        cancel_flag: None,
     };
     let (_sys, body) = AnthropicProvider::build_request_body(&req);
     let api_messages = body["messages"].as_array().unwrap();
@@ -553,6 +560,7 @@ fn test_build_request_body_includes_tool_choice_auto() {
         tool_choice: Some(crate::domain::provider::ToolChoice::Auto),
         metadata: None,
         thinking_level: None,
+        cancel_flag: None,
     };
     let (_sys, body) = AnthropicProvider::build_request_body(&req);
     assert_eq!(body["tool_choice"]["type"], "auto");
@@ -576,6 +584,7 @@ fn test_build_request_body_includes_tool_choice_any() {
         tool_choice: Some(crate::domain::provider::ToolChoice::Any),
         metadata: None,
         thinking_level: None,
+        cancel_flag: None,
     };
     let (_sys, body) = AnthropicProvider::build_request_body(&req);
     assert_eq!(body["tool_choice"]["type"], "any");
@@ -599,6 +608,7 @@ fn test_build_request_body_includes_tool_choice_specific() {
         tool_choice: Some(crate::domain::provider::ToolChoice::Specific("bash".into())),
         metadata: None,
         thinking_level: None,
+        cancel_flag: None,
     };
     let (_sys, body) = AnthropicProvider::build_request_body(&req);
     assert_eq!(body["tool_choice"]["type"], "tool");
@@ -622,6 +632,7 @@ fn test_build_request_body_includes_metadata_user_id() {
             user_id: Some("telegram_12345".into()),
         }),
         thinking_level: None,
+        cancel_flag: None,
     };
     let (_sys, body) = AnthropicProvider::build_request_body(&req);
     assert_eq!(body["metadata"]["user_id"], "telegram_12345");
@@ -640,6 +651,7 @@ fn test_build_request_body_omits_metadata_when_none() {
         tool_choice: None,
         metadata: None,
         thinking_level: None,
+        cancel_flag: None,
     };
     let (_sys, body) = AnthropicProvider::build_request_body(&req);
     assert!(body.get("metadata").is_none() || body["metadata"].is_null());
@@ -681,6 +693,7 @@ async fn test_api_key_auth_sends_beta_header() {
         tool_choice: None,
         metadata: None,
         thinking_level: None,
+        cancel_flag: None,
     };
     let result = provider.chat(req).await;
     assert!(
