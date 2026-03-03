@@ -80,7 +80,7 @@ Manual arg parsing (no clap). Entry point: `cli::run(args) -> i32`.
 | Command | Description |
 |---|---|
 | `quecto` | Interactive REPL (`-s` session, `--system` prompt, `--model` override) with live progress spinner |
-| `quecto agent -m <msg>` | Headless one-shot (`-s`, `--no-session`, `--system`, `--model`, `--max-iterations`, `--max-time`) |
+| `quecto agent -m <msg>` | Headless one-shot / automation (`-s`, `--no-session`, `--system`, `--model`, `--max-iterations`, `--max-time`, `--mode rpc`) |
 | `quecto onboard` | Creates workspace + default config |
 | `quecto skills list\|remove\|install` | Skill management |
 | `quecto status` | Config summary, provider availability |
