@@ -4,6 +4,10 @@ A single-binary personal AI assistant that runs on minimal Linux systems. Quecto
 
 Built in Rust. No runtime dependencies. Runs on a VPS, Raspberry Pi, or container.
 
+## Release Notes
+
+Recent updates and PR-level release notes are tracked in [`CHANGELOG.md`](CHANGELOG.md).
+
 ## Quick Start
 
 ```bash
@@ -72,6 +76,7 @@ quecto agent -m "Write a Python script that generates primes"
 | `--model` | No | Override model (default: `gpt-5.2`) |
 | `--max-iterations` | No | Max tool call rounds before stopping |
 | `--max-time` | No | Wall-clock timeout in seconds (exit code 2 on timeout) |
+| `--mode` | No | Operation mode: default one-shot, or `rpc` for JSON-lines automation protocol |
 
 **Sessions** persist conversation history so the agent remembers context across runs:
 
@@ -81,6 +86,30 @@ quecto agent -s myproject -m "Add error handling to what we discussed"
 ```
 
 Use `-s -` or `--no-session` for one-off questions that don't need history.
+
+### `quecto agent --mode rpc` — JSON-lines protocol
+
+For automation and long-lived agent processes, use RPC mode:
+
+```bash
+quecto agent --mode rpc
+```
+
+Send one JSON command per line on `stdin` (and read JSON events from `stdout`).
+
+Basic example:
+
+```text
+{"type":"prompt","id":"msg-1","message":"Summarize the CHANGELOG.md file"}
+{"type":"get_state","id":"state-1"}
+{"type":"abort","id":"msg-cancel-1"}
+{"type":"get_session_stats","id":"stats-1"}
+```
+
+Supported command types include:
+`prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_messages`, `get_session_stats`, and `set_model`.
+
+Refer to `src/interface/cli/rpc_types.rs` for the full protocol schema and optional fields.
 
 ### `quecto gateway` — Run as a Telegram bot
 
