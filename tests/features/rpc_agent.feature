@@ -157,6 +157,18 @@ Feature: RPC mode for headless agent operation
     Then the RPC stdout should contain a response command "set_model" with success true
     And the RPC get_state response model should be "gpt-5-mini"
 
+  @wip
+  Scenario: set_model accepts Pi-compatible provider and modelId fields
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "ok"
+    When I start the RPC agent with no session
+    And I queue RPC set_model provider "openai-codex" modelId "gpt-5.3-codex"
+    And I queue RPC command "get_state" with id "sm-3"
+    And I close RPC stdin
+    Then the RPC stdout should contain a response command "set_model" with success true
+    And the RPC get_state response model should be "openai-codex/gpt-5.3-codex"
+
   # ─── abort command ──────────────────────────────────────────────────────────
 
   @done

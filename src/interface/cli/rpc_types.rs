@@ -52,10 +52,19 @@ pub enum RpcCommand {
         id: Option<String>,
     },
     /// Switch the active model at runtime.
+    ///
+    /// Accepts either:
+    /// - legacy `{ "model": "provider/modelId" }`, or
+    /// - Pi-compatible `{ "provider": "...", "modelId": "..." }`.
     SetModel {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
-        model: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        provider: Option<String>,
+        #[serde(rename = "modelId", skip_serializing_if = "Option::is_none")]
+        model_id: Option<String>,
     },
 }
 
@@ -358,7 +367,35 @@ mod tests {
         let json = r#"{"type":"set_model","model":"gpt-5-mini"}"#;
         let cmd: RpcCommand = serde_json::from_str(json).unwrap();
         match cmd {
-            RpcCommand::SetModel { model, .. } => assert_eq!(model, "gpt-5-mini"),
+            RpcCommand::SetModel {
+                model,
+                provider,
+                model_id,
+                ..
+            } => {
+                assert_eq!(model.as_deref(), Some("gpt-5-mini"));
+                assert!(provider.is_none());
+                assert!(model_id.is_none());
+            }
+            _ => panic!("expected SetModel"),
+        }
+    }
+
+    #[test]
+    fn test_parse_set_model_provider_and_model_id_command() {
+        let json = r#"{"type":"set_model","provider":"openai-codex","modelId":"gpt-5.3-codex"}"#;
+        let cmd: RpcCommand = serde_json::from_str(json).unwrap();
+        match cmd {
+            RpcCommand::SetModel {
+                model,
+                provider,
+                model_id,
+                ..
+            } => {
+                assert!(model.is_none());
+                assert_eq!(provider.as_deref(), Some("openai-codex"));
+                assert_eq!(model_id.as_deref(), Some("gpt-5.3-codex"));
+            }
             _ => panic!("expected SetModel"),
         }
     }
@@ -512,7 +549,9 @@ mod tests {
         assert_eq!(
             RpcCommand::SetModel {
                 id: None,
-                model: "m".into()
+                model: Some("m".into()),
+                provider: None,
+                model_id: None,
             }
             .type_name(),
             "set_model"

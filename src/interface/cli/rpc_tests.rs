@@ -166,7 +166,35 @@ fn test_parse_set_model_command() {
     let line = r#"{"type":"set_model","model":"gpt-5-mini"}"#;
     let cmd = parse_rpc_line(line).unwrap();
     match cmd {
-        RpcCommand::SetModel { model, .. } => assert_eq!(model, "gpt-5-mini"),
+        RpcCommand::SetModel {
+            model,
+            provider,
+            model_id,
+            ..
+        } => {
+            assert_eq!(model.as_deref(), Some("gpt-5-mini"));
+            assert!(provider.is_none());
+            assert!(model_id.is_none());
+        }
+        _ => panic!("expected SetModel"),
+    }
+}
+
+#[test]
+fn test_parse_set_model_provider_and_model_id_command() {
+    let line = r#"{"type":"set_model","provider":"openai-codex","modelId":"gpt-5.3-codex"}"#;
+    let cmd = parse_rpc_line(line).unwrap();
+    match cmd {
+        RpcCommand::SetModel {
+            model,
+            provider,
+            model_id,
+            ..
+        } => {
+            assert!(model.is_none());
+            assert_eq!(provider.as_deref(), Some("openai-codex"));
+            assert_eq!(model_id.as_deref(), Some("gpt-5.3-codex"));
+        }
         _ => panic!("expected SetModel"),
     }
 }
@@ -228,6 +256,23 @@ fn test_enqueue_pending_respects_cap() {
         RpcSession::MAX_PENDING,
         "should cap at MAX_PENDING"
     );
+}
+
+#[test]
+fn test_resolve_set_model_target_from_legacy_model_field() {
+    let model = resolve_set_model_target(Some("gpt-5-mini".into()), None, None).unwrap();
+    assert_eq!(model, "gpt-5-mini");
+}
+
+#[test]
+fn test_resolve_set_model_target_from_provider_and_model_id() {
+    let model = resolve_set_model_target(
+        None,
+        Some("openai-codex".into()),
+        Some("gpt-5.3-codex".into()),
+    )
+    .unwrap();
+    assert_eq!(model, "openai-codex/gpt-5.3-codex");
 }
 
 #[test]

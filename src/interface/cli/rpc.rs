@@ -293,6 +293,27 @@ struct DispatchCtx<'a> {
     session_key: &'a str,
 }
 
+fn resolve_set_model_target(
+    model: Option<String>,
+    provider: Option<String>,
+    model_id: Option<String>,
+) -> Result<String, &'static str> {
+    if let Some(m) = model.filter(|m| !m.trim().is_empty()) {
+        return Ok(m);
+    }
+
+    match (provider, model_id) {
+        (Some(provider), Some(model_id)) => {
+            if provider.trim().is_empty() || model_id.trim().is_empty() {
+                Err("set_model requires non-empty model, or non-empty provider+modelId")
+            } else {
+                Ok(format!("{provider}/{model_id}"))
+            }
+        }
+        _ => Err("set_model requires model, or provider+modelId"),
+    }
+}
+
 /// Dispatch a single RPC command.  Returns `true` if the loop should exit.
 async fn dispatch_command(cmd: RpcCommand, ctx: &mut DispatchCtx<'_>) -> bool {
     let id = cmd.id().map(str::to_owned);
@@ -362,9 +383,23 @@ async fn dispatch_command(cmd: RpcCommand, ctx: &mut DispatchCtx<'_>) -> bool {
             false
         }
 
-        RpcCommand::SetModel { model, .. } => {
-            ctx.agent.set_model(model.clone());
-            ctx.rpc_session.set_model(model.clone());
+        RpcCommand::SetModel {
+            model,
+            provider,
+            model_id,
+            ..
+        } => {
+            let resolved_model = match resolve_set_model_target(model, provider, model_id) {
+                Ok(m) => m,
+                Err(msg) => {
+                    let ev = RpcEvent::err(id.as_deref(), &type_name, msg);
+                    emit_event(ctx.stdout, &ev).await;
+                    return false;
+                }
+            };
+
+            ctx.agent.set_model(resolved_model.clone());
+            ctx.rpc_session.set_model(resolved_model);
             tracing::debug!(new_model = %ctx.rpc_session.model(), "RPC: model switched");
             let ev = RpcEvent::ok(id.as_deref(), &type_name, None);
             emit_event(ctx.stdout, &ev).await;
