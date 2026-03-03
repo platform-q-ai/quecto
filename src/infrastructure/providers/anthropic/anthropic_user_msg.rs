@@ -1,14 +1,3 @@
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
-
-/// Returns `true` if the cancel flag is set (checked with Relaxed ordering).
-pub(super) fn is_cancelled(flag: &Option<Arc<AtomicBool>>) -> bool {
-    flag.as_ref()
-        .map(|f| f.load(Ordering::Relaxed))
-        .unwrap_or(false)
-}
-
 /// User message content block builder for the Anthropic API (#188).
 ///
 /// Handles structured content block arrays for user messages containing inline

@@ -2730,16 +2730,16 @@ fn given_anthropic_mock_success_182(world: &mut QuectoWorld) {
 
 #[given("a cancel flag that is already set")]
 fn given_cancel_flag_set(world: &mut QuectoWorld) {
-    use std::sync::atomic::Ordering;
-    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    flag.store(true, Ordering::SeqCst);
+    use quecto::domain::provider::CancelFlag;
+    let flag = CancelFlag::new();
+    flag.cancel();
     world.cancel_flag = Some(flag);
 }
 
 #[given("a cancel flag that is not set")]
 fn given_cancel_flag_not_set(world: &mut QuectoWorld) {
-    let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    world.cancel_flag = Some(flag);
+    use quecto::domain::provider::CancelFlag;
+    world.cancel_flag = Some(CancelFlag::new());
 }
 
 #[when("I send a chat request with the cancel flag")]
@@ -2912,5 +2912,82 @@ fn then_stop_reason_variant(world: &mut QuectoWorld, expected_variant: String) {
         matches,
         "expected StopReason::{}, got: {:?}",
         expected_variant, sr
+    );
+}
+
+// ===========================================================================
+// #182 extra: Aborted messages are filtered by normalize_messages
+// ===========================================================================
+
+#[given("a message list with an aborted assistant turn followed by a new user message")]
+fn given_aborted_message_list(world: &mut QuectoWorld) {
+    use quecto::domain::message::StopReason;
+    let mut aborted = Message::assistant("partial response", vec![]);
+    aborted.stop_reason = Some(StopReason::Aborted);
+    let follow_up = Message::user("please continue");
+    let msgs = vec![Message::user("hello"), aborted, follow_up];
+    // Normalize and store the resulting API messages for assertion.
+    let (_, api_msgs) =
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::build_messages_public(
+            &msgs,
+        );
+    world.api_messages = api_msgs;
+}
+
+#[when("I normalize the messages")]
+fn when_normalize_messages(world: &mut QuectoWorld) {
+    assert!(
+        !world.api_messages.is_empty(),
+        "normalized message list should not be empty — given step must have populated it"
+    );
+}
+
+#[then("the aborted assistant message should be removed")]
+fn then_aborted_message_removed(world: &mut QuectoWorld) {
+    let has_partial = world.api_messages.iter().any(|m| {
+        m["content"]
+            .as_str()
+            .map(|s| s.contains("partial response"))
+            .unwrap_or(false)
+            || m["content"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter().any(|b| {
+                        b["text"]
+                            .as_str()
+                            .map(|t| t.contains("partial response"))
+                            .unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false)
+    });
+    assert!(
+        !has_partial,
+        "aborted assistant message should have been filtered out"
+    );
+}
+
+#[then("the new user message should remain")]
+fn then_new_user_message_remains(world: &mut QuectoWorld) {
+    let has_followup = world.api_messages.iter().any(|m| {
+        m["content"]
+            .as_str()
+            .map(|s| s.contains("please continue"))
+            .unwrap_or(false)
+            || m["content"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter().any(|b| {
+                        b["text"]
+                            .as_str()
+                            .map(|t| t.contains("please continue"))
+                            .unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false)
+    });
+    assert!(
+        has_followup,
+        "new user message should still be in the normalized list"
     );
 }

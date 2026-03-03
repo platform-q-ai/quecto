@@ -11,6 +11,8 @@ pub enum ErrorClass {
     Client,
     /// Network/connection error
     Network,
+    /// Request was cancelled by the caller
+    Cancelled,
     /// Unknown error
     Unknown,
 }
@@ -43,6 +45,7 @@ impl ErrorClass {
             ErrorClass::Server => "server",
             ErrorClass::Client => "client",
             ErrorClass::Network => "network",
+            ErrorClass::Cancelled => "cancelled",
             ErrorClass::Unknown => "unknown",
         }
     }
@@ -112,6 +115,7 @@ mod tests {
         assert_eq!(format!("{}", ErrorClass::Server), "server");
         assert_eq!(format!("{}", ErrorClass::Client), "client");
         assert_eq!(format!("{}", ErrorClass::Network), "network");
+        assert_eq!(format!("{}", ErrorClass::Cancelled), "cancelled");
         assert_eq!(format!("{}", ErrorClass::Unknown), "unknown");
     }
 
@@ -119,7 +123,13 @@ mod tests {
     fn test_as_str_all_variants() {
         assert_eq!(ErrorClass::Client.as_str(), "client");
         assert_eq!(ErrorClass::Network.as_str(), "network");
+        assert_eq!(ErrorClass::Cancelled.as_str(), "cancelled");
         assert_eq!(ErrorClass::Unknown.as_str(), "unknown");
+    }
+
+    #[test]
+    fn test_cancelled_not_retryable() {
+        assert!(!ErrorClass::Cancelled.is_retryable());
     }
 
     #[test]

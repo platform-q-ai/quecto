@@ -151,11 +151,7 @@ impl AnthropicProvider {
         }
     }
 
-    /// Normalize a single tool call ID for the Anthropic API.
-    ///
-    /// Strips characters outside `[a-zA-Z0-9_-]` (replacing them with `_`)
-    /// and truncates to 64 characters. This prevents API errors from
-    /// Codex-style IDs such as `call_abc|call_abc|0` (450+ chars with `|`).
+    /// Normalize a tool call ID: strip `[^a-zA-Z0-9_-]` → `'_'`, truncate to 64 (#184).
     fn normalize_tool_call_id(id: &str) -> String {
         id.chars()
             .map(|c| {
@@ -169,26 +165,24 @@ impl AnthropicProvider {
             .collect()
     }
 
-    /// Pre-process messages for the Anthropic API (#184 normalization pipeline):
-    ///
-    /// 1. Normalize tool call IDs (strip invalid chars, truncate to 64).
-    /// 2. Filter out assistant messages whose `stop_reason` is `Error` **and**
-    ///    the tool-result messages that reference those dropped tool calls —
-    ///    preventing the inverse-orphan problem (tool_result with no tool_use).
-    ///
-    /// Returns a new `Vec<Message>` with IDs normalised consistently across
-    /// both the `tool_use` blocks (assistant) and `tool_result` blocks (tool).
+    /// Normalize messages: strip invalid tool call IDs, filter error/aborted
+    /// assistant turns and their orphaned tool_result counterparts (#184, #182).
     fn normalize_messages(messages: &[Message]) -> Vec<Message> {
         use crate::domain::message::StopReason;
         use std::collections::{HashMap, HashSet};
 
-        // Collect IDs from assistant messages that will be dropped so we can
+        // Collect IDs from dropped assistant turns (error/aborted) so we can
         // also drop their orphaned tool_result counterparts.
+        let is_incomplete = |m: &&Message| {
+            m.role == Role::Assistant
+                && matches!(
+                    m.stop_reason,
+                    Some(StopReason::Error) | Some(StopReason::Aborted)
+                )
+        };
         let dropped_tool_ids: HashSet<String> = messages
             .iter()
-            .filter(|m| {
-                m.role == Role::Assistant && matches!(m.stop_reason, Some(StopReason::Error))
-            })
+            .filter(is_incomplete)
             .flat_map(|m| m.tool_calls.iter().map(|tc| tc.id.clone()))
             .collect();
 
@@ -202,8 +196,13 @@ impl AnthropicProvider {
         messages
             .iter()
             .filter(|m| {
-                // Drop errored assistant messages.
-                if m.role == Role::Assistant && matches!(m.stop_reason, Some(StopReason::Error)) {
+                // Drop incomplete assistant turns (error or aborted).
+                if m.role == Role::Assistant
+                    && matches!(
+                        m.stop_reason,
+                        Some(StopReason::Error) | Some(StopReason::Aborted)
+                    )
+                {
                     return false;
                 }
                 // Drop tool results whose tool call was dropped above.
@@ -530,7 +529,7 @@ impl LlmProvider for AnthropicProvider {
         let cancel = request.cancel_flag.clone();
 
         Box::pin(async move {
-            if anthropic_user_msg::is_cancelled(&cancel) {
+            if cancel.as_ref().is_some_and(|f| f.is_cancelled()) {
                 return Err(DomainError::Provider("request cancelled".into()));
             }
             let request_builder = self
@@ -581,7 +580,7 @@ impl LlmProvider for AnthropicProvider {
         let cancel = request.cancel_flag.clone();
 
         Box::pin(async move {
-            if anthropic_user_msg::is_cancelled(&cancel) {
+            if cancel.as_ref().is_some_and(|f| f.is_cancelled()) {
                 return Err(DomainError::Provider("request cancelled".into()));
             }
             let mut resp = self.stream_chat_with_body(body, &url).await?;
@@ -608,7 +607,7 @@ impl LlmProvider for AnthropicProvider {
 
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
-            if anthropic_user_msg::is_cancelled(&cancel) {
+            if cancel.as_ref().is_some_and(|f| f.is_cancelled()) {
                 let _ = tx
                     .send(StreamEvent::Error("request cancelled".into()))
                     .await;

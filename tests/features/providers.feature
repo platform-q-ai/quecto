@@ -436,3 +436,9 @@ Feature: LLM Providers
     Given a stop reason string "aborted"
     When I parse the stop reason
     Then the stop reason should be Aborted
+
+  Scenario: Aborted assistant messages are dropped from normalized message list
+    Given a message list with an aborted assistant turn followed by a new user message
+    When I normalize the messages
+    Then the aborted assistant message should be removed
+    And the new user message should remain

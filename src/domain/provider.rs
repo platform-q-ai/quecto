@@ -52,9 +52,36 @@ pub struct ChatRequest<'a> {
     /// When set, the Anthropic provider adds a `thinking` parameter to the request.
     pub thinking_level: Option<ThinkingLevel>,
     /// Optional cancellation flag. When `Some`, the provider checks this flag
-    /// before and during processing and returns `DomainError::Provider("cancelled")`
-    /// immediately if the flag is set. Set to `true` to cancel an in-flight request.
-    pub cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// before processing and returns `DomainError::Provider("request cancelled")`
+    /// immediately if it is set. Set `cancel_flag.cancel()` from any thread to
+    /// cancel an in-flight request.
+    pub cancel_flag: Option<CancelFlag>,
+}
+
+/// A shared cancellation flag that can be checked by providers.
+///
+/// Wraps `Arc<AtomicBool>` as a domain-level concept so that the domain layer
+/// does not expose raw concurrency primitives in its public API.
+#[derive(Debug, Clone, Default)]
+pub struct CancelFlag(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl CancelFlag {
+    /// Create a new, unset cancel flag.
+    pub fn new() -> Self {
+        Self(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+            false,
+        )))
+    }
+
+    /// Signal cancellation. The next provider check will return a cancellation error.
+    pub fn cancel(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Returns `true` if cancellation has been requested.
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Acquire)
+    }
 }
 
 /// Effort levels for extended thinking.

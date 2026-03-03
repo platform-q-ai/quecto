@@ -93,6 +93,10 @@ impl FallbackProvider {
 
         let lowered = msg.to_ascii_lowercase();
 
+        if lowered.contains("request cancelled") || lowered.contains("request canceled") {
+            return ErrorClass::Cancelled;
+        }
+
         if lowered.contains("rate limit") {
             ErrorClass::RateLimit
         } else if lowered.contains("auth")
@@ -432,6 +436,16 @@ mod tests {
 
         let err3 = DomainError::Provider("connect refused".to_string());
         assert_eq!(FallbackProvider::classify_error(&err3), ErrorClass::Network);
+    }
+
+    #[test]
+    fn test_classify_cancelled_error() {
+        let err = DomainError::Provider("request cancelled".to_string());
+        assert_eq!(
+            FallbackProvider::classify_error(&err),
+            ErrorClass::Cancelled
+        );
+        assert!(!ErrorClass::Cancelled.is_retryable());
     }
 
     #[test]
