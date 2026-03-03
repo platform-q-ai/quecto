@@ -150,16 +150,153 @@ impl AnthropicProvider {
         }
     }
 
+    /// Normalize a single tool call ID for the Anthropic API.
+    ///
+    /// Strips characters outside `[a-zA-Z0-9_-]` (replacing them with `_`)
+    /// and truncates to 64 characters. This prevents API errors from
+    /// Codex-style IDs such as `call_abc|call_abc|0` (450+ chars with `|`).
+    fn normalize_tool_call_id(id: &str) -> String {
+        id.chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .take(64)
+            .collect()
+    }
+
+    /// Pre-process messages for the Anthropic API (#184 normalization pipeline):
+    ///
+    /// 1. Normalize tool call IDs (strip invalid chars, truncate to 64).
+    /// 2. Filter out assistant messages whose `stop_reason` is `Error`
+    ///    (incomplete turns that should not be replayed).
+    ///
+    /// Returns a new `Vec<Message>` with IDs normalised consistently across
+    /// both the `tool_use` blocks (assistant) and `tool_result` blocks (tool).
+    fn normalize_messages(messages: &[Message]) -> Vec<Message> {
+        use crate::domain::message::StopReason;
+        use std::collections::HashMap;
+
+        // Build a map from original tool call ID → normalised ID.
+        let id_map: HashMap<String, String> = messages
+            .iter()
+            .flat_map(|m| m.tool_calls.iter())
+            .map(|tc| (tc.id.clone(), Self::normalize_tool_call_id(&tc.id)))
+            .collect();
+
+        messages
+            .iter()
+            .filter(|m| {
+                // Drop assistant messages that ended with an error stop reason.
+                !(m.role == Role::Assistant && matches!(m.stop_reason, Some(StopReason::Error)))
+            })
+            .map(|m| {
+                let mut out = m.clone();
+                // Normalise IDs in tool_use blocks (assistant messages).
+                for tc in &mut out.tool_calls {
+                    if let Some(norm) = id_map.get(&tc.id) {
+                        tc.id = norm.clone();
+                    }
+                }
+                // Normalise IDs in tool_result blocks (tool messages).
+                if m.role == Role::Tool {
+                    if let Some(orig) = &m.tool_call_id {
+                        if let Some(norm) = id_map.get(orig) {
+                            out.tool_call_id = Some(norm.clone());
+                        }
+                    }
+                }
+                out
+            })
+            .collect()
+    }
+
+    /// Collect IDs of all `tool_use` blocks from assistant messages.
+    fn collect_tool_use_ids(api_messages: &[serde_json::Value]) -> Vec<String> {
+        api_messages
+            .iter()
+            .filter(|m| m["role"] == "assistant")
+            .flat_map(|m| m["content"].as_array().into_iter().flatten())
+            .filter(|b| b["type"] == "tool_use")
+            .filter_map(|b| b["id"].as_str().map(str::to_string))
+            .collect()
+    }
+
+    /// Collect IDs of all `tool_result` blocks from user messages.
+    fn collect_tool_result_ids(
+        api_messages: &[serde_json::Value],
+    ) -> std::collections::HashSet<String> {
+        api_messages
+            .iter()
+            .flat_map(|m| m["content"].as_array().into_iter().flatten())
+            .filter(|b| b["type"] == "tool_result")
+            .filter_map(|b| b["tool_use_id"].as_str().map(str::to_string))
+            .collect()
+    }
+
+    /// Build a synthetic `tool_result` block for an orphaned tool call.
+    fn synthetic_tool_result(tool_use_id: String) -> serde_json::Value {
+        serde_json::json!({
+            "type": "tool_result",
+            "tool_use_id": tool_use_id,
+            "content": "No result provided",
+            "is_error": true,
+            "_synthetic": true,
+        })
+    }
+
+    /// Detect orphaned tool calls in `api_messages` (tool_use blocks without a
+    /// matching tool_result) and inject synthetic error results.
+    ///
+    /// A tool call is orphaned when an interrupted session has an assistant
+    /// message with tool_use blocks but no subsequent tool result messages.
+    /// Sending such a payload to Anthropic causes an API error.
+    fn inject_orphaned_tool_results(api_messages: &mut Vec<serde_json::Value>) {
+        let pending = Self::collect_tool_use_ids(api_messages);
+        let satisfied = Self::collect_tool_result_ids(api_messages);
+
+        let mut synthetic_blocks: Vec<serde_json::Value> = pending
+            .into_iter()
+            .filter(|id| !satisfied.contains(id))
+            .map(Self::synthetic_tool_result)
+            .collect();
+
+        if synthetic_blocks.is_empty() {
+            return;
+        }
+
+        // Append into the last user message if it already has tool_result blocks;
+        // otherwise push a new user message.
+        if let Some(last) = api_messages.last_mut() {
+            if last["role"] == "user" {
+                if let Some(arr) = last["content"].as_array_mut() {
+                    arr.append(&mut synthetic_blocks);
+                    return;
+                }
+            }
+        }
+        api_messages.push(serde_json::json!({
+            "role": "user",
+            "content": synthetic_blocks,
+        }));
+    }
+
     /// Convert domain messages to Anthropic API message format.
     ///
-    /// Batches consecutive tool result messages into a single user message (#187).
+    /// Applies the #184 normalization pipeline (ID normalization, orphaned tool
+    /// call injection, errored message filtering) then batches consecutive tool
+    /// result messages into a single user message (#187).
     fn build_messages(messages: &[Message]) -> (Option<String>, Vec<serde_json::Value>) {
+        let normalized = Self::normalize_messages(messages);
         let mut system_prompt: Option<String> = None;
         let mut api_messages: Vec<serde_json::Value> = Vec::new();
         let mut i = 0;
 
-        while i < messages.len() {
-            let m = &messages[i];
+        while i < normalized.len() {
+            let m = &normalized[i];
             match m.role {
                 Role::System => {
                     system_prompt = Some(m.content.clone());
@@ -176,8 +313,8 @@ impl AnthropicProvider {
                 Role::Tool => {
                     // Batch consecutive tool results into a single user message (#187).
                     let mut tool_results: Vec<serde_json::Value> = Vec::new();
-                    while i < messages.len() && messages[i].role == Role::Tool {
-                        tool_results.push(Self::build_tool_result_block(&messages[i]));
+                    while i < normalized.len() && normalized[i].role == Role::Tool {
+                        tool_results.push(Self::build_tool_result_block(&normalized[i]));
                         i += 1;
                     }
                     api_messages.push(serde_json::json!({
@@ -187,6 +324,8 @@ impl AnthropicProvider {
                 }
             }
         }
+
+        Self::inject_orphaned_tool_results(&mut api_messages);
         (system_prompt, api_messages)
     }
 

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
 use crate::domain::error::DomainError;
-use crate::domain::message::{Message, Role, ToolCall};
+use crate::domain::message::{Message, Role, StopReason, ToolCall};
 use crate::domain::session::{Session, SessionStore};
 
 /// File-based session store. Each session is stored as a JSON file
@@ -51,10 +51,24 @@ struct MessageRecord {
     spill_id: Option<String>,
     #[serde(default, skip_serializing_if = "skip_if_false")]
     is_error: bool,
+    /// Stop reason for assistant messages (serialised as raw Anthropic string).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stop_reason: Option<String>,
 }
 
 fn skip_if_false(v: &bool) -> bool {
     !v
+}
+
+fn stop_reason_to_str(sr: &StopReason) -> String {
+    match sr {
+        StopReason::EndTurn => "end_turn".into(),
+        StopReason::MaxTokens => "max_tokens".into(),
+        StopReason::ToolUse => "tool_use".into(),
+        StopReason::Refusal => "refusal".into(),
+        StopReason::Error => "error".into(),
+        StopReason::Unknown(s) => s.clone(),
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -203,6 +217,7 @@ fn message_to_record(msg: &Message) -> MessageRecord {
         input_preview: msg.input_preview.clone(),
         spill_id: msg.spill_id.clone(),
         is_error: msg.is_error,
+        stop_reason: msg.stop_reason.as_ref().map(stop_reason_to_str),
     }
 }
 
@@ -233,6 +248,7 @@ fn record_to_message(rec: MessageRecord) -> Message {
     // `None` = absent (old session file), keep constructor default
     // (true for System, false for others).
     msg.is_error = rec.is_error;
+    msg.stop_reason = rec.stop_reason.as_deref().map(StopReason::from_anthropic);
     if let Some(pinned) = rec.is_pinned {
         msg.is_pinned = pinned;
     }
