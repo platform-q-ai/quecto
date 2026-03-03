@@ -279,6 +279,7 @@ impl CodexProvider {
             completion_tokens: u["output_tokens"].as_u64().unwrap_or(0) as u32,
             cache_read_tokens: None,
             cache_write_tokens: None,
+            cost: None,
         });
 
         Ok(LlmResponse {
@@ -402,6 +403,7 @@ impl SseAccumulator {
                         completion_tokens: u["output_tokens"].as_u64().unwrap_or(0) as u32,
                         cache_read_tokens: None,
                         cache_write_tokens: None,
+                        cost: None,
                     });
                 }
             }

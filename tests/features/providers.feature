@@ -220,3 +220,17 @@ Feature: LLM Providers
     Given an Anthropic request with model "claude-3-5-sonnet-20241022" and thinking level "high" and max_tokens 4096
     When I build the Anthropic request body with thinking
     Then the request body max_tokens should be at least 16384
+
+  # --- #185: Per-call cost tracking ---
+
+  Scenario: Cost is calculated for known Anthropic models
+    Given usage data with 1000 prompt tokens and 500 completion tokens for model "claude-sonnet-4-6"
+    When I calculate the cost
+    Then the total cost should be approximately 0.0105 USD
+    And the input cost should be approximately 0.003 USD
+    And the output cost should be approximately 0.0075 USD
+
+  Scenario: Cost is not calculated for unknown models
+    Given usage data with 1000 prompt tokens and 500 completion tokens for model "unknown-model"
+    When I calculate the cost
+    Then cost should be None

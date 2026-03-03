@@ -1475,3 +1475,106 @@ fn then_max_tokens_at_least(world: &mut QuectoWorld, min: u32) {
         "max_tokens should be at least {min}, got: {max_tokens}"
     );
 }
+
+// --- #185: Per-call cost tracking ---
+
+#[given(
+    expr = "usage data with {int} prompt tokens and {int} completion tokens for model {string}"
+)]
+fn given_usage_data(world: &mut QuectoWorld, prompt: u32, completion: u32, model: String) {
+    world
+        .env_overrides
+        .insert("_cost_prompt_tokens".into(), prompt.to_string());
+    world
+        .env_overrides
+        .insert("_cost_completion_tokens".into(), completion.to_string());
+    world.env_overrides.insert("_cost_model".into(), model);
+}
+
+#[when("I calculate the cost")]
+fn when_calculate_cost(world: &mut QuectoWorld) {
+    let prompt: u32 = world
+        .env_overrides
+        .get("_cost_prompt_tokens")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let completion: u32 = world
+        .env_overrides
+        .get("_cost_completion_tokens")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let model = world.env_overrides.get("_cost_model").unwrap().clone();
+    let usage = quecto::domain::message::UsageInfo {
+        prompt_tokens: prompt,
+        completion_tokens: completion,
+        cache_read_tokens: None,
+        cache_write_tokens: None,
+        cost: None,
+    };
+    if let Some(pricing) = quecto::domain::message::model_pricing(&model) {
+        let cost = pricing.cost_for(&usage);
+        world
+            .env_overrides
+            .insert("_cost_total".into(), cost.total_cost_usd().to_string());
+        world
+            .env_overrides
+            .insert("_cost_input".into(), cost.input_cost_usd().to_string());
+        world
+            .env_overrides
+            .insert("_cost_output".into(), cost.output_cost_usd().to_string());
+    } else {
+        world
+            .env_overrides
+            .insert("_cost_total".into(), "none".into());
+    }
+}
+
+#[then(expr = "the total cost should be approximately {float} USD")]
+fn then_total_cost(world: &mut QuectoWorld, expected: f64) {
+    let actual: f64 = world
+        .env_overrides
+        .get("_cost_total")
+        .unwrap()
+        .parse()
+        .expect("cost should be a number");
+    assert!(
+        (actual - expected).abs() < 0.0001,
+        "expected total cost ~{expected}, got {actual}"
+    );
+}
+
+#[then(expr = "the input cost should be approximately {float} USD")]
+fn then_input_cost(world: &mut QuectoWorld, expected: f64) {
+    let actual: f64 = world
+        .env_overrides
+        .get("_cost_input")
+        .unwrap()
+        .parse()
+        .expect("cost should be a number");
+    assert!(
+        (actual - expected).abs() < 0.0001,
+        "expected input cost ~{expected}, got {actual}"
+    );
+}
+
+#[then(expr = "the output cost should be approximately {float} USD")]
+fn then_output_cost(world: &mut QuectoWorld, expected: f64) {
+    let actual: f64 = world
+        .env_overrides
+        .get("_cost_output")
+        .unwrap()
+        .parse()
+        .expect("cost should be a number");
+    assert!(
+        (actual - expected).abs() < 0.0001,
+        "expected output cost ~{expected}, got {actual}"
+    );
+}
+
+#[then("cost should be None")]
+fn then_cost_none(world: &mut QuectoWorld) {
+    let val = world.env_overrides.get("_cost_total").unwrap();
+    assert_eq!(val, "none", "expected no cost, got: {val}");
+}
