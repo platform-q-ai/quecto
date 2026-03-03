@@ -1,8 +1,6 @@
 /// RPC agent loop — headless operation via JSON-lines protocol over stdin/stdout.
 ///
 /// Entry point: `run_rpc_loop` — called from `cmd_agent` when `--mode rpc` is set.
-use std::sync::Arc;
-
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::agent::AgentLoop;
 use crate::domain::message::{Message, Role};
@@ -61,8 +59,15 @@ impl RpcSession {
         self.streaming = v;
     }
 
+    /// Maximum number of pending (steer/follow_up) messages buffered at once.
+    /// Prevents OOM from a flood of pending messages from a misbehaving client.
+    pub const MAX_PENDING: usize = 64;
+
     pub fn enqueue_pending(&mut self, msg: String) {
-        self.pending.push(msg);
+        if self.pending.len() < Self::MAX_PENDING {
+            self.pending.push(msg);
+        }
+        // Silently drop if the queue is full — caller already got a success ack.
     }
 
     pub fn drain_pending(&mut self) -> Vec<String> {
@@ -130,6 +135,8 @@ pub struct RpcLoopArgs<'a> {
     pub stdin_override: Option<Box<dyn tokio::io::AsyncRead + Send + Unpin + 'static>>,
     /// Injected stdout writer for testing.  `None` = use real `tokio::io::stdout`.
     pub stdout_override: Option<Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'static>>,
+    /// Injected session store for testing.  `None` = use `FileSessionStore`.
+    pub session_store_override: Option<Box<dyn SessionStore + 'static>>,
 }
 
 /// Run the RPC event loop.  Reads JSON commands from stdin until EOF;
@@ -157,12 +164,19 @@ async fn rpc_loop_async(args: RpcLoopArgs<'_>) -> i32 {
         ephemeral,
         stdin_override,
         stdout_override,
+        session_store_override,
     } = args;
 
-    let agent = Arc::new(agent);
-    let session_store = FileSessionStore::new(base_dir);
+    let mut agent = agent;
+    let file_store;
+    let session_store: &dyn SessionStore = if let Some(ref s) = session_store_override {
+        s.as_ref()
+    } else {
+        file_store = FileSessionStore::new(base_dir);
+        &file_store
+    };
 
-    let mut messages = match load_session(&session_store, &session_key, ephemeral).await {
+    let mut messages = match load_session(session_store, &session_key, ephemeral).await {
         Ok(m) => m,
         Err(err) => {
             if let Some(mut out) = stdout_override {
@@ -187,7 +201,7 @@ async fn rpc_loop_async(args: RpcLoopArgs<'_>) -> i32 {
     run_command_loop(
         stdin_reader,
         &mut DispatchCtx {
-            agent: &agent,
+            agent: &mut agent,
             messages: &mut messages,
             rpc_session: &mut rpc_session,
             stdout: &mut *stdout,
@@ -214,6 +228,8 @@ async fn run_command_loop(
 ) {
     use tokio::io::{AsyncBufReadExt, BufReader};
 
+    // 1 MiB per line matches the bash tool cap; prevents OOM from unbounded lines.
+    const MAX_LINE_BYTES: usize = 1024 * 1024;
     let mut lines = BufReader::new(stdin_reader).lines();
 
     loop {
@@ -221,6 +237,11 @@ async fn run_command_loop(
             Ok(Some(l)) => l,
             _ => break,
         };
+        if line.len() > MAX_LINE_BYTES {
+            let ev = RpcEvent::err(None, "parse_error", "line exceeds 1 MiB limit");
+            emit_event(ctx.stdout, &ev).await;
+            continue;
+        }
         let line = line.trim().to_owned();
         if line.is_empty() {
             continue;
@@ -249,7 +270,7 @@ async fn run_command_loop(
 
 /// Load session messages, or return an empty vec for ephemeral/missing sessions.
 async fn load_session(
-    store: &FileSessionStore,
+    store: &dyn SessionStore,
     session_key: &str,
     ephemeral: bool,
 ) -> Result<Vec<Message>, String> {
@@ -265,7 +286,7 @@ async fn load_session(
 
 /// Mutable context threaded through each command dispatch.
 struct DispatchCtx<'a> {
-    agent: &'a Arc<AgentLoopImpl>,
+    agent: &'a mut AgentLoopImpl,
     messages: &'a mut Vec<Message>,
     rpc_session: &'a mut RpcSession,
     stdout: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
@@ -295,6 +316,11 @@ async fn dispatch_command(cmd: RpcCommand, ctx: &mut DispatchCtx<'_>) -> bool {
             .await
         }
 
+        // Steer and FollowUp both enqueue a pending message. In the current sequential
+        // implementation there is no runtime distinction: the pending queue is drained
+        // after each prompt regardless of how messages were enqueued.  True steer
+        // semantics (interrupt after current tool) require threading a CancelFlag into
+        // the agent loop — deferred to a follow-up PR (#233 MVP).
         RpcCommand::Steer { message, .. } | RpcCommand::FollowUp { message, .. } => {
             ctx.rpc_session.enqueue_pending(message);
             let ev = RpcEvent::ok(id.as_deref(), &type_name, None);
@@ -302,6 +328,9 @@ async fn dispatch_command(cmd: RpcCommand, ctx: &mut DispatchCtx<'_>) -> bool {
             false
         }
 
+        // Abort is a no-op when the agent is idle (sequential loop: a command can
+        // only arrive between prompts). Abort-during-streaming requires a CancelFlag
+        // wired into the agent process loop — deferred to follow-up.
         RpcCommand::Abort { .. } => {
             let ev = RpcEvent::ok(id.as_deref(), &type_name, None);
             emit_event(ctx.stdout, &ev).await;
@@ -334,6 +363,7 @@ async fn dispatch_command(cmd: RpcCommand, ctx: &mut DispatchCtx<'_>) -> bool {
         }
 
         RpcCommand::SetModel { model, .. } => {
+            ctx.agent.set_model(model.clone());
             ctx.rpc_session.set_model(model.clone());
             tracing::debug!(new_model = %ctx.rpc_session.model(), "RPC: model switched");
             let ev = RpcEvent::ok(id.as_deref(), &type_name, None);
@@ -425,7 +455,7 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
 
 /// Arguments for [`run_agent_prompt`] — avoids the clippy too-many-arguments lint.
 struct PromptArgs<'a> {
-    agent: &'a Arc<AgentLoopImpl>,
+    agent: &'a mut AgentLoopImpl,
     messages: &'a mut Vec<Message>,
     rpc_session: &'a mut RpcSession,
     stdout: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),

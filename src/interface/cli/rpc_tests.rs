@@ -215,3 +215,25 @@ fn test_rpc_event_parse_error_response_shape() {
     assert_eq!(v["success"], false);
     assert!(v["error"].is_string());
 }
+
+#[test]
+fn test_enqueue_pending_respects_cap() {
+    let mut session = RpcSession::new("model".into(), "key".into());
+    for i in 0..RpcSession::MAX_PENDING + 10 {
+        session.enqueue_pending(format!("msg-{i}"));
+    }
+    let drained = session.drain_pending();
+    assert_eq!(
+        drained.len(),
+        RpcSession::MAX_PENDING,
+        "should cap at MAX_PENDING"
+    );
+}
+
+#[test]
+fn test_set_model_is_reflected_in_state_snapshot() {
+    let mut session = RpcSession::new("gpt-4".into(), "cli:test".into());
+    session.set_model("claude-opus-4-5".into());
+    let snap = session.state_snapshot(0);
+    assert_eq!(snap.model, "claude-opus-4-5");
+}

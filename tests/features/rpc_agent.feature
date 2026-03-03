@@ -160,6 +160,9 @@ Feature: RPC mode for headless agent operation
   # ─── abort command ──────────────────────────────────────────────────────────
 
   @done
+  # Note: abort is always a no-op in the current sequential implementation —
+  # commands can only arrive between prompts, so the agent is never mid-run.
+  # Abort-during-streaming requires CancelFlag wiring (follow-up PR).
   Scenario: abort while idle returns success
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server

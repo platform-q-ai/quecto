@@ -144,6 +144,7 @@ fn execute_rpc(world: &mut QuectoWorld) {
             ephemeral,
             stdin_override: Some(Box::new(stdin_cursor)),
             stdout_override: Some(Box::new(VecWriter(stdout_clone))),
+            session_store_override: None,
         })
     })
     .join()
