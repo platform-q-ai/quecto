@@ -664,6 +664,17 @@ pub struct QuectoWorld {
     // --- Issue #193: default_send_to fallback ---
     /// Default send-to address configured for cron delivery fallback
     pub cron_default_send_to: Option<String>,
+    // --- Issue #182: cancellation support ---
+    /// Cancel flag for cancellation BDD scenarios
+    pub cancel_flag: Option<quecto::domain::provider::CancelFlag>,
+    /// Result of a chat() call (Ok(response) or Err(message)) for cancellation tests
+    pub chat_result: Option<Result<LlmResponse, String>>,
+    /// Result of a chat_stream() call for cancellation tests
+    pub chat_stream_result: Option<Result<LlmResponse, String>>,
+    /// Parsed stop reason for stop_reason parsing tests
+    pub parsed_stop_reason: Option<quecto::domain::message::StopReason>,
+    /// Normalized API messages (for normalization scenario assertions)
+    pub api_messages: Vec<serde_json::Value>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.

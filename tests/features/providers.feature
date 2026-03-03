@@ -405,3 +405,40 @@ Feature: LLM Providers
     Given a user message with text "" and one image block of type "image/png"
     When I build Anthropic messages from that history for model "claude-instant-1"
     Then the Anthropic payload should contain no user messages
+
+  # --- #182: Abort/cancellation support via CancelFlag ---
+
+  Scenario: Chat request is cancelled before it starts
+    Given an Anthropic mock server that returns a successful text response
+    And a cancel flag that is already set
+    When I send a chat request with the cancel flag
+    Then the chat request should return a cancellation error
+
+  Scenario: Streaming chat request is cancelled before it starts
+    Given an Anthropic mock server that streams text "Hello world" in 3 chunks
+    And a cancel flag that is already set
+    When I send a streaming chat request with the cancel flag
+    Then the streaming chat request should return a cancellation error
+
+  Scenario: Chat request completes normally when cancel flag is not set
+    Given an Anthropic mock server that returns a successful text response
+    And a cancel flag that is not set
+    When I send a chat request with the cancel flag
+    Then the chat request should succeed with a response
+
+  Scenario: Incremental streaming chat emits Error event when cancelled before start
+    Given an Anthropic mock server that streams text "Hello world" in 3 chunks
+    And a cancel flag that is already set
+    When I send an incremental streaming chat request with the cancel flag
+    Then I should receive an Error stream event containing "cancelled"
+
+  Scenario: StopReason aborted is parsed correctly
+    Given a stop reason string "aborted"
+    When I parse the stop reason
+    Then the stop reason should be Aborted
+
+  Scenario: Aborted assistant messages are dropped from normalized message list
+    Given a message list with an aborted assistant turn followed by a new user message
+    When I normalize the messages
+    Then the aborted assistant message should be removed
+    And the new user message should remain

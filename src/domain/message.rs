@@ -178,6 +178,8 @@ pub enum StopReason {
     Refusal,
     /// An error occurred (e.g. safety filter).
     Error,
+    /// Request was cancelled by the caller before or during generation.
+    Aborted,
     /// Unknown stop reason (future-proofing).
     Unknown(String),
 }
@@ -192,6 +194,7 @@ impl StopReason {
             "refusal" => Self::Refusal,
             "pause_turn" | "stop_sequence" => Self::EndTurn,
             "sensitive" | "error" => Self::Error,
+            "aborted" => Self::Aborted,
             other => Self::Unknown(other.to_string()),
         }
     }

@@ -85,8 +85,7 @@ impl AnthropicProvider {
             }]);
         }
 
-        // Apply cache_control to the last user message's content block (#176).
-        Self::apply_cache_control_to_last_user_message(&mut api_messages);
+        Self::apply_cache_control_to_last_user_message(&mut api_messages); // #176
 
         body["messages"] = serde_json::Value::Array(api_messages);
 
@@ -152,11 +151,7 @@ impl AnthropicProvider {
         }
     }
 
-    /// Normalize a single tool call ID for the Anthropic API.
-    ///
-    /// Strips characters outside `[a-zA-Z0-9_-]` (replacing them with `_`)
-    /// and truncates to 64 characters. This prevents API errors from
-    /// Codex-style IDs such as `call_abc|call_abc|0` (450+ chars with `|`).
+    /// Normalize a tool call ID: strip `[^a-zA-Z0-9_-]` → `'_'`, truncate to 64 (#184).
     fn normalize_tool_call_id(id: &str) -> String {
         id.chars()
             .map(|c| {
@@ -170,26 +165,24 @@ impl AnthropicProvider {
             .collect()
     }
 
-    /// Pre-process messages for the Anthropic API (#184 normalization pipeline):
-    ///
-    /// 1. Normalize tool call IDs (strip invalid chars, truncate to 64).
-    /// 2. Filter out assistant messages whose `stop_reason` is `Error` **and**
-    ///    the tool-result messages that reference those dropped tool calls —
-    ///    preventing the inverse-orphan problem (tool_result with no tool_use).
-    ///
-    /// Returns a new `Vec<Message>` with IDs normalised consistently across
-    /// both the `tool_use` blocks (assistant) and `tool_result` blocks (tool).
+    /// Normalize messages: strip invalid tool call IDs, filter error/aborted
+    /// assistant turns and their orphaned tool_result counterparts (#184, #182).
     fn normalize_messages(messages: &[Message]) -> Vec<Message> {
         use crate::domain::message::StopReason;
         use std::collections::{HashMap, HashSet};
 
-        // Collect IDs from assistant messages that will be dropped so we can
+        // Collect IDs from dropped assistant turns (error/aborted) so we can
         // also drop their orphaned tool_result counterparts.
+        let is_incomplete = |m: &&Message| {
+            m.role == Role::Assistant
+                && matches!(
+                    m.stop_reason,
+                    Some(StopReason::Error) | Some(StopReason::Aborted)
+                )
+        };
         let dropped_tool_ids: HashSet<String> = messages
             .iter()
-            .filter(|m| {
-                m.role == Role::Assistant && matches!(m.stop_reason, Some(StopReason::Error))
-            })
+            .filter(is_incomplete)
             .flat_map(|m| m.tool_calls.iter().map(|tc| tc.id.clone()))
             .collect();
 
@@ -203,8 +196,13 @@ impl AnthropicProvider {
         messages
             .iter()
             .filter(|m| {
-                // Drop errored assistant messages.
-                if m.role == Role::Assistant && matches!(m.stop_reason, Some(StopReason::Error)) {
+                // Drop incomplete assistant turns (error or aborted).
+                if m.role == Role::Assistant
+                    && matches!(
+                        m.stop_reason,
+                        Some(StopReason::Error) | Some(StopReason::Aborted)
+                    )
+                {
                     return false;
                 }
                 // Drop tool results whose tool call was dropped above.
@@ -528,8 +526,12 @@ impl LlmProvider for AnthropicProvider {
         let model = request.model.to_string();
         let (_system, body) = Self::build_request_body(&request);
         let url = format!("{}/v1/messages", self.api_base);
+        let cancel = request.cancel_flag.clone();
 
         Box::pin(async move {
+            if cancel.as_ref().is_some_and(|f| f.is_cancelled()) {
+                return Err(DomainError::Provider("request cancelled".into()));
+            }
             let request_builder = self
                 .client
                 .post(&url)
@@ -571,14 +573,16 @@ impl LlmProvider for AnthropicProvider {
         &self,
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
-        // Build the request body synchronously before entering the async block
-        // to avoid cloning messages/tools into the future.
         let model = request.model.to_string();
         let (_system, mut body) = Self::build_request_body(&request);
         body["stream"] = serde_json::Value::Bool(true);
         let url = format!("{}/v1/messages", self.api_base);
+        let cancel = request.cancel_flag.clone();
 
         Box::pin(async move {
+            if cancel.as_ref().is_some_and(|f| f.is_cancelled()) {
+                return Err(DomainError::Provider("request cancelled".into()));
+            }
             let mut resp = self.stream_chat_with_body(body, &url).await?;
             Self::attach_cost(&mut resp, &model);
             Ok(resp)
@@ -593,6 +597,7 @@ impl LlmProvider for AnthropicProvider {
         let (_system, mut body) = Self::build_request_body(&request);
         body["stream"] = serde_json::Value::Bool(true);
         let url = format!("{}/v1/messages", self.api_base);
+        let cancel = request.cancel_flag.clone();
 
         // Clone all fields needed so the background task can be 'static.
         let api_key = self.api_key.clone();
@@ -602,10 +607,13 @@ impl LlmProvider for AnthropicProvider {
 
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
-
-            // Spawn the byte-stream pump as a detached task so the receiver
-            // is returned immediately — callers get events as they arrive
-            // rather than after the full response has been consumed.
+            if cancel.as_ref().is_some_and(|f| f.is_cancelled()) {
+                let _ = tx
+                    .send(StreamEvent::Error("request cancelled".into()))
+                    .await;
+                return rx;
+            }
+            // Spawn the pump as a detached task so rx is returned immediately.
             tokio::spawn(async move {
                 let provider = AnthropicProvider {
                     api_key,
@@ -616,9 +624,7 @@ impl LlmProvider for AnthropicProvider {
                 provider
                     .stream_chat_incremental_with_body(body, &url, tx)
                     .await;
-                // Cost attachment for Done(LlmResponse) is a future enhancement;
-                // model is kept here to avoid a dead-code warning.
-                drop(model);
+                drop(model); // suppress unused-variable warning; cost attachment is future work.
             });
 
             rx
@@ -629,19 +635,16 @@ impl LlmProvider for AnthropicProvider {
 /// Public test-support methods (BDD steps need access to internal builders).
 #[cfg(any(test, feature = "test-support"))]
 impl AnthropicProvider {
-    /// Public wrapper for `build_request_body` (for BDD tests).
     pub fn build_request_body_public(
         request: &ChatRequest<'_>,
     ) -> (Option<String>, serde_json::Value) {
         Self::build_request_body(request)
     }
 
-    /// Public wrapper for `build_messages` (for BDD tests).
     pub fn build_messages_public(messages: &[Message]) -> (Option<String>, Vec<serde_json::Value>) {
         Self::build_messages(messages, "claude-opus-4-5")
     }
 
-    /// Public wrapper for `build_messages` with explicit model (for BDD tests — #188).
     pub fn build_messages_for_model_public(
         messages: &[Message],
         model: &str,

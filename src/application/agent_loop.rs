@@ -177,6 +177,7 @@ impl AgentLoopImpl {
             tool_choice: None,
             metadata: None,
             thinking_level: None,
+            cancel_flag: None,
         }
     }
 

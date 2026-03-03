@@ -93,6 +93,10 @@ impl FallbackProvider {
 
         let lowered = msg.to_ascii_lowercase();
 
+        if lowered.contains("request cancelled") || lowered.contains("request canceled") {
+            return ErrorClass::Cancelled;
+        }
+
         if lowered.contains("rate limit") {
             ErrorClass::RateLimit
         } else if lowered.contains("auth")
@@ -151,6 +155,7 @@ impl FallbackProvider {
                 tool_choice: request.tool_choice.clone(),
                 metadata: request.metadata.clone(),
                 thinking_level: request.thinking_level,
+                cancel_flag: request.cancel_flag.clone(),
             };
             match entry.provider.chat(req).await {
                 Ok(response) => {
@@ -246,6 +251,7 @@ impl LlmProvider for FallbackProvider {
                 tool_choice: request.tool_choice.clone(),
                 metadata: request.metadata.clone(),
                 thinking_level: request.thinking_level,
+                cancel_flag: request.cancel_flag.clone(),
             };
             self.try_chat(&req).await
         })
@@ -320,6 +326,7 @@ mod tests {
             tool_choice: None,
             metadata: None,
             thinking_level: None,
+            cancel_flag: None,
         }
     }
 
@@ -429,6 +436,16 @@ mod tests {
 
         let err3 = DomainError::Provider("connect refused".to_string());
         assert_eq!(FallbackProvider::classify_error(&err3), ErrorClass::Network);
+    }
+
+    #[test]
+    fn test_classify_cancelled_error() {
+        let err = DomainError::Provider("request cancelled".to_string());
+        assert_eq!(
+            FallbackProvider::classify_error(&err),
+            ErrorClass::Cancelled
+        );
+        assert!(!ErrorClass::Cancelled.is_retryable());
     }
 
     #[test]
@@ -556,6 +573,7 @@ mod tests {
             tool_choice: None,
             metadata: None,
             thinking_level: None,
+            cancel_flag: None,
         }
     }
 
