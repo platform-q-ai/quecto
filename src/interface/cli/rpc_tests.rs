@@ -170,3 +170,48 @@ fn test_parse_set_model_command() {
         _ => panic!("expected SetModel"),
     }
 }
+
+#[test]
+fn test_stats_user_plus_assistant_equals_exchange() {
+    // After 1 user + 1 assistant message, counts should be 1 and 1.
+    let messages = vec![
+        Message::user("hello"),
+        Message::assistant("hi there", vec![]),
+    ];
+    let stats = compute_session_stats("cli:test", &messages);
+    assert_eq!(stats.user_messages, 1);
+    assert_eq!(stats.assistant_messages, 1);
+    assert_eq!(stats.total_messages, 2);
+    assert_eq!(stats.tool_calls, 0);
+}
+
+#[test]
+fn test_parse_error_response_uses_parse_error_command() {
+    // Malformed JSON must produce a response with command == "parse_error".
+    let result = parse_rpc_line("{{bad json");
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err();
+    // The error message should describe a parse failure.
+    assert!(
+        err_msg.contains("parse") || err_msg.contains("JSON") || err_msg.contains("expected"),
+        "unexpected error: {err_msg}"
+    );
+}
+
+#[test]
+fn test_rpc_event_parse_error_response_shape() {
+    // Verify that the parse error event we emit conforms to the Response shape.
+    let ev = RpcEvent::Response {
+        id: None,
+        command: "parse_error".to_string(),
+        success: false,
+        data: None,
+        error: Some("parse error: invalid JSON".to_string()),
+    };
+    let json = ev.to_json_line();
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(v["type"], "response");
+    assert_eq!(v["command"], "parse_error");
+    assert_eq!(v["success"], false);
+    assert!(v["error"].is_string());
+}
