@@ -175,77 +175,122 @@ pub struct UsageInfo {
 }
 
 /// Per-call cost breakdown calculated from token usage and model pricing.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Costs are stored internally as **micro-USD** (`u64`, i.e. millionths of a US dollar)
+/// to avoid floating-point accumulation errors. Use the `*_usd()` helpers for display.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CostInfo {
-    /// Cost of input tokens in USD.
-    pub input_cost: f64,
-    /// Cost of output tokens in USD.
-    pub output_cost: f64,
-    /// Cost of cache-read input tokens in USD.
-    pub cache_read_cost: f64,
-    /// Cost of cache-write input tokens in USD.
-    pub cache_write_cost: f64,
-    /// Total cost in USD (sum of all components).
-    pub total_cost: f64,
-}
-
-/// Per-million-token pricing for a model.
-#[derive(Debug, Clone, Copy)]
-pub struct ModelPricing {
-    /// Input token cost per million tokens.
-    pub input_per_million: f64,
-    /// Output token cost per million tokens.
-    pub output_per_million: f64,
-    /// Cache-read input token cost per million tokens.
-    pub cache_read_per_million: f64,
-    /// Cache-write input token cost per million tokens.
-    pub cache_write_per_million: f64,
+    /// Input token cost in micro-USD.
+    pub input_cost_micro_usd: u64,
+    /// Output token cost in micro-USD.
+    pub output_cost_micro_usd: u64,
+    /// Cache-read input token cost in micro-USD.
+    pub cache_read_cost_micro_usd: u64,
+    /// Cache-write input token cost in micro-USD.
+    pub cache_write_cost_micro_usd: u64,
+    /// Total cost in micro-USD (sum of all components).
+    pub total_cost_micro_usd: u64,
 }
 
 impl CostInfo {
-    /// Calculate cost from usage data and model pricing.
-    pub fn from_usage(usage: &UsageInfo, pricing: &ModelPricing) -> Self {
-        let per_m = |tokens: u32, rate: f64| (tokens as f64 / 1_000_000.0) * rate;
-        let input_cost = per_m(usage.prompt_tokens, pricing.input_per_million);
-        let output_cost = per_m(usage.completion_tokens, pricing.output_per_million);
-        let cache_read_cost = per_m(
+    /// Input cost in USD.
+    pub fn input_cost_usd(&self) -> f64 {
+        self.input_cost_micro_usd as f64 / 1_000_000.0
+    }
+    /// Output cost in USD.
+    pub fn output_cost_usd(&self) -> f64 {
+        self.output_cost_micro_usd as f64 / 1_000_000.0
+    }
+    /// Cache-read cost in USD.
+    pub fn cache_read_cost_usd(&self) -> f64 {
+        self.cache_read_cost_micro_usd as f64 / 1_000_000.0
+    }
+    /// Cache-write cost in USD.
+    pub fn cache_write_cost_usd(&self) -> f64 {
+        self.cache_write_cost_micro_usd as f64 / 1_000_000.0
+    }
+    /// Total cost in USD.
+    pub fn total_cost_usd(&self) -> f64 {
+        self.total_cost_micro_usd as f64 / 1_000_000.0
+    }
+}
+
+/// Per-million-token pricing for a model, stored as micro-USD per million tokens.
+/// Using integer rates avoids floating-point representation issues at the pricing layer.
+#[derive(Debug, Clone, Copy)]
+pub struct ModelPricing {
+    /// Input token cost in micro-USD per million tokens.
+    pub input_micro_usd_per_million: u64,
+    /// Output token cost in micro-USD per million tokens.
+    pub output_micro_usd_per_million: u64,
+    /// Cache-read input token cost in micro-USD per million tokens.
+    pub cache_read_micro_usd_per_million: u64,
+    /// Cache-write input token cost in micro-USD per million tokens.
+    pub cache_write_micro_usd_per_million: u64,
+}
+
+impl ModelPricing {
+    /// Calculate cost from usage data using integer micro-USD arithmetic.
+    pub fn cost_for(&self, usage: &UsageInfo) -> CostInfo {
+        // tokens * rate_per_million / 1_000_000 — performed in u64 to stay exact.
+        let calc = |tokens: u32, rate: u64| -> u64 { (tokens as u64 * rate) / 1_000_000 };
+        let input = calc(usage.prompt_tokens, self.input_micro_usd_per_million);
+        let output = calc(usage.completion_tokens, self.output_micro_usd_per_million);
+        let cache_read = calc(
             usage.cache_read_tokens.unwrap_or(0),
-            pricing.cache_read_per_million,
+            self.cache_read_micro_usd_per_million,
         );
-        let cache_write_cost = per_m(
+        let cache_write = calc(
             usage.cache_write_tokens.unwrap_or(0),
-            pricing.cache_write_per_million,
+            self.cache_write_micro_usd_per_million,
         );
-        Self {
-            input_cost,
-            output_cost,
-            cache_read_cost,
-            cache_write_cost,
-            total_cost: input_cost + output_cost + cache_read_cost + cache_write_cost,
+        CostInfo {
+            input_cost_micro_usd: input,
+            output_cost_micro_usd: output,
+            cache_read_cost_micro_usd: cache_read,
+            cache_write_cost_micro_usd: cache_write,
+            total_cost_micro_usd: input + output + cache_read + cache_write,
         }
     }
 }
 
+/// Returns true if `model` starts with `prefix`, case-insensitively, using byte
+/// comparison — no heap allocation.
+fn starts_with_ci(model: &str, prefix: &str) -> bool {
+    let m = model.as_bytes();
+    let p = prefix.as_bytes();
+    if m.len() < p.len() {
+        return false;
+    }
+    m[..p.len()]
+        .iter()
+        .zip(p)
+        .all(|(a, b)| a.eq_ignore_ascii_case(b))
+}
+
 /// Look up pricing for a known model. Returns `None` for unknown models.
 ///
-/// Only `claude-sonnet-4` and `claude-opus-4` families are tracked.
+/// **Allowlist**: only `claude-sonnet-4` and `claude-opus-4` families are recognised.
+/// Any other model string — including older Claude generations — returns `None`,
+/// preventing a spoofed model name from silently matching unintended pricing.
+///
+/// Rates are expressed as micro-USD per million tokens (integer arithmetic, no f64 drift).
 pub fn model_pricing(model: &str) -> Option<ModelPricing> {
-    // Normalise to lowercase for matching.
-    let m = model.to_ascii_lowercase();
-    // Match on model family prefix (covers dated variants like claude-sonnet-4-5, claude-sonnet-4-6).
-    if m.starts_with("claude-sonnet-4") {
+    if starts_with_ci(model, "claude-sonnet-4") {
+        // $3.00 / $15.00 / $0.30 / $3.75 per million tokens → micro-USD
         Some(ModelPricing {
-            input_per_million: 3.0,
-            output_per_million: 15.0,
-            cache_read_per_million: 0.30,
-            cache_write_per_million: 3.75,
+            input_micro_usd_per_million: 3_000_000,
+            output_micro_usd_per_million: 15_000_000,
+            cache_read_micro_usd_per_million: 300_000,
+            cache_write_micro_usd_per_million: 3_750_000,
         })
-    } else if m.starts_with("claude-opus-4") {
+    } else if starts_with_ci(model, "claude-opus-4") {
+        // $15.00 / $75.00 / $1.50 / $18.75 per million tokens → micro-USD
         Some(ModelPricing {
-            input_per_million: 15.0,
-            output_per_million: 75.0,
-            cache_read_per_million: 1.50,
-            cache_write_per_million: 18.75,
+            input_micro_usd_per_million: 15_000_000,
+            output_micro_usd_per_million: 75_000_000,
+            cache_read_micro_usd_per_million: 1_500_000,
+            cache_write_micro_usd_per_million: 18_750_000,
         })
     } else {
         None
@@ -266,18 +311,19 @@ mod tests {
             cost: None,
         };
         let pricing = model_pricing("claude-sonnet-4-6").unwrap();
-        let cost = CostInfo::from_usage(&usage, &pricing);
-        // Input: 1000/1M * $3.00 = $0.003
-        assert!((cost.input_cost - 0.003).abs() < 1e-9);
-        // Output: 500/1M * $15.00 = $0.0075
-        assert!((cost.output_cost - 0.0075).abs() < 1e-9);
-        // Cache read: 200/1M * $0.30 = $0.00006
-        assert!((cost.cache_read_cost - 0.00006).abs() < 1e-9);
-        // Cache write: 100/1M * $3.75 = $0.000375
-        assert!((cost.cache_write_cost - 0.000375).abs() < 1e-9);
+        let cost = pricing.cost_for(&usage);
+        // Input: 1000/1M * $3.00 = $0.003 = 3000 micro-USD
+        assert_eq!(cost.input_cost_micro_usd, 3000);
+        assert!((cost.input_cost_usd() - 0.003).abs() < 1e-9);
+        // Output: 500/1M * $15.00 = $0.0075 = 7500 micro-USD
+        assert_eq!(cost.output_cost_micro_usd, 7500);
+        assert!((cost.output_cost_usd() - 0.0075).abs() < 1e-9);
+        // Cache read: 200/1M * $0.30 = $0.00006 = 60 micro-USD (integer: 200*300_000/1_000_000=60)
+        assert_eq!(cost.cache_read_cost_micro_usd, 60);
+        // Cache write: 100/1M * $3.75 = $0.000375 = 375 micro-USD (100*3_750_000/1_000_000=375)
+        assert_eq!(cost.cache_write_cost_micro_usd, 375);
         // Total
-        let expected_total = 0.003 + 0.0075 + 0.00006 + 0.000375;
-        assert!((cost.total_cost - expected_total).abs() < 1e-9);
+        assert_eq!(cost.total_cost_micro_usd, 3000 + 7500 + 60 + 375);
     }
 
     #[test]
@@ -290,11 +336,13 @@ mod tests {
             cost: None,
         };
         let pricing = model_pricing("claude-opus-4-6").unwrap();
-        let cost = CostInfo::from_usage(&usage, &pricing);
-        // Input: 1M/1M * $15.00 = $15.00
-        assert!((cost.input_cost - 15.0).abs() < 1e-6);
-        // Output: 100K/1M * $75.00 = $7.50
-        assert!((cost.output_cost - 7.5).abs() < 1e-6);
+        let cost = pricing.cost_for(&usage);
+        // Input: 1M/1M * $15.00 = $15.00 = 15_000_000 micro-USD
+        assert_eq!(cost.input_cost_micro_usd, 15_000_000);
+        assert!((cost.input_cost_usd() - 15.0).abs() < 1e-6);
+        // Output: 100K/1M * $75.00 = $7.50 = 7_500_000 micro-USD
+        assert_eq!(cost.output_cost_micro_usd, 7_500_000);
+        assert!((cost.output_cost_usd() - 7.5).abs() < 1e-6);
     }
 
     #[test]
@@ -311,8 +359,19 @@ mod tests {
     fn test_model_pricing_known_models() {
         assert!(model_pricing("claude-sonnet-4-6").is_some());
         assert!(model_pricing("claude-opus-4-6").is_some());
-        // Prefix match covers all dated variants of the two supported families
+        // Prefix match covers dated variants of the two supported families
         assert!(model_pricing("claude-sonnet-4-20250514").is_some());
         assert!(model_pricing("claude-opus-4-20250514").is_some());
+        // Case-insensitive, no heap allocation
+        assert!(model_pricing("Claude-Sonnet-4-6").is_some());
+        assert!(model_pricing("CLAUDE-OPUS-4-6").is_some());
+    }
+
+    #[test]
+    fn test_starts_with_ci() {
+        assert!(starts_with_ci("Claude-Sonnet-4-6", "claude-sonnet-4"));
+        assert!(starts_with_ci("CLAUDE-OPUS-4", "claude-opus-4"));
+        assert!(!starts_with_ci("claude-3-5-sonnet", "claude-sonnet-4"));
+        assert!(!starts_with_ci("short", "claude-sonnet-4"));
     }
 }

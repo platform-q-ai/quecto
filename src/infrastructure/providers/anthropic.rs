@@ -4,9 +4,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::domain::error::DomainError;
-use crate::domain::message::{
-    CostInfo, LlmResponse, Message, Role, StopReason, ToolCall, UsageInfo,
-};
+use crate::domain::message::{LlmResponse, Message, Role, StopReason, ToolCall, UsageInfo};
 use crate::domain::provider::{ChatRequest, LlmProvider};
 
 /// Anthropic LLM provider.
@@ -271,7 +269,7 @@ impl AnthropicProvider {
     fn attach_cost(response: &mut LlmResponse, model: &str) {
         if let Some(ref mut usage) = response.usage {
             if let Some(pricing) = crate::domain::message::model_pricing(model) {
-                usage.cost = Some(CostInfo::from_usage(usage, &pricing));
+                usage.cost = Some(pricing.cost_for(usage));
             }
         }
     }

@@ -1514,16 +1514,16 @@ fn when_calculate_cost(world: &mut QuectoWorld) {
         cost: None,
     };
     if let Some(pricing) = quecto::domain::message::model_pricing(&model) {
-        let cost = quecto::domain::message::CostInfo::from_usage(&usage, &pricing);
+        let cost = pricing.cost_for(&usage);
         world
             .env_overrides
-            .insert("_cost_total".into(), cost.total_cost.to_string());
+            .insert("_cost_total".into(), cost.total_cost_usd().to_string());
         world
             .env_overrides
-            .insert("_cost_input".into(), cost.input_cost.to_string());
+            .insert("_cost_input".into(), cost.input_cost_usd().to_string());
         world
             .env_overrides
-            .insert("_cost_output".into(), cost.output_cost.to_string());
+            .insert("_cost_output".into(), cost.output_cost_usd().to_string());
     } else {
         world
             .env_overrides
