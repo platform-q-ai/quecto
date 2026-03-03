@@ -5,7 +5,11 @@ use std::pin::Pin;
 
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, Role, StopReason, ToolCall, UsageInfo};
-use crate::domain::provider::{ChatRequest, LlmProvider};
+use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
+
+mod anthropic_sse;
+#[cfg(any(test, feature = "test-support"))]
+use anthropic_sse::SseAccumulator;
 
 /// Anthropic LLM provider.
 #[derive(Debug)]
@@ -336,205 +340,6 @@ impl AnthropicProvider {
     }
 }
 
-impl AnthropicProvider {
-    /// Send a streaming chat request with a pre-built JSON body.
-    async fn stream_chat_with_body(
-        &self,
-        body: serde_json::Value,
-        url: &str,
-    ) -> Result<LlmResponse, DomainError> {
-        let request_builder = self
-            .client
-            .post(url)
-            .header("anthropic-version", "2023-06-01")
-            .header("Content-Type", "application/json")
-            .json(&body);
-        let request_builder = self.apply_auth_headers(request_builder);
-
-        let response = request_builder
-            .send()
-            .await
-            .map_err(|e| DomainError::Provider(format!("HTTP error: {}", e)))?;
-
-        let status = response.status().as_u16();
-        if status != 200 {
-            let text = response.text().await.unwrap_or_default();
-            return Err(DomainError::Provider(format!(
-                "HTTP {} from Anthropic: {}",
-                status, text
-            )));
-        }
-
-        let full = response
-            .text()
-            .await
-            .map_err(|e| DomainError::Provider(format!("failed to read stream: {}", e)))?;
-
-        Self::parse_sse_response(&full)
-    }
-
-    /// Parse Anthropic SSE events into an assembled LlmResponse.
-    fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> {
-        let mut acc = SseAccumulator::default();
-        let mut current_event = String::new();
-
-        for line in raw.lines() {
-            let line = line.trim();
-            if let Some(event) = line.strip_prefix("event: ") {
-                current_event = event.to_string();
-                continue;
-            }
-            if !line.starts_with("data: ") {
-                continue;
-            }
-            let data = &line[6..];
-            let chunk: serde_json::Value = serde_json::from_str(data).unwrap_or_default();
-
-            match current_event.as_str() {
-                "message_start" => acc.handle_message_start(&chunk),
-                "content_block_start" => acc.handle_block_start(&chunk),
-                "content_block_delta" => acc.handle_block_delta(&chunk),
-                "content_block_stop" => acc.handle_block_stop(),
-                "message_delta" => acc.handle_message_delta(&chunk),
-                "message_stop" => break,
-                _ => {}
-            }
-        }
-
-        Ok(acc.into_response())
-    }
-}
-
-/// Accumulates SSE events into a final `LlmResponse`.
-///
-/// Extracted from `parse_sse_response` to reduce cognitive complexity.
-#[derive(Default)]
-struct SseAccumulator {
-    content: String,
-    tool_calls: Vec<ToolCall>,
-    current_tool_id: String,
-    current_tool_name: String,
-    current_tool_input: String,
-    in_tool_input: bool,
-    prompt_tokens: Option<u32>,
-    completion_tokens: Option<u32>,
-    cache_read_tokens: Option<u32>,
-    cache_write_tokens: Option<u32>,
-    stop_reason: Option<StopReason>,
-}
-
-impl SseAccumulator {
-    fn handle_message_start(&mut self, chunk: &serde_json::Value) {
-        if let Some(usage) = chunk["message"]["usage"].as_object() {
-            self.update_usage_fields(usage);
-        }
-    }
-
-    fn handle_block_start(&mut self, chunk: &serde_json::Value) {
-        if chunk["content_block"]["type"].as_str() == Some("tool_use") {
-            self.current_tool_id = chunk["content_block"]["id"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string();
-            self.current_tool_name = chunk["content_block"]["name"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string();
-            self.current_tool_input.clear();
-            self.in_tool_input = true;
-        }
-    }
-
-    fn handle_block_delta(&mut self, chunk: &serde_json::Value) {
-        let delta = &chunk["delta"];
-        match delta["type"].as_str() {
-            Some("text_delta") => {
-                if let Some(text) = delta["text"].as_str() {
-                    self.content.push_str(text);
-                }
-            }
-            Some("input_json_delta") => {
-                if let Some(json) = delta["partial_json"].as_str() {
-                    self.current_tool_input.push_str(json);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn handle_block_stop(&mut self) {
-        if self.in_tool_input {
-            self.tool_calls.push(ToolCall {
-                id: std::mem::take(&mut self.current_tool_id),
-                name: std::mem::take(&mut self.current_tool_name),
-                arguments: std::mem::take(&mut self.current_tool_input),
-            });
-            self.in_tool_input = false;
-        }
-    }
-
-    fn handle_message_delta(&mut self, chunk: &serde_json::Value) {
-        if let Some(reason) = chunk["delta"]["stop_reason"].as_str() {
-            self.stop_reason = Some(StopReason::from_anthropic(reason));
-        }
-        if let Some(usage) = chunk["usage"].as_object() {
-            if let Some(v) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
-                self.completion_tokens = Some(v as u32);
-            }
-            if let Some(v) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
-                self.prompt_tokens = Some(v as u32);
-            }
-        }
-    }
-
-    /// Extract usage fields from an Anthropic usage object.
-    fn update_usage_fields(&mut self, usage: &serde_json::Map<String, serde_json::Value>) {
-        if let Some(v) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
-            self.prompt_tokens = Some(v as u32);
-        }
-        if let Some(v) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
-            self.completion_tokens = Some(v as u32);
-        }
-        if let Some(v) = usage
-            .get("cache_read_input_tokens")
-            .and_then(|v| v.as_u64())
-        {
-            self.cache_read_tokens = Some(v as u32);
-        }
-        if let Some(v) = usage
-            .get("cache_creation_input_tokens")
-            .and_then(|v| v.as_u64())
-        {
-            self.cache_write_tokens = Some(v as u32);
-        }
-    }
-
-    fn into_response(self) -> LlmResponse {
-        let content = if self.content.is_empty() {
-            None
-        } else {
-            Some(self.content)
-        };
-        let usage = if self.prompt_tokens.is_some() || self.completion_tokens.is_some() {
-            Some(UsageInfo {
-                prompt_tokens: self.prompt_tokens.unwrap_or(0),
-                completion_tokens: self.completion_tokens.unwrap_or(0),
-                cache_read_tokens: self.cache_read_tokens,
-                cache_write_tokens: self.cache_write_tokens,
-                cost: None,
-            })
-        } else {
-            None
-        };
-        LlmResponse {
-            content,
-            tool_calls: self.tool_calls,
-            usage,
-            stop_reason: self.stop_reason,
-        }
-    }
-}
-
 impl LlmProvider for AnthropicProvider {
     fn name(&self) -> &str {
         "anthropic"
@@ -603,6 +408,23 @@ impl LlmProvider for AnthropicProvider {
             Ok(resp)
         })
     }
+
+    fn chat_stream_incremental(
+        &self,
+        request: ChatRequest<'_>,
+    ) -> Pin<Box<dyn Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + '_>> {
+        let model = request.model.to_string();
+        let (_system, mut body) = Self::build_request_body(&request);
+        body["stream"] = serde_json::Value::Bool(true);
+        let url = format!("{}/v1/messages", self.api_base);
+
+        Box::pin(async move {
+            let (tx, rx) = tokio::sync::mpsc::channel(64);
+            self.stream_chat_incremental_with_body(body, &url, tx).await;
+            drop(model); // Suppress unused warning until cost attachment is wired.
+            rx
+        })
+    }
 }
 
 /// Public test-support methods (BDD steps need access to internal builders).
@@ -623,6 +445,84 @@ impl AnthropicProvider {
     /// Public wrapper for `parse_sse_response` (for BDD tests).
     pub fn parse_sse_response_public(raw: &str) -> Result<LlmResponse, DomainError> {
         Self::parse_sse_response(raw)
+    }
+
+    /// Parse Anthropic SSE text into a sequence of [`StreamEvent`]s.
+    ///
+    /// Emits granular events (TextDelta, ToolCallStart, etc.) for each SSE
+    /// packet, enabling incremental delivery to callers.  Exposed publicly
+    /// only under test builds so the incremental protocol can be unit-tested
+    /// without an HTTP server.
+    fn parse_sse_events(raw: &str) -> Vec<StreamEvent> {
+        let mut events: Vec<StreamEvent> = Vec::new();
+        let mut acc = SseAccumulator::default();
+        let mut current_event = String::new();
+
+        for line in raw.lines() {
+            let line = line.trim();
+            if let Some(event_type) = line.strip_prefix("event: ") {
+                current_event = event_type.to_string();
+                continue;
+            }
+            if let Some(data) = line.strip_prefix("data: ") {
+                let chunk: serde_json::Value = serde_json::from_str(data).unwrap_or_default();
+                if Self::collect_sse_event(current_event.as_str(), &chunk, &mut acc, &mut events) {
+                    break;
+                }
+            }
+        }
+
+        events.push(StreamEvent::Done(acc.into_response()));
+        events
+    }
+
+    /// Dispatch one SSE event into the accumulator and event list.
+    ///
+    /// Returns `true` when `message_stop` is received (caller should stop).
+    fn collect_sse_event(
+        event_type: &str,
+        chunk: &serde_json::Value,
+        acc: &mut SseAccumulator,
+        events: &mut Vec<StreamEvent>,
+    ) -> bool {
+        use anthropic_sse::stream_event_from_delta;
+        match event_type {
+            "message_start" => acc.handle_message_start(chunk),
+            "content_block_start" => {
+                let block = &chunk["content_block"];
+                if block["type"].as_str() == Some("tool_use") {
+                    let id = block["id"].as_str().unwrap_or_default().to_string();
+                    let name = block["name"].as_str().unwrap_or_default().to_string();
+                    events.push(StreamEvent::ToolCallStart { id, name });
+                }
+                acc.handle_block_start(chunk);
+            }
+            "content_block_delta" => {
+                if let Some(ev) = stream_event_from_delta(&chunk["delta"]) {
+                    events.push(ev);
+                }
+                acc.handle_block_delta(chunk);
+            }
+            "content_block_stop" => {
+                if acc.in_tool_input {
+                    events.push(StreamEvent::ToolCallEnd {
+                        id: acc.current_tool_id.clone(),
+                        name: acc.current_tool_name.clone(),
+                        arguments: acc.current_tool_input.clone(),
+                    });
+                }
+                acc.handle_block_stop();
+            }
+            "message_delta" => acc.handle_message_delta(chunk),
+            "message_stop" => return true,
+            _ => {}
+        }
+        false
+    }
+
+    /// Public wrapper for `parse_sse_events` (for BDD tests — #181).
+    pub fn parse_sse_events_public(raw: &str) -> Vec<StreamEvent> {
+        Self::parse_sse_events(raw)
     }
 
     /// Public wrapper for `build_tool_result_message` (for BDD tests).

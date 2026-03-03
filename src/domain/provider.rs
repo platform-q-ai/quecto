@@ -7,6 +7,32 @@ use super::{
     tool::ToolDefinition,
 };
 
+/// Incremental streaming event emitted by `chat_stream_incremental()`.
+///
+/// Callers receive these events as each SSE packet arrives from the LLM,
+/// enabling real-time token rendering without buffering the full response.
+#[derive(Debug)]
+pub enum StreamEvent {
+    /// A text token arrived (maps to Anthropic `text_delta`).
+    TextDelta(String),
+    /// A thinking token arrived (maps to Anthropic `thinking_delta`).
+    ThinkingDelta(String),
+    /// A tool call started; the model is about to stream its arguments.
+    ToolCallStart { id: String, name: String },
+    /// A partial JSON fragment of tool arguments arrived (`input_json_delta`).
+    ToolCallDelta(String),
+    /// A tool call finished; `arguments` is the fully assembled JSON string.
+    ToolCallEnd {
+        id: String,
+        name: String,
+        arguments: String,
+    },
+    /// The LLM turn is complete. Contains the fully assembled `LlmResponse`.
+    Done(LlmResponse),
+    /// A terminal error occurred during streaming (error message string).
+    Error(String),
+}
+
 /// Parameters for a chat request to an LLM provider.
 #[derive(Debug, Clone)]
 pub struct ChatRequest<'a> {
@@ -110,6 +136,35 @@ pub trait LlmProvider: Send + Sync + std::fmt::Debug {
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         self.chat(request)
+    }
+
+    /// Send a streaming chat request and return a channel that emits
+    /// incremental [`StreamEvent`]s as each SSE packet arrives.
+    ///
+    /// The channel is closed after either a [`StreamEvent::Done`] or
+    /// [`StreamEvent::Error`] is sent. Callers should read until the channel
+    /// closes or until they receive one of those terminal events.
+    ///
+    /// Default implementation wraps `chat_stream()` and emits a single
+    /// `Done` or `Error` event — no true incremental delivery.
+    /// Providers that support byte-stream SSE should override this method.
+    fn chat_stream_incremental(
+        &self,
+        request: ChatRequest<'_>,
+    ) -> Pin<Box<dyn Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + '_>> {
+        let fut = self.chat_stream(request);
+        Box::pin(async move {
+            let (tx, rx) = tokio::sync::mpsc::channel(32);
+            match fut.await {
+                Ok(resp) => {
+                    let _ = tx.send(StreamEvent::Done(resp)).await;
+                }
+                Err(e) => {
+                    let _ = tx.send(StreamEvent::Error(e.to_string())).await;
+                }
+            }
+            rx
+        })
     }
 }
 

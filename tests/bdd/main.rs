@@ -559,6 +559,10 @@ pub struct QuectoWorld {
     pub captured_log_output: Option<Arc<Mutex<String>>>,
     /// Streaming response from provider streaming scenarios
     pub streaming_response: Option<LlmResponse>,
+    /// Incremental stream events collected from chat_stream_incremental scenarios (#181)
+    pub stream_events: Vec<quecto::domain::provider::StreamEvent>,
+    /// Whether any parse error occurred during incremental streaming (#181)
+    pub stream_had_parse_error: bool,
     /// Context pruning: in-memory spill store
     pub context_spill_store: Option<DebugSpillStore>,
     /// Context pruning: messages under test

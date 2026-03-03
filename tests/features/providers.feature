@@ -234,3 +234,60 @@ Feature: LLM Providers
     Given usage data with 1000 prompt tokens and 500 completion tokens for model "unknown-model"
     When I calculate the cost
     Then cost should be None
+
+  # --- #181: True incremental SSE streaming ---
+
+  Scenario: StreamEvent TextDelta carries individual text tokens
+    Given an Anthropic SSE chunk with a text_delta event containing "Hello"
+    When I parse the SSE chunk as a stream event
+    Then the stream event should be a TextDelta with text "Hello"
+
+  Scenario: StreamEvent ThinkingDelta carries thinking tokens
+    Given an Anthropic SSE chunk with a thinking_delta event containing "Let me think"
+    When I parse the SSE chunk as a stream event
+    Then the stream event should be a ThinkingDelta with text "Let me think"
+
+  Scenario: StreamEvent ToolCallStart carries tool id and name
+    Given an Anthropic SSE chunk with a content_block_start for tool "bash" with id "toolu_001"
+    When I parse the SSE chunk as a stream event
+    Then the stream event should be a ToolCallStart with id "toolu_001" and name "bash"
+
+  Scenario: StreamEvent ToolCallDelta carries partial JSON argument
+    Given an Anthropic SSE chunk with an input_json_delta containing "{\"cmd\":"
+    When I parse the SSE chunk as a stream event
+    Then the stream event should be a ToolCallDelta with partial "{\"cmd\":"
+
+  Scenario: StreamEvent ToolCallEnd is emitted on content_block_stop for a tool
+    Given an Anthropic SSE chunk with a content_block_stop for tool "bash" id "toolu_001" and accumulated input "{\"cmd\":\"ls\"}"
+    When I parse the SSE chunk as a stream event
+    Then the stream event should be a ToolCallEnd with id "toolu_001" name "bash" and arguments "{\"cmd\":\"ls\"}"
+
+  Scenario: Incremental SSE stream emits TextDelta events before Done
+    Given an Anthropic mock server that streams text "Hello world" in 3 chunks
+    When I send an incremental streaming chat request
+    Then I should receive TextDelta events totalling "Hello world"
+    And the final event should be Done with content "Hello world"
+
+  Scenario: Incremental SSE stream emits ToolCallStart then ToolCallDelta then ToolCallEnd then Done
+    Given an Anthropic mock server that streams a tool call for "bash" with arguments "{\"command\":\"ls\"}"
+    When I send an incremental streaming chat request
+    Then I should receive a ToolCallStart event for tool "bash"
+    And I should receive ToolCallDelta events
+    And I should receive a ToolCallEnd event for tool "bash" with arguments "{\"command\":\"ls\"}"
+    And the final event should be Done with a tool call for "bash"
+
+  Scenario: Incremental SSE stream emits Error event on HTTP failure
+    Given an Anthropic mock server that returns an HTTP 500 error
+    When I send an incremental streaming chat request
+    Then I should receive an Error stream event
+
+  Scenario: Incremental SSE stream handles chunked byte boundaries gracefully
+    Given an Anthropic mock server that sends SSE lines split across byte chunks
+    When I send an incremental streaming chat request
+    Then I should receive TextDelta events totalling the expected text
+    And no parse errors should occur
+
+  Scenario: chat_stream_incremental assembles same LlmResponse as chat_stream
+    Given an Anthropic mock server that streams a complete response with text and tool call
+    When I send both a streaming and an incremental streaming chat request
+    Then both responses should have identical content and tool calls
