@@ -181,6 +181,40 @@ pub fn resolve_api_key_with_refresh(
 /// Check which providers have expired credentials and need re-authentication.
 ///
 /// Operates on a pre-loaded snapshot to avoid redundant file I/O.
+/// Resolve the effective workspace directory for an agent or REPL invocation.
+///
+/// When `no_sandbox` is `true`, the agent should operate from the **process's
+/// current working directory** rather than the configured workspace path. This
+/// lets users run `quecto --no-sandbox` from any directory and have the agent
+/// see that directory as its root, matching how every other CLI tool behaves.
+///
+/// When sandbox is enabled (the default), the configured workspace path is used.
+///
+/// # Arguments
+///
+/// * `config_workspace` — the resolved workspace path from config (already `~`-expanded)
+/// * `no_sandbox` — whether the `--no-sandbox` flag was passed
+pub fn resolve_agent_workspace(config_workspace: &str, no_sandbox: bool) -> std::path::PathBuf {
+    if no_sandbox {
+        match std::env::current_dir() {
+            Ok(cwd) => cwd,
+            Err(e) => {
+                // CWD is unavailable (e.g. deleted directory). Fall back to the
+                // config workspace and emit a warning so the user is not silently
+                // misled about which directory the agent is operating from.
+                tracing::warn!(
+                    error = %e,
+                    fallback = config_workspace,
+                    "--no-sandbox: current_dir() failed, falling back to config workspace"
+                );
+                std::path::PathBuf::from(config_workspace)
+            }
+        }
+    } else {
+        std::path::PathBuf::from(config_workspace)
+    }
+}
+
 pub fn check_provider_readiness(creds: &HashMap<String, Credential>) -> Vec<String> {
     creds
         .values()

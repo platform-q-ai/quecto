@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::CliContext;
@@ -271,7 +270,10 @@ pub(crate) fn build_agent_from_config(
         }
     };
 
-    let workspace = PathBuf::from(config.workspace_path());
+    let workspace = crate::interface::shared::resolve_agent_workspace(
+        &config.workspace_path(),
+        flags.no_sandbox,
+    );
     let model = flags
         .model_override
         .clone()

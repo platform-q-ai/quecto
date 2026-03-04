@@ -114,6 +114,35 @@ fn test_build_agent_no_sandbox_emits_warning() {
     );
 }
 
+// ===================================================================
+// --no-sandbox uses CWD as workspace root
+// ===================================================================
+
+/// `shared::resolve_agent_workspace` must return CWD when no_sandbox=true.
+#[test]
+fn test_resolve_agent_workspace_no_sandbox_returns_cwd() {
+    let cwd = std::env::current_dir().unwrap();
+    let result =
+        crate::interface::shared::resolve_agent_workspace("/some/configured/workspace", true);
+    assert_eq!(
+        result, cwd,
+        "--no-sandbox should return current_dir(), got {:?}",
+        result
+    );
+}
+
+/// `shared::resolve_agent_workspace` must return the config workspace when no_sandbox=false.
+#[test]
+fn test_resolve_agent_workspace_sandboxed_returns_config() {
+    let result =
+        crate::interface::shared::resolve_agent_workspace("/some/configured/workspace", false);
+    assert_eq!(
+        result.to_string_lossy(),
+        "/some/configured/workspace",
+        "sandboxed mode should use config workspace"
+    );
+}
+
 /// Verify that without --no-sandbox, config's restrict_to_workspace: true is
 /// honoured (no warning emitted, agent still builds).
 #[test]

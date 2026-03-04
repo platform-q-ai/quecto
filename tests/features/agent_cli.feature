@@ -112,3 +112,17 @@ Feature: Agent CLI — Headless One-Shot Mode
     When I run quecto help
     Then the exit code should be 0
     And stdout should contain "--no-sandbox"
+
+  # --no-sandbox uses CWD as workspace root
+  # Tested at unit level in agent_no_sandbox_tests.rs::test_resolve_agent_workspace_*
+  # BDD scenario is pending because in-process CWD mutation is global and unsafe in
+  # a parallel test harness; the logic is fully covered by the unit tests.
+  # TODO(no-issue): promote to @done once a subprocess-based step runner is available.
+  @pending
+  Scenario: --no-sandbox uses the process CWD as workspace root
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "cwd-root"
+    When I run quecto agent --no-sandbox -m "hello" from a custom working directory
+    Then the exit code should be 0
+    And the agent workspace should equal the custom working directory

@@ -305,7 +305,10 @@ pub fn run_repl<R: BufRead, W: Write>(
     is_tty: bool,
     ctx: &ReplContext<'_>,
 ) -> i32 {
-    let workspace = PathBuf::from(ctx.config.workspace_path());
+    let workspace = crate::interface::shared::resolve_agent_workspace(
+        &ctx.config.workspace_path(),
+        ctx.flags.no_sandbox,
+    );
     let model = ctx
         .flags
         .model_override
