@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
-use crate::domain::provider::{ChatRequest, LlmProvider, model_excluded_from_provider};
+use crate::domain::provider::{ChatRequest, LlmProvider};
 
 use super::error::ErrorClass;
 
@@ -127,13 +127,13 @@ impl FallbackProvider {
 
     /// Try to send a chat request, falling back through available providers.
     ///
-    /// Model-aware routing: if the model name has a definitive owner (e.g.
-    /// `claude-*` → Anthropic), only that provider is tried. Unknown model
-    /// names fall through all providers in insertion order as before.
+    /// **Explicit routing via `provider/model` syntax**: when the model string
+    /// contains a `/`, only providers whose name matches the prefix are tried,
+    /// and the bare model id (the part after `/`) is forwarded. Unknown prefixes
+    /// return an error immediately.
     ///
-    /// Provider-qualified model syntax (`provider/model`) is also supported.
-    /// When present, only matching providers are considered and providers receive
-    /// only the bare model id segment.
+    /// **Bare model names** (no `/`) are tried against all available providers
+    /// in insertion order; the first successful response wins.
     async fn try_chat(&self, request: &ChatRequest<'_>) -> Result<LlmResponse, DomainError> {
         let mut last_error: Option<DomainError> = None;
         let qualified = parse_qualified_model(request.model);
@@ -149,11 +149,6 @@ impl FallbackProvider {
             } else {
                 request.model
             };
-
-            // Skip providers that definitely cannot serve this model.
-            if model_excluded_from_provider(effective_model, entry.provider.name()) {
-                continue;
-            }
 
             if !entry.is_available() {
                 continue;
@@ -193,9 +188,10 @@ impl FallbackProvider {
 
         if let Some((provider_prefix, _)) = qualified {
             if !matched_qualified_provider {
+                let truncated = &provider_prefix[..provider_prefix.len().min(MAX_PREFIX_IN_ERROR)];
                 return Err(DomainError::Provider(format!(
                     "no configured provider matches model prefix '{}'",
-                    provider_prefix
+                    truncated
                 )));
             }
         }
@@ -205,24 +201,38 @@ impl FallbackProvider {
     }
 }
 
+/// Parse a `provider/model` string into its two parts.
+///
+/// Returns `None` for bare model names (no `/`) or malformed inputs.
+/// Rejects nested slashes in the model segment (`a/b/c`) to avoid
+/// forwarding multi-segment paths like `models/gpt-4o` to providers.
 fn parse_qualified_model(model: &str) -> Option<(&str, &str)> {
     let (provider, model_id) = model.split_once('/')?;
     let provider = provider.trim();
     let model_id = model_id.trim();
-    if provider.is_empty() || model_id.is_empty() {
+    // Reject empty segments or nested slashes in the model id.
+    if provider.is_empty() || model_id.is_empty() || model_id.contains('/') {
         return None;
     }
     Some((provider, model_id))
 }
 
+/// Returns `true` when `prefix` names the same provider as `provider_name`.
+///
+/// Supports well-known aliases:
+/// - `"openai"` and `"openai-codex"` both resolve to the `"codex"` provider
+///   (ChatGPT OAuth token path).
+///
+/// Comparison is case-insensitive. Provider names from registered providers
+/// are expected to be trimmed; the prefix comes from user input and is also
+/// trimmed by `parse_qualified_model` before reaching here.
 fn provider_prefix_matches(prefix: &str, provider_name: &str) -> bool {
-    let prefix = prefix.trim();
-    let provider_name = provider_name.trim();
-
     if prefix.eq_ignore_ascii_case(provider_name) {
         return true;
     }
 
+    // "openai" and "openai-codex" are conventional aliases for the Codex
+    // provider (ChatGPT backend using OAuth tokens).
     if provider_name.eq_ignore_ascii_case("codex") {
         return prefix.eq_ignore_ascii_case("openai")
             || prefix.eq_ignore_ascii_case("openai-codex");
@@ -230,6 +240,10 @@ fn provider_prefix_matches(prefix: &str, provider_name: &str) -> bool {
 
     false
 }
+
+/// Maximum length of a provider prefix included in error messages.
+/// Prevents unbounded user input from bloating log lines.
+const MAX_PREFIX_IN_ERROR: usize = 64;
 
 fn extract_http_status(msg: &str) -> Option<u16> {
     let lowered = msg.to_ascii_lowercase();

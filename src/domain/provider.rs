@@ -129,17 +129,6 @@ pub struct RequestMetadata {
     pub user_id: Option<String>,
 }
 
-/// **Deprecated — always returns `false`.**
-///
-/// Previously performed implicit model-name-based routing (e.g. `claude-*` → Anthropic).
-/// This has been removed in favour of explicit `provider/model` syntax at the CLI/RPC
-/// layer. Use `--model anthropic/claude-opus-4-5` to target a specific provider.
-///
-/// Kept as a no-op stub so callers compile without changes during the transition.
-pub fn model_excluded_from_provider(_model: &str, _provider_name: &str) -> bool {
-    false
-}
-
 /// Port: an LLM provider that can process chat requests.
 pub trait LlmProvider: Send + Sync + std::fmt::Debug {
     /// Human-readable provider name (e.g. "openai", "anthropic").
@@ -189,25 +178,5 @@ pub trait LlmProvider: Send + Sync + std::fmt::Debug {
             }
             rx
         })
-    }
-}
-
-#[cfg(test)]
-mod routing_tests {
-    use super::*;
-
-    #[test]
-    fn model_excluded_from_provider_always_returns_false() {
-        // Smart matching removed — function is a no-op stub.
-        // All model names are accepted by all providers; routing is done
-        // via explicit provider/model syntax in the FallbackProvider.
-        assert!(!model_excluded_from_provider("claude-opus-4-5", "openai"));
-        assert!(!model_excluded_from_provider(
-            "claude-opus-4-5",
-            "anthropic"
-        ));
-        assert!(!model_excluded_from_provider("gpt-4o", "openai"));
-        assert!(!model_excluded_from_provider("gpt-4o", "anthropic"));
-        assert!(!model_excluded_from_provider("", "openai"));
     }
 }

@@ -482,3 +482,24 @@ async fn test_provider_qualified_model_with_unknown_prefix_fails_fast() {
     );
     assert!(!openai.was_called());
 }
+
+#[tokio::test]
+async fn test_nested_slash_model_treated_as_bare_name() {
+    // "openai/models/gpt-4o" has a nested slash in the model segment.
+    // parse_qualified_model rejects it, so it falls through as a bare name.
+    let openai = TrackingProvider::succeeding("openai", "OpenAI response");
+    let provider = FallbackProvider::new(vec![openai.clone() as Arc<dyn LlmProvider>]);
+
+    let messages = test_messages();
+    let resp = provider
+        .chat(make_request(&messages, "openai/models/gpt-4o"))
+        .await
+        .unwrap();
+
+    // Treated as bare name — first provider gets the full string unchanged.
+    assert_eq!(resp.content.unwrap(), "OpenAI response");
+    assert_eq!(
+        openai.received_model().as_deref(),
+        Some("openai/models/gpt-4o")
+    );
+}

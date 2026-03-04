@@ -196,6 +196,13 @@ impl CodexProvider {
     }
 
     /// Validate request constraints that are specific to the ChatGPT Codex backend.
+    ///
+    /// The slash check is defense-in-depth: `FallbackProvider` strips the
+    /// provider prefix before dispatching here, so a well-formed call never
+    /// carries a slash. However callers that bypass `FallbackProvider` (e.g.
+    /// tests, future code paths) could pass a provider-qualified name, which
+    /// the Codex backend would silently reject with an opaque HTTP 400. The
+    /// check surfaces this misconfiguration early with a clear message.
     fn validate_request(request: &ChatRequest<'_>) -> Result<(), DomainError> {
         if request.model.contains('/') {
             return Err(DomainError::Provider(
