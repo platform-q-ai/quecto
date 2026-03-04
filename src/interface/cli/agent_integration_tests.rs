@@ -357,6 +357,7 @@ fn test_run_agent_session_ephemeral_no_save() {
         max_iterations: None,
         max_time: None,
         mode: super::AgentMode::OneShot,
+        no_sandbox: false,
     };
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -390,6 +391,7 @@ fn test_run_agent_session_default_session_key() {
         max_iterations: None,
         max_time: None,
         mode: super::AgentMode::OneShot,
+        no_sandbox: false,
     };
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -415,6 +417,7 @@ fn test_run_agent_session_with_system_prompt_injection() {
         max_iterations: None,
         max_time: None,
         mode: super::AgentMode::OneShot,
+        no_sandbox: false,
     };
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -440,6 +443,7 @@ fn test_run_agent_session_with_deadline() {
         max_iterations: None,
         max_time: Some(2),
         mode: super::AgentMode::OneShot,
+        no_sandbox: false,
     };
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -535,6 +539,7 @@ fn test_run_agent_session_loads_existing_session() {
         max_iterations: None,
         max_time: None,
         mode: super::AgentMode::OneShot,
+        no_sandbox: false,
     };
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -571,6 +576,7 @@ fn test_run_agent_session_loads_existing_with_system_prompt() {
         max_iterations: None,
         max_time: None,
         mode: super::AgentMode::OneShot,
+        no_sandbox: false,
     };
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -606,6 +612,7 @@ fn test_build_agent_from_config_with_workspace_path() {
         max_iterations: None,
         max_time: None,
         mode: super::AgentMode::OneShot,
+        no_sandbox: false,
     };
     let mut stderr = String::new();
     let result = build_agent_from_config(tmp.path(), &flags, &mut stderr);
@@ -629,6 +636,7 @@ fn test_build_agent_from_config_with_max_iterations() {
         max_iterations: Some(7),
         max_time: None,
         mode: super::AgentMode::OneShot,
+        no_sandbox: false,
     };
     let mut stderr = String::new();
     let result = build_agent_from_config(tmp.path(), &flags, &mut stderr);

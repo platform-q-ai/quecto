@@ -45,6 +45,10 @@ pub(crate) struct AgentFlags {
     pub(crate) max_time: Option<u64>,
     /// Operating mode (default: one-shot).
     pub(crate) mode: AgentMode,
+    /// When true, disable workspace path restriction for all filesystem tools.
+    /// Overrides `config.agents.defaults.restrict_to_workspace`.
+    /// WARNING: allows the agent to read/write any path on the system.
+    pub(crate) no_sandbox: bool,
 }
 
 /// Bundles the stdout/stderr pair passed through the agent pipeline.
@@ -107,12 +111,17 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut max_iterations: Option<u32> = None;
     let mut max_time: Option<u64> = None;
     let mut mode = AgentMode::OneShot;
+    let mut no_sandbox = false;
     let mut i = 0;
 
     while i < args.len() {
         match args[i].as_str() {
             "--no-session" => {
                 no_session = true;
+                i += 1;
+            }
+            "--no-sandbox" => {
+                no_sandbox = true;
                 i += 1;
             }
             "-s" | "--session" => {
@@ -184,6 +193,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         max_iterations,
         max_time,
         mode,
+        no_sandbox,
     })
 }
 
@@ -266,10 +276,13 @@ pub(crate) fn build_agent_from_config(
         .model_override
         .clone()
         .unwrap_or(config.agents.defaults.model.clone());
-    let sandbox = Sandbox::new(
-        Some(workspace.clone()),
-        config.agents.defaults.restrict_to_workspace,
-    );
+    // --no-sandbox overrides config: disables workspace path restriction for all
+    // filesystem tools. The dangerous-command denylist remains active regardless.
+    let restrict_to_workspace = !flags.no_sandbox && config.agents.defaults.restrict_to_workspace;
+    if flags.no_sandbox {
+        stderr.push_str("WARNING: --no-sandbox is active — workspace path restriction disabled\n");
+    }
+    let sandbox = Sandbox::new(Some(workspace.clone()), restrict_to_workspace);
     let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
     let registry =
         ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
@@ -287,7 +300,7 @@ pub(crate) fn build_agent_from_config(
     )));
     registry.register(Arc::new(SpawnTool::with_base_dir(
         vec![],
-        config.agents.defaults.restrict_to_workspace,
+        restrict_to_workspace,
         base_dir.to_path_buf(),
     )));
     let agent = AgentLoopImpl::new(AgentLoopConfig {
@@ -595,3 +608,7 @@ mod integration_tests;
 #[cfg(test)]
 #[path = "agent_no_session_tests.rs"]
 mod no_session_tests;
+
+#[cfg(test)]
+#[path = "agent_no_sandbox_tests.rs"]
+mod no_sandbox_tests;

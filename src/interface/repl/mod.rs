@@ -24,10 +24,22 @@ use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use std::path::PathBuf;
 
 /// Parsed flags that apply to REPL mode.
+///
+/// # Security note
+///
+/// The `no_sandbox` field disables the workspace path restriction that confines
+/// all filesystem tools to the configured workspace directory. Setting it to
+/// `true` allows the agent to read and write **any path on the system**.
+/// This is intentional when running quecto as a coding assistant on an arbitrary
+/// repo, but must never be set implicitly or without user consent.
 pub struct ReplFlags {
     pub session_name: Option<String>,
     pub system_prompt: Option<String>,
     pub model_override: Option<String>,
+    /// When true, disable workspace path restriction for all filesystem tools.
+    /// Overrides `config.agents.defaults.restrict_to_workspace`.
+    /// WARNING: allows the agent to read/write any path on the system.
+    pub no_sandbox: bool,
 }
 
 /// Session state for the REPL (agent, persistence, history).
@@ -299,10 +311,14 @@ pub fn run_repl<R: BufRead, W: Write>(
         .model_override
         .clone()
         .unwrap_or(ctx.config.agents.defaults.model.clone());
-    let sandbox = Sandbox::new(
-        Some(workspace.clone()),
-        ctx.config.agents.defaults.restrict_to_workspace,
-    );
+    // --no-sandbox overrides config: disables workspace path restriction for all
+    // filesystem tools. The dangerous-command denylist remains active regardless.
+    let restrict_to_workspace =
+        !ctx.flags.no_sandbox && ctx.config.agents.defaults.restrict_to_workspace;
+    if ctx.flags.no_sandbox {
+        tracing::warn!("--no-sandbox: workspace path restriction disabled");
+    }
+    let sandbox = Sandbox::new(Some(workspace.clone()), restrict_to_workspace);
     let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(ctx.config);
     let mut registry =
         ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
