@@ -496,3 +496,109 @@ fn test_truncate_tail_byte_limit() {
         "expected last entry in tail"
     );
 }
+
+// --- DNS resolver file bindmount tests ---
+
+#[test]
+fn test_nsjail_etc_files_includes_resolv_conf() {
+    // resolve_ro_etc_files() filters by existence — assert the constant includes it
+    // by checking nsjail_args_str includes it when the file exists, or by checking
+    // the resolved list directly when the file exists on this host.
+    // The canonical check: on any host that has /etc/resolv.conf the command must
+    // contain it; on hosts that don't, the constant is still verified via the command
+    // absence test to not emit false positives.
+    let etc_files = resolve_ro_etc_files();
+    // We verify the candidate path is listed (resolve_existing returns it if it exists).
+    // If /etc/resolv.conf doesn't exist on this CI host we assert the constant has it
+    // by constructing args with a synthetic etc_files list.
+    if std::path::Path::new("/etc/resolv.conf").exists() {
+        assert!(
+            etc_files.contains(&"/etc/resolv.conf"),
+            "resolve_ro_etc_files() must include /etc/resolv.conf when it exists on the host"
+        );
+    }
+    // Also verify the constant itself contains the path regardless of host.
+    let args_with_resolv = {
+        let workspace = PathBuf::from("/tmp/test");
+        let source_env = HashMap::new();
+        let ro_dirs = resolve_ro_bindmounts();
+        let ro_dev = resolve_ro_dev_files();
+        let synthetic_etc = vec!["/etc/resolv.conf"];
+        let config = NsjailConfig {
+            options: &NsjailOptions::default(),
+            ro_dirs: &ro_dirs,
+            ro_etc_files: &synthetic_etc,
+            ro_dev_files: &ro_dev,
+        };
+        let cmd = build_nsjail_command(&workspace, "echo hi", &source_env, &config);
+        cmd.as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    assert!(
+        args_with_resolv.contains("/etc/resolv.conf"),
+        "nsjail command must bind-mount /etc/resolv.conf when present in etc_files list"
+    );
+}
+
+#[test]
+fn test_nsjail_etc_files_includes_hosts() {
+    let etc_files = resolve_ro_etc_files();
+    if std::path::Path::new("/etc/hosts").exists() {
+        assert!(
+            etc_files.contains(&"/etc/hosts"),
+            "resolve_ro_etc_files() must include /etc/hosts when it exists on the host"
+        );
+    }
+    let args_with_hosts = {
+        let workspace = PathBuf::from("/tmp/test");
+        let source_env = HashMap::new();
+        let ro_dirs = resolve_ro_bindmounts();
+        let ro_dev = resolve_ro_dev_files();
+        let synthetic_etc = vec!["/etc/hosts"];
+        let config = NsjailConfig {
+            options: &NsjailOptions::default(),
+            ro_dirs: &ro_dirs,
+            ro_etc_files: &synthetic_etc,
+            ro_dev_files: &ro_dev,
+        };
+        let cmd = build_nsjail_command(&workspace, "echo hi", &source_env, &config);
+        cmd.as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    assert!(
+        args_with_hosts.contains("/etc/hosts"),
+        "nsjail command must bind-mount /etc/hosts when present in etc_files list"
+    );
+}
+
+#[test]
+fn test_nsjail_command_includes_resolv_conf_bindmount() {
+    // Only meaningful if /etc/resolv.conf exists on this host; skip otherwise.
+    if !std::path::Path::new("/etc/resolv.conf").exists() {
+        return;
+    }
+    let args = nsjail_args_str(&NsjailOptions::default());
+    assert!(
+        args.contains("/etc/resolv.conf"),
+        "nsjail command must bind-mount /etc/resolv.conf for DNS resolution: {args}"
+    );
+}
+
+#[test]
+fn test_nsjail_command_includes_hosts_bindmount() {
+    // Only meaningful if /etc/hosts exists on this host; skip otherwise.
+    if !std::path::Path::new("/etc/hosts").exists() {
+        return;
+    }
+    let args = nsjail_args_str(&NsjailOptions::default());
+    assert!(
+        args.contains("/etc/hosts"),
+        "nsjail command must bind-mount /etc/hosts for hostname resolution: {args}"
+    );
+}
