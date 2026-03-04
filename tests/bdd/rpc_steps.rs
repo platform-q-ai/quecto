@@ -287,6 +287,12 @@ fn when_queue_rpc_steer(world: &mut QuectoWorld, message: String, id: String) {
     world.rpc_stdin_lines.push(cmd.to_string());
 }
 
+#[when(expr = "I queue RPC get_messages_tail with count {int} and id {string}")]
+fn when_queue_rpc_get_messages_tail(world: &mut QuectoWorld, count: usize, id: String) {
+    let cmd = serde_json::json!({"type": "get_messages_tail", "id": id, "count": count});
+    world.rpc_stdin_lines.push(cmd.to_string());
+}
+
 #[when(expr = "I queue RPC raw line {string}")]
 fn when_queue_rpc_raw_line(world: &mut QuectoWorld, line: String) {
     world.rpc_stdin_lines.push(line);
@@ -500,6 +506,41 @@ fn then_rpc_get_messages_has_array(world: &mut QuectoWorld, field: String) {
         resp["data"][&field].is_array(),
         "expected get_messages.data.{field} to be an array\ngot: {}",
         resp["data"]
+    );
+}
+
+// ─── get_messages_tail assertions ─────────────────────────────────────────────
+
+#[then(expr = "the RPC get_messages_tail response should include a {string} array")]
+fn then_rpc_get_messages_tail_has_array(world: &mut QuectoWorld, field: String) {
+    let resp = find_response(world, "get_messages_tail").expect("no get_messages_tail response");
+    assert!(
+        resp["data"][&field].is_array(),
+        "expected get_messages_tail.data.{field} to be an array\ngot: {}",
+        resp["data"]
+    );
+}
+
+#[then(expr = "the RPC get_messages_tail messages count should be at most {int}")]
+fn then_rpc_get_messages_tail_count_at_most(world: &mut QuectoWorld, max: usize) {
+    let resp = find_response(world, "get_messages_tail").expect("no get_messages_tail response");
+    let count = resp["data"]["messages"]
+        .as_array()
+        .map(|a| a.len())
+        .unwrap_or(0);
+    assert!(count <= max, "expected at most {max} messages, got {count}");
+}
+
+#[then(expr = "the RPC get_messages_tail messages count should be exactly {int}")]
+fn then_rpc_get_messages_tail_count_exactly(world: &mut QuectoWorld, expected: usize) {
+    let resp = find_response(world, "get_messages_tail").expect("no get_messages_tail response");
+    let count = resp["data"]["messages"]
+        .as_array()
+        .map(|a| a.len())
+        .unwrap_or(0);
+    assert_eq!(
+        count, expected,
+        "expected exactly {expected} messages, got {count}"
     );
 }
 
