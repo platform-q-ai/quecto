@@ -273,6 +273,11 @@ fn test_build_agent_network_flag_emits_warning() {
         "expected --network warning in stderr, got: {}",
         stderr
     );
+    assert!(
+        stderr.contains("network namespace isolation disabled"),
+        "expected network namespace message in stderr, got: {}",
+        stderr
+    );
 }
 
 /// Without --network, no network warning should appear.

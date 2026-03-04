@@ -331,10 +331,13 @@ pub fn run_repl<R: BufRead, W: Write>(
     }
     let sandbox = Sandbox::new(Some(workspace.clone()), restrict_to_workspace);
     let mut exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(ctx.config);
-    // --network overrides config: enables network access inside bash tool calls.
+    // --network overrides config: enables network access inside bash tool calls by
+    // disabling nsjail's network namespace isolation. nsjail still runs for all other
+    // isolation (filesystem, PIDs, memory, CPU). The dangerous-command denylist
+    // remains active regardless.
     if ctx.flags.network {
         exec_settings.network_passthrough = true;
-        tracing::warn!("--network: bash tool network isolation disabled");
+        tracing::warn!("--network: bash network namespace isolation disabled");
     }
     let mut registry =
         ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);

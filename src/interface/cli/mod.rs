@@ -426,7 +426,7 @@ fn help_text(out: &mut String) {
         "                       --no-sandbox  Disable workspace path restriction (DANGEROUS)\n",
     );
     out.push_str(
-        "                       --network     Enable bash tool network access (DANGEROUS)\n",
+        "                       --network     Enable outbound network in bash (disables nsjail net namespace)\n",
     );
     out.push_str("                       --model <m>   Override model\n");
     out.push_str("                       --system <p>  System prompt\n");

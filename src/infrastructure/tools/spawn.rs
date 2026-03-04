@@ -52,7 +52,16 @@ impl SpawnTool {
         }
     }
 
-    /// Enable network passthrough for spawned child agents.
+    /// Enable or disable network passthrough for spawned child agents.
+    ///
+    /// Pass the effective `exec_settings.network_passthrough` value (which already
+    /// reflects both config defaults and any `--network` CLI override) so that
+    /// child agents inherit the parent's network posture, including config-level
+    /// `network_passthrough: true` settings that were not set via `--network`.
+    ///
+    /// The flag is also forwarded via `--network` in the child argv (see
+    /// `build_command`), ensuring grandchild agents spawned by this child also
+    /// inherit the posture.
     pub fn with_network(mut self, network_passthrough: bool) -> Self {
         self.network_passthrough = network_passthrough;
         self

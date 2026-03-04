@@ -296,14 +296,21 @@ pub(crate) fn build_agent_from_config(
         stderr.push_str("WARNING: --no-sandbox is active — workspace path restriction disabled\n");
     }
     let sandbox = Sandbox::new(Some(workspace.clone()), restrict_to_workspace);
+    // Build exec settings from config first, then apply CLI overrides.
+    // ORDERING: overrides must happen before with_core_tools_and_exec_settings — do not reorder.
     let mut exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
     // --network overrides config: enables network access inside bash tool calls by
-    // disabling nsjail's network namespace isolation. The dangerous-command denylist
+    // disabling nsjail's network namespace isolation. nsjail still runs for all other
+    // isolation (filesystem, PIDs, memory, CPU). The dangerous-command denylist
     // remains active regardless.
     if flags.network {
         exec_settings.network_passthrough = true;
-        stderr.push_str("WARNING: --network is active — bash tool network isolation disabled\n");
+        stderr
+            .push_str("WARNING: --network is active — bash network namespace isolation disabled\n");
+        tracing::warn!("--network: bash network namespace isolation disabled");
     }
+    // Capture network_passthrough before exec_settings is moved into the registry.
+    let effective_network = exec_settings.network_passthrough;
     let registry =
         ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
     let mut registry = registry;
@@ -318,9 +325,13 @@ pub(crate) fn build_agent_from_config(
         spill_store.clone(),
         session_key.clone(),
     )));
+    // Propagate network_passthrough (which reflects both config and --network override)
+    // so child agents spawned via SpawnTool inherit the same network posture as the
+    // parent. The flag is also forwarded via argv (--network) so grandchild agents
+    // are covered too.
     registry.register(Arc::new(
         SpawnTool::with_base_dir(vec![], restrict_to_workspace, base_dir.to_path_buf())
-            .with_network(flags.network),
+            .with_network(effective_network),
     ));
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
