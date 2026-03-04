@@ -236,6 +236,25 @@ pub(crate) fn cmd_agent(
     run_agent_session(&base_dir, agent, &flags, &mut out)
 }
 
+/// Resolve the effective workspace directory for an agent invocation.
+///
+/// When `--no-sandbox` is active, the agent should operate from the **process's
+/// current working directory** rather than the configured workspace path. This
+/// lets users run `quecto --no-sandbox` from any directory and have the agent
+/// see that directory as its root, matching how every other CLI tool behaves.
+///
+/// When sandbox is enabled (the default), the configured workspace path is used.
+pub(crate) fn resolve_agent_workspace(
+    config: &crate::infrastructure::config::Config,
+    no_sandbox: bool,
+) -> PathBuf {
+    if no_sandbox {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from(config.workspace_path()))
+    } else {
+        PathBuf::from(config.workspace_path())
+    }
+}
+
 /// Load config, build provider, and construct the agent loop. Returns None on error.
 pub(crate) fn build_agent_from_config(
     base_dir: &std::path::Path,
@@ -271,7 +290,7 @@ pub(crate) fn build_agent_from_config(
         }
     };
 
-    let workspace = PathBuf::from(config.workspace_path());
+    let workspace = resolve_agent_workspace(&config, flags.no_sandbox);
     let model = flags
         .model_override
         .clone()

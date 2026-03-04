@@ -114,6 +114,48 @@ fn test_build_agent_no_sandbox_emits_warning() {
     );
 }
 
+// ===================================================================
+// --no-sandbox uses CWD as workspace root
+// ===================================================================
+
+// ===================================================================
+// --no-sandbox uses CWD as workspace root
+// ===================================================================
+
+/// `resolve_agent_workspace` must return CWD when no_sandbox=true,
+/// regardless of what config.workspace_path() says.
+#[test]
+fn test_resolve_agent_workspace_no_sandbox_returns_cwd() {
+    use crate::infrastructure::config::Config;
+    let config: Config = serde_json::from_str(
+        r#"{"agents":{"defaults":{"workspace":"/some/configured/workspace"}}}"#,
+    )
+    .unwrap();
+    let cwd = std::env::current_dir().unwrap();
+    let result = resolve_agent_workspace(&config, true);
+    assert_eq!(
+        result, cwd,
+        "--no-sandbox should return current_dir(), got {:?}",
+        result
+    );
+}
+
+/// `resolve_agent_workspace` must return config.workspace_path() when no_sandbox=false.
+#[test]
+fn test_resolve_agent_workspace_sandboxed_returns_config() {
+    use crate::infrastructure::config::Config;
+    let config: Config = serde_json::from_str(
+        r#"{"agents":{"defaults":{"workspace":"/some/configured/workspace"}}}"#,
+    )
+    .unwrap();
+    let result = resolve_agent_workspace(&config, false);
+    assert_eq!(
+        result.to_string_lossy(),
+        "/some/configured/workspace",
+        "sandboxed mode should use config workspace"
+    );
+}
+
 /// Verify that without --no-sandbox, config's restrict_to_workspace: true is
 /// honoured (no warning emitted, agent still builds).
 #[test]

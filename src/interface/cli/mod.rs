@@ -11,6 +11,7 @@ use crate::infrastructure::config::Config;
 
 // Re-export public types for external consumers.
 pub use agent::build_agent_provider;
+pub(crate) use agent::resolve_agent_workspace;
 
 // Re-export shared functions for backward compatibility.
 pub use super::shared::{load_skill_prompt, merge_prompts};
