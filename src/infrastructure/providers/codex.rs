@@ -195,6 +195,34 @@ impl CodexProvider {
             .collect()
     }
 
+    /// Validate request constraints that are specific to the ChatGPT Codex backend.
+    ///
+    /// The slash check is defense-in-depth: `FallbackProvider` strips the
+    /// provider prefix before dispatching here, so a well-formed call never
+    /// carries a slash. However callers that bypass `FallbackProvider` (e.g.
+    /// tests, future code paths) could pass a provider-qualified name, which
+    /// the Codex backend would silently reject with an opaque HTTP 400. The
+    /// check surfaces this misconfiguration early with a clear message.
+    fn validate_request(request: &ChatRequest<'_>) -> Result<(), DomainError> {
+        if request.model.contains('/') {
+            return Err(DomainError::Provider(
+                "codex provider expects a bare model id (e.g. 'gpt-5.3-codex'), not a provider-qualified name".to_string(),
+            ));
+        }
+
+        let has_instructions = request
+            .messages
+            .iter()
+            .any(|m| matches!(m.role, Role::System) && !m.content.trim().is_empty());
+        if !has_instructions {
+            return Err(DomainError::Provider(
+                "codex provider requires instructions; include a non-empty system message (e.g. pass --system)".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
     /// Build the full request body.
     fn build_request_body(request: &ChatRequest<'_>) -> serde_json::Value {
         let (instructions, input) = Self::build_input(request.messages);
@@ -449,6 +477,10 @@ impl LlmProvider for CodexProvider {
         &self,
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+        if let Err(err) = Self::validate_request(&request) {
+            return Box::pin(async move { Err(err) });
+        }
+
         let body = Self::build_request_body(&request);
         let url = format!("{}/codex/responses", self.api_base);
 

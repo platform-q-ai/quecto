@@ -269,6 +269,12 @@ fn when_queue_rpc_set_model(world: &mut QuectoWorld, model: String) {
     world.rpc_stdin_lines.push(cmd.to_string());
 }
 
+#[when(expr = "I queue RPC set_model provider {string} modelId {string}")]
+fn when_queue_rpc_set_model_provider(world: &mut QuectoWorld, provider: String, model_id: String) {
+    let cmd = serde_json::json!({"type": "set_model", "id": "sm-1", "provider": provider, "modelId": model_id});
+    world.rpc_stdin_lines.push(cmd.to_string());
+}
+
 #[when(expr = "I queue RPC follow_up {string} with id {string}")]
 fn when_queue_rpc_follow_up(world: &mut QuectoWorld, message: String, id: String) {
     let cmd = serde_json::json!({"type": "follow_up", "id": id, "message": message});

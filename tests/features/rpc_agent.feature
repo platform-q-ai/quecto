@@ -157,7 +157,10 @@ Feature: RPC mode for headless agent operation
     Then the RPC stdout should contain a response command "set_model" with success true
     And the RPC get_state response model should be "gpt-5-mini"
 
-  @wip
+  # Note: provider+modelId is normalized to a single model string ("provider/modelId").
+  # The FallbackProvider strips the provider prefix before forwarding to the
+  # matched provider, so individual providers always receive bare model IDs.
+  @done
   Scenario: set_model accepts Pi-compatible provider and modelId fields
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server

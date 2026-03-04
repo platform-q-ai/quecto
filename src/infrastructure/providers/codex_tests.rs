@@ -357,7 +357,7 @@ async fn test_codex_provider_http_error() {
         "acct-123".to_string(),
         Some(server.uri()),
     );
-    let messages = vec![Message::user("hi")];
+    let messages = vec![Message::system("You are helpful."), Message::user("hi")];
     let result = provider
         .chat(ChatRequest {
             messages: &messages,
@@ -393,7 +393,7 @@ async fn test_codex_provider_success() {
         "acct-123".to_string(),
         Some(server.uri()),
     );
-    let messages = vec![Message::user("hello")];
+    let messages = vec![Message::system("You are helpful."), Message::user("hello")];
     let result = provider
         .chat(ChatRequest {
             messages: &messages,
@@ -410,6 +410,60 @@ async fn test_codex_provider_success() {
         .await;
     let resp = result.unwrap();
     assert_eq!(resp.content.unwrap(), "Hi!");
+}
+
+#[tokio::test]
+async fn test_codex_provider_rejects_provider_qualified_model_name() {
+    let provider = CodexProvider::new("test-token".to_string(), "acct-123".to_string(), None);
+    let messages = vec![Message::system("You are helpful."), Message::user("hello")];
+
+    let result = provider
+        .chat(ChatRequest {
+            messages: &messages,
+            tools: &[],
+            model: "openai/gpt-5.3-codex",
+            max_tokens: 1024,
+            temperature: 0.7,
+            session_id: None,
+            tool_choice: None,
+            metadata: None,
+            thinking_level: None,
+            cancel_flag: None,
+        })
+        .await;
+
+    let err = result.expect_err("provider-qualified model should be rejected");
+    assert!(
+        err.to_string().contains("bare model id"),
+        "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn test_codex_provider_rejects_missing_instructions() {
+    let provider = CodexProvider::new("test-token".to_string(), "acct-123".to_string(), None);
+    let messages = vec![Message::user("hello")];
+
+    let result = provider
+        .chat(ChatRequest {
+            messages: &messages,
+            tools: &[],
+            model: "gpt-5.3-codex",
+            max_tokens: 1024,
+            temperature: 0.7,
+            session_id: None,
+            tool_choice: None,
+            metadata: None,
+            thinking_level: None,
+            cancel_flag: None,
+        })
+        .await;
+
+    let err = result.expect_err("missing instructions should be rejected");
+    assert!(
+        err.to_string().contains("requires instructions"),
+        "unexpected error: {err}"
+    );
 }
 
 // ===================================================================
