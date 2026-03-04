@@ -323,6 +323,7 @@ fn parse_repl_flags(args: &[String]) -> Result<ReplFlags, String> {
     let mut session_name: Option<String> = None;
     let mut system_prompt: Option<String> = None;
     let mut model_override: Option<String> = None;
+    let mut no_sandbox = false;
     let mut i = 0;
 
     while i < args.len() {
@@ -357,6 +358,10 @@ fn parse_repl_flags(args: &[String]) -> Result<ReplFlags, String> {
                     return Err("--model requires a value".to_string());
                 }
             }
+            "--no-sandbox" => {
+                no_sandbox = true;
+                i += 1;
+            }
             other if other.starts_with("--") || other.starts_with('-') => {
                 return Err(format!("unknown flag '{other}'"));
             }
@@ -370,6 +375,7 @@ fn parse_repl_flags(args: &[String]) -> Result<ReplFlags, String> {
         session_name,
         system_prompt,
         model_override,
+        no_sandbox,
     })
 }
 
@@ -409,6 +415,9 @@ fn help_text(out: &mut String) {
     out.push_str("  agent       Run a one-shot agent session (-m required)\n");
     out.push_str("              Options: -s <name>  Named session (default: \"default\")\n");
     out.push_str("                       --no-session  Ephemeral mode — nothing saved or loaded\n");
+    out.push_str(
+        "                       --no-sandbox  Disable workspace path restriction (DANGEROUS)\n",
+    );
     out.push_str("                       --model <m>   Override model\n");
     out.push_str("                       --system <p>  System prompt\n");
     out.push_str("                       --max-iterations <n>  Max tool iterations\n");

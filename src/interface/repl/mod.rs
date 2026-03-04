@@ -28,6 +28,10 @@ pub struct ReplFlags {
     pub session_name: Option<String>,
     pub system_prompt: Option<String>,
     pub model_override: Option<String>,
+    /// When true, disable workspace path restriction for all filesystem tools.
+    /// Overrides `config.agents.defaults.restrict_to_workspace`.
+    /// WARNING: allows the agent to read/write any path on the system.
+    pub no_sandbox: bool,
 }
 
 /// Session state for the REPL (agent, persistence, history).
@@ -299,10 +303,14 @@ pub fn run_repl<R: BufRead, W: Write>(
         .model_override
         .clone()
         .unwrap_or(ctx.config.agents.defaults.model.clone());
-    let sandbox = Sandbox::new(
-        Some(workspace.clone()),
-        ctx.config.agents.defaults.restrict_to_workspace,
-    );
+    // --no-sandbox overrides config: disables workspace path restriction for all
+    // filesystem tools. The dangerous-command denylist remains active regardless.
+    let restrict_to_workspace = if ctx.flags.no_sandbox {
+        false
+    } else {
+        ctx.config.agents.defaults.restrict_to_workspace
+    };
+    let sandbox = Sandbox::new(Some(workspace.clone()), restrict_to_workspace);
     let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(ctx.config);
     let mut registry =
         ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
