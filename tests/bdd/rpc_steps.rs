@@ -8,6 +8,7 @@ use super::*;
 // deterministic without spawning real OS processes.
 
 use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
+use quecto::domain::message::Role;
 use quecto::domain::session::Session;
 use quecto::infrastructure::config::Config;
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
@@ -135,6 +136,7 @@ fn execute_rpc(world: &mut QuectoWorld) {
     let stdin_cursor = tokio::io::BufReader::new(std::io::Cursor::new(stdin_bytes));
     let base_for_thread = base.clone();
 
+    let system_prompt = world.rpc_system_prompt.clone().unwrap_or_default();
     let exit_code = std::thread::spawn(move || {
         run_rpc_loop(RpcLoopArgs {
             agent,
@@ -142,6 +144,7 @@ fn execute_rpc(world: &mut QuectoWorld) {
             session_key,
             model,
             ephemeral,
+            system_prompt,
             stdin_override: Some(Box::new(stdin_cursor)),
             stdout_override: Some(Box::new(VecWriter(stdout_clone))),
             session_store_override: None,
@@ -235,6 +238,24 @@ fn when_start_rpc_no_session(world: &mut QuectoWorld) {
 fn when_start_rpc_no_session_flag(world: &mut QuectoWorld) {
     world.rpc_session_name = None;
     world.rpc_no_session = true;
+}
+
+#[when(expr = "I start the RPC agent with no session and system prompt {string}")]
+fn when_start_rpc_no_session_with_system(world: &mut QuectoWorld, system: String) {
+    world.rpc_session_name = None;
+    world.rpc_no_session = true;
+    world.rpc_system_prompt = Some(system);
+}
+
+#[when(expr = "I start the RPC agent with session {string} and system prompt {string}")]
+fn when_start_rpc_with_session_and_system(
+    world: &mut QuectoWorld,
+    session: String,
+    system: String,
+) {
+    world.rpc_session_name = Some(session);
+    world.rpc_no_session = false;
+    world.rpc_system_prompt = Some(system);
 }
 
 #[when(expr = "I start the RPC agent with session {string}")]
@@ -571,6 +592,23 @@ fn then_session_file_exists(world: &mut QuectoWorld, session_name: String) {
     assert!(
         matches!(result, Ok(Some(_))),
         "expected session {session_name:?} saved, got: {result:?}"
+    );
+}
+
+#[then(expr = "the session for {string} should not contain a system message")]
+fn then_session_has_no_system_message(world: &mut QuectoWorld, session_name: String) {
+    let base = world.cli_context.base_dir.clone().expect("no base dir");
+    let key = Session::build_key("cli", &session_name);
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let store = FileSessionStore::new(&base);
+    let session = rt
+        .block_on(store.load(&key))
+        .expect("failed to load session")
+        .expect("session not found");
+    let has_system = session.messages.iter().any(|m| m.role == Role::System);
+    assert!(
+        !has_system,
+        "expected no system message in saved session, but found one"
     );
 }
 
