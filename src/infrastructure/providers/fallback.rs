@@ -110,6 +110,7 @@ impl FallbackProvider {
             || lowered.contains("bad gateway")
             || lowered.contains("service unavailable")
             || lowered.contains("gateway timeout")
+            || lowered.contains("overloaded")
         {
             ErrorClass::Server
         } else if lowered.contains("connect")

@@ -212,6 +212,35 @@ fn test_classify_502_503_504() {
 }
 
 #[test]
+fn test_classify_529_as_server_and_retryable() {
+    let err = DomainError::Provider(
+        "HTTP 529 from Anthropic: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}"
+            .to_string(),
+    );
+    let class = FallbackProvider::classify_error(&err);
+    assert_eq!(
+        class,
+        ErrorClass::Server,
+        "HTTP 529 should be classified as Server"
+    );
+    assert!(class.is_retryable(), "HTTP 529 should be retryable");
+}
+
+#[test]
+fn test_classify_overloaded_body_as_server() {
+    // Anthropic sometimes returns 529 with "overloaded" in the body text.
+    let err = DomainError::Provider("HTTP 529 from Anthropic: overloaded".to_string());
+    assert_eq!(FallbackProvider::classify_error(&err), ErrorClass::Server);
+}
+
+#[test]
+fn test_classify_overloaded_keyword_alone_is_server() {
+    // Even if status code parsing fails, "overloaded" in the message → Server.
+    let err = DomainError::Provider("Anthropic API is overloaded, please retry".to_string());
+    assert_eq!(FallbackProvider::classify_error(&err), ErrorClass::Server);
+}
+
+#[test]
 fn test_non_provider_errors_are_not_classified_as_provider_server_errors() {
     let err = DomainError::Tool("HTTP 500 from subprocess".to_string());
     assert_eq!(FallbackProvider::classify_error(&err), ErrorClass::Unknown);

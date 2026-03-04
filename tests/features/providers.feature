@@ -29,6 +29,22 @@ Feature: LLM Providers
     Then the error should be classified as "server"
     And the error should be retryable
 
+  Scenario: HTTP 529 is classified as server error and is retryable
+    Given a provider error with status 529
+    Then the error should be classified as "server"
+    And the error should be retryable
+
+  Scenario: Anthropic overloaded body text is classified as server error
+    Given a provider error with message "HTTP 529 from Anthropic: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}"
+    Then the error should be classified as "server"
+    And the error should be retryable
+
+  Scenario: Provider fallback triggered on HTTP 529 overloaded response
+    Given a primary provider that returns a server error "HTTP 529 from Anthropic: overloaded"
+    And a fallback provider that returns "Fallback after overload"
+    When I send a chat request through the fallback provider
+    Then the fallback response content should be "Fallback after overload"
+
   Scenario: Provider fallback on server error
     Given a primary provider that returns a server error "HTTP 500 Internal Server Error"
     And a fallback provider that returns "Fallback response"

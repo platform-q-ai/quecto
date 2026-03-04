@@ -39,6 +39,30 @@ fn given_provider_error(world: &mut QuectoWorld, status: u16) {
     world.error_class = Some(ErrorClass::from_status(status));
 }
 
+#[given(expr = "a provider error with message {string}")]
+fn given_provider_error_with_message(world: &mut QuectoWorld, message: String) {
+    // Extract HTTP status from the message (e.g. "HTTP 529 from Anthropic: ...")
+    // and classify it, falling back to keyword matching for "overloaded".
+    let class = if let Some(status) = extract_status_from_message(&message) {
+        ErrorClass::from_status(status)
+    } else if message.to_ascii_lowercase().contains("overloaded") {
+        ErrorClass::Server
+    } else {
+        ErrorClass::Unknown
+    };
+    world.error_class = Some(class);
+}
+
+fn extract_status_from_message(msg: &str) -> Option<u16> {
+    // Match patterns like "HTTP 529 " or "HTTP 529:"
+    let idx = msg.find("HTTP ")?;
+    let rest = &msg[idx + 5..];
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    rest[..end].parse().ok()
+}
+
 #[then(expr = "the error should be classified as {string}")]
 fn then_error_classified_as(world: &mut QuectoWorld, expected: String) {
     let class = world.error_class.as_ref().expect("no error class");
