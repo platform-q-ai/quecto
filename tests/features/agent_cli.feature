@@ -117,6 +117,7 @@ Feature: Agent CLI — Headless One-Shot Mode
   # Tested at unit level in agent_no_sandbox_tests.rs::test_resolve_agent_workspace_*
   # BDD scenario is pending because in-process CWD mutation is global and unsafe in
   # a parallel test harness; the logic is fully covered by the unit tests.
+  # TODO(no-issue): promote to @done once a subprocess-based step runner is available.
   @pending
   Scenario: --no-sandbox uses the process CWD as workspace root
     Given a temp base directory
