@@ -66,17 +66,22 @@ Feature: LLM Providers
     When I send a streaming chat request with message "Hi"
     Then the streaming response content should be "Hello from Claude"
 
-  Scenario: Claude model is routed to Anthropic provider, not OpenAI
+  Scenario: Explicit anthropic/ prefix routes to Anthropic provider
     Given a fallback provider with OpenAI first and Anthropic second
-    When I send a chat request with model "claude-opus-4-5"
+    When I send a chat request with model "anthropic/claude-opus-4-5"
     Then the request should be handled by the "anthropic" provider
 
-  Scenario: GPT model is routed to OpenAI provider
+  Scenario: Explicit openai/ prefix routes to OpenAI provider
     Given a fallback provider with OpenAI first and Anthropic second
-    When I send a chat request with model "gpt-4o"
+    When I send a chat request with model "openai/gpt-4o"
     Then the request should be handled by the "openai" provider
 
-  Scenario: Claude model bypasses a failed OpenAI provider
+  Scenario: Bare model name goes to first provider in order
+    Given a fallback provider with OpenAI first and Anthropic second
+    When I send a chat request with model "claude-opus-4-5"
+    Then the request should be handled by the "openai" provider
+
+  Scenario: Bare model falls back on retryable error
     Given a fallback provider with a failing OpenAI and a succeeding Anthropic
     When I send a chat request with model "claude-sonnet-4-20250514"
     Then the request should succeed with the Anthropic response

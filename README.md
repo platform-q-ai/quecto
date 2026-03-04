@@ -73,7 +73,7 @@ quecto agent -m "Write a Python script that generates primes"
 | `-s` / `--session` | No | Session name for persistence. Omit for `cli:default`. Use `-` for ephemeral |
 | `--no-session` | No | Ephemeral mode — nothing saved or loaded (mutually exclusive with `-s`) |
 | `--system` | No | System prompt prepended to conversation |
-| `--model` | No | Override model (default: `gpt-5.2`) |
+| `--model` | No | Override model. Accepts bare id (`gpt-5.3-codex`) or provider-qualified (`openai/gpt-4o`). Default: `gpt-5.2` |
 | `--max-iterations` | No | Max tool call rounds before stopping |
 | `--max-time` | No | Wall-clock timeout in seconds (exit code 2 on timeout) |
 | `--mode` | No | Operation mode: default one-shot, or `rpc` for JSON-lines automation protocol |
