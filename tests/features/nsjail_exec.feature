@@ -408,3 +408,20 @@ Feature: nsjail Exec Isolation
       | command | getent hosts google.com |
     Then the tool result should not be an error
     And the tool result should contain "google.com"
+
+  # --- SSL CA certificate bundle ---
+
+  Scenario: /etc/ca-certificates is bind-mounted read-only inside nsjail
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with a workspace
+    Then the nsjail command for "echo test" should contain "/etc/ca-certificates"
+
+  # TODO: promote to @done once a network-capable CI environment is available.
+  @pending
+  Scenario: HTTPS curl succeeds inside nsjail with network passthrough enabled
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with network passthrough enabled
+    When the agent executes nsjail tool "bash" with args:
+      | command | curl -s -o /dev/null -w '%{http_code}' https://example.com |
+    Then the tool result should not be an error
+    And the tool result should contain "200"

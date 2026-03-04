@@ -104,6 +104,7 @@ const NSJAIL_RO_ETC_FILES: &[&str] = &[
     "/etc/passwd",
     "/etc/group",
     "/etc/ssl",
+    "/etc/ca-certificates",
     "/etc/alternatives",
 ];
 

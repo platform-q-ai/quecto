@@ -602,3 +602,27 @@ fn test_nsjail_command_includes_hosts_bindmount() {
         "nsjail command must bind-mount /etc/hosts for hostname resolution: {args}"
     );
 }
+
+#[test]
+fn test_nsjail_etc_files_includes_ca_certificates() {
+    if !std::path::Path::new("/etc/ca-certificates").exists() {
+        return;
+    }
+    let etc_files = resolve_ro_etc_files();
+    assert!(
+        etc_files.contains(&"/etc/ca-certificates"),
+        "resolve_ro_etc_files() must include /etc/ca-certificates when it exists on the host"
+    );
+}
+
+#[test]
+fn test_nsjail_command_includes_ca_certificates_bindmount() {
+    if !std::path::Path::new("/etc/ca-certificates").exists() {
+        return;
+    }
+    let args = nsjail_args_str(&NsjailOptions::default());
+    assert!(
+        args.contains("/etc/ca-certificates"),
+        "nsjail command must bind-mount /etc/ca-certificates for SSL cert verification: {args}"
+    );
+}
