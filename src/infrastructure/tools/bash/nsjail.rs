@@ -69,7 +69,18 @@ const DEFAULT_NSJAIL_TMP_SIZE_MB: u64 = 512;
 const TRUSTED_NSJAIL_PATHS: &[&str] = &["/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin"];
 
 pub(super) const EXEC_ENV_ALLOWLIST: &[&str] = &[
-    "HOME", "PATH", "LANG", "TZ", "TERM", "SHELL", "USER", "LOGNAME", "TMPDIR",
+    "HOME",
+    "PATH",
+    "LANG",
+    "TZ",
+    "TERM",
+    "SHELL",
+    "USER",
+    "LOGNAME",
+    "TMPDIR",
+    // Allow GitHub CLI/API auth tokens for operator-authorized issue/PR workflows.
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
 ];
 
 /// System paths to mount read-only inside the nsjail container.

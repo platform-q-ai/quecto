@@ -77,6 +77,35 @@ async fn test_exec_strips_quecto_env_vars() {
     assert!(!result.content.contains("sk-secret"));
 }
 
+#[tokio::test]
+async fn test_exec_allows_github_token_env_vars() {
+    let tmp = TempDir::new().unwrap();
+    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
+    let tool = ExecTool::new(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox));
+
+    let mut env_vars = HashMap::new();
+    env_vars.insert("GH_TOKEN".to_string(), "gh-test-token".to_string());
+    env_vars.insert("GITHUB_TOKEN".to_string(), "github-test-token".to_string());
+
+    let gh = tool
+        .execute_with_env(r#"{"command": "printenv GH_TOKEN"}"#, &env_vars)
+        .await
+        .unwrap();
+    assert!(
+        gh.content.contains("gh-test-token"),
+        "GH_TOKEN should be propagated"
+    );
+
+    let github = tool
+        .execute_with_env(r#"{"command": "printenv GITHUB_TOKEN"}"#, &env_vars)
+        .await
+        .unwrap();
+    assert!(
+        github.content.contains("github-test-token"),
+        "GITHUB_TOKEN should be propagated"
+    );
+}
+
 #[test]
 fn test_nsjail_falls_back_when_binary_missing() {
     let tmp = TempDir::new().unwrap();
