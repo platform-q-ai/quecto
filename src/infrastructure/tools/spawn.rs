@@ -20,6 +20,8 @@ pub struct SpawnTool {
     allowed_agents: Vec<String>,
     /// Whether workspace restriction should be inherited.
     restrict_to_workspace: bool,
+    /// Whether network passthrough should be inherited.
+    network_passthrough: bool,
     /// Base directory for the child agent process.
     base_dir: PathBuf,
 }
@@ -31,6 +33,7 @@ impl SpawnTool {
         Self {
             allowed_agents,
             restrict_to_workspace,
+            network_passthrough: false,
             base_dir: PathBuf::new(),
         }
     }
@@ -44,8 +47,24 @@ impl SpawnTool {
         Self {
             allowed_agents,
             restrict_to_workspace,
+            network_passthrough: false,
             base_dir,
         }
+    }
+
+    /// Enable or disable network passthrough for spawned child agents.
+    ///
+    /// Pass the effective `exec_settings.network_passthrough` value (which already
+    /// reflects both config defaults and any `--network` CLI override) so that
+    /// child agents inherit the parent's network posture, including config-level
+    /// `network_passthrough: true` settings that were not set via `--network`.
+    ///
+    /// The flag is also forwarded via `--network` in the child argv (see
+    /// `build_command`), ensuring grandchild agents spawned by this child also
+    /// inherit the posture.
+    pub fn with_network(mut self, network_passthrough: bool) -> Self {
+        self.network_passthrough = network_passthrough;
+        self
     }
 
     /// Parse the tool arguments and create a SubagentConfig.
@@ -123,6 +142,12 @@ impl SpawnTool {
         // silently re-enable the sandbox by re-reading config defaults.
         if !self.restrict_to_workspace {
             cmd.arg("--no-sandbox");
+        }
+
+        // Propagate --network so child agents inherit the same network access
+        // posture as the parent.
+        if self.network_passthrough {
+            cmd.arg("--network");
         }
 
         if !self.base_dir.as_os_str().is_empty() {
