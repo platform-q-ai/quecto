@@ -104,6 +104,11 @@ const NSJAIL_RO_ETC_FILES: &[&str] = &[
     "/etc/passwd",
     "/etc/group",
     "/etc/ssl",
+    // Required because /etc/ssl/certs/ca-certificates.crt is a symlink whose
+    // target resolves to /etc/ca-certificates/extracted/tls-ca-bundle.pem.
+    // Without this mount, TLS libraries (curl, git, gh, openssl) fail with
+    // "error adding trust anchors" (exit code 77) even when /etc/ssl is mounted.
+    "/etc/ca-certificates",
     "/etc/alternatives",
 ];
 
