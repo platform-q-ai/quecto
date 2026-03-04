@@ -136,7 +136,7 @@ fn execute_rpc(world: &mut QuectoWorld) {
     let stdin_cursor = tokio::io::BufReader::new(std::io::Cursor::new(stdin_bytes));
     let base_for_thread = base.clone();
 
-    let system_prompt = world.rpc_system_prompt.clone();
+    let system_prompt = world.rpc_system_prompt.clone().unwrap_or_default();
     let exit_code = std::thread::spawn(move || {
         run_rpc_loop(RpcLoopArgs {
             agent,

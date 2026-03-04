@@ -138,10 +138,16 @@ pub struct RpcLoopArgs<'a> {
     pub session_key: String,
     pub model: String,
     pub ephemeral: bool,
-    /// Optional system prompt from `--system`.  Prepended as a transient
-    /// `Message::system` before each prompt run; stripped before persisting
-    /// the session (matches one-shot mode behaviour).
-    pub system_prompt: Option<String>,
+    /// System prompt (datetime preamble + skills + user-supplied `--system`).
+    /// Built via `build_system_prompt()` — always non-empty (contains at
+    /// least the datetime preamble).  Prepended as a transient
+    /// `Message::system` before processing; stripped before persisting the
+    /// session so it is not double-injected on the next process invocation.
+    ///
+    /// NOTE: the datetime in the preamble is fixed at process-start time.
+    /// For long-lived RPC sessions (hours) the timestamp will be stale.
+    /// A future improvement would re-inject on each prompt command.
+    pub system_prompt: String,
     /// Injected stdin for testing.  `None` = use real `tokio::io::stdin`.
     pub stdin_override: Option<Box<dyn tokio::io::AsyncRead + Send + Unpin + 'static>>,
     /// Injected stdout writer for testing.  `None` = use real `tokio::io::stdout`.
@@ -201,7 +207,7 @@ async fn rpc_loop_async(args: RpcLoopArgs<'_>) -> i32 {
     };
 
     // Inject system prompt as a transient leading message (not persisted).
-    inject_system_prompt(&mut messages, system_prompt.as_deref());
+    inject_system_prompt(&mut messages, &system_prompt);
 
     let mut rpc_session = RpcSession::new(model, session_key.clone());
     let mut stdout: Box<dyn tokio::io::AsyncWrite + Send + Unpin> = match stdout_override {
@@ -228,7 +234,7 @@ async fn rpc_loop_async(args: RpcLoopArgs<'_>) -> i32 {
     if !ephemeral && !session_key.is_empty() {
         // Strip the transient system prompt before saving so it is not
         // double-injected on the next process invocation.
-        remove_injected_system_prompt(&mut messages, system_prompt.as_deref());
+        remove_injected_system_prompt(&mut messages, &system_prompt);
         let session = Session {
             key: session_key,
             messages: std::mem::take(&mut messages),
@@ -241,31 +247,41 @@ async fn rpc_loop_async(args: RpcLoopArgs<'_>) -> i32 {
 
 /// Prepend a system message if `prompt` is non-empty and no system message
 /// already exists at the front of `messages`.
-pub fn inject_system_prompt(messages: &mut Vec<Message>, prompt: Option<&str>) {
-    let text = match prompt {
-        Some(t) if !t.is_empty() => t,
-        _ => return,
-    };
+///
+/// The injected message is **transient** — it is added before the command
+/// loop runs and stripped before the session is persisted.  Callers must
+/// pair each `inject_system_prompt` with a matching
+/// `remove_injected_system_prompt` call.
+///
+/// If the session already has a leading `Role::System` message (e.g. loaded
+/// from a previous run that saved one, or a future feature), the new system
+/// prompt is silently skipped to preserve the existing context.  Callers
+/// that need to override a persisted system message should strip it first.
+pub(crate) fn inject_system_prompt(messages: &mut Vec<Message>, prompt: &str) {
+    if prompt.is_empty() {
+        return;
+    }
     // Skip injection if a system message is already present (e.g. loaded from session).
     if messages.first().is_some_and(|m| m.role == Role::System) {
         return;
     }
-    messages.insert(0, Message::system(text.to_string()));
+    messages.insert(0, Message::system(prompt.to_string()));
 }
 
 /// Remove the injected system prompt from `messages` before persisting.
 ///
 /// Only removes the first message if it is a system message with content
 /// matching `prompt` exactly — never silently removes user-authored system
-/// messages from session history.
-pub fn remove_injected_system_prompt(messages: &mut Vec<Message>, prompt: Option<&str>) {
-    let text = match prompt {
-        Some(t) if !t.is_empty() => t,
-        _ => return,
-    };
+/// messages from session history.  Uses an exact content comparison so
+/// that an in-flight mutation of the first message (e.g. by a buggy tool)
+/// does not accidentally delete session content.
+pub(crate) fn remove_injected_system_prompt(messages: &mut Vec<Message>, prompt: &str) {
+    if prompt.is_empty() {
+        return;
+    }
     if messages
         .first()
-        .is_some_and(|m| m.role == Role::System && m.content == text)
+        .is_some_and(|m| m.role == Role::System && m.content == prompt)
     {
         messages.remove(0);
     }

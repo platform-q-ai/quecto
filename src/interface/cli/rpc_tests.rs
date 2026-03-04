@@ -339,7 +339,7 @@ fn test_messages_tail_json_count_exceeds_history() {
 #[test]
 fn test_inject_system_prompt_prepends_system_message() {
     let mut messages: Vec<Message> = vec![Message::user("hello")];
-    inject_system_prompt(&mut messages, Some("Be helpful."));
+    inject_system_prompt(&mut messages, "Be helpful.");
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].role, crate::domain::message::Role::System);
     assert_eq!(messages[0].content, "Be helpful.");
@@ -347,16 +347,9 @@ fn test_inject_system_prompt_prepends_system_message() {
 }
 
 #[test]
-fn test_inject_system_prompt_none_is_noop() {
-    let mut messages: Vec<Message> = vec![Message::user("hello")];
-    inject_system_prompt(&mut messages, None);
-    assert_eq!(messages.len(), 1);
-}
-
-#[test]
 fn test_inject_system_prompt_empty_string_is_noop() {
     let mut messages: Vec<Message> = vec![Message::user("hello")];
-    inject_system_prompt(&mut messages, Some(""));
+    inject_system_prompt(&mut messages, "");
     assert_eq!(messages.len(), 1);
 }
 
@@ -364,7 +357,7 @@ fn test_inject_system_prompt_empty_string_is_noop() {
 fn test_inject_system_prompt_skips_when_system_already_present() {
     let mut messages: Vec<Message> =
         vec![Message::system("Existing system."), Message::user("hello")];
-    inject_system_prompt(&mut messages, Some("New system."));
+    inject_system_prompt(&mut messages, "New system.");
     // Should not prepend — existing system message already present.
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].content, "Existing system.");
@@ -377,22 +370,22 @@ fn test_remove_system_prompt_removes_first_system_message() {
         Message::user("hello"),
         Message::assistant("hi", vec![]),
     ];
-    remove_injected_system_prompt(&mut messages, Some("Be helpful."));
+    remove_injected_system_prompt(&mut messages, "Be helpful.");
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].content, "hello");
 }
 
 #[test]
-fn test_remove_system_prompt_noop_when_none() {
+fn test_remove_system_prompt_noop_when_empty() {
     let mut messages: Vec<Message> = vec![Message::system("Keep."), Message::user("hello")];
-    remove_injected_system_prompt(&mut messages, None);
+    remove_injected_system_prompt(&mut messages, "");
     assert_eq!(messages.len(), 2);
 }
 
 #[test]
 fn test_remove_system_prompt_noop_when_content_differs() {
     let mut messages: Vec<Message> = vec![Message::system("Different."), Message::user("hello")];
-    remove_injected_system_prompt(&mut messages, Some("Be helpful."));
+    remove_injected_system_prompt(&mut messages, "Be helpful.");
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].content, "Different.");
 }
