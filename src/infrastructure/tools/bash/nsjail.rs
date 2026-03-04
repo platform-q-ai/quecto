@@ -76,9 +76,20 @@ pub(super) const EXEC_ENV_ALLOWLIST: &[&str] = &[
 const NSJAIL_RO_BINDMOUNTS: &[&str] = &["/bin", "/usr", "/lib", "/lib64"];
 
 /// Individual files from `/etc` needed inside the jail.
+///
+/// `/etc/resolv.conf` and `/etc/hosts` are required for DNS and hostname
+/// resolution inside the jail when network passthrough is enabled. Without
+/// them, tools like `curl`, `git`, and `gh` cannot resolve any hostnames.
+///
+/// `/etc/resolv.conf` is often a symlink (e.g. to
+/// `/run/systemd/resolve/stub-resolv.conf` on systemd hosts). nsjail's
+/// `--bindmount_ro` follows the symlink at mount time, so the real file is
+/// bind-mounted at the `/etc/resolv.conf` path inside the jail regardless.
 const NSJAIL_RO_ETC_FILES: &[&str] = &[
     "/etc/ld.so.cache",
     "/etc/ld.so.conf",
+    "/etc/resolv.conf",
+    "/etc/hosts",
     "/etc/nsswitch.conf",
     "/etc/passwd",
     "/etc/group",

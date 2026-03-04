@@ -384,3 +384,23 @@ Feature: nsjail Exec Isolation
       | command | python3 -c "print('A' * 1500000)" |
     Then the tool result should be truncated to approximately 1 MiB
     And the tool result should indicate truncation
+
+  # --- DNS / resolver files ---
+
+  Scenario: /etc/resolv.conf is bind-mounted read-only inside nsjail
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with a workspace
+    Then the nsjail command for "echo test" should contain "/etc/resolv.conf"
+
+  Scenario: /etc/hosts is bind-mounted read-only inside nsjail
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with a workspace
+    Then the nsjail command for "echo test" should contain "/etc/hosts"
+
+  Scenario: DNS resolution works inside nsjail with network passthrough enabled
+    Given nsjail is available on the system
+    And an nsjail-isolated exec tool with network passthrough enabled
+    When the agent executes nsjail tool "bash" with args:
+      | command | getent hosts google.com |
+    Then the tool result should not be an error
+    And the tool result should contain "google.com"
