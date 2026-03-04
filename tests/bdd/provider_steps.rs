@@ -39,6 +39,14 @@ fn given_provider_error(world: &mut QuectoWorld, status: u16) {
     world.error_class = Some(ErrorClass::from_status(status));
 }
 
+#[given(expr = "a provider error with message {string}")]
+fn given_provider_error_with_message(world: &mut QuectoWorld, message: String) {
+    use quecto::domain::error::DomainError;
+    use quecto::infrastructure::providers::fallback::FallbackProvider;
+    let err = DomainError::Provider(message);
+    world.error_class = Some(FallbackProvider::classify_error(&err));
+}
+
 #[then(expr = "the error should be classified as {string}")]
 fn then_error_classified_as(world: &mut QuectoWorld, expected: String) {
     let class = world.error_class.as_ref().expect("no error class");

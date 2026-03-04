@@ -5,7 +5,7 @@ pub enum ErrorClass {
     RateLimit,
     /// Authentication error (401, 403)
     Auth,
-    /// Server error (500, 502, 503, 504)
+    /// Server error (500, 502, 503, 504, 529 overloaded)
     Server,
     /// Client error (400, 404, etc.)
     Client,
@@ -24,7 +24,7 @@ impl ErrorClass {
             401 | 403 => ErrorClass::Auth,
             429 => ErrorClass::RateLimit,
             400 | 404 | 405 | 406 | 409 | 410 | 422 => ErrorClass::Client,
-            500 | 502 | 503 | 504 => ErrorClass::Server,
+            500 | 502 | 503 | 504 | 529 => ErrorClass::Server,
             _ => ErrorClass::Unknown,
         }
     }
@@ -87,6 +87,13 @@ mod tests {
             assert_eq!(class, ErrorClass::Server);
             assert!(class.is_retryable());
         }
+    }
+
+    #[test]
+    fn test_529_is_server_and_retryable() {
+        let class = ErrorClass::from_status(529);
+        assert_eq!(class, ErrorClass::Server, "HTTP 529 should be Server");
+        assert!(class.is_retryable(), "HTTP 529 should be retryable");
     }
 
     #[test]
