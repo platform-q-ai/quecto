@@ -410,6 +410,7 @@ fn help_text(out: &mut String) {
     ));
     out.push_str("\nUsage: quecto [command]\n");
     out.push_str("\nWhen run with no arguments, quecto enters interactive REPL mode.\n");
+    out.push_str("  REPL options: -s <name>, --system <p>, --model <m>, --no-sandbox\n");
     out.push_str("\nCommands:\n");
     out.push_str("  onboard     Initialize configuration and workspace\n");
     out.push_str("  agent       Run a one-shot agent session (-m required)\n");

@@ -118,6 +118,13 @@ impl SpawnTool {
             cmd.arg("--system").arg(system);
         }
 
+        // Propagate --no-sandbox so child agents inherit the same workspace
+        // restriction posture as the parent. Without this, the child would
+        // silently re-enable the sandbox by re-reading config defaults.
+        if !self.restrict_to_workspace {
+            cmd.arg("--no-sandbox");
+        }
+
         if !self.base_dir.as_os_str().is_empty() {
             cmd.env("QUECTO_BASE_DIR", &self.base_dir);
         }

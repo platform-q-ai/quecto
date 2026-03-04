@@ -278,11 +278,10 @@ pub(crate) fn build_agent_from_config(
         .unwrap_or(config.agents.defaults.model.clone());
     // --no-sandbox overrides config: disables workspace path restriction for all
     // filesystem tools. The dangerous-command denylist remains active regardless.
-    let restrict_to_workspace = if flags.no_sandbox {
-        false
-    } else {
-        config.agents.defaults.restrict_to_workspace
-    };
+    let restrict_to_workspace = !flags.no_sandbox && config.agents.defaults.restrict_to_workspace;
+    if flags.no_sandbox {
+        stderr.push_str("WARNING: --no-sandbox is active — workspace path restriction disabled\n");
+    }
     let sandbox = Sandbox::new(Some(workspace.clone()), restrict_to_workspace);
     let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
     let registry =
