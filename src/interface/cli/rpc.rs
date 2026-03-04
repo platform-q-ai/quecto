@@ -122,6 +122,13 @@ pub fn compute_session_stats(session_key: &str, messages: &[Message]) -> Session
     }
 }
 
+/// Return a JSON value containing the last `count` messages in chronological order.
+pub fn messages_tail_json(messages: &[Message], count: usize) -> serde_json::Value {
+    let skip = messages.len().saturating_sub(count);
+    let msgs_json: Vec<serde_json::Value> = messages[skip..].iter().map(message_to_json).collect();
+    serde_json::json!({ "messages": msgs_json })
+}
+
 // ─── RPC loop ────────────────────────────────────────────────────────────────
 
 /// Arguments for running the RPC loop (avoids long parameter lists).
@@ -314,10 +321,39 @@ fn resolve_set_model_target(
     }
 }
 
+/// Build the response data payload for read-only query commands.
+///
+/// Returns `Some(data)` when the command is a recognised query, `None` otherwise.
+fn query_response_data(cmd: &RpcCommand, ctx: &DispatchCtx<'_>) -> Option<serde_json::Value> {
+    match cmd {
+        RpcCommand::GetState { .. } => {
+            let state = ctx.rpc_session.state_snapshot(ctx.messages.len());
+            Some(serde_json::to_value(&state).unwrap_or_default())
+        }
+        RpcCommand::GetMessages { .. } => {
+            let msgs: Vec<serde_json::Value> = ctx.messages.iter().map(message_to_json).collect();
+            Some(serde_json::json!({ "messages": msgs }))
+        }
+        RpcCommand::GetMessagesTail { count, .. } => Some(messages_tail_json(ctx.messages, *count)),
+        RpcCommand::GetSessionStats { .. } => {
+            let stats = compute_session_stats(ctx.session_key, ctx.messages);
+            Some(serde_json::to_value(&stats).unwrap_or_default())
+        }
+        _ => None,
+    }
+}
+
 /// Dispatch a single RPC command.  Returns `true` if the loop should exit.
 async fn dispatch_command(cmd: RpcCommand, ctx: &mut DispatchCtx<'_>) -> bool {
     let id = cmd.id().map(str::to_owned);
     let type_name = cmd.type_name().to_owned();
+
+    // Fast path: read-only query commands share the same emit pattern.
+    if let Some(data) = query_response_data(&cmd, ctx) {
+        let ev = RpcEvent::ok(id.as_deref(), &type_name, Some(data));
+        emit_event(ctx.stdout, &ev).await;
+        return false;
+    }
 
     match cmd {
         RpcCommand::Prompt {
@@ -358,31 +394,6 @@ async fn dispatch_command(cmd: RpcCommand, ctx: &mut DispatchCtx<'_>) -> bool {
             false
         }
 
-        RpcCommand::GetState { .. } => {
-            let state = ctx.rpc_session.state_snapshot(ctx.messages.len());
-            let data = serde_json::to_value(&state).unwrap_or_default();
-            let ev = RpcEvent::ok(id.as_deref(), &type_name, Some(data));
-            emit_event(ctx.stdout, &ev).await;
-            false
-        }
-
-        RpcCommand::GetMessages { .. } => {
-            let msgs_json: Vec<serde_json::Value> =
-                ctx.messages.iter().map(message_to_json).collect();
-            let data = serde_json::json!({ "messages": msgs_json });
-            let ev = RpcEvent::ok(id.as_deref(), &type_name, Some(data));
-            emit_event(ctx.stdout, &ev).await;
-            false
-        }
-
-        RpcCommand::GetSessionStats { .. } => {
-            let stats = compute_session_stats(ctx.session_key, ctx.messages);
-            let data = serde_json::to_value(&stats).unwrap_or_default();
-            let ev = RpcEvent::ok(id.as_deref(), &type_name, Some(data));
-            emit_event(ctx.stdout, &ev).await;
-            false
-        }
-
         RpcCommand::SetModel {
             model,
             provider,
@@ -402,6 +413,23 @@ async fn dispatch_command(cmd: RpcCommand, ctx: &mut DispatchCtx<'_>) -> bool {
             ctx.rpc_session.set_model(resolved_model);
             tracing::debug!(new_model = %ctx.rpc_session.model(), "RPC: model switched");
             let ev = RpcEvent::ok(id.as_deref(), &type_name, None);
+            emit_event(ctx.stdout, &ev).await;
+            false
+        }
+
+        // Query variants are handled by the fast path above; this arm is a safety
+        // net in case query_response_data is not updated when a new query variant is
+        // added. It emits a graceful error rather than panicking.
+        RpcCommand::GetState { .. }
+        | RpcCommand::GetMessages { .. }
+        | RpcCommand::GetMessagesTail { .. }
+        | RpcCommand::GetSessionStats { .. } => {
+            tracing::error!(command = %type_name, "query variant reached dispatch fallback — update query_response_data");
+            let ev = RpcEvent::err(
+                id.as_deref(),
+                &type_name,
+                "internal: unhandled query command",
+            );
             emit_event(ctx.stdout, &ev).await;
             false
         }

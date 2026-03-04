@@ -282,3 +282,54 @@ fn test_set_model_is_reflected_in_state_snapshot() {
     let snap = session.state_snapshot(0);
     assert_eq!(snap.model, "claude-opus-4-5");
 }
+
+// ─── get_messages_tail ───────────────────────────────────────────────────────
+
+#[test]
+fn test_parse_get_messages_tail_line() {
+    let line = r#"{"type":"get_messages_tail","count":3}"#;
+    let cmd = parse_rpc_line(line).unwrap();
+    match cmd {
+        RpcCommand::GetMessagesTail { count, .. } => assert_eq!(count, 3),
+        _ => panic!("expected GetMessagesTail"),
+    }
+}
+
+#[test]
+fn test_get_messages_tail_type_name() {
+    let cmd = RpcCommand::GetMessagesTail { id: None, count: 5 };
+    assert_eq!(cmd.type_name(), "get_messages_tail");
+}
+
+#[test]
+fn test_get_messages_tail_returns_last_n_in_order() {
+    // Build 5 user messages and request tail of 3 — should get last 3 in original order.
+    let messages: Vec<Message> = (0..5).map(|i| Message::user(format!("msg{i}"))).collect();
+    let data = messages_tail_json(&messages, 3);
+    let arr = data["messages"].as_array().unwrap();
+    assert_eq!(arr.len(), 3);
+    assert_eq!(arr[0]["content"], "msg2");
+    assert_eq!(arr[1]["content"], "msg3");
+    assert_eq!(arr[2]["content"], "msg4");
+}
+
+#[test]
+fn test_messages_tail_json_empty_history() {
+    let messages: Vec<Message> = vec![];
+    let data = messages_tail_json(&messages, 5);
+    assert!(data["messages"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn test_messages_tail_json_count_zero() {
+    let messages: Vec<Message> = (0..3).map(|i| Message::user(format!("m{i}"))).collect();
+    let data = messages_tail_json(&messages, 0);
+    assert!(data["messages"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn test_messages_tail_json_count_exceeds_history() {
+    let messages: Vec<Message> = (0..2).map(|i| Message::user(format!("m{i}"))).collect();
+    let data = messages_tail_json(&messages, 100);
+    assert_eq!(data["messages"].as_array().unwrap().len(), 2);
+}

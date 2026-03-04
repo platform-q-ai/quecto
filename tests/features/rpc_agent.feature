@@ -274,6 +274,57 @@ Feature: RPC mode for headless agent operation
     Then the RPC stdout should contain a parse error response
     And the RPC stdout should contain a response command "parse_error" with success false
 
+  # ─── get_messages_tail command ───────────────────────────────────────────────
+
+  @done
+  Scenario: get_messages_tail returns last N messages
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "reply one"
+    And the mock LLM returns a text response "reply two"
+    When I start the RPC agent with no session
+    And I queue RPC prompt "first"
+    And I queue RPC prompt "second"
+    And I queue RPC get_messages_tail with count 2 and id "gmt-1"
+    And I close RPC stdin
+    Then the RPC stdout should contain a response command "get_messages_tail" with success true
+    And the RPC get_messages_tail response should include a "messages" array
+    And the RPC get_messages_tail messages count should be at most 2
+
+  @done
+  Scenario: get_messages_tail with count larger than history returns all messages
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "only reply"
+    When I start the RPC agent with no session
+    And I queue RPC prompt "only prompt"
+    And I queue RPC get_messages_tail with count 100 and id "gmt-2"
+    And I close RPC stdin
+    Then the RPC stdout should contain a response command "get_messages_tail" with success true
+    And the RPC get_messages_tail response should include a "messages" array
+
+  @done
+  Scenario: get_messages_tail with count 0 returns empty messages array
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "any reply"
+    When I start the RPC agent with no session
+    And I queue RPC prompt "any prompt"
+    And I queue RPC get_messages_tail with count 0 and id "gmt-3"
+    And I close RPC stdin
+    Then the RPC stdout should contain a response command "get_messages_tail" with success true
+    And the RPC get_messages_tail messages count should be exactly 0
+
+  @done
+  Scenario: get_messages_tail on empty history returns empty array
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the RPC agent with no session
+    And I queue RPC get_messages_tail with count 5 and id "gmt-4"
+    And I close RPC stdin
+    Then the RPC stdout should contain a response command "get_messages_tail" with success true
+    And the RPC get_messages_tail messages count should be exactly 0
+
   # ─── compute_session_stats correctness ───────────────────────────────────────
 
   @wip

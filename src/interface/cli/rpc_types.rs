@@ -46,6 +46,12 @@ pub enum RpcCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    /// Return the last `count` messages from the conversation history.
+    GetMessagesTail {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        count: usize,
+    },
     /// Return token usage and cost statistics.
     GetSessionStats {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -78,6 +84,7 @@ impl RpcCommand {
             Self::Abort { id } => id.as_deref(),
             Self::GetState { id } => id.as_deref(),
             Self::GetMessages { id } => id.as_deref(),
+            Self::GetMessagesTail { id, .. } => id.as_deref(),
             Self::GetSessionStats { id } => id.as_deref(),
             Self::SetModel { id, .. } => id.as_deref(),
         }
@@ -92,6 +99,7 @@ impl RpcCommand {
             Self::Abort { .. } => "abort",
             Self::GetState { .. } => "get_state",
             Self::GetMessages { .. } => "get_messages",
+            Self::GetMessagesTail { .. } => "get_messages_tail",
             Self::GetSessionStats { .. } => "get_session_stats",
             Self::SetModel { .. } => "set_model",
         }
@@ -356,6 +364,37 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_get_messages_tail_command() {
+        let json = r#"{"type":"get_messages_tail","count":5}"#;
+        let cmd: RpcCommand = serde_json::from_str(json).unwrap();
+        match cmd {
+            RpcCommand::GetMessagesTail { id, count } => {
+                assert!(id.is_none());
+                assert_eq!(count, 5);
+            }
+            _ => panic!("expected GetMessagesTail"),
+        }
+    }
+
+    #[test]
+    fn test_parse_get_messages_tail_with_id() {
+        let json = r#"{"type":"get_messages_tail","id":"gmt-1","count":10}"#;
+        let cmd: RpcCommand = serde_json::from_str(json).unwrap();
+        assert_eq!(cmd.id(), Some("gmt-1"));
+        assert_eq!(cmd.type_name(), "get_messages_tail");
+    }
+
+    #[test]
+    fn test_parse_get_messages_tail_count_zero() {
+        let json = r#"{"type":"get_messages_tail","count":0}"#;
+        let cmd: RpcCommand = serde_json::from_str(json).unwrap();
+        match cmd {
+            RpcCommand::GetMessagesTail { count, .. } => assert_eq!(count, 0),
+            _ => panic!("expected GetMessagesTail"),
+        }
+    }
+
+    #[test]
     fn test_parse_get_session_stats_command() {
         let json = r#"{"type":"get_session_stats"}"#;
         let cmd: RpcCommand = serde_json::from_str(json).unwrap();
@@ -541,6 +580,10 @@ mod tests {
         assert_eq!(
             RpcCommand::GetMessages { id: None }.type_name(),
             "get_messages"
+        );
+        assert_eq!(
+            RpcCommand::GetMessagesTail { id: None, count: 5 }.type_name(),
+            "get_messages_tail"
         );
         assert_eq!(
             RpcCommand::GetSessionStats { id: None }.type_name(),
