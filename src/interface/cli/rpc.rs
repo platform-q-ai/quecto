@@ -417,11 +417,22 @@ async fn dispatch_command(cmd: RpcCommand, ctx: &mut DispatchCtx<'_>) -> bool {
             false
         }
 
-        // Query variants are handled by the fast path above and will never reach here.
+        // Query variants are handled by the fast path above; this arm is a safety
+        // net in case query_response_data is not updated when a new query variant is
+        // added. It emits a graceful error rather than panicking.
         RpcCommand::GetState { .. }
         | RpcCommand::GetMessages { .. }
         | RpcCommand::GetMessagesTail { .. }
-        | RpcCommand::GetSessionStats { .. } => unreachable!("handled by query_response_data"),
+        | RpcCommand::GetSessionStats { .. } => {
+            tracing::error!(command = %type_name, "query variant reached dispatch fallback — update query_response_data");
+            let ev = RpcEvent::err(
+                id.as_deref(),
+                &type_name,
+                "internal: unhandled query command",
+            );
+            emit_event(ctx.stdout, &ev).await;
+            false
+        }
     }
 }
 

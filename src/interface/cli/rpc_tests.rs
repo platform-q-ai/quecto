@@ -302,28 +302,6 @@ fn test_get_messages_tail_type_name() {
 }
 
 #[test]
-fn test_get_messages_tail_tail_of_empty_slice() {
-    let messages: Vec<Message> = vec![];
-    let tail: Vec<_> = messages.iter().rev().take(5).collect();
-    assert!(tail.is_empty());
-}
-
-#[test]
-fn test_get_messages_tail_count_larger_than_history() {
-    let messages = [Message::user("a"), Message::assistant("b", vec![])];
-    // take(100) on a 2-element iterator gives 2
-    let tail: Vec<_> = messages.iter().rev().take(100).collect();
-    assert_eq!(tail.len(), 2);
-}
-
-#[test]
-fn test_get_messages_tail_count_zero() {
-    let messages = [Message::user("a"), Message::assistant("b", vec![])];
-    let tail: Vec<_> = messages.iter().rev().take(0).collect();
-    assert!(tail.is_empty());
-}
-
-#[test]
 fn test_get_messages_tail_returns_last_n_in_order() {
     // Build 5 user messages and request tail of 3 — should get last 3 in original order.
     let messages: Vec<Message> = (0..5).map(|i| Message::user(format!("msg{i}"))).collect();
