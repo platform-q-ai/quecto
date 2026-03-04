@@ -547,3 +547,34 @@ fn test_parse_repl_flags_no_sandbox_combined_with_session() {
     assert_eq!(flags.session_name.as_deref(), Some("chat1"));
     assert_eq!(flags.model_override.as_deref(), Some("gpt-4"));
 }
+
+// ===================================================================
+// --network flag tests for REPL
+// ===================================================================
+
+#[test]
+fn test_parse_repl_flags_network_defaults_false() {
+    let flags = parse_repl_flags(&[]).unwrap();
+    assert!(
+        !flags.network,
+        "--network should be false by default in REPL"
+    );
+}
+
+#[test]
+fn test_parse_repl_flags_network_parsed() {
+    let args: Vec<String> = vec!["--network".into()];
+    let flags = parse_repl_flags(&args).unwrap();
+    assert!(
+        flags.network,
+        "--network should be true when provided to REPL"
+    );
+}
+
+#[test]
+fn test_parse_repl_flags_network_combined_with_no_sandbox() {
+    let args: Vec<String> = vec!["--network".into(), "--no-sandbox".into()];
+    let flags = parse_repl_flags(&args).unwrap();
+    assert!(flags.network);
+    assert!(flags.no_sandbox);
+}

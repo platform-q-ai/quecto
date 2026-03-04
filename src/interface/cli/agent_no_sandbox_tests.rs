@@ -99,6 +99,7 @@ fn test_build_agent_no_sandbox_emits_warning() {
         max_time: None,
         mode: super::AgentMode::OneShot,
         no_sandbox: true,
+        network: false,
     };
 
     let mut stderr = String::new();
@@ -164,6 +165,7 @@ fn test_build_agent_with_sandbox_enabled_no_warning() {
         max_time: None,
         mode: super::AgentMode::OneShot,
         no_sandbox: false,
+        network: false,
     };
 
     let mut stderr = String::new();
@@ -172,6 +174,136 @@ fn test_build_agent_with_sandbox_enabled_no_warning() {
     assert!(
         !stderr.contains("--no-sandbox"),
         "no warning expected when sandbox is not disabled, got: {}",
+        stderr
+    );
+}
+
+// ===================================================================
+// --network flag parsing tests
+// ===================================================================
+
+#[test]
+fn test_agent_network_flag_defaults_false() {
+    let mut stderr = String::new();
+    let a: Vec<String> = vec!["-m".into(), "Hi".into()];
+    let flags = parse_agent_flags(&a, &mut stderr).unwrap();
+    assert!(!flags.network, "--network should be false by default");
+}
+
+#[test]
+fn test_agent_network_flag_parsed() {
+    let mut stderr = String::new();
+    let a: Vec<String> = vec!["--network".into(), "-m".into(), "Hi".into()];
+    let flags = parse_agent_flags(&a, &mut stderr).unwrap();
+    assert!(flags.network, "--network should be true when provided");
+}
+
+#[test]
+fn test_agent_network_combined_with_no_sandbox() {
+    let mut stderr = String::new();
+    let a: Vec<String> = vec![
+        "--network".into(),
+        "--no-sandbox".into(),
+        "-m".into(),
+        "Hi".into(),
+    ];
+    let flags = parse_agent_flags(&a, &mut stderr).unwrap();
+    assert!(flags.network);
+    assert!(flags.no_sandbox);
+}
+
+#[test]
+fn test_agent_network_combined_with_no_session() {
+    let mut stderr = String::new();
+    let a: Vec<String> = vec![
+        "--network".into(),
+        "--no-session".into(),
+        "-m".into(),
+        "Hi".into(),
+    ];
+    let flags = parse_agent_flags(&a, &mut stderr).unwrap();
+    assert!(flags.network);
+    assert!(flags.no_session);
+}
+
+#[test]
+fn test_agent_help_documents_network() {
+    let out = run_with_output(vec!["quecto".into(), "help".into()], &default_ctx());
+    assert_eq!(out.exit_code, 0);
+    assert!(
+        out.stdout.contains("--network"),
+        "help text must document --network, got:\n{}",
+        out.stdout
+    );
+}
+
+// ===================================================================
+// --network integration: build_agent_from_config
+// ===================================================================
+
+/// --network should override config network_passthrough=false and emit a warning.
+#[test]
+fn test_build_agent_network_flag_emits_warning() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("config.json"),
+        r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#,
+    )
+    .unwrap();
+
+    let flags = AgentFlags {
+        session_name: None,
+        no_session: false,
+        message: Some("hi".into()),
+        system_prompt: None,
+        model_override: None,
+        max_iterations: None,
+        max_time: None,
+        mode: super::AgentMode::OneShot,
+        no_sandbox: false,
+        network: true,
+    };
+
+    let mut stderr = String::new();
+    let result = build_agent_from_config(tmp.path(), &flags, &mut stderr);
+
+    assert!(result.is_some(), "stderr: {}", stderr);
+    assert!(
+        stderr.contains("--network"),
+        "expected --network warning in stderr, got: {}",
+        stderr
+    );
+}
+
+/// Without --network, no network warning should appear.
+#[test]
+fn test_build_agent_without_network_flag_no_warning() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("config.json"),
+        r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#,
+    )
+    .unwrap();
+
+    let flags = AgentFlags {
+        session_name: None,
+        no_session: false,
+        message: Some("hi".into()),
+        system_prompt: None,
+        model_override: None,
+        max_iterations: None,
+        max_time: None,
+        mode: super::AgentMode::OneShot,
+        no_sandbox: false,
+        network: false,
+    };
+
+    let mut stderr = String::new();
+    let result = build_agent_from_config(tmp.path(), &flags, &mut stderr);
+    assert!(result.is_some(), "stderr: {}", stderr);
+    assert!(
+        !stderr.contains("--network"),
+        "no --network warning expected, got: {}",
         stderr
     );
 }

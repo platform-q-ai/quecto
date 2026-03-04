@@ -113,6 +113,30 @@ Feature: Agent CLI — Headless One-Shot Mode
     Then the exit code should be 0
     And stdout should contain "--no-sandbox"
 
+  # --- Issue #0: --network flag ---
+
+  Scenario: --network flag is accepted and enables network passthrough
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "network enabled"
+    When I run quecto agent --network -m "hello"
+    Then the exit code should be 0
+    And stdout should contain "network enabled"
+
+  Scenario: --network flag parses correctly alongside --no-sandbox
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "ok"
+    When I run quecto agent --network --no-sandbox -m "hello"
+    Then the exit code should be 0
+    And stdout should contain "ok"
+
+  Scenario: --network flag is documented in help
+    Given a temp base directory
+    When I run quecto help
+    Then the exit code should be 0
+    And stdout should contain "--network"
+
   # --no-sandbox uses CWD as workspace root
   # Tested at unit level in agent_no_sandbox_tests.rs::test_resolve_agent_workspace_*
   # BDD scenario is pending because in-process CWD mutation is global and unsafe in

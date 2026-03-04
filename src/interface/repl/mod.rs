@@ -32,6 +32,10 @@ use std::path::PathBuf;
 /// `true` allows the agent to read and write **any path on the system**.
 /// This is intentional when running quecto as a coding assistant on an arbitrary
 /// repo, but must never be set implicitly or without user consent.
+///
+/// The `network` field enables outbound network access inside bash tool calls
+/// by disabling nsjail's network namespace isolation. Must never be set
+/// implicitly or without user consent.
 pub struct ReplFlags {
     pub session_name: Option<String>,
     pub system_prompt: Option<String>,
@@ -40,6 +44,10 @@ pub struct ReplFlags {
     /// Overrides `config.agents.defaults.restrict_to_workspace`.
     /// WARNING: allows the agent to read/write any path on the system.
     pub no_sandbox: bool,
+    /// When true, enable network access inside bash tool calls.
+    /// Overrides `config.tools.exec.network_passthrough`.
+    /// WARNING: allows bash commands to make outbound network connections.
+    pub network: bool,
 }
 
 /// Session state for the REPL (agent, persistence, history).
@@ -322,7 +330,12 @@ pub fn run_repl<R: BufRead, W: Write>(
         tracing::warn!("--no-sandbox: workspace path restriction disabled");
     }
     let sandbox = Sandbox::new(Some(workspace.clone()), restrict_to_workspace);
-    let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(ctx.config);
+    let mut exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(ctx.config);
+    // --network overrides config: enables network access inside bash tool calls.
+    if ctx.flags.network {
+        exec_settings.network_passthrough = true;
+        tracing::warn!("--network: bash tool network isolation disabled");
+    }
     let mut registry =
         ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
     let ephemeral = ctx.flags.session_name.as_deref() == Some("-");

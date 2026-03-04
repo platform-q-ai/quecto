@@ -48,6 +48,11 @@ pub(crate) struct AgentFlags {
     /// Overrides `config.agents.defaults.restrict_to_workspace`.
     /// WARNING: allows the agent to read/write any path on the system.
     pub(crate) no_sandbox: bool,
+    /// When true, enable network access inside bash tool calls by disabling
+    /// nsjail's network namespace isolation (`--disable_clone_newnet`).
+    /// Overrides `config.tools.exec.network_passthrough`.
+    /// WARNING: allows bash commands to make outbound network connections.
+    pub(crate) network: bool,
 }
 
 /// Bundles the stdout/stderr pair passed through the agent pipeline.
@@ -111,6 +116,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut max_time: Option<u64> = None;
     let mut mode = AgentMode::OneShot;
     let mut no_sandbox = false;
+    let mut network = false;
     let mut i = 0;
 
     while i < args.len() {
@@ -121,6 +127,10 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
             }
             "--no-sandbox" => {
                 no_sandbox = true;
+                i += 1;
+            }
+            "--network" => {
+                network = true;
                 i += 1;
             }
             "-s" | "--session" => {
@@ -193,6 +203,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         max_time,
         mode,
         no_sandbox,
+        network,
     })
 }
 
@@ -285,7 +296,14 @@ pub(crate) fn build_agent_from_config(
         stderr.push_str("WARNING: --no-sandbox is active — workspace path restriction disabled\n");
     }
     let sandbox = Sandbox::new(Some(workspace.clone()), restrict_to_workspace);
-    let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
+    let mut exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
+    // --network overrides config: enables network access inside bash tool calls by
+    // disabling nsjail's network namespace isolation. The dangerous-command denylist
+    // remains active regardless.
+    if flags.network {
+        exec_settings.network_passthrough = true;
+        stderr.push_str("WARNING: --network is active — bash tool network isolation disabled\n");
+    }
     let registry =
         ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
     let mut registry = registry;
@@ -300,11 +318,10 @@ pub(crate) fn build_agent_from_config(
         spill_store.clone(),
         session_key.clone(),
     )));
-    registry.register(Arc::new(SpawnTool::with_base_dir(
-        vec![],
-        restrict_to_workspace,
-        base_dir.to_path_buf(),
-    )));
+    registry.register(Arc::new(
+        SpawnTool::with_base_dir(vec![], restrict_to_workspace, base_dir.to_path_buf())
+            .with_network(flags.network),
+    ));
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),

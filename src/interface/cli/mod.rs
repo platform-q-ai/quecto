@@ -324,6 +324,7 @@ fn parse_repl_flags(args: &[String]) -> Result<ReplFlags, String> {
     let mut system_prompt: Option<String> = None;
     let mut model_override: Option<String> = None;
     let mut no_sandbox = false;
+    let mut network = false;
     let mut i = 0;
 
     while i < args.len() {
@@ -362,6 +363,10 @@ fn parse_repl_flags(args: &[String]) -> Result<ReplFlags, String> {
                 no_sandbox = true;
                 i += 1;
             }
+            "--network" => {
+                network = true;
+                i += 1;
+            }
             other if other.starts_with("--") || other.starts_with('-') => {
                 return Err(format!("unknown flag '{other}'"));
             }
@@ -376,6 +381,7 @@ fn parse_repl_flags(args: &[String]) -> Result<ReplFlags, String> {
         system_prompt,
         model_override,
         no_sandbox,
+        network,
     })
 }
 
@@ -410,7 +416,7 @@ fn help_text(out: &mut String) {
     ));
     out.push_str("\nUsage: quecto [command]\n");
     out.push_str("\nWhen run with no arguments, quecto enters interactive REPL mode.\n");
-    out.push_str("  REPL options: -s <name>, --system <p>, --model <m>, --no-sandbox\n");
+    out.push_str("  REPL options: -s <name>, --system <p>, --model <m>, --no-sandbox, --network\n");
     out.push_str("\nCommands:\n");
     out.push_str("  onboard     Initialize configuration and workspace\n");
     out.push_str("  agent       Run a one-shot agent session (-m required)\n");
@@ -418,6 +424,9 @@ fn help_text(out: &mut String) {
     out.push_str("                       --no-session  Ephemeral mode — nothing saved or loaded\n");
     out.push_str(
         "                       --no-sandbox  Disable workspace path restriction (DANGEROUS)\n",
+    );
+    out.push_str(
+        "                       --network     Enable bash tool network access (DANGEROUS)\n",
     );
     out.push_str("                       --model <m>   Override model\n");
     out.push_str("                       --system <p>  System prompt\n");
