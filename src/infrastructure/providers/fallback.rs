@@ -81,7 +81,17 @@ impl FallbackProvider {
     }
 
     /// Classify a DomainError into an ErrorClass for retry decisions.
-    fn classify_error(err: &DomainError) -> ErrorClass {
+    #[cfg(not(any(test, feature = "test-support")))]
+    pub(crate) fn classify_error(err: &DomainError) -> ErrorClass {
+        Self::classify_error_impl(err)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn classify_error(err: &DomainError) -> ErrorClass {
+        Self::classify_error_impl(err)
+    }
+
+    fn classify_error_impl(err: &DomainError) -> ErrorClass {
         let msg = match err {
             DomainError::Provider(msg) => msg,
             _ => return ErrorClass::Unknown,
@@ -110,7 +120,7 @@ impl FallbackProvider {
             || lowered.contains("bad gateway")
             || lowered.contains("service unavailable")
             || lowered.contains("gateway timeout")
-            || lowered.contains("overloaded")
+            || lowered.contains("overloaded_error")
         {
             ErrorClass::Server
         } else if lowered.contains("connect")

@@ -227,17 +227,28 @@ fn test_classify_529_as_server_and_retryable() {
 }
 
 #[test]
-fn test_classify_overloaded_body_as_server() {
-    // Anthropic sometimes returns 529 with "overloaded" in the body text.
-    let err = DomainError::Provider("HTTP 529 from Anthropic: overloaded".to_string());
+fn test_classify_overloaded_error_body_as_server() {
+    // Anthropic returns overloaded_error in the JSON body — matched by keyword.
+    let err = DomainError::Provider(
+        "HTTP 529 from Anthropic: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}".to_string(),
+    );
     assert_eq!(FallbackProvider::classify_error(&err), ErrorClass::Server);
 }
 
 #[test]
-fn test_classify_overloaded_keyword_alone_is_server() {
-    // Even if status code parsing fails, "overloaded" in the message → Server.
-    let err = DomainError::Provider("Anthropic API is overloaded, please retry".to_string());
+fn test_classify_overloaded_error_keyword_alone_is_server() {
+    // Even if status code parsing fails, "overloaded_error" in the message → Server.
+    let err =
+        DomainError::Provider("Anthropic returned overloaded_error, please retry".to_string());
     assert_eq!(FallbackProvider::classify_error(&err), ErrorClass::Server);
+}
+
+#[test]
+fn test_classify_bare_overloaded_word_is_unknown() {
+    // Bare "overloaded" without the Anthropic-specific suffix is NOT classified
+    // as Server — prevents false positives from unrelated messages.
+    let err = DomainError::Provider("system is overloaded".to_string());
+    assert_eq!(FallbackProvider::classify_error(&err), ErrorClass::Unknown);
 }
 
 #[test]
