@@ -473,12 +473,22 @@ fn cmd_agent_rpc(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         })
         .unwrap_or_else(|| "default".to_string());
 
+    // Build system prompt (datetime preamble + skills + user-supplied --system),
+    // mirroring what one-shot mode does before run_agent_session.
+    // Always non-empty: build_system_prompt returns at least the datetime preamble.
+    let skill_prompt = crate::interface::shared::load_skill_prompt(&base_dir);
+    let system_prompt = Some(crate::interface::shared::build_system_prompt(
+        &skill_prompt,
+        &flags.system_prompt,
+    ));
+
     crate::interface::cli::rpc::run_rpc_loop(crate::interface::cli::rpc::RpcLoopArgs {
         agent,
         base_dir: &base_dir,
         session_key,
         model,
         ephemeral,
+        system_prompt,
         stdin_override: None,
         stdout_override: None,
         session_store_override: None,

@@ -138,6 +138,10 @@ pub struct RpcLoopArgs<'a> {
     pub session_key: String,
     pub model: String,
     pub ephemeral: bool,
+    /// Optional system prompt from `--system`.  Prepended as a transient
+    /// `Message::system` before each prompt run; stripped before persisting
+    /// the session (matches one-shot mode behaviour).
+    pub system_prompt: Option<String>,
     /// Injected stdin for testing.  `None` = use real `tokio::io::stdin`.
     pub stdin_override: Option<Box<dyn tokio::io::AsyncRead + Send + Unpin + 'static>>,
     /// Injected stdout writer for testing.  `None` = use real `tokio::io::stdout`.
@@ -169,6 +173,7 @@ async fn rpc_loop_async(args: RpcLoopArgs<'_>) -> i32 {
         session_key,
         model,
         ephemeral,
+        system_prompt,
         stdin_override,
         stdout_override,
         session_store_override,
@@ -195,6 +200,9 @@ async fn rpc_loop_async(args: RpcLoopArgs<'_>) -> i32 {
         }
     };
 
+    // Inject system prompt as a transient leading message (not persisted).
+    inject_system_prompt(&mut messages, system_prompt.as_deref());
+
     let mut rpc_session = RpcSession::new(model, session_key.clone());
     let mut stdout: Box<dyn tokio::io::AsyncWrite + Send + Unpin> = match stdout_override {
         Some(w) => w,
@@ -218,6 +226,9 @@ async fn rpc_loop_async(args: RpcLoopArgs<'_>) -> i32 {
     .await;
 
     if !ephemeral && !session_key.is_empty() {
+        // Strip the transient system prompt before saving so it is not
+        // double-injected on the next process invocation.
+        remove_injected_system_prompt(&mut messages, system_prompt.as_deref());
         let session = Session {
             key: session_key,
             messages: std::mem::take(&mut messages),
@@ -226,6 +237,38 @@ async fn rpc_loop_async(args: RpcLoopArgs<'_>) -> i32 {
     }
 
     0
+}
+
+/// Prepend a system message if `prompt` is non-empty and no system message
+/// already exists at the front of `messages`.
+pub fn inject_system_prompt(messages: &mut Vec<Message>, prompt: Option<&str>) {
+    let text = match prompt {
+        Some(t) if !t.is_empty() => t,
+        _ => return,
+    };
+    // Skip injection if a system message is already present (e.g. loaded from session).
+    if messages.first().is_some_and(|m| m.role == Role::System) {
+        return;
+    }
+    messages.insert(0, Message::system(text.to_string()));
+}
+
+/// Remove the injected system prompt from `messages` before persisting.
+///
+/// Only removes the first message if it is a system message with content
+/// matching `prompt` exactly — never silently removes user-authored system
+/// messages from session history.
+pub fn remove_injected_system_prompt(messages: &mut Vec<Message>, prompt: Option<&str>) {
+    let text = match prompt {
+        Some(t) if !t.is_empty() => t,
+        _ => return,
+    };
+    if messages
+        .first()
+        .is_some_and(|m| m.role == Role::System && m.content == text)
+    {
+        messages.remove(0);
+    }
 }
 
 /// Read JSON commands from stdin and dispatch them until EOF or a fatal error.

@@ -507,6 +507,8 @@ pub struct QuectoWorld {
     pub rpc_session_name: Option<String>,
     /// RPC agent: use --no-session flag
     pub rpc_no_session: bool,
+    /// RPC agent: optional system prompt from --system flag
+    pub rpc_system_prompt: Option<String>,
     /// REPL: accumulated input lines (built up by "I type" steps)
     pub repl_input_lines: Vec<String>,
     /// REPL: flags to pass (built up by "with flags" steps)

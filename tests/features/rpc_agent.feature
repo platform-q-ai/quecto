@@ -3,6 +3,31 @@ Feature: RPC mode for headless agent operation
   I want to drive quecto agent via a JSON-lines protocol over stdin/stdout
   So that I can interact with a long-lived agent session programmatically
 
+  # ─── --system flag ──────────────────────────────────────────────────────────
+
+  @done
+  Scenario: --system flag injects system prompt into RPC session
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "hello"
+    When I start the RPC agent with no session and system prompt "You are a helpful assistant."
+    And I queue RPC prompt "hi"
+    And I close RPC stdin
+    Then the RPC process exits with code 0
+    And the RPC stdout should contain an event of type "agent_end"
+
+  @done
+  Scenario: --system flag system prompt is not persisted in session history
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "saved"
+    When I start the RPC agent with session "sys-persist-test" and system prompt "You are helpful."
+    And I queue RPC prompt "remember this"
+    And I close RPC stdin
+    Then the RPC process exits with code 0
+    And a session file for "sys-persist-test" should exist
+    And the session for "sys-persist-test" should not contain a system message
+
   # ─── Flag parsing ───────────────────────────────────────────────────────────
 
   @done
