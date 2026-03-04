@@ -397,6 +397,10 @@ Feature: nsjail Exec Isolation
     And an nsjail-isolated exec tool with a workspace
     Then the nsjail command for "echo test" should contain "/etc/hosts"
 
+  # TODO: promote to @done once a network-capable CI environment is available.
+  # This scenario requires real outbound DNS; it is pending to avoid flaking in
+  # air-gapped runners. Command-shape coverage is provided by the two scenarios above.
+  @pending
   Scenario: DNS resolution works inside nsjail with network passthrough enabled
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with network passthrough enabled

@@ -78,13 +78,23 @@ const NSJAIL_RO_BINDMOUNTS: &[&str] = &["/bin", "/usr", "/lib", "/lib64"];
 /// Individual files from `/etc` needed inside the jail.
 ///
 /// `/etc/resolv.conf` and `/etc/hosts` are required for DNS and hostname
-/// resolution inside the jail when network passthrough is enabled. Without
-/// them, tools like `curl`, `git`, and `gh` cannot resolve any hostnames.
+/// resolution. Without them, tools like `curl`, `git`, and `gh` cannot
+/// resolve any hostnames even when `network_passthrough` is enabled.
 ///
-/// `/etc/resolv.conf` is often a symlink (e.g. to
-/// `/run/systemd/resolve/stub-resolv.conf` on systemd hosts). nsjail's
-/// `--bindmount_ro` follows the symlink at mount time, so the real file is
-/// bind-mounted at the `/etc/resolv.conf` path inside the jail regardless.
+/// These files are mounted **unconditionally** (not gated on
+/// `network_passthrough`) for two reasons:
+/// 1. They are read-only and contain no secrets — only nameserver addresses
+///    and hostname/IP mappings that are already accessible to any process
+///    on the host with read access to `/etc`.
+/// 2. Gating them on `network_passthrough` would require threading that flag
+///    through to mount-list construction, adding complexity for negligible
+///    security benefit (a network-isolated jail still has `getent hosts`
+///    available, so the information would be inferrable anyway).
+///
+/// `/etc/resolv.conf` is often a symlink (e.g. on systemd hosts it points
+/// to `/run/systemd/resolve/stub-resolv.conf`). nsjail's `--bindmount_ro`
+/// follows the symlink at mount time, so the real file is mounted correctly
+/// at the `/etc/resolv.conf` path inside the jail regardless.
 const NSJAIL_RO_ETC_FILES: &[&str] = &[
     "/etc/ld.so.cache",
     "/etc/ld.so.conf",
