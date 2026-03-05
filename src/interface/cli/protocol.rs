@@ -1,8 +1,19 @@
-/// UDS protocol types for `quecto agent --mode uds`.
+/// UDS protocol types and wire-format helpers for `quecto agent --mode uds`.
 ///
 /// JSON-lines protocol over a Unix domain socket.  One JSON object per line.
 /// All commands carry an optional `id` field for request/response correlation.
 use serde::{Deserialize, Serialize};
+
+// ─── Public parse helper ──────────────────────────────────────────────────────
+
+/// Parse a single JSON line into an [`AgentCommand`].
+/// Returns `Err` for invalid JSON or an unrecognised command type.
+pub fn parse_command_line(line: &str) -> Result<AgentCommand, String> {
+    if line.trim().is_empty() {
+        return Err("empty line".to_string());
+    }
+    serde_json::from_str(line).map_err(|e| format!("parse error: {e}"))
+}
 
 // ─── Commands (stdin) ────────────────────────────────────────────────────────
 

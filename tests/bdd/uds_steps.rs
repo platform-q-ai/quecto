@@ -882,3 +882,28 @@ fn then_socket_has_mode_0600(world: &mut QuectoWorld) {
         .expect("socket mode not recorded — did 'I close the real socket connection' run?");
     assert_eq!(mode, 0o600, "expected socket mode 0600, got {mode:04o}");
 }
+
+// ─── Socket path length validation ───────────────────────────────────────────
+
+#[when("I run quecto agent --mode uds with an overlong socket path")]
+fn when_run_agent_overlong_socket(world: &mut QuectoWorld) {
+    // Build a path that exceeds the 104-byte sockaddr_un.sun_path limit.
+    let base = base_path(world);
+    let long_name = "x".repeat(110);
+    let long_path = base.join(format!("{long_name}.sock"));
+    let args = vec![
+        "quecto".to_string(),
+        "agent".to_string(),
+        "--mode".to_string(),
+        "uds".to_string(),
+        "--socket".to_string(),
+        long_path.to_string_lossy().into_owned(),
+    ];
+    let output = quecto::interface::cli::run_with_output(args, &world.cli_context);
+    world.exit_code = output.exit_code;
+    // Set uds_exit_code so execute_uds() short-circuits in Then steps.
+    world.uds_exit_code = Some(output.exit_code);
+    world.stdout = output.stdout;
+    world.agent_stderr.push_str(&output.stderr);
+    world.stderr = output.stderr;
+}

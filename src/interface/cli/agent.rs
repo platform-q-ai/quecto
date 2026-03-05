@@ -19,6 +19,13 @@ use crate::infrastructure::tools::recall::RecallTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use crate::infrastructure::tools::spawn::SpawnTool;
 
+/// Maximum byte length for user-supplied `--socket` paths.
+///
+/// Linux `sockaddr_un.sun_path` is 108 bytes (107 usable + NUL terminator).
+/// macOS/BSDs use 104 bytes.  We enforce the stricter macOS limit so the same
+/// path works cross-platform.  Auto-generated UUID paths are always ≤70 bytes.
+const MAX_SOCKET_PATH_BYTES: usize = 104;
+
 /// Parsed flags for the `agent` subcommand.
 pub(crate) struct AgentFlags {
     /// Session name for persistence. `None` = "default", `Some("-")` = ephemeral.
@@ -515,6 +522,17 @@ fn xdg_runtime_dir_or_temp() -> std::path::PathBuf {
 /// Validates config/provider, then enters the async JSON-lines loop.
 /// Returns an exit code.
 fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i32 {
+    // Early validation for user-supplied --socket paths: check length before
+    // doing any I/O (config load, agent build).  Auto-generated paths are
+    // always short, so we only gate on explicitly provided paths here.
+    if let Some(ref p) = flags.socket_path {
+        if p.as_os_str().len() > MAX_SOCKET_PATH_BYTES {
+            stderr
+                .push_str("agent: --socket path exceeds the Unix socket path limit (104 bytes)\n");
+            return 1;
+        }
+    }
+
     let base_dir = ctx.base_dir();
     let agent = match build_agent_from_config(&base_dir, &flags, stderr) {
         Some(a) => a,
@@ -563,6 +581,12 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     // Callers discover the path by watching stderr for "quecto-agent-socket: <path>".
     let socket_path = flags.socket_path.clone().unwrap_or_else(|| {
         let dir = xdg_runtime_dir_or_temp();
+        // Best-effort: remove stale quecto-agent-*.sock files older than 24 h.
+        // Drop guards do not run on SIGKILL so stale sockets can accumulate.
+        crate::interface::cli::uds::reap_stale_sockets(
+            &dir,
+            std::time::Duration::from_secs(86_400),
+        );
         let id = uuid::Uuid::new_v4();
         dir.join(format!("quecto-agent-{id}.sock"))
     });
