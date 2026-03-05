@@ -137,38 +137,8 @@ pub fn resolve_api_key_with_refresh(
                         ),
                     };
 
-                    match refresh_result {
-                        Ok(token_resp) => {
-                            let expires_at =
-                                chrono::Utc::now().timestamp() + token_resp.expires_in as i64 - 300;
-                            let account_id = if provider == "openai" {
-                                crate::infrastructure::auth::oauth::extract_openai_account_id(
-                                    &token_resp.access_token,
-                                )
-                            } else {
-                                None
-                            };
-                            let new_cred = Credential {
-                                provider: provider.to_string(),
-                                token: token_resp.access_token.clone(),
-                                method:
-                                    crate::infrastructure::auth::credential_store::AuthMethod::OAuth,
-                                expires_at: Some(expires_at),
-                                refresh_token: Some(token_resp.refresh_token),
-                                account_id,
-                            };
-                            if let Err(e) = store.store(new_cred) {
-                                tracing::warn!(
-                                    "failed to persist refreshed token for {}: {}",
-                                    provider,
-                                    e
-                                );
-                            }
-                            return token_resp.access_token;
-                        }
-                        Err(e) => {
-                            tracing::warn!("failed to refresh OAuth token for {}: {}", provider, e);
-                        }
+                    if let Some(token) = persist_refreshed_token(store, provider, refresh_result) {
+                        return token;
                     }
                 }
             }
@@ -176,6 +146,125 @@ pub fn resolve_api_key_with_refresh(
     }
 
     config_key.to_string()
+}
+
+/// Resolve an API key for a provider, automatically refreshing expired OAuth tokens.
+///
+/// Async variant for use in the gateway (already running inside a tokio runtime).
+/// If the credential is expired and has a refresh token, attempts to refresh it
+/// and update the credential store. Falls back to config key on failure.
+///
+/// Uses the standard OAuth config for the provider. For testing with custom
+/// OAuth endpoints, use [`resolve_api_key_with_refresh_async_with_oauth_config`].
+pub async fn resolve_api_key_with_refresh_async(
+    config_key: &str,
+    store: &crate::infrastructure::auth::credential_store::CredentialStore,
+    provider: &str,
+) -> String {
+    let oauth_config = crate::infrastructure::auth::oauth::OAuthConfig::for_provider(provider);
+    match oauth_config {
+        Some(ref cfg) => {
+            resolve_api_key_with_refresh_async_with_oauth_config(config_key, store, provider, cfg)
+                .await
+        }
+        None => {
+            // No OAuth config for this provider — fall back to snapshot-based resolution
+            let creds = store.load_snapshot().unwrap_or_default();
+            resolve_api_key(config_key, &creds, provider)
+        }
+    }
+}
+
+/// Resolve an API key for a provider with async refresh using a custom OAuth config.
+///
+/// This is the testable inner function that accepts an explicit `OAuthConfig`,
+/// allowing tests to point at a mock OAuth server.
+pub async fn resolve_api_key_with_refresh_async_with_oauth_config(
+    config_key: &str,
+    store: &crate::infrastructure::auth::credential_store::CredentialStore,
+    provider: &str,
+    oauth_config: &crate::infrastructure::auth::oauth::OAuthConfig,
+) -> String {
+    let creds = store.load_snapshot().unwrap_or_default();
+
+    if let Some(cred) = creds.get(provider) {
+        if !cred.is_expired() {
+            return cred.token.clone();
+        }
+
+        // Token is expired — try to refresh if we have a refresh token
+        if cred.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth {
+            if let Some(ref refresh_token) = cred.refresh_token {
+                tracing::info!("refreshing expired OAuth token for {} (async)", provider);
+
+                // Dispatch to the correct refresh function based on provider
+                let refresh_result = match provider {
+                    "openai" => {
+                        crate::infrastructure::auth::oauth::refresh_openai_token(
+                            oauth_config,
+                            refresh_token,
+                        )
+                        .await
+                    }
+                    _ => {
+                        crate::infrastructure::auth::oauth::refresh_anthropic_token(
+                            oauth_config,
+                            refresh_token,
+                        )
+                        .await
+                    }
+                };
+
+                if let Some(token) = persist_refreshed_token(store, provider, refresh_result) {
+                    return token;
+                }
+            }
+        }
+    }
+
+    config_key.to_string()
+}
+
+/// Process an OAuth token refresh result: build and persist the new credential.
+///
+/// Returns `Some(access_token)` on success, `None` on failure (logged as warning).
+/// Shared by both sync and async refresh paths to avoid credential-building duplication.
+fn persist_refreshed_token(
+    store: &crate::infrastructure::auth::credential_store::CredentialStore,
+    provider: &str,
+    refresh_result: Result<
+        crate::infrastructure::auth::oauth::OAuthTokenResponse,
+        crate::domain::error::DomainError,
+    >,
+) -> Option<String> {
+    match refresh_result {
+        Ok(token_resp) => {
+            let expires_at = chrono::Utc::now().timestamp() + token_resp.expires_in as i64 - 300;
+            let account_id = if provider == "openai" {
+                crate::infrastructure::auth::oauth::extract_openai_account_id(
+                    &token_resp.access_token,
+                )
+            } else {
+                None
+            };
+            let new_cred = Credential {
+                provider: provider.to_string(),
+                token: token_resp.access_token.clone(),
+                method: crate::infrastructure::auth::credential_store::AuthMethod::OAuth,
+                expires_at: Some(expires_at),
+                refresh_token: Some(token_resp.refresh_token),
+                account_id,
+            };
+            if let Err(e) = store.store(new_cred) {
+                tracing::warn!("failed to persist refreshed token for {}: {}", provider, e);
+            }
+            Some(token_resp.access_token)
+        }
+        Err(e) => {
+            tracing::warn!("failed to refresh OAuth token for {}: {}", provider, e);
+            None
+        }
+    }
 }
 
 /// Check which providers have expired credentials and need re-authentication.

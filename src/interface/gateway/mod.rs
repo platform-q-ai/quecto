@@ -15,7 +15,7 @@ use crate::domain::agent::AgentLoop;
 use crate::domain::channel::Channel;
 use crate::domain::provider::LlmProvider;
 use crate::domain::session::SessionStore;
-use crate::infrastructure::auth::credential_store::{Credential, CredentialStore};
+use crate::infrastructure::auth::credential_store::CredentialStore;
 use crate::infrastructure::bus::MessageBus;
 use crate::infrastructure::channels::telegram::TelegramChannel;
 use crate::infrastructure::config::Config;
@@ -184,14 +184,16 @@ impl Gateway {
             .try_init();
         let workspace = self.resolve_workspace();
 
-        // Load credential snapshot once for both provider resolution and readiness check.
+        // Load credential store for provider resolution and readiness check.
+        // The store is passed to build_fallback_provider which uses async refresh
+        // to automatically refresh expired OAuth tokens (issue #254).
         let store = CredentialStore::new(&self.base_dir);
         let creds = store.load_snapshot().unwrap_or_default();
         let needs_reauth = check_provider_readiness(&creds);
         for provider_name in &needs_reauth {
             tracing::warn!(
                 provider = provider_name.as_str(),
-                "credential expired — run `quecto auth login` to re-authenticate"
+                "credential expired — attempting OAuth refresh"
             );
         }
 
@@ -209,7 +211,7 @@ impl Gateway {
 
         // Shared HTTP client for all providers and HTTP-using tools.
         let http_client = reqwest::Client::new();
-        let provider_impl = Arc::new(self.build_fallback_provider(&creds, &http_client)?);
+        let provider_impl = Arc::new(self.build_fallback_provider(&store, &http_client).await?);
         let provider: Arc<dyn LlmProvider> = provider_impl.clone();
         let cron_store = Arc::new(FileCronStore::new(&self.base_dir));
         let (agent_impl, mut bus) = self.build_agent(
@@ -280,16 +282,17 @@ impl Gateway {
 
     /// Build the fallback provider from configured API keys.
     ///
-    /// Accepts a pre-loaded credential snapshot to maintain the
-    /// single-snapshot-at-startup invariant and avoid redundant file reads.
-    fn build_fallback_provider(
+    /// Uses async token refresh so that expired OAuth tokens are automatically
+    /// refreshed at startup (issue #254). Accepts a `CredentialStore` reference
+    /// to enable refresh-and-persist on expired tokens.
+    async fn build_fallback_provider(
         &self,
-        creds: &std::collections::HashMap<String, Credential>,
+        store: &CredentialStore,
         http_client: &reqwest::Client,
     ) -> Result<FallbackProvider, GatewayError> {
         let mut provider_list = Vec::new();
         for name in &["openai", "anthropic"] {
-            if let Some(p) = self.resolve_provider(name, creds, http_client)? {
+            if let Some(p) = self.resolve_provider(name, store, http_client).await? {
                 provider_list.push(p);
             }
         }
@@ -300,10 +303,14 @@ impl Gateway {
     }
 
     /// Resolve a single provider by name, returning `None` if no key is configured.
-    fn resolve_provider(
+    ///
+    /// Uses async token refresh to automatically refresh expired OAuth tokens
+    /// (issue #254). This replaces the previous snapshot-based approach that
+    /// could not refresh tokens.
+    async fn resolve_provider(
         &self,
         name: &str,
-        creds: &std::collections::HashMap<String, Credential>,
+        store: &CredentialStore,
         http_client: &reqwest::Client,
     ) -> Result<Option<Arc<dyn LlmProvider>>, GatewayError> {
         let (config_key, api_base) = match name {
@@ -317,7 +324,9 @@ impl Gateway {
             ),
             _ => return Ok(None),
         };
-        let api_key = resolve_api_key(config_key, creds, name);
+        let api_key =
+            crate::interface::shared::resolve_api_key_with_refresh_async(config_key, store, name)
+                .await;
         if api_key.is_empty() {
             return Ok(None);
         }

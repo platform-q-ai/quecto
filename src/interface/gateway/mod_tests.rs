@@ -529,15 +529,140 @@ fn test_build_whisper_client_https_non_groq_host_with_insecure_flag() {
     );
 }
 
+// --- resolve_api_key_with_refresh_async tests (issue #254) ---
+
+#[tokio::test]
+async fn test_resolve_api_key_with_refresh_async_returns_valid_token() {
+    use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    store
+        .store(Credential {
+            provider: "anthropic".to_string(),
+            token: "sk-ant-oat01-valid".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(i64::MAX), // far future
+            refresh_token: Some("rt-test".to_string()),
+            account_id: None,
+        })
+        .unwrap();
+
+    let resolved =
+        crate::interface::shared::resolve_api_key_with_refresh_async("", &store, "anthropic").await;
+    assert_eq!(resolved, "sk-ant-oat01-valid");
+}
+
+#[tokio::test]
+async fn test_resolve_api_key_with_refresh_async_falls_back_to_config_on_no_credential() {
+    use crate::infrastructure::auth::credential_store::CredentialStore;
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+
+    let resolved = crate::interface::shared::resolve_api_key_with_refresh_async(
+        "sk-config-key",
+        &store,
+        "anthropic",
+    )
+    .await;
+    assert_eq!(resolved, "sk-config-key");
+}
+
+#[tokio::test]
+async fn test_resolve_api_key_with_refresh_async_refreshes_expired_token() {
+    use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let response = serde_json::json!({
+        "access_token": "sk-ant-oat01-refreshed",
+        "refresh_token": "rt-new-refresh",
+        "expires_in": 28800
+    });
+
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+        .mount(&server)
+        .await;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    store
+        .store(Credential {
+            provider: "anthropic".to_string(),
+            token: "sk-ant-oat01-expired".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(0), // always expired
+            refresh_token: Some("rt-old-refresh".to_string()),
+            account_id: None,
+        })
+        .unwrap();
+
+    let resolved = crate::interface::shared::resolve_api_key_with_refresh_async_with_oauth_config(
+        "",
+        &store,
+        "anthropic",
+        &crate::infrastructure::auth::oauth::OAuthConfig::with_base_url(&server.uri()),
+    )
+    .await;
+    assert_eq!(resolved, "sk-ant-oat01-refreshed");
+
+    // Verify the credential was persisted
+    let creds = store.load_snapshot().unwrap();
+    let cred = creds.get("anthropic").unwrap();
+    assert_eq!(cred.token, "sk-ant-oat01-refreshed");
+    assert_eq!(cred.refresh_token.as_deref(), Some("rt-new-refresh"));
+}
+
+#[tokio::test]
+async fn test_resolve_api_key_with_refresh_async_falls_back_on_refresh_failure() {
+    use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(400).set_body_string("invalid_grant"))
+        .mount(&server)
+        .await;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    store
+        .store(Credential {
+            provider: "anthropic".to_string(),
+            token: "sk-ant-oat01-expired".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(0),
+            refresh_token: Some("rt-bad-refresh".to_string()),
+            account_id: None,
+        })
+        .unwrap();
+
+    let resolved = crate::interface::shared::resolve_api_key_with_refresh_async_with_oauth_config(
+        "sk-ant-config-fallback",
+        &store,
+        "anthropic",
+        &crate::infrastructure::auth::oauth::OAuthConfig::with_base_url(&server.uri()),
+    )
+    .await;
+    assert_eq!(resolved, "sk-ant-config-fallback");
+}
+
 // --- build_fallback_provider tests ---
 
-#[test]
-fn test_build_fallback_provider_no_keys() {
+#[tokio::test]
+async fn test_build_fallback_provider_no_keys() {
     let config: Config = serde_json::from_str("{}").unwrap();
     let tmp = tempfile::TempDir::new().unwrap();
     let gw = Gateway::new(config, tmp.path().to_path_buf());
-    let creds = std::collections::HashMap::new();
-    let result = gw.build_fallback_provider(&creds, &reqwest::Client::new());
+    let store = crate::infrastructure::auth::credential_store::CredentialStore::new(tmp.path());
+    let result = gw
+        .build_fallback_provider(&store, &reqwest::Client::new())
+        .await;
     assert!(result.is_err(), "should fail with no providers configured");
     let err = result.unwrap_err();
     assert!(
@@ -547,39 +672,45 @@ fn test_build_fallback_provider_no_keys() {
     );
 }
 
-#[test]
-fn test_build_fallback_provider_openai_only() {
+#[tokio::test]
+async fn test_build_fallback_provider_openai_only() {
     let config: Config =
         serde_json::from_str(r#"{"providers": {"openai": {"api_key": "sk-test-openai"}}}"#)
             .unwrap();
     let tmp = tempfile::TempDir::new().unwrap();
     let gw = Gateway::new(config, tmp.path().to_path_buf());
-    let creds = std::collections::HashMap::new();
-    let result = gw.build_fallback_provider(&creds, &reqwest::Client::new());
+    let store = crate::infrastructure::auth::credential_store::CredentialStore::new(tmp.path());
+    let result = gw
+        .build_fallback_provider(&store, &reqwest::Client::new())
+        .await;
     assert!(result.is_ok(), "should succeed with openai key");
 }
 
-#[test]
-fn test_build_fallback_provider_anthropic_only() {
+#[tokio::test]
+async fn test_build_fallback_provider_anthropic_only() {
     let config: Config =
         serde_json::from_str(r#"{"providers": {"anthropic": {"api_key": "sk-ant-test"}}}"#)
             .unwrap();
     let tmp = tempfile::TempDir::new().unwrap();
     let gw = Gateway::new(config, tmp.path().to_path_buf());
-    let creds = std::collections::HashMap::new();
-    let result = gw.build_fallback_provider(&creds, &reqwest::Client::new());
+    let store = crate::infrastructure::auth::credential_store::CredentialStore::new(tmp.path());
+    let result = gw
+        .build_fallback_provider(&store, &reqwest::Client::new())
+        .await;
     assert!(result.is_ok(), "should succeed with anthropic key");
 }
 
-#[test]
-fn test_build_fallback_provider_both_providers() {
+#[tokio::test]
+async fn test_build_fallback_provider_both_providers() {
     let config: Config = serde_json::from_str(
         r#"{"providers": {"openai": {"api_key": "sk-openai"}, "anthropic": {"api_key": "sk-ant"}}}"#,
     )
     .unwrap();
     let tmp = tempfile::TempDir::new().unwrap();
     let gw = Gateway::new(config, tmp.path().to_path_buf());
-    let creds = std::collections::HashMap::new();
-    let result = gw.build_fallback_provider(&creds, &reqwest::Client::new());
+    let store = crate::infrastructure::auth::credential_store::CredentialStore::new(tmp.path());
+    let result = gw
+        .build_fallback_provider(&store, &reqwest::Client::new())
+        .await;
     assert!(result.is_ok(), "should succeed with both providers");
 }
