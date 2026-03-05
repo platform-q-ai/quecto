@@ -204,3 +204,25 @@ Feature: Authentication
     When an OAuth token exchange is performed
     Then the token exchange should succeed with access token "sk-ant-oat01-exchanged"
     And the token exchange response should have no refresh token
+
+  # --- Consistent expires_at safety margin (issue #256) ---
+
+  @done
+  Scenario: expires_at_with_margin applies consistent 5-minute safety buffer
+    Given an OAuth token with expires_in of 3600 seconds
+    When expires_at_with_margin is calculated
+    Then the resulting expires_at should be 3300 seconds from now
+
+  @done
+  Scenario: Gateway refresh stores credential with safety margin
+    Given a config with no API key for "anthropic"
+    And a stored expired OAuth credential for "anthropic" with refresh token "rt-margin-test"
+    And a mock OAuth refresh server that returns a new token "sk-ant-oat01-margin" with refresh token "rt-new"
+    When the gateway resolves API key with refresh for "anthropic"
+    Then the persisted credential for "anthropic" should have expires_at with 300-second safety margin for 28800 seconds
+
+  @done
+  Scenario: expires_at_with_margin handles zero expiry
+    Given an OAuth token with expires_in of 0 seconds
+    When expires_at_with_margin is calculated
+    Then the resulting expires_at should be -300 seconds from now

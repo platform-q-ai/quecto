@@ -81,7 +81,7 @@ pub(super) fn import_anthropic(
             Ok(resp) => (
                 resp.access_token,
                 resp.refresh_token.unwrap_or_else(|| refresh.to_string()),
-                now + resp.expires_in as i64 - 300,
+                crate::interface::shared::expires_at_with_margin(resp.expires_in),
             ),
             Err(e) => {
                 out.stderr.push_str(&format!(
@@ -92,7 +92,11 @@ pub(super) fn import_anthropic(
             }
         }
     } else {
-        (access.to_string(), refresh.to_string(), expires_s - 300)
+        (
+            access.to_string(),
+            refresh.to_string(),
+            expires_s - crate::interface::shared::OAUTH_EXPIRY_MARGIN_SECS,
+        )
     };
 
     match store.store(Credential {
@@ -146,7 +150,7 @@ pub(super) fn import_openai(
         provider: "openai".to_string(),
         token: access.to_string(),
         method: AuthMethod::OAuth,
-        expires_at: Some(expires_s),
+        expires_at: Some(expires_s - crate::interface::shared::OAUTH_EXPIRY_MARGIN_SECS),
         refresh_token,
         account_id: None,
     }) {

@@ -898,3 +898,67 @@ fn then_token_exchange_no_refresh_token(world: &mut QuectoWorld) {
         resp.refresh_token
     );
 }
+
+// ===========================================================================
+// Consistent expires_at safety margin steps (issue #256)
+// ===========================================================================
+
+#[given(expr = "an OAuth token with expires_in of {int} seconds")]
+fn given_oauth_token_expires_in(world: &mut QuectoWorld, expires_in: u64) {
+    world.gateway_expires_in = Some(expires_in);
+}
+
+#[when("expires_at_with_margin is calculated")]
+fn when_expires_at_with_margin(world: &mut QuectoWorld) {
+    let expires_in = world.gateway_expires_in.expect("expires_in not set");
+    let result = quecto::interface::shared::expires_at_with_margin(expires_in);
+    world.gateway_computed_expires_at = Some(result);
+}
+
+#[then(expr = "the resulting expires_at should be {int} seconds from now")]
+fn then_expires_at_is_seconds_from_now(world: &mut QuectoWorld, expected_offset: i64) {
+    let now = chrono::Utc::now().timestamp();
+    let actual = world
+        .gateway_computed_expires_at
+        .expect("expires_at not computed");
+    let expected = now + expected_offset;
+    assert!(
+        (actual - expected).abs() <= 2,
+        "expected expires_at ~{} ({} seconds from now), got {} (diff: {}s)",
+        expected,
+        expected_offset,
+        actual,
+        (actual - expected).abs()
+    );
+}
+
+#[then(
+    expr = "the persisted credential for {string} should have expires_at with 300-second safety margin for {int} seconds"
+)]
+fn then_persisted_credential_has_margin(
+    world: &mut QuectoWorld,
+    provider: String,
+    expires_in: i64,
+) {
+    let base = base_path(world);
+    let store = CredentialStore::new(&base);
+    let creds = store.load_snapshot().unwrap();
+    let cred = creds
+        .get(&provider)
+        .unwrap_or_else(|| panic!("no credential found for provider '{}'", provider));
+
+    let now = chrono::Utc::now().timestamp();
+    let expected_with_margin = now + expires_in - 300;
+    let actual = cred.expires_at.expect("expires_at not set");
+
+    assert!(
+        (actual - expected_with_margin).abs() <= 2,
+        "expected expires_at ~{} (now + {} - 300), got {} (diff: {}s). \
+         Without margin would be ~{} — if that matches, the margin is missing.",
+        expected_with_margin,
+        expires_in,
+        actual,
+        (actual - expected_with_margin).abs(),
+        now + expires_in
+    );
+}
