@@ -391,6 +391,15 @@ Feature: UDS mode for headless agent operation
     Then the UDS agent exits with code 0
     And the socket file should not exist after agent exits
 
+  @done @uds-transport @socket-permissions
+  Scenario: auto-generated socket has owner-only permissions (mode 0600)
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the UDS agent with a real socket bind
+    And I close the real socket connection
+    Then the UDS agent exits with code 0
+    And the socket file should have mode 0600
+
   # ─── abort while running ─────────────────────────────────────────────────────
 
   @done @steer-abort

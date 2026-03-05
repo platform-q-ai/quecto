@@ -389,3 +389,33 @@ fn test_remove_system_prompt_noop_when_content_differs() {
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].content, "Different.");
 }
+
+// ─── Socket permission tests ──────────────────────────────────────────────────
+
+#[test]
+fn test_bind_socket_mode_is_0600() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().expect("failed to create tempdir");
+    let socket_path = dir.path().join("test-mode.sock");
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let listener = rt
+        .block_on(async { bind_secure_socket(&socket_path) })
+        .expect("bind failed");
+    let mode = std::fs::metadata(&socket_path)
+        .expect("stat")
+        .permissions()
+        .mode();
+    drop(listener);
+
+    assert_eq!(
+        mode & 0o777,
+        0o600,
+        "expected socket mode 0600, got {:04o}",
+        mode & 0o777
+    );
+}

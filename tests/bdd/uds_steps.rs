@@ -789,3 +789,96 @@ fn then_get_session_stats_assistant_messages_eq(world: &mut QuectoWorld, expecte
         "expected assistantMessages={expected}, got {actual}"
     );
 }
+
+// ─── Real-bind steps (socket_override = None) ────────────────────────────────
+//
+// These steps exercise the production bind path so socket permission
+// behaviour can be verified.  Unlike execute_uds, they pass
+// socket_override = None so run_uds_loop calls UnixListener::bind() for real.
+
+#[when("I start the UDS agent with a real socket bind")]
+fn when_start_uds_with_real_bind(world: &mut QuectoWorld) {
+    world.session_name = None;
+    world.no_session = true;
+    // Actual execution deferred to "I close the real socket connection".
+}
+
+/// Run the UDS loop with a real bind (socket_override = None), sample the
+/// socket mode once the file appears, then connect and disconnect to let the
+/// agent exit cleanly.
+#[when("I close the real socket connection")]
+fn when_close_real_socket_connection(world: &mut QuectoWorld) {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::UnixStream;
+
+    if world.uds_exit_code.is_some() {
+        return;
+    }
+    let base = world.cli_context.base_dir.clone().expect("no base dir");
+    let ctx = match build_uds_agent(world, &base) {
+        Ok(c) => c,
+        Err(e) => {
+            world.agent_stderr = e;
+            world.uds_exit_code = Some(1);
+            return;
+        }
+    };
+    let socket_path = base.join("real-bind-test.sock");
+    let _ = std::fs::remove_file(&socket_path);
+    world._uds_real_bind_socket_path = Some(socket_path.clone());
+
+    let UdsAgentContext {
+        agent,
+        model,
+        session_key,
+        ephemeral,
+    } = ctx;
+    let base_dir = base.clone();
+    let sp = socket_path.clone();
+
+    let handle = std::thread::spawn(move || {
+        run_uds_loop(UdsLoopArgs {
+            agent,
+            base_dir: &base_dir,
+            session_key,
+            model,
+            ephemeral,
+            system_prompt: String::new(),
+            socket_path: sp,
+            socket_override: None,
+            session_store_override: None,
+        })
+    });
+
+    // Wait for the socket file to appear (agent has bound and is ready).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !socket_path.exists() {
+        if std::time::Instant::now() > deadline {
+            world.agent_stderr = "timeout waiting for socket".to_string();
+            world.uds_exit_code = Some(1);
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+
+    // Sample the socket mode while the file still exists (before SocketGuard
+    // removes it after the agent exits).
+    let mode = std::fs::metadata(&socket_path)
+        .expect("failed to stat socket file after bind — possible race or bind failure")
+        .permissions()
+        .mode();
+    world._uds_real_bind_socket_mode = Some(mode & 0o777);
+
+    // Connect and immediately disconnect to unblock accept() so the agent exits.
+    let _ = UnixStream::connect(&socket_path);
+
+    world.uds_exit_code = Some(handle.join().unwrap_or(1));
+}
+
+#[then("the socket file should have mode 0600")]
+fn then_socket_has_mode_0600(world: &mut QuectoWorld) {
+    let mode = world
+        ._uds_real_bind_socket_mode
+        .expect("socket mode not recorded — did 'I close the real socket connection' run?");
+    assert_eq!(mode, 0o600, "expected socket mode 0600, got {mode:04o}");
+}

@@ -43,7 +43,7 @@ pub struct UdsLoopArgs<'a> {
     /// In tests: unused (the pre-connected `socket_override` is used instead).
     pub socket_path: std::path::PathBuf,
     /// Pre-connected stream injected by tests instead of accepting from a listener.
-    /// `None` = bind `socket_path`, `chmod 0o600`, accept one connection.
+    /// `None` = bind `socket_path` with mode `0600` (chmod-after-bind), accept one connection.
     pub socket_override: Option<std::os::unix::net::UnixStream>,
     /// Injected session store for testing.  `None` = use `FileSessionStore`.
     pub session_store_override: Option<Box<dyn SessionStore + 'static>>,
@@ -52,7 +52,7 @@ pub struct UdsLoopArgs<'a> {
 /// Run the UDS event loop.
 ///
 /// In production: binds a `UnixListener` on `socket_path`, prints the path
-/// to stderr, `chmod 0o600`, accepts one client connection, then processes
+/// to stderr, binds with mode `0600` (chmod-after-bind), accepts one client, then processes
 /// JSON-lines commands until the client closes the connection.  The socket
 /// file is unlinked on exit (both clean and panicked via a drop guard).
 ///
@@ -80,10 +80,33 @@ impl Drop for SocketGuard {
     }
 }
 
+/// Bind a `UnixListener` with owner-only permissions (`0600`).
+///
+/// Removes any stale socket file at `path`, binds the listener, then applies
+/// `chmod 0600`.  When `$XDG_RUNTIME_DIR` is used as the parent directory
+/// (mode `0700` on systemd systems), the directory already prevents other
+/// users from reaching the socket, so the brief post-bind window before chmod
+/// is not reachable.  On non-systemd systems with `/tmp`, the window is small
+/// (nanoseconds between bind and chmod) and requires a local attacker to win
+/// the race.
+///
+/// # Errors
+/// Returns `std::io::Error` if bind or chmod fails.
+fn bind_secure_socket(path: &std::path::Path) -> std::io::Result<tokio::net::UnixListener> {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::remove_file(path);
+    let listener = tokio::net::UnixListener::bind(path)?;
+    if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
+        // Remove the bound-but-insecure socket so it does not linger on disk
+        // with overly permissive mode.  The caller will exit on the error.
+        let _ = std::fs::remove_file(path);
+        return Err(e);
+    }
+    Ok(listener)
+}
+
 /// Async body of the UDS loop.
 async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
-    use std::os::unix::fs::PermissionsExt;
-
     let UdsLoopArgs {
         agent,
         base_dir,
@@ -126,19 +149,13 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         let w: Box<dyn tokio::io::AsyncWrite + Send + Unpin> = Box::new(w);
         (r, w, None::<SocketGuard>)
     } else {
-        let _ = std::fs::remove_file(&socket_path);
-        let listener = match tokio::net::UnixListener::bind(&socket_path) {
+        let listener = match bind_secure_socket(&socket_path) {
             Ok(l) => l,
             Err(e) => {
                 eprintln!("failed to bind socket {}: {e}", socket_path.display());
                 return 1;
             }
         };
-        if let Err(e) =
-            std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))
-        {
-            eprintln!("warning: failed to chmod socket: {e}");
-        }
         // Print socket path to stderr — callers poll for this line to discover the path.
         eprintln!("quecto-agent-socket: {}", socket_path.display());
         let stream = match listener.accept().await {

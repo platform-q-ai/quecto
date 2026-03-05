@@ -489,6 +489,29 @@ pub(crate) fn run_with_deadline(
 
 /// Run the agent in UDS mode.
 ///
+/// Return the XDG runtime directory if it is set, exists, and is writable by
+/// the current process; otherwise fall back to [`std::env::temp_dir`].
+///
+/// The XDG Base Directory Specification requires `$XDG_RUNTIME_DIR` to be
+/// owned by the user and mode `0700`.  We additionally verify it is writable
+/// before using it so a misconfigured or container-injected value does not
+/// cause a confusing bind error later.
+fn xdg_runtime_dir_or_temp() -> std::path::PathBuf {
+    if let Some(xdg) = std::env::var_os("XDG_RUNTIME_DIR") {
+        let path = std::path::PathBuf::from(xdg);
+        // Validate: must exist and be a directory we can write to.
+        if path.is_dir() {
+            // Probe writability by attempting to create a temp file inside.
+            let probe = path.join(".quecto-probe");
+            if std::fs::File::create(&probe).is_ok() {
+                let _ = std::fs::remove_file(&probe);
+                return path;
+            }
+        }
+    }
+    std::env::temp_dir()
+}
+
 /// Validates config/provider, then enters the async JSON-lines loop.
 /// Returns an exit code.
 fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i32 {
@@ -532,12 +555,16 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     let system_prompt =
         crate::interface::shared::build_system_prompt(&skill_prompt, &flags.system_prompt);
 
-    // Use --socket path if provided, otherwise auto-generate in tmpdir.
+    // Use --socket path if provided, otherwise auto-generate.
+    // Prefer $XDG_RUNTIME_DIR (/run/user/<uid>, mode 0700 on systemd) so the
+    // socket is not enumerable by other users via `ls /tmp/`.  The directory
+    // must exist and be writable by the current user; if not, fall back to
+    // temp_dir().  Fall back unconditionally when XDG_RUNTIME_DIR is unset.
     // Callers discover the path by watching stderr for "quecto-agent-socket: <path>".
     let socket_path = flags.socket_path.clone().unwrap_or_else(|| {
-        let tmpdir = std::env::temp_dir();
+        let dir = xdg_runtime_dir_or_temp();
         let id = uuid::Uuid::new_v4();
-        tmpdir.join(format!("quecto-agent-{id}.sock"))
+        dir.join(format!("quecto-agent-{id}.sock"))
     });
 
     crate::interface::cli::uds::run_uds_loop(crate::interface::cli::uds::UdsLoopArgs {
