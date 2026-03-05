@@ -1,22 +1,22 @@
-/// RPC agent loop — headless operation via JSON-lines protocol over stdin/stdout.
+/// UDS agent loop — headless operation via JSON-lines protocol over a Unix domain socket.
 ///
-/// Entry point: `run_rpc_loop` — called from `cmd_agent` when `--mode rpc` is set.
+/// Entry point: `run_uds_loop` — called from `cmd_agent` when `--mode uds` is set.
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::agent::AgentLoop;
 use crate::domain::message::{Message, Role};
 use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 
-use super::rpc_types::{
-    RpcCommand, RpcEvent, SessionState, SessionStats, StreamingBehavior, TokenStats,
+use super::protocol::{
+    AgentCommand, AgentEvent, SessionState, SessionStats, StreamingBehavior, TokenStats,
     ToolResultContent, TurnMessage,
 };
 
 // ─── Public parse helper (used by unit tests) ────────────────────────────────
 
-/// Parse a single JSON line into an `RpcCommand`.  Returns `Err` for invalid
+/// Parse a single JSON line into an `AgentCommand`.  Returns `Err` for invalid
 /// JSON or an unrecognised command type.
-pub fn parse_rpc_line(line: &str) -> Result<RpcCommand, String> {
+pub fn parse_command_line(line: &str) -> Result<AgentCommand, String> {
     if line.trim().is_empty() {
         return Err("empty line".to_string());
     }
@@ -25,15 +25,15 @@ pub fn parse_rpc_line(line: &str) -> Result<RpcCommand, String> {
 
 // ─── Session state tracker ────────────────────────────────────────────────────
 
-/// In-memory state for an active RPC session.
-pub struct RpcSession {
+/// In-memory state for an active UDS session.
+pub struct AgentSession {
     model: String,
     session_key: String,
     streaming: bool,
     pending: Vec<String>,
 }
 
-impl RpcSession {
+impl AgentSession {
     pub fn new(model: String, session_key: String) -> Self {
         Self {
             model,
@@ -131,8 +131,8 @@ pub fn messages_tail_json(messages: &[Message], count: usize) -> serde_json::Val
 
 // ─── RPC loop ────────────────────────────────────────────────────────────────
 
-/// Arguments for running the RPC loop (avoids long parameter lists).
-pub struct RpcLoopArgs<'a> {
+/// Arguments for running the UDS loop (avoids long parameter lists).
+pub struct UdsLoopArgs<'a> {
     pub agent: AgentLoopImpl,
     pub base_dir: &'a std::path::Path,
     pub session_key: String,
@@ -156,9 +156,9 @@ pub struct RpcLoopArgs<'a> {
     pub session_store_override: Option<Box<dyn SessionStore + 'static>>,
 }
 
-/// Run the RPC event loop.  Reads JSON commands from stdin until EOF;
+/// Run the UDS event loop.  Reads JSON commands from stdin until EOF;
 /// emits JSON events to stdout.  Returns the exit code.
-pub fn run_rpc_loop(args: RpcLoopArgs<'_>) -> i32 {
+pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     let rt = match crate::interface::cli::build_tokio_runtime() {
         Ok(rt) => rt,
         Err(e) => {
@@ -166,14 +166,14 @@ pub fn run_rpc_loop(args: RpcLoopArgs<'_>) -> i32 {
             return 1;
         }
     };
-    rt.block_on(rpc_loop_async(args))
+    rt.block_on(uds_loop_async(args))
 }
 
-/// Async body of the RPC loop.
-async fn rpc_loop_async(args: RpcLoopArgs<'_>) -> i32 {
+/// Async body of the UDS loop.
+async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     use tokio::io::AsyncWriteExt;
 
-    let RpcLoopArgs {
+    let UdsLoopArgs {
         agent,
         base_dir,
         session_key,
@@ -209,7 +209,7 @@ async fn rpc_loop_async(args: RpcLoopArgs<'_>) -> i32 {
     // Inject system prompt as a transient leading message (not persisted).
     inject_system_prompt(&mut messages, &system_prompt);
 
-    let mut rpc_session = RpcSession::new(model, session_key.clone());
+    let mut agent_session = AgentSession::new(model, session_key.clone());
     let mut stdout: Box<dyn tokio::io::AsyncWrite + Send + Unpin> = match stdout_override {
         Some(w) => w,
         None => Box::new(tokio::io::stdout()),
@@ -224,7 +224,7 @@ async fn rpc_loop_async(args: RpcLoopArgs<'_>) -> i32 {
         &mut DispatchCtx {
             agent: &mut agent,
             messages: &mut messages,
-            rpc_session: &mut rpc_session,
+            session: &mut agent_session,
             stdout: &mut *stdout,
             session_key: &session_key,
         },
@@ -304,7 +304,7 @@ async fn run_command_loop(
             _ => break,
         };
         if line.len() > MAX_LINE_BYTES {
-            let ev = RpcEvent::err(None, "parse_error", "line exceeds 1 MiB limit");
+            let ev = AgentEvent::err(None, "parse_error", "line exceeds 1 MiB limit");
             emit_event(ctx.stdout, &ev).await;
             continue;
         }
@@ -313,10 +313,10 @@ async fn run_command_loop(
             continue;
         }
 
-        let cmd = match parse_rpc_line(&line) {
+        let cmd = match parse_command_line(&line) {
             Ok(c) => c,
             Err(e) => {
-                let ev = RpcEvent::Response {
+                let ev = AgentEvent::Response {
                     id: None,
                     command: "parse_error".to_string(),
                     success: false,
@@ -354,7 +354,7 @@ async fn load_session(
 struct DispatchCtx<'a> {
     agent: &'a mut AgentLoopImpl,
     messages: &'a mut Vec<Message>,
-    rpc_session: &'a mut RpcSession,
+    session: &'a mut AgentSession,
     stdout: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
     session_key: &'a str,
 }
@@ -383,18 +383,20 @@ fn resolve_set_model_target(
 /// Build the response data payload for read-only query commands.
 ///
 /// Returns `Some(data)` when the command is a recognised query, `None` otherwise.
-fn query_response_data(cmd: &RpcCommand, ctx: &DispatchCtx<'_>) -> Option<serde_json::Value> {
+fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serde_json::Value> {
     match cmd {
-        RpcCommand::GetState { .. } => {
-            let state = ctx.rpc_session.state_snapshot(ctx.messages.len());
+        AgentCommand::GetState { .. } => {
+            let state = ctx.session.state_snapshot(ctx.messages.len());
             Some(serde_json::to_value(&state).unwrap_or_default())
         }
-        RpcCommand::GetMessages { .. } => {
+        AgentCommand::GetMessages { .. } => {
             let msgs: Vec<serde_json::Value> = ctx.messages.iter().map(message_to_json).collect();
             Some(serde_json::json!({ "messages": msgs }))
         }
-        RpcCommand::GetMessagesTail { count, .. } => Some(messages_tail_json(ctx.messages, *count)),
-        RpcCommand::GetSessionStats { .. } => {
+        AgentCommand::GetMessagesTail { count, .. } => {
+            Some(messages_tail_json(ctx.messages, *count))
+        }
+        AgentCommand::GetSessionStats { .. } => {
             let stats = compute_session_stats(ctx.session_key, ctx.messages);
             Some(serde_json::to_value(&stats).unwrap_or_default())
         }
@@ -403,19 +405,19 @@ fn query_response_data(cmd: &RpcCommand, ctx: &DispatchCtx<'_>) -> Option<serde_
 }
 
 /// Dispatch a single RPC command.  Returns `true` if the loop should exit.
-async fn dispatch_command(cmd: RpcCommand, ctx: &mut DispatchCtx<'_>) -> bool {
+async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool {
     let id = cmd.id().map(str::to_owned);
     let type_name = cmd.type_name().to_owned();
 
     // Fast path: read-only query commands share the same emit pattern.
     if let Some(data) = query_response_data(&cmd, ctx) {
-        let ev = RpcEvent::ok(id.as_deref(), &type_name, Some(data));
+        let ev = AgentEvent::ok(id.as_deref(), &type_name, Some(data));
         emit_event(ctx.stdout, &ev).await;
         return false;
     }
 
     match cmd {
-        RpcCommand::Prompt {
+        AgentCommand::Prompt {
             message,
             streaming_behavior,
             ..
@@ -437,9 +439,9 @@ async fn dispatch_command(cmd: RpcCommand, ctx: &mut DispatchCtx<'_>) -> bool {
         // after each prompt regardless of how messages were enqueued.  True steer
         // semantics (interrupt after current tool) require threading a CancelFlag into
         // the agent loop — deferred to a follow-up PR (#233 MVP).
-        RpcCommand::Steer { message, .. } | RpcCommand::FollowUp { message, .. } => {
-            ctx.rpc_session.enqueue_pending(message);
-            let ev = RpcEvent::ok(id.as_deref(), &type_name, None);
+        AgentCommand::Steer { message, .. } | AgentCommand::FollowUp { message, .. } => {
+            ctx.session.enqueue_pending(message);
+            let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
             emit_event(ctx.stdout, &ev).await;
             false
         }
@@ -447,13 +449,13 @@ async fn dispatch_command(cmd: RpcCommand, ctx: &mut DispatchCtx<'_>) -> bool {
         // Abort is a no-op when the agent is idle (sequential loop: a command can
         // only arrive between prompts). Abort-during-streaming requires a CancelFlag
         // wired into the agent process loop — deferred to follow-up.
-        RpcCommand::Abort { .. } => {
-            let ev = RpcEvent::ok(id.as_deref(), &type_name, None);
+        AgentCommand::Abort { .. } => {
+            let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
             emit_event(ctx.stdout, &ev).await;
             false
         }
 
-        RpcCommand::SetModel {
+        AgentCommand::SetModel {
             model,
             provider,
             model_id,
@@ -462,16 +464,16 @@ async fn dispatch_command(cmd: RpcCommand, ctx: &mut DispatchCtx<'_>) -> bool {
             let resolved_model = match resolve_set_model_target(model, provider, model_id) {
                 Ok(m) => m,
                 Err(msg) => {
-                    let ev = RpcEvent::err(id.as_deref(), &type_name, msg);
+                    let ev = AgentEvent::err(id.as_deref(), &type_name, msg);
                     emit_event(ctx.stdout, &ev).await;
                     return false;
                 }
             };
 
             ctx.agent.set_model(resolved_model.clone());
-            ctx.rpc_session.set_model(resolved_model);
-            tracing::debug!(new_model = %ctx.rpc_session.model(), "RPC: model switched");
-            let ev = RpcEvent::ok(id.as_deref(), &type_name, None);
+            ctx.session.set_model(resolved_model);
+            tracing::debug!(new_model = %ctx.session.model(), "UDS: model switched");
+            let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
             emit_event(ctx.stdout, &ev).await;
             false
         }
@@ -479,12 +481,12 @@ async fn dispatch_command(cmd: RpcCommand, ctx: &mut DispatchCtx<'_>) -> bool {
         // Query variants are handled by the fast path above; this arm is a safety
         // net in case query_response_data is not updated when a new query variant is
         // added. It emits a graceful error rather than panicking.
-        RpcCommand::GetState { .. }
-        | RpcCommand::GetMessages { .. }
-        | RpcCommand::GetMessagesTail { .. }
-        | RpcCommand::GetSessionStats { .. } => {
+        AgentCommand::GetState { .. }
+        | AgentCommand::GetMessages { .. }
+        | AgentCommand::GetMessagesTail { .. }
+        | AgentCommand::GetSessionStats { .. } => {
             tracing::error!(command = %type_name, "query variant reached dispatch fallback — update query_response_data");
-            let ev = RpcEvent::err(
+            let ev = AgentEvent::err(
                 id.as_deref(),
                 &type_name,
                 "internal: unhandled query command",
@@ -509,7 +511,7 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
     let DispatchCtx {
         agent,
         messages,
-        rpc_session,
+        session: agent_session,
         stdout,
         ..
     } = ctx;
@@ -520,16 +522,16 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
         streaming_behavior,
     } = cmd;
     // If the agent is currently running, require streaming_behavior.
-    if rpc_session.is_streaming() {
+    if agent_session.is_streaming() {
         match streaming_behavior {
             Some(StreamingBehavior::FollowUp) | Some(StreamingBehavior::Steer) => {
-                rpc_session.enqueue_pending(message);
-                let ev = RpcEvent::ok(id.as_deref(), &type_name, None);
+                agent_session.enqueue_pending(message);
+                let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
                 emit_event(stdout, &ev).await;
                 return false;
             }
             None => {
-                let ev = RpcEvent::err(
+                let ev = AgentEvent::err(
                     id.as_deref(),
                     &type_name,
                     "agent is running; provide streamingBehavior",
@@ -543,18 +545,18 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
     let exit = run_agent_prompt(PromptArgs {
         agent,
         messages,
-        rpc_session,
+        session: agent_session,
         stdout,
         message,
     })
     .await;
 
-    let ev = RpcEvent::ok(id.as_deref(), &type_name, None);
+    let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
     emit_event(stdout, &ev).await;
 
     // Drain pending follow-ups.
     loop {
-        let pending = rpc_session.drain_pending();
+        let pending = agent_session.drain_pending();
         if pending.is_empty() {
             break;
         }
@@ -562,7 +564,7 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
             run_agent_prompt(PromptArgs {
                 agent,
                 messages,
-                rpc_session,
+                session: agent_session,
                 stdout,
                 message: follow_msg,
             })
@@ -579,36 +581,36 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
 struct PromptArgs<'a> {
     agent: &'a mut AgentLoopImpl,
     messages: &'a mut Vec<Message>,
-    rpc_session: &'a mut RpcSession,
+    session: &'a mut AgentSession,
     stdout: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
     message: String,
 }
 
-/// Run a single agent prompt, emitting RPC events.  Returns 0 on success.
+/// Run a single agent prompt, emitting UDS events.  Returns 0 on success.
 async fn run_agent_prompt(args: PromptArgs<'_>) -> i32 {
     let PromptArgs {
         agent,
         messages,
-        rpc_session,
+        session: agent_session,
         stdout,
         message,
     } = args;
 
-    rpc_session.set_streaming(true);
-    emit_event(stdout, &RpcEvent::AgentStart).await;
-    emit_event(stdout, &RpcEvent::TurnStart).await;
+    agent_session.set_streaming(true);
+    emit_event(stdout, &AgentEvent::AgentStart).await;
+    emit_event(stdout, &AgentEvent::TurnStart).await;
 
     messages.push(Message::user(message));
 
     let before_len = messages.len();
     let result = agent.process(messages).await;
-    rpc_session.set_streaming(false);
+    agent_session.set_streaming(false);
 
     match result {
         Ok(agent_result) => {
             emit_tool_events_from_messages(stdout, &messages[before_len..]).await;
 
-            let turn_end = RpcEvent::TurnEnd {
+            let turn_end = AgentEvent::TurnEnd {
                 message: TurnMessage {
                     role: "assistant".to_string(),
                     content: agent_result.response.clone(),
@@ -621,11 +623,15 @@ async fn run_agent_prompt(args: PromptArgs<'_>) -> i32 {
 
             let run_msgs: Vec<serde_json::Value> =
                 messages[before_len..].iter().map(message_to_json).collect();
-            emit_event(stdout, &RpcEvent::AgentEnd { messages: run_msgs }).await;
+            emit_event(stdout, &AgentEvent::AgentEnd { messages: run_msgs }).await;
             0
         }
         Err(e) => {
-            emit_event(stdout, &RpcEvent::err(None, "agent_error", format!("{e}"))).await;
+            emit_event(
+                stdout,
+                &AgentEvent::err(None, "agent_error", format!("{e}")),
+            )
+            .await;
             1
         }
     }
@@ -645,7 +651,7 @@ async fn emit_tool_events_from_messages(
                     serde_json::from_str(&tc.arguments).unwrap_or_default();
                 emit_event(
                     stdout,
-                    &RpcEvent::ToolExecutionStart {
+                    &AgentEvent::ToolExecutionStart {
                         tool_call_id: tc.id.clone(),
                         tool_name: tc.name.clone(),
                         args,
@@ -656,7 +662,7 @@ async fn emit_tool_events_from_messages(
         } else if msg.role == Role::Tool {
             emit_event(
                 stdout,
-                &RpcEvent::ToolExecutionEnd {
+                &AgentEvent::ToolExecutionEnd {
                     tool_call_id: msg.tool_call_id.clone().unwrap_or_default(),
                     tool_name: msg.tool_name.clone().unwrap_or_default(),
                     result: ToolResultContent {
@@ -686,12 +692,12 @@ fn message_to_json(msg: &Message) -> serde_json::Value {
 }
 
 /// Write an event as a JSON line followed by a newline.
-async fn emit_event(writer: &mut (dyn tokio::io::AsyncWrite + Send + Unpin), event: &RpcEvent) {
+async fn emit_event(writer: &mut (dyn tokio::io::AsyncWrite + Send + Unpin), event: &AgentEvent) {
     use tokio::io::AsyncWriteExt;
     let line = event.to_json_line() + "\n";
     let _ = writer.write_all(line.as_bytes()).await;
 }
 
 #[cfg(test)]
-#[path = "rpc_tests.rs"]
+#[path = "uds_tests.rs"]
 mod tests;

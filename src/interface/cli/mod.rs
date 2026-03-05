@@ -1,8 +1,8 @@
 mod agent;
 mod auth;
 mod commands;
-pub mod rpc;
-pub mod rpc_types;
+pub mod protocol;
+pub mod uds;
 
 use std::path::PathBuf;
 
@@ -450,7 +450,7 @@ fn help_text(out: &mut String) {
     out.push_str("                       --max-iterations <n>  Max tool iterations\n");
     out.push_str("                       --max-time <s>  Wall-clock timeout in seconds\n");
     out.push_str(
-        "                       --mode rpc    JSON-lines RPC mode (stdin→stdout protocol)\n",
+        "                       --mode uds    JSON-lines agent mode via Unix domain socket\n",
     );
     out.push_str("  auth        Manage authentication (login, logout, status)\n");
     out.push_str("  gateway     Start the Telegram gateway\n");

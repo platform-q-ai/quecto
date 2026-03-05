@@ -1,30 +1,30 @@
 use super::*;
-/// Unit tests for the RPC agent loop.
+/// Unit tests for the UDS agent loop.
 ///
-/// These tests exercise the RPC session state management, stats computation,
+/// These tests exercise the UDS session state management, stats computation,
 /// model switching, and event emission — all without real I/O or a real agent.
-// This file is compiled as `mod tests` inside `rpc.rs`, so `super` = `rpc`.
-// `rpc_types` lives as a sibling at `cli::rpc_types`.
-use crate::interface::cli::rpc_types::*;
+// This file is compiled as `mod tests` inside `uds.rs`, so `super` = `uds`.
+// `protocol` lives as a sibling at `cli::protocol`.
+use crate::interface::cli::protocol::*;
 
-// ─── RpcSession unit tests ───────────────────────────────────────────────────
+// ─── AgentSession unit tests ───────────────────────────────────────────────────
 
 #[test]
 fn test_initial_state_not_streaming() {
-    let session = RpcSession::new("gpt-5".to_string(), "cli:test".to_string());
+    let session = AgentSession::new("gpt-5".to_string(), "cli:test".to_string());
     assert!(!session.is_streaming());
 }
 
 #[test]
 fn test_set_model_changes_model() {
-    let mut session = RpcSession::new("gpt-5".to_string(), "cli:test".to_string());
+    let mut session = AgentSession::new("gpt-5".to_string(), "cli:test".to_string());
     session.set_model("gpt-5-mini".to_string());
     assert_eq!(session.model(), "gpt-5-mini");
 }
 
 #[test]
 fn test_session_state_snapshot() {
-    let session = RpcSession::new("gpt-5".to_string(), "cli:my".to_string());
+    let session = AgentSession::new("gpt-5".to_string(), "cli:my".to_string());
     let state = session.state_snapshot(4);
     assert_eq!(state.model, "gpt-5");
     assert!(!state.is_streaming);
@@ -35,7 +35,7 @@ fn test_session_state_snapshot() {
 
 #[test]
 fn test_pending_message_count_after_enqueue() {
-    let mut session = RpcSession::new("m".to_string(), "k".to_string());
+    let mut session = AgentSession::new("m".to_string(), "k".to_string());
     session.enqueue_pending("first".to_string());
     session.enqueue_pending("second".to_string());
     let state = session.state_snapshot(0);
@@ -44,7 +44,7 @@ fn test_pending_message_count_after_enqueue() {
 
 #[test]
 fn test_drain_pending_messages() {
-    let mut session = RpcSession::new("m".to_string(), "k".to_string());
+    let mut session = AgentSession::new("m".to_string(), "k".to_string());
     session.enqueue_pending("a".to_string());
     session.enqueue_pending("b".to_string());
     let drained = session.drain_pending();
@@ -125,38 +125,38 @@ fn test_stats_tokens_zeroed_without_usage_on_message() {
     assert_eq!(stats.cost, 0.0);
 }
 
-// ─── parse_rpc_line ──────────────────────────────────────────────────────────
+// ─── parse_command_line ──────────────────────────────────────────────────────────
 
 #[test]
 fn test_parse_valid_prompt_line() {
     let line = r#"{"type":"prompt","message":"hello"}"#;
-    let result = parse_rpc_line(line);
+    let result = parse_command_line(line);
     assert!(result.is_ok());
-    matches!(result.unwrap(), RpcCommand::Prompt { .. });
+    matches!(result.unwrap(), AgentCommand::Prompt { .. });
 }
 
 #[test]
 fn test_parse_invalid_json_returns_err() {
-    let result = parse_rpc_line("not json{");
+    let result = parse_command_line("not json{");
     assert!(result.is_err());
 }
 
 #[test]
 fn test_parse_unknown_type_returns_err() {
-    let result = parse_rpc_line(r#"{"type":"unknown"}"#);
+    let result = parse_command_line(r#"{"type":"unknown"}"#);
     assert!(result.is_err());
 }
 
 #[test]
 fn test_parse_empty_line_returns_err() {
-    let result = parse_rpc_line("");
+    let result = parse_command_line("");
     assert!(result.is_err());
 }
 
 #[test]
 fn test_parse_abort_command() {
     let line = r#"{"type":"abort","id":"ab-1"}"#;
-    let cmd = parse_rpc_line(line).unwrap();
+    let cmd = parse_command_line(line).unwrap();
     assert_eq!(cmd.id(), Some("ab-1"));
     assert_eq!(cmd.type_name(), "abort");
 }
@@ -164,9 +164,9 @@ fn test_parse_abort_command() {
 #[test]
 fn test_parse_set_model_command() {
     let line = r#"{"type":"set_model","model":"gpt-5-mini"}"#;
-    let cmd = parse_rpc_line(line).unwrap();
+    let cmd = parse_command_line(line).unwrap();
     match cmd {
-        RpcCommand::SetModel {
+        AgentCommand::SetModel {
             model,
             provider,
             model_id,
@@ -183,9 +183,9 @@ fn test_parse_set_model_command() {
 #[test]
 fn test_parse_set_model_provider_and_model_id_command() {
     let line = r#"{"type":"set_model","provider":"openai-codex","modelId":"gpt-5.3-codex"}"#;
-    let cmd = parse_rpc_line(line).unwrap();
+    let cmd = parse_command_line(line).unwrap();
     match cmd {
-        RpcCommand::SetModel {
+        AgentCommand::SetModel {
             model,
             provider,
             model_id,
@@ -216,7 +216,7 @@ fn test_stats_user_plus_assistant_equals_exchange() {
 #[test]
 fn test_parse_error_response_uses_parse_error_command() {
     // Malformed JSON must produce a response with command == "parse_error".
-    let result = parse_rpc_line("{{bad json");
+    let result = parse_command_line("{{bad json");
     assert!(result.is_err());
     let err_msg = result.unwrap_err();
     // The error message should describe a parse failure.
@@ -227,9 +227,9 @@ fn test_parse_error_response_uses_parse_error_command() {
 }
 
 #[test]
-fn test_rpc_event_parse_error_response_shape() {
+fn test_agent_event_parse_error_response_shape() {
     // Verify that the parse error event we emit conforms to the Response shape.
-    let ev = RpcEvent::Response {
+    let ev = AgentEvent::Response {
         id: None,
         command: "parse_error".to_string(),
         success: false,
@@ -246,14 +246,14 @@ fn test_rpc_event_parse_error_response_shape() {
 
 #[test]
 fn test_enqueue_pending_respects_cap() {
-    let mut session = RpcSession::new("model".into(), "key".into());
-    for i in 0..RpcSession::MAX_PENDING + 10 {
+    let mut session = AgentSession::new("model".into(), "key".into());
+    for i in 0..AgentSession::MAX_PENDING + 10 {
         session.enqueue_pending(format!("msg-{i}"));
     }
     let drained = session.drain_pending();
     assert_eq!(
         drained.len(),
-        RpcSession::MAX_PENDING,
+        AgentSession::MAX_PENDING,
         "should cap at MAX_PENDING"
     );
 }
@@ -277,7 +277,7 @@ fn test_resolve_set_model_target_from_provider_and_model_id() {
 
 #[test]
 fn test_set_model_is_reflected_in_state_snapshot() {
-    let mut session = RpcSession::new("gpt-4".into(), "cli:test".into());
+    let mut session = AgentSession::new("gpt-4".into(), "cli:test".into());
     session.set_model("claude-opus-4-5".into());
     let snap = session.state_snapshot(0);
     assert_eq!(snap.model, "claude-opus-4-5");
@@ -288,16 +288,16 @@ fn test_set_model_is_reflected_in_state_snapshot() {
 #[test]
 fn test_parse_get_messages_tail_line() {
     let line = r#"{"type":"get_messages_tail","count":3}"#;
-    let cmd = parse_rpc_line(line).unwrap();
+    let cmd = parse_command_line(line).unwrap();
     match cmd {
-        RpcCommand::GetMessagesTail { count, .. } => assert_eq!(count, 3),
+        AgentCommand::GetMessagesTail { count, .. } => assert_eq!(count, 3),
         _ => panic!("expected GetMessagesTail"),
     }
 }
 
 #[test]
 fn test_get_messages_tail_type_name() {
-    let cmd = RpcCommand::GetMessagesTail { id: None, count: 5 };
+    let cmd = AgentCommand::GetMessagesTail { id: None, count: 5 };
     assert_eq!(cmd.type_name(), "get_messages_tail");
 }
 

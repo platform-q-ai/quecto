@@ -25,8 +25,8 @@ pub(crate) enum AgentMode {
     /// One-shot mode (default): run one prompt then exit.
     #[default]
     OneShot,
-    /// RPC mode: read JSON commands from stdin, stream events to stdout.
-    Rpc,
+    /// UDS mode: read JSON commands from a Unix domain socket, stream events back.
+    Uds,
 }
 
 /// Parsed flags for the `agent` subcommand.
@@ -171,12 +171,12 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                 i += 2;
             }
             "--mode" => {
-                let val = next_arg(args, i, "--mode requires a value (e.g. rpc)", stderr)?;
+                let val = next_arg(args, i, "--mode requires a value (e.g. uds)", stderr)?;
                 mode = match val {
-                    "rpc" => AgentMode::Rpc,
+                    "uds" => AgentMode::Uds,
                     other => {
                         stderr.push_str(&format!(
-                            "agent: --mode '{other}' is not valid; supported: rpc\n"
+                            "agent: --mode '{other}' is not valid; supported: uds\n"
                         ));
                         return None;
                     }
@@ -219,9 +219,9 @@ pub(crate) fn cmd_agent(
         None => return 1,
     };
 
-    // ── RPC mode ──────────────────────────────────────────────────────────────
-    if flags.mode == AgentMode::Rpc {
-        return cmd_agent_rpc(ctx, flags, stderr);
+    // ── UDS mode ──────────────────────────────────────────────────────────────
+    if flags.mode == AgentMode::Uds {
+        return cmd_agent_uds(ctx, flags, stderr);
     }
 
     // ── One-shot mode (default) ───────────────────────────────────────────────
@@ -480,11 +480,11 @@ pub(crate) fn run_with_deadline(
     })
 }
 
-/// Run the agent in RPC mode.
+/// Run the agent in UDS mode.
 ///
 /// Validates config/provider, then enters the async JSON-lines loop.
 /// Returns an exit code.
-fn cmd_agent_rpc(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i32 {
+fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i32 {
     let base_dir = ctx.base_dir();
     let agent = match build_agent_from_config(&base_dir, &flags, stderr) {
         Some(a) => a,
@@ -520,12 +520,12 @@ fn cmd_agent_rpc(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     // Build system prompt (datetime preamble + skills + user-supplied --system),
     // mirroring what one-shot mode does before run_agent_session.
     // build_system_prompt() always returns a non-empty string (contains at
-    // least the datetime preamble), so the RpcLoopArgs field is a plain String.
+    // least the datetime preamble), so the UdsLoopArgs field is a plain String.
     let skill_prompt = crate::interface::shared::load_skill_prompt(&base_dir);
     let system_prompt =
         crate::interface::shared::build_system_prompt(&skill_prompt, &flags.system_prompt);
 
-    crate::interface::cli::rpc::run_rpc_loop(crate::interface::cli::rpc::RpcLoopArgs {
+    crate::interface::cli::uds::run_uds_loop(crate::interface::cli::uds::UdsLoopArgs {
         agent,
         base_dir: &base_dir,
         session_key,
