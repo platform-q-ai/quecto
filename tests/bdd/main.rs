@@ -681,6 +681,13 @@ pub struct QuectoWorld {
     pub gateway_oauth_mock_uri: Option<String>,
     /// Leaked wiremock server ref for OAuth refresh mock (kept alive)
     pub _gateway_oauth_mock_server: Option<&'static wiremock::MockServer>,
+    /// Token exchange result (for issue #257 scenarios)
+    pub gateway_token_exchange_result: Option<
+        Result<
+            quecto::infrastructure::auth::oauth::OAuthTokenResponse,
+            quecto::domain::error::DomainError,
+        >,
+    >,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.

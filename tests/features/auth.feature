@@ -176,3 +176,31 @@ Feature: Authentication
     When the gateway resolves API key with refresh for "openai"
     Then the resolved API key should be "eyJnew-openai-token"
     And the persisted credential for "openai" should have token "eyJnew-openai-token"
+
+  # --- Optional refresh_token in OAuth response (issue #257) ---
+
+  @done
+  Scenario: OAuth refresh response without refresh_token preserves previous refresh token
+    Given a config with no API key for "anthropic"
+    And a stored expired OAuth credential for "anthropic" with refresh token "rt-original"
+    And a mock OAuth refresh server that omits refresh_token and returns token "sk-ant-oat01-no-rt"
+    When the gateway resolves API key with refresh for "anthropic"
+    Then the resolved API key should be "sk-ant-oat01-no-rt"
+    And the persisted credential for "anthropic" should have token "sk-ant-oat01-no-rt"
+    And the persisted credential for "anthropic" should have refresh token "rt-original"
+
+  @done
+  Scenario: OAuth refresh response with new refresh_token updates stored refresh token
+    Given a config with no API key for "anthropic"
+    And a stored expired OAuth credential for "anthropic" with refresh token "rt-old"
+    And a mock OAuth refresh server that returns a new token "sk-ant-oat01-refreshed" with refresh token "rt-new"
+    When the gateway resolves API key with refresh for "anthropic"
+    Then the resolved API key should be "sk-ant-oat01-refreshed"
+    And the persisted credential for "anthropic" should have refresh token "rt-new"
+
+  @done
+  Scenario: OAuth token exchange response without refresh_token deserializes successfully
+    Given a mock OAuth token exchange server that omits refresh_token
+    When an OAuth token exchange is performed
+    Then the token exchange should succeed with access token "sk-ant-oat01-exchanged"
+    And the token exchange response should have no refresh token
