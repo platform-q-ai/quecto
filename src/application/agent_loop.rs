@@ -49,6 +49,10 @@ pub struct AgentLoopImpl {
     max_context_tokens: usize,
     /// Optional live progress callback wired by the REPL progress renderer.
     progress_callback: Option<ProgressCallback>,
+    /// Shared cancellation flag.  When set, the next provider request returns
+    /// `DomainError::Provider("request cancelled")`.  The UDS loop sets this
+    /// flag from `abort`/`steer` commands to interrupt an in-flight run.
+    cancel_flag: Option<crate::domain::provider::CancelFlag>,
 }
 
 impl std::fmt::Debug for AgentLoopImpl {
@@ -85,7 +89,23 @@ impl AgentLoopImpl {
             context_collapse_after_turns: config.context_collapse_after_turns,
             max_context_tokens: config.max_context_tokens,
             progress_callback: config.progress_callback,
+            cancel_flag: None,
         }
+    }
+
+    /// Attach a shared cancellation flag.  Calling `flag.cancel()` from any
+    /// thread will cause the next in-flight provider request to return a
+    /// cancellation error, aborting the current `process()` call.
+    pub fn with_cancel_flag(mut self, flag: crate::domain::provider::CancelFlag) -> Self {
+        self.cancel_flag = Some(flag);
+        self
+    }
+
+    /// Replace the active cancellation flag (used by the UDS loop to install
+    /// a fresh flag before each prompt so that a prior cancellation does not
+    /// poison subsequent runs).
+    pub fn set_cancel_flag(&mut self, flag: crate::domain::provider::CancelFlag) {
+        self.cancel_flag = Some(flag);
     }
 
     /// Switch the model used for all subsequent LLM calls.
@@ -189,7 +209,7 @@ impl AgentLoopImpl {
             tool_choice: None,
             metadata: None,
             thinking_level: None,
-            cancel_flag: None,
+            cancel_flag: self.cancel_flag.clone(),
         }
     }
 

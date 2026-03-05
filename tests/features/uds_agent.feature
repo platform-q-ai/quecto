@@ -390,3 +390,31 @@ Feature: UDS mode for headless agent operation
     And I close the UDS connection
     Then the UDS agent exits with code 0
     And the socket file should not exist after agent exits
+
+  # ─── abort while running ─────────────────────────────────────────────────────
+
+  @done @steer-abort
+  Scenario: abort while running cancels the in-flight agent run
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM will delay its response by 3 seconds
+    When I start the UDS agent with no session
+    And I send prompt "slow task"
+    And I send command "abort" with id "ab-running-1"
+    And I close the UDS connection
+    Then the agent output should contain a response command "abort" with success true
+    And the agent output should not contain an event of type "agent_end"
+
+  # ─── steer while running ─────────────────────────────────────────────────────
+
+  @done @steer-abort
+  Scenario: steer while running interrupts the in-flight agent run
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM will delay its response by 3 seconds
+    When I start the UDS agent with no session
+    And I send prompt "original task"
+    And I send steer "new direction" with id "st-running-1"
+    And I close the UDS connection
+    Then the agent output should contain a response command "steer" with success true
+    And the agent output should not contain an event of type "agent_end"

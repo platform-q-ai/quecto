@@ -1,15 +1,17 @@
 /// UDS agent loop — headless operation via JSON-lines protocol over a Unix domain socket.
 ///
 /// Entry point: `run_uds_loop` — called from `cmd_agent` when `--mode uds` is set.
-/// Session state, statistics, and the public parse helper live in `uds_session`.
+/// Session state and statistics live in `uds_session`.
+/// Cancellation infrastructure and prompt execution live in `uds_cancel`.
 use crate::application::agent_loop::AgentLoopImpl;
-use crate::domain::agent::AgentLoop;
 use crate::domain::message::{Message, Role};
 use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 
-use super::protocol::{
-    AgentCommand, AgentEvent, StreamingBehavior, ToolResultContent, TurnMessage,
+use super::protocol::{AgentCommand, AgentEvent, StreamingBehavior};
+use super::uds_cancel::{
+    CancelHandle, CancelSlot, PromptArgs, PromptOutcome, arm_cancel, disarm_cancel, emit_event,
+    fire_cancel, run_agent_prompt,
 };
 use super::uds_session::{
     AgentSession, compute_session_stats, message_to_json, messages_tail_json,
@@ -210,6 +212,7 @@ async fn uds_loop_with_streams(args: StreamLoopArgs, session_store: &dyn Session
             session: &mut agent_session,
             stdout: &mut *writer,
             session_key: &session_key,
+            cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
         },
     )
     .await;
@@ -268,35 +271,96 @@ pub(crate) fn remove_injected_system_prompt(messages: &mut Vec<Message>, prompt:
     }
 }
 
-/// Read JSON commands from stdin and dispatch them until EOF or a fatal error.
+/// Parsed command line or a line-too-long error.
+enum LineResult {
+    Command(AgentCommand),
+    ParseError(String),
+    LineTooLong,
+}
+
+/// Parse a raw text line into a `LineResult`.
+fn parse_line(line: &str) -> LineResult {
+    const MAX_LINE_BYTES: usize = 1024 * 1024;
+    if line.len() > MAX_LINE_BYTES {
+        return LineResult::LineTooLong;
+    }
+    let line = line.trim();
+    if line.is_empty() {
+        // Treat empty lines as a no-op by returning a vacuous parse error
+        // that the loop discards silently.  A sentinel variant would be
+        // cleaner but adds noise for a rare case.
+        return LineResult::ParseError(String::new());
+    }
+    match parse_command_line(line) {
+        Ok(c) => LineResult::Command(c),
+        Err(e) => LineResult::ParseError(e),
+    }
+}
+
+/// Read JSON commands from the socket and dispatch them until EOF or a fatal error.
+///
+/// A background reader task reads lines concurrently and sends them to an
+/// mpsc channel.  Abort and steer commands are recognised by the reader and
+/// immediately signal `cancel_notify` — this unblocks any `select!` inside
+/// `run_agent_prompt` that is waiting for `process()` to finish, causing the
+/// in-flight HTTP request to be dropped.  The command is also forwarded to the
+/// main dispatch channel so a response can be emitted.
 async fn run_command_loop(
-    stdin_reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+    reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ctx: &mut DispatchCtx<'_>,
 ) {
     use tokio::io::{AsyncBufReadExt, BufReader};
 
-    // 1 MiB per line matches the bash tool cap; prevents OOM from unbounded lines.
-    const MAX_LINE_BYTES: usize = 1024 * 1024;
-    let mut lines = BufReader::new(stdin_reader).lines();
+    // Clone the cancel handle for the concurrent reader task.
+    let cancel_for_reader = std::sync::Arc::clone(&ctx.cancel_handle);
+
+    // `None` in the channel signals EOF.
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Option<String>>();
+
+    // Spawn the reader task — it runs concurrently with the dispatch loop.
+    // When it sees an abort or steer command it immediately fires the shared
+    // cancel handle so any in-flight select!(process | cancel_rx) unblocks and
+    // drops the in-flight HTTP request without waiting for the dispatch loop
+    // to dequeue the command from the main mpsc channel.
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(reader).lines();
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => {
+                    let trimmed = line.trim();
+                    if let Ok(cmd) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                        let ty = cmd.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        if ty == "abort" || ty == "steer" {
+                            fire_cancel(&cancel_for_reader);
+                        }
+                    }
+                    if tx.send(Some(line)).is_err() {
+                        break;
+                    }
+                }
+                _ => {
+                    let _ = tx.send(None);
+                    break;
+                }
+            }
+        }
+    });
 
     loop {
-        let line = match lines.next_line().await {
-            Ok(Some(l)) => l,
+        let raw = match rx.recv().await {
+            Some(Some(l)) => l,
             _ => break,
         };
-        if line.len() > MAX_LINE_BYTES {
-            let ev = AgentEvent::err(None, "parse_error", "line exceeds 1 MiB limit");
-            emit_event(ctx.stdout, &ev).await;
-            continue;
-        }
-        let line = line.trim().to_owned();
-        if line.is_empty() {
-            continue;
-        }
 
-        let cmd = match parse_command_line(&line) {
-            Ok(c) => c,
-            Err(e) => {
+        match parse_line(&raw) {
+            LineResult::LineTooLong => {
+                let ev = AgentEvent::err(None, "parse_error", "line exceeds 1 MiB limit");
+                emit_event(ctx.stdout, &ev).await;
+            }
+            LineResult::ParseError(e) if e.is_empty() => {
+                // Empty line — skip silently.
+            }
+            LineResult::ParseError(e) => {
                 let ev = AgentEvent::Response {
                     id: None,
                     command: "parse_error".to_string(),
@@ -305,12 +369,12 @@ async fn run_command_loop(
                     error: Some(e),
                 };
                 emit_event(ctx.stdout, &ev).await;
-                continue;
             }
-        };
-
-        if dispatch_command(cmd, ctx).await {
-            break;
+            LineResult::Command(cmd) => {
+                if dispatch_command(cmd, ctx).await {
+                    break;
+                }
+            }
         }
     }
 }
@@ -338,6 +402,10 @@ struct DispatchCtx<'a> {
     session: &'a mut AgentSession,
     stdout: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
     session_key: &'a str,
+    /// Shared cancellation state.  The reader task fires cancellation the
+    /// moment it sees an abort/steer line; [`arm_cancel`] installs the oneshot
+    /// for the current run (or detects a pre-fired cancel).
+    cancel_handle: CancelHandle,
 }
 
 fn resolve_set_model_target(
@@ -359,6 +427,40 @@ fn resolve_set_model_target(
         }
         _ => Err("set_model requires model, or provider+modelId"),
     }
+}
+
+/// Arguments for `handle_set_model` — bundles the command fields with context.
+struct SetModelArgs {
+    id: Option<String>,
+    type_name: String,
+    model: Option<String>,
+    provider: Option<String>,
+    model_id: Option<String>,
+}
+
+/// Handle a `set_model` command: resolve, apply, and emit a response event.
+async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'_>) -> bool {
+    let SetModelArgs {
+        id,
+        type_name,
+        model,
+        provider,
+        model_id,
+    } = args;
+    let resolved_model = match resolve_set_model_target(model, provider, model_id) {
+        Ok(m) => m,
+        Err(msg) => {
+            let ev = AgentEvent::err(id.as_deref(), &type_name, msg);
+            emit_event(ctx.stdout, &ev).await;
+            return false;
+        }
+    };
+    ctx.agent.set_model(resolved_model.clone());
+    ctx.session.set_model(resolved_model);
+    tracing::debug!(new_model = %ctx.session.model(), "UDS: model switched");
+    let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
+    emit_event(ctx.stdout, &ev).await;
+    false
 }
 
 /// Build the response data payload for read-only query commands.
@@ -415,22 +517,37 @@ async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool 
             .await
         }
 
-        // Steer and FollowUp both enqueue a pending message. In the current sequential
-        // implementation there is no runtime distinction: the pending queue is drained
-        // after each prompt regardless of how messages were enqueued.  True steer
-        // semantics (interrupt after current tool) require threading a CancelFlag into
-        // the agent loop — deferred to a follow-up PR (#233 MVP).
-        AgentCommand::Steer { message, .. } | AgentCommand::FollowUp { message, .. } => {
+        // Steer: cancel any in-flight run, then enqueue the steer message as the
+        // *first* pending entry so it runs next (true interrupt semantics, not
+        // queue-append).  When idle, steer behaves like follow_up.
+        AgentCommand::Steer { message, .. } => {
+            if ctx.session.is_streaming() {
+                // Belt-and-suspenders: reader task already fired this, but fire
+                // again in case the dispatch loop races ahead of the reader.
+                fire_cancel(&ctx.cancel_handle);
+                // Prepend so the steer message is processed before any earlier
+                // enqueued follow-ups.
+                ctx.session.prepend_pending(message);
+            } else {
+                ctx.session.enqueue_pending(message);
+            }
+            let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
+            emit_event(ctx.stdout, &ev).await;
+            false
+        }
+
+        // FollowUp: always enqueue (append), never interrupt.
+        AgentCommand::FollowUp { message, .. } => {
             ctx.session.enqueue_pending(message);
             let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
             emit_event(ctx.stdout, &ev).await;
             false
         }
 
-        // Abort is a no-op when the agent is idle (sequential loop: a command can
-        // only arrive between prompts). Abort-during-streaming requires a CancelFlag
-        // wired into the agent process loop — deferred to follow-up.
+        // Abort: cancel any in-flight run.  Belt-and-suspenders — the reader
+        // task already fired this when it saw the abort line.
         AgentCommand::Abort { .. } => {
+            fire_cancel(&ctx.cancel_handle);
             let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
             emit_event(ctx.stdout, &ev).await;
             false
@@ -442,21 +559,17 @@ async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool 
             model_id,
             ..
         } => {
-            let resolved_model = match resolve_set_model_target(model, provider, model_id) {
-                Ok(m) => m,
-                Err(msg) => {
-                    let ev = AgentEvent::err(id.as_deref(), &type_name, msg);
-                    emit_event(ctx.stdout, &ev).await;
-                    return false;
-                }
-            };
-
-            ctx.agent.set_model(resolved_model.clone());
-            ctx.session.set_model(resolved_model);
-            tracing::debug!(new_model = %ctx.session.model(), "UDS: model switched");
-            let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
-            emit_event(ctx.stdout, &ev).await;
-            false
+            handle_set_model(
+                SetModelArgs {
+                    id,
+                    type_name,
+                    model,
+                    provider,
+                    model_id,
+                },
+                ctx,
+            )
+            .await
         }
 
         // Query variants are handled by the fast path above; this arm is a safety
@@ -489,26 +602,20 @@ struct PromptCommand {
 /// Handle a `prompt` command: run agent, emit events, drain follow-ups.
 /// Returns `true` if the loop should exit (agent error).
 async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
-    let DispatchCtx {
-        agent,
-        messages,
-        session: agent_session,
-        stdout,
-        ..
-    } = ctx;
     let PromptCommand {
         id,
         type_name,
         message,
         streaming_behavior,
     } = cmd;
-    // If the agent is currently running, require streaming_behavior.
-    if agent_session.is_streaming() {
+
+    // If the agent is currently running, require streamingBehavior.
+    if ctx.session.is_streaming() {
         match streaming_behavior {
             Some(StreamingBehavior::FollowUp) | Some(StreamingBehavior::Steer) => {
-                agent_session.enqueue_pending(message);
+                ctx.session.enqueue_pending(message);
                 let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
-                emit_event(stdout, &ev).await;
+                emit_event(ctx.stdout, &ev).await;
                 return false;
             }
             None => {
@@ -517,151 +624,74 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
                     &type_name,
                     "agent is running; provide streamingBehavior",
                 );
-                emit_event(stdout, &ev).await;
+                emit_event(ctx.stdout, &ev).await;
                 return false;
             }
         }
     }
 
-    let exit = run_agent_prompt(PromptArgs {
-        agent,
-        messages,
-        session: agent_session,
-        stdout,
+    // Arm the cancellation slot.  Returns None if a cancel was already
+    // requested before this run started (pre-fired cancel).
+    let Some(cancel_rx) = arm_cancel(&ctx.cancel_handle) else {
+        // Pre-cancelled — treat as if the run was cancelled immediately.
+        return false;
+    };
+
+    let outcome = run_agent_prompt(PromptArgs {
+        agent: ctx.agent,
+        messages: ctx.messages,
+        session: ctx.session,
+        stdout: ctx.stdout,
         message,
+        cancel_rx,
     })
     .await;
 
-    let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
-    emit_event(stdout, &ev).await;
+    disarm_cancel(&ctx.cancel_handle);
 
-    // Drain pending follow-ups.
+    match outcome {
+        PromptOutcome::Cancelled => {
+            // Run was cancelled — do not emit agent_end; drain pending (steer
+            // message may have been prepended).
+            drain_and_run_pending(ctx).await;
+            false
+        }
+        PromptOutcome::Error => {
+            // Fatal agent error — exit the loop.
+            true
+        }
+        PromptOutcome::Success => {
+            let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
+            emit_event(ctx.stdout, &ev).await;
+            drain_and_run_pending(ctx).await;
+            false
+        }
+    }
+}
+
+/// Drain the pending queue and run each enqueued message as a follow-up prompt.
+async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
     loop {
-        let pending = agent_session.drain_pending();
+        let pending = ctx.session.drain_pending();
         if pending.is_empty() {
             break;
         }
         for follow_msg in pending {
+            let Some(cancel_rx) = arm_cancel(&ctx.cancel_handle) else {
+                break; // pre-cancelled — stop draining
+            };
             run_agent_prompt(PromptArgs {
-                agent,
-                messages,
-                session: agent_session,
-                stdout,
+                agent: ctx.agent,
+                messages: ctx.messages,
+                session: ctx.session,
+                stdout: ctx.stdout,
                 message: follow_msg,
+                cancel_rx,
             })
             .await;
+            disarm_cancel(&ctx.cancel_handle);
         }
     }
-
-    exit != 0
-}
-
-// ─── Agent prompt execution ───────────────────────────────────────────────────
-
-/// Arguments for [`run_agent_prompt`] — avoids the clippy too-many-arguments lint.
-struct PromptArgs<'a> {
-    agent: &'a mut AgentLoopImpl,
-    messages: &'a mut Vec<Message>,
-    session: &'a mut AgentSession,
-    stdout: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
-    message: String,
-}
-
-/// Run a single agent prompt, emitting UDS events.  Returns 0 on success.
-async fn run_agent_prompt(args: PromptArgs<'_>) -> i32 {
-    let PromptArgs {
-        agent,
-        messages,
-        session: agent_session,
-        stdout,
-        message,
-    } = args;
-
-    agent_session.set_streaming(true);
-    emit_event(stdout, &AgentEvent::AgentStart).await;
-    emit_event(stdout, &AgentEvent::TurnStart).await;
-
-    messages.push(Message::user(message));
-
-    let before_len = messages.len();
-    let result = agent.process(messages).await;
-    agent_session.set_streaming(false);
-
-    match result {
-        Ok(agent_result) => {
-            emit_tool_events_from_messages(stdout, &messages[before_len..]).await;
-
-            let turn_end = AgentEvent::TurnEnd {
-                message: TurnMessage {
-                    role: "assistant".to_string(),
-                    content: agent_result.response.clone(),
-                    usage: None,
-                    stop_reason: None,
-                },
-                tool_results: vec![],
-            };
-            emit_event(stdout, &turn_end).await;
-
-            let run_msgs: Vec<serde_json::Value> =
-                messages[before_len..].iter().map(message_to_json).collect();
-            emit_event(stdout, &AgentEvent::AgentEnd { messages: run_msgs }).await;
-            0
-        }
-        Err(e) => {
-            emit_event(
-                stdout,
-                &AgentEvent::err(None, "agent_error", format!("{e}")),
-            )
-            .await;
-            1
-        }
-    }
-}
-
-// ─── Tool event emission ──────────────────────────────────────────────────────
-
-/// Emit `tool_execution_start` / `tool_execution_end` events from message diff.
-async fn emit_tool_events_from_messages(
-    stdout: &mut (dyn tokio::io::AsyncWrite + Send + Unpin),
-    messages: &[Message],
-) {
-    for msg in messages {
-        if msg.role == Role::Assistant {
-            for tc in &msg.tool_calls {
-                let args: serde_json::Value =
-                    serde_json::from_str(&tc.arguments).unwrap_or_default();
-                emit_event(
-                    stdout,
-                    &AgentEvent::ToolExecutionStart {
-                        tool_call_id: tc.id.clone(),
-                        tool_name: tc.name.clone(),
-                        args,
-                    },
-                )
-                .await;
-            }
-        } else if msg.role == Role::Tool {
-            emit_event(
-                stdout,
-                &AgentEvent::ToolExecutionEnd {
-                    tool_call_id: msg.tool_call_id.clone().unwrap_or_default(),
-                    tool_name: msg.tool_name.clone().unwrap_or_default(),
-                    result: ToolResultContent {
-                        content: vec![serde_json::json!({"type":"text","text": msg.content})],
-                    },
-                    is_error: msg.is_error,
-                },
-            )
-            .await;
-        }
-    }
-}
-
-/// Write an event as a JSON line followed by a newline.
-async fn emit_event(writer: &mut (dyn tokio::io::AsyncWrite + Send + Unpin), event: &AgentEvent) {
-    use tokio::io::AsyncWriteExt;
-    let line = event.to_json_line() + "\n";
-    let _ = writer.write_all(line.as_bytes()).await;
 }
 
 #[cfg(test)]

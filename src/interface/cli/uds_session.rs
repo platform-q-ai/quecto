@@ -61,6 +61,14 @@ impl AgentSession {
         // Silently drop if the queue is full — caller already got a success ack.
     }
 
+    /// Prepend a message to the front of the pending queue so it runs before
+    /// any earlier-enqueued follow-ups.  Used by `steer` for interrupt semantics.
+    pub fn prepend_pending(&mut self, msg: String) {
+        if self.pending.len() < Self::MAX_PENDING {
+            self.pending.insert(0, msg);
+        }
+    }
+
     pub fn drain_pending(&mut self) -> Vec<String> {
         std::mem::take(&mut self.pending)
     }
