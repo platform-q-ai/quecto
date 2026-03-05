@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
-use crate::domain::workflow::{WorkflowState, workflow_state_event};
+use crate::domain::workflow::{WorkflowState, WorkflowStateSnapshot};
 
 /// Callback for emitting workflow_state UDS events.
 pub type WorkflowEventEmitter = Arc<dyn Fn(serde_json::Value) + Send + Sync>;
@@ -51,6 +51,14 @@ impl WorkflowTool {
         &self.state
     }
 
+    /// Acquire the lock, recovering from poison. Returns a graceful error
+    /// string instead of panicking if the mutex was poisoned.
+    fn lock_state(&self) -> Result<std::sync::MutexGuard<'_, WorkflowState>, String> {
+        self.state
+            .lock()
+            .map_err(|e| format!("workflow state poisoned: {}", e))
+    }
+
     fn handle_action(&self, arguments: &str) -> Result<String, String> {
         let args: serde_json::Value =
             serde_json::from_str(arguments).map_err(|e| format!("invalid JSON: {}", e))?;
@@ -60,73 +68,98 @@ impl WorkflowTool {
             .and_then(|v| v.as_str())
             .ok_or("missing required field: action")?;
 
+        // For status, no mutation — read-only, no event emission.
+        if action == "status" {
+            let state = self.lock_state()?;
+            return Ok(state.system_prompt_snippet());
+        }
+
+        // All other actions mutate state. Acquire lock once for both
+        // mutation and event snapshot to eliminate TOCTOU gap.
+        let mut state = self.lock_state()?;
         let result = match action {
-            "status" => self.handle_status(),
-            "check" => self.handle_check(&args),
-            "uncheck" => self.handle_uncheck(&args),
-            "reset" => self.handle_reset(),
-            "skip" => self.handle_skip(&args),
-            "set_issue" => self.handle_set_issue(&args),
-            "clear_issue" => self.handle_clear_issue(),
+            "check" => self.do_check(&mut state, &args),
+            "uncheck" => self.do_uncheck(&mut state, &args),
+            "reset" => self.do_reset(&mut state),
+            "skip" => self.do_skip(&mut state, &args),
+            "set_issue" => self.do_set_issue(&mut state, &args),
+            "clear_issue" => self.do_clear_issue(&mut state),
             _ => Err(format!("unknown action: {}", action)),
         };
 
-        // Emit event on successful mutation
-        if result.is_ok() && action != "status" {
-            self.emit_event();
+        // Snapshot under the same lock, then drop before emitting.
+        let maybe_event = if result.is_ok() {
+            Some(snapshot_to_event(&state.snapshot()))
+        } else {
+            None
+        };
+        drop(state);
+
+        // Emit outside the lock so I/O in the emitter doesn't block state access.
+        if let Some(event) = maybe_event {
+            self.emit_event(event);
         }
 
         result
     }
 
-    fn handle_status(&self) -> Result<String, String> {
-        let state = self.state.lock().unwrap();
-        Ok(state.system_prompt_snippet())
-    }
-
-    fn handle_check(&self, args: &serde_json::Value) -> Result<String, String> {
+    fn do_check(
+        &self,
+        state: &mut WorkflowState,
+        args: &serde_json::Value,
+    ) -> Result<String, String> {
         let step = self.parse_step(args)?;
-        let mut state = self.state.lock().unwrap();
         state.check(step).map_err(|e| e.to_string())?;
         Ok(format!("Step {} checked.", step))
     }
 
-    fn handle_uncheck(&self, args: &serde_json::Value) -> Result<String, String> {
+    fn do_uncheck(
+        &self,
+        state: &mut WorkflowState,
+        args: &serde_json::Value,
+    ) -> Result<String, String> {
         let step = self.parse_step(args)?;
-        let mut state = self.state.lock().unwrap();
         state.uncheck(step).map_err(|e| e.to_string())?;
         Ok(format!("Step {} unchecked.", step))
     }
 
-    fn handle_reset(&self) -> Result<String, String> {
-        let mut state = self.state.lock().unwrap();
+    fn do_reset(&self, state: &mut WorkflowState) -> Result<String, String> {
         state.reset();
         Ok("Workflow reset. All steps cleared.".to_string())
     }
 
-    fn handle_skip(&self, args: &serde_json::Value) -> Result<String, String> {
+    fn do_skip(
+        &self,
+        state: &mut WorkflowState,
+        args: &serde_json::Value,
+    ) -> Result<String, String> {
         let step = self.parse_step(args)?;
-        let mut state = self.state.lock().unwrap();
         state.skip(step).map_err(|e| e.to_string())?;
         Ok(format!("Step {} skipped (force-marked done).", step))
     }
 
-    fn handle_set_issue(&self, args: &serde_json::Value) -> Result<String, String> {
-        let number = args
+    fn do_set_issue(
+        &self,
+        state: &mut WorkflowState,
+        args: &serde_json::Value,
+    ) -> Result<String, String> {
+        let raw_number = args
             .get("issueNumber")
             .and_then(|v| v.as_u64())
-            .ok_or("missing field: issueNumber")? as u32;
+            .ok_or("missing field: issueNumber")?;
+        if raw_number > u32::MAX as u64 {
+            return Err("issueNumber exceeds u32 range".to_string());
+        }
+        let number = raw_number as u32;
         let title = args
             .get("issueTitle")
             .and_then(|v| v.as_str())
             .ok_or("missing field: issueTitle")?;
-        let mut state = self.state.lock().unwrap();
         state.set_issue(number, title.to_string());
         Ok(format!("Active issue set: #{} — {}", number, title))
     }
 
-    fn handle_clear_issue(&self) -> Result<String, String> {
-        let mut state = self.state.lock().unwrap();
+    fn do_clear_issue(&self, state: &mut WorkflowState) -> Result<String, String> {
         state.clear_issue();
         Ok("Active issue cleared.".to_string())
     }
@@ -138,13 +171,48 @@ impl WorkflowTool {
             .ok_or_else(|| "missing field: step".to_string())
     }
 
-    fn emit_event(&self) {
+    fn emit_event(&self, event: serde_json::Value) {
         if let Some(ref emitter) = self.event_emitter {
-            let state = self.state.lock().unwrap();
-            let event = workflow_state_event(&state);
             emitter(event);
         }
     }
+}
+
+/// Convert a domain snapshot to a `serde_json::Value` for UDS emission.
+/// Lives in infrastructure (not domain) to keep `serde_json` out of the
+/// domain layer.
+pub fn snapshot_to_event(snapshot: &WorkflowStateSnapshot) -> serde_json::Value {
+    let steps: Vec<serde_json::Value> = snapshot
+        .steps
+        .iter()
+        .map(|(step, done)| {
+            serde_json::json!({
+                "id": step.id,
+                "label": step.label,
+                "phase": step.phase,
+                "done": done,
+            })
+        })
+        .collect();
+
+    let mut event = serde_json::json!({
+        "type": "workflow_state",
+        "steps": steps,
+        "progress": {
+            "done": snapshot.progress.done,
+            "total": snapshot.progress.total,
+            "percent": snapshot.progress.percent,
+        },
+    });
+
+    if let Some((num, title)) = &snapshot.active_issue {
+        event["activeIssue"] = serde_json::json!({
+            "number": num,
+            "title": title,
+        });
+    }
+
+    event
 }
 
 impl Tool for WorkflowTool {
@@ -406,5 +474,29 @@ mod tests {
             .unwrap(); // ordering error
         let events = events.lock().unwrap();
         assert_eq!(events.len(), 0);
+    }
+
+    // ─── snapshot_to_event tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_snapshot_to_event() {
+        let mut state = WorkflowState::default_bdd();
+        state.check(1).unwrap();
+        state.set_issue(42, "My feature".into());
+        let event = snapshot_to_event(&state.snapshot());
+        assert_eq!(event["type"], "workflow_state");
+        assert!(event["steps"].is_array());
+        assert_eq!(event["steps"].as_array().unwrap().len(), 16);
+        assert_eq!(event["steps"][0]["done"], true);
+        assert_eq!(event["steps"][1]["done"], false);
+        assert_eq!(event["progress"]["done"], 1);
+        assert_eq!(event["activeIssue"]["number"], 42);
+    }
+
+    #[test]
+    fn test_snapshot_to_event_no_issue() {
+        let state = WorkflowState::default_bdd();
+        let event = snapshot_to_event(&state.snapshot());
+        assert!(event.get("activeIssue").is_none());
     }
 }

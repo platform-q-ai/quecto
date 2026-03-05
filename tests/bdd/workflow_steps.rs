@@ -297,7 +297,7 @@ async fn when_execute_action(world: &mut QuectoWorld, action: String) {
         .workflow_tool
         .as_ref()
         .expect("workflow tool should exist");
-    let args = format!(r#"{{"action":"{}"}}"#, action);
+    let args = serde_json::json!({"action": action}).to_string();
     let result = tool.execute(&args).await;
     world.tool_result = Some(result.map_err(|e| e.to_string()));
 }
@@ -308,7 +308,7 @@ async fn when_execute_action_with_step(world: &mut QuectoWorld, action: String, 
         .workflow_tool
         .as_ref()
         .expect("workflow tool should exist");
-    let args = format!(r#"{{"action":"{}","step":{}}}"#, action, num);
+    let args = serde_json::json!({"action": action, "step": num}).to_string();
     let result = tool.execute(&args).await;
     world.tool_result = Some(result.map_err(|e| e.to_string()));
 }
@@ -324,10 +324,12 @@ async fn when_execute_action_with_issue(
         .workflow_tool
         .as_ref()
         .expect("workflow tool should exist");
-    let args = format!(
-        r#"{{"action":"{}","issueNumber":{},"issueTitle":"{}"}}"#,
-        action, number, title
-    );
+    let args = serde_json::json!({
+        "action": action,
+        "issueNumber": number,
+        "issueTitle": title
+    })
+    .to_string();
     let result = tool.execute(&args).await;
     world.tool_result = Some(result.map_err(|e| e.to_string()));
 }

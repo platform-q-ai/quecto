@@ -5,6 +5,14 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Maximum allowed length for issue titles (chars).
+/// Prevents unbounded memory/context-token usage from excessively long titles.
+const MAX_ISSUE_TITLE_LEN: usize = 500;
+
+/// Maximum number of steps allowed in a workflow configuration.
+/// Prevents DoS via config files with millions of steps.
+const MAX_STEPS: usize = 100;
+
 /// A single step in the development workflow.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowStep {
@@ -29,6 +37,15 @@ pub struct WorkflowProgress {
     pub percent: u32,
 }
 
+/// Snapshot of workflow state for serialization by the infrastructure layer.
+/// Keeps `serde_json` out of the domain layer.
+#[derive(Debug, Clone)]
+pub struct WorkflowStateSnapshot {
+    pub steps: Vec<(WorkflowStep, bool)>,
+    pub progress: WorkflowProgress,
+    pub active_issue: Option<(u32, String)>,
+}
+
 /// Error type for workflow operations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkflowError {
@@ -51,13 +68,26 @@ impl std::error::Error for WorkflowError {}
 
 impl WorkflowState {
     /// Create a new workflow state from the given steps.
+    ///
+    /// Clamps to [`MAX_STEPS`] to prevent unbounded allocations from
+    /// malicious config files.
     pub fn new(steps: Vec<WorkflowStep>) -> Self {
+        let steps: Vec<WorkflowStep> = if steps.len() > MAX_STEPS {
+            steps.into_iter().take(MAX_STEPS).collect()
+        } else {
+            steps
+        };
         let len = steps.len();
         Self {
             steps,
             done: vec![false; len],
             active_issue: None,
         }
+    }
+
+    /// Create a workflow state from config.
+    pub fn from_config(config: &WorkflowConfig) -> Self {
+        Self::new(config.steps.clone())
     }
 
     /// Create a default 16-step BDD/TDD workflow.
@@ -100,6 +130,10 @@ impl WorkflowState {
     }
 
     /// Unmark a step.
+    ///
+    /// This is a low-level operation that may create ordering gaps (e.g.
+    /// unchecking step 2 while steps 3+ remain checked). Use `reset()` for
+    /// a clean restart. The ordering invariant is re-enforced by `check()`.
     pub fn uncheck(&mut self, step: u32) -> Result<(), WorkflowError> {
         let idx = self.validate_step(step)?;
         self.done[idx] = false;
@@ -120,7 +154,20 @@ impl WorkflowState {
     }
 
     /// Record the active issue.
+    ///
+    /// Titles are truncated to [`MAX_ISSUE_TITLE_LEN`] characters to
+    /// prevent unbounded system prompt / memory growth.
     pub fn set_issue(&mut self, number: u32, title: String) {
+        let title = if title.len() > MAX_ISSUE_TITLE_LEN {
+            // Truncate at char boundary
+            let mut end = MAX_ISSUE_TITLE_LEN;
+            while !title.is_char_boundary(end) && end > 0 {
+                end -= 1;
+            }
+            title[..end].to_string()
+        } else {
+            title
+        };
         self.active_issue = Some((number, title));
     }
 
@@ -147,6 +194,9 @@ impl WorkflowState {
     }
 
     /// Build a human-readable system prompt snippet for the current state.
+    ///
+    /// Groups steps by their `phase` field (derived from step data, not
+    /// hardcoded IDs) so custom step configurations display correctly.
     pub fn system_prompt_snippet(&self) -> String {
         let progress = self.progress();
         let mut out = format!(
@@ -166,37 +216,54 @@ impl WorkflowState {
         // Find current step (first unchecked)
         let current_step = self.done.iter().position(|&d| !d);
 
-        // Group steps by phase for display
-        let phases = [
-            ("RED", vec![1, 2, 3]),
-            ("GREEN", vec![4]),
-            ("REFACTOR", vec![5]),
-            ("GREEN", vec![6]),
-            ("CI/CD", vec![7, 8, 9]),
-            ("REVIEW", vec![10, 11, 12, 13]),
-            ("CI/CD", vec![14, 15, 16]),
-        ];
+        // Group consecutive steps by phase, using display names derived from
+        // the phase field rather than hardcoded step IDs.
+        let mut groups: Vec<(&str, Vec<(usize, &WorkflowStep)>)> = Vec::new();
+        for (idx, step) in self.steps.iter().enumerate() {
+            let display_phase = phase_display_name(&step.phase);
+            if groups
+                .last()
+                .is_some_and(|(name, _)| *name == display_phase)
+            {
+                groups.last_mut().unwrap().1.push((idx, step));
+            } else {
+                groups.push((display_phase, vec![(idx, step)]));
+            }
+        }
 
-        for (phase_name, step_ids) in &phases {
+        for (phase_name, step_entries) in &groups {
             out.push_str(&format!("\n[{}]\n", phase_name));
-            for &sid in step_ids {
-                if let Some(idx) = self.steps.iter().position(|s| s.id == sid) {
-                    let marker = if self.done[idx] { "✓" } else { " " };
-                    let step = &self.steps[idx];
-                    let is_current = current_step == Some(idx);
-                    if is_current {
-                        out.push_str(&format!(
-                            "CURRENT STEP → {}. {} [{}]\n",
-                            step.id, step.label, phase_name
-                        ));
-                    } else {
-                        out.push_str(&format!("  [{}] {}. {}\n", marker, step.id, step.label));
-                    }
+            for &(idx, step) in step_entries {
+                let marker = if self.done[idx] { "✓" } else { " " };
+                let is_current = current_step == Some(idx);
+                if is_current {
+                    out.push_str(&format!(
+                        "CURRENT STEP → {}. {} [{}]\n",
+                        step.id, step.label, phase_name
+                    ));
+                } else {
+                    out.push_str(&format!("  [{}] {}. {}\n", marker, step.id, step.label));
                 }
             }
         }
 
         out
+    }
+
+    /// Create a snapshot of the current state for event serialization.
+    /// The infrastructure layer converts this to JSON — keeps `serde_json`
+    /// out of the domain layer.
+    pub fn snapshot(&self) -> WorkflowStateSnapshot {
+        WorkflowStateSnapshot {
+            steps: self
+                .steps
+                .iter()
+                .zip(self.done.iter())
+                .map(|(s, &d)| (s.clone(), d))
+                .collect(),
+            progress: self.progress(),
+            active_issue: self.active_issue.clone(),
+        }
     }
 
     /// Validate a step number (1-based) and return the 0-based index.
@@ -212,12 +279,24 @@ impl WorkflowState {
     }
 }
 
+/// Map a phase field value to its display name.
+fn phase_display_name(phase: &str) -> &str {
+    match phase {
+        "red" => "RED",
+        "green" => "GREEN",
+        "refactor" => "REFACTOR",
+        "ci_cd" => "CI/CD",
+        "review" => "REVIEW",
+        other => other,
+    }
+}
+
 /// Workflow configuration section for config.json.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
-    #[serde(default = "default_steps")]
+    #[serde(default = "default_steps", skip_serializing_if = "is_default_steps")]
     pub steps: Vec<WorkflowStep>,
 }
 
@@ -228,6 +307,20 @@ impl Default for WorkflowConfig {
             steps: default_steps(),
         }
     }
+}
+
+/// Returns true if the steps match the default 16-step template.
+/// Used by `skip_serializing_if` to avoid injecting default workflow
+/// config into serialized config files on round-trip.
+fn is_default_steps(steps: &[WorkflowStep]) -> bool {
+    let defaults = default_steps();
+    if steps.len() != defaults.len() {
+        return false;
+    }
+    steps
+        .iter()
+        .zip(defaults.iter())
+        .all(|(a, b)| a.id == b.id && a.label == b.label && a.phase == b.phase)
 }
 
 fn default_true() -> bool {
@@ -320,48 +413,9 @@ pub fn default_steps() -> Vec<WorkflowStep> {
     ]
 }
 
-/// Serialize the workflow state to a JSON value for UDS event emission.
-pub fn workflow_state_event(state: &WorkflowState) -> serde_json::Value {
-    let progress = state.progress();
-    let steps: Vec<serde_json::Value> = state
-        .steps()
-        .iter()
-        .zip(state.done_flags().iter())
-        .map(|(step, &done)| {
-            serde_json::json!({
-                "id": step.id,
-                "label": step.label,
-                "phase": step.phase,
-                "done": done,
-            })
-        })
-        .collect();
-
-    let mut event = serde_json::json!({
-        "type": "workflow_state",
-        "steps": steps,
-        "progress": {
-            "done": progress.done,
-            "total": progress.total,
-            "percent": progress.percent,
-        },
-    });
-
-    if let Some((num, title)) = state.active_issue() {
-        event["activeIssue"] = serde_json::json!({
-            "number": num,
-            "title": title,
-        });
-    }
-
-    event
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ─── WorkflowState tests ─────────────────────────────────────────────────
 
     #[test]
     fn test_default_state_has_16_steps() {
@@ -430,6 +484,15 @@ mod tests {
     }
 
     #[test]
+    fn test_set_issue_truncates_long_title() {
+        let mut state = WorkflowState::default_bdd();
+        let long_title = "x".repeat(1000);
+        state.set_issue(1, long_title);
+        let issue = state.active_issue().unwrap();
+        assert!(issue.1.len() <= MAX_ISSUE_TITLE_LEN);
+    }
+
+    #[test]
     fn test_clear_issue() {
         let mut state = WorkflowState::default_bdd();
         state.set_issue(42, "My feature".into());
@@ -462,6 +525,39 @@ mod tests {
         let mut state = WorkflowState::default_bdd();
         let err = state.uncheck(0).unwrap_err();
         assert!(err.to_string().contains("invalid step"));
+    }
+
+    #[test]
+    fn test_new_clamps_steps_to_max() {
+        let steps: Vec<WorkflowStep> = (0..200)
+            .map(|i| WorkflowStep {
+                id: i,
+                label: format!("Step {}", i),
+                phase: "red".into(),
+            })
+            .collect();
+        let state = WorkflowState::new(steps);
+        assert_eq!(state.steps().len(), MAX_STEPS);
+    }
+
+    #[test]
+    fn test_from_config() {
+        let config = WorkflowConfig::default();
+        let state = WorkflowState::from_config(&config);
+        assert_eq!(state.steps().len(), 16);
+    }
+
+    #[test]
+    fn test_snapshot() {
+        let mut state = WorkflowState::default_bdd();
+        state.check(1).unwrap();
+        state.set_issue(42, "feat".into());
+        let snap = state.snapshot();
+        assert_eq!(snap.steps.len(), 16);
+        assert!(snap.steps[0].1); // first step done
+        assert!(!snap.steps[1].1);
+        assert_eq!(snap.progress.done, 1);
+        assert_eq!(snap.active_issue, Some((42, "feat".into())));
     }
 
     // ─── WorkflowConfig tests ────────────────────────────────────────────────
@@ -504,6 +600,14 @@ mod tests {
         assert_eq!(config.steps.len(), 16);
     }
 
+    #[test]
+    fn test_config_roundtrip_skips_default_steps() {
+        let config = WorkflowConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        // Default steps should be skipped in serialization
+        assert!(!json.contains("Update Scenarios"));
+    }
+
     // ─── System prompt snippet tests ─────────────────────────────────────────
 
     #[test]
@@ -531,31 +635,30 @@ mod tests {
         assert!(snippet.contains("(not set)"));
     }
 
-    // ─── UDS event tests ─────────────────────────────────────────────────────
-
     #[test]
-    fn test_workflow_state_event() {
-        let mut state = WorkflowState::default_bdd();
-        state.check(1).unwrap();
-        state.set_issue(42, "My feature".into());
-        let event = workflow_state_event(&state);
-        assert_eq!(event["type"], "workflow_state");
-        assert!(event["steps"].is_array());
-        assert_eq!(event["steps"].as_array().unwrap().len(), 16);
-        assert_eq!(event["steps"][0]["done"], true);
-        assert_eq!(event["steps"][1]["done"], false);
-        assert_eq!(event["progress"]["done"], 1);
-        assert_eq!(event["progress"]["total"], 16);
-        assert_eq!(event["progress"]["percent"], 6);
-        assert_eq!(event["activeIssue"]["number"], 42);
-        assert_eq!(event["activeIssue"]["title"], "My feature");
-    }
-
-    #[test]
-    fn test_workflow_state_event_no_issue() {
-        let state = WorkflowState::default_bdd();
-        let event = workflow_state_event(&state);
-        assert!(event.get("activeIssue").is_none());
+    fn test_system_prompt_snippet_custom_steps() {
+        let steps = vec![
+            WorkflowStep {
+                id: 1,
+                label: "Custom step A".into(),
+                phase: "alpha".into(),
+            },
+            WorkflowStep {
+                id: 2,
+                label: "Custom step B".into(),
+                phase: "alpha".into(),
+            },
+            WorkflowStep {
+                id: 3,
+                label: "Custom step C".into(),
+                phase: "beta".into(),
+            },
+        ];
+        let state = WorkflowState::new(steps);
+        let snippet = state.system_prompt_snippet();
+        assert!(snippet.contains("[alpha]"));
+        assert!(snippet.contains("[beta]"));
+        assert!(snippet.contains("Custom step A"));
     }
 
     // ─── WorkflowError tests ─────────────────────────────────────────────────
@@ -566,5 +669,15 @@ mod tests {
         assert_eq!(err.to_string(), "invalid step 0");
         let err = WorkflowError::OrderingViolation("complete step 1 first".into());
         assert_eq!(err.to_string(), "complete step 1 first");
+    }
+
+    #[test]
+    fn test_phase_display_name() {
+        assert_eq!(phase_display_name("red"), "RED");
+        assert_eq!(phase_display_name("green"), "GREEN");
+        assert_eq!(phase_display_name("refactor"), "REFACTOR");
+        assert_eq!(phase_display_name("ci_cd"), "CI/CD");
+        assert_eq!(phase_display_name("review"), "REVIEW");
+        assert_eq!(phase_display_name("custom"), "custom");
     }
 }
