@@ -688,6 +688,10 @@ pub struct QuectoWorld {
             quecto::domain::error::DomainError,
         >,
     >,
+    /// OAuth expires_in value for margin tests (issue #256)
+    pub gateway_expires_in: Option<u64>,
+    /// Computed expires_at for margin assertions (issue #256)
+    pub gateway_computed_expires_at: Option<i64>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
