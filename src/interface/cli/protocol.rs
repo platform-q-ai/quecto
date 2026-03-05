@@ -137,6 +137,8 @@ pub enum AgentEvent {
     AgentStart,
     /// Agent finished processing.  Contains messages from this run as JSON values.
     AgentEnd { messages: Vec<serde_json::Value> },
+    /// An incremental text token from the LLM during streaming.
+    Token { token: String },
     /// A new LLM call begins.
     TurnStart,
     /// LLM call completed.

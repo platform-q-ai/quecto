@@ -359,6 +359,7 @@ pub(crate) fn build_agent_from_config(
         context_collapse_after_turns: config.agents.defaults.context_collapse_after_turns,
         max_context_tokens: config.agents.defaults.max_context_tokens,
         progress_callback: None,
+        streaming: false,
     })
     .with_max_tool_iterations(
         flags
@@ -534,10 +535,12 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     }
 
     let base_dir = ctx.base_dir();
-    let agent = match build_agent_from_config(&base_dir, &flags, stderr) {
+    let mut agent = match build_agent_from_config(&base_dir, &flags, stderr) {
         Some(a) => a,
         None => return 1,
     };
+    // Enable incremental streaming so the UDS layer emits token events.
+    agent.set_streaming(true);
 
     let ephemeral = flags.no_session || flags.session_name.as_deref() == Some("-");
     let session_key = if ephemeral {

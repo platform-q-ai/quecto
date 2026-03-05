@@ -182,6 +182,7 @@ fn make_agent(
         context_collapse_after_turns: u32::MAX,
         max_context_tokens: 190_000,
         progress_callback: None,
+        streaming: false,
     });
     (agent, provider)
 }
@@ -344,6 +345,7 @@ async fn test_tool_error_is_sent_back() {
         context_collapse_after_turns: u32::MAX,
         max_context_tokens: 190_000,
         progress_callback: None,
+        streaming: false,
     });
     let mut messages = vec![Message::user("use a tool")];
     let result = agent.run_loop(&mut messages).await.unwrap();
@@ -393,6 +395,7 @@ fn make_agent_with_callback(
         context_collapse_after_turns: u32::MAX,
         max_context_tokens: 190_000,
         progress_callback: Some(callback),
+        streaming: false,
     });
     (agent, provider, events)
 }
@@ -723,6 +726,7 @@ async fn test_spill_preserves_message_content_after_spill() {
         context_collapse_after_turns: u32::MAX,
         max_context_tokens: 190_000,
         progress_callback: None,
+        streaming: false,
     });
 
     let mut messages = vec![Message::user("run it")];

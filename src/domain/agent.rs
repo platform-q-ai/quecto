@@ -42,6 +42,8 @@ pub enum AgentProgressEvent {
         /// Whether the tool returned an error.
         is_error: bool,
     },
+    /// An incremental text token arrived from the LLM during streaming.
+    Token(String),
     /// The agent loop has produced a final text response and is done.
     Done,
 }

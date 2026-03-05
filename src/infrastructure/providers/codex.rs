@@ -10,7 +10,7 @@ use std::pin::Pin;
 
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, Role, ToolCall, UsageInfo};
-use crate::domain::provider::{ChatRequest, LlmProvider};
+use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
 
 /// Default Codex backend base URL for ChatGPT OAuth tokens.
 const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api";
@@ -381,6 +381,41 @@ impl CodexProvider {
         Self::sanitize_cache_key(key)
     }
 
+    /// Consume SSE body incrementally, emitting `StreamEvent`s per delta.
+    async fn pump_codex_sse(
+        &self,
+        url: &str,
+        body: serde_json::Value,
+        tx: tokio::sync::mpsc::Sender<StreamEvent>,
+    ) {
+        let mut response = match self
+            .apply_headers(self.client.post(url))
+            .json(&body)
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = tx
+                    .send(StreamEvent::Error(format!("Codex request failed: {e}")))
+                    .await;
+                return;
+            }
+        };
+        let status = response.status().as_u16();
+        if status != 200 {
+            let mut text = response.text().await.unwrap_or_default();
+            text.truncate(4096);
+            let _ = tx
+                .send(StreamEvent::Error(format!(
+                    "HTTP {status} from Codex: {text}"
+                )))
+                .await;
+            return;
+        }
+        codex_pump_sse_bytes(&mut response, &tx).await;
+    }
+
     /// Public accessor for `parse_sse_response` (for BDD/integration tests).
     #[cfg(any(test, feature = "test-support"))]
     pub fn parse_sse_response_public(raw: &str) -> Result<LlmResponse, DomainError> {
@@ -516,6 +551,137 @@ impl LlmProvider for CodexProvider {
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         self.chat(request)
     }
+
+    fn chat_stream_incremental(
+        &self,
+        request: ChatRequest<'_>,
+    ) -> Pin<Box<dyn Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + '_>> {
+        if let Err(err) = Self::validate_request(&request) {
+            return Box::pin(async move {
+                let (tx, rx) = tokio::sync::mpsc::channel(1);
+                let _ = tx.send(StreamEvent::Error(err.to_string())).await;
+                rx
+            });
+        }
+        let body = Self::build_request_body(&request);
+        let url = format!("{}/codex/responses", self.api_base);
+        let api_key = self.api_key.clone();
+        let api_base = self.api_base.clone();
+        let account_id = self.account_id.clone();
+        let client = self.client.clone();
+        Box::pin(async move {
+            let (tx, rx) = tokio::sync::mpsc::channel(64);
+            tokio::spawn(async move {
+                let provider = CodexProvider {
+                    api_key,
+                    api_base,
+                    client,
+                    account_id,
+                };
+                provider.pump_codex_sse(&url, body, tx).await;
+            });
+            rx
+        })
+    }
+}
+
+/// Outcome from processing a single Codex SSE data payload.
+enum CodexSseOutcome {
+    Continue,
+    Done,
+}
+
+/// Process a single SSE `data:` payload from the Codex Responses API.
+async fn process_codex_data(
+    data: &str,
+    acc: &mut SseAccumulator,
+    tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+) -> CodexSseOutcome {
+    if data == "[DONE]" {
+        return CodexSseOutcome::Done;
+    }
+    if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
+        if event["type"].as_str() == Some("response.output_text.delta") {
+            if let Some(delta) = event["delta"].as_str() {
+                let _ = tx.send(StreamEvent::TextDelta(delta.to_string())).await;
+            }
+        }
+        acc.handle_event(&event);
+        if event["type"].as_str() == Some("response.completed") {
+            return CodexSseOutcome::Done;
+        }
+    }
+    CodexSseOutcome::Continue
+}
+
+/// Append a chunk to the carry buffer, guarding against runaway lines.
+async fn extend_codex_carry(
+    carry: &mut Vec<u8>,
+    bytes: &[u8],
+    tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+) -> bool {
+    const MAX_LINE_BYTES: usize = 1024 * 1024; // 1 MiB
+    if carry.len() + bytes.len() > MAX_LINE_BYTES && !carry.contains(&b'\n') {
+        let _ = tx
+            .send(StreamEvent::Error("SSE line exceeds 1 MiB limit".into()))
+            .await;
+        return false;
+    }
+    carry.extend_from_slice(bytes);
+    true
+}
+
+/// Drain complete lines from `carry`, returning `true` on stream completion.
+async fn drain_codex_lines(
+    carry: &mut Vec<u8>,
+    acc: &mut SseAccumulator,
+    tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+) -> bool {
+    while let Some(pos) = carry.iter().position(|&b| b == b'\n') {
+        let raw_line = carry.drain(..=pos).collect::<Vec<u8>>();
+        if let Ok(line) = std::str::from_utf8(&raw_line) {
+            let line = line.trim();
+            if let Some(data) = line.strip_prefix("data: ") {
+                if matches!(
+                    process_codex_data(data, acc, tx).await,
+                    CodexSseOutcome::Done
+                ) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Consume Codex Responses API SSE byte stream, emitting `StreamEvent`s.
+async fn codex_pump_sse_bytes(
+    response: &mut reqwest::Response,
+    tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+) {
+    let mut carry: Vec<u8> = Vec::new();
+    let mut acc = SseAccumulator::default();
+
+    loop {
+        let bytes = match response.chunk().await {
+            Ok(Some(b)) => b,
+            Ok(None) => break,
+            Err(e) => {
+                let _ = tx
+                    .send(StreamEvent::Error(format!("stream read error: {e}")))
+                    .await;
+                return;
+            }
+        };
+        if !extend_codex_carry(&mut carry, &bytes, tx).await {
+            return;
+        }
+        if drain_codex_lines(&mut carry, &mut acc, tx).await {
+            let _ = tx.send(StreamEvent::Done(acc.into_response())).await;
+            return;
+        }
+    }
+    let _ = tx.send(StreamEvent::Done(acc.into_response())).await;
 }
 
 #[cfg(test)]

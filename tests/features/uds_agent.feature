@@ -434,3 +434,19 @@ Feature: UDS mode for headless agent operation
     And I close the UDS connection
     Then the agent output should contain a response command "steer" with success true
     And the agent output should not contain an event of type "agent_end"
+
+  # ─── Token streaming ────────────────────────────────────────────────────────
+
+  @done @token-streaming
+  Scenario: prompt produces incremental token events when LLM streams
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And UDS streaming is enabled
+    And the mock LLM returns a streaming response with tokens "Hello" " world"
+    When I start the UDS agent with no session
+    And I send prompt "greet me"
+    And I close the UDS connection
+    Then the UDS agent exits with code 0
+    And the agent output should contain a token event with "Hello"
+    And the agent output should contain a token event with " world"
+    And the agent output should contain a turn_end event with content "Hello world"

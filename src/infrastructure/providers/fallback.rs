@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
-use crate::domain::provider::{ChatRequest, LlmProvider};
+use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
 
 use super::error::ErrorClass;
 
@@ -328,6 +328,51 @@ impl LlmProvider for FallbackProvider {
                 cancel_flag: request.cancel_flag.clone(),
             };
             self.try_chat(&req).await
+        })
+    }
+
+    fn chat_stream_incremental(
+        &self,
+        request: ChatRequest<'_>,
+    ) -> Pin<Box<dyn Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + '_>> {
+        let messages = request.messages.to_vec();
+        let tools = request.tools.to_vec();
+        let model = request.model.to_string();
+        Box::pin(async move {
+            let qualified = parse_qualified_model(&model);
+            // Find the first available provider (with model routing).
+            for entry in &self.entries {
+                let effective_model = if let Some((prefix, bare)) = qualified {
+                    if !provider_prefix_matches(prefix, entry.provider.name()) {
+                        continue;
+                    }
+                    bare
+                } else {
+                    &model
+                };
+                if !entry.is_available() {
+                    continue;
+                }
+                let req = ChatRequest {
+                    messages: &messages,
+                    tools: &tools,
+                    model: effective_model,
+                    max_tokens: request.max_tokens,
+                    temperature: request.temperature,
+                    session_id: request.session_id.clone(),
+                    tool_choice: request.tool_choice.clone(),
+                    metadata: request.metadata.clone(),
+                    thinking_level: request.thinking_level,
+                    cancel_flag: request.cancel_flag.clone(),
+                };
+                return entry.provider.chat_stream_incremental(req).await;
+            }
+            // No provider available — return a channel with an error.
+            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            let _ = tx
+                .send(StreamEvent::Error("no LLM providers available".to_string()))
+                .await;
+            rx
         })
     }
 }

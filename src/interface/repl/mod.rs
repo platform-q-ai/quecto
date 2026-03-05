@@ -371,6 +371,7 @@ pub fn run_repl<R: BufRead, W: Write>(
         context_collapse_after_turns: ctx.config.agents.defaults.context_collapse_after_turns,
         max_context_tokens: ctx.config.agents.defaults.max_context_tokens,
         progress_callback,
+        streaming: false,
     });
 
     let session_store = FileSessionStore::new(ctx.base_dir);

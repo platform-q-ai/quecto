@@ -1,11 +1,10 @@
-use std::path::PathBuf;
-
 use super::*;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::message::Message;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
+use std::path::PathBuf;
 
 use crate::interface::cli::{CliContext, run_with_output};
 
@@ -54,6 +53,7 @@ fn make_test_agent(base_dir: &std::path::Path) -> AgentLoopImpl {
         context_collapse_after_turns: u32::MAX,
         max_context_tokens: 190_000,
         progress_callback: None,
+        streaming: false,
     })
     .with_max_tool_iterations(1)
 }
@@ -488,6 +488,7 @@ fn test_run_with_deadline_completes_before_timeout() {
         context_collapse_after_turns: u32::MAX,
         max_context_tokens: 190_000,
         progress_callback: None,
+        streaming: false,
     })
     .with_max_tool_iterations(1);
 

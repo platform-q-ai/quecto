@@ -5,7 +5,7 @@ use std::pin::Pin;
 
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Role, ToolCall, UsageInfo};
-use crate::domain::provider::{ChatRequest, LlmProvider};
+use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
 
 /// OpenAI-compatible LLM provider.
 #[derive(Debug)]
@@ -239,6 +239,42 @@ impl OpenAiProvider {
         })
     }
 
+    /// Consume SSE body incrementally, emitting `StreamEvent`s per delta.
+    async fn pump_sse_incremental(
+        &self,
+        body: serde_json::Value,
+        url: &str,
+        tx: tokio::sync::mpsc::Sender<StreamEvent>,
+    ) {
+        let request_builder = self
+            .client
+            .post(url)
+            .header("Content-Type", "application/json")
+            .json(&body);
+        let request_builder = self.apply_auth_headers(request_builder);
+        let mut response = match request_builder.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = tx
+                    .send(StreamEvent::Error(format!("HTTP error: {e}")))
+                    .await;
+                return;
+            }
+        };
+        let status = response.status().as_u16();
+        if status != 200 {
+            let mut text = response.text().await.unwrap_or_default();
+            text.truncate(4096);
+            let _ = tx
+                .send(StreamEvent::Error(format!(
+                    "HTTP {status} from OpenAI: {text}"
+                )))
+                .await;
+            return;
+        }
+        openai_sse::pump_sse_bytes(&mut response, &tx).await;
+    }
+
     /// Maximum number of tool calls allowed in a single streaming response.
     const MAX_TOOL_CALLS: usize = 128;
 
@@ -329,15 +365,41 @@ impl LlmProvider for OpenAiProvider {
         &self,
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
-        // Build the request body synchronously before entering the async block
-        // to avoid cloning messages/tools into the future.
         let mut body = Self::build_request_body(&request);
         body["stream"] = serde_json::Value::Bool(true);
         let url = format!("{}/chat/completions", self.api_base);
-
         Box::pin(async move { self.stream_chat_with_body(body, &url).await })
     }
+
+    fn chat_stream_incremental(
+        &self,
+        request: ChatRequest<'_>,
+    ) -> Pin<Box<dyn Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + '_>> {
+        let mut body = Self::build_request_body(&request);
+        body["stream"] = serde_json::Value::Bool(true);
+        let url = format!("{}/chat/completions", self.api_base);
+        let api_key = self.api_key.clone();
+        let api_base = self.api_base.clone();
+        let account_id = self.account_id.clone();
+        let client = self.client.clone();
+        Box::pin(async move {
+            let (tx, rx) = tokio::sync::mpsc::channel(64);
+            tokio::spawn(async move {
+                let provider = OpenAiProvider {
+                    api_key,
+                    api_base,
+                    client,
+                    account_id,
+                };
+                provider.pump_sse_incremental(body, &url, tx).await;
+            });
+            rx
+        })
+    }
 }
+
+#[path = "openai_sse.rs"]
+mod openai_sse;
 
 #[cfg(test)]
 mod tests {
