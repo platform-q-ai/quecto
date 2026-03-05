@@ -19,16 +19,6 @@ use crate::infrastructure::tools::recall::RecallTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use crate::infrastructure::tools::spawn::SpawnTool;
 
-/// Operating mode for the `agent` subcommand.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) enum AgentMode {
-    /// One-shot mode (default): run one prompt then exit.
-    #[default]
-    OneShot,
-    /// UDS mode: read JSON commands from a Unix domain socket, stream events back.
-    Uds,
-}
-
 /// Parsed flags for the `agent` subcommand.
 pub(crate) struct AgentFlags {
     /// Session name for persistence. `None` = "default", `Some("-")` = ephemeral.
@@ -43,8 +33,9 @@ pub(crate) struct AgentFlags {
     pub(crate) max_iterations: Option<u32>,
     /// Wall-clock timeout in seconds for the entire agent run.
     pub(crate) max_time: Option<u64>,
-    /// Operating mode (default: one-shot).
-    pub(crate) mode: AgentMode,
+    /// When true, enter UDS mode: read JSON commands from a Unix domain socket.
+    /// When false (default), run in one-shot mode: process one prompt then exit.
+    pub(crate) uds_mode: bool,
     /// When true, disable workspace path restriction for all filesystem tools.
     /// Overrides `config.agents.defaults.restrict_to_workspace`.
     /// WARNING: allows the agent to read/write any path on the system.
@@ -110,11 +101,11 @@ fn parse_pos_u64(val: &str, flag: &str, stderr: &mut String) -> Option<u64> {
     }
 }
 
-/// Parse the `--mode` flag value into an `AgentMode`.  Returns `None` and
-/// writes an error message to `stderr` for unknown values.
-fn parse_agent_mode(val: &str, stderr: &mut String) -> Option<AgentMode> {
+/// Parse the `--mode` flag value.  Returns `Some(true)` for `"uds"`, `None`
+/// (with an error written to `stderr`) for any unknown value.
+fn parse_agent_mode(val: &str, stderr: &mut String) -> Option<bool> {
     match val {
-        "uds" => Some(AgentMode::Uds),
+        "uds" => Some(true),
         other => {
             stderr.push_str(&format!(
                 "agent: --mode '{other}' is not valid; supported: uds\n"
@@ -132,7 +123,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut model_override: Option<String> = None;
     let mut max_iterations: Option<u32> = None;
     let mut max_time: Option<u64> = None;
-    let mut mode = AgentMode::OneShot;
+    let mut uds_mode = false;
     let mut no_sandbox = false;
     let mut network = false;
     let mut socket_path: Option<std::path::PathBuf> = None;
@@ -190,7 +181,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
             }
             "--mode" => {
                 let val = next_arg(args, i, "--mode requires a value (e.g. uds)", stderr)?;
-                mode = parse_agent_mode(val, stderr)?;
+                uds_mode = parse_agent_mode(val, stderr)?;
                 i += 2;
             }
             "--socket" => {
@@ -217,7 +208,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         model_override,
         max_iterations,
         max_time,
-        mode,
+        uds_mode,
         no_sandbox,
         network,
         socket_path,
@@ -236,7 +227,7 @@ pub(crate) fn cmd_agent(
     };
 
     // ── UDS mode ──────────────────────────────────────────────────────────────
-    if flags.mode == AgentMode::Uds {
+    if flags.uds_mode {
         return cmd_agent_uds(ctx, flags, stderr);
     }
 
