@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::domain::workflow::WorkflowConfig;
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
@@ -19,6 +21,8 @@ pub struct Config {
     pub health: HealthConfig,
     #[serde(default)]
     pub voice: VoiceConfig,
+    #[serde(default)]
+    pub workflow: WorkflowConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

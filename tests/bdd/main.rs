@@ -711,6 +711,20 @@ pub struct QuectoWorld {
     pub gateway_import_stderr: Option<String>,
     /// RefreshableProvider result (issue #255)
     pub refreshable_result: Option<Result<LlmResponse, DomainError>>,
+    // --- Issue #279: workflow tool ---
+    /// Shared workflow state for workflow BDD scenarios
+    pub workflow_state:
+        Option<std::sync::Arc<std::sync::Mutex<quecto::domain::workflow::WorkflowState>>>,
+    /// Workflow tool instance for BDD scenarios
+    pub workflow_tool: Option<quecto::infrastructure::tools::workflow_tool::WorkflowTool>,
+    /// Captured workflow events for event emission scenarios
+    pub workflow_events: Option<std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>>,
+    /// Workflow error from the last operation
+    pub workflow_error: Option<String>,
+    /// Workflow config for config scenarios
+    pub workflow_config: Option<quecto::domain::workflow::WorkflowConfig>,
+    /// Workflow system prompt snippet for system prompt scenarios
+    pub workflow_snippet: Option<String>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
@@ -1001,6 +1015,7 @@ mod tool_empty_args_steps;
 mod truncate_steps;
 mod uds_steps;
 mod voice_steps;
+mod workflow_steps;
 
 // Runner
 // ===========================================================================

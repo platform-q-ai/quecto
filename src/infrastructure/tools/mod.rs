@@ -11,3 +11,4 @@ pub mod registry;
 pub mod spawn;
 pub mod truncate;
 pub mod web_search;
+pub mod workflow_tool;
