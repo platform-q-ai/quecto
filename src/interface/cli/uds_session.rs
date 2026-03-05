@@ -3,17 +3,6 @@ use crate::domain::message::{Message, Role};
 
 use super::protocol::{SessionState, SessionStats, TokenStats};
 
-// ─── Public parse helper (used by unit tests) ────────────────────────────────
-
-/// Parse a single JSON line into an `AgentCommand`.  Returns `Err` for invalid
-/// JSON or an unrecognised command type.
-pub fn parse_command_line(line: &str) -> Result<super::protocol::AgentCommand, String> {
-    if line.trim().is_empty() {
-        return Err("empty line".to_string());
-    }
-    serde_json::from_str(line).map_err(|e| format!("parse error: {e}"))
-}
-
 // ─── Session state tracker ────────────────────────────────────────────────────
 
 /// In-memory state for an active UDS session.
@@ -72,7 +61,7 @@ impl AgentSession {
     }
 
     pub fn drain_pending(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.pending).into_iter().collect()
+        Vec::from(std::mem::take(&mut self.pending))
     }
 
     pub fn state_snapshot(&self, message_count: usize) -> SessionState {

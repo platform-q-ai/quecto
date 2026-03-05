@@ -383,6 +383,13 @@ Feature: UDS mode for headless agent operation
     Then the UDS agent exits with code 0
 
   @done @uds-transport
+  Scenario: --socket path exceeding 104 bytes is rejected with a clear error
+    Given a temp base directory
+    When I run quecto agent --mode uds with an overlong socket path
+    Then the exit code should be 1
+    And the agent stderr should contain "socket path exceeds"
+
+  @done @uds-transport
   Scenario: socket file is removed after agent exits
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server

@@ -17,7 +17,7 @@ use super::uds_session::{
     AgentSession, compute_session_stats, message_to_json, messages_tail_json,
 };
 
-pub use super::uds_session::parse_command_line;
+pub use super::protocol::parse_command_line;
 
 // ─── UDS loop ────────────────────────────────────────────────────────────────
 
@@ -28,19 +28,12 @@ pub struct UdsLoopArgs<'a> {
     pub session_key: String,
     pub model: String,
     pub ephemeral: bool,
-    /// System prompt (datetime preamble + skills + user-supplied `--system`).
-    /// Built via `build_system_prompt()` — always non-empty (contains at
-    /// least the datetime preamble).  Prepended as a transient
-    /// `Message::system` before processing; stripped before persisting the
-    /// session so it is not double-injected on the next process invocation.
-    ///
-    /// NOTE: the datetime in the preamble is fixed at process-start time.
-    /// For long-lived UDS sessions (hours) the timestamp will be stale.
-    /// A future improvement would re-inject on each prompt command.
+    /// System prompt (datetime preamble + skills + user `--system`).
+    /// Prepended as transient `Message::system` before each run; stripped
+    /// before persisting so it is not double-injected on next invocation.
     pub system_prompt: String,
-    /// Path to the Unix domain socket file.
-    /// In production: used to bind `UnixListener` and printed to stderr.
-    /// In tests: unused (the pre-connected `socket_override` is used instead).
+    /// Path to the Unix domain socket.  Bound and announced in production;
+    /// unused in tests (see `socket_override`).
     pub socket_path: std::path::PathBuf,
     /// Pre-connected stream injected by tests instead of accepting from a listener.
     /// `None` = bind `socket_path` with mode `0600` (chmod-after-bind), accept one connection.
@@ -49,17 +42,9 @@ pub struct UdsLoopArgs<'a> {
     pub session_store_override: Option<Box<dyn SessionStore + 'static>>,
 }
 
-/// Run the UDS event loop.
-///
-/// In production: binds a `UnixListener` on `socket_path`, prints the path
-/// to stderr, binds with mode `0600` (chmod-after-bind), accepts one client, then processes
-/// JSON-lines commands until the client closes the connection.  The socket
-/// file is unlinked on exit (both clean and panicked via a drop guard).
-///
-/// In tests: a pre-connected `std::os::unix::net::UnixStream` is passed via
-/// `socket_override`, so no listening or `accept()` occurs.
-///
-/// Returns an exit code (0 = success, 1 = error).
+/// Run the UDS event loop.  Binds a `UnixListener`, announces path on stderr,
+/// accepts one client, processes JSON-lines commands.  In tests, uses
+/// `socket_override` instead of binding.  Returns exit code.
 pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     let rt = match crate::interface::cli::build_tokio_runtime() {
         Ok(rt) => rt,
@@ -71,6 +56,32 @@ pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     rt.block_on(uds_loop_async(args))
 }
 
+/// Remove stale `quecto-agent-*.sock` files older than `max_age` from `dir`.
+/// Best-effort: silently ignores errors.  Drop guards do not run on SIGKILL,
+/// so stale sockets can accumulate; this runs at startup to clean up.
+pub(crate) fn reap_stale_sockets(dir: &std::path::Path, max_age: std::time::Duration) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let cutoff = std::time::SystemTime::now()
+        .checked_sub(max_age)
+        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !name_str.starts_with("quecto-agent-") || !name_str.ends_with(".sock") {
+            continue;
+        }
+        if let Ok(meta) = entry.metadata() {
+            if let Ok(modified) = meta.modified() {
+                if modified < cutoff {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+}
+
 /// Drop guard that removes the socket file on exit.
 struct SocketGuard(std::path::PathBuf);
 
@@ -80,18 +91,10 @@ impl Drop for SocketGuard {
     }
 }
 
-/// Bind a `UnixListener` with owner-only permissions (`0600`).
-///
-/// Removes any stale socket file at `path`, binds the listener, then applies
-/// `chmod 0600`.  When `$XDG_RUNTIME_DIR` is used as the parent directory
-/// (mode `0700` on systemd systems), the directory already prevents other
-/// users from reaching the socket, so the brief post-bind window before chmod
-/// is not reachable.  On non-systemd systems with `/tmp`, the window is small
-/// (nanoseconds between bind and chmod) and requires a local attacker to win
-/// the race.
-///
-/// # Errors
-/// Returns `std::io::Error` if bind or chmod fails.
+/// Remove stale socket, bind at `path`, apply `chmod 0600`, return listener.
+/// On chmod failure the socket is removed before returning `Err`.
+/// On `$XDG_RUNTIME_DIR` systems (mode `0700`) the post-bind TOCTOU window
+/// is unreachable; on `/tmp` the window is nanoseconds.
 fn bind_secure_socket(path: &std::path::Path) -> std::io::Result<tokio::net::UnixListener> {
     use std::os::unix::fs::PermissionsExt;
     let _ = std::fs::remove_file(path);
@@ -533,7 +536,7 @@ fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serd
     }
 }
 
-/// Dispatch a single RPC command.  Returns `true` if the loop should exit.
+/// Dispatch a single UDS command.  Returns `true` if the loop should exit.
 async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool {
     let id = cmd.id().map(str::to_owned);
     let type_name = cmd.type_name().to_owned();
