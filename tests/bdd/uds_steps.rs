@@ -1,10 +1,10 @@
 use super::*;
 
-// RPC Agent Steps
+// UDS Agent Steps
 // ===========================================================================
 //
-// The RPC loop runs in a dedicated OS thread using a tokio runtime with
-// in-memory cursor pipes for stdin/stdout, so BDD tests stay fully
+// The UDS loop runs in a dedicated OS thread using a tokio runtime with
+// in-memory cursor pipes (AsyncRead/AsyncWrite), so BDD tests stay fully
 // deterministic without spawning real OS processes.
 
 use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
@@ -15,7 +15,7 @@ use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 use quecto::interface::cli::build_agent_provider;
-use quecto::interface::cli::rpc::{RpcLoopArgs, run_rpc_loop};
+use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
 
 // ─── In-memory async writer ──────────────────────────────────────────────────
 
@@ -48,10 +48,10 @@ impl Unpin for VecWriter {}
 
 // ─── Execution helper ────────────────────────────────────────────────────────
 
-/// Build an agent and run the RPC loop with the accumulated stdin lines.
+/// Build an agent and run the UDS loop with the accumulated command lines.
 /// Stores stdout lines, stderr, and exit code into `world`.  Idempotent.
-fn execute_rpc(world: &mut QuectoWorld) {
-    if world.rpc_exit_code.is_some() {
+fn execute_uds(world: &mut QuectoWorld) {
+    if world.uds_exit_code.is_some() {
         return;
     }
 
@@ -63,8 +63,8 @@ fn execute_rpc(world: &mut QuectoWorld) {
 
     // Config check.
     if !base.join("config.json").exists() {
-        world.rpc_stderr = "config not found".to_string();
-        world.rpc_exit_code = Some(1);
+        world.agent_stderr = "config not found".to_string();
+        world.uds_exit_code = Some(1);
         return;
     }
 
@@ -78,8 +78,8 @@ fn execute_rpc(world: &mut QuectoWorld) {
     ) {
         Ok(c) => c,
         Err(e) => {
-            world.rpc_stderr = format!("failed to load config: {e}");
-            world.rpc_exit_code = Some(1);
+            world.agent_stderr = format!("failed to load config: {e}");
+            world.uds_exit_code = Some(1);
             return;
         }
     };
@@ -87,8 +87,8 @@ fn execute_rpc(world: &mut QuectoWorld) {
     let provider = match build_agent_provider(&config, &base) {
         Ok(p) => p,
         Err(e) => {
-            world.rpc_stderr = e;
-            world.rpc_exit_code = Some(1);
+            world.agent_stderr = e;
+            world.uds_exit_code = Some(1);
             return;
         }
     };
@@ -103,11 +103,11 @@ fn execute_rpc(world: &mut QuectoWorld) {
     let registry =
         ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
 
-    let ephemeral = world.rpc_no_session || world.rpc_session_name.as_deref() == Some("-");
+    let ephemeral = world.no_session || world.session_name.as_deref() == Some("-");
     let session_key = if ephemeral {
         String::new()
     } else {
-        let name = world.rpc_session_name.as_deref().unwrap_or("default");
+        let name = world.session_name.as_deref().unwrap_or("default");
         Session::build_key("cli", name)
     };
 
@@ -126,7 +126,7 @@ fn execute_rpc(world: &mut QuectoWorld) {
 
     // Build stdin bytes from accumulated lines.
     let stdin_bytes: Vec<u8> = world
-        .rpc_stdin_lines
+        .uds_commands
         .iter()
         .flat_map(|l| format!("{l}\n").into_bytes())
         .collect();
@@ -136,9 +136,9 @@ fn execute_rpc(world: &mut QuectoWorld) {
     let stdin_cursor = tokio::io::BufReader::new(std::io::Cursor::new(stdin_bytes));
     let base_for_thread = base.clone();
 
-    let system_prompt = world.rpc_system_prompt.clone().unwrap_or_default();
+    let system_prompt = world.system_prompt.clone().unwrap_or_default();
     let exit_code = std::thread::spawn(move || {
-        run_rpc_loop(RpcLoopArgs {
+        run_uds_loop(UdsLoopArgs {
             agent,
             base_dir: &base_for_thread,
             session_key,
@@ -154,12 +154,12 @@ fn execute_rpc(world: &mut QuectoWorld) {
     .unwrap_or(1);
 
     let raw = String::from_utf8_lossy(&stdout_buf.lock().unwrap()).to_string();
-    world.rpc_stdout_lines = raw
+    world.agent_events = raw
         .lines()
         .filter(|l| !l.is_empty())
         .map(str::to_owned)
         .collect();
-    world.rpc_exit_code = Some(exit_code);
+    world.uds_exit_code = Some(exit_code);
 }
 
 // ─── Given steps ─────────────────────────────────────────────────────────────
@@ -228,106 +228,106 @@ fn given_mock_llm_tool_call_then_text(world: &mut QuectoWorld, text: String) {
 
 // ─── When steps — session setup ───────────────────────────────────────────────
 
-#[when("I start the RPC agent with no session")]
-fn when_start_rpc_no_session(world: &mut QuectoWorld) {
-    world.rpc_session_name = None;
-    world.rpc_no_session = true;
+#[when("I start the UDS agent with no session")]
+fn when_start_uds_no_session(world: &mut QuectoWorld) {
+    world.session_name = None;
+    world.no_session = true;
 }
 
-#[when("I start the RPC agent with --no-session flag")]
-fn when_start_rpc_no_session_flag(world: &mut QuectoWorld) {
-    world.rpc_session_name = None;
-    world.rpc_no_session = true;
+#[when("I start the UDS agent with --no-session flag")]
+fn when_start_uds_no_session_flag(world: &mut QuectoWorld) {
+    world.session_name = None;
+    world.no_session = true;
 }
 
-#[when(expr = "I start the RPC agent with no session and system prompt {string}")]
-fn when_start_rpc_no_session_with_system(world: &mut QuectoWorld, system: String) {
-    world.rpc_session_name = None;
-    world.rpc_no_session = true;
-    world.rpc_system_prompt = Some(system);
+#[when(expr = "I start the UDS agent with no session and system prompt {string}")]
+fn when_start_uds_no_session_with_system(world: &mut QuectoWorld, system: String) {
+    world.session_name = None;
+    world.no_session = true;
+    world.system_prompt = Some(system);
 }
 
-#[when(expr = "I start the RPC agent with session {string} and system prompt {string}")]
-fn when_start_rpc_with_session_and_system(
+#[when(expr = "I start the UDS agent with session {string} and system prompt {string}")]
+fn when_start_uds_with_session_and_system(
     world: &mut QuectoWorld,
     session: String,
     system: String,
 ) {
-    world.rpc_session_name = Some(session);
-    world.rpc_no_session = false;
-    world.rpc_system_prompt = Some(system);
+    world.session_name = Some(session);
+    world.no_session = false;
+    world.system_prompt = Some(system);
 }
 
-#[when(expr = "I start the RPC agent with session {string}")]
-fn when_start_rpc_with_session(world: &mut QuectoWorld, session: String) {
-    world.rpc_session_name = Some(session);
-    world.rpc_no_session = false;
+#[when(expr = "I start the UDS agent with session {string}")]
+fn when_start_uds_with_session(world: &mut QuectoWorld, session: String) {
+    world.session_name = Some(session);
+    world.no_session = false;
 }
 
 // ─── When steps — stdin commands ──────────────────────────────────────────────
 
-#[when(expr = "I queue RPC prompt {string}")]
-fn when_queue_rpc_prompt(world: &mut QuectoWorld, message: String) {
+#[when(expr = "I send prompt {string}")]
+fn when_send_prompt(world: &mut QuectoWorld, message: String) {
     let cmd = serde_json::json!({"type": "prompt", "message": message});
-    world.rpc_stdin_lines.push(cmd.to_string());
+    world.uds_commands.push(cmd.to_string());
 }
 
-#[when(expr = "I queue RPC prompt with id {string} and message {string}")]
-fn when_queue_rpc_prompt_with_id(world: &mut QuectoWorld, id: String, message: String) {
+#[when(expr = "I send prompt with id {string} and message {string}")]
+fn when_send_prompt_with_id(world: &mut QuectoWorld, id: String, message: String) {
     let cmd = serde_json::json!({"type": "prompt", "id": id, "message": message});
-    world.rpc_stdin_lines.push(cmd.to_string());
+    world.uds_commands.push(cmd.to_string());
 }
 
-#[when(expr = "I queue RPC command {string} with id {string}")]
-fn when_queue_rpc_command_with_id(world: &mut QuectoWorld, command: String, id: String) {
+#[when(expr = "I send command {string} with id {string}")]
+fn when_send_command_with_id(world: &mut QuectoWorld, command: String, id: String) {
     let cmd = serde_json::json!({"type": command, "id": id});
-    world.rpc_stdin_lines.push(cmd.to_string());
+    world.uds_commands.push(cmd.to_string());
 }
 
-#[when(expr = "I queue RPC set_model {string}")]
-fn when_queue_rpc_set_model(world: &mut QuectoWorld, model: String) {
+#[when(expr = "I send set_model {string}")]
+fn when_send_set_model(world: &mut QuectoWorld, model: String) {
     let cmd = serde_json::json!({"type": "set_model", "id": "sm-1", "model": model});
-    world.rpc_stdin_lines.push(cmd.to_string());
+    world.uds_commands.push(cmd.to_string());
 }
 
-#[when(expr = "I queue RPC set_model provider {string} modelId {string}")]
-fn when_queue_rpc_set_model_provider(world: &mut QuectoWorld, provider: String, model_id: String) {
+#[when(expr = "I send set_model provider {string} modelId {string}")]
+fn when_send_set_model_provider(world: &mut QuectoWorld, provider: String, model_id: String) {
     let cmd = serde_json::json!({"type": "set_model", "id": "sm-1", "provider": provider, "modelId": model_id});
-    world.rpc_stdin_lines.push(cmd.to_string());
+    world.uds_commands.push(cmd.to_string());
 }
 
-#[when(expr = "I queue RPC follow_up {string} with id {string}")]
-fn when_queue_rpc_follow_up(world: &mut QuectoWorld, message: String, id: String) {
+#[when(expr = "I send follow_up {string} with id {string}")]
+fn when_send_follow_up(world: &mut QuectoWorld, message: String, id: String) {
     let cmd = serde_json::json!({"type": "follow_up", "id": id, "message": message});
-    world.rpc_stdin_lines.push(cmd.to_string());
+    world.uds_commands.push(cmd.to_string());
 }
 
-#[when(expr = "I queue RPC steer {string} with id {string}")]
-fn when_queue_rpc_steer(world: &mut QuectoWorld, message: String, id: String) {
+#[when(expr = "I send steer {string} with id {string}")]
+fn when_send_steer(world: &mut QuectoWorld, message: String, id: String) {
     let cmd = serde_json::json!({"type": "steer", "id": id, "message": message});
-    world.rpc_stdin_lines.push(cmd.to_string());
+    world.uds_commands.push(cmd.to_string());
 }
 
-#[when(expr = "I queue RPC get_messages_tail with count {int} and id {string}")]
-fn when_queue_rpc_get_messages_tail(world: &mut QuectoWorld, count: usize, id: String) {
+#[when(expr = "I send get_messages_tail with count {int} and id {string}")]
+fn when_send_get_messages_tail(world: &mut QuectoWorld, count: usize, id: String) {
     let cmd = serde_json::json!({"type": "get_messages_tail", "id": id, "count": count});
-    world.rpc_stdin_lines.push(cmd.to_string());
+    world.uds_commands.push(cmd.to_string());
 }
 
-#[when(expr = "I queue RPC raw line {string}")]
-fn when_queue_rpc_raw_line(world: &mut QuectoWorld, line: String) {
-    world.rpc_stdin_lines.push(line);
+#[when(expr = "I send raw line {string}")]
+fn when_send_raw_line(world: &mut QuectoWorld, line: String) {
+    world.uds_commands.push(line);
 }
 
-#[when("I queue RPC unknown command with id \"u-1\"")]
-fn when_queue_rpc_unknown_command(world: &mut QuectoWorld) {
+#[when("I send unknown command with id \"u-1\"")]
+fn when_send_unknown_command(world: &mut QuectoWorld) {
     let cmd = serde_json::json!({"type": "unknown_command", "id": "u-1"});
-    world.rpc_stdin_lines.push(cmd.to_string());
+    world.uds_commands.push(cmd.to_string());
 }
 
-#[when("I close RPC stdin")]
-fn when_close_rpc_stdin(world: &mut QuectoWorld) {
-    execute_rpc(world);
+#[when("I close the UDS connection")]
+fn when_close_uds_connection(world: &mut QuectoWorld) {
+    execute_uds(world);
 }
 
 /// Run quecto agent with an invalid --mode value (uses existing CLI runner).
@@ -349,36 +349,36 @@ fn when_run_agent_with_invalid_mode(world: &mut QuectoWorld, mode: String, messa
 
 // ─── Then steps — exit code ───────────────────────────────────────────────────
 
-#[then(expr = "the RPC process exits with code {int}")]
-fn then_rpc_exits_with_code(world: &mut QuectoWorld, code: i32) {
-    execute_rpc(world);
+#[then(expr = "the UDS agent exits with code {int}")]
+fn then_uds_exits_with_code(world: &mut QuectoWorld, code: i32) {
+    execute_uds(world);
     assert_eq!(
-        world.rpc_exit_code,
+        world.uds_exit_code,
         Some(code),
         "expected exit code {code}, got {:?}\nstderr: {}\nstdout: {:#?}",
-        world.rpc_exit_code,
-        world.rpc_stderr,
-        world.rpc_stdout_lines,
+        world.uds_exit_code,
+        world.agent_stderr,
+        world.agent_events,
     );
 }
 
 // ─── Then steps — stderr ──────────────────────────────────────────────────────
 
-#[then(expr = "the RPC stderr should contain {string}")]
-fn then_rpc_stderr_contains(world: &mut QuectoWorld, expected: String) {
-    execute_rpc(world);
+#[then(expr = "the agent stderr should contain {string}")]
+fn then_agent_stderr_contains(world: &mut QuectoWorld, expected: String) {
+    execute_uds(world);
     assert!(
-        world.rpc_stderr.contains(&expected),
+        world.agent_stderr.contains(&expected),
         "expected stderr to contain {expected:?}\ngot: {}",
-        world.rpc_stderr,
+        world.agent_stderr,
     );
 }
 
 // ─── Then steps — stdout event assertions ─────────────────────────────────────
 
-fn stdout_event_types(world: &QuectoWorld) -> Vec<String> {
+fn agent_event_types(world: &QuectoWorld) -> Vec<String> {
     world
-        .rpc_stdout_lines
+        .agent_events
         .iter()
         .filter_map(|l| {
             serde_json::from_str::<serde_json::Value>(l)
@@ -388,19 +388,19 @@ fn stdout_event_types(world: &QuectoWorld) -> Vec<String> {
         .collect()
 }
 
-#[then(expr = "the RPC stdout should contain an event of type {string}")]
-fn then_rpc_stdout_contains_event_type(world: &mut QuectoWorld, event_type: String) {
-    let types = stdout_event_types(world);
+#[then(expr = "the agent output should contain an event of type {string}")]
+fn then_agent_output_contains_event_type(world: &mut QuectoWorld, event_type: String) {
+    let types = agent_event_types(world);
     assert!(
         types.contains(&event_type),
         "expected event {event_type:?}\ngot: {types:?}\nlines: {:#?}",
-        world.rpc_stdout_lines,
+        world.agent_events,
     );
 }
 
-#[then(expr = "the RPC stdout event {string} should appear {int} times")]
-fn then_rpc_stdout_event_appears_n_times(world: &mut QuectoWorld, event_type: String, n: usize) {
-    let count = stdout_event_types(world)
+#[then(expr = "the agent output event {string} should appear {int} times")]
+fn then_agent_output_event_appears_n_times(world: &mut QuectoWorld, event_type: String, n: usize) {
+    let count = agent_event_types(world)
         .iter()
         .filter(|t| *t == &event_type)
         .count();
@@ -408,13 +408,13 @@ fn then_rpc_stdout_event_appears_n_times(world: &mut QuectoWorld, event_type: St
         count,
         n,
         "expected {event_type:?} × {n}, got {count}\ntypes: {:#?}",
-        stdout_event_types(world),
+        agent_event_types(world),
     );
 }
 
-#[then(expr = "the RPC stdout should contain a response with id {string}")]
-fn then_rpc_stdout_contains_response_with_id(world: &mut QuectoWorld, expected_id: String) {
-    let found = world.rpc_stdout_lines.iter().any(|l| {
+#[then(expr = "the agent output should contain a response with id {string}")]
+fn then_agent_output_contains_response_with_id(world: &mut QuectoWorld, expected_id: String) {
+    let found = world.agent_events.iter().any(|l| {
         serde_json::from_str::<serde_json::Value>(l)
             .ok()
             .and_then(|v| {
@@ -430,12 +430,12 @@ fn then_rpc_stdout_contains_response_with_id(world: &mut QuectoWorld, expected_i
     assert!(
         found,
         "expected response with id {expected_id:?}\nlines: {:#?}",
-        world.rpc_stdout_lines,
+        world.agent_events,
     );
 }
 
-fn find_response(world: &QuectoWorld, command: &str) -> Option<serde_json::Value> {
-    world.rpc_stdout_lines.iter().find_map(|l| {
+fn find_agent_response(world: &QuectoWorld, command: &str) -> Option<serde_json::Value> {
+    world.agent_events.iter().find_map(|l| {
         let v: serde_json::Value = serde_json::from_str(l).ok()?;
         if v["type"] == "response" && v["command"] == command {
             Some(v)
@@ -445,13 +445,13 @@ fn find_response(world: &QuectoWorld, command: &str) -> Option<serde_json::Value
     })
 }
 
-#[then(expr = "the RPC stdout should contain a response command {string} with success true")]
-fn then_rpc_stdout_response_success(world: &mut QuectoWorld, command: String) {
-    let resp = find_response(world, &command);
+#[then(expr = "the agent output should contain a response command {string} with success true")]
+fn then_agent_output_response_success(world: &mut QuectoWorld, command: String) {
+    let resp = find_agent_response(world, &command);
     assert!(
         resp.is_some(),
         "no response for {command:?}\nlines: {:#?}",
-        world.rpc_stdout_lines,
+        world.agent_events,
     );
     assert_eq!(
         resp.unwrap()["success"],
@@ -460,9 +460,9 @@ fn then_rpc_stdout_response_success(world: &mut QuectoWorld, command: String) {
     );
 }
 
-#[then("the RPC stdout should contain a response with success false")]
-fn then_rpc_stdout_response_failure(world: &mut QuectoWorld) {
-    let found = world.rpc_stdout_lines.iter().any(|l| {
+#[then("the agent output should contain a response with success false")]
+fn then_agent_output_response_failure(world: &mut QuectoWorld) {
+    let found = world.agent_events.iter().any(|l| {
         serde_json::from_str::<serde_json::Value>(l)
             .ok()
             .map(|v| v["type"] == "response" && v["success"] == false)
@@ -471,13 +471,13 @@ fn then_rpc_stdout_response_failure(world: &mut QuectoWorld) {
     assert!(
         found,
         "expected response with success=false\nlines: {:#?}",
-        world.rpc_stdout_lines,
+        world.agent_events,
     );
 }
 
-#[then("the RPC stdout should contain a parse error response")]
-fn then_rpc_stdout_parse_error(world: &mut QuectoWorld) {
-    let found = world.rpc_stdout_lines.iter().any(|l| {
+#[then("the agent output should contain a parse error response")]
+fn then_agent_output_parse_error(world: &mut QuectoWorld) {
+    let found = world.agent_events.iter().any(|l| {
         serde_json::from_str::<serde_json::Value>(l)
             .ok()
             .map(|v| {
@@ -494,15 +494,15 @@ fn then_rpc_stdout_parse_error(world: &mut QuectoWorld) {
     assert!(
         found,
         "expected a parse error response\nlines: {:#?}",
-        world.rpc_stdout_lines,
+        world.agent_events,
     );
 }
 
 // ─── get_state assertions ─────────────────────────────────────────────────────
 
-#[then(expr = "the RPC get_state response should include field {string}")]
-fn then_rpc_get_state_has_field(world: &mut QuectoWorld, field: String) {
-    let resp = find_response(world, "get_state").expect("no get_state response");
+#[then(expr = "the get_state response should include field {string}")]
+fn then_get_state_has_field(world: &mut QuectoWorld, field: String) {
+    let resp = find_agent_response(world, "get_state").expect("no get_state response");
     let data = resp["data"].as_object().expect("no data in get_state");
     assert!(
         data.contains_key(&field),
@@ -511,18 +511,18 @@ fn then_rpc_get_state_has_field(world: &mut QuectoWorld, field: String) {
     );
 }
 
-#[then(expr = "the RPC get_state response model should be {string}")]
-fn then_rpc_get_state_model(world: &mut QuectoWorld, expected_model: String) {
-    let resp = find_response(world, "get_state").expect("no get_state response");
+#[then(expr = "the get_state response model should be {string}")]
+fn then_get_state_model(world: &mut QuectoWorld, expected_model: String) {
+    let resp = find_agent_response(world, "get_state").expect("no get_state response");
     let model = resp["data"]["model"].as_str().unwrap_or("");
     assert_eq!(model, expected_model);
 }
 
 // ─── get_messages assertions ──────────────────────────────────────────────────
 
-#[then(expr = "the RPC get_messages response data should include a {string} array")]
-fn then_rpc_get_messages_has_array(world: &mut QuectoWorld, field: String) {
-    let resp = find_response(world, "get_messages").expect("no get_messages response");
+#[then(expr = "the get_messages response data should include a {string} array")]
+fn then_get_messages_has_array(world: &mut QuectoWorld, field: String) {
+    let resp = find_agent_response(world, "get_messages").expect("no get_messages response");
     assert!(
         resp["data"][&field].is_array(),
         "expected get_messages.data.{field} to be an array\ngot: {}",
@@ -532,9 +532,10 @@ fn then_rpc_get_messages_has_array(world: &mut QuectoWorld, field: String) {
 
 // ─── get_messages_tail assertions ─────────────────────────────────────────────
 
-#[then(expr = "the RPC get_messages_tail response should include a {string} array")]
-fn then_rpc_get_messages_tail_has_array(world: &mut QuectoWorld, field: String) {
-    let resp = find_response(world, "get_messages_tail").expect("no get_messages_tail response");
+#[then(expr = "the get_messages_tail response should include a {string} array")]
+fn then_get_messages_tail_has_array(world: &mut QuectoWorld, field: String) {
+    let resp =
+        find_agent_response(world, "get_messages_tail").expect("no get_messages_tail response");
     assert!(
         resp["data"][&field].is_array(),
         "expected get_messages_tail.data.{field} to be an array\ngot: {}",
@@ -542,9 +543,10 @@ fn then_rpc_get_messages_tail_has_array(world: &mut QuectoWorld, field: String) 
     );
 }
 
-#[then(expr = "the RPC get_messages_tail messages count should be at most {int}")]
-fn then_rpc_get_messages_tail_count_at_most(world: &mut QuectoWorld, max: usize) {
-    let resp = find_response(world, "get_messages_tail").expect("no get_messages_tail response");
+#[then(expr = "the get_messages_tail messages count should be at most {int}")]
+fn then_get_messages_tail_count_at_most(world: &mut QuectoWorld, max: usize) {
+    let resp =
+        find_agent_response(world, "get_messages_tail").expect("no get_messages_tail response");
     let count = resp["data"]["messages"]
         .as_array()
         .map(|a| a.len())
@@ -552,9 +554,10 @@ fn then_rpc_get_messages_tail_count_at_most(world: &mut QuectoWorld, max: usize)
     assert!(count <= max, "expected at most {max} messages, got {count}");
 }
 
-#[then(expr = "the RPC get_messages_tail messages count should be exactly {int}")]
-fn then_rpc_get_messages_tail_count_exactly(world: &mut QuectoWorld, expected: usize) {
-    let resp = find_response(world, "get_messages_tail").expect("no get_messages_tail response");
+#[then(expr = "the get_messages_tail messages count should be exactly {int}")]
+fn then_get_messages_tail_count_exactly(world: &mut QuectoWorld, expected: usize) {
+    let resp =
+        find_agent_response(world, "get_messages_tail").expect("no get_messages_tail response");
     let count = resp["data"]["messages"]
         .as_array()
         .map(|a| a.len())
@@ -567,9 +570,10 @@ fn then_rpc_get_messages_tail_count_exactly(world: &mut QuectoWorld, expected: u
 
 // ─── get_session_stats assertions ─────────────────────────────────────────────
 
-#[then(expr = "the RPC get_session_stats response should include field {string}")]
-fn then_rpc_get_session_stats_has_field(world: &mut QuectoWorld, field: String) {
-    let resp = find_response(world, "get_session_stats").expect("no get_session_stats response");
+#[then(expr = "the get_session_stats response should include field {string}")]
+fn then_get_session_stats_has_field(world: &mut QuectoWorld, field: String) {
+    let resp =
+        find_agent_response(world, "get_session_stats").expect("no get_session_stats response");
     let data = resp["data"]
         .as_object()
         .expect("no data in get_session_stats");
@@ -631,13 +635,13 @@ fn then_no_session_file_exists(world: &mut QuectoWorld, _session_name: String) {
 
 // ─── #233: Additional step implementations ────────────────────────────────────
 
-#[then(expr = "the RPC stdout should contain a response command {string} with success false")]
-fn then_rpc_stdout_response_command_failure(world: &mut QuectoWorld, command: String) {
-    let resp = find_response(world, &command);
+#[then(expr = "the agent output should contain a response command {string} with success false")]
+fn then_agent_output_response_command_failure(world: &mut QuectoWorld, command: String) {
+    let resp = find_agent_response(world, &command);
     assert!(
         resp.is_some(),
         "no response for {command:?}\nlines: {:#?}",
-        world.rpc_stdout_lines,
+        world.agent_events,
     );
     assert_eq!(
         resp.unwrap()["success"],
@@ -646,10 +650,11 @@ fn then_rpc_stdout_response_command_failure(world: &mut QuectoWorld, command: St
     );
 }
 
-#[then(expr = "the RPC get_session_stats userMessages should equal {int}")]
-fn then_rpc_get_session_stats_user_messages_eq(world: &mut QuectoWorld, expected: usize) {
-    execute_rpc(world);
-    let resp = find_response(world, "get_session_stats").expect("no get_session_stats response");
+#[then(expr = "the get_session_stats userMessages should equal {int}")]
+fn then_get_session_stats_user_messages_eq(world: &mut QuectoWorld, expected: usize) {
+    execute_uds(world);
+    let resp =
+        find_agent_response(world, "get_session_stats").expect("no get_session_stats response");
     let actual = resp["data"]["userMessages"]
         .as_u64()
         .expect("userMessages not a number") as usize;
@@ -659,10 +664,11 @@ fn then_rpc_get_session_stats_user_messages_eq(world: &mut QuectoWorld, expected
     );
 }
 
-#[then(expr = "the RPC get_session_stats assistantMessages should equal {int}")]
-fn then_rpc_get_session_stats_assistant_messages_eq(world: &mut QuectoWorld, expected: usize) {
-    execute_rpc(world);
-    let resp = find_response(world, "get_session_stats").expect("no get_session_stats response");
+#[then(expr = "the get_session_stats assistantMessages should equal {int}")]
+fn then_get_session_stats_assistant_messages_eq(world: &mut QuectoWorld, expected: usize) {
+    execute_uds(world);
+    let resp =
+        find_agent_response(world, "get_session_stats").expect("no get_session_stats response");
     let actual = resp["data"]["assistantMessages"]
         .as_u64()
         .expect("assistantMessages not a number") as usize;

@@ -1,15 +1,15 @@
-/// RPC protocol types for `quecto agent --mode rpc`.
+/// UDS protocol types for `quecto agent --mode uds`.
 ///
-/// JSON-lines protocol over stdin/stdout.  One JSON object per line.
+/// JSON-lines protocol over a Unix domain socket.  One JSON object per line.
 /// All commands carry an optional `id` field for request/response correlation.
 use serde::{Deserialize, Serialize};
 
 // ─── Commands (stdin) ────────────────────────────────────────────────────────
 
-/// A command received from stdin.
+/// A command received over the UDS socket.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum RpcCommand {
+pub enum AgentCommand {
     /// Send a user message to the agent.
     Prompt {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -74,7 +74,7 @@ pub enum RpcCommand {
     },
 }
 
-impl RpcCommand {
+impl AgentCommand {
     /// Return the optional correlation id.
     pub fn id(&self) -> Option<&str> {
         match self {
@@ -118,10 +118,10 @@ pub enum StreamingBehavior {
 
 // ─── Events (stdout) ─────────────────────────────────────────────────────────
 
-/// An event emitted to stdout.
+/// An event emitted over the UDS socket.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum RpcEvent {
+pub enum AgentEvent {
     /// Agent begins processing a prompt.
     AgentStart,
     /// Agent finished processing.  Contains messages from this run as JSON values.
@@ -196,7 +196,7 @@ pub struct ToolResultContent {
 
 // ─── Response helpers ────────────────────────────────────────────────────────
 
-impl RpcEvent {
+impl AgentEvent {
     /// Build a success response.
     pub fn ok(id: Option<&str>, command: &str, data: Option<serde_json::Value>) -> Self {
         Self::Response {
@@ -221,7 +221,7 @@ impl RpcEvent {
 
     /// Serialize the event to a JSON line (no trailing newline).
     pub fn to_json_line(&self) -> String {
-        serde_json::to_string(self).expect("RpcEvent is always serializable")
+        serde_json::to_string(self).expect("AgentEvent is always serializable")
     }
 }
 
@@ -266,14 +266,14 @@ pub struct TokenStats {
 mod tests {
     use super::*;
 
-    // ─── RpcCommand deserialization ──────────────────────────────────────────
+    // ─── AgentCommand deserialization ──────────────────────────────────────────
 
     #[test]
     fn test_parse_prompt_command() {
         let json = r#"{"type":"prompt","message":"hello world"}"#;
-        let cmd: RpcCommand = serde_json::from_str(json).unwrap();
+        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
         match cmd {
-            RpcCommand::Prompt {
+            AgentCommand::Prompt {
                 message,
                 id,
                 streaming_behavior,
@@ -289,16 +289,16 @@ mod tests {
     #[test]
     fn test_parse_prompt_with_id() {
         let json = r#"{"type":"prompt","id":"req-1","message":"hello"}"#;
-        let cmd: RpcCommand = serde_json::from_str(json).unwrap();
+        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
         assert_eq!(cmd.id(), Some("req-1"));
     }
 
     #[test]
     fn test_parse_prompt_with_steer_behavior() {
         let json = r#"{"type":"prompt","message":"hi","streamingBehavior":"steer"}"#;
-        let cmd: RpcCommand = serde_json::from_str(json).unwrap();
+        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
         match cmd {
-            RpcCommand::Prompt {
+            AgentCommand::Prompt {
                 streaming_behavior, ..
             } => {
                 assert_eq!(streaming_behavior, Some(StreamingBehavior::Steer));
@@ -310,9 +310,9 @@ mod tests {
     #[test]
     fn test_parse_prompt_with_follow_up_behavior() {
         let json = r#"{"type":"prompt","message":"hi","streamingBehavior":"followUp"}"#;
-        let cmd: RpcCommand = serde_json::from_str(json).unwrap();
+        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
         match cmd {
-            RpcCommand::Prompt {
+            AgentCommand::Prompt {
                 streaming_behavior, ..
             } => {
                 assert_eq!(streaming_behavior, Some(StreamingBehavior::FollowUp));
@@ -324,9 +324,9 @@ mod tests {
     #[test]
     fn test_parse_steer_command() {
         let json = r#"{"type":"steer","message":"change direction"}"#;
-        let cmd: RpcCommand = serde_json::from_str(json).unwrap();
+        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
         match cmd {
-            RpcCommand::Steer { message, .. } => assert_eq!(message, "change direction"),
+            AgentCommand::Steer { message, .. } => assert_eq!(message, "change direction"),
             _ => panic!("expected Steer"),
         }
     }
@@ -334,9 +334,9 @@ mod tests {
     #[test]
     fn test_parse_follow_up_command() {
         let json = r#"{"type":"follow_up","message":"also do this"}"#;
-        let cmd: RpcCommand = serde_json::from_str(json).unwrap();
+        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
         match cmd {
-            RpcCommand::FollowUp { message, .. } => assert_eq!(message, "also do this"),
+            AgentCommand::FollowUp { message, .. } => assert_eq!(message, "also do this"),
             _ => panic!("expected FollowUp"),
         }
     }
@@ -344,14 +344,14 @@ mod tests {
     #[test]
     fn test_parse_abort_command() {
         let json = r#"{"type":"abort"}"#;
-        let cmd: RpcCommand = serde_json::from_str(json).unwrap();
-        matches!(cmd, RpcCommand::Abort { .. });
+        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
+        matches!(cmd, AgentCommand::Abort { .. });
     }
 
     #[test]
     fn test_parse_get_state_command() {
         let json = r#"{"type":"get_state","id":"gs-1"}"#;
-        let cmd: RpcCommand = serde_json::from_str(json).unwrap();
+        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
         assert_eq!(cmd.id(), Some("gs-1"));
         assert_eq!(cmd.type_name(), "get_state");
     }
@@ -359,16 +359,16 @@ mod tests {
     #[test]
     fn test_parse_get_messages_command() {
         let json = r#"{"type":"get_messages"}"#;
-        let cmd: RpcCommand = serde_json::from_str(json).unwrap();
+        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
         assert_eq!(cmd.type_name(), "get_messages");
     }
 
     #[test]
     fn test_parse_get_messages_tail_command() {
         let json = r#"{"type":"get_messages_tail","count":5}"#;
-        let cmd: RpcCommand = serde_json::from_str(json).unwrap();
+        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
         match cmd {
-            RpcCommand::GetMessagesTail { id, count } => {
+            AgentCommand::GetMessagesTail { id, count } => {
                 assert!(id.is_none());
                 assert_eq!(count, 5);
             }
@@ -379,7 +379,7 @@ mod tests {
     #[test]
     fn test_parse_get_messages_tail_with_id() {
         let json = r#"{"type":"get_messages_tail","id":"gmt-1","count":10}"#;
-        let cmd: RpcCommand = serde_json::from_str(json).unwrap();
+        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
         assert_eq!(cmd.id(), Some("gmt-1"));
         assert_eq!(cmd.type_name(), "get_messages_tail");
     }
@@ -387,9 +387,9 @@ mod tests {
     #[test]
     fn test_parse_get_messages_tail_count_zero() {
         let json = r#"{"type":"get_messages_tail","count":0}"#;
-        let cmd: RpcCommand = serde_json::from_str(json).unwrap();
+        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
         match cmd {
-            RpcCommand::GetMessagesTail { count, .. } => assert_eq!(count, 0),
+            AgentCommand::GetMessagesTail { count, .. } => assert_eq!(count, 0),
             _ => panic!("expected GetMessagesTail"),
         }
     }
@@ -397,16 +397,16 @@ mod tests {
     #[test]
     fn test_parse_get_session_stats_command() {
         let json = r#"{"type":"get_session_stats"}"#;
-        let cmd: RpcCommand = serde_json::from_str(json).unwrap();
+        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
         assert_eq!(cmd.type_name(), "get_session_stats");
     }
 
     #[test]
     fn test_parse_set_model_command() {
         let json = r#"{"type":"set_model","model":"gpt-5-mini"}"#;
-        let cmd: RpcCommand = serde_json::from_str(json).unwrap();
+        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
         match cmd {
-            RpcCommand::SetModel {
+            AgentCommand::SetModel {
                 model,
                 provider,
                 model_id,
@@ -423,9 +423,9 @@ mod tests {
     #[test]
     fn test_parse_set_model_provider_and_model_id_command() {
         let json = r#"{"type":"set_model","provider":"openai-codex","modelId":"gpt-5.3-codex"}"#;
-        let cmd: RpcCommand = serde_json::from_str(json).unwrap();
+        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
         match cmd {
-            RpcCommand::SetModel {
+            AgentCommand::SetModel {
                 model,
                 provider,
                 model_id,
@@ -441,28 +441,28 @@ mod tests {
 
     #[test]
     fn test_malformed_json_fails() {
-        let result: Result<RpcCommand, _> = serde_json::from_str("not json{");
+        let result: Result<AgentCommand, _> = serde_json::from_str("not json{");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_unknown_type_fails() {
-        let result: Result<RpcCommand, _> = serde_json::from_str(r#"{"type":"unknown_command"}"#);
+        let result: Result<AgentCommand, _> = serde_json::from_str(r#"{"type":"unknown_command"}"#);
         assert!(result.is_err());
     }
 
-    // ─── RpcEvent serialization ──────────────────────────────────────────────
+    // ─── AgentEvent serialization ──────────────────────────────────────────────
 
     #[test]
     fn test_agent_start_event_serializes() {
-        let event = RpcEvent::AgentStart;
+        let event = AgentEvent::AgentStart;
         let json = event.to_json_line();
         assert!(json.contains("\"type\":\"agent_start\""));
     }
 
     #[test]
     fn test_agent_end_event_serializes() {
-        let event = RpcEvent::AgentEnd { messages: vec![] };
+        let event = AgentEvent::AgentEnd { messages: vec![] };
         let json = event.to_json_line();
         assert!(json.contains("\"type\":\"agent_end\""));
         assert!(json.contains("\"messages\""));
@@ -470,14 +470,14 @@ mod tests {
 
     #[test]
     fn test_turn_start_event_serializes() {
-        let event = RpcEvent::TurnStart;
+        let event = AgentEvent::TurnStart;
         let json = event.to_json_line();
         assert!(json.contains("\"type\":\"turn_start\""));
     }
 
     #[test]
     fn test_tool_execution_start_event_serializes() {
-        let event = RpcEvent::ToolExecutionStart {
+        let event = AgentEvent::ToolExecutionStart {
             tool_call_id: "call-1".to_string(),
             tool_name: "bash".to_string(),
             args: serde_json::json!({"command": "echo hi"}),
@@ -490,7 +490,7 @@ mod tests {
 
     #[test]
     fn test_tool_execution_end_event_serializes() {
-        let event = RpcEvent::ToolExecutionEnd {
+        let event = AgentEvent::ToolExecutionEnd {
             tool_call_id: "call-1".to_string(),
             tool_name: "bash".to_string(),
             result: ToolResultContent {
@@ -505,7 +505,7 @@ mod tests {
 
     #[test]
     fn test_response_ok_event_serializes() {
-        let event = RpcEvent::ok(Some("req-1"), "prompt", None);
+        let event = AgentEvent::ok(Some("req-1"), "prompt", None);
         let json = event.to_json_line();
         assert!(json.contains("\"type\":\"response\""));
         assert!(json.contains("\"command\":\"prompt\""));
@@ -515,7 +515,7 @@ mod tests {
 
     #[test]
     fn test_response_err_event_serializes() {
-        let event = RpcEvent::err(None, "prompt", "agent already running");
+        let event = AgentEvent::err(None, "prompt", "agent already running");
         let json = event.to_json_line();
         assert!(json.contains("\"success\":false"));
         assert!(json.contains("\"error\":\"agent already running\""));
@@ -525,7 +525,7 @@ mod tests {
 
     #[test]
     fn test_response_without_id_omits_id_field() {
-        let event = RpcEvent::ok(None, "abort", None);
+        let event = AgentEvent::ok(None, "abort", None);
         let json = event.to_json_line();
         assert!(!json.contains("\"id\""));
     }
@@ -571,26 +571,26 @@ mod tests {
         assert!(json.contains("\"tokens\""));
     }
 
-    // ─── RpcCommand::id() / type_name() ─────────────────────────────────────
+    // ─── AgentCommand::id() / type_name() ─────────────────────────────────────
 
     #[test]
     fn test_command_type_names() {
-        assert_eq!(RpcCommand::Abort { id: None }.type_name(), "abort");
-        assert_eq!(RpcCommand::GetState { id: None }.type_name(), "get_state");
+        assert_eq!(AgentCommand::Abort { id: None }.type_name(), "abort");
+        assert_eq!(AgentCommand::GetState { id: None }.type_name(), "get_state");
         assert_eq!(
-            RpcCommand::GetMessages { id: None }.type_name(),
+            AgentCommand::GetMessages { id: None }.type_name(),
             "get_messages"
         );
         assert_eq!(
-            RpcCommand::GetMessagesTail { id: None, count: 5 }.type_name(),
+            AgentCommand::GetMessagesTail { id: None, count: 5 }.type_name(),
             "get_messages_tail"
         );
         assert_eq!(
-            RpcCommand::GetSessionStats { id: None }.type_name(),
+            AgentCommand::GetSessionStats { id: None }.type_name(),
             "get_session_stats"
         );
         assert_eq!(
-            RpcCommand::SetModel {
+            AgentCommand::SetModel {
                 id: None,
                 model: Some("m".into()),
                 provider: None,
@@ -600,7 +600,7 @@ mod tests {
             "set_model"
         );
         assert_eq!(
-            RpcCommand::FollowUp {
+            AgentCommand::FollowUp {
                 id: None,
                 message: "m".into()
             }
@@ -608,7 +608,7 @@ mod tests {
             "follow_up"
         );
         assert_eq!(
-            RpcCommand::Steer {
+            AgentCommand::Steer {
                 id: None,
                 message: "m".into()
             }
@@ -619,5 +619,5 @@ mod tests {
 }
 
 #[cfg(test)]
-#[path = "rpc_shape_tests.rs"]
+#[path = "protocol_shape_tests.rs"]
 mod shape_tests;

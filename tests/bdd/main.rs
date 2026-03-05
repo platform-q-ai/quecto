@@ -496,20 +496,20 @@ pub struct QuectoWorld {
     pub subprocess_stdout: Option<String>,
     /// Subprocess captured stderr
     pub subprocess_stderr: Option<String>,
-    /// RPC agent: accumulated stdin lines to send (built up by "I send RPC command" steps)
-    pub rpc_stdin_lines: Vec<String>,
-    /// RPC agent: captured stdout lines after execution
-    pub rpc_stdout_lines: Vec<String>,
-    /// RPC agent: captured stderr after execution
-    pub rpc_stderr: String,
-    /// RPC agent: exit code after execution
-    pub rpc_exit_code: Option<i32>,
-    /// RPC agent: session name flag (None = no session, Some(name) = named, Some("-") = ephemeral)
-    pub rpc_session_name: Option<String>,
-    /// RPC agent: use --no-session flag
-    pub rpc_no_session: bool,
-    /// RPC agent: optional system prompt from --system flag
-    pub rpc_system_prompt: Option<String>,
+    /// UDS agent: accumulated command lines to send (built up by "I send" steps)
+    pub uds_commands: Vec<String>,
+    /// UDS agent: captured event lines after execution
+    pub agent_events: Vec<String>,
+    /// UDS agent: captured stderr after execution
+    pub agent_stderr: String,
+    /// UDS agent: exit code after execution
+    pub uds_exit_code: Option<i32>,
+    /// UDS agent: session name flag (None = no session, Some(name) = named, Some("-") = ephemeral)
+    pub session_name: Option<String>,
+    /// UDS agent: use --no-session flag
+    pub no_session: bool,
+    /// UDS agent: optional system prompt from --system flag
+    pub system_prompt: Option<String>,
     /// REPL: accumulated input lines (built up by "I type" steps)
     pub repl_input_lines: Vec<String>,
     /// REPL: flags to pass (built up by "with flags" steps)
@@ -981,7 +981,6 @@ mod path_utils_steps;
 mod provider_steps;
 mod read_tool_steps;
 mod repl_steps;
-mod rpc_steps;
 mod sandbox_steps;
 mod security_steps;
 mod session_steps;
@@ -990,6 +989,7 @@ mod subagent_steps;
 mod telegram_steps;
 mod tool_empty_args_steps;
 mod truncate_steps;
+mod uds_steps;
 mod voice_steps;
 
 // Runner

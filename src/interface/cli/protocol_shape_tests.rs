@@ -1,5 +1,5 @@
-// Shape tests for rpc_types — verifies JSON serialization matches the issue #233 spec.
-// Loaded from rpc_types.rs via #[path = "rpc_shape_tests.rs"].
+// Shape tests for protocol — verifies JSON serialization matches the issue #233 spec.
+// Loaded from protocol.rs via #[path = "protocol_shape_tests.rs"].
 #![allow(unused_imports)]
 use super::*;
 
@@ -12,7 +12,7 @@ fn round_trip<T: serde::Serialize + serde::de::DeserializeOwned>(v: &T) -> serde
 
 #[test]
 fn tool_execution_start_matches_spec_shape() {
-    let ev = RpcEvent::ToolExecutionStart {
+    let ev = AgentEvent::ToolExecutionStart {
         tool_call_id: "call_abc123".into(),
         tool_name: "bash".into(),
         args: serde_json::json!({"command": "cargo test"}),
@@ -29,7 +29,7 @@ fn tool_execution_start_matches_spec_shape() {
 
 #[test]
 fn tool_execution_end_matches_spec_shape() {
-    let ev = RpcEvent::ToolExecutionEnd {
+    let ev = AgentEvent::ToolExecutionEnd {
         tool_call_id: "call_abc123".into(),
         tool_name: "bash".into(),
         result: ToolResultContent {
@@ -48,7 +48,7 @@ fn tool_execution_end_matches_spec_shape() {
 
 #[test]
 fn turn_end_matches_spec_shape() {
-    let ev = RpcEvent::TurnEnd {
+    let ev = AgentEvent::TurnEnd {
         message: TurnMessage {
             role: "assistant".into(),
             content: "I'll fix the failing tests...".into(),
@@ -75,7 +75,7 @@ fn turn_end_matches_spec_shape() {
 
 #[test]
 fn response_with_id_matches_spec() {
-    let ev = RpcEvent::ok(Some("req-1"), "prompt", None);
+    let ev = AgentEvent::ok(Some("req-1"), "prompt", None);
     let j = round_trip(&ev);
     assert_eq!(j["type"], "response");
     assert_eq!(j["id"], "req-1");
@@ -88,7 +88,7 @@ fn response_with_id_matches_spec() {
 
 #[test]
 fn response_error_matches_spec() {
-    let ev = RpcEvent::Response {
+    let ev = AgentEvent::Response {
         id: None,
         command: "set_model".into(),
         success: false,
@@ -165,7 +165,7 @@ fn get_session_stats_tokens_camel_case() {
 #[test]
 fn streaming_behavior_serializes_as_camel_case() {
     // Spec: "steer" and "followUp"
-    let cmd = RpcCommand::Prompt {
+    let cmd = AgentCommand::Prompt {
         id: None,
         message: "hi".into(),
         streaming_behavior: Some(StreamingBehavior::FollowUp),
@@ -177,7 +177,7 @@ fn streaming_behavior_serializes_as_camel_case() {
 
 #[test]
 fn steer_streaming_behavior_value() {
-    let cmd = RpcCommand::Prompt {
+    let cmd = AgentCommand::Prompt {
         id: None,
         message: "hi".into(),
         streaming_behavior: Some(StreamingBehavior::Steer),
@@ -188,7 +188,7 @@ fn steer_streaming_behavior_value() {
 
 #[test]
 fn agent_end_has_messages_array() {
-    let ev = RpcEvent::AgentEnd {
+    let ev = AgentEvent::AgentEnd {
         messages: vec![serde_json::json!({"role":"assistant","content":"ok"})],
     };
     let j = round_trip(&ev);
@@ -200,7 +200,7 @@ fn agent_end_has_messages_array() {
 #[test]
 fn follow_up_command_serializes_type_as_follow_up() {
     // The spec uses "follow_up" (snake_case) for the type field
-    let cmd = RpcCommand::FollowUp {
+    let cmd = AgentCommand::FollowUp {
         id: None,
         message: "also do this".into(),
     };
@@ -212,9 +212,9 @@ fn follow_up_command_serializes_type_as_follow_up() {
 fn roundtrip_parse_streaming_behavior_follow_up() {
     // Spec sends "followUp" camelCase; we must parse it back
     let raw = r#"{"type":"prompt","message":"hi","streamingBehavior":"followUp"}"#;
-    let cmd: RpcCommand = serde_json::from_str(raw).unwrap();
+    let cmd: AgentCommand = serde_json::from_str(raw).unwrap();
     match cmd {
-        RpcCommand::Prompt {
+        AgentCommand::Prompt {
             streaming_behavior: Some(StreamingBehavior::FollowUp),
             ..
         } => {}
