@@ -12,6 +12,23 @@ use crate::infrastructure::config::Config;
 // Re-export public types for external consumers.
 pub use agent::build_agent_provider;
 
+/// Re-export for test access to OpenAI import params struct.
+pub use auth::auth_import::OpenAiImportParams;
+
+/// Test-friendly OpenAI import with optional OAuth base URL override.
+///
+/// Wraps the internal `auth_import::import_openai` for BDD testing,
+/// allowing injection of a mock OAuth server URL.
+pub fn auth_import_openai(
+    auth_json: &serde_json::Value,
+    params: &OpenAiImportParams<'_>,
+    stdout: &mut String,
+    stderr: &mut String,
+) -> Option<u32> {
+    let mut out = auth::Output { stdout, stderr };
+    auth::auth_import::import_openai(auth_json, params, &mut out)
+}
+
 // Re-export shared functions for backward compatibility.
 pub use super::shared::{load_skill_prompt, merge_prompts};
 

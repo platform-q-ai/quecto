@@ -226,3 +226,26 @@ Feature: Authentication
     Given an OAuth token with expires_in of 0 seconds
     When expires_at_with_margin is calculated
     Then the resulting expires_at should be -300 seconds from now
+
+  # --- OpenAI OAuth import refresh (issue #258) ---
+
+  @done
+  Scenario: OpenAI import refreshes expired token
+    Given an opencode auth.json with expired OpenAI OAuth credential
+    And a mock OAuth refresh server that returns a new token "eyJrefreshed-openai" with refresh token "rt-new-openai"
+    When the opencode credentials are imported
+    Then the stored OpenAI credential should have token "eyJrefreshed-openai"
+    And the import output should contain "OpenAI token expired, refreshing"
+
+  @done
+  Scenario: OpenAI import stores non-expired token as-is
+    Given an opencode auth.json with valid OpenAI OAuth credential "eyJvalid-openai"
+    When the opencode credentials are imported
+    Then the stored OpenAI credential should have token "eyJvalid-openai"
+
+  @done
+  Scenario: OpenAI import fails gracefully when refresh fails
+    Given an opencode auth.json with expired OpenAI OAuth credential
+    And a mock OAuth refresh server that returns an error
+    When the opencode credentials are imported
+    Then the import output should contain "failed to refresh OpenAI token"

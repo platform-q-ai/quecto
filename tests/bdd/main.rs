@@ -692,6 +692,12 @@ pub struct QuectoWorld {
     pub gateway_expires_in: Option<u64>,
     /// Computed expires_at for margin assertions (issue #256)
     pub gateway_computed_expires_at: Option<i64>,
+    /// Auth.json for import scenarios (issue #258)
+    pub gateway_import_auth_json: Option<serde_json::Value>,
+    /// Import stdout output (issue #258)
+    pub gateway_import_stdout: Option<String>,
+    /// Import stderr output (issue #258)
+    pub gateway_import_stderr: Option<String>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.

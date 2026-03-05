@@ -121,49 +121,106 @@ pub(super) fn import_anthropic(
     }
 }
 
+/// Parameters for OpenAI OAuth import, bundling runtime + optional overrides.
+pub struct OpenAiImportParams<'a> {
+    pub store: &'a CredentialStore,
+    pub rt: &'a tokio::runtime::Runtime,
+    pub oauth_base_url: Option<&'a str>,
+}
+
 /// Import OpenAI OAuth credential from opencode auth.json.
-pub(super) fn import_openai(
+///
+/// Mirrors `import_anthropic`: if the token is expired and a refresh token
+/// is available, attempts to refresh before storing (issue #258).
+pub(crate) fn import_openai(
     auth_json: &serde_json::Value,
-    store: &CredentialStore,
+    params: &OpenAiImportParams<'_>,
     out: &mut Output<'_>,
-) -> u32 {
+) -> Option<u32> {
     let openai = match auth_json.get("openai") {
         Some(v) if v.get("type").and_then(|t| t.as_str()) == Some("oauth") => v,
-        _ => return 0,
+        _ => return Some(0),
     };
 
     let access = openai.get("access").and_then(|v| v.as_str()).unwrap_or("");
     let refresh = openai.get("refresh").and_then(|v| v.as_str()).unwrap_or("");
     let expires_s = openai.get("expires").and_then(|v| v.as_i64()).unwrap_or(0) / 1000;
+    let now = chrono::Utc::now().timestamp();
 
     if access.is_empty() {
-        return 0;
+        return Some(0);
     }
 
-    let refresh_token = if refresh.is_empty() {
-        None
+    let (token, refresh_tok, expires, account_id) = if now >= expires_s && !refresh.is_empty() {
+        out.stdout.push_str("OpenAI token expired, refreshing...\n");
+        let config = match params.oauth_base_url {
+            Some(url) => crate::infrastructure::auth::oauth::OAuthConfig::with_base_url(url),
+            None => match crate::infrastructure::auth::oauth::OAuthConfig::for_provider("openai") {
+                Some(c) => c,
+                None => {
+                    out.stderr.push_str("auth login: no OpenAI OAuth config\n");
+                    return None;
+                }
+            },
+        };
+        match params
+            .rt
+            .block_on(crate::infrastructure::auth::oauth::refresh_openai_token(
+                &config, refresh,
+            )) {
+            Ok(resp) => {
+                let acct_id = crate::infrastructure::auth::oauth::extract_openai_account_id(
+                    &resp.access_token,
+                );
+                (
+                    resp.access_token,
+                    resp.refresh_token.unwrap_or_else(|| refresh.to_string()),
+                    crate::interface::shared::expires_at_with_margin(resp.expires_in),
+                    acct_id,
+                )
+            }
+            Err(e) => {
+                out.stderr.push_str(&format!(
+                    "auth login: failed to refresh OpenAI token: {}\n",
+                    e
+                ));
+                return None;
+            }
+        }
     } else {
-        Some(refresh.to_string())
+        let acct_id = crate::infrastructure::auth::oauth::extract_openai_account_id(access);
+        (
+            access.to_string(),
+            refresh.to_string(),
+            expires_s - crate::interface::shared::OAUTH_EXPIRY_MARGIN_SECS,
+            acct_id,
+        )
     };
 
-    match store.store(Credential {
+    let refresh_token = if refresh_tok.is_empty() {
+        None
+    } else {
+        Some(refresh_tok)
+    };
+
+    match params.store.store(Credential {
         provider: "openai".to_string(),
-        token: access.to_string(),
+        token,
         method: AuthMethod::OAuth,
-        expires_at: Some(expires_s - crate::interface::shared::OAUTH_EXPIRY_MARGIN_SECS),
+        expires_at: Some(expires),
         refresh_token,
-        account_id: None,
+        account_id,
     }) {
         Ok(()) => {
             out.stdout.push_str("Imported OpenAI OAuth credential\n");
-            1
+            Some(1)
         }
         Err(e) => {
             out.stderr.push_str(&format!(
                 "auth login: failed to store OpenAI credential: {}\n",
                 e
             ));
-            0
+            Some(0)
         }
     }
 }

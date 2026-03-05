@@ -1,5 +1,5 @@
 #[path = "auth_import.rs"]
-mod auth_import;
+pub(crate) mod auth_import;
 
 use super::CliContext;
 use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
@@ -8,7 +8,7 @@ use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, Cred
 const KNOWN_PROVIDERS: &[&str] = &["openai", "anthropic"];
 
 /// Bundled output streams for auth subcommands.
-pub(super) struct Output<'a> {
+pub(crate) struct Output<'a> {
     pub stdout: &'a mut String,
     pub stderr: &'a mut String,
 }
@@ -540,7 +540,15 @@ fn cmd_auth_import_opencode(ctx: &CliContext, out: &mut Output<'_>) -> i32 {
         None => return 1,
     }
 
-    imported += auth_import::import_openai(&auth_json, &store, out);
+    let openai_params = auth_import::OpenAiImportParams {
+        store: &store,
+        rt: &rt,
+        oauth_base_url: None,
+    };
+    match auth_import::import_openai(&auth_json, &openai_params, out) {
+        Some(n) => imported += n,
+        None => return 1,
+    }
 
     if imported == 0 {
         out.stderr
