@@ -4,8 +4,10 @@
 //! race-free: whether the cancel signal arrives before or during a prompt run,
 //! the correct outcome (skipped or interrupted) is guaranteed.
 
+use std::sync::Arc;
+
 use crate::application::agent_loop::AgentLoopImpl;
-use crate::domain::agent::AgentLoop;
+use crate::domain::agent::{AgentLoop, AgentProgressEvent};
 use crate::domain::message::{Message, Role};
 use crate::interface::cli::protocol::{AgentEvent, ToolResultContent, TurnMessage};
 use crate::interface::cli::uds_session::{AgentSession, message_to_json};
@@ -108,12 +110,12 @@ pub struct PromptArgs<'a> {
     pub cancel_rx: tokio::sync::oneshot::Receiver<()>,
 }
 
-/// Run a single agent prompt, emitting UDS events.
+/// Run a single agent prompt, emitting UDS events including streamed tokens.
 ///
-/// Races `agent.process()` against a oneshot cancellation signal.  If the
-/// cancel fires first, the in-flight HTTP request is dropped immediately
-/// (the reqwest future is cancelled at the OS level) and the partially-appended
-/// user message is removed from `messages`.
+/// Installs a progress callback that forwards `AgentProgressEvent::Token`
+/// events through an unbounded channel.  `agent.process()` is raced against
+/// both the cancellation oneshot and the token-forwarding drain loop so that
+/// tokens are emitted in real time (not buffered until completion).
 pub async fn run_agent_prompt(args: PromptArgs<'_>) -> PromptOutcome {
     let PromptArgs {
         agent,
@@ -130,28 +132,40 @@ pub async fn run_agent_prompt(args: PromptArgs<'_>) -> PromptOutcome {
 
     let user_msg_idx = messages.len();
     messages.push(Message::user(message));
-
     let before_len = messages.len();
 
-    // Race process() against the oneshot cancel signal.  If cancel fires, the
-    // process() future is dropped — reqwest aborts the in-flight HTTP request.
-    let result = tokio::select! {
-        res = agent.process(messages) => Some(res),
-        _ = cancel_rx => None,
-    };
+    // Install a progress callback that forwards events to a bounded channel.
+    // Capacity 256 limits back-pressure from a slow UDS consumer while being
+    // large enough to never block under normal streaming throughput.
+    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<AgentProgressEvent>(256);
+    agent.set_progress_callback(Some(Arc::new(move |ev| {
+        // try_send: drop event if the channel is full rather than blocking
+        // the synchronous callback.  Dropped tokens are acceptable — the
+        // full text is still delivered in the turn_end event.
+        let _ = progress_tx.try_send(ev);
+    })));
 
+    // Run process() + token drain concurrently, with cancel support.
+    let result = run_with_token_drain(TokenDrainArgs {
+        agent,
+        messages,
+        progress_rx: &mut progress_rx,
+        stdout,
+        cancel_rx,
+    })
+    .await;
+
+    // Clear the callback so it doesn't hold the closed sender.
+    agent.set_progress_callback(None);
     agent_session.set_streaming(false);
 
     match result {
         None => {
-            // Cancelled — remove the user message (and any partial assistant /
-            // tool messages that process() may have appended before cancellation).
             messages.truncate(user_msg_idx);
             PromptOutcome::Cancelled
         }
         Some(Ok(agent_result)) => {
             emit_tool_events(stdout, &messages[before_len..]).await;
-
             let turn_end = AgentEvent::TurnEnd {
                 message: TurnMessage {
                     role: "assistant".to_string(),
@@ -162,7 +176,6 @@ pub async fn run_agent_prompt(args: PromptArgs<'_>) -> PromptOutcome {
                 tool_results: vec![],
             };
             emit_event(stdout, &turn_end).await;
-
             let run_msgs: Vec<serde_json::Value> =
                 messages[before_len..].iter().map(message_to_json).collect();
             emit_event(stdout, &AgentEvent::AgentEnd { messages: run_msgs }).await;
@@ -176,6 +189,64 @@ pub async fn run_agent_prompt(args: PromptArgs<'_>) -> PromptOutcome {
             .await;
             PromptOutcome::Error
         }
+    }
+}
+
+/// Arguments for [`run_with_token_drain`].
+struct TokenDrainArgs<'a> {
+    agent: &'a mut AgentLoopImpl,
+    messages: &'a mut Vec<Message>,
+    progress_rx: &'a mut tokio::sync::mpsc::Receiver<AgentProgressEvent>,
+    stdout: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
+    cancel_rx: tokio::sync::oneshot::Receiver<()>,
+}
+
+/// Run `agent.process()` while draining progress events (especially tokens)
+/// to the UDS writer in real time.  Races against a cancellation oneshot.
+async fn run_with_token_drain(
+    args: TokenDrainArgs<'_>,
+) -> Option<Result<crate::domain::agent::AgentResult, crate::domain::error::DomainError>> {
+    let TokenDrainArgs {
+        agent,
+        messages,
+        progress_rx,
+        stdout,
+        cancel_rx,
+    } = args;
+    // We can't run process() and drain the channel truly concurrently because
+    // process() takes &mut messages (exclusive borrow).  Instead we poll
+    // both futures in a select! loop.
+    tokio::pin!(cancel_rx);
+    let mut process_fut = agent.process(messages);
+
+    loop {
+        tokio::select! {
+            biased;  // prioritise cancel and progress over process completion
+            _ = &mut cancel_rx => return None,
+            Some(ev) = progress_rx.recv() => {
+                forward_progress_event(ev, stdout).await;
+            }
+            result = &mut process_fut => {
+                // Drain any remaining events that arrived between last poll
+                // and process completion.
+                while let Ok(ev) = progress_rx.try_recv() {
+                    forward_progress_event(ev, stdout).await;
+                }
+                return Some(result);
+            }
+        }
+    }
+}
+
+/// Forward a single progress event to the UDS writer.
+/// Currently only `Token` events are forwarded — other progress events
+/// (Thinking, ToolStarted, etc.) use the existing tool_execution events.
+async fn forward_progress_event(
+    ev: AgentProgressEvent,
+    stdout: &mut (dyn tokio::io::AsyncWrite + Send + Unpin),
+) {
+    if let AgentProgressEvent::Token(t) = ev {
+        emit_event(stdout, &AgentEvent::Token { token: t }).await;
     }
 }
 

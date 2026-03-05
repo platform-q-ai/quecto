@@ -43,6 +43,7 @@ fn build_agent_loop(world: &QuectoWorld, max_iterations: Option<u32>) -> AgentLo
         context_collapse_after_turns: u32::MAX,
         max_context_tokens: 190_000,
         progress_callback: None,
+        streaming: false,
     });
 
     if let Some(max) = max_iterations {

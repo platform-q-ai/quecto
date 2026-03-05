@@ -10,7 +10,7 @@ use crate::domain::agent::{
 };
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
-use crate::domain::provider::{ChatRequest, LlmProvider};
+use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
 use crate::domain::session::{ContextSpillStore, SpillEntry};
 use crate::domain::tool::ToolRegistry;
 
@@ -32,6 +32,11 @@ pub struct AgentLoopConfig {
     /// Used by the REPL progress renderer to display tool activity to the user.
     /// Pass `None` for headless/gateway operation (no-op, zero overhead).
     pub progress_callback: Option<ProgressCallback>,
+    /// When `true`, use `chat_stream_incremental()` for LLM calls so that
+    /// `AgentProgressEvent::Token` events are emitted in real time.
+    /// Set by the UDS agent path; `false` for REPL/gateway (which use
+    /// non-streaming mock servers in tests).
+    pub streaming: bool,
 }
 
 /// Concrete implementation of the agent loop.
@@ -47,6 +52,8 @@ pub struct AgentLoopImpl {
     session_key: String,
     context_collapse_after_turns: u32,
     max_context_tokens: usize,
+    /// When true, use incremental streaming for LLM calls.
+    streaming: bool,
     /// Optional live progress callback wired by the REPL progress renderer.
     progress_callback: Option<ProgressCallback>,
 }
@@ -85,6 +92,7 @@ impl AgentLoopImpl {
             context_collapse_after_turns: config.context_collapse_after_turns,
             max_context_tokens: config.max_context_tokens,
             progress_callback: config.progress_callback,
+            streaming: config.streaming,
         }
     }
 
@@ -118,6 +126,19 @@ impl AgentLoopImpl {
     pub fn with_max_tool_iterations(mut self, max: u32) -> Self {
         self.max_tool_iterations = max;
         self
+    }
+
+    /// Enable or disable incremental streaming for LLM calls.
+    pub fn set_streaming(&mut self, enabled: bool) {
+        self.streaming = enabled;
+    }
+
+    /// Set or replace the progress callback at runtime.
+    ///
+    /// Used by the UDS agent to install a streaming-token forwarder after
+    /// construction.  Pass `None` to clear the callback.
+    pub fn set_progress_callback(&mut self, cb: Option<ProgressCallback>) {
+        self.progress_callback = cb;
     }
 
     /// Set the skill count (for startup info).
@@ -314,6 +335,35 @@ impl AgentLoopImpl {
         }
     }
 
+    /// Send a chat request using incremental streaming.
+    ///
+    /// Emits `AgentProgressEvent::Token` for each text delta so the UDS layer
+    /// can forward them as `{"type":"token"}` events.  Falls back gracefully
+    /// for providers whose `chat_stream_incremental()` wraps `chat()` (emitting
+    /// only a single `Done`).
+    async fn stream_chat(&self, request: ChatRequest<'_>) -> Result<LlmResponse, DomainError> {
+        let mut rx = self.provider.chat_stream_incremental(request).await;
+        while let Some(event) = rx.recv().await {
+            match event {
+                StreamEvent::TextDelta(t) => {
+                    self.notify(|| AgentProgressEvent::Token(t));
+                }
+                StreamEvent::Done(response) => return Ok(response),
+                StreamEvent::Error(e) => {
+                    return Err(DomainError::Provider(e));
+                }
+                // Tool call streaming events are handled by the provider's
+                // accumulator — they assemble into LlmResponse.tool_calls
+                // and are delivered via StreamEvent::Done.
+                _ => {}
+            }
+        }
+        // Channel closed without Done — shouldn't happen but handle gracefully.
+        Err(DomainError::Provider(
+            "streaming channel closed without completion".to_string(),
+        ))
+    }
+
     /// Run the LLM-tool loop.
     async fn run_loop(&self, messages: &mut Vec<Message>) -> Result<AgentResult, DomainError> {
         let tool_defs = self.tool_registry.definitions();
@@ -341,9 +391,15 @@ impl AgentLoopImpl {
             });
 
             let request = self.build_chat_request(messages, tool_defs);
-            // Propagate provider errors — emit Done first so the spinner is cleared
-            // before the REPL prints the error message.
-            let response = match self.provider.chat(request).await {
+            // Use streaming when enabled (UDS mode) so token events are
+            // forwarded in real time.  REPL/gateway/one-shot use the
+            // non-streaming path.
+            let response = if self.streaming {
+                self.stream_chat(request).await
+            } else {
+                self.provider.chat(request).await
+            };
+            let response = match response {
                 Ok(r) => r,
                 Err(e) => {
                     self.notify(|| AgentProgressEvent::Done);

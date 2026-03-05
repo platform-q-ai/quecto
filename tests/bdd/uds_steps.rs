@@ -64,7 +64,7 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         Session::build_key("cli", world.session_name.as_deref().unwrap_or("default"))
     };
 
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
+    let mut agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),
         model: model.clone(),
@@ -75,7 +75,12 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         context_collapse_after_turns: u32::MAX,
         max_context_tokens: config.agents.defaults.max_context_tokens,
         progress_callback: None,
+        streaming: false,
     });
+    // Enable streaming when the scenario has set the flag (e.g. SSE mock).
+    if world._uds_streaming_enabled {
+        agent.set_streaming(true);
+    }
 
     Ok(UdsAgentContext {
         agent,
@@ -906,4 +911,80 @@ fn when_run_agent_overlong_socket(world: &mut QuectoWorld) {
     world.stdout = output.stdout;
     world.agent_stderr.push_str(&output.stderr);
     world.stderr = output.stderr;
+}
+
+// ─── Token streaming steps ──────────────────────────────────────────────────
+
+#[given(expr = "UDS streaming is enabled")]
+fn given_uds_streaming_enabled(world: &mut QuectoWorld) {
+    world._uds_streaming_enabled = true;
+}
+
+#[given(expr = "the mock LLM returns a streaming response with tokens {string} {string}")]
+fn given_mock_llm_streaming_tokens(world: &mut QuectoWorld, tok1: String, tok2: String) {
+    assert!(
+        world._wiremock_server_uri.is_some(),
+        "mock server URI not set — ensure a config step ran first"
+    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+
+        // Build SSE body: two token deltas + [DONE]
+        let sse_body = format!(
+            "data: {{\"id\":\"chatcmpl-1\",\"choices\":[{{\"delta\":{{\"content\":\"{tok1}\"}}}}]}}\n\n\
+             data: {{\"id\":\"chatcmpl-1\",\"choices\":[{{\"delta\":{{\"content\":\"{tok2}\"}}}}]}}\n\n\
+             data: [DONE]\n\n"
+        );
+
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(sse_body),
+            )
+            .mount(&server)
+            .await;
+
+        super::e2e_steps::rewrite_config_to_uri(world, &new_uri);
+        std::mem::forget(server);
+    });
+    std::mem::forget(rt);
+}
+
+#[then(expr = "the agent output should contain a token event with {string}")]
+fn then_agent_output_contains_token(world: &mut QuectoWorld, expected: String) {
+    execute_uds(world);
+    let events = &world.agent_events;
+    let found = events.iter().any(|line| {
+        if let Ok(ev) = serde_json::from_str::<serde_json::Value>(line) {
+            ev["type"].as_str() == Some("token") && ev["token"].as_str() == Some(&expected)
+        } else {
+            false
+        }
+    });
+    assert!(
+        found,
+        "expected a token event with {expected:?} in events:\n{events:#?}"
+    );
+}
+
+#[then(expr = "the agent output should contain a turn_end event with content {string}")]
+fn then_agent_output_contains_turn_end(world: &mut QuectoWorld, expected: String) {
+    execute_uds(world);
+    let events = &world.agent_events;
+    let found = events.iter().any(|line| {
+        if let Ok(ev) = serde_json::from_str::<serde_json::Value>(line) {
+            ev["type"].as_str() == Some("turn_end")
+                && ev["message"]["content"].as_str() == Some(&expected)
+        } else {
+            false
+        }
+    });
+    assert!(
+        found,
+        "expected a turn_end event with content {expected:?} in events:\n{events:#?}"
+    );
 }

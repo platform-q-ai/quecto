@@ -512,6 +512,8 @@ pub struct QuectoWorld {
     pub system_prompt: Option<String>,
     /// UDS agent: path to the socket file used in the last execute_uds() run
     pub _uds_socket_path: Option<std::path::PathBuf>,
+    /// When true, the UDS agent builder enables incremental streaming.
+    pub _uds_streaming_enabled: bool,
     /// UDS agent: when true, pass an explicit socket path to run_uds_loop
     pub _uds_use_explicit_socket: bool,
     /// UDS agent: path used when testing the real bind path (socket_override = None)

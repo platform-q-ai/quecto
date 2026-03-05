@@ -120,6 +120,26 @@ impl LlmProvider for RefreshableProvider {
                 .await
         })
     }
+
+    fn chat_stream_incremental(
+        &self,
+        request: ChatRequest<'_>,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = tokio::sync::mpsc::Receiver<crate::domain::provider::StreamEvent>>
+                + Send
+                + '_,
+        >,
+    > {
+        // Delegate to the inner provider.  Token refresh is not attempted
+        // here — auth errors come through the StreamEvent channel.
+        let owned = OwnedRequest::from(&request);
+        Box::pin(async move {
+            let inner = self.inner.read().await.clone();
+            let req = owned.as_request();
+            inner.chat_stream_incremental(req).await
+        })
+    }
 }
 
 /// Owned copies of borrowed ChatRequest fields so the future outlives the borrow.

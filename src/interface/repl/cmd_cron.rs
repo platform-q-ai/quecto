@@ -214,6 +214,7 @@ mod tests {
             context_collapse_after_turns: u32::MAX,
             max_context_tokens: 190_000,
             progress_callback: None,
+            streaming: false,
         });
 
         let session = super::super::ReplSession {
