@@ -510,6 +510,10 @@ pub struct QuectoWorld {
     pub no_session: bool,
     /// UDS agent: optional system prompt from --system flag
     pub system_prompt: Option<String>,
+    /// UDS agent: path to the socket file used in the last execute_uds() run
+    pub _uds_socket_path: Option<std::path::PathBuf>,
+    /// UDS agent: when true, pass an explicit socket path to run_uds_loop
+    pub _uds_use_explicit_socket: bool,
     /// REPL: accumulated input lines (built up by "I type" steps)
     pub repl_input_lines: Vec<String>,
     /// REPL: flags to pass (built up by "with flags" steps)

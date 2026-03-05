@@ -3,6 +3,7 @@ mod auth;
 mod commands;
 pub mod protocol;
 pub mod uds;
+pub mod uds_session;
 
 use std::path::PathBuf;
 
@@ -451,6 +452,9 @@ fn help_text(out: &mut String) {
     out.push_str("                       --max-time <s>  Wall-clock timeout in seconds\n");
     out.push_str(
         "                       --mode uds    JSON-lines agent mode via Unix domain socket\n",
+    );
+    out.push_str(
+        "                       --socket <path>  Socket path for --mode uds (default: auto in tmpdir)\n",
     );
     out.push_str("  auth        Manage authentication (login, logout, status)\n");
     out.push_str("  gateway     Start the Telegram gateway\n");

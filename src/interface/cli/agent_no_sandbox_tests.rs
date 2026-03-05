@@ -100,6 +100,7 @@ fn test_build_agent_no_sandbox_emits_warning() {
         mode: super::AgentMode::OneShot,
         no_sandbox: true,
         network: false,
+        socket_path: None,
     };
 
     let mut stderr = String::new();
@@ -166,6 +167,7 @@ fn test_build_agent_with_sandbox_enabled_no_warning() {
         mode: super::AgentMode::OneShot,
         no_sandbox: false,
         network: false,
+        socket_path: None,
     };
 
     let mut stderr = String::new();
@@ -262,6 +264,7 @@ fn test_build_agent_network_flag_emits_warning() {
         mode: super::AgentMode::OneShot,
         no_sandbox: false,
         network: true,
+        socket_path: None,
     };
 
     let mut stderr = String::new();
@@ -301,6 +304,7 @@ fn test_build_agent_without_network_flag_no_warning() {
         mode: super::AgentMode::OneShot,
         no_sandbox: false,
         network: false,
+        socket_path: None,
     };
 
     let mut stderr = String::new();

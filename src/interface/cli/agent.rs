@@ -54,6 +54,9 @@ pub(crate) struct AgentFlags {
     /// Overrides `config.tools.exec.network_passthrough`.
     /// WARNING: allows bash commands to make outbound network connections.
     pub(crate) network: bool,
+    /// Explicit socket path for `--mode uds`.
+    /// If `None`, a path is auto-generated in `$TMPDIR` and printed to stderr.
+    pub(crate) socket_path: Option<std::path::PathBuf>,
 }
 
 /// Bundles the stdout/stderr pair passed through the agent pipeline.
@@ -107,6 +110,20 @@ fn parse_pos_u64(val: &str, flag: &str, stderr: &mut String) -> Option<u64> {
     }
 }
 
+/// Parse the `--mode` flag value into an `AgentMode`.  Returns `None` and
+/// writes an error message to `stderr` for unknown values.
+fn parse_agent_mode(val: &str, stderr: &mut String) -> Option<AgentMode> {
+    match val {
+        "uds" => Some(AgentMode::Uds),
+        other => {
+            stderr.push_str(&format!(
+                "agent: --mode '{other}' is not valid; supported: uds\n"
+            ));
+            None
+        }
+    }
+}
+
 pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<AgentFlags> {
     let mut session_name: Option<String> = None;
     let mut no_session = false;
@@ -118,6 +135,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut mode = AgentMode::OneShot;
     let mut no_sandbox = false;
     let mut network = false;
+    let mut socket_path: Option<std::path::PathBuf> = None;
     let mut i = 0;
 
     while i < args.len() {
@@ -172,15 +190,12 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
             }
             "--mode" => {
                 let val = next_arg(args, i, "--mode requires a value (e.g. uds)", stderr)?;
-                mode = match val {
-                    "uds" => AgentMode::Uds,
-                    other => {
-                        stderr.push_str(&format!(
-                            "agent: --mode '{other}' is not valid; supported: uds\n"
-                        ));
-                        return None;
-                    }
-                };
+                mode = parse_agent_mode(val, stderr)?;
+                i += 2;
+            }
+            "--socket" => {
+                let val = next_arg(args, i, "--socket requires a path", stderr)?;
+                socket_path = Some(std::path::PathBuf::from(val));
                 i += 2;
             }
             _ => {
@@ -205,6 +220,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         mode,
         no_sandbox,
         network,
+        socket_path,
     })
 }
 
@@ -525,6 +541,14 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     let system_prompt =
         crate::interface::shared::build_system_prompt(&skill_prompt, &flags.system_prompt);
 
+    // Use --socket path if provided, otherwise auto-generate in tmpdir.
+    // Callers discover the path by watching stderr for "quecto-agent-socket: <path>".
+    let socket_path = flags.socket_path.clone().unwrap_or_else(|| {
+        let tmpdir = std::env::temp_dir();
+        let id = uuid::Uuid::new_v4();
+        tmpdir.join(format!("quecto-agent-{id}.sock"))
+    });
+
     crate::interface::cli::uds::run_uds_loop(crate::interface::cli::uds::UdsLoopArgs {
         agent,
         base_dir: &base_dir,
@@ -532,8 +556,8 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         model,
         ephemeral,
         system_prompt,
-        stdin_override: None,
-        stdout_override: None,
+        socket_path,
+        socket_override: None,
         session_store_override: None,
     })
 }

@@ -359,6 +359,7 @@ fn test_run_agent_session_ephemeral_no_save() {
         mode: super::AgentMode::OneShot,
         no_sandbox: false,
         network: false,
+        socket_path: None,
     };
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -394,6 +395,7 @@ fn test_run_agent_session_default_session_key() {
         mode: super::AgentMode::OneShot,
         no_sandbox: false,
         network: false,
+        socket_path: None,
     };
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -421,6 +423,7 @@ fn test_run_agent_session_with_system_prompt_injection() {
         mode: super::AgentMode::OneShot,
         no_sandbox: false,
         network: false,
+        socket_path: None,
     };
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -448,6 +451,7 @@ fn test_run_agent_session_with_deadline() {
         mode: super::AgentMode::OneShot,
         no_sandbox: false,
         network: false,
+        socket_path: None,
     };
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -545,6 +549,7 @@ fn test_run_agent_session_loads_existing_session() {
         mode: super::AgentMode::OneShot,
         no_sandbox: false,
         network: false,
+        socket_path: None,
     };
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -583,6 +588,7 @@ fn test_run_agent_session_loads_existing_with_system_prompt() {
         mode: super::AgentMode::OneShot,
         no_sandbox: false,
         network: false,
+        socket_path: None,
     };
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -620,6 +626,7 @@ fn test_build_agent_from_config_with_workspace_path() {
         mode: super::AgentMode::OneShot,
         no_sandbox: false,
         network: false,
+        socket_path: None,
     };
     let mut stderr = String::new();
     let result = build_agent_from_config(tmp.path(), &flags, &mut stderr);
@@ -645,6 +652,7 @@ fn test_build_agent_from_config_with_max_iterations() {
         mode: super::AgentMode::OneShot,
         no_sandbox: false,
         network: false,
+        socket_path: None,
     };
     let mut stderr = String::new();
     let result = build_agent_from_config(tmp.path(), &flags, &mut stderr);

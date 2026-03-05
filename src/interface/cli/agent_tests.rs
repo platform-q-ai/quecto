@@ -508,6 +508,7 @@ fn test_build_agent_from_config_no_config_file() {
         mode: super::AgentMode::OneShot,
         no_sandbox: false,
         network: false,
+        socket_path: None,
     };
     let mut stderr = String::new();
     let result = build_agent_from_config(tmp.path(), &flags, &mut stderr);
@@ -530,6 +531,7 @@ fn test_build_agent_from_config_invalid_json() {
         mode: super::AgentMode::OneShot,
         no_sandbox: false,
         network: false,
+        socket_path: None,
     };
     let mut stderr = String::new();
     let result = build_agent_from_config(tmp.path(), &flags, &mut stderr);
@@ -556,6 +558,7 @@ fn test_build_agent_from_config_no_providers() {
         mode: super::AgentMode::OneShot,
         no_sandbox: false,
         network: false,
+        socket_path: None,
     };
     let mut stderr = String::new();
     let result = build_agent_from_config(tmp.path(), &flags, &mut stderr);
@@ -582,6 +585,7 @@ fn test_build_agent_from_config_with_model_override() {
         mode: super::AgentMode::OneShot,
         no_sandbox: false,
         network: false,
+        socket_path: None,
     };
     let mut stderr = String::new();
     let result = build_agent_from_config(tmp.path(), &flags, &mut stderr);

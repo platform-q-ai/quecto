@@ -358,3 +358,35 @@ Feature: UDS mode for headless agent operation
     Then the agent output should contain a response command "get_session_stats" with success true
     And the get_session_stats userMessages should equal 1
     And the get_session_stats assistantMessages should equal 1
+
+  # ─── UDS transport ────────────────────────────────────────────────────────
+
+  @done @uds-transport
+  Scenario: socket path is printed to stderr on startup
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "hello"
+    When I start the UDS agent with no session
+    And I send prompt "hi"
+    And I close the UDS connection
+    Then the UDS agent exits with code 0
+    And the agent stderr should contain "quecto-agent-"
+
+  @done @uds-transport
+  Scenario: --socket flag uses the provided path
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "hello"
+    When I start the UDS agent with explicit socket path
+    And I send prompt "hi"
+    And I close the UDS connection
+    Then the UDS agent exits with code 0
+
+  @done @uds-transport
+  Scenario: socket file is removed after agent exits
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the UDS agent with no session
+    And I close the UDS connection
+    Then the UDS agent exits with code 0
+    And the socket file should not exist after agent exits

@@ -1,10 +1,10 @@
-use super::*;
-/// Unit tests for the UDS agent loop.
+/// Unit tests for the UDS agent loop — session state, stats, and dispatch helpers.
 ///
-/// These tests exercise the UDS session state management, stats computation,
-/// model switching, and event emission — all without real I/O or a real agent.
-// This file is compiled as `mod tests` inside `uds.rs`, so `super` = `uds`.
-// `protocol` lives as a sibling at `cli::protocol`.
+/// This file is compiled as `mod tests` inside `uds.rs`, so `super` = `uds`.
+/// Session-layer types (`AgentSession`, `compute_session_stats`, etc.) are
+/// re-exported from `uds` via `uds_session`.  Protocol types are imported from
+/// `cli::protocol`.
+use super::*;
 use crate::interface::cli::protocol::*;
 
 // ─── AgentSession unit tests ───────────────────────────────────────────────────
