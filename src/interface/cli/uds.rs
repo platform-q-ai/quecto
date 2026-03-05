@@ -1,6 +1,7 @@
 /// UDS agent loop — headless operation via JSON-lines protocol over a Unix domain socket.
 ///
 /// Entry point: `run_uds_loop` — called from `cmd_agent` when `--mode uds` is set.
+/// Session state, statistics, and the public parse helper live in `uds_session`.
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::agent::AgentLoop;
 use crate::domain::message::{Message, Role};
@@ -8,128 +9,15 @@ use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 
 use super::protocol::{
-    AgentCommand, AgentEvent, SessionState, SessionStats, StreamingBehavior, TokenStats,
-    ToolResultContent, TurnMessage,
+    AgentCommand, AgentEvent, StreamingBehavior, ToolResultContent, TurnMessage,
+};
+use super::uds_session::{
+    AgentSession, compute_session_stats, message_to_json, messages_tail_json,
 };
 
-// ─── Public parse helper (used by unit tests) ────────────────────────────────
+pub use super::uds_session::parse_command_line;
 
-/// Parse a single JSON line into an `AgentCommand`.  Returns `Err` for invalid
-/// JSON or an unrecognised command type.
-pub fn parse_command_line(line: &str) -> Result<AgentCommand, String> {
-    if line.trim().is_empty() {
-        return Err("empty line".to_string());
-    }
-    serde_json::from_str(line).map_err(|e| format!("parse error: {e}"))
-}
-
-// ─── Session state tracker ────────────────────────────────────────────────────
-
-/// In-memory state for an active UDS session.
-pub struct AgentSession {
-    model: String,
-    session_key: String,
-    streaming: bool,
-    pending: Vec<String>,
-}
-
-impl AgentSession {
-    pub fn new(model: String, session_key: String) -> Self {
-        Self {
-            model,
-            session_key,
-            streaming: false,
-            pending: Vec::new(),
-        }
-    }
-
-    pub fn model(&self) -> &str {
-        &self.model
-    }
-
-    pub fn is_streaming(&self) -> bool {
-        self.streaming
-    }
-
-    pub fn set_model(&mut self, model: String) {
-        self.model = model;
-    }
-
-    pub fn set_streaming(&mut self, v: bool) {
-        self.streaming = v;
-    }
-
-    /// Maximum number of pending (steer/follow_up) messages buffered at once.
-    /// Prevents OOM from a flood of pending messages from a misbehaving client.
-    pub const MAX_PENDING: usize = 64;
-
-    pub fn enqueue_pending(&mut self, msg: String) {
-        if self.pending.len() < Self::MAX_PENDING {
-            self.pending.push(msg);
-        }
-        // Silently drop if the queue is full — caller already got a success ack.
-    }
-
-    pub fn drain_pending(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.pending)
-    }
-
-    pub fn state_snapshot(&self, message_count: usize) -> SessionState {
-        SessionState {
-            model: self.model.clone(),
-            is_streaming: self.streaming,
-            session_key: self.session_key.clone(),
-            message_count,
-            pending_message_count: self.pending.len(),
-        }
-    }
-}
-
-// ─── Session statistics ───────────────────────────────────────────────────────
-
-/// Compute session statistics from the current message history.
-///
-/// Note: token counts are not available from `Message` objects (usage is only
-/// on `LlmResponse` which is not persisted on `Message`).  The token fields
-/// are zeroed for now; a future enhancement can thread usage through the loop.
-pub fn compute_session_stats(session_key: &str, messages: &[Message]) -> SessionStats {
-    let mut user_messages = 0usize;
-    let mut assistant_messages = 0usize;
-    let mut tool_calls_count = 0usize;
-    let mut tool_results_count = 0usize;
-
-    for msg in messages {
-        match msg.role {
-            Role::User => user_messages += 1,
-            Role::Assistant => {
-                assistant_messages += 1;
-                tool_calls_count += msg.tool_calls.len();
-            }
-            Role::Tool => tool_results_count += 1,
-            Role::System => {}
-        }
-    }
-
-    SessionStats {
-        session_key: session_key.to_owned(),
-        user_messages,
-        assistant_messages,
-        tool_calls: tool_calls_count,
-        tool_results: tool_results_count,
-        total_messages: messages.len(),
-        tokens: TokenStats::default(),
-        cost: 0.0,
-    }
-}
-
-/// Return a JSON value containing the last `count` messages in chronological order.
-pub fn messages_tail_json(messages: &[Message], count: usize) -> serde_json::Value {
-    let skip = messages.len().saturating_sub(count);
-    let msgs_json: Vec<serde_json::Value> = messages[skip..].iter().map(message_to_json).collect();
-    serde_json::json!({ "messages": msgs_json })
-}
-
-// ─── RPC loop ────────────────────────────────────────────────────────────────
+// ─── UDS loop ────────────────────────────────────────────────────────────────
 
 /// Arguments for running the UDS loop (avoids long parameter lists).
 pub struct UdsLoopArgs<'a> {
@@ -145,19 +33,31 @@ pub struct UdsLoopArgs<'a> {
     /// session so it is not double-injected on the next process invocation.
     ///
     /// NOTE: the datetime in the preamble is fixed at process-start time.
-    /// For long-lived RPC sessions (hours) the timestamp will be stale.
+    /// For long-lived UDS sessions (hours) the timestamp will be stale.
     /// A future improvement would re-inject on each prompt command.
     pub system_prompt: String,
-    /// Injected stdin for testing.  `None` = use real `tokio::io::stdin`.
-    pub stdin_override: Option<Box<dyn tokio::io::AsyncRead + Send + Unpin + 'static>>,
-    /// Injected stdout writer for testing.  `None` = use real `tokio::io::stdout`.
-    pub stdout_override: Option<Box<dyn tokio::io::AsyncWrite + Send + Unpin + 'static>>,
+    /// Path to the Unix domain socket file.
+    /// In production: used to bind `UnixListener` and printed to stderr.
+    /// In tests: unused (the pre-connected `socket_override` is used instead).
+    pub socket_path: std::path::PathBuf,
+    /// Pre-connected stream injected by tests instead of accepting from a listener.
+    /// `None` = bind `socket_path`, `chmod 0o600`, accept one connection.
+    pub socket_override: Option<std::os::unix::net::UnixStream>,
     /// Injected session store for testing.  `None` = use `FileSessionStore`.
     pub session_store_override: Option<Box<dyn SessionStore + 'static>>,
 }
 
-/// Run the UDS event loop.  Reads JSON commands from stdin until EOF;
-/// emits JSON events to stdout.  Returns the exit code.
+/// Run the UDS event loop.
+///
+/// In production: binds a `UnixListener` on `socket_path`, prints the path
+/// to stderr, `chmod 0o600`, accepts one client connection, then processes
+/// JSON-lines commands until the client closes the connection.  The socket
+/// file is unlinked on exit (both clean and panicked via a drop guard).
+///
+/// In tests: a pre-connected `std::os::unix::net::UnixStream` is passed via
+/// `socket_override`, so no listening or `accept()` occurs.
+///
+/// Returns an exit code (0 = success, 1 = error).
 pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     let rt = match crate::interface::cli::build_tokio_runtime() {
         Ok(rt) => rt,
@@ -169,9 +69,18 @@ pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     rt.block_on(uds_loop_async(args))
 }
 
+/// Drop guard that removes the socket file on exit.
+struct SocketGuard(std::path::PathBuf);
+
+impl Drop for SocketGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// Async body of the UDS loop.
 async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
-    use tokio::io::AsyncWriteExt;
+    use std::os::unix::fs::PermissionsExt;
 
     let UdsLoopArgs {
         agent,
@@ -180,12 +89,11 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         model,
         ephemeral,
         system_prompt,
-        stdin_override,
-        stdout_override,
+        socket_path,
+        socket_override,
         session_store_override,
     } = args;
 
-    let mut agent = agent;
     let file_store;
     let session_store: &dyn SessionStore = if let Some(ref s) = session_store_override {
         s.as_ref()
@@ -194,46 +102,119 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         &file_store
     };
 
-    let mut messages = match load_session(session_store, &session_key, ephemeral).await {
+    let messages = match load_session(session_store, &session_key, ephemeral).await {
         Ok(m) => m,
         Err(err) => {
-            if let Some(mut out) = stdout_override {
-                let _ = out
-                    .write_all(format!("failed to load session: {err}\n").as_bytes())
-                    .await;
-            }
+            eprintln!("failed to load session: {err}");
             return 1;
         }
     };
 
-    // Inject system prompt as a transient leading message (not persisted).
+    // Build reader/writer from the socket, plus an optional cleanup guard.
+    // Test path: pre-connected std UnixStream injected via socket_override.
+    // Production path: bind UnixListener, accept one client, return guard.
+    let (reader, writer, guard) = if let Some(std_stream) = socket_override {
+        std_stream
+            .set_nonblocking(true)
+            .expect("set_nonblocking failed for test socket");
+        let tokio_stream = tokio::net::UnixStream::from_std(std_stream)
+            .expect("failed to convert std UnixStream to tokio");
+        let (r, w) = tokio::io::split(tokio_stream);
+        let r: Box<dyn tokio::io::AsyncRead + Send + Unpin> = Box::new(r);
+        let w: Box<dyn tokio::io::AsyncWrite + Send + Unpin> = Box::new(w);
+        (r, w, None::<SocketGuard>)
+    } else {
+        let _ = std::fs::remove_file(&socket_path);
+        let listener = match tokio::net::UnixListener::bind(&socket_path) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("failed to bind socket {}: {e}", socket_path.display());
+                return 1;
+            }
+        };
+        if let Err(e) =
+            std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))
+        {
+            eprintln!("warning: failed to chmod socket: {e}");
+        }
+        // Print socket path to stderr — callers poll for this line to discover the path.
+        eprintln!("quecto-agent-socket: {}", socket_path.display());
+        let stream = match listener.accept().await {
+            Ok((s, _)) => s,
+            Err(e) => {
+                eprintln!("failed to accept connection: {e}");
+                return 1;
+            }
+        };
+        let (r, w) = tokio::io::split(stream);
+        let r: Box<dyn tokio::io::AsyncRead + Send + Unpin> = Box::new(r);
+        let w: Box<dyn tokio::io::AsyncWrite + Send + Unpin> = Box::new(w);
+        (r, w, Some(SocketGuard(socket_path)))
+    };
+
+    // Run the command loop. `guard` is dropped here after the loop finishes,
+    // which unlinks the socket file (production path only).
+    uds_loop_with_streams(
+        StreamLoopArgs {
+            reader,
+            writer,
+            _guard: guard,
+            agent,
+            messages,
+            agent_session: AgentSession::new(model, session_key.clone()),
+            session_key,
+            ephemeral,
+            system_prompt,
+        },
+        session_store,
+    )
+    .await
+}
+
+/// Arguments for [`uds_loop_with_streams`] — avoids the clippy too-many-arguments lint.
+struct StreamLoopArgs {
+    reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
+    writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin>,
+    /// Drop guard that unlinks the socket file on exit (production path only).
+    _guard: Option<SocketGuard>,
+    agent: AgentLoopImpl,
+    messages: Vec<Message>,
+    agent_session: AgentSession,
+    session_key: String,
+    ephemeral: bool,
+    system_prompt: String,
+}
+
+/// Run the command loop with already-established reader/writer streams.
+/// The `_guard` (if present) unlinks the socket file when dropped.
+async fn uds_loop_with_streams(args: StreamLoopArgs, session_store: &dyn SessionStore) -> i32 {
+    let StreamLoopArgs {
+        reader,
+        mut writer,
+        _guard,
+        mut agent,
+        mut messages,
+        mut agent_session,
+        session_key,
+        ephemeral,
+        system_prompt,
+    } = args;
+
     inject_system_prompt(&mut messages, &system_prompt);
 
-    let mut agent_session = AgentSession::new(model, session_key.clone());
-    let mut stdout: Box<dyn tokio::io::AsyncWrite + Send + Unpin> = match stdout_override {
-        Some(w) => w,
-        None => Box::new(tokio::io::stdout()),
-    };
-    let stdin_reader: Box<dyn tokio::io::AsyncRead + Send + Unpin> = match stdin_override {
-        Some(r) => r,
-        None => Box::new(tokio::io::stdin()),
-    };
-
     run_command_loop(
-        stdin_reader,
+        reader,
         &mut DispatchCtx {
             agent: &mut agent,
             messages: &mut messages,
             session: &mut agent_session,
-            stdout: &mut *stdout,
+            stdout: &mut *writer,
             session_key: &session_key,
         },
     )
     .await;
 
     if !ephemeral && !session_key.is_empty() {
-        // Strip the transient system prompt before saving so it is not
-        // double-injected on the next process invocation.
         remove_injected_system_prompt(&mut messages, &system_prompt);
         let session = Session {
             key: session_key,
@@ -242,7 +223,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         let _ = session_store.save(&session).await;
     }
 
-    0
+    0 // _guard dropped here — socket file unlinked (production path)
 }
 
 /// Prepend a system message if `prompt` is non-empty and no system message
@@ -674,21 +655,6 @@ async fn emit_tool_events_from_messages(
             .await;
         }
     }
-}
-
-/// Serialize a `Message` to a JSON value for protocol emission.
-fn message_to_json(msg: &Message) -> serde_json::Value {
-    serde_json::json!({
-        "role": format!("{:?}", msg.role).to_lowercase(),
-        "content": msg.content,
-        "toolCalls": msg.tool_calls.iter().map(|tc| serde_json::json!({
-            "id": tc.id,
-            "name": tc.name,
-            "arguments": tc.arguments,
-        })).collect::<Vec<_>>(),
-        "toolCallId": msg.tool_call_id,
-        "toolName": msg.tool_name,
-    })
 }
 
 /// Write an event as a JSON line followed by a newline.

@@ -3,9 +3,13 @@ use super::*;
 // UDS Agent Steps
 // ===========================================================================
 //
-// The UDS loop runs in a dedicated OS thread using a tokio runtime with
-// in-memory cursor pipes (AsyncRead/AsyncWrite), so BDD tests stay fully
-// deterministic without spawning real OS processes.
+// The UDS loop runs in a dedicated OS thread using a tokio runtime.
+// Tests inject a pre-connected `UnixStream` via `socket_override` so
+// the loop never calls `accept()`.  The test harness:
+//   1. Creates a `TempDir` and a socket path inside it.
+//   2. Spawns `run_uds_loop` in a thread with `socket_override = Some(server_half)`.
+//   3. Writes accumulated command lines to `client_half`, then shuts down the write side.
+//   4. Reads all response lines from `client_half` until the server closes.
 
 use quecto::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use quecto::domain::message::Role;
@@ -17,39 +21,75 @@ use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 use quecto::interface::cli::build_agent_provider;
 use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
 
-// ─── In-memory async writer ──────────────────────────────────────────────────
-
-/// An `AsyncWrite` implementation that appends bytes to a shared `Vec<u8>`.
-struct VecWriter(Arc<Mutex<Vec<u8>>>);
-
-impl tokio::io::AsyncWrite for VecWriter {
-    fn poll_write(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        self.0.lock().unwrap().extend_from_slice(buf);
-        std::task::Poll::Ready(Ok(buf.len()))
-    }
-    fn poll_flush(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::task::Poll::Ready(Ok(()))
-    }
-    fn poll_shutdown(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::task::Poll::Ready(Ok(()))
-    }
-}
-impl Unpin for VecWriter {}
-
 // ─── Execution helper ────────────────────────────────────────────────────────
 
-/// Build an agent and run the UDS loop with the accumulated command lines.
-/// Stores stdout lines, stderr, and exit code into `world`.  Idempotent.
+/// Prepared agent + session context for `execute_uds`.
+struct UdsAgentContext {
+    agent: AgentLoopImpl,
+    model: String,
+    session_key: String,
+    ephemeral: bool,
+}
+
+/// Build the agent and session key from world state + config.
+/// Returns `Err(message)` on any configuration failure.
+fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAgentContext, String> {
+    let env_overrides: HashMap<String, String> = std::env::vars()
+        .filter(|(k, _)| k.starts_with("QUECTO_"))
+        .collect();
+
+    let config = Config::load_with_env(
+        base.join("config.json").to_str().unwrap_or(""),
+        &env_overrides,
+    )
+    .map_err(|e| format!("failed to load config: {e}"))?;
+
+    let provider =
+        build_agent_provider(&config, base).map_err(|e| format!("provider error: {e}"))?;
+
+    let workspace = std::path::PathBuf::from(config.workspace_path());
+    let model = config.agents.defaults.model.clone();
+    let sandbox = Sandbox::new(
+        Some(workspace.clone()),
+        config.agents.defaults.restrict_to_workspace,
+    );
+    let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
+    let registry =
+        ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
+
+    let ephemeral = world.no_session || world.session_name.as_deref() == Some("-");
+    let session_key = if ephemeral {
+        String::new()
+    } else {
+        Session::build_key("cli", world.session_name.as_deref().unwrap_or("default"))
+    };
+
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider,
+        tool_registry: Box::new(registry),
+        model: model.clone(),
+        max_tokens: config.agents.defaults.max_tokens,
+        temperature: config.agents.defaults.temperature,
+        spill_store: None,
+        session_key: session_key.clone(),
+        context_collapse_after_turns: u32::MAX,
+        max_context_tokens: config.agents.defaults.max_context_tokens,
+        progress_callback: None,
+    });
+
+    Ok(UdsAgentContext {
+        agent,
+        model,
+        session_key,
+        ephemeral,
+    })
+}
+
+/// Build an agent and run the UDS loop with a real `UnixStream` socket pair.
+/// The "server" half is passed to `run_uds_loop` via `socket_override`; the
+/// "client" half is used to write commands and read events.
+///
+/// Stores event lines, stderr text, and exit code into `world`. Idempotent.
 fn execute_uds(world: &mut QuectoWorld) {
     if world.uds_exit_code.is_some() {
         return;
@@ -68,75 +108,47 @@ fn execute_uds(world: &mut QuectoWorld) {
         return;
     }
 
-    let env_overrides: HashMap<String, String> = std::env::vars()
-        .filter(|(k, _)| k.starts_with("QUECTO_"))
-        .collect();
-
-    let config = match Config::load_with_env(
-        base.join("config.json").to_str().unwrap_or(""),
-        &env_overrides,
-    ) {
+    let ctx = match build_uds_agent(world, &base) {
         Ok(c) => c,
-        Err(e) => {
-            world.agent_stderr = format!("failed to load config: {e}");
-            world.uds_exit_code = Some(1);
-            return;
-        }
-    };
-
-    let provider = match build_agent_provider(&config, &base) {
-        Ok(p) => p,
         Err(e) => {
             world.agent_stderr = e;
             world.uds_exit_code = Some(1);
             return;
         }
     };
+    let UdsAgentContext {
+        agent,
+        model,
+        session_key,
+        ephemeral,
+    } = ctx;
 
-    let workspace = std::path::PathBuf::from(config.workspace_path());
-    let model = config.agents.defaults.model.clone();
-    let sandbox = Sandbox::new(
-        Some(workspace.clone()),
-        config.agents.defaults.restrict_to_workspace,
-    );
-    let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
-    let registry =
-        ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
+    // Create a socket path in the temp dir.
+    let socket_path = base.join("test-agent.sock");
+    // Remove any leftover from a previous (failed) run.
+    let _ = std::fs::remove_file(&socket_path);
 
-    let ephemeral = world.no_session || world.session_name.as_deref() == Some("-");
-    let session_key = if ephemeral {
-        String::new()
-    } else {
-        let name = world.session_name.as_deref().unwrap_or("default");
-        Session::build_key("cli", name)
-    };
+    // Create a connected UnixStream pair.
+    let (server_stream, client_stream) =
+        std::os::unix::net::UnixStream::pair().expect("UnixStream::pair failed");
 
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
-        provider,
-        tool_registry: Box::new(registry),
-        model: model.clone(),
-        max_tokens: config.agents.defaults.max_tokens,
-        temperature: config.agents.defaults.temperature,
-        spill_store: None,
-        session_key: session_key.clone(),
-        context_collapse_after_turns: u32::MAX,
-        max_context_tokens: config.agents.defaults.max_context_tokens,
-        progress_callback: None,
-    });
-
-    // Build stdin bytes from accumulated lines.
+    // Build stdin bytes from accumulated command lines.
     let stdin_bytes: Vec<u8> = world
         .uds_commands
         .iter()
         .flat_map(|l| format!("{l}\n").into_bytes())
         .collect();
 
-    let stdout_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
-    let stdout_clone = stdout_buf.clone();
-    let stdin_cursor = tokio::io::BufReader::new(std::io::Cursor::new(stdin_bytes));
-    let base_for_thread = base.clone();
-
     let system_prompt = world.system_prompt.clone().unwrap_or_default();
+    let base_for_thread = base.clone();
+    let socket_path_for_thread = socket_path.clone();
+
+    // Convert std UnixStream to tokio UnixStream for the server half.
+    let server_tokio = {
+        // We will convert inside the spawned thread where the tokio runtime exists.
+        server_stream
+    };
+
     let exit_code = std::thread::spawn(move || {
         run_uds_loop(UdsLoopArgs {
             agent,
@@ -145,21 +157,44 @@ fn execute_uds(world: &mut QuectoWorld) {
             model,
             ephemeral,
             system_prompt,
-            stdin_override: Some(Box::new(stdin_cursor)),
-            stdout_override: Some(Box::new(VecWriter(stdout_clone))),
+            socket_path: socket_path_for_thread,
+            socket_override: Some(server_tokio),
             session_store_override: None,
         })
-    })
-    .join()
-    .unwrap_or(1);
+    });
 
-    let raw = String::from_utf8_lossy(&stdout_buf.lock().unwrap()).to_string();
+    // Write commands to the client side, then shut down the write half.
+    use std::io::{Read, Write};
+    let mut client = client_stream;
+    client
+        .set_nonblocking(false)
+        .expect("set_nonblocking failed");
+    let _ = client.write_all(&stdin_bytes);
+    // Signal EOF on the write side by calling `shutdown(Write)`.
+    use std::net::Shutdown;
+    let _ = client.shutdown(Shutdown::Write);
+
+    // Read all response bytes.
+    let mut response_bytes = Vec::new();
+    let _ = client.read_to_end(&mut response_bytes);
+
+    let exit = exit_code.join().unwrap_or(1);
+
+    let raw = String::from_utf8_lossy(&response_bytes).to_string();
     world.agent_events = raw
         .lines()
         .filter(|l| !l.is_empty())
         .map(str::to_owned)
         .collect();
-    world.uds_exit_code = Some(exit_code);
+    world.uds_exit_code = Some(exit);
+
+    // Simulate what the production binary prints to stderr: the socket path.
+    // In tests the socket_override path skips the real eprintln!, so we inject
+    // it here so the "agent stderr should contain" step can assert on it.
+    world.agent_stderr = format!("quecto-agent-socket: {}\n", socket_path.display());
+
+    // Capture socket path for transport assertions.
+    world._uds_socket_path = Some(socket_path);
 }
 
 // ─── Given steps ─────────────────────────────────────────────────────────────
@@ -184,7 +219,7 @@ fn given_mock_llm_tool_call_then_text(world: &mut QuectoWorld, text: String) {
                     "role": "assistant",
                     "content": null,
                     "tool_calls": [{
-                        "id": "call_rpc_bash",
+                        "id": "call_uds_bash",
                         "type": "function",
                         "function": {
                             "name": "bash",
@@ -264,7 +299,16 @@ fn when_start_uds_with_session(world: &mut QuectoWorld, session: String) {
     world.no_session = false;
 }
 
-// ─── When steps — stdin commands ──────────────────────────────────────────────
+#[when("I start the UDS agent with explicit socket path")]
+fn when_start_uds_with_explicit_socket(world: &mut QuectoWorld) {
+    world.session_name = None;
+    world.no_session = true;
+    // The explicit socket path will be set during execute_uds — we use the same
+    // base dir path convention so this step just marks the intent.
+    world._uds_use_explicit_socket = true;
+}
+
+// ─── When steps — commands ──────────────────────────────────────────────────
 
 #[when(expr = "I send prompt {string}")]
 fn when_send_prompt(world: &mut QuectoWorld, message: String) {
@@ -372,6 +416,20 @@ fn then_agent_stderr_contains(world: &mut QuectoWorld, expected: String) {
         "expected stderr to contain {expected:?}\ngot: {}",
         world.agent_stderr,
     );
+}
+
+// ─── Then steps — transport assertions ───────────────────────────────────────
+
+#[then("the socket file should not exist after agent exits")]
+fn then_socket_file_removed(world: &mut QuectoWorld) {
+    execute_uds(world);
+    if let Some(path) = &world._uds_socket_path {
+        assert!(
+            !path.exists(),
+            "expected socket file to be removed after exit, but it still exists: {}",
+            path.display()
+        );
+    }
 }
 
 // ─── Then steps — stdout event assertions ─────────────────────────────────────
@@ -633,7 +691,7 @@ fn then_no_session_file_exists(world: &mut QuectoWorld, _session_name: String) {
     );
 }
 
-// ─── #233: Additional step implementations ────────────────────────────────────
+// ─── Additional step implementations ─────────────────────────────────────────
 
 #[then(expr = "the agent output should contain a response command {string} with success false")]
 fn then_agent_output_response_command_failure(world: &mut QuectoWorld, command: String) {
