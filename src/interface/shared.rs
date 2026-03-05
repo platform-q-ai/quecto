@@ -329,6 +329,128 @@ pub fn resolve_agent_workspace(config_workspace: &str, no_sandbox: bool) -> std:
     }
 }
 
+/// Build a [`RefreshFn`] for use with [`RefreshableProvider`].
+///
+/// The returned function reads the stored refresh token, calls the appropriate
+/// OAuth refresh endpoint, persists the new credential, and returns the new
+/// access token.
+pub fn make_oauth_refresh_fn() -> crate::infrastructure::providers::refreshable::RefreshFn {
+    use std::sync::Arc;
+    Arc::new(|store, provider_name| {
+        let provider_name = provider_name.to_string();
+        let store = store.clone();
+        Box::pin(async move {
+            let creds = store.load_snapshot().unwrap_or_default();
+            let cred = creds.get(&provider_name).ok_or_else(|| {
+                crate::domain::error::DomainError::Provider(format!(
+                    "no credential found for {}",
+                    provider_name
+                ))
+            })?;
+            let refresh_token = cred.refresh_token.as_ref().ok_or_else(|| {
+                crate::domain::error::DomainError::Provider(format!(
+                    "no refresh token for {}",
+                    provider_name
+                ))
+            })?;
+            let oauth_config =
+                crate::infrastructure::auth::oauth::OAuthConfig::for_provider(&provider_name)
+                    .ok_or_else(|| {
+                        crate::domain::error::DomainError::Provider(format!(
+                            "no OAuth config for {}",
+                            provider_name
+                        ))
+                    })?;
+
+            let refresh_result = match provider_name.as_str() {
+                "openai" => {
+                    crate::infrastructure::auth::oauth::refresh_openai_token(
+                        &oauth_config,
+                        refresh_token,
+                    )
+                    .await
+                }
+                _ => {
+                    crate::infrastructure::auth::oauth::refresh_anthropic_token(
+                        &oauth_config,
+                        refresh_token,
+                    )
+                    .await
+                }
+            };
+
+            persist_refreshed_token(&store, &provider_name, refresh_token, refresh_result)
+                .ok_or_else(|| {
+                    crate::domain::error::DomainError::Provider(format!(
+                        "failed to refresh token for {}",
+                        provider_name
+                    ))
+                })
+        })
+    })
+}
+
+/// Build a [`ProviderFactory`] that re-creates a provider with a new API key.
+///
+/// The factory knows the provider name and API base URL, and creates the
+/// correct provider type (Codex for OpenAI OAuth, standard otherwise).
+pub fn make_provider_factory(
+    provider_name: &str,
+    api_base: Option<String>,
+    http_client: reqwest::Client,
+) -> crate::infrastructure::providers::refreshable::ProviderFactory {
+    use crate::infrastructure::providers;
+    use std::sync::Arc;
+
+    let name = provider_name.to_string();
+    let base = api_base;
+    Arc::new(
+        move |new_token: &str| -> Arc<dyn crate::domain::provider::LlmProvider> {
+            if name == "openai" {
+                let account_id =
+                    crate::infrastructure::auth::oauth::extract_openai_account_id(new_token);
+                if let Some(acct) = account_id {
+                    return providers::create_codex_provider_with_client(
+                        new_token.to_string(),
+                        acct,
+                        http_client.clone(),
+                    );
+                }
+            }
+            match providers::create_provider_with_client(
+                &name,
+                new_token.to_string(),
+                base.clone(),
+                http_client.clone(),
+            ) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::error!(
+                        provider = name.as_str(),
+                        error = %e,
+                        "failed to rebuild provider after token refresh"
+                    );
+                    // Return a provider that will fail — better than panicking
+                    providers::create_provider_with_client(
+                        &name,
+                        new_token.to_string(),
+                        None,
+                        http_client.clone(),
+                    )
+                    .unwrap_or_else(|_| {
+                        Arc::new(
+                            crate::infrastructure::providers::openai::OpenAiProvider::new(
+                                new_token.to_string(),
+                                None,
+                            ),
+                        )
+                    })
+                }
+            }
+        },
+    )
+}
+
 pub fn check_provider_readiness(creds: &HashMap<String, Credential>) -> Vec<String> {
     creds
         .values()

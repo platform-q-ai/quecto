@@ -1,0 +1,227 @@
+//! RefreshableProvider — decorator that retries on 401 after refreshing OAuth tokens.
+//!
+//! Wraps an inner `LlmProvider` and intercepts auth errors (401). When a 401 is
+//! detected and the provider has an OAuth credential with a refresh token in the
+//! credential store, it refreshes the token, rebuilds the inner provider with the
+//! new token, and retries the request once.
+
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+use crate::domain::error::DomainError;
+use crate::domain::message::LlmResponse;
+use crate::domain::provider::{ChatRequest, LlmProvider};
+use crate::infrastructure::auth::credential_store::{AuthMethod, CredentialStore};
+use crate::infrastructure::providers::error::ErrorClass;
+
+/// Async function that refreshes an OAuth token.
+///
+/// Takes the credential store and provider name, returns the new access token.
+/// Responsible for persisting the refreshed credential in the store.
+pub type RefreshFn = Arc<
+    dyn Fn(
+            Arc<CredentialStore>,
+            &str,
+        ) -> Pin<Box<dyn Future<Output = Result<String, DomainError>> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// Factory function that rebuilds a provider with a new API key.
+pub type ProviderFactory = Arc<dyn Fn(&str) -> Arc<dyn LlmProvider> + Send + Sync>;
+
+/// Configuration for building a [`RefreshableProvider`].
+pub struct RefreshableConfig {
+    /// The initial inner provider.
+    pub inner: Arc<dyn LlmProvider>,
+    /// Credential store for checking/persisting tokens.
+    pub store: Arc<CredentialStore>,
+    /// Provider name (e.g. "anthropic", "openai").
+    pub provider_name: String,
+    /// Function to refresh the OAuth token.
+    pub refresh_fn: RefreshFn,
+    /// Function to rebuild the provider with a new API key.
+    pub factory: ProviderFactory,
+}
+
+/// A provider decorator that intercepts 401 errors and attempts to refresh
+/// the OAuth token before retrying the request with a rebuilt provider.
+pub struct RefreshableProvider {
+    inner: RwLock<Arc<dyn LlmProvider>>,
+    store: Arc<CredentialStore>,
+    provider_name: String,
+    refresh_fn: RefreshFn,
+    factory: ProviderFactory,
+}
+
+impl std::fmt::Debug for RefreshableProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RefreshableProvider")
+            .field("provider_name", &self.provider_name)
+            .finish()
+    }
+}
+
+impl RefreshableProvider {
+    /// Create a new refreshable provider from a config.
+    pub fn new(config: RefreshableConfig) -> Self {
+        Self {
+            inner: RwLock::new(config.inner),
+            store: config.store,
+            provider_name: config.provider_name,
+            refresh_fn: config.refresh_fn,
+            factory: config.factory,
+        }
+    }
+
+    /// Check if the error is a 401 that might be fixable by refreshing.
+    fn is_refreshable_auth_error(err: &DomainError) -> bool {
+        let class =
+            crate::infrastructure::providers::fallback::FallbackProvider::classify_error(err);
+        class == ErrorClass::Auth
+    }
+
+    /// Check if the provider has an OAuth credential with a refresh token.
+    fn has_refreshable_credential(&self) -> bool {
+        let creds = self.store.load_snapshot().unwrap_or_default();
+        if let Some(cred) = creds.get(&self.provider_name) {
+            cred.method == AuthMethod::OAuth && cred.refresh_token.is_some()
+        } else {
+            false
+        }
+    }
+}
+
+impl LlmProvider for RefreshableProvider {
+    fn name(&self) -> &str {
+        &self.provider_name
+    }
+
+    fn chat(
+        &self,
+        request: ChatRequest<'_>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+        let owned = OwnedRequest::from(&request);
+        Box::pin(async move {
+            self.try_with_refresh(owned, |inner, req| inner.chat(req))
+                .await
+        })
+    }
+
+    fn chat_stream(
+        &self,
+        request: ChatRequest<'_>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+        let owned = OwnedRequest::from(&request);
+        Box::pin(async move {
+            self.try_with_refresh(owned, |inner, req| inner.chat_stream(req))
+                .await
+        })
+    }
+}
+
+/// Owned copies of borrowed ChatRequest fields so the future outlives the borrow.
+struct OwnedRequest {
+    messages: Vec<crate::domain::message::Message>,
+    tools: Vec<crate::domain::tool::ToolDefinition>,
+    model: String,
+    max_tokens: u32,
+    temperature: f32,
+    session_id: Option<String>,
+    tool_choice: Option<crate::domain::provider::ToolChoice>,
+    metadata: Option<crate::domain::provider::RequestMetadata>,
+    thinking_level: Option<crate::domain::provider::ThinkingLevel>,
+    cancel_flag: Option<crate::domain::provider::CancelFlag>,
+}
+
+impl OwnedRequest {
+    fn from(r: &ChatRequest<'_>) -> Self {
+        Self {
+            messages: r.messages.to_vec(),
+            tools: r.tools.to_vec(),
+            model: r.model.to_string(),
+            max_tokens: r.max_tokens,
+            temperature: r.temperature,
+            session_id: r.session_id.clone(),
+            tool_choice: r.tool_choice.clone(),
+            metadata: r.metadata.clone(),
+            thinking_level: r.thinking_level,
+            cancel_flag: r.cancel_flag.clone(),
+        }
+    }
+
+    fn as_request(&self) -> ChatRequest<'_> {
+        ChatRequest {
+            messages: &self.messages,
+            tools: &self.tools,
+            model: &self.model,
+            max_tokens: self.max_tokens,
+            temperature: self.temperature,
+            session_id: self.session_id.clone(),
+            tool_choice: self.tool_choice.clone(),
+            metadata: self.metadata.clone(),
+            thinking_level: self.thinking_level,
+            cancel_flag: self.cancel_flag.clone(),
+        }
+    }
+}
+
+impl RefreshableProvider {
+    /// Try a provider call, refreshing the token on 401 and retrying once.
+    async fn try_with_refresh<F>(
+        &self,
+        owned: OwnedRequest,
+        call: F,
+    ) -> Result<LlmResponse, DomainError>
+    where
+        F: for<'a> Fn(
+            &'a Arc<dyn LlmProvider>,
+            ChatRequest<'a>,
+        ) -> Pin<
+            Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>,
+        >,
+    {
+        let inner = self.inner.read().await.clone();
+        let result = call(&inner, owned.as_request()).await;
+
+        match result {
+            Ok(resp) => Ok(resp),
+            Err(err)
+                if Self::is_refreshable_auth_error(&err) && self.has_refreshable_credential() =>
+            {
+                tracing::info!(
+                    provider = self.provider_name.as_str(),
+                    "401 from OAuth provider — attempting token refresh"
+                );
+
+                match (self.refresh_fn)(self.store.clone(), &self.provider_name).await {
+                    Ok(new_token) => {
+                        tracing::info!(
+                            provider = self.provider_name.as_str(),
+                            "token refreshed — rebuilding provider"
+                        );
+                        let new_inner = (self.factory)(&new_token);
+                        let result = call(&new_inner, owned.as_request()).await;
+                        *self.inner.write().await = new_inner;
+                        result
+                    }
+                    Err(refresh_err) => {
+                        tracing::warn!(
+                            provider = self.provider_name.as_str(),
+                            error = %refresh_err,
+                            "token refresh failed — returning original 401"
+                        );
+                        Err(err)
+                    }
+                }
+            }
+            Err(err) => Err(err),
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "refreshable_tests.rs"]
+mod tests;

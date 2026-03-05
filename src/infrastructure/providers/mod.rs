@@ -3,6 +3,7 @@ pub mod codex;
 pub mod error;
 pub mod fallback;
 pub mod openai;
+pub mod refreshable;
 
 use std::sync::Arc;
 

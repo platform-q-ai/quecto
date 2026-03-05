@@ -13,6 +13,7 @@ use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::providers;
 use crate::infrastructure::providers::fallback::FallbackProvider;
+use crate::infrastructure::providers::refreshable::{RefreshableConfig, RefreshableProvider};
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::recall::RecallTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
@@ -538,6 +539,9 @@ fn cmd_agent_rpc(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
 }
 
 /// Build a FallbackProvider from config + credential store, suitable for the agent CLI.
+///
+/// OAuth-backed providers are wrapped in [`RefreshableProvider`] so that
+/// expired tokens are automatically refreshed mid-session on 401 (issue #255).
 pub fn build_agent_provider(
     config: &Config,
     base_dir: &std::path::Path,
@@ -554,6 +558,8 @@ pub fn build_agent_provider(
 
     // Shared HTTP client for all providers — avoids duplicate connection pools and TLS contexts.
     let http_client = reqwest::Client::new();
+    let store_arc = Arc::new(CredentialStore::new(base_dir));
+    let refresh_fn = crate::interface::shared::make_oauth_refresh_fn();
 
     // Try OpenAI (with auto-refresh for expired OAuth tokens)
     let openai_key = crate::interface::shared::resolve_api_key_with_refresh(
@@ -563,32 +569,30 @@ pub fn build_agent_provider(
         &rt,
     );
     if !openai_key.is_empty() {
-        let account_id = crate::infrastructure::auth::oauth::extract_openai_account_id(&openai_key);
-        if let Some(acct) = account_id {
-            // OAuth token — use Codex provider (ChatGPT backend)
-            provider_list.push(providers::create_codex_provider_with_client(
-                openai_key,
-                acct,
-                http_client.clone(),
-            ));
+        let is_oauth = store.get("openai").ok().flatten().is_some_and(|c| {
+            c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
+        });
+        let openai_base = if config.providers.openai.api_base.is_empty() {
+            None
         } else {
-            // Regular API key — use standard OpenAI provider
-            let base = if config.providers.openai.api_base.is_empty() {
-                None
-            } else {
-                Some(config.providers.openai.api_base.clone())
-            };
-            match providers::create_provider_with_client(
+            Some(config.providers.openai.api_base.clone())
+        };
+        let inner = build_single_provider("openai", &openai_key, &openai_base, &http_client)?;
+        if is_oauth {
+            let factory = crate::interface::shared::make_provider_factory(
                 "openai",
-                openai_key,
-                base,
+                openai_base,
                 http_client.clone(),
-            ) {
-                Ok(p) => provider_list.push(p),
-                Err(e) => {
-                    return Err(format!("openai provider configuration error: {}", e));
-                }
-            }
+            );
+            provider_list.push(Arc::new(RefreshableProvider::new(RefreshableConfig {
+                inner,
+                store: store_arc.clone(),
+                provider_name: "openai".to_string(),
+                refresh_fn: refresh_fn.clone(),
+                factory,
+            })));
+        } else {
+            provider_list.push(inner);
         }
     }
 
@@ -600,21 +604,31 @@ pub fn build_agent_provider(
         &rt,
     );
     if !anthropic_key.is_empty() {
-        let base = if config.providers.anthropic.api_base.is_empty() {
+        let is_oauth = store.get("anthropic").ok().flatten().is_some_and(|c| {
+            c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
+        });
+        let anthropic_base = if config.providers.anthropic.api_base.is_empty() {
             None
         } else {
             Some(config.providers.anthropic.api_base.clone())
         };
-        match providers::create_provider_with_client(
-            "anthropic",
-            anthropic_key,
-            base,
-            http_client.clone(),
-        ) {
-            Ok(p) => provider_list.push(p),
-            Err(e) => {
-                return Err(format!("anthropic provider configuration error: {}", e));
-            }
+        let inner =
+            build_single_provider("anthropic", &anthropic_key, &anthropic_base, &http_client)?;
+        if is_oauth {
+            let factory = crate::interface::shared::make_provider_factory(
+                "anthropic",
+                anthropic_base,
+                http_client.clone(),
+            );
+            provider_list.push(Arc::new(RefreshableProvider::new(RefreshableConfig {
+                inner,
+                store: store_arc.clone(),
+                provider_name: "anthropic".to_string(),
+                refresh_fn: refresh_fn.clone(),
+                factory,
+            })));
+        } else {
+            provider_list.push(inner);
         }
     }
 
@@ -625,6 +639,28 @@ pub fn build_agent_provider(
     }
 
     Ok(Arc::new(FallbackProvider::new(provider_list)))
+}
+
+/// Build a single provider from name, key, and base URL.
+fn build_single_provider(
+    name: &str,
+    api_key: &str,
+    api_base: &Option<String>,
+    http_client: &reqwest::Client,
+) -> Result<Arc<dyn LlmProvider>, String> {
+    if name == "openai" {
+        let account_id = crate::infrastructure::auth::oauth::extract_openai_account_id(api_key);
+        if let Some(acct) = account_id {
+            return Ok(providers::create_codex_provider_with_client(
+                api_key.to_string(),
+                acct,
+                http_client.clone(),
+            ));
+        }
+    }
+    let base = api_base.clone();
+    providers::create_provider_with_client(name, api_key.to_string(), base, http_client.clone())
+        .map_err(|e| format!("{} provider configuration error: {}", name, e))
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@ use quecto::domain::agent::{AgentInfo, AgentLoop, AgentResult};
 use quecto::domain::cron::{CronJob, CronJobResult, CronSchedule, CronStore};
 use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, Role, ToolCall};
-use quecto::domain::provider::LlmProvider;
+use quecto::domain::provider::{ChatRequest, LlmProvider};
 use quecto::domain::session::{ContextSpillStore, Session, SessionStore, strip_tool_history};
 use quecto::domain::skill::{Skill, SkillLoader};
 use quecto::domain::tool::{Tool, ToolDefinition, ToolResult};
@@ -33,6 +33,7 @@ use quecto::infrastructure::persistence::skill_loader::FileSkillLoader;
 use quecto::infrastructure::providers;
 use quecto::infrastructure::providers::error::ErrorClass;
 use quecto::infrastructure::providers::fallback::FallbackProvider;
+
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::bash::{ExecIsolationMode, ExecTool};
 use quecto::infrastructure::tools::cron_tool::CronTool;
@@ -698,6 +699,8 @@ pub struct QuectoWorld {
     pub gateway_import_stdout: Option<String>,
     /// Import stderr output (issue #258)
     pub gateway_import_stderr: Option<String>,
+    /// RefreshableProvider result (issue #255)
+    pub refreshable_result: Option<Result<LlmResponse, DomainError>>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
