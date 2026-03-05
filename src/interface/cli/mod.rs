@@ -3,6 +3,7 @@ mod auth;
 mod commands;
 pub mod protocol;
 pub mod uds;
+pub mod uds_cancel;
 pub mod uds_session;
 
 use std::path::PathBuf;

@@ -261,6 +261,50 @@ fn given_mock_llm_tool_call_then_text(world: &mut QuectoWorld, text: String) {
     std::mem::forget(rt);
 }
 
+/// Mount a delayed response on the existing wiremock server.  The delay causes
+/// the agent's LLM call to block long enough for a concurrent `abort` or
+/// `steer` command to arrive and cancel it.
+#[given(expr = "the mock LLM will delay its response by {int} seconds")]
+fn given_mock_llm_delayed_response(world: &mut QuectoWorld, delay_secs: u64) {
+    assert!(
+        world._wiremock_server_uri.is_some(),
+        "mock server URI not set — add 'And a config file with an OpenAI provider pointing at a mock server' first"
+    );
+    let uri = world._wiremock_server_uri.clone().unwrap();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        // Connect to the existing mock server via its URI.  We start a fresh
+        // server pointing at the same port is not possible directly, so we
+        // create a new one and rewrite the config to point at it.
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+        let body = serde_json::json!({
+            "id": "chatcmpl-delayed",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": "delayed response" },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+        });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(body)
+                    .set_delay(std::time::Duration::from_secs(delay_secs)),
+            )
+            .mount(&server)
+            .await;
+        // Drop old URI reference (unused after rewrite).
+        drop(uri);
+        e2e_steps::rewrite_config_to_uri(world, &new_uri);
+        std::mem::forget(server);
+    });
+    std::mem::forget(rt);
+}
+
 // ─── When steps — session setup ───────────────────────────────────────────────
 
 #[when("I start the UDS agent with no session")]
@@ -452,6 +496,16 @@ fn then_agent_output_contains_event_type(world: &mut QuectoWorld, event_type: St
     assert!(
         types.contains(&event_type),
         "expected event {event_type:?}\ngot: {types:?}\nlines: {:#?}",
+        world.agent_events,
+    );
+}
+
+#[then(expr = "the agent output should not contain an event of type {string}")]
+fn then_agent_output_not_contains_event_type(world: &mut QuectoWorld, event_type: String) {
+    let types = agent_event_types(world);
+    assert!(
+        !types.contains(&event_type),
+        "expected NO event {event_type:?} but found it\ngot: {types:?}\nlines: {:#?}",
         world.agent_events,
     );
 }

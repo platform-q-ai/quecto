@@ -21,7 +21,8 @@ pub struct AgentSession {
     model: String,
     session_key: String,
     streaming: bool,
-    pending: Vec<String>,
+    /// `VecDeque` supports O(1) push_back (enqueue) and push_front (prepend/steer).
+    pending: std::collections::VecDeque<String>,
 }
 
 impl AgentSession {
@@ -30,7 +31,7 @@ impl AgentSession {
             model,
             session_key,
             streaming: false,
-            pending: Vec::new(),
+            pending: std::collections::VecDeque::new(),
         }
     }
 
@@ -56,13 +57,22 @@ impl AgentSession {
 
     pub fn enqueue_pending(&mut self, msg: String) {
         if self.pending.len() < Self::MAX_PENDING {
-            self.pending.push(msg);
+            self.pending.push_back(msg);
         }
         // Silently drop if the queue is full — caller already got a success ack.
     }
 
+    /// Prepend a message to the front of the pending queue so it runs before
+    /// any earlier-enqueued follow-ups.  Used by `steer` for interrupt semantics.
+    /// O(1) with `VecDeque`, unlike `Vec::insert(0)`.
+    pub fn prepend_pending(&mut self, msg: String) {
+        if self.pending.len() < Self::MAX_PENDING {
+            self.pending.push_front(msg);
+        }
+    }
+
     pub fn drain_pending(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.pending)
+        std::mem::take(&mut self.pending).into_iter().collect()
     }
 
     pub fn state_snapshot(&self, message_count: usize) -> SessionState {
