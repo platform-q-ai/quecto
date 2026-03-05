@@ -900,6 +900,92 @@ fn then_token_exchange_no_refresh_token(world: &mut QuectoWorld) {
 }
 
 // ===========================================================================
+// OpenAI OAuth import refresh steps (issue #258)
+// ===========================================================================
+
+#[given("an opencode auth.json with expired OpenAI OAuth credential")]
+fn given_opencode_expired_openai(world: &mut QuectoWorld) {
+    ensure_temp_dir(world);
+    let now = chrono::Utc::now().timestamp();
+    // Token expired 100 seconds ago
+    let expires_ms = (now - 100) * 1000;
+    world.gateway_import_auth_json = Some(serde_json::json!({
+        "openai": {
+            "type": "oauth",
+            "access": "eyJ-old-expired",
+            "refresh": "rt-old-openai",
+            "expires": expires_ms
+        }
+    }));
+}
+
+#[given(expr = "an opencode auth.json with valid OpenAI OAuth credential {string}")]
+fn given_opencode_valid_openai(world: &mut QuectoWorld, token: String) {
+    ensure_temp_dir(world);
+    let now = chrono::Utc::now().timestamp();
+    let expires_ms = (now + 7200) * 1000;
+    world.gateway_import_auth_json = Some(serde_json::json!({
+        "openai": {
+            "type": "oauth",
+            "access": token,
+            "refresh": "rt-valid",
+            "expires": expires_ms
+        }
+    }));
+}
+
+#[when("the opencode credentials are imported")]
+fn when_opencode_imported(world: &mut QuectoWorld) {
+    let base = base_path(world);
+    let store = CredentialStore::new(&base);
+    let auth_json = world
+        .gateway_import_auth_json
+        .as_ref()
+        .expect("auth.json not set");
+
+    let oauth_base_url = world.gateway_oauth_mock_uri.clone();
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let params = quecto::interface::cli::OpenAiImportParams {
+        store: &store,
+        rt: &rt,
+        oauth_base_url: oauth_base_url.as_deref(),
+    };
+    quecto::interface::cli::auth_import_openai(auth_json, &params, &mut stdout, &mut stderr);
+    world.gateway_import_stdout = Some(stdout);
+    world.gateway_import_stderr = Some(stderr);
+}
+
+#[then(expr = "the stored OpenAI credential should have token {string}")]
+fn then_stored_openai_token(world: &mut QuectoWorld, expected_token: String) {
+    let base = base_path(world);
+    let store = CredentialStore::new(&base);
+    let creds = store.load_snapshot().unwrap();
+    let cred = creds.get("openai").expect("no OpenAI credential found");
+    assert_eq!(
+        cred.token, expected_token,
+        "expected OpenAI token '{}', got '{}'",
+        expected_token, cred.token
+    );
+}
+
+#[then(expr = "the import output should contain {string}")]
+fn then_import_output_contains(world: &mut QuectoWorld, expected: String) {
+    let stdout = world.gateway_import_stdout.as_deref().unwrap_or("");
+    let stderr = world.gateway_import_stderr.as_deref().unwrap_or("");
+    let combined = format!("{}{}", stdout, stderr);
+    assert!(
+        combined.contains(&expected),
+        "expected import output to contain '{}', got stdout='{}' stderr='{}'",
+        expected,
+        stdout,
+        stderr
+    );
+}
+
+// ===========================================================================
 // Consistent expires_at safety margin steps (issue #256)
 // ===========================================================================
 

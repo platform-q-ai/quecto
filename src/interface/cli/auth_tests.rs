@@ -528,6 +528,7 @@ fn test_import_openai_stores_credential_with_safety_margin() {
 
     let tmp = tempfile::TempDir::new().unwrap();
     let store = CredentialStore::new(tmp.path());
+    let rt = tokio::runtime::Runtime::new().unwrap();
 
     let now = chrono::Utc::now().timestamp();
     // expires_s in the JSON is in milliseconds, divide by 1000 gives seconds
@@ -547,7 +548,12 @@ fn test_import_openai_stores_credential_with_safety_margin() {
         stdout: &mut stdout,
         stderr: &mut stderr,
     };
-    super::auth_import::import_openai(&auth_json, &store, &mut out);
+    let params = super::auth_import::OpenAiImportParams {
+        store: &store,
+        rt: &rt,
+        oauth_base_url: None,
+    };
+    super::auth_import::import_openai(&auth_json, &params, &mut out);
 
     let creds = store.load_snapshot().unwrap();
     let cred = creds.get("openai").unwrap();
@@ -561,4 +567,47 @@ fn test_import_openai_stores_credential_with_safety_margin() {
         cred.expires_at.unwrap(),
         (cred.expires_at.unwrap() - expected_with_margin).abs()
     );
+}
+
+#[test]
+fn test_import_openai_non_expired_stores_directly() {
+    use crate::infrastructure::auth::credential_store::CredentialStore;
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+
+    let now = chrono::Utc::now().timestamp();
+    // Token expires in 7200 seconds (not expired)
+    let expires_ms = (now + 7200) * 1000;
+    let auth_json: serde_json::Value = serde_json::json!({
+        "openai": {
+            "type": "oauth",
+            "access": "eyJ-still-valid",
+            "refresh": "rt-test",
+            "expires": expires_ms
+        }
+    });
+
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let mut out = Output {
+        stdout: &mut stdout,
+        stderr: &mut stderr,
+    };
+    let params = super::auth_import::OpenAiImportParams {
+        store: &store,
+        rt: &rt,
+        oauth_base_url: None,
+    };
+    let result = super::auth_import::import_openai(&auth_json, &params, &mut out);
+    assert_eq!(result, Some(1));
+    assert!(
+        !stdout.contains("refreshing"),
+        "should not attempt refresh for non-expired token"
+    );
+
+    let creds = store.load_snapshot().unwrap();
+    let cred = creds.get("openai").unwrap();
+    assert_eq!(cred.token, "eyJ-still-valid");
 }
