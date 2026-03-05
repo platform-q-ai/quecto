@@ -271,6 +271,19 @@ pub(crate) fn remove_injected_system_prompt(messages: &mut Vec<Message>, prompt:
     }
 }
 
+// 1 MiB per line — matches the bash tool cap and guards against OOM from
+// unbounded JSON allocations in both the reader task and the dispatch loop.
+const MAX_LINE_BYTES: usize = 1024 * 1024;
+
+/// Return `true` if a trimmed JSON line looks like an `abort` or `steer` command.
+///
+/// Uses a cheap substring search rather than a full JSON parse to avoid
+/// allocating a Value DOM in the hot-path reader task.  The check is
+/// intentionally permissive; the dispatch loop re-parses canonically.
+fn is_cancel_command(trimmed: &str) -> bool {
+    trimmed.contains("\"type\":\"abort\"") || trimmed.contains("\"type\":\"steer\"")
+}
+
 /// Parsed command line or a line-too-long error.
 enum LineResult {
     Command(AgentCommand),
@@ -280,7 +293,6 @@ enum LineResult {
 
 /// Parse a raw text line into a `LineResult`.
 fn parse_line(line: &str) -> LineResult {
-    const MAX_LINE_BYTES: usize = 1024 * 1024;
     if line.len() > MAX_LINE_BYTES {
         return LineResult::LineTooLong;
     }
@@ -314,32 +326,44 @@ async fn run_command_loop(
     // Clone the cancel handle for the concurrent reader task.
     let cancel_for_reader = std::sync::Arc::clone(&ctx.cancel_handle);
 
+    // Bounded channel — prevents unbounded memory growth if the client sends
+    // commands faster than the dispatch loop can process them.  64 slots is
+    // generous for a single-client UDS session; the reader task will yield
+    // when full, providing natural back-pressure.
     // `None` in the channel signals EOF.
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Option<String>>();
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Option<String>>(64);
 
     // Spawn the reader task — it runs concurrently with the dispatch loop.
     // When it sees an abort or steer command it immediately fires the shared
     // cancel handle so any in-flight select!(process | cancel_rx) unblocks and
     // drops the in-flight HTTP request without waiting for the dispatch loop
     // to dequeue the command from the main mpsc channel.
-    tokio::spawn(async move {
+    // The JoinHandle is stored so we can abort the task when the dispatch loop
+    // exits early (fatal error, disconnect), preventing a resource leak.
+    let reader_task = tokio::spawn(async move {
         let mut lines = BufReader::new(reader).lines();
         loop {
             match lines.next_line().await {
                 Ok(Some(line)) => {
-                    let trimmed = line.trim();
-                    if let Ok(cmd) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                        let ty = cmd.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                        if ty == "abort" || ty == "steer" {
+                    // Apply the same size guard used by the dispatch loop so
+                    // the reader never allocates memory for oversized lines.
+                    // Lines that are too long are forwarded as-is and the
+                    // dispatch loop emits the error response.
+                    if line.len() <= MAX_LINE_BYTES {
+                        // Use a cheap substring check rather than a full JSON
+                        // parse so the reader does not allocate a Value DOM for
+                        // every line.  The check is intentionally loose — the
+                        // dispatch loop re-parses canonically.
+                        if is_cancel_command(line.trim()) {
                             fire_cancel(&cancel_for_reader);
                         }
                     }
-                    if tx.send(Some(line)).is_err() {
+                    if tx.send(Some(line)).await.is_err() {
                         break;
                     }
                 }
                 _ => {
-                    let _ = tx.send(None);
+                    let _ = tx.send(None).await;
                     break;
                 }
             }
@@ -377,6 +401,11 @@ async fn run_command_loop(
             }
         }
     }
+
+    // Abort the reader task so it doesn't linger after the dispatch loop exits
+    // (e.g. on a fatal agent error or explicit disconnect command).  If the
+    // task already finished (EOF) this is a harmless no-op.
+    reader_task.abort();
 }
 
 /// Load session messages, or return an empty vec for ephemeral/missing sessions.

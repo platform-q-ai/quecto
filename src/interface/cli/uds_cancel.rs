@@ -29,19 +29,21 @@ pub type CancelHandle = std::sync::Arc<std::sync::Mutex<CancelSlot>>;
 /// - `Armed`: fires the sender (cancels the running prompt immediately).
 /// - `Idle`:  transitions to `Fired` so the next `arm_cancel` is pre-cancelled.
 /// - `Fired`: no-op (already pending).
+///
+/// # Panics
+/// Panics if the `CancelSlot` mutex is poisoned (indicates a bug elsewhere).
 pub fn fire_cancel(handle: &CancelHandle) {
-    if let Ok(mut guard) = handle.lock() {
-        match std::mem::replace(&mut *guard, CancelSlot::Idle) {
-            CancelSlot::Armed(tx) => {
-                let _ = tx.send(());
-                // Slot is now Idle — the prompt cleans up after the select!.
-            }
-            CancelSlot::Idle => {
-                *guard = CancelSlot::Fired;
-            }
-            CancelSlot::Fired => {
-                *guard = CancelSlot::Fired; // restore
-            }
+    let mut guard = handle.lock().expect("CancelSlot mutex poisoned");
+    match std::mem::replace(&mut *guard, CancelSlot::Idle) {
+        CancelSlot::Armed(tx) => {
+            let _ = tx.send(());
+            // Slot is now Idle — the prompt cleans up after the select!.
+        }
+        CancelSlot::Idle => {
+            *guard = CancelSlot::Fired;
+        }
+        CancelSlot::Fired => {
+            *guard = CancelSlot::Fired; // restore
         }
     }
 }
@@ -53,28 +55,32 @@ pub fn fire_cancel(handle: &CancelHandle) {
 ///
 /// Returns `None` when the slot was already `Fired` (a cancel arrived before
 /// the run started) — the caller should skip the run entirely.
+///
+/// # Panics
+/// Panics if the `CancelSlot` mutex is poisoned (indicates a bug elsewhere).
 pub fn arm_cancel(handle: &CancelHandle) -> Option<tokio::sync::oneshot::Receiver<()>> {
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-    if let Ok(mut guard) = handle.lock() {
-        match *guard {
-            CancelSlot::Fired => {
-                *guard = CancelSlot::Idle;
-                return None;
-            }
-            _ => {
-                *guard = CancelSlot::Armed(tx);
-            }
+    let mut guard = handle.lock().expect("CancelSlot mutex poisoned");
+    match *guard {
+        CancelSlot::Fired => {
+            *guard = CancelSlot::Idle;
+            None
+        }
+        _ => {
+            *guard = CancelSlot::Armed(tx);
+            Some(rx)
         }
     }
-    Some(rx)
 }
 
 /// Disarm and reset the slot after a run completes normally.
+///
+/// # Panics
+/// Panics if the `CancelSlot` mutex is poisoned (indicates a bug elsewhere).
 pub fn disarm_cancel(handle: &CancelHandle) {
-    if let Ok(mut guard) = handle.lock() {
-        if matches!(*guard, CancelSlot::Armed(_)) {
-            *guard = CancelSlot::Idle;
-        }
+    let mut guard = handle.lock().expect("CancelSlot mutex poisoned");
+    if matches!(*guard, CancelSlot::Armed(_)) {
+        *guard = CancelSlot::Idle;
     }
 }
 
