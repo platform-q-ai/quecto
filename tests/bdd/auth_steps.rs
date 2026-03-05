@@ -1048,3 +1048,259 @@ fn then_persisted_credential_has_margin(
         now + expires_in
     );
 }
+
+// --- RefreshableProvider BDD steps (issue #255) ---
+
+use quecto::infrastructure::providers::refreshable::{
+    ProviderFactory, RefreshFn, RefreshableConfig, RefreshableProvider,
+};
+
+/// Helper: build a mock refresh function that stores a new token.
+fn make_bdd_refresh(new_token: String) -> RefreshFn {
+    Arc::new(move |store, provider_name| {
+        let token = new_token.clone();
+        let provider_name = provider_name.to_string();
+        let store = store.clone();
+        Box::pin(async move {
+            store
+                .store(Credential {
+                    provider: provider_name,
+                    token: token.clone(),
+                    method: AuthMethod::OAuth,
+                    expires_at: Some(i64::MAX),
+                    refresh_token: Some("rt-refreshed".to_string()),
+                    account_id: None,
+                })
+                .map_err(|e| DomainError::Provider(format!("store error: {}", e)))?;
+            Ok(token)
+        })
+    })
+}
+
+/// Mock provider that fails N times with 401, then succeeds.
+#[derive(Debug)]
+struct BddMockRetryProvider {
+    call_count: Arc<std::sync::atomic::AtomicU32>,
+    fail_until: u32,
+}
+
+impl BddMockRetryProvider {
+    fn new(fail_until: u32) -> Self {
+        Self {
+            call_count: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            fail_until,
+        }
+    }
+}
+
+impl LlmProvider for BddMockRetryProvider {
+    fn name(&self) -> &str {
+        "bdd-mock"
+    }
+
+    fn chat(
+        &self,
+        _request: ChatRequest<'_>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+        let count = self
+            .call_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async move {
+            if count < self.fail_until {
+                Err(DomainError::Provider(
+                    "provider error (401): unauthorized".to_string(),
+                ))
+            } else {
+                Ok(LlmResponse {
+                    content: Some("refreshed-success".to_string()),
+                    tool_calls: vec![],
+                    usage: None,
+                    stop_reason: None,
+                })
+            }
+        })
+    }
+}
+
+/// Mock provider that always returns 500.
+#[derive(Debug)]
+struct BddMock500Provider;
+
+impl LlmProvider for BddMock500Provider {
+    fn name(&self) -> &str {
+        "bdd-mock-500"
+    }
+
+    fn chat(
+        &self,
+        _request: ChatRequest<'_>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+        Box::pin(async {
+            Err(DomainError::Provider(
+                "provider error (500): internal server error".to_string(),
+            ))
+        })
+    }
+}
+
+/// Mock provider that always succeeds.
+#[derive(Debug)]
+struct BddMockSuccessProvider;
+
+impl LlmProvider for BddMockSuccessProvider {
+    fn name(&self) -> &str {
+        "bdd-mock-ok"
+    }
+
+    fn chat(
+        &self,
+        _request: ChatRequest<'_>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+        Box::pin(async {
+            Ok(LlmResponse {
+                content: Some("normal-success".to_string()),
+                tool_calls: vec![],
+                usage: None,
+                stop_reason: None,
+            })
+        })
+    }
+}
+
+#[given("an OAuth-backed provider that returns 401 on first call")]
+fn given_provider_401_first(world: &mut QuectoWorld) {
+    ensure_credential_store(world);
+    let store = world.credential_store.as_ref().unwrap();
+    store
+        .store(Credential {
+            provider: "anthropic".to_string(),
+            token: "sk-ant-oat01-expired".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(0),
+            refresh_token: Some("rt-old".to_string()),
+            account_id: None,
+        })
+        .unwrap();
+
+    let base_dir = store.path().parent().unwrap();
+    let store_arc = Arc::new(CredentialStore::new(base_dir));
+    let call_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let inner = Arc::new(BddMockRetryProvider::new(1));
+    let cc = call_count.clone();
+    let factory: ProviderFactory = Arc::new(move |_| {
+        Arc::new(BddMockRetryProvider {
+            call_count: cc.clone(),
+            fail_until: 0, // rebuilt provider always succeeds
+        }) as Arc<dyn LlmProvider>
+    });
+    let refreshable = RefreshableProvider::new(RefreshableConfig {
+        inner,
+        store: store_arc,
+        provider_name: "anthropic".to_string(),
+        refresh_fn: make_bdd_refresh("sk-ant-oat01-fresh".to_string()),
+        factory,
+    });
+    world.provider = Some(Arc::new(refreshable));
+}
+
+#[given(expr = "the provider returns success after token refresh")]
+fn given_provider_succeeds_after_refresh(_world: &mut QuectoWorld) {
+    // Already configured by the retry provider (fail_until=1)
+}
+
+#[given("an OAuth-backed provider that returns 500")]
+fn given_provider_500(world: &mut QuectoWorld) {
+    ensure_credential_store(world);
+    let store = world.credential_store.as_ref().unwrap();
+    let base_dir = store.path().parent().unwrap();
+    let store_arc = Arc::new(CredentialStore::new(base_dir));
+    let inner = Arc::new(BddMock500Provider);
+    let factory: ProviderFactory =
+        Arc::new(|_| Arc::new(BddMock500Provider) as Arc<dyn LlmProvider>);
+    let refreshable = RefreshableProvider::new(RefreshableConfig {
+        inner,
+        store: store_arc,
+        provider_name: "anthropic".to_string(),
+        refresh_fn: make_bdd_refresh("unused".to_string()),
+        factory,
+    });
+    world.provider = Some(Arc::new(refreshable));
+}
+
+#[given("an OAuth-backed provider that returns success")]
+fn given_provider_success(world: &mut QuectoWorld) {
+    ensure_credential_store(world);
+    let store = world.credential_store.as_ref().unwrap();
+    let base_dir = store.path().parent().unwrap();
+    let store_arc = Arc::new(CredentialStore::new(base_dir));
+    let inner = Arc::new(BddMockSuccessProvider);
+    let factory: ProviderFactory =
+        Arc::new(|_| Arc::new(BddMockSuccessProvider) as Arc<dyn LlmProvider>);
+    let refreshable = RefreshableProvider::new(RefreshableConfig {
+        inner,
+        store: store_arc,
+        provider_name: "anthropic".to_string(),
+        refresh_fn: make_bdd_refresh("unused".to_string()),
+        factory,
+    });
+    world.provider = Some(Arc::new(refreshable));
+}
+
+#[when("a chat request is sent through the refreshable provider")]
+async fn when_chat_through_refreshable(world: &mut QuectoWorld) {
+    let provider = world.provider.as_ref().expect("provider not set");
+    let request = ChatRequest {
+        messages: &[],
+        tools: &[],
+        model: "test-model",
+        max_tokens: 1024,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+    };
+    world.refreshable_result = Some(provider.chat(request).await);
+}
+
+#[then("the request should succeed with the refreshed token")]
+fn then_succeed_with_refreshed(world: &mut QuectoWorld) {
+    let result = world.refreshable_result.as_ref().expect("no result");
+    let resp = result.as_ref().expect("expected Ok, got Err");
+    assert_eq!(
+        resp.content.as_deref(),
+        Some("refreshed-success"),
+        "response should come from the retried call"
+    );
+}
+
+#[then("the credential store should contain the refreshed token")]
+fn then_store_has_refreshed_token(world: &mut QuectoWorld) {
+    let store = world
+        .credential_store
+        .as_ref()
+        .expect("no credential store");
+    let creds = store.load_snapshot().unwrap();
+    let cred = creds.get("anthropic").expect("no anthropic credential");
+    assert_eq!(cred.token, "sk-ant-oat01-fresh");
+}
+
+#[then("the request should fail with a server error")]
+fn then_fail_with_server_error(world: &mut QuectoWorld) {
+    let result = world.refreshable_result.as_ref().expect("no result");
+    let err = result.as_ref().expect_err("expected Err, got Ok");
+    let msg = err.to_string();
+    assert!(msg.contains("500"), "expected 500 error, got: {}", msg);
+}
+
+#[then("the request should succeed normally")]
+fn then_succeed_normally(world: &mut QuectoWorld) {
+    let result = world.refreshable_result.as_ref().expect("no result");
+    let resp = result.as_ref().expect("expected Ok, got Err");
+    assert_eq!(
+        resp.content.as_deref(),
+        Some("normal-success"),
+        "response should be normal success"
+    );
+}

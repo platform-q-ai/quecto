@@ -249,3 +249,26 @@ Feature: Authentication
     And a mock OAuth refresh server that returns an error
     When the opencode credentials are imported
     Then the import output should contain "failed to refresh OpenAI token"
+
+  # --- Mid-session OAuth token refresh on 401 (issue #255) ---
+
+  @done
+  Scenario: RefreshableProvider refreshes token and retries on 401
+    Given an OAuth-backed provider that returns 401 on first call
+    And a mock OAuth refresh server that returns a new token "sk-ant-oat01-fresh"
+    And the provider returns success after token refresh
+    When a chat request is sent through the refreshable provider
+    Then the request should succeed with the refreshed token
+    And the credential store should contain the refreshed token
+
+  @done
+  Scenario: RefreshableProvider passes through non-401 errors unchanged
+    Given an OAuth-backed provider that returns 500
+    When a chat request is sent through the refreshable provider
+    Then the request should fail with a server error
+
+  @done
+  Scenario: RefreshableProvider passes through successful responses
+    Given an OAuth-backed provider that returns success
+    When a chat request is sent through the refreshable provider
+    Then the request should succeed normally

@@ -24,6 +24,7 @@ use crate::infrastructure::persistence::cron_store::FileCronStore;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::providers;
 use crate::infrastructure::providers::fallback::FallbackProvider;
+use crate::infrastructure::providers::refreshable::{RefreshableConfig, RefreshableProvider};
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::cron_tool::CronTool;
 use crate::infrastructure::tools::message::MessageTool;
@@ -305,8 +306,8 @@ impl Gateway {
     /// Resolve a single provider by name, returning `None` if no key is configured.
     ///
     /// Uses async token refresh to automatically refresh expired OAuth tokens
-    /// (issue #254). This replaces the previous snapshot-based approach that
-    /// could not refresh tokens.
+    /// (issue #254). OAuth-backed providers are wrapped in [`RefreshableProvider`]
+    /// so that 401 errors trigger automatic token refresh mid-session (#255).
     async fn resolve_provider(
         &self,
         name: &str,
@@ -331,31 +332,59 @@ impl Gateway {
             return Ok(None);
         }
 
-        // For OpenAI OAuth tokens, use the Codex provider instead
-        if name == "openai" {
-            let account_id =
-                crate::infrastructure::auth::oauth::extract_openai_account_id(&api_key);
-            if let Some(acct) = account_id {
-                return Ok(Some(providers::create_codex_provider_with_client(
-                    api_key,
-                    acct,
-                    http_client.clone(),
-                )));
-            }
-        }
+        let is_oauth = store.get(name).ok().flatten().is_some_and(|c| {
+            c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
+        });
 
         let base = if api_base.is_empty() {
             None
         } else {
             Some(api_base.clone())
         };
-        match providers::create_provider_with_client(name, api_key, base, http_client.clone()) {
-            Ok(p) => Ok(Some(p)),
-            Err(e) => Err(GatewayError::Config(format!(
-                "{} provider configuration error: {}",
-                name, e
-            ))),
+
+        let inner = Self::build_single_provider(name, &api_key, &base, http_client)?;
+
+        if is_oauth {
+            let store_arc = Arc::new(CredentialStore::new(store.path().parent().unwrap()));
+            let factory =
+                crate::interface::shared::make_provider_factory(name, base, http_client.clone());
+            let refresh_fn = crate::interface::shared::make_oauth_refresh_fn();
+            Ok(Some(Arc::new(RefreshableProvider::new(
+                RefreshableConfig {
+                    inner,
+                    store: store_arc,
+                    provider_name: name.to_string(),
+                    refresh_fn,
+                    factory,
+                },
+            ))))
+        } else {
+            Ok(Some(inner))
         }
+    }
+
+    /// Build a single provider from name, key, base URL, and HTTP client.
+    fn build_single_provider(
+        name: &str,
+        api_key: &str,
+        api_base: &Option<String>,
+        http_client: &reqwest::Client,
+    ) -> Result<Arc<dyn LlmProvider>, GatewayError> {
+        if name == "openai" {
+            let account_id = crate::infrastructure::auth::oauth::extract_openai_account_id(api_key);
+            if let Some(acct) = account_id {
+                return Ok(providers::create_codex_provider_with_client(
+                    api_key.to_string(),
+                    acct,
+                    http_client.clone(),
+                ));
+            }
+        }
+        let base = api_base.clone();
+        providers::create_provider_with_client(name, api_key.to_string(), base, http_client.clone())
+            .map_err(|e| {
+                GatewayError::Config(format!("{} provider configuration error: {}", name, e))
+            })
     }
 
     /// Build agent loop with tool registry and message bus.
