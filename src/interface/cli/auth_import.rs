@@ -80,7 +80,7 @@ pub(super) fn import_anthropic(
         )) {
             Ok(resp) => (
                 resp.access_token,
-                resp.refresh_token,
+                resp.refresh_token.unwrap_or_else(|| refresh.to_string()),
                 now + resp.expires_in as i64 - 300,
             ),
             Err(e) => {

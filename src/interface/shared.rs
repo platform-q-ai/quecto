@@ -137,7 +137,9 @@ pub fn resolve_api_key_with_refresh(
                         ),
                     };
 
-                    if let Some(token) = persist_refreshed_token(store, provider, refresh_result) {
+                    if let Some(token) =
+                        persist_refreshed_token(store, provider, refresh_token, refresh_result)
+                    {
                         return token;
                     }
                 }
@@ -215,7 +217,9 @@ pub async fn resolve_api_key_with_refresh_async_with_oauth_config(
                     }
                 };
 
-                if let Some(token) = persist_refreshed_token(store, provider, refresh_result) {
+                if let Some(token) =
+                    persist_refreshed_token(store, provider, refresh_token, refresh_result)
+                {
                     return token;
                 }
             }
@@ -229,9 +233,13 @@ pub async fn resolve_api_key_with_refresh_async_with_oauth_config(
 ///
 /// Returns `Some(access_token)` on success, `None` on failure (logged as warning).
 /// Shared by both sync and async refresh paths to avoid credential-building duplication.
+///
+/// `previous_refresh_token` is preserved when the server response omits
+/// `refresh_token` (valid per RFC 6749 §5.1 — the field is OPTIONAL).
 fn persist_refreshed_token(
     store: &crate::infrastructure::auth::credential_store::CredentialStore,
     provider: &str,
+    previous_refresh_token: &str,
     refresh_result: Result<
         crate::infrastructure::auth::oauth::OAuthTokenResponse,
         crate::domain::error::DomainError,
@@ -247,12 +255,15 @@ fn persist_refreshed_token(
             } else {
                 None
             };
+            let effective_refresh = token_resp
+                .refresh_token
+                .unwrap_or_else(|| previous_refresh_token.to_string());
             let new_cred = Credential {
                 provider: provider.to_string(),
                 token: token_resp.access_token.clone(),
                 method: crate::infrastructure::auth::credential_store::AuthMethod::OAuth,
                 expires_at: Some(expires_at),
-                refresh_token: Some(token_resp.refresh_token),
+                refresh_token: Some(effective_refresh),
                 account_id,
             };
             if let Err(e) = store.store(new_cred) {
@@ -466,5 +477,232 @@ mod tests {
                 preamble
             );
         }
+    }
+
+    // --- resolve_api_key_with_refresh_async tests (issue #254, #257) ---
+
+    #[tokio::test]
+    async fn test_resolve_api_key_with_refresh_async_returns_valid_token() {
+        use crate::infrastructure::auth::credential_store::{
+            AuthMethod, Credential, CredentialStore,
+        };
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = CredentialStore::new(tmp.path());
+        store
+            .store(Credential {
+                provider: "anthropic".to_string(),
+                token: "sk-ant-oat01-valid".to_string(),
+                method: AuthMethod::OAuth,
+                expires_at: Some(i64::MAX),
+                refresh_token: Some("rt-test".to_string()),
+                account_id: None,
+            })
+            .unwrap();
+
+        let resolved = resolve_api_key_with_refresh_async("", &store, "anthropic").await;
+        assert_eq!(resolved, "sk-ant-oat01-valid");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_api_key_with_refresh_async_falls_back_to_config_on_no_credential() {
+        use crate::infrastructure::auth::credential_store::CredentialStore;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = CredentialStore::new(tmp.path());
+
+        let resolved =
+            resolve_api_key_with_refresh_async("sk-config-key", &store, "anthropic").await;
+        assert_eq!(resolved, "sk-config-key");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_api_key_with_refresh_async_refreshes_expired_token() {
+        use crate::infrastructure::auth::credential_store::{
+            AuthMethod, Credential, CredentialStore,
+        };
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let response = serde_json::json!({
+            "access_token": "sk-ant-oat01-refreshed",
+            "refresh_token": "rt-new-refresh",
+            "expires_in": 28800
+        });
+
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+            .mount(&server)
+            .await;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = CredentialStore::new(tmp.path());
+        store
+            .store(Credential {
+                provider: "anthropic".to_string(),
+                token: "sk-ant-oat01-expired".to_string(),
+                method: AuthMethod::OAuth,
+                expires_at: Some(0),
+                refresh_token: Some("rt-old-refresh".to_string()),
+                account_id: None,
+            })
+            .unwrap();
+
+        let resolved = resolve_api_key_with_refresh_async_with_oauth_config(
+            "",
+            &store,
+            "anthropic",
+            &crate::infrastructure::auth::oauth::OAuthConfig::with_base_url(&server.uri()),
+        )
+        .await;
+        assert_eq!(resolved, "sk-ant-oat01-refreshed");
+
+        let creds = store.load_snapshot().unwrap();
+        let cred = creds.get("anthropic").unwrap();
+        assert_eq!(cred.token, "sk-ant-oat01-refreshed");
+        assert_eq!(cred.refresh_token.as_deref(), Some("rt-new-refresh"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_api_key_with_refresh_async_falls_back_on_refresh_failure() {
+        use crate::infrastructure::auth::credential_store::{
+            AuthMethod, Credential, CredentialStore,
+        };
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .respond_with(ResponseTemplate::new(400).set_body_string("invalid_grant"))
+            .mount(&server)
+            .await;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = CredentialStore::new(tmp.path());
+        store
+            .store(Credential {
+                provider: "anthropic".to_string(),
+                token: "sk-ant-oat01-expired".to_string(),
+                method: AuthMethod::OAuth,
+                expires_at: Some(0),
+                refresh_token: Some("rt-bad-refresh".to_string()),
+                account_id: None,
+            })
+            .unwrap();
+
+        let resolved = resolve_api_key_with_refresh_async_with_oauth_config(
+            "sk-ant-config-fallback",
+            &store,
+            "anthropic",
+            &crate::infrastructure::auth::oauth::OAuthConfig::with_base_url(&server.uri()),
+        )
+        .await;
+        assert_eq!(resolved, "sk-ant-config-fallback");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_api_key_with_refresh_async_preserves_old_refresh_token_when_omitted() {
+        use crate::infrastructure::auth::credential_store::{
+            AuthMethod, Credential, CredentialStore,
+        };
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let response = serde_json::json!({
+            "access_token": "sk-ant-oat01-new-no-rt",
+            "expires_in": 28800
+        });
+
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+            .mount(&server)
+            .await;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = CredentialStore::new(tmp.path());
+        store
+            .store(Credential {
+                provider: "anthropic".to_string(),
+                token: "sk-ant-oat01-expired".to_string(),
+                method: AuthMethod::OAuth,
+                expires_at: Some(0),
+                refresh_token: Some("rt-original-keep-me".to_string()),
+                account_id: None,
+            })
+            .unwrap();
+
+        let resolved = resolve_api_key_with_refresh_async_with_oauth_config(
+            "",
+            &store,
+            "anthropic",
+            &crate::infrastructure::auth::oauth::OAuthConfig::with_base_url(&server.uri()),
+        )
+        .await;
+        assert_eq!(resolved, "sk-ant-oat01-new-no-rt");
+
+        let creds = store.load_snapshot().unwrap();
+        let cred = creds.get("anthropic").unwrap();
+        assert_eq!(cred.token, "sk-ant-oat01-new-no-rt");
+        assert_eq!(
+            cred.refresh_token.as_deref(),
+            Some("rt-original-keep-me"),
+            "old refresh token should be preserved when server omits it"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_api_key_with_refresh_async_updates_refresh_token_when_provided() {
+        use crate::infrastructure::auth::credential_store::{
+            AuthMethod, Credential, CredentialStore,
+        };
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let response = serde_json::json!({
+            "access_token": "sk-ant-oat01-new-with-rt",
+            "refresh_token": "rt-brand-new",
+            "expires_in": 28800
+        });
+
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+            .mount(&server)
+            .await;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let store = CredentialStore::new(tmp.path());
+        store
+            .store(Credential {
+                provider: "anthropic".to_string(),
+                token: "sk-ant-oat01-expired".to_string(),
+                method: AuthMethod::OAuth,
+                expires_at: Some(0),
+                refresh_token: Some("rt-old".to_string()),
+                account_id: None,
+            })
+            .unwrap();
+
+        let resolved = resolve_api_key_with_refresh_async_with_oauth_config(
+            "",
+            &store,
+            "anthropic",
+            &crate::infrastructure::auth::oauth::OAuthConfig::with_base_url(&server.uri()),
+        )
+        .await;
+        assert_eq!(resolved, "sk-ant-oat01-new-with-rt");
+
+        let creds = store.load_snapshot().unwrap();
+        let cred = creds.get("anthropic").unwrap();
+        assert_eq!(
+            cred.refresh_token.as_deref(),
+            Some("rt-brand-new"),
+            "refresh token should be updated when server provides a new one"
+        );
     }
 }

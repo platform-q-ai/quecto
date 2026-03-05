@@ -406,7 +406,7 @@ fn store_oauth_credential(
         token: token_resp.access_token.clone(),
         method: AuthMethod::OAuth,
         expires_at: Some(params.expires_at),
-        refresh_token: Some(token_resp.refresh_token.clone()),
+        refresh_token: token_resp.refresh_token.clone(),
         account_id: params.account_id,
     }) {
         Ok(()) => {

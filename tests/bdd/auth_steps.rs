@@ -739,3 +739,162 @@ fn then_resolved_api_key_is(world: &mut QuectoWorld, expected: String) {
         expected, actual
     );
 }
+
+// ===========================================================================
+// Optional refresh_token in OAuth response steps (issue #257)
+// ===========================================================================
+
+#[given(expr = "a mock OAuth refresh server that omits refresh_token and returns token {string}")]
+fn given_mock_oauth_refresh_server_no_refresh_token(world: &mut QuectoWorld, new_token: String) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (uri, leaked) = rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+
+        // Response deliberately omits refresh_token (valid per RFC 6749 §5.1)
+        let response = serde_json::json!({
+            "access_token": new_token,
+            "expires_in": 28800
+        });
+
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/oauth/token"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(&response))
+            .mount(&server)
+            .await;
+
+        let uri = server.uri();
+        let leaked: &'static wiremock::MockServer = Box::leak(Box::new(server));
+        (uri, leaked)
+    });
+    std::mem::forget(rt);
+    world.gateway_oauth_mock_uri = Some(uri);
+    world._gateway_oauth_mock_server = Some(leaked);
+}
+
+#[given(
+    expr = "a mock OAuth refresh server that returns a new token {string} with refresh token {string}"
+)]
+fn given_mock_oauth_refresh_server_with_refresh_token(
+    world: &mut QuectoWorld,
+    new_token: String,
+    new_refresh: String,
+) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (uri, leaked) = rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+
+        let response = serde_json::json!({
+            "access_token": new_token,
+            "refresh_token": new_refresh,
+            "expires_in": 28800
+        });
+
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/oauth/token"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(&response))
+            .mount(&server)
+            .await;
+
+        let uri = server.uri();
+        let leaked: &'static wiremock::MockServer = Box::leak(Box::new(server));
+        (uri, leaked)
+    });
+    std::mem::forget(rt);
+    world.gateway_oauth_mock_uri = Some(uri);
+    world._gateway_oauth_mock_server = Some(leaked);
+}
+
+#[then(expr = "the persisted credential for {string} should have refresh token {string}")]
+fn then_persisted_credential_has_refresh_token(
+    world: &mut QuectoWorld,
+    provider: String,
+    expected_refresh: String,
+) {
+    let base = base_path(world);
+    let store = CredentialStore::new(&base);
+    let creds = store.load_snapshot().unwrap();
+    let cred = creds
+        .get(&provider)
+        .unwrap_or_else(|| panic!("no credential found for provider '{}'", provider));
+    assert_eq!(
+        cred.refresh_token.as_deref(),
+        Some(expected_refresh.as_str()),
+        "expected persisted refresh token '{}' for '{}', got '{:?}'",
+        expected_refresh,
+        provider,
+        cred.refresh_token
+    );
+}
+
+#[given("a mock OAuth token exchange server that omits refresh_token")]
+fn given_mock_oauth_token_exchange_no_refresh_token(world: &mut QuectoWorld) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (uri, leaked) = rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+
+        let response = serde_json::json!({
+            "access_token": "sk-ant-oat01-exchanged",
+            "expires_in": 28800
+        });
+
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/oauth/token"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(&response))
+            .mount(&server)
+            .await;
+
+        let uri = server.uri();
+        let leaked: &'static wiremock::MockServer = Box::leak(Box::new(server));
+        (uri, leaked)
+    });
+    std::mem::forget(rt);
+    world.gateway_oauth_mock_uri = Some(uri);
+    world._gateway_oauth_mock_server = Some(leaked);
+}
+
+#[when("an OAuth token exchange is performed")]
+fn when_oauth_token_exchange(world: &mut QuectoWorld) {
+    use quecto::infrastructure::auth::oauth::{OAuthConfig, exchange_anthropic_code};
+
+    let uri = world
+        .gateway_oauth_mock_uri
+        .as_ref()
+        .expect("mock OAuth URI not set");
+    let config = OAuthConfig::with_base_url(uri);
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let result = rt.block_on(exchange_anthropic_code(
+        &config,
+        "code123#state456",
+        "verifier",
+    ));
+    world.gateway_token_exchange_result = Some(result);
+}
+
+#[then(expr = "the token exchange should succeed with access token {string}")]
+fn then_token_exchange_succeeds(world: &mut QuectoWorld, expected_token: String) {
+    let result = world
+        .gateway_token_exchange_result
+        .as_ref()
+        .expect("no token exchange result");
+    let resp = result.as_ref().expect("token exchange failed");
+    assert_eq!(
+        resp.access_token, expected_token,
+        "expected access token '{}', got '{}'",
+        expected_token, resp.access_token
+    );
+}
+
+#[then("the token exchange response should have no refresh token")]
+fn then_token_exchange_no_refresh_token(world: &mut QuectoWorld) {
+    let result = world
+        .gateway_token_exchange_result
+        .as_ref()
+        .expect("no token exchange result");
+    let resp = result.as_ref().expect("token exchange failed");
+    assert_eq!(
+        resp.refresh_token, None,
+        "expected no refresh token, got '{:?}'",
+        resp.refresh_token
+    );
+}
