@@ -558,3 +558,184 @@ fn then_stored_credential_method(world: &mut QuectoWorld, expected_method: Strin
         cred.method.as_str()
     );
 }
+
+// ===========================================================================
+// Gateway OAuth Token Refresh Steps (issue #254)
+// ===========================================================================
+
+#[given(expr = "a stored expired OAuth credential for {string} with refresh token {string}")]
+fn given_expired_oauth_credential(
+    world: &mut QuectoWorld,
+    provider: String,
+    refresh_token: String,
+) {
+    // Ensure temp dir and gateway credential store
+    if world.gateway_credential_store.is_none() {
+        ensure_temp_dir(world);
+        let base = base_path(world);
+        world.gateway_credential_store = Some(CredentialStore::new(&base));
+        if world.gateway_config.is_none() {
+            let config: Config = serde_json::from_str("{}").unwrap();
+            world.gateway_config = Some(config);
+        }
+    }
+    let store = world
+        .gateway_credential_store
+        .as_ref()
+        .expect("gateway credential store not set");
+    store
+        .store(Credential {
+            provider,
+            token: "sk-expired-token".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(0), // always expired
+            refresh_token: Some(refresh_token),
+            account_id: None,
+        })
+        .unwrap();
+}
+
+#[given(expr = "a stored valid OAuth credential for {string} with token {string}")]
+fn given_valid_oauth_credential(world: &mut QuectoWorld, provider: String, token: String) {
+    if world.gateway_credential_store.is_none() {
+        ensure_temp_dir(world);
+        let base = base_path(world);
+        world.gateway_credential_store = Some(CredentialStore::new(&base));
+        if world.gateway_config.is_none() {
+            let config: Config = serde_json::from_str("{}").unwrap();
+            world.gateway_config = Some(config);
+        }
+    }
+    let store = world
+        .gateway_credential_store
+        .as_ref()
+        .expect("gateway credential store not set");
+    store
+        .store(Credential {
+            provider,
+            token,
+            method: AuthMethod::OAuth,
+            expires_at: Some(i64::MAX), // far future — never expired
+            refresh_token: Some("rt-unused".to_string()),
+            account_id: None,
+        })
+        .unwrap();
+}
+
+#[given(expr = "a mock OAuth refresh server that returns a new token {string}")]
+fn given_mock_oauth_refresh_server_success(world: &mut QuectoWorld, new_token: String) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (uri, leaked) = rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+
+        let response = serde_json::json!({
+            "access_token": new_token,
+            "refresh_token": "rt-new-refresh",
+            "expires_in": 28800
+        });
+
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/oauth/token"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(&response))
+            .mount(&server)
+            .await;
+
+        let uri = server.uri();
+        let leaked: &'static wiremock::MockServer = Box::leak(Box::new(server));
+        (uri, leaked)
+    });
+    std::mem::forget(rt);
+    world.gateway_oauth_mock_uri = Some(uri);
+    world._gateway_oauth_mock_server = Some(leaked);
+}
+
+#[given("a mock OAuth refresh server that returns an error")]
+fn given_mock_oauth_refresh_server_error(world: &mut QuectoWorld) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let (uri, leaked) = rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/oauth/token"))
+            .respond_with(wiremock::ResponseTemplate::new(400).set_body_string("invalid_grant"))
+            .mount(&server)
+            .await;
+
+        let uri = server.uri();
+        let leaked: &'static wiremock::MockServer = Box::leak(Box::new(server));
+        (uri, leaked)
+    });
+    std::mem::forget(rt);
+    world.gateway_oauth_mock_uri = Some(uri);
+    world._gateway_oauth_mock_server = Some(leaked);
+}
+
+#[when(expr = "the gateway resolves API key with refresh for {string}")]
+fn when_gateway_resolves_with_refresh(world: &mut QuectoWorld, provider: String) {
+    use quecto::infrastructure::auth::oauth::OAuthConfig;
+    use quecto::interface::shared::resolve_api_key_with_refresh_async_with_oauth_config;
+
+    let config = world
+        .gateway_config
+        .as_ref()
+        .expect("gateway config not set");
+    let base = base_path(world);
+    let store = CredentialStore::new(&base);
+
+    let config_key = match provider.as_str() {
+        "openai" => &config.providers.openai.api_key,
+        "anthropic" => &config.providers.anthropic.api_key,
+        _ => panic!("unknown provider: {}", provider),
+    };
+
+    let oauth_config = world
+        .gateway_oauth_mock_uri
+        .as_ref()
+        .map(|uri| OAuthConfig::with_base_url(uri))
+        .unwrap_or_else(|| {
+            OAuthConfig::for_provider(&provider)
+                .unwrap_or_else(|| OAuthConfig::with_base_url("http://localhost:0"))
+        });
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let resolved = rt.block_on(resolve_api_key_with_refresh_async_with_oauth_config(
+        config_key,
+        &store,
+        &provider,
+        &oauth_config,
+    ));
+
+    world.gateway_resolved_api_key = Some(resolved);
+}
+
+#[then(expr = "the persisted credential for {string} should have token {string}")]
+fn then_persisted_credential_has_token(
+    world: &mut QuectoWorld,
+    provider: String,
+    expected_token: String,
+) {
+    let base = base_path(world);
+    let store = CredentialStore::new(&base);
+    let creds = store.load_snapshot().unwrap();
+    let cred = creds
+        .get(&provider)
+        .unwrap_or_else(|| panic!("no credential found for provider '{}'", provider));
+    assert_eq!(
+        cred.token, expected_token,
+        "expected persisted token '{}' for '{}', got '{}'",
+        expected_token, provider, cred.token
+    );
+}
+
+#[then(expr = "the resolved API key should be {string}")]
+fn then_resolved_api_key_is(world: &mut QuectoWorld, expected: String) {
+    let actual = world
+        .gateway_resolved_api_key
+        .as_ref()
+        .expect("no resolved API key");
+    assert_eq!(
+        actual, &expected,
+        "expected resolved API key '{}', got '{}'",
+        expected, actual
+    );
+}

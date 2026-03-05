@@ -141,3 +141,38 @@ Feature: Authentication
     Given a stored credential for "openai" that is expired
     When the gateway checks provider readiness
     Then the gateway should report "openai" needs re-authentication
+
+  # --- Gateway OAuth token refresh (issue #254) ---
+
+  @done
+  Scenario: Gateway refreshes expired OAuth token at startup
+    Given a config with no API key for "anthropic"
+    And a stored expired OAuth credential for "anthropic" with refresh token "rt-old-refresh"
+    And a mock OAuth refresh server that returns a new token "sk-ant-oat01-new-access"
+    When the gateway resolves API key with refresh for "anthropic"
+    Then the resolved API key should be "sk-ant-oat01-new-access"
+    And the persisted credential for "anthropic" should have token "sk-ant-oat01-new-access"
+
+  @done
+  Scenario: Gateway falls back to config key when OAuth refresh fails
+    Given a config with API key "sk-ant-config-key" for "anthropic"
+    And a stored expired OAuth credential for "anthropic" with refresh token "rt-bad-refresh"
+    And a mock OAuth refresh server that returns an error
+    When the gateway resolves API key with refresh for "anthropic"
+    Then the resolved API key should be "sk-ant-config-key"
+
+  @done
+  Scenario: Gateway uses valid non-expired OAuth token without refresh
+    Given a config with no API key for "anthropic"
+    And a stored valid OAuth credential for "anthropic" with token "sk-ant-oat01-valid"
+    When the gateway resolves API key with refresh for "anthropic"
+    Then the resolved API key should be "sk-ant-oat01-valid"
+
+  @done
+  Scenario: Gateway async refresh updates credential store on disk
+    Given a config with no API key for "openai"
+    And a stored expired OAuth credential for "openai" with refresh token "rt-openai-refresh"
+    And a mock OAuth refresh server that returns a new token "eyJnew-openai-token"
+    When the gateway resolves API key with refresh for "openai"
+    Then the resolved API key should be "eyJnew-openai-token"
+    And the persisted credential for "openai" should have token "eyJnew-openai-token"

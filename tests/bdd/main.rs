@@ -677,6 +677,10 @@ pub struct QuectoWorld {
     pub parsed_stop_reason: Option<quecto::domain::message::StopReason>,
     /// Normalized API messages (for normalization scenario assertions)
     pub api_messages: Vec<serde_json::Value>,
+    /// Mock OAuth refresh server URI (for gateway OAuth refresh scenarios, issue #254)
+    pub gateway_oauth_mock_uri: Option<String>,
+    /// Leaked wiremock server ref for OAuth refresh mock (kept alive)
+    pub _gateway_oauth_mock_server: Option<&'static wiremock::MockServer>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
