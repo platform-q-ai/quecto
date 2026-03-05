@@ -514,6 +514,10 @@ pub struct QuectoWorld {
     pub _uds_socket_path: Option<std::path::PathBuf>,
     /// UDS agent: when true, pass an explicit socket path to run_uds_loop
     pub _uds_use_explicit_socket: bool,
+    /// UDS agent: path used when testing the real bind path (socket_override = None)
+    pub _uds_real_bind_socket_path: Option<std::path::PathBuf>,
+    /// UDS agent: unix mode bits sampled from the socket file after bind
+    pub _uds_real_bind_socket_mode: Option<u32>,
     /// REPL: accumulated input lines (built up by "I type" steps)
     pub repl_input_lines: Vec<String>,
     /// REPL: flags to pass (built up by "with flags" steps)

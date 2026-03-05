@@ -532,12 +532,17 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     let system_prompt =
         crate::interface::shared::build_system_prompt(&skill_prompt, &flags.system_prompt);
 
-    // Use --socket path if provided, otherwise auto-generate in tmpdir.
+    // Use --socket path if provided, otherwise auto-generate.
+    // Prefer $XDG_RUNTIME_DIR (/run/user/<uid>, mode 0700) so the socket is
+    // not enumerable by other users via `ls /tmp/`.  Fall back to temp_dir()
+    // when XDG_RUNTIME_DIR is not set (e.g. non-systemd environments).
     // Callers discover the path by watching stderr for "quecto-agent-socket: <path>".
     let socket_path = flags.socket_path.clone().unwrap_or_else(|| {
-        let tmpdir = std::env::temp_dir();
+        let dir = std::env::var_os("XDG_RUNTIME_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
         let id = uuid::Uuid::new_v4();
-        tmpdir.join(format!("quecto-agent-{id}.sock"))
+        dir.join(format!("quecto-agent-{id}.sock"))
     });
 
     crate::interface::cli::uds::run_uds_loop(crate::interface::cli::uds::UdsLoopArgs {
