@@ -43,7 +43,7 @@ pub struct UdsLoopArgs<'a> {
     /// In tests: unused (the pre-connected `socket_override` is used instead).
     pub socket_path: std::path::PathBuf,
     /// Pre-connected stream injected by tests instead of accepting from a listener.
-    /// `None` = bind `socket_path` with mode `0600` (umask-before-bind), accept one connection.
+    /// `None` = bind `socket_path` with mode `0600` (chmod-after-bind), accept one connection.
     pub socket_override: Option<std::os::unix::net::UnixStream>,
     /// Injected session store for testing.  `None` = use `FileSessionStore`.
     pub session_store_override: Option<Box<dyn SessionStore + 'static>>,
@@ -52,7 +52,7 @@ pub struct UdsLoopArgs<'a> {
 /// Run the UDS event loop.
 ///
 /// In production: binds a `UnixListener` on `socket_path`, prints the path
-/// to stderr, binds with mode `0600` (umask-before-bind), accepts one client, then processes
+/// to stderr, binds with mode `0600` (chmod-after-bind), accepts one client, then processes
 /// JSON-lines commands until the client closes the connection.  The socket
 /// file is unlinked on exit (both clean and panicked via a drop guard).
 ///
@@ -92,13 +92,16 @@ impl Drop for SocketGuard {
 ///
 /// # Errors
 /// Returns `std::io::Error` if bind or chmod fails.
-pub(crate) fn bind_secure_socket(
-    path: &std::path::Path,
-) -> std::io::Result<tokio::net::UnixListener> {
+fn bind_secure_socket(path: &std::path::Path) -> std::io::Result<tokio::net::UnixListener> {
     use std::os::unix::fs::PermissionsExt;
     let _ = std::fs::remove_file(path);
     let listener = tokio::net::UnixListener::bind(path)?;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
+        // Remove the bound-but-insecure socket so it does not linger on disk
+        // with overly permissive mode.  The caller will exit on the error.
+        let _ = std::fs::remove_file(path);
+        return Err(e);
+    }
     Ok(listener)
 }
 

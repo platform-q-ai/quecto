@@ -863,9 +863,11 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
 
     // Sample the socket mode while the file still exists (before SocketGuard
     // removes it after the agent exits).
-    if let Ok(meta) = std::fs::metadata(&socket_path) {
-        world._uds_real_bind_socket_mode = Some(meta.permissions().mode() & 0o777);
-    }
+    let mode = std::fs::metadata(&socket_path)
+        .expect("failed to stat socket file after bind — possible race or bind failure")
+        .permissions()
+        .mode();
+    world._uds_real_bind_socket_mode = Some(mode & 0o777);
 
     // Connect and immediately disconnect to unblock accept() so the agent exits.
     let _ = UnixStream::connect(&socket_path);
