@@ -29,8 +29,8 @@ pub struct UdsLoopArgs<'a> {
     pub model: String,
     pub ephemeral: bool,
     /// System prompt (datetime preamble + skills + user `--system`).
-    /// Prepended as transient `Message::system` before each run; stripped
-    /// before persisting so it is not double-injected on next invocation.
+    /// Prepended as transient `Message::system`; stripped before persisting.
+    /// NOTE: datetime is fixed at process-start — stale for long sessions.
     pub system_prompt: String,
     /// Path to the Unix domain socket.  Bound and announced in production;
     /// unused in tests (see `socket_override`).
@@ -57,8 +57,10 @@ pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
 }
 
 /// Remove stale `quecto-agent-*.sock` files older than `max_age` from `dir`.
-/// Best-effort: silently ignores errors.  Drop guards do not run on SIGKILL,
-/// so stale sockets can accumulate; this runs at startup to clean up.
+/// Best-effort (ignores errors).  Drop guards don't run on SIGKILL so sockets
+/// can accumulate; call this at startup.  `metadata()` follows symlinks
+/// (symlinks in the socket dir are not expected).  TOCTOU between stat and
+/// unlink is acceptable at 24h granularity with UUID-named sockets.
 pub(crate) fn reap_stale_sockets(dir: &std::path::Path, max_age: std::time::Duration) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;

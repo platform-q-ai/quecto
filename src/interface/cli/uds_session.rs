@@ -61,6 +61,10 @@ impl AgentSession {
     }
 
     pub fn drain_pending(&mut self) -> Vec<String> {
+        // Vec::from(VecDeque) calls make_contiguous() then ptr::copy when the
+        // deque's head != 0 — O(n) in the number of elements, same as the
+        // previous .into_iter().collect().  Pending queue is capped at 64
+        // entries so worst case is ~64 fat-pointer copies (~1.5 KiB).
         Vec::from(std::mem::take(&mut self.pending))
     }
 

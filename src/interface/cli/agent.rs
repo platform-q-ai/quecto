@@ -19,6 +19,13 @@ use crate::infrastructure::tools::recall::RecallTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use crate::infrastructure::tools::spawn::SpawnTool;
 
+/// Maximum byte length for user-supplied `--socket` paths.
+///
+/// Linux `sockaddr_un.sun_path` is 108 bytes (107 usable + NUL terminator).
+/// macOS/BSDs use 104 bytes.  We enforce the stricter macOS limit so the same
+/// path works cross-platform.  Auto-generated UUID paths are always ≤70 bytes.
+const MAX_SOCKET_PATH_BYTES: usize = 104;
+
 /// Parsed flags for the `agent` subcommand.
 pub(crate) struct AgentFlags {
     /// Session name for persistence. `None` = "default", `Some("-")` = ephemeral.
@@ -518,7 +525,6 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     // Early validation for user-supplied --socket paths: check length before
     // doing any I/O (config load, agent build).  Auto-generated paths are
     // always short, so we only gate on explicitly provided paths here.
-    const MAX_SOCKET_PATH_BYTES: usize = 104;
     if let Some(ref p) = flags.socket_path {
         if p.as_os_str().len() > MAX_SOCKET_PATH_BYTES {
             stderr
