@@ -83,9 +83,9 @@ Feature: Built-in workflow tool
 
   # ─── Domain: WorkflowConfig ────────────────────────────────────────────────
 
-  Scenario: Default workflow config has enabled true and 16 default steps
+  Scenario: Default workflow config has enabled false and 16 default steps
     Given a default workflow config
-    Then the workflow config should be enabled
+    Then the workflow config should not be enabled
     And the workflow config should have 16 steps
     And the first step should be id 1 label "Update Scenarios / Add new features" phase "red"
     And the last step should be id 16 label "Move to local master and pull" phase "ci_cd"
@@ -104,7 +104,7 @@ Feature: Built-in workflow tool
   Scenario: Config without workflow section uses defaults
     Given a config file without workflow section
     When I load the config
-    Then the workflow config should be enabled
+    Then the workflow config should not be enabled
     And the workflow config should have 16 steps
 
   # ─── Tool: WorkflowTool ────────────────────────────────────────────────────

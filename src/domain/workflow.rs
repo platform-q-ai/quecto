@@ -453,7 +453,7 @@ pub struct WorkflowConfig {
 impl Default for WorkflowConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             steps: default_steps(),
             auto_continue: true,
             completion_nudge: true,

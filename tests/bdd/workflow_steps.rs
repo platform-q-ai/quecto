@@ -191,11 +191,13 @@ fn then_config_enabled(world: &mut QuectoWorld) {
 
 #[then("the workflow config should not be enabled")]
 fn then_config_not_enabled(world: &mut QuectoWorld) {
-    let config = world
-        .workflow_config
-        .as_ref()
-        .expect("workflow config should exist");
-    assert!(!config.enabled);
+    if let Some(ref config) = world.workflow_config {
+        assert!(!config.enabled);
+    } else if let Some(ref config) = world.config {
+        assert!(!config.workflow.enabled);
+    } else {
+        panic!("no workflow config or loaded config available");
+    }
 }
 
 #[then(expr = "the workflow config should have {int} steps")]

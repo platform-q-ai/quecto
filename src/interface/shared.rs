@@ -78,6 +78,37 @@ pub fn build_system_prompt(skill_prompt: &str, user_prompt: &Option<String>) -> 
     }
 }
 
+/// Append the workflow state snippet to a system prompt if workflow is enabled.
+pub fn append_workflow_prompt(
+    system: &mut String,
+    wf_config: &crate::domain::workflow::WorkflowConfig,
+) {
+    if !wf_config.enabled {
+        return;
+    }
+    let state = crate::domain::workflow::WorkflowState::from_config(wf_config);
+    system.push_str("\n\n");
+    system.push_str(&state.system_prompt_snippet_with_config(wf_config.enforce_commit_after_step));
+}
+
+/// Register the workflow tool in a tool registry if workflow is enabled.
+///
+/// Returns the shared workflow state for use in system prompt injection.
+pub fn register_workflow_tool(
+    registry: &mut crate::infrastructure::tools::registry::ToolRegistryImpl,
+    wf_config: &crate::domain::workflow::WorkflowConfig,
+) {
+    if !wf_config.enabled {
+        return;
+    }
+    let state = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::domain::workflow::WorkflowState::from_config(wf_config),
+    ));
+    let mut tool = crate::infrastructure::tools::workflow_tool::WorkflowTool::new(state);
+    tool.set_enforce_commit(wf_config.enforce_commit_after_step);
+    registry.register(std::sync::Arc::new(tool));
+}
+
 /// Resolve an API key for a provider from a credential snapshot.
 ///
 /// The credential store snapshot takes priority over the config-file key.
