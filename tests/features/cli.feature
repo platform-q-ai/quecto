@@ -15,10 +15,8 @@ Feature: CLI Interface
     And the output should contain "Usage: quecto [command]"
     And the output should contain "onboard"
     And the output should contain "agent"
-    And the output should contain "gateway"
     And the output should contain "status"
     And the output should contain "auth"
-    And the output should contain "cron"
     And the output should contain "skills"
     And the output should contain "version"
 

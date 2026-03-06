@@ -1,40 +1,7 @@
 use std::path::PathBuf;
 
 use crate::domain::error::DomainError;
-use crate::domain::workspace::{HeartbeatTaskSource, OnboardStore};
-
-#[derive(Debug, Clone)]
-pub struct FileHeartbeatTaskSource {
-    workspace: PathBuf,
-}
-
-impl FileHeartbeatTaskSource {
-    pub fn new(workspace: impl Into<PathBuf>) -> Self {
-        Self {
-            workspace: workspace.into(),
-        }
-    }
-}
-
-impl HeartbeatTaskSource for FileHeartbeatTaskSource {
-    fn read_heartbeat_md(
-        &self,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<Option<String>, DomainError>> + Send + '_>,
-    > {
-        Box::pin(async move {
-            let path = self.workspace.join("HEARTBEAT.md");
-            match tokio::fs::read_to_string(&path).await {
-                Ok(content) => Ok(Some(content)),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-                Err(e) => Err(DomainError::Other(format!(
-                    "failed to read HEARTBEAT.md: {}",
-                    e
-                ))),
-            }
-        })
-    }
-}
+use crate::domain::workspace::OnboardStore;
 
 #[derive(Debug, Clone)]
 pub struct FileOnboardStore {
@@ -120,14 +87,6 @@ impl OnboardStore for FileOnboardStore {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-
-    #[tokio::test]
-    async fn test_heartbeat_source_missing_file_returns_none() {
-        let tmp = TempDir::new().unwrap();
-        let source = FileHeartbeatTaskSource::new(tmp.path());
-        let content = source.read_heartbeat_md().await.unwrap();
-        assert!(content.is_none());
-    }
 
     #[test]
     fn test_onboard_store_rejects_non_basename_workspace_file() {

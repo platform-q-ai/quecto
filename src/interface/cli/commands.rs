@@ -49,62 +49,7 @@ pub(crate) fn cmd_status(ctx: &CliContext, stdout: &mut String, stderr: &mut Str
     stdout.push_str(&format!("  OpenAI API:    {}\n", openai_status));
     stdout.push_str(&format!("  Anthropic API: {}\n", anthropic_status));
 
-    // Telegram status
-    let telegram_status = if config.channels.telegram.enabled {
-        "enabled"
-    } else {
-        "disabled"
-    };
-    stdout.push_str(&format!("  Telegram:      {}\n", telegram_status));
-
-    // Heartbeat status
-    let heartbeat_status = if config.heartbeat.enabled {
-        format!("enabled ({}s)", config.heartbeat.interval)
-    } else {
-        "disabled".to_string()
-    };
-    stdout.push_str(&format!("  Heartbeat:     {}\n", heartbeat_status));
-
     0
-}
-
-/// Run the gateway as a long-running async service.
-/// This creates a tokio runtime and blocks until shutdown.
-pub(crate) fn cmd_gateway_run(ctx: &CliContext) -> i32 {
-    use crate::interface::gateway::Gateway;
-
-    let base_dir = ctx.base_dir();
-    let config_path = ctx.config_path();
-
-    if !config_path.exists() {
-        eprintln!("config not found at {}", config_path.display());
-        eprintln!("run 'quecto onboard' first");
-        return 1;
-    }
-
-    // Load config with env overrides
-    let env_overrides: HashMap<String, String> = std::env::vars()
-        .filter(|(k, _)| k.starts_with("QUECTO_"))
-        .collect();
-
-    let config = match Config::load_with_env(config_path.to_str().unwrap_or(""), &env_overrides) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("failed to load config: {}", e);
-            return 1;
-        }
-    };
-
-    let gateway = Gateway::new(config, base_dir);
-
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    match rt.block_on(gateway.run()) {
-        Ok(()) => 0,
-        Err(e) => {
-            eprintln!("gateway error: {}", e);
-            1
-        }
-    }
 }
 
 pub(crate) fn cmd_onboard(ctx: &CliContext, stdout: &mut String, stderr: &mut String) -> i32 {

@@ -103,9 +103,4 @@ Feature: Security Sandbox
     Then the validation should be an error
     And the error should mention "outside working dir"
 
-  Scenario: Heartbeat tasks inherit workspace restrictions
-    Given a sandboxed workspace at "/tmp/quecto-test"
-    And restrict_to_workspace is true
-    When a heartbeat sandbox validates path "/etc/shadow"
-    Then the validation should be an error
-    And the error should mention "outside working dir"
+

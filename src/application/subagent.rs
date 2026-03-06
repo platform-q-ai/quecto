@@ -12,8 +12,6 @@ pub struct SubagentContext {
     pub messages: Vec<Message>,
     /// Whether workspace restriction is inherited from parent.
     pub restrict_to_workspace: bool,
-    /// Where to deliver results.
-    pub deliver_to: Option<String>,
 }
 
 impl SubagentContext {
@@ -23,7 +21,6 @@ impl SubagentContext {
             task: config.task.clone(),
             messages: vec![], // Independent — no parent history
             restrict_to_workspace: config.restrict_to_workspace,
-            deliver_to: config.deliver_to.clone(),
         }
     }
 }
@@ -38,7 +35,6 @@ mod tests {
             task: "Do stuff".to_string(),
             agent_id: None,
             restrict_to_workspace: true,
-            deliver_to: None,
             system: None,
         };
         let ctx = SubagentContext::from_config(&config);
@@ -52,7 +48,6 @@ mod tests {
             task: "task".to_string(),
             agent_id: None,
             restrict_to_workspace: true,
-            deliver_to: None,
             system: None,
         };
         let ctx = SubagentContext::from_config(&config);
@@ -65,23 +60,9 @@ mod tests {
             task: "task".to_string(),
             agent_id: None,
             restrict_to_workspace: false,
-            deliver_to: None,
             system: None,
         };
         let ctx = SubagentContext::from_config(&config);
         assert!(!ctx.restrict_to_workspace);
-    }
-
-    #[test]
-    fn test_deliver_to_propagated() {
-        let config = SubagentConfig {
-            task: "task".to_string(),
-            agent_id: None,
-            restrict_to_workspace: true,
-            deliver_to: Some("telegram:12345".to_string()),
-            system: None,
-        };
-        let ctx = SubagentContext::from_config(&config);
-        assert_eq!(ctx.deliver_to.as_deref(), Some("telegram:12345"));
     }
 }

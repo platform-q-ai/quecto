@@ -9,7 +9,6 @@ fn given_subagent_spawn_request(world: &mut QuectoWorld, task: String) {
         task,
         agent_id: None,
         restrict_to_workspace: false,
-        deliver_to: None,
         system: None,
     });
 }
@@ -21,7 +20,6 @@ fn given_parent_config_restrict(world: &mut QuectoWorld, value: String) {
         task: "test task".to_string(),
         agent_id: None,
         restrict_to_workspace: restrict,
-        deliver_to: None,
         system: None,
     });
 }
@@ -122,55 +120,6 @@ fn then_validation_fails_with(world: &mut QuectoWorld, expected: String) {
         expected,
         err
     );
-}
-
-// ===========================================================================
-// Subagent + Message Tool Steps
-// ===========================================================================
-
-#[given(expr = "a subagent with deliver_to {string}")]
-fn given_subagent_with_deliver_to(world: &mut QuectoWorld, deliver_to: String) {
-    world.subagent_config = Some(SubagentConfig {
-        task: "test task".to_string(),
-        agent_id: None,
-        restrict_to_workspace: false,
-        deliver_to: Some(deliver_to),
-        system: None,
-    });
-    world.subagent_context = Some(SubagentContext::from_config(
-        world.subagent_config.as_ref().unwrap(),
-    ));
-}
-
-#[given("a message tool connected to the bus")]
-fn given_message_tool_on_bus(world: &mut QuectoWorld) {
-    let deliver_to = world
-        .subagent_context
-        .as_ref()
-        .expect("subagent context not set")
-        .deliver_to
-        .clone();
-
-    let mut bus = MessageBus::new(16);
-    let sender = bus.outbound_sender();
-    let receiver = bus.take_outbound_receiver().unwrap();
-    world.message_bus_receiver = Some(receiver);
-
-    let tool = MessageTool::new(sender, deliver_to);
-    let mut registry = ToolRegistryImpl::new();
-    registry.register(Arc::new(tool));
-    world.tool_registry = Some(registry);
-}
-
-#[when(expr = "the subagent sends result {string} via the message tool")]
-fn when_subagent_sends_via_message(world: &mut QuectoWorld, text: String) {
-    let registry = world.tool_registry.as_ref().expect("tool registry not set");
-    let args = serde_json::json!({"text": text}).to_string();
-    let result = tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(registry.execute("message", &args))
-        .unwrap();
-    assert!(!result.is_error, "message send failed: {}", result.content);
 }
 
 // ===========================================================================

@@ -1,8 +1,5 @@
 pub mod agent_loop;
 pub mod context_pruning;
-pub mod cron_executor;
-pub mod heartbeat;
 pub mod onboard;
 pub mod reload;
 pub mod subagent;
-pub mod voice;

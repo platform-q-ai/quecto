@@ -4,30 +4,6 @@ use super::*;
 // Config Steps (Given)
 // ===========================================================================
 
-// --- Issue #193: TelegramConfig.default_send_to BDD steps ---
-
-#[then("the telegram default_send_to should be absent")]
-fn then_telegram_default_send_to_absent(world: &mut QuectoWorld) {
-    let config = world.config.as_ref().expect("config not loaded");
-    assert!(
-        config.channels.telegram.default_send_to.is_none(),
-        "expected default_send_to to be None, got: {:?}",
-        config.channels.telegram.default_send_to
-    );
-}
-
-#[then(expr = "the telegram default_send_to should be {string}")]
-fn then_telegram_default_send_to(world: &mut QuectoWorld, expected: String) {
-    let config = world.config.as_ref().expect("config not loaded");
-    assert_eq!(
-        config.channels.telegram.default_send_to.as_deref(),
-        Some(expected.as_str()),
-        "expected default_send_to to be {:?}, got: {:?}",
-        expected,
-        config.channels.telegram.default_send_to
-    );
-}
-
 #[given(expr = "a config file at {string} with content:")]
 fn given_config_file_at_path(world: &mut QuectoWorld, step: &gherkin::Step, _path: String) {
     let content = step.docstring().expect("step should have a docstring");

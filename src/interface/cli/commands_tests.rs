@@ -1,4 +1,3 @@
-use super::*;
 use crate::interface::cli::{CliContext, run_with_output};
 
 fn mock_github_raw_skill(owner: &str, repo: &str, skill: &str, body: &str) -> wiremock::MockServer {
@@ -262,59 +261,6 @@ fn test_skills_install_creates_skill_files() {
     assert!(content.contains("Weather forecasts"));
 }
 
-#[test]
-fn test_status_shows_telegram_and_heartbeat() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let config_json = r#"{
-        "providers": { "openai": { "api_key": "sk-test" } },
-        "channels": { "telegram": { "enabled": true, "token": "123:ABC" } },
-        "heartbeat": { "enabled": true, "interval": 300 }
-    }"#;
-    std::fs::write(tmp.path().join("config.json"), config_json).unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
-    let out = run_with_output(args("status"), &ctx);
-    assert_eq!(out.exit_code, 0);
-    assert!(out.stdout.contains("Telegram:"));
-    assert!(out.stdout.contains("enabled"));
-    assert!(out.stdout.contains("Heartbeat:"));
-    assert!(out.stdout.contains("300s"));
-}
-
-#[test]
-fn test_status_disabled_telegram_and_heartbeat() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let config_json = r#"{
-        "providers": { "openai": { "api_key": "sk-test" } },
-        "channels": { "telegram": { "enabled": false } },
-        "heartbeat": { "enabled": false }
-    }"#;
-    std::fs::write(tmp.path().join("config.json"), config_json).unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
-    let out = run_with_output(args("status"), &ctx);
-    assert_eq!(out.exit_code, 0);
-    assert!(out.stdout.contains("disabled"));
-}
-
-#[test]
-fn test_gateway_no_config() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
-    // cmd_gateway_run uses eprintln directly, so we test through run_with_output
-    // (which routes "gateway" to a hint message since the real gateway path
-    // goes through run() -> cmd_gateway_run)
-    let out = run_with_output(args("gateway"), &ctx);
-    assert_eq!(out.exit_code, 0);
-}
-
 // ===================================================================
 // skills remove success + edge cases
 // ===================================================================
@@ -374,21 +320,4 @@ fn test_status_both_providers_configured() {
     // Both should show "configured"
     let configured_count = out.stdout.matches("configured").count();
     assert_eq!(configured_count, 2, "stdout: {}", out.stdout);
-}
-
-// ===================================================================
-// cmd_gateway_run() no-config path
-// ===================================================================
-
-#[test]
-fn test_cmd_gateway_run_no_config() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
-    // cmd_gateway_run uses eprintln, so we can't capture stderr via CliOutput.
-    // But we can verify the exit code.
-    let code = cmd_gateway_run(&ctx);
-    assert_eq!(code, 1);
 }

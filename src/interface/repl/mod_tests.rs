@@ -6,8 +6,6 @@ fn test_slash_command_constants() {
     assert_eq!(CMD_QUIT, "/quit");
     assert_eq!(CMD_HELP, "/help");
     assert_eq!(CMD_CLEAR, "/clear");
-    assert_eq!(CMD_HEARTBEAT, "/heartbeat");
-    assert_eq!(CMD_CRON, "/cron");
     assert_eq!(CMD_AGENT, "/agent");
     assert_eq!(CMD_SPAWN, "/spawn");
 }
@@ -292,8 +290,6 @@ fn test_run_help_command() {
     assert!(out.contains("/clear"));
     assert!(out.contains("/exit"));
     assert!(out.contains("/quit"));
-    assert!(out.contains("/cron"));
-    assert!(out.contains("/heartbeat"));
     assert!(out.contains("/agent"));
     assert!(out.contains("/spawn"));
 }
@@ -660,8 +656,6 @@ fn test_print_help() {
     assert!(out.contains("/exit"));
     assert!(out.contains("/quit"));
     assert!(out.contains("/agent"));
-    assert!(out.contains("/cron"));
-    assert!(out.contains("/heartbeat"));
     assert!(out.contains("/spawn"));
 }
 

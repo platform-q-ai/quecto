@@ -26,13 +26,10 @@ Zero deps except `thiserror`, `serde` (derive), `serde_yaml`. Defines system voc
 | `agent.rs` | `AgentLoop` trait, `AgentInfo`, `AgentResult`, `AgentProgressEvent`, `ProgressCallback` |
 | `session.rs` | `Session`, `SessionStore` trait, `SpillEntry`, `SpillIndex`, `ContextSpillStore` trait, `strip_tool_history()` |
 | `skill.rs` | `Skill`, `SkillSource`, `SkillFrontmatter`, `SkillLoader` trait, `split_skill_md()`, `validate_frontmatter()` |
-| `cron.rs` | `CronJob`, `CronJobResult`, `CronSchedule`, `CronStore` trait, `is_job_due()` (saturating arithmetic) |
-| `channel.rs` | `Channel` trait (outbound delivery port) |
-| `workspace.rs` | `HeartbeatTaskSource` and `OnboardStore` ports |
+| `workspace.rs` | `OnboardStore` port |
 | `subagent.rs` | `SubagentConfig`, `validate_agent_id()` |
-| `voice.rs` | `VoiceTranscriber` trait, `TranscriptionResult`, `TranscriptionError` |
 | `workflow.rs` | `WorkflowState`, `WorkflowConfig` (`guard_commit`, `enforce_commit_after_step`, `steps`), `WorkflowStep`, `WorkflowPersistable`, `default_steps()` (returns empty — steps must be configured in config.json), `bdd_steps()` (test-only 16-step template), `from_persistable_with_steps()` |
-| `error.rs` | `DomainError` enum (Provider, Tool, Session, Channel, Security, Config, Other) |
+| `error.rs` | `DomainError` enum (Provider, Tool, Session, Security, Config, Other) |
 
 Traits use `Pin<Box<dyn Future + Send + '_>>` for `Arc<dyn Trait>` compatibility.
 
@@ -43,29 +40,22 @@ Depends only on `domain/`. Orchestration logic, no I/O.
 |---|---|
 | `agent_loop.rs` | Core LLM-tool loop: send → execute tools → repeat. Traces `tool_name`, `duration_ms`, `is_error`. Progress callbacks for REPL spinner |
 | `context_pruning.rs` | Token estimation, sliding window, pinned manifest. Collapse disabled by default (`context_collapse_after_turns = u32::MAX`); spill-to-disk when enabled |
-| `cron_executor.rs` | Runs due cron jobs with timeout, records `last_error`, propagates `deliver_to` |
-| `heartbeat.rs` | Task parsing, scheduling, dispatch through agent |
 | `onboard.rs` | Onboarding orchestration via `OnboardStore` |
 | `reload.rs` | `/reload` use case: strips stale tool history via `strip_tool_history()`, clears spill index, coordinates `SessionStore` + `ContextSpillStore` |
 | `subagent.rs` | `SubagentContext` — child agent contexts with inherited sandbox |
-| `voice.rs` | Transcribes audio via `VoiceTranscriber`, routes text through agent |
 
 ### infrastructure/ — Concrete adapters
 Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 
 | Component | Contents |
 |---|---|
-| `config.rs` | `Config` with serde, env overrides, exec isolation settings (nsjail binary/limits/fallback), `TelegramConfig.default_send_to`, `WorkflowConfig` (steps must be explicit in config.json, `guard_commit` controls WorkflowGuard registration) |
+| `config.rs` | `Config` with serde, env overrides, exec isolation settings (nsjail binary/limits/fallback), `WorkflowConfig` (steps must be explicit in config.json, `guard_commit` controls WorkflowGuard registration) |
 | `providers/` | `OpenAiProvider`, `AnthropicProvider` (SSE streaming), `CodexProvider` (Responses API, SSE, `prompt_cache_key`, orphan pair repair), `FallbackProvider` (cooldown + error classification + `claude-*` model routing). URL validation: https required for non-loopback |
-| `tools/` | `bash/` (shell, 1MiB cap, per-invocation timeout, `commandPrefix`, native/nsjail modes), `filesystem/` (`ReadTool` with image base64+auto-resize, `WriteTool`, `EditTool` with fuzzy match+CRLF/BOM+LCS diff, `LsTool` with limit+case-insensitive sort), `grep.rs` (rg JSON output, file-cache context), `find.rs` (fd, nested .gitignore, path-segment globs via `--full-path`), `ensure_tool.rs` (auto-download rg/fd from GitHub), `spawn.rs`, `cron_tool.rs`, `message.rs` (with `default_send_to` fallback), `web_search.rs` (Brave+DDG), `recall.rs` (spill retrieval), `workflow_tool.rs` (`WorkflowTool` + `WorkflowGuard` — blocks `git commit`/`git push` when workflow steps incomplete; registration controlled by `guard_commit` config), `path_utils.rs`, `truncate.rs`, `registry.rs` (`ToolRegistryImpl`, `guard_count()`) |
-| `persistence/` | `FileSessionStore` (round-trips all Message fields), `MemoryStore`, `FileCronStore` (Mutex-serialized read-modify-write, atomic temp-file rename), `FileSkillLoader`, `FileHeartbeatTaskSource`, `FileOnboardStore`, `FileContextSpillStore` (JSONL append-only) |
+| `tools/` | `bash/` (shell, 1MiB cap, per-invocation timeout, `commandPrefix`, native/nsjail modes), `filesystem/` (`ReadTool` with image base64+auto-resize, `WriteTool`, `EditTool` with fuzzy match+CRLF/BOM+LCS diff, `LsTool` with limit+case-insensitive sort), `grep.rs` (rg JSON output, file-cache context), `find.rs` (fd, nested .gitignore, path-segment globs via `--full-path`), `ensure_tool.rs` (auto-download rg/fd from GitHub), `spawn.rs`, `web_search.rs` (Brave+DDG), `recall.rs` (spill retrieval), `workflow_tool.rs` (`WorkflowTool` + `WorkflowGuard` — blocks `git commit`/`git push` when workflow steps incomplete; registration controlled by `guard_commit` config), `path_utils.rs`, `truncate.rs`, `registry.rs` (`ToolRegistryImpl`, `guard_count()`) |
+| `persistence/` | `FileSessionStore` (round-trips all Message fields), `MemoryStore`, `FileSkillLoader`, `FileOnboardStore`, `FileContextSpillStore` (JSONL append-only) |
 | `security/` | `Sandbox` — workspace path validation + command filtering |
 | `auth/` | `CredentialStore` (file-based), `oauth.rs` (browser + device code flows, Anthropic OAuth) |
-| `channels/` | `TelegramChannel` — send/receive, user allowlist, configurable `api_base`, `default_send_to` |
-| `voice/` | `GroqWhisperClient` — Groq API speech-to-text |
 | `logging.rs` | `redact_api_keys()` — pattern-based secret redaction |
-| `bus.rs` | `MessageBus` — async channel for message passing |
-| `health/` | `HealthServer` — raw tokio TCP, `/health` (liveness) + `/ready` (readiness) |
 
 ### Tool isolation
 
@@ -75,7 +65,7 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 
 **Tool binary resolution** (`rg`, `fd`): `ensure_tool` resolves via system PATH → cache dir (`~/.local/share/quecto/tools/`) → auto-download from GitHub releases. Set `QUECTO_OFFLINE=1` to disable downloads.
 
-### interface/ — CLI + Gateway (composition root)
+### interface/ — CLI (composition root)
 Manual arg parsing (no clap). Entry point: `cli::run(args) -> i32`.
 
 | Command | Description |
@@ -86,16 +76,13 @@ Manual arg parsing (no clap). Entry point: `cli::run(args) -> i32`.
 | `quecto skills list\|remove\|install` | Skill management |
 | `quecto status` | Config summary, provider availability |
 | `quecto auth login\|logout\|status` | Credential management (token/OAuth/device-code) |
-| `quecto gateway` | Full async gateway (Telegram polling + agent loop) |
 | `quecto help\|version` | Self-explanatory |
 
-REPL commands: `/help`, `/clear`, `/cron`, `/heartbeat`, `/agent`, `/spawn`, `/exit`. Uses abstracted I/O for testing.
+REPL commands: `/help`, `/clear`, `/agent`, `/spawn`, `/exit`. Uses abstracted I/O for testing.
 
 REPL progress: `ProgressRenderer` drives a braille spinner at ~12fps on stderr (TTY only). Shows thinking state, tool name, arguments preview, and execution status. Pure ANSI escape codes — no external crates.
 
-All entry points (REPL, CLI agent, gateway) prepend a datetime preamble to the system prompt via `build_system_prompt()` so the agent always knows the current date/time/timezone — critical for cron scheduling and time-aware tasks.
-
-Gateway: `EventLoopContext` holds runtime state. Telegram polling, bot commands (`/start`, `/help`, `/status`, `/reload`), credential snapshot for efficiency, session trimming via `max_session_messages`, graceful shutdown via `tokio::select!`. Gateway services use a `SystemPromptAgent` wrapper that injects a transient datetime+skills system prompt before each `process()` call and strips it after — never persisted in session history. Applied to inbound message processing, heartbeat ticks, and cron ticks.
+All entry points (REPL, CLI agent) prepend a datetime preamble to the system prompt via `build_system_prompt()` so the agent always knows the current date/time/timezone — critical for time-aware tasks.
 
 Headless CLI agent includes `SpawnTool` for background subagent spawning. Subagent timeout: 24 hours.
 

@@ -122,11 +122,6 @@ Feature: Agent Tool System
     And the tool registry should contain "edit"
     And the tool registry should contain "ls"
 
-  Scenario: Message tool sends to channel via bus
-    Given a message tool with default target "telegram:12345"
-    When the agent sends a message "Task completed!" via the message tool
-    Then the outbound bus should have a message for "telegram:12345" with text "Task completed!"
-
   Scenario: Spawn tool validates and creates subagent config
     Given a spawn tool with allowed agents "news-bot" and "weather-bot"
     When the agent executes the spawn tool with task "Summarize news"

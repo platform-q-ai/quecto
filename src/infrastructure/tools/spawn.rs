@@ -99,7 +99,6 @@ impl SpawnTool {
             task,
             agent_id,
             restrict_to_workspace: self.restrict_to_workspace,
-            deliver_to: None,
             system,
         })
     }
@@ -531,13 +530,6 @@ mod tests {
             .parse_args(r#"{"task":"work","agent_id":999}"#)
             .unwrap();
         assert!(config.agent_id.is_none());
-    }
-
-    #[test]
-    fn test_parse_args_deliver_to_always_none() {
-        let tool = test_tool();
-        let config = tool.parse_args(r#"{"task":"work"}"#).unwrap();
-        assert!(config.deliver_to.is_none());
     }
 
     #[test]
