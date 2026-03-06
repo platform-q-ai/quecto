@@ -9,4 +9,5 @@ pub mod skill;
 pub mod subagent;
 pub mod tool;
 pub mod voice;
+pub mod workflow;
 pub mod workspace;
