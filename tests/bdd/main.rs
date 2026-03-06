@@ -725,6 +725,17 @@ pub struct QuectoWorld {
     pub workflow_config: Option<quecto::domain::workflow::WorkflowConfig>,
     /// Workflow system prompt snippet for system prompt scenarios
     pub workflow_snippet: Option<String>,
+    // --- Issue #280: workflow automation ---
+    /// JSON string for workflow config deserialization scenarios
+    pub workflow_config_json: Option<String>,
+    /// Generated nudge message (auto_continue or completion)
+    pub workflow_nudge: Option<String>,
+    /// enforce_commit_after_step setting for commit enforcement scenarios
+    pub enforce_commit_after_step: Option<Option<u32>>,
+    /// Commit check result (Ok = allowed, Err = blocked with reason)
+    pub commit_check_result: Option<Result<(), String>>,
+    /// Serialized workflow state JSON for persistence scenarios
+    pub workflow_serialized: Option<String>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
@@ -1015,6 +1026,7 @@ mod tool_empty_args_steps;
 mod truncate_steps;
 mod uds_steps;
 mod voice_steps;
+mod workflow_automation_steps;
 mod workflow_steps;
 
 // Runner

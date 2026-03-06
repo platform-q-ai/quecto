@@ -18,6 +18,7 @@ pub type WorkflowEventEmitter = Arc<dyn Fn(serde_json::Value) + Send + Sync>;
 pub struct WorkflowTool {
     state: Arc<Mutex<WorkflowState>>,
     event_emitter: Option<WorkflowEventEmitter>,
+    enforce_commit_after_step: Option<u32>,
 }
 
 impl std::fmt::Debug for WorkflowTool {
@@ -32,6 +33,7 @@ impl WorkflowTool {
         Self {
             state,
             event_emitter: None,
+            enforce_commit_after_step: None,
         }
     }
 
@@ -43,6 +45,19 @@ impl WorkflowTool {
         Self {
             state,
             event_emitter: Some(emitter),
+            enforce_commit_after_step: None,
+        }
+    }
+
+    /// Create a new workflow tool with commit enforcement configuration.
+    pub fn with_enforce_commit(
+        state: Arc<Mutex<WorkflowState>>,
+        enforce_commit_after_step: Option<u32>,
+    ) -> Self {
+        Self {
+            state,
+            event_emitter: None,
+            enforce_commit_after_step,
         }
     }
 
@@ -72,6 +87,15 @@ impl WorkflowTool {
         if action == "status" {
             let state = self.lock_state()?;
             return Ok(state.system_prompt_snippet());
+        }
+
+        // check_commit is read-only — no mutation, no event emission.
+        if action == "check_commit" {
+            let state = self.lock_state()?;
+            return match state.check_commit_allowed(self.enforce_commit_after_step) {
+                Ok(()) => Ok("Commit allowed.".to_string()),
+                Err(reason) => Err(reason),
+            };
         }
 
         // All other actions mutate state. Acquire lock once for both
@@ -498,5 +522,41 @@ mod tests {
         let state = WorkflowState::default_bdd();
         let event = snapshot_to_event(&state.snapshot());
         assert!(event.get("activeIssue").is_none());
+    }
+
+    // ─── check_commit action tests ──────────────────────────────────────────
+
+    fn test_tool_with_enforce(threshold: Option<u32>) -> WorkflowTool {
+        let state = Arc::new(Mutex::new(WorkflowState::default_bdd()));
+        WorkflowTool::with_enforce_commit(state, threshold)
+    }
+
+    #[tokio::test]
+    async fn test_check_commit_blocked() {
+        let tool = test_tool_with_enforce(Some(6));
+        let result = tool.execute(r#"{"action":"check_commit"}"#).await.unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("step 1"));
+    }
+
+    #[tokio::test]
+    async fn test_check_commit_allowed_after_steps() {
+        let tool = test_tool_with_enforce(Some(6));
+        for i in 1..=6 {
+            tool.execute(&format!(r#"{{"action":"check","step":{}}}"#, i))
+                .await
+                .unwrap();
+        }
+        let result = tool.execute(r#"{"action":"check_commit"}"#).await.unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains("allowed"));
+    }
+
+    #[tokio::test]
+    async fn test_check_commit_allowed_when_disabled() {
+        let tool = test_tool_with_enforce(None);
+        let result = tool.execute(r#"{"action":"check_commit"}"#).await.unwrap();
+        assert!(!result.is_error);
+        assert!(result.content.contains("allowed"));
     }
 }
