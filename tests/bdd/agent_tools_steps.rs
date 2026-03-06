@@ -227,7 +227,7 @@ fn then_registry_contains(world: &mut QuectoWorld, tool_name: String) {
 }
 
 // ===========================================================================
-// Security (Subagent/Heartbeat Inheritance) Steps
+// Security (Subagent Inheritance) Steps
 // ===========================================================================
 
 #[given("a subagent context inheriting restrict_to_workspace")]
@@ -238,7 +238,6 @@ fn given_subagent_inheriting_sandbox(world: &mut QuectoWorld) {
         task: "test task".to_string(),
         agent_id: None,
         restrict_to_workspace: sb.restrict_to_workspace,
-        deliver_to: None,
         system: None,
     });
     let ctx = SubagentContext::from_config(world.subagent_config.as_ref().unwrap());
@@ -255,17 +254,6 @@ fn when_subagent_validates_path(world: &mut QuectoWorld, path: String) {
         .as_ref()
         .expect("subagent context not set");
     assert_eq!(ctx.restrict_to_workspace, sb.restrict_to_workspace);
-    world.validation_result = Some(
-        sb.validate_path(&path)
-            .map(|_| ())
-            .map_err(|e| e.to_string()),
-    );
-}
-
-#[when(expr = "a heartbeat sandbox validates path {string}")]
-fn when_heartbeat_validates_path(world: &mut QuectoWorld, path: String) {
-    // Heartbeat tasks run within the same sandbox restrictions
-    let sb = world.sandbox.as_ref().expect("sandbox not configured");
     world.validation_result = Some(
         sb.validate_path(&path)
             .map(|_| ())

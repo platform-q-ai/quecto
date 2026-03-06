@@ -310,8 +310,7 @@ impl CodexProvider {
     ///
     /// Examples:
     /// - `"cli:default"` → `"cli:5e2b9f3a"` (no PII in original, prefix kept)
-    /// - `"telegram:12345"` → `"telegram:c3d7e1f2"` (chat ID hidden)
-    /// - `"gateway:cron-heartbeat"` → `"gateway:8a4c6b1d"`
+    /// - `"uds:agent-1"` → `"uds:7b3f1e9a"` (agent ID hidden)
     fn sanitize_cache_key(key: &str) -> String {
         // FNV-1a 32-bit hash — fast, no deps, deterministic.
         let mut hash: u32 = 0x811c_9dc5;

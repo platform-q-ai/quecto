@@ -10,9 +10,8 @@ use crate::domain::session::{ContextSpillStore, Session, SessionStore, strip_too
 /// 4. Atomically clears `spill.jsonl` for this session key.
 /// 5. Returns a human-readable summary safe to send to the user.
 ///
-/// The caller is responsible for building the session key (e.g. from an
-/// `InboundMessage.source`) so that the key is derived in a single place.
-/// This ensures `/reload` and the inbound processor always agree on the key.
+/// The caller is responsible for building the session key so that the key
+/// is derived in a single place.
 ///
 /// This is application-layer orchestration: it coordinates domain logic
 /// (`strip_tool_history`) and infrastructure ports (`SessionStore`, `ContextSpillStore`)

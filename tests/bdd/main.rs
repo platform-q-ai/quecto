@@ -624,18 +624,12 @@ struct ScenarioShardEntry {
     weight: u64,
 }
 
-fn scenario_weight(tags: &[String], step_lines: &[String], feature: &str, scenario: &str) -> u64 {
+fn scenario_weight(tags: &[String], step_lines: &[String], _feature: &str, _scenario: &str) -> u64 {
     let mut w = 1_u64;
     if tags.iter().any(|t| t == "real-llm") {
         w += 4;
     }
     if tags.iter().any(|t| t == "real-llm-smoke") {
-        w += 2;
-    }
-    if feature.to_ascii_lowercase().contains("gateway") {
-        w += 2;
-    }
-    if scenario.to_ascii_lowercase().contains("gateway") {
         w += 2;
     }
     for line in step_lines {
@@ -645,12 +639,6 @@ fn scenario_weight(tags: &[String], step_lines: &[String], feature: &str, scenar
         }
         if l.contains("takes 5 seconds") {
             w += 8;
-        }
-        if l.contains("wait for the health server to accept connections") {
-            w += 6;
-        }
-        if l.contains("run the quecto gateway subprocess") {
-            w += 4;
         }
     }
     w

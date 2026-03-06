@@ -221,7 +221,7 @@ impl Tool for SpawnTool {
         Box::pin(async move {
             match self.parse_args(&args) {
                 Ok(config) => {
-                    // Only spawn subprocess when base_dir is configured (gateway mode).
+                    // Only spawn subprocess when base_dir is configured (CLI agent mode).
                     // Otherwise return a stub result (unit test / isolated mode).
                     if self.base_dir.as_os_str().is_empty() {
                         let msg = format!(
