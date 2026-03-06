@@ -252,6 +252,7 @@ impl AgentLoopImpl {
         // Clones inside the closure are only evaluated when a callback is
         // registered (zero-cost on headless paths via notify's guard).
         self.notify(|| AgentProgressEvent::ToolStarted {
+            tool_call_id: tc.id.clone(),
             name: tc.name.clone(),
             arguments: tc.arguments.clone(),
         });
@@ -268,6 +269,7 @@ impl AgentLoopImpl {
 
         // Emit ToolFinished so the REPL can replace the spinner line.
         self.notify(|| AgentProgressEvent::ToolFinished {
+            tool_call_id: tc.id.clone(),
             name: tc.name.clone(),
             arguments: tc.arguments.clone(),
             duration_ms,
@@ -457,3 +459,7 @@ impl AgentLoop for AgentLoopImpl {
 #[cfg(test)]
 #[path = "agent_loop_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "agent_loop_spill_tests.rs"]
+mod spill_tests;

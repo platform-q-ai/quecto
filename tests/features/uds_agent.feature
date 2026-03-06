@@ -548,3 +548,62 @@ Feature: UDS mode for headless agent operation
     Then the UDS agent exits with code 0
     And client 1 should have received an event of type "tool_execution_start"
     And client 1 should have received an event of type "tool_execution_end"
+
+  # ─── tool_call_id propagation (#318) ─────────────────────────────────────────
+
+  @wip @multi-client
+  Scenario: tool_execution_start carries tool_call_id in multi-client mode
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a tool call then a text response "done"
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And client 1 sends prompt "run a tool"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 1 should have received a tool_execution_start with a non-empty tool_call_id
+
+  @wip @multi-client
+  Scenario: tool_execution_end carries tool_call_id in multi-client mode
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a tool call then a text response "done"
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And client 1 sends prompt "run a tool"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 1 should have received a tool_execution_end with a non-empty tool_call_id
+
+  # ─── Single-client real-time tool events (#318) ──────────────────────────────
+
+  @wip
+  Scenario: tool_execution_start is emitted with tool_call_id in single-client mode
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a tool call then a text response "done"
+    When I start the UDS agent with no session
+    And I send prompt "run a tool"
+    And I close the UDS connection
+    Then the UDS agent exits with code 0
+    And the agent output should contain a tool_execution_start with a non-empty tool_call_id
+
+  # ─── Extension wiring (#318 Part 2) ─────────────────────────────────────────
+
+  @wip @extensions
+  Scenario: Extension tools are discovered and registered during agent construction
+    Given a temp base directory
+    And a mock LLM that captures requests and returns text "ok"
+    And a script extension "greet" in the workspace extensions directory
+    When I run quecto agent -m "hello"
+    Then the exit code should be 0
+    And the LLM request should have included tool "greet"
+
+  @wip @extensions
+  Scenario: Extension system prompt snippets are injected into the agent
+    Given a temp base directory
+    And a mock LLM that captures requests and returns text "ok"
+    And a script extension "greet" with system prompt "Always be polite." in the workspace extensions directory
+    When I run quecto agent -m "hello"
+    Then the exit code should be 0
+    And the LLM should have received a system message containing "Always be polite."

@@ -78,6 +78,18 @@ pub fn build_system_prompt(skill_prompt: &str, user_prompt: &Option<String>) -> 
     }
 }
 
+/// Append extension system prompt snippets in a clearly delimited section.
+///
+/// Wrapping prevents extension snippets from being misinterpreted as core
+/// system instructions by the LLM.
+pub fn append_extension_prompt(system: &mut String, snippets: &str) {
+    if !snippets.is_empty() {
+        system.push_str("\n\n## Extensions\n");
+        system.push_str(snippets);
+        system.push_str("\n## End Extensions");
+    }
+}
+
 /// Append the workflow state snippet to a system prompt if workflow is enabled.
 pub fn append_workflow_prompt(
     system: &mut String,
@@ -473,6 +485,44 @@ pub fn check_provider_readiness(creds: &HashMap<String, Credential>) -> Vec<Stri
         .filter(|c| c.is_expired())
         .map(|c| c.provider.clone())
         .collect()
+}
+
+/// Register extension tools, rejecting any that shadow core tools.
+pub fn register_extension_tools(
+    registry: &mut crate::infrastructure::tools::registry::ToolRegistryImpl,
+    ext_registry: &crate::infrastructure::extensions::registry::ExtensionRegistry,
+) {
+    let core_names: std::collections::HashSet<String> = registry
+        .definitions()
+        .iter()
+        .map(|d| d.name.to_string())
+        .collect();
+    for tool in ext_registry.all_tools() {
+        let name = tool.definition().name.to_string();
+        if core_names.contains(&name) {
+            tracing::warn!(tool = %name, "extension tool rejected: shadows core tool");
+            continue;
+        }
+        registry.register(tool);
+    }
+}
+
+/// Resolve the XDG runtime directory or fall back to temp.
+///
+/// Returns `$XDG_RUNTIME_DIR` if it exists, is a directory, and is writable.
+/// Otherwise returns `std::env::temp_dir()`.
+pub fn xdg_runtime_dir_or_temp() -> std::path::PathBuf {
+    if let Some(xdg) = std::env::var_os("XDG_RUNTIME_DIR") {
+        let path = std::path::PathBuf::from(xdg);
+        if path.is_dir() {
+            let probe = path.join(".quecto-probe");
+            if std::fs::File::create(&probe).is_ok() {
+                let _ = std::fs::remove_file(&probe);
+                return path;
+            }
+        }
+    }
+    std::env::temp_dir()
 }
 
 #[cfg(test)]

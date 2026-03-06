@@ -23,7 +23,7 @@ Zero deps except `thiserror`, `serde` (derive), `serde_yaml`. Defines system voc
 | `message.rs` | `Message` (constructors `::system/user/assistant/tool`; pruning fields: `turn`, `is_pinned`, `is_manifest`, `is_collapsed`, `tool_name`, `input_preview`, `spill_id`), `Role`, `ToolCall`, `LlmResponse`, `UsageInfo` |
 | `provider.rs` | `LlmProvider` trait (dyn-compatible), `ChatRequest` (with `session_id` for prompt caching), `chat()` + `chat_stream()` (SSE with non-streaming fallback), `model_excluded_from_provider()` (routes `claude-*` → Anthropic) |
 | `tool.rs` | `Tool` trait, `ToolRegistry` trait, `ToolDefinition`, `ToolResult` (with `image_blocks` for base64 images) |
-| `agent.rs` | `AgentLoop` trait, `AgentInfo`, `AgentResult`, `AgentProgressEvent`, `ProgressCallback` |
+| `agent.rs` | `AgentLoop` trait, `AgentInfo`, `AgentResult`, `AgentProgressEvent` (with `tool_call_id` on `ToolStarted`/`ToolFinished`), `ProgressCallback` |
 | `session.rs` | `Session`, `SessionStore` trait, `SpillEntry`, `SpillIndex`, `ContextSpillStore` trait, `strip_tool_history()` |
 | `skill.rs` | `Skill`, `SkillSource`, `SkillFrontmatter`, `SkillLoader` trait, `split_skill_md()`, `validate_frontmatter()` |
 | `workspace.rs` | `OnboardStore` port |
@@ -54,6 +54,7 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 | `tools/` | `bash/` (shell, 1MiB cap, per-invocation timeout, `commandPrefix`, native/nsjail modes), `filesystem/` (`ReadTool` with image base64+auto-resize, `WriteTool`, `EditTool` with fuzzy match+CRLF/BOM+LCS diff, `LsTool` with limit+case-insensitive sort), `grep.rs` (rg JSON output, file-cache context), `find.rs` (fd, nested .gitignore, path-segment globs via `--full-path`), `ensure_tool.rs` (auto-download rg/fd from GitHub), `spawn.rs`, `web_search.rs` (Brave+DDG), `recall.rs` (spill retrieval), `workflow_tool.rs` (`WorkflowTool` + `WorkflowGuard` — blocks `git commit`/`git push` when workflow steps incomplete; registration controlled by `guard_commit` config), `path_utils.rs`, `truncate.rs`, `registry.rs` (`ToolRegistryImpl`, `guard_count()`) |
 | `persistence/` | `FileSessionStore` (round-trips all Message fields), `MemoryStore`, `FileSkillLoader`, `FileOnboardStore`, `FileContextSpillStore` (JSONL append-only) |
 | `security/` | `Sandbox` — workspace path validation + command filtering |
+| `extensions/` | `ExtensionRegistry` (discover, register, hot-reload), `ScriptTool` (TOML manifest, subprocess exec, timeout, 1 MiB cap), `ExtensionWatcher` (fingerprint-based change detection). Wired into `build_agent_from_config`: discovers `<workspace>/extensions/*/extension.toml`, registers tools, injects system prompt snippets |
 | `auth/` | `CredentialStore` (file-based), `oauth.rs` (browser + device code flows, Anthropic OAuth) |
 | `logging.rs` | `redact_api_keys()` — pattern-based secret redaction |
 
