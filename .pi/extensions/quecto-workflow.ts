@@ -52,8 +52,8 @@ interface ActiveIssue {
 
 const WORKFLOW_TEMPLATE: Omit<WorkflowStep, "done">[] = [
 	{ id: 1, label: "Update Scenarios / Add new features", phase: "red" },
-	{ id: 2, label: "Write/update unit tests", phase: "red" },
-	{ id: 3, label: "Ensure new/modified tests FAIL (RED)", phase: "red" },
+	{ id: 2, label: "Write/update unit tests (run a quick smoke check; full suite runs on push)", phase: "red" },
+	{ id: 3, label: "Ensure new/modified tests FAIL (RED) — quick targeted run only, not full suite", phase: "red" },
 	{ id: 4, label: "Implement code (GREEN)", phase: "green" },
 	{ id: 5, label: "Commit", phase: "ci" },
 	{ id: 6, label: "Push (pre-push hook will run tests and linting)", phase: "ci" },
@@ -433,6 +433,29 @@ export default function (pi: ExtensionAPI) {
 			injection += `Do NOT skip ahead — complete steps in order.\n`;
 
 			// Step-specific instructions
+			if (current.id === 2) {
+				injection += `\n### Step 2: Write/update unit tests\n`;
+				injection += `Write or update the unit tests and BDD scenarios for the change.\n`;
+				injection += `Run a quick targeted smoke check to confirm they compile and are wired up:\n`;
+				injection += "```bash\n";
+				injection += `cargo test --no-fail-fast --lib -- <your_module> 2>&1 | scripts/test-filter.sh\n`;
+				injection += "```\n";
+				injection += `Do NOT run the full BDD suite here — the pre-push hook runs all 24 shards automatically on \`git push\`.\n`;
+			}
+
+			if (current.id === 3) {
+				injection += `\n### Step 3: Verify tests FAIL (RED)\n`;
+				injection += `Run only the new/modified tests to confirm they fail before any implementation:\n`;
+				injection += "```bash\n";
+				injection += `cargo test --no-fail-fast --lib -- <your_test_name> 2>&1 | scripts/test-filter.sh\n`;
+				injection += "```\n";
+				injection += `For a BDD scenario, tag it @focus and run:\n`;
+				injection += "```bash\n";
+				injection += `QUECTO_TAG=focus cargo test --no-fail-fast --features test-support --test bdd 2>&1 | scripts/test-filter.sh\n`;
+				injection += "```\n";
+				injection += `Do NOT run the full suite — the pre-push hook covers that. You only need to confirm the specific new tests are red.\n`;
+			}
+
 			if (current.id === 8) {
 				injection += `\n### Step 8: Dispatch Reviewer Subagents\n`;
 				injection += `Use the \`subagent\` tool in parallel mode to dispatch all three reviewers simultaneously.\n`;

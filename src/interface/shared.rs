@@ -156,56 +156,28 @@ pub fn resolve_api_key(
 
 /// Resolve an API key for a provider, automatically refreshing expired OAuth tokens.
 ///
-/// If the credential is expired and has a refresh token, attempts to refresh it
-/// and update the credential store. Falls back to config key on failure.
+/// Sync wrapper around [`resolve_api_key_with_refresh_async`] for callers that
+/// hold a `tokio::runtime::Runtime` but are not inside an async context (e.g.
+/// the CLI agent entrypoint). Eliminates duplicated refresh/persist logic (#308).
+///
+/// # Panics
+///
+/// Panics if called from within an active tokio runtime context (i.e. inside a
+/// `.await` chain or a `tokio::spawn` task). Use [`resolve_api_key_with_refresh_async`]
+/// instead in those contexts.
 pub fn resolve_api_key_with_refresh(
     config_key: &str,
     store: &crate::infrastructure::auth::credential_store::CredentialStore,
     provider: &str,
     rt: &tokio::runtime::Runtime,
 ) -> String {
-    let creds = store.load_snapshot().unwrap_or_default();
-
-    if let Some(cred) = creds.get(provider) {
-        if !cred.is_expired() {
-            return cred.token.clone();
-        }
-
-        // Token is expired — try to refresh if we have a refresh token
-        if cred.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth {
-            if let Some(ref refresh_token) = cred.refresh_token {
-                if let Some(oauth_config) =
-                    crate::infrastructure::auth::oauth::OAuthConfig::for_provider(provider)
-                {
-                    tracing::info!("refreshing expired OAuth token for {}", provider);
-
-                    // Dispatch to the correct refresh function based on provider
-                    let refresh_result = match provider {
-                        "openai" => {
-                            rt.block_on(crate::infrastructure::auth::oauth::refresh_openai_token(
-                                &oauth_config,
-                                refresh_token,
-                            ))
-                        }
-                        _ => rt.block_on(
-                            crate::infrastructure::auth::oauth::refresh_anthropic_token(
-                                &oauth_config,
-                                refresh_token,
-                            ),
-                        ),
-                    };
-
-                    if let Some(token) =
-                        persist_refreshed_token(store, provider, refresh_token, refresh_result)
-                    {
-                        return token;
-                    }
-                }
-            }
-        }
-    }
-
-    config_key.to_string()
+    debug_assert!(
+        tokio::runtime::Handle::try_current().is_err(),
+        "resolve_api_key_with_refresh called inside an active tokio runtime — use resolve_api_key_with_refresh_async instead"
+    );
+    rt.block_on(resolve_api_key_with_refresh_async(
+        config_key, store, provider,
+    ))
 }
 
 /// Resolve an API key for a provider, automatically refreshing expired OAuth tokens.

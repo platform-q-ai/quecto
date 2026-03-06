@@ -71,6 +71,19 @@ Feature: Security Sandbox
     Then the validation should be an error
     And the error should mention "dangerous pattern"
 
+  # --- #304: Narrowed chown denylist pattern ---
+
+  Scenario: chown targeting system root is blocked
+    Given restrict_to_workspace is false
+    When the agent tries to validate command "chown -R root:root /"
+    Then the validation should be an error
+    And the error should mention "dangerous pattern"
+
+  Scenario: chown scoped to workspace is allowed
+    Given restrict_to_workspace is false
+    When the agent tries to validate command "chown -R user:group ./src"
+    Then the validation should be ok
+
   Scenario: Safe command allowed when restriction disabled
     Given restrict_to_workspace is false
     When the agent tries to validate command "echo hello"

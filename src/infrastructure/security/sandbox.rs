@@ -25,7 +25,19 @@ const DANGEROUS_PATTERNS: &[&str] = &[
     "init 6",
     ":(){ :",
     "chmod -R 777 /",
-    "chown -R ",
+    // #304: Narrowed from "chown -R " (blocked legitimate workspace-scoped usage and
+    // missed the no-space variant -Rroot). Patterns target system-root ownership changes;
+    // nsjail mount namespace prevents escapes in sandboxed mode.
+    //
+    // Known gap: non-recursive `chown root /` (no -R) is not covered here — this is
+    // intentional; the denylist only targets recursive forms. nsjail is the primary
+    // defence for sandboxed deployments.
+    "chown -r root", // -R root (spaced); also catches -R newroot via substring
+    "chown -rroot",  // -Rroot (no space, compact form)
+    "chown --recursive root", // GNU long-flag form
+    "chown -r 0 /",  // -R UID 0, system root path
+    "chown --recursive 0", // GNU long-flag, UID 0
+    "chown -r 0:0",  // -R UID 0:GID 0
     "> /dev/sda",
     "wget|sh",
     "wget | sh",
@@ -676,4 +688,26 @@ mod tests {
     // --- Sandbox hardening: allowlist tests ---
 
     // Allowlist, escape bypass, and token extraction tests in sandbox_escape_tests.rs
+
+    // --- #304: Narrowed chown denylist ---
+
+    #[test]
+    fn test_chown_system_root_blocked() {
+        let sb = sandbox("/tmp/quecto-test", false);
+        assert!(sb.validate_command("chown -R root:root /").is_err());
+    }
+
+    #[test]
+    fn test_chown_workspace_scoped_allowed() {
+        // Legitimate workspace-scoped chown should not be blocked
+        let sb = sandbox("/tmp/quecto-test", false);
+        assert!(sb.validate_command("chown -R user:group ./src").is_ok());
+    }
+
+    #[test]
+    fn test_chown_no_space_variant_blocked() {
+        // chown -Rroot (no space) previously bypassed the trailing-space pattern
+        let sb = sandbox("/tmp/quecto-test", false);
+        assert!(sb.validate_command("chown -Rroot /").is_err());
+    }
 }
