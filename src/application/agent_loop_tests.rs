@@ -8,14 +8,14 @@ use std::sync::{Arc, Mutex};
 // -----------------------------------------------------------------------
 
 #[derive(Debug)]
-struct MockProvider {
+pub(super) struct MockProvider {
     responses: Mutex<Vec<LlmResponse>>,
     /// Captured tool definitions from the last chat() call.
     last_tool_defs: Mutex<Vec<ToolDefinition>>,
 }
 
 impl MockProvider {
-    fn new(responses: Vec<LlmResponse>) -> Self {
+    pub(super) fn new(responses: Vec<LlmResponse>) -> Self {
         Self {
             responses: Mutex::new(responses),
             last_tool_defs: Mutex::new(vec![]),
@@ -64,20 +64,20 @@ impl LlmProvider for MockProvider {
 // -----------------------------------------------------------------------
 
 #[derive(Default)]
-struct MockRegistry {
+pub(super) struct MockRegistry {
     tools: Vec<Arc<dyn Tool>>,
     cached_definitions: Vec<ToolDefinition>,
 }
 
 impl MockRegistry {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             tools: Vec::new(),
             cached_definitions: Vec::new(),
         }
     }
 
-    fn register(&mut self, tool: Arc<dyn Tool>) {
+    pub(super) fn register(&mut self, tool: Arc<dyn Tool>) {
         let def = tool.definition();
         self.cached_definitions.push(def);
         self.tools.push(tool);
@@ -111,13 +111,13 @@ impl ToolRegistry for MockRegistry {
 // Mock Tool for unit tests
 // -----------------------------------------------------------------------
 
-struct MockTool {
+pub(super) struct MockTool {
     def: ToolDefinition,
     response: Mutex<String>,
 }
 
 impl MockTool {
-    fn new(name: &str, response: &str) -> Self {
+    pub(super) fn new(name: &str, response: &str) -> Self {
         Self {
             def: ToolDefinition {
                 name: name.to_string().into(),
@@ -162,7 +162,7 @@ impl crate::domain::tool::Tool for MockTool {
 // Helper to build an AgentLoopImpl with mock components
 // -----------------------------------------------------------------------
 
-fn make_agent(
+pub(super) fn make_agent(
     responses: Vec<LlmResponse>,
     tools: Vec<(&str, &str)>,
 ) -> (AgentLoopImpl, Arc<MockProvider>) {
@@ -187,7 +187,7 @@ fn make_agent(
     (agent, provider)
 }
 
-fn text_response(content: &str) -> LlmResponse {
+pub(super) fn text_response(content: &str) -> LlmResponse {
     LlmResponse {
         content: Some(content.to_string()),
         tool_calls: vec![],
@@ -202,7 +202,7 @@ fn text_response(content: &str) -> LlmResponse {
     }
 }
 
-fn tool_call_response(name: &str, args: &str) -> LlmResponse {
+pub(super) fn tool_call_response(name: &str, args: &str) -> LlmResponse {
     LlmResponse {
         content: None,
         tool_calls: vec![ToolCall {

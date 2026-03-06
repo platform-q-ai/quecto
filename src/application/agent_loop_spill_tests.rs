@@ -1,148 +1,14 @@
-/// Spill-to-disk and tool_call_id tests for the agent loop.
+/// Spill-to-disk tests for the agent loop.
 ///
 /// Split from `agent_loop_tests.rs` to keep files within the 750-line limit.
+/// Uses shared mock infrastructure from `super::tests`.
+use super::tests::{MockProvider, MockRegistry, MockTool, text_response, tool_call_response};
 use super::*;
-use crate::domain::message::{LlmResponse, Message, Role, ToolCall, UsageInfo};
+use crate::domain::message::{Message, Role};
 use crate::domain::session::{ContextSpillStore, SpillEntry};
-use crate::domain::tool::{Tool, ToolDefinition, ToolRegistry, ToolResult};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-
-// Re-use test helpers from agent_loop_tests via the parent module.
-// (They're in the same `tests` cfg scope since both files are
-//  `#[path = "..."]` modules under `agent_loop.rs`.)
-
-// ─── Mock infrastructure (duplicated minimal set needed for these tests) ──────
-
-#[derive(Debug)]
-struct SpillMockProvider {
-    responses: Mutex<Vec<LlmResponse>>,
-}
-impl SpillMockProvider {
-    fn new(responses: Vec<LlmResponse>) -> Self {
-        Self {
-            responses: Mutex::new(responses),
-        }
-    }
-}
-impl crate::domain::provider::LlmProvider for SpillMockProvider {
-    fn chat(
-        &self,
-        request: crate::domain::provider::ChatRequest<'_>,
-    ) -> Pin<
-        Box<
-            dyn Future<Output = Result<LlmResponse, crate::domain::error::DomainError>> + Send + '_,
-        >,
-    > {
-        let _ = request;
-        let resp = self.responses.lock().unwrap().remove(0);
-        Box::pin(async move { Ok(resp) })
-    }
-    fn name(&self) -> &str {
-        "spill-mock"
-    }
-}
-
-#[derive(Debug)]
-struct SpillMockTool {
-    name: String,
-    output: String,
-}
-impl Tool for SpillMockTool {
-    fn definition(&self) -> ToolDefinition {
-        ToolDefinition {
-            name: self.name.clone().into(),
-            description: "mock".into(),
-            parameters_schema: r#"{"type":"object"}"#.into(),
-        }
-    }
-    fn execute(
-        &self,
-        _args: &str,
-    ) -> Pin<
-        Box<dyn Future<Output = Result<ToolResult, crate::domain::error::DomainError>> + Send + '_>,
-    > {
-        let out = self.output.clone();
-        Box::pin(async move {
-            Ok(ToolResult {
-                content: out,
-                is_error: false,
-                image_blocks: vec![],
-            })
-        })
-    }
-}
-
-struct SpillMockRegistry {
-    tools: std::collections::HashMap<String, Arc<dyn Tool>>,
-    definitions: Vec<ToolDefinition>,
-}
-impl SpillMockRegistry {
-    fn new() -> Self {
-        Self {
-            tools: std::collections::HashMap::new(),
-            definitions: Vec::new(),
-        }
-    }
-    fn register(&mut self, tool: Arc<dyn Tool>) {
-        let name = tool.definition().name.to_string();
-        self.definitions.push(tool.definition());
-        self.tools.insert(name, tool);
-    }
-}
-impl ToolRegistry for SpillMockRegistry {
-    fn definitions(&self) -> &[ToolDefinition] {
-        &self.definitions
-    }
-    fn execute(
-        &self,
-        name: &str,
-        args: &str,
-    ) -> Pin<
-        Box<dyn Future<Output = Result<ToolResult, crate::domain::error::DomainError>> + Send + '_>,
-    > {
-        let tool = self.tools.get(name).cloned();
-        let name = name.to_string();
-        let args = args.to_string();
-        Box::pin(async move {
-            match tool {
-                Some(t) => t.execute(&args).await,
-                None => Err(crate::domain::error::DomainError::Tool(format!(
-                    "unknown: {name}"
-                ))),
-            }
-        })
-    }
-}
-
-fn text_resp(content: &str) -> LlmResponse {
-    LlmResponse {
-        content: Some(content.to_string()),
-        tool_calls: vec![],
-        usage: Some(UsageInfo {
-            prompt_tokens: 10,
-            completion_tokens: 20,
-            cache_read_tokens: None,
-            cache_write_tokens: None,
-            cost: None,
-        }),
-        stop_reason: None,
-    }
-}
-
-fn tool_call_resp(name: &str, args: &str) -> LlmResponse {
-    LlmResponse {
-        content: None,
-        tool_calls: vec![ToolCall {
-            id: format!("call_{name}"),
-            name: name.to_string(),
-            arguments: args.to_string(),
-        }],
-        usage: None,
-        stop_reason: None,
-    }
-}
 
 /// Mock spill store that records appended entries.
 #[derive(Debug, Default)]
@@ -201,20 +67,15 @@ impl ContextSpillStore for MockSpillStore {
     }
 }
 
-// ─── Spill tests ─────────────────────────────────────────────────────────────
-
 #[tokio::test]
 async fn test_spill_preserves_message_content_after_spill() {
     let spill_store = Arc::new(MockSpillStore::default());
-    let provider = Arc::new(SpillMockProvider::new(vec![
-        tool_call_resp("bash", r#"{"command":"echo hi"}"#),
-        text_resp("done"),
+    let provider = Arc::new(MockProvider::new(vec![
+        tool_call_response("bash", r#"{"command":"echo hi"}"#),
+        text_response("done"),
     ]));
-    let mut registry = SpillMockRegistry::new();
-    registry.register(Arc::new(SpillMockTool {
-        name: "bash".into(),
-        output: "big output here".into(),
-    }));
+    let mut registry = MockRegistry::new();
+    registry.register(Arc::new(MockTool::new("bash", "big output here")));
 
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,

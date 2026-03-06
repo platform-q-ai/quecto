@@ -324,22 +324,18 @@ pub(crate) fn build_agent_from_config(
         .model_override
         .clone()
         .unwrap_or(config.agents.defaults.model.clone());
-    // --no-sandbox: disables workspace path restriction (denylist still active).
     let restrict_to_workspace = !flags.no_sandbox && config.agents.defaults.restrict_to_workspace;
     if flags.no_sandbox {
         stderr.push_str("WARNING: --no-sandbox is active — workspace path restriction disabled\n");
     }
     let sandbox = Sandbox::new(Some(workspace.clone()), restrict_to_workspace);
-    // Build exec settings; CLI overrides must precede with_core_tools_and_exec_settings.
     let mut exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
-    // --network: disables nsjail network namespace (other isolation remains active).
     if flags.network {
         exec_settings.network_passthrough = true;
         stderr
             .push_str("WARNING: --network is active — bash network namespace isolation disabled\n");
         tracing::warn!("--network: bash network namespace isolation disabled");
     }
-    // Capture network_passthrough before exec_settings is moved into the registry.
     let effective_network = exec_settings.network_passthrough;
     let extensions_dir = workspace.join("extensions");
     let mut registry =
@@ -355,7 +351,6 @@ pub(crate) fn build_agent_from_config(
         spill_store.clone(),
         session_key.clone(),
     )));
-    // Propagate network_passthrough so child agents inherit the same network posture.
     registry.register(Arc::new(
         SpawnTool::with_base_dir(vec![], restrict_to_workspace, base_dir.to_path_buf())
             .with_network(effective_network),
@@ -363,11 +358,11 @@ pub(crate) fn build_agent_from_config(
     crate::interface::shared::register_workflow_tool(&mut registry, &config.workflow);
 
     // Discover and register script extensions from <workspace>/extensions/.
+    // Discovery runs once at agent construction — hot-reload requires
+    // ExtensionWatcher (not wired here; see AGENTS.md).
     let ext_registry = ExtensionRegistry::discover(&[extensions_dir]);
     let extension_prompt_snippets = ext_registry.system_prompt_snippets();
-    for tool in ext_registry.all_tools() {
-        registry.register(tool);
-    }
+    crate::interface::shared::register_extension_tools(&mut registry, &ext_registry);
 
     let wf_config = config.workflow.clone();
     let agent = AgentLoopImpl::new(AgentLoopConfig {
