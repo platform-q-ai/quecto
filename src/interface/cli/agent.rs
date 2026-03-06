@@ -197,7 +197,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                 i += 2;
             }
             "--config" => {
-                // Consumed globally by CliContext, but validate the value is present.
+                // Value consumed globally by extract_config_flag; validate here too.
                 let _val = next_arg(args, i, "--config requires a path", stderr)?;
                 i += 2;
             }
@@ -556,8 +556,7 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         .model_override
         .clone()
         .or_else(|| {
-            // Re-read config to get the default model.
-            let config_path = base_dir.join("config.json");
+            // Re-read config to get the default model (using the same config_path).
             let env_overrides: HashMap<String, String> = std::env::vars()
                 .filter(|(k, _)| k.starts_with("QUECTO_"))
                 .collect();

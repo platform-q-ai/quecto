@@ -75,14 +75,33 @@ impl CliContext {
     }
 }
 
-/// Extract `--config <path>` from args (consumed globally, before subcommand dispatch).
+/// Extract `--config <path>` from args (consumed globally).
+/// Skips values of flags that take arguments (e.g. `-m`, `--system`) to avoid
+/// misinterpreting message text like `-m "--config"` as the flag.
 fn extract_config_flag(args: &[String]) -> Option<PathBuf> {
+    /// Flags that consume the next arg as a value (skip their value during scan).
+    const VALUE_FLAGS: &[&str] = &[
+        "-m",
+        "--message",
+        "-s",
+        "--session",
+        "--system",
+        "--model",
+        "--max-iterations",
+        "--max-time",
+        "--mode",
+        "--socket",
+    ];
     let mut i = 0;
     while i < args.len() {
         if args[i] == "--config" && i + 1 < args.len() {
             return Some(PathBuf::from(&args[i + 1]));
         }
-        i += 1;
+        if VALUE_FLAGS.contains(&args[i].as_str()) {
+            i += 2; // skip the flag and its value
+        } else {
+            i += 1;
+        }
     }
     None
 }
@@ -128,10 +147,7 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
         if let Some(path) = extract_config_flag(&args) {
             merged_ctx = CliContext {
                 config_path: Some(path),
-                base_dir: ctx.base_dir.clone(),
-                stdin_data: ctx.stdin_data.clone(),
-                oauth_base_url: ctx.oauth_base_url.clone(),
-                github_raw_base_url: ctx.github_raw_base_url.clone(),
+                ..ctx.clone()
             };
             &merged_ctx
         } else {
