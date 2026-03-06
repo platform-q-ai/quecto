@@ -56,7 +56,7 @@ struct ReplSession {
     session_key: String,
     ephemeral: bool,
     system_prompt: Option<String>,
-    /// Base directory for accessing cron store, config, etc.
+    /// Base directory for accessing config, etc.
     base_dir: PathBuf,
 }
 

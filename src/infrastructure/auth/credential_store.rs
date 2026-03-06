@@ -104,7 +104,7 @@ impl CredentialStore {
     /// Load all credentials from disk as a snapshot.
     ///
     /// This is intentionally stateless: each call re-reads the file from disk.
-    /// Correct for CLI (no stale state); for the long-running gateway, call once
+    /// Correct for CLI (no stale state); for long-running processes, call once
     /// at startup and pass the snapshot to resolution functions.
     pub fn load_snapshot(&self) -> Result<HashMap<String, Credential>, DomainError> {
         if !self.path.exists() {

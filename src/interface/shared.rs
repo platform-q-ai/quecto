@@ -1,4 +1,4 @@
-//! Shared utility functions used by CLI, REPL, and gateway modules.
+//! Shared utility functions used by CLI and REPL modules.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -182,7 +182,7 @@ pub fn resolve_api_key_with_refresh(
 
 /// Resolve an API key for a provider, automatically refreshing expired OAuth tokens.
 ///
-/// Async variant for use in the gateway (already running inside a tokio runtime).
+/// Async variant for callers already running inside a tokio runtime.
 /// If the credential is expired and has a refresh token, attempts to refresh it
 /// and update the credential store. Falls back to config key on failure.
 ///

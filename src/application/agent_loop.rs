@@ -30,11 +30,11 @@ pub struct AgentLoopConfig {
     pub max_context_tokens: usize,
     /// Optional callback to receive live progress events during agent processing.
     /// Used by the REPL progress renderer to display tool activity to the user.
-    /// Pass `None` for headless/gateway operation (no-op, zero overhead).
+    /// Pass `None` for headless operation (no-op, zero overhead).
     pub progress_callback: Option<ProgressCallback>,
     /// When `true`, use `chat_stream_incremental()` for LLM calls so that
     /// `AgentProgressEvent::Token` events are emitted in real time.
-    /// Set by the UDS agent path; `false` for REPL/gateway (which use
+    /// Set by the UDS agent path; `false` for REPL (which uses
     /// non-streaming mock servers in tests).
     pub streaming: bool,
 }
@@ -111,7 +111,7 @@ impl AgentLoopImpl {
     /// Fire a progress event to the registered callback, if any.
     ///
     /// Accepts a closure that constructs the event so it is only evaluated
-    /// when a callback is actually registered. On the headless/gateway path
+    /// when a callback is actually registered. On the headless path
     /// (`progress_callback = None`) the closure is never called — no String
     /// allocations, no truncation scans. This keeps the hot tool-execution
     /// path zero-cost when progress reporting is disabled.
@@ -392,7 +392,7 @@ impl AgentLoopImpl {
 
             let request = self.build_chat_request(messages, tool_defs);
             // Use streaming when enabled (UDS mode) so token events are
-            // forwarded in real time.  REPL/gateway/one-shot use the
+            // forwarded in real time.  REPL/one-shot use the
             // non-streaming path.
             let response = if self.streaming {
                 self.stream_chat(request).await
