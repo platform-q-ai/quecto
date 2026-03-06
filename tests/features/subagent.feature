@@ -30,8 +30,4 @@ Feature: Subagent / Multi-Agent Architecture
     When I validate agent_id "evil-bot"
     Then the validation should fail with "not allowed"
 
-  Scenario: Subagent communicates results via message tool
-    Given a subagent with deliver_to "telegram:12345"
-    And a message tool connected to the bus
-    When the subagent sends result "Here are today's headlines..." via the message tool
-    Then the outbound bus should have a message for "telegram:12345" with text "Here are today's headlines..."
+

@@ -1,0 +1,37 @@
+{
+  "workflow": {
+    "enabled": true,
+    "auto_continue": true,
+    "completion_nudge": true,
+    "steps": [
+      { "id": 1,  "label": "Update Scenarios / Add new features",           "phase": "red" },
+      { "id": 2,  "label": "Write/update unit tests",                       "phase": "red" },
+      { "id": 3,  "label": "Ensure new/modified tests FAIL (RED)",          "phase": "red" },
+      { "id": 4,  "label": "Implement code (GREEN)",                        "phase": "green" },
+      { "id": 5,  "label": "Refactor (perf, security, clean arch)",         "phase": "refactor" },
+      { "id": 6,  "label": "Ensure tests still pass (GREEN)",               "phase": "green" },
+      { "id": 7,  "label": "Commit",                                        "phase": "ci_cd" },
+      { "id": 8,  "label": "Push",                                          "phase": "ci_cd" },
+      { "id": 9,  "label": "Create PR",                                     "phase": "ci_cd" },
+      { "id": 10, "label": "Despatch reviewers (Arch, Security, Perf)",      "phase": "review" },
+      { "id": 11, "label": "Fix all valid review concerns",                  "phase": "review" },
+      { "id": 12, "label": "Push changes to remote",                         "phase": "review" },
+      { "id": 13, "label": "Reply to comments and mark resolved",            "phase": "review" },
+      { "id": 14, "label": "Run pre-merge hooks (real-LLM, machete, deny)",  "phase": "ci_cd" },
+      { "id": 15, "label": "Merge",                                          "phase": "ci_cd" },
+      { "id": 16, "label": "Move to local master and pull",                  "phase": "ci_cd" }
+    ],
+    "guards": [
+      {
+        "commands": ["git commit", "git push"],
+        "before_step": 7,
+        "message": "Complete RED-GREEN-REFACTOR (steps 1-6) before committing."
+      },
+      {
+        "commands": ["git merge", "gh pr merge"],
+        "before_step": 15,
+        "message": "Complete code review (steps 10-14) before merging."
+      }
+    ]
+  }
+}

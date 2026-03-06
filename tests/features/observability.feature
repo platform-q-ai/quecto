@@ -1,28 +1,8 @@
 @done
 Feature: Observability
   As an operator
-  I want structured logging and health endpoints
+  I want structured logging
   So that I can monitor Quecto in production
-
-  Scenario: Health endpoint returns OK
-    Given a health server started on a random port
-    When I request GET "/health" from the health server
-    Then the HTTP response status should be 200
-    And the response body should be JSON containing "status" with value "ok"
-
-  Scenario: Ready endpoint reports ready when providers are available
-    Given a health server started on a random port
-    And the readiness check reports providers available
-    When I request GET "/ready" from the health server
-    Then the HTTP response status should be 200
-    And the response body should be JSON containing "ready" with value "true"
-
-  Scenario: Ready endpoint returns 503 when no providers available
-    Given a health server started on a random port
-    And the readiness check reports no providers available
-    When I request GET "/ready" from the health server
-    Then the HTTP response status should be 503
-    And the response body should be JSON containing "ready" with value "false"
 
   Scenario: Status command shows configuration summary
     Given a valid config with OpenAI API key set

@@ -10,17 +10,7 @@ pub struct Config {
     #[serde(default)]
     pub providers: ProvidersConfig,
     #[serde(default)]
-    pub channels: ChannelsConfig,
-    #[serde(default)]
     pub tools: ToolsConfig,
-    #[serde(default)]
-    pub heartbeat: HeartbeatConfig,
-    #[serde(default)]
-    pub gateway: GatewayConfig,
-    #[serde(default)]
-    pub health: HealthConfig,
-    #[serde(default)]
-    pub voice: VoiceConfig,
     #[serde(default)]
     pub workflow: WorkflowConfig,
 }
@@ -101,55 +91,9 @@ impl std::fmt::Debug for ProviderEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ChannelsConfig {
-    #[serde(default)]
-    pub telegram: TelegramConfig,
-}
-
-#[derive(Clone, Serialize, Deserialize, Default)]
-pub struct TelegramConfig {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default)]
-    pub token: String,
-    #[serde(default)]
-    pub api_base: String,
-    #[serde(default)]
-    pub allow_from: Vec<String>,
-    /// Default outbound address for `MessageTool` and cron job delivery
-    /// when no explicit `target`/`deliver_to` is specified.
-    ///
-    /// Format: `"telegram:<chat_id>"` (e.g. `"telegram:123456789"`).
-    ///
-    /// **Single-user deployments only.** Setting this in a multi-user gateway
-    /// could leak responses from one user's session to another if the LLM omits
-    /// the `target` argument in a `MessageTool` call. The `allow_from` filter
-    /// still gates actual delivery.
-    ///
-    /// TODO: consider hoisting to `ChannelsConfig.default_send_to` once a second
-    /// channel type is added, so the fallback stays channel-agnostic.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_send_to: Option<String>,
-}
-
-impl std::fmt::Debug for TelegramConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TelegramConfig")
-            .field("enabled", &self.enabled)
-            .field("token", &"[REDACTED]")
-            .field("api_base", &self.api_base)
-            .field("allow_from", &self.allow_from)
-            .field("default_send_to", &self.default_send_to)
-            .finish()
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ToolsConfig {
     #[serde(default)]
     pub web: WebToolConfig,
-    #[serde(default)]
-    pub cron: CronToolConfig,
     #[serde(default)]
     pub exec: ExecToolConfig,
 }
@@ -242,94 +186,6 @@ pub struct DuckDuckGoConfig {
     pub max_results: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CronToolConfig {
-    #[serde(default = "default_cron_timeout")]
-    pub exec_timeout_minutes: u32,
-}
-
-impl Default for CronToolConfig {
-    fn default() -> Self {
-        Self {
-            exec_timeout_minutes: default_cron_timeout(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HeartbeatConfig {
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    #[serde(default = "default_heartbeat_interval")]
-    pub interval: u32,
-}
-
-impl Default for HeartbeatConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            interval: default_heartbeat_interval(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GatewayConfig {
-    #[serde(default = "default_host")]
-    pub host: String,
-    #[serde(default = "default_port")]
-    pub port: u16,
-}
-
-impl Default for GatewayConfig {
-    fn default() -> Self {
-        Self {
-            host: default_host(),
-            port: default_port(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HealthConfig {
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    #[serde(default = "default_health_port")]
-    pub port: u16,
-}
-
-impl Default for HealthConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            port: default_health_port(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct VoiceConfig {
-    #[serde(default)]
-    pub groq: GroqVoiceConfig,
-}
-
-#[derive(Clone, Serialize, Deserialize, Default)]
-pub struct GroqVoiceConfig {
-    #[serde(default)]
-    pub api_key: String,
-    #[serde(default)]
-    pub api_base: String,
-}
-
-impl std::fmt::Debug for GroqVoiceConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GroqVoiceConfig")
-            .field("api_key", &"[REDACTED]")
-            .field("api_base", &self.api_base)
-            .finish()
-    }
-}
-
 fn default_workspace() -> String {
     "~/.quecto/workspace".to_string()
 }
@@ -370,9 +226,6 @@ fn default_true() -> bool {
 fn default_max_results() -> u32 {
     5
 }
-fn default_cron_timeout() -> u32 {
-    5
-}
 fn default_nsjail_binary() -> String {
     "nsjail".to_string()
 }
@@ -400,19 +253,6 @@ fn default_nsjail_tmp_size_mb() -> u64 {
     // 512 MB — conservative default safe for RPi/VPS (1–2 GB RAM).
     512
 }
-fn default_heartbeat_interval() -> u32 {
-    30
-}
-fn default_host() -> String {
-    "0.0.0.0".to_string()
-}
-fn default_port() -> u16 {
-    8080
-}
-fn default_health_port() -> u16 {
-    9090
-}
-
 impl Config {
     /// Load config from a JSON file at the given path.
     pub fn load(path: &str) -> Result<Self, ConfigError> {

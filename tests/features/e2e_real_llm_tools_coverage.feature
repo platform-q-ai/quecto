@@ -56,6 +56,4 @@ Feature: E2E Real LLM Tool Coverage
     Then the exit code should be 0
     And stdout should contain "FIND_JSON_OK"
 
-  # Note: cron tool is gateway-only (not available in CLI agent or REPL).
-  # It has 20+ mock BDD scenarios. Real-LLM cron coverage would require
-  # the gateway Telegram mock harness — deferred to a gateway-specific PR.
+

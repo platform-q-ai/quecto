@@ -1,11 +1,9 @@
 pub mod bash;
 pub mod command_match;
-pub mod cron_tool;
 pub mod ensure_tool;
 pub mod filesystem;
 pub mod find;
 pub mod grep;
-pub mod message;
 pub mod path_utils;
 pub mod recall;
 pub mod registry;

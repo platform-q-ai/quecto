@@ -114,11 +114,6 @@ pub fn run(args: Vec<String>) -> i32 {
         ..Default::default()
     };
 
-    // Handle gateway specially — it's a long-running async process
-    if args.len() >= 2 && args[1] == "gateway" {
-        return commands::cmd_gateway_run(&ctx);
-    }
-
     // No arguments → enter REPL mode with real stdin/stdout
     if args.len() < 2 {
         let io = ReplIo {
@@ -169,16 +164,8 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
         match args[1].as_str() {
             "onboard" => commands::cmd_onboard(ctx, &mut stdout, &mut stderr),
             "agent" => agent::cmd_agent(ctx, &args[2..], &mut stdout, &mut stderr),
-            "gateway" => {
-                stdout.push_str("Use 'quecto gateway' to start the gateway service\n");
-                0
-            }
             "status" => commands::cmd_status(ctx, &mut stdout, &mut stderr),
             "auth" => auth::cmd_auth(ctx, &args[2..], &mut stdout, &mut stderr),
-            "cron" => {
-                stderr.push_str("cron: not yet implemented\n");
-                1
-            }
             "skills" => commands::cmd_skills(ctx, &args[2..], &mut stdout, &mut stderr),
             "help" | "--help" | "-h" => {
                 help_text(&mut stdout);
@@ -527,9 +514,7 @@ fn help_text(out: &mut String) {
         "                       --socket <path>  Socket path for --mode uds (default: auto in tmpdir)\n",
     );
     out.push_str("  auth        Manage authentication (login, logout, status)\n");
-    out.push_str("  gateway     Start the Telegram gateway\n");
     out.push_str("  status      Show status\n");
-    out.push_str("  cron        Manage scheduled tasks\n");
     out.push_str("  skills      Manage skills (install, list, remove)\n");
     out.push_str("  help        Show this help\n");
     out.push_str("  version     Show version information\n");

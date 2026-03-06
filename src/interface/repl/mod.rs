@@ -1,6 +1,4 @@
 mod cmd_agent;
-mod cmd_cron;
-mod cmd_heartbeat;
 mod cmd_spawn;
 mod parsers;
 pub(crate) mod progress;
@@ -80,8 +78,6 @@ const CMD_EXIT: &str = "/exit";
 const CMD_QUIT: &str = "/quit";
 const CMD_HELP: &str = "/help";
 const CMD_CLEAR: &str = "/clear";
-const CMD_CRON: &str = "/cron";
-const CMD_HEARTBEAT: &str = "/heartbeat";
 const CMD_AGENT: &str = "/agent";
 const CMD_SPAWN: &str = "/spawn";
 
@@ -142,14 +138,6 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
                     self.handle_clear(&rt);
                     continue;
                 }
-                _ if input.starts_with(CMD_CRON) => {
-                    self.handle_cron(input);
-                    continue;
-                }
-                _ if input.starts_with(CMD_HEARTBEAT) => {
-                    self.handle_heartbeat(input);
-                    continue;
-                }
                 _ if input.starts_with(CMD_AGENT) => {
                     self.handle_agent(input, &rt);
                     continue;
@@ -180,8 +168,6 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
         let _ = writeln!(self.writer, "  /help       Show this help");
         let _ = writeln!(self.writer, "  /clear      Clear conversation history");
         let _ = writeln!(self.writer, "  /agent      Manage subagent profiles");
-        let _ = writeln!(self.writer, "  /cron       Manage scheduled cron jobs");
-        let _ = writeln!(self.writer, "  /heartbeat  Manage heartbeat tasks");
         let _ = writeln!(self.writer, "  /spawn      Spawn a task as a child agent");
         let _ = writeln!(self.writer, "  /exit       Exit the REPL");
         let _ = writeln!(self.writer, "  /quit       Exit the REPL");
@@ -199,26 +185,6 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
             }
         }
         let _ = writeln!(self.writer, "Conversation cleared.");
-    }
-
-    // -----------------------------------------------------------------------
-    // Config helpers
-    // -----------------------------------------------------------------------
-
-    fn load_config(&self) -> Option<Config> {
-        let config_path = self.session.base_dir.join("config.json");
-        Config::load(config_path.to_str()?).ok()
-    }
-
-    fn read_config_json(&self, path: &Path) -> Result<serde_json::Value, String> {
-        let content = std::fs::read_to_string(path).map_err(|e| format!("read config: {}", e))?;
-        serde_json::from_str(&content).map_err(|e| format!("parse config: {}", e))
-    }
-
-    fn write_config_json(&self, path: &Path, config: &serde_json::Value) -> Result<(), String> {
-        let content =
-            serde_json::to_string_pretty(config).map_err(|e| format!("serialize config: {}", e))?;
-        std::fs::write(path, content).map_err(|e| format!("write config: {}", e))
     }
 
     // -----------------------------------------------------------------------

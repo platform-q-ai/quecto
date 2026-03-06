@@ -44,10 +44,8 @@ fn test_help_command_shows_usage() {
             "Usage: quecto [command]",
             "onboard",
             "agent",
-            "gateway",
             "status",
             "auth",
-            "cron",
             "skills",
             "help",
             "version",
@@ -86,27 +84,13 @@ fn test_unknown_command() {
 }
 
 #[test]
-fn test_cron_not_implemented() {
-    let out = run_with_output(args("cron"), &default_ctx());
-    assert_eq!(out.exit_code, 1);
-    assert!(out.stderr.contains("not yet implemented"));
-}
-
-#[test]
-fn test_gateway_subcommand_hint() {
-    let out = run_with_output(args("gateway"), &default_ctx());
-    assert_eq!(out.exit_code, 0);
-    assert!(out.stdout.contains("gateway"));
-}
-
-#[test]
 fn test_help_text_includes_all_commands() {
     let mut out = String::new();
     help_text(&mut out);
     assert_contains_all(
         &out,
         &[
-            "onboard", "agent", "auth", "gateway", "status", "cron", "skills", "help", "version",
+            "onboard", "agent", "auth", "status", "skills", "help", "version",
         ],
     );
 }
