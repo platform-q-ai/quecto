@@ -93,7 +93,8 @@ impl WorkflowState {
         Self::new(config.steps.clone())
     }
 
-    /// Create the 16-step BDD/TDD workflow (for tests and reference).
+    /// Create the 16-step BDD/TDD workflow (test-only convenience).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn default_bdd() -> Self {
         Self::new(bdd_steps())
     }
@@ -352,8 +353,11 @@ impl WorkflowState {
     /// Restore state from a persisted snapshot.
     ///
     /// Uses the provided steps (from config), or falls back to
-    /// [`default_steps()`] if `None`. If the persisted done vector length
-    /// doesn't match the step count, it is padded with `false` or truncated.
+    /// **Deprecated:** Use [`from_persistable_with_steps`] with explicit steps.
+    ///
+    /// Since `default_steps()` returns empty, this discards all persisted
+    /// done-state when called without explicit steps.
+    #[deprecated(note = "use from_persistable_with_steps with explicit steps from config")]
     pub fn from_persistable(p: &WorkflowPersistable) -> Self {
         Self::from_persistable_with_steps(p, None)
     }
@@ -451,6 +455,9 @@ pub struct WorkflowConfig {
     /// When true (default), a WorkflowGuard is registered that blocks
     /// `git commit`/`git push` until required steps are complete.
     /// Set to false to disable the guard while keeping the workflow tool.
+    ///
+    /// **Note:** This is a developer convenience, NOT a security boundary.
+    /// Any user with config.json write access can disable it.
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub guard_commit: bool,
 }
@@ -500,7 +507,8 @@ pub fn default_steps() -> Vec<WorkflowStep> {
 }
 
 /// The 16-step BDD/TDD workflow matching AGENTS.md.
-/// Used by `default_bdd()` for test convenience and as a reference template.
+/// Test-only: used by `default_bdd()` as a reference template.
+#[cfg(any(test, feature = "test-support"))]
 pub fn bdd_steps() -> Vec<WorkflowStep> {
     vec![
         WorkflowStep {
