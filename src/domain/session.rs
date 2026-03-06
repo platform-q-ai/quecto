@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -115,6 +116,52 @@ pub fn strip_tool_history(messages: &[Message]) -> Vec<Message> {
         }
     }
     filtered
+}
+
+/// Return the set of tool-call IDs that have a matching pair on both the
+/// assistant side (tool_calls) and the tool side (tool_call_id).
+///
+/// Orphaned IDs — calls without a result or results without a call — are
+/// excluded. Callers should filter messages to only emit tool calls / tool
+/// results whose ID appears in the returned set, preventing API errors from
+/// mismatched pairs.
+///
+/// Extracted from `CodexProvider::valid_call_id_pairs` (#311) so all
+/// providers can benefit from the same logic.
+pub fn filter_orphan_tool_pairs(messages: &[Message]) -> HashSet<String> {
+    use super::message::Role;
+
+    let mut sent: HashSet<String> = HashSet::new();
+    let mut received: HashSet<String> = HashSet::new();
+
+    for msg in messages {
+        match msg.role {
+            Role::Assistant => {
+                for tc in &msg.tool_calls {
+                    sent.insert(tc.id.clone());
+                }
+            }
+            Role::Tool => {
+                if let Some(ref cid) = msg.tool_call_id {
+                    received.insert(cid.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if sent.iter().any(|id| !received.contains(id)) || received.iter().any(|id| !sent.contains(id))
+    {
+        tracing::warn!(
+            orphaned_calls = ?sent.iter().filter(|id| !received.contains(*id)).collect::<Vec<_>>(),
+            orphaned_results = ?received.iter().filter(|id| !sent.contains(*id)).collect::<Vec<_>>(),
+            "orphaned tool call/result pairs detected and excluded"
+        );
+    }
+
+    sent.into_iter()
+        .filter(|id| received.contains(id))
+        .collect()
 }
 
 /// Port: spill storage used by context pruning and recall().
@@ -262,5 +309,45 @@ mod tests {
         ];
         let filtered = strip_tool_history(&messages);
         assert_eq!(filtered.len(), 3);
+    }
+
+    // --- #311: filter_orphan_tool_pairs domain function ---
+
+    #[test]
+    fn filter_orphan_pairs_matched_calls_preserved() {
+        let mut assistant = Message::assistant("", vec![make_tool_call("bash")]);
+        assistant.tool_calls[0].id = "call-1".to_string();
+        let mut tool_result = Message::tool("call-1", "output");
+        tool_result.tool_call_id = Some("call-1".to_string());
+        let messages = vec![assistant, tool_result];
+        let valid = filter_orphan_tool_pairs(&messages);
+        assert!(valid.contains("call-1"));
+    }
+
+    #[test]
+    fn filter_orphan_pairs_unmatched_call_excluded() {
+        let mut assistant = Message::assistant("", vec![make_tool_call("bash")]);
+        assistant.tool_calls[0].id = "call-orphan".to_string();
+        // No matching tool result
+        let messages = vec![assistant];
+        let valid = filter_orphan_tool_pairs(&messages);
+        assert!(!valid.contains("call-orphan"));
+    }
+
+    #[test]
+    fn filter_orphan_pairs_unmatched_result_excluded() {
+        let mut tool_result = Message::tool("ghost-id", "output");
+        tool_result.tool_call_id = Some("ghost-id".to_string());
+        // No matching assistant call
+        let messages = vec![tool_result];
+        let valid = filter_orphan_tool_pairs(&messages);
+        assert!(!valid.contains("ghost-id"));
+    }
+
+    #[test]
+    fn filter_orphan_pairs_empty_messages_returns_empty() {
+        let messages: Vec<Message> = vec![];
+        let valid = filter_orphan_tool_pairs(&messages);
+        assert!(valid.is_empty());
     }
 }

@@ -79,6 +79,19 @@ impl Sandbox {
 
     /// Validate that a file path is within the workspace (if restriction is enabled).
     /// Follows symlinks to ensure the resolved real path is inside the workspace.
+    ///
+    /// # TOCTOU note (#303)
+    ///
+    /// There is an inherent time-of-check / time-of-use gap between this call and
+    /// the subsequent filesystem I/O (open/write/read). A symlink could be swapped
+    /// to point outside the workspace between validation and use. This is:
+    ///
+    /// - **Fully mitigated** when nsjail is enabled: the mount namespace prevents
+    ///   any path outside the sandboxed workspace from being accessed.
+    /// - **A known, low-severity limitation** in native exec mode: exploitation
+    ///   requires local filesystem access and precise timing. For security-critical
+    ///   native deployments, consider `O_NOFOLLOW` on the final path component or
+    ///   re-validating via `/proc/self/fd/N` after open.
     pub fn validate_path(&self, path: &str) -> Result<PathBuf, SandboxError> {
         let path = Path::new(path);
 

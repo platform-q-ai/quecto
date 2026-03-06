@@ -60,51 +60,10 @@ impl CodexProvider {
 
     /// Scan messages and return the set of call IDs that appear on BOTH the
     /// assistant side (function_call) and the tool side (function_call_output).
-    /// Logs a warning for any orphaned IDs that will be dropped.
+    ///
+    /// Delegates to [`crate::domain::session::filter_orphan_tool_pairs`] (#311).
     fn valid_call_id_pairs(messages: &[Message]) -> std::collections::HashSet<String> {
-        use std::collections::HashSet;
-
-        let mut sent: HashSet<String> = HashSet::new();
-        let mut received: HashSet<String> = HashSet::new();
-
-        for msg in messages {
-            match msg.role {
-                Role::Assistant => {
-                    for tc in &msg.tool_calls {
-                        sent.insert(tc.id.clone());
-                    }
-                }
-                Role::Tool => {
-                    if let Some(ref cid) = msg.tool_call_id {
-                        received.insert(cid.clone());
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        // Lazy allocation: only build diagnostic Vecs when orphans are actually
-        // present — the happy path (no orphans) is zero-alloc beyond the sets.
-        let has_orphan_calls = sent.iter().any(|id| !received.contains(id));
-        let has_orphan_outputs = received.iter().any(|id| !sent.contains(id));
-
-        if has_orphan_calls || has_orphan_outputs {
-            let orphaned_calls: Vec<_> = sent.iter().filter(|id| !received.contains(*id)).collect();
-            let orphaned_outputs: Vec<_> =
-                received.iter().filter(|id| !sent.contains(*id)).collect();
-            tracing::warn!(
-                orphaned_calls = ?orphaned_calls,
-                orphaned_outputs = ?orphaned_outputs,
-                "Codex: orphaned function_call/output pairs removed \
-                 (session corrupted mid-turn or by context pruning). \
-                 TODO: extract repair logic to application layer so all providers benefit \
-                 (tracked as follow-up — OpenAI and Anthropic have the same pairing constraint)."
-            );
-        }
-
-        sent.into_iter()
-            .filter(|id| received.contains(id))
-            .collect()
+        crate::domain::session::filter_orphan_tool_pairs(messages)
     }
 
     /// Convert our domain messages into Responses API `input` array.
