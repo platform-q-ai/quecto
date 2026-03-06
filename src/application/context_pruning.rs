@@ -20,11 +20,28 @@ use crate::domain::session::{ContextSpillStore, SpillIndex};
 /// `current_turn.saturating_sub(turn)` can never reach this threshold.
 pub const COLLAPSE_DISABLED: u32 = u32::MAX;
 
-/// Estimate token count from byte length. Intentionally conservative.
-/// 1 token ~ 3 bytes. Overestimates for prose, roughly accurate for
-/// code/paths/URLs. Better to prune early than to exceed context limits.
+/// Estimate token count from text content (#305).
+///
+/// Uses a two-class character heuristic that is accurate for both ASCII prose
+/// and non-ASCII (CJK, emoji, etc.):
+///
+/// - ASCII codepoints: ~4 chars per token (matches GPT cl100k_base for English)
+/// - Non-ASCII codepoints: ~1 char per token (CJK, emoji, etc. are typically
+///   1 token per codepoint in current tokenisers)
+///
+/// The old byte-based estimate (`len/3`) overcounted ASCII by ~33% and gave
+/// the same token count for 100 CJK chars as for 300 ASCII chars, which is
+/// inaccurate in opposite directions. This heuristic is more balanced: it
+/// reduces pruning pressure on ASCII-heavy sessions without undercounting CJK
+/// (which would weaken pruning as a prompt-injection defence).
+///
+/// The estimate is intentionally slightly conservative — it is better to
+/// prune a turn early than to exceed the provider's context limit.
 pub fn estimate_tokens(text: &str) -> usize {
-    text.len().div_ceil(3)
+    let (ascii, non_ascii) = text.chars().fold((0usize, 0usize), |(a, n), c| {
+        if c.is_ascii() { (a + 1, n) } else { (a, n + 1) }
+    });
+    ascii.div_ceil(4) + non_ascii
 }
 
 /// Estimate total tokens for a slice of messages.
@@ -226,11 +243,11 @@ mod tests {
     #[test]
     fn test_estimate_tokens() {
         assert_eq!(estimate_tokens(""), 0);
-        assert_eq!(estimate_tokens("abc"), 1); // 3 bytes / 3 = 1
-        assert_eq!(estimate_tokens("abcdef"), 2); // 6 / 3 = 2
-        assert_eq!(estimate_tokens("ab"), 1); // ceiling: (2+2)/3 = 1
-        // Large text: ~300 bytes -> ~100 tokens
-        let large = "x".repeat(300);
+        assert_eq!(estimate_tokens("abcd"), 1); // 4 chars / 4 = 1
+        assert_eq!(estimate_tokens("abcdefgh"), 2); // 8 / 4 = 2
+        assert_eq!(estimate_tokens("ab"), 1); // ceiling: div_ceil(2, 4) = 1
+        // 400 ASCII chars → 100 tokens at 4 chars/token
+        let large = "x".repeat(400);
         assert_eq!(estimate_tokens(&large), 100);
     }
 
@@ -393,12 +410,12 @@ mod tests {
     #[test]
     fn test_estimate_message_tokens_includes_image_blocks() {
         use crate::domain::tool::ImageBlock;
-        let mut msg = Message::tool("call_1", "abc"); // 1 token text
+        let mut msg = Message::tool("call_1", "abc"); // div_ceil(3,4)=1 token text
         msg.image_blocks = vec![ImageBlock {
             mime_type: "image/png",
-            data: "x".repeat(300), // 100 tokens image
+            data: "x".repeat(300), // div_ceil(300,4)=75 tokens image
         }];
-        assert_eq!(estimate_message_tokens(&msg), 101); // 1 text + 100 image
+        assert_eq!(estimate_message_tokens(&msg), 76); // 1 text + 75 image
     }
 
     #[test]
@@ -421,5 +438,46 @@ mod tests {
     #[test]
     fn test_collapse_disabled_constant() {
         assert_eq!(COLLAPSE_DISABLED, u32::MAX);
+    }
+
+    // --- #305: Improved token estimation heuristic ---
+
+    #[test]
+    fn estimate_tokens_ascii_prose_uses_four_chars_per_token() {
+        // 400 ASCII chars → 100 tokens at 4 chars/token
+        let prose = "a".repeat(400);
+        assert_eq!(estimate_tokens(&prose), 100);
+    }
+
+    #[test]
+    fn estimate_tokens_ascii_ceiling_division() {
+        // div_ceil(300, 4) = 75 tokens for 300 ASCII chars
+        let text = "x_".repeat(150); // 300 ASCII chars
+        assert_eq!(estimate_tokens(&text), 75);
+    }
+
+    #[test]
+    fn estimate_tokens_cjk_one_token_per_char() {
+        // CJK chars use the non-ASCII branch: 1 token per codepoint.
+        // 100 CJK chars → 100 tokens (accurate: GPT tokeniser gives ~1 token/CJK char).
+        // This is better than the old byte heuristic: 300 bytes/3 = 100 (same answer,
+        // but correct reasoning). For pure ASCII, bytes/3 overcounted; chars/4 is accurate.
+        let cjk = "中".repeat(100); // 100 non-ASCII codepoints
+        assert_eq!(estimate_tokens(&cjk), 100); // 100 * 1 = 100
+    }
+
+    #[test]
+    fn estimate_tokens_mixed_ascii_and_cjk() {
+        // 8 ASCII chars → div_ceil(8,4)=2 tokens; 3 CJK chars → 3 tokens = 5 total
+        let mixed = "hello!! 中文日";
+        assert_eq!(
+            estimate_tokens(mixed),
+            estimate_tokens("hello!! ") + estimate_tokens("中文日")
+        );
+    }
+
+    #[test]
+    fn estimate_tokens_empty_string_is_zero() {
+        assert_eq!(estimate_tokens(""), 0);
     }
 }

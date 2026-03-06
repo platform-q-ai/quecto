@@ -79,6 +79,21 @@ impl Sandbox {
 
     /// Validate that a file path is within the workspace (if restriction is enabled).
     /// Follows symlinks to ensure the resolved real path is inside the workspace.
+    ///
+    /// # TOCTOU note (#303)
+    ///
+    /// There is an inherent time-of-check / time-of-use gap between this call and
+    /// the subsequent filesystem I/O (open/write/read) performed by the caller.
+    /// A symlink could be swapped to point outside the workspace in that window.
+    ///
+    /// - **Not mitigated by nsjail**: nsjail only wraps bash/exec child processes;
+    ///   filesystem tools (read, write, edit, ls) run in the parent Quecto process
+    ///   and call `validate_path` directly, so the TOCTOU gap exists regardless
+    ///   of nsjail configuration.
+    /// - **Known low-severity limitation**: exploitation requires local filesystem
+    ///   access and precise timing. For security-critical native deployments,
+    ///   consider `O_NOFOLLOW` on the final path component, or re-validate by
+    ///   comparing the open fd target via `/proc/self/fd/N` after open.
     pub fn validate_path(&self, path: &str) -> Result<PathBuf, SandboxError> {
         let path = Path::new(path);
 

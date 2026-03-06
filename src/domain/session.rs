@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -115,6 +116,93 @@ pub fn strip_tool_history(messages: &[Message]) -> Vec<Message> {
         }
     }
     filtered
+}
+
+/// Diagnostic information returned by [`filter_orphan_tool_pairs`].
+///
+/// Callers (infrastructure providers) are responsible for logging these with
+/// provider-specific context. Domain functions must remain side-effect-free.
+#[derive(Debug, Default)]
+pub struct OrphanDiag {
+    /// Tool-call IDs present in assistant messages but missing a tool result.
+    pub orphaned_calls: Vec<String>,
+    /// Tool-call IDs present in tool results but missing an assistant call.
+    pub orphaned_results: Vec<String>,
+}
+
+impl OrphanDiag {
+    /// Returns `true` if any orphaned IDs were found.
+    pub fn has_orphans(&self) -> bool {
+        !self.orphaned_calls.is_empty() || !self.orphaned_results.is_empty()
+    }
+}
+
+/// Return the set of tool-call IDs that have a matching pair on both the
+/// assistant side (tool_calls) and the tool side (tool_call_id), together
+/// with diagnostic info about any orphaned IDs.
+///
+/// Orphaned IDs — calls without a result or results without a call — are
+/// excluded from the returned set. Callers should filter their message list
+/// to only emit tool calls / results whose ID appears in the valid set,
+/// preventing provider API errors (e.g. HTTP 400) from mismatched pairs.
+///
+/// Extracted from `CodexProvider::valid_call_id_pairs` (#311) so all
+/// providers benefit from the same logic. The caller is responsible for
+/// logging `OrphanDiag` with provider-specific context — domain functions
+/// must remain pure (no I/O or side-effects).
+///
+/// # Allocation note
+///
+/// The happy path (no orphans) is zero-alloc beyond the two `HashSet`s:
+/// `OrphanDiag::orphaned_calls` and `orphaned_results` are only populated
+/// (and thus only allocate) when mismatches are actually detected.
+pub fn filter_orphan_tool_pairs(messages: &[Message]) -> (HashSet<String>, OrphanDiag) {
+    use super::message::Role;
+
+    let mut sent: HashSet<String> = HashSet::new();
+    let mut received: HashSet<String> = HashSet::new();
+
+    for msg in messages {
+        match msg.role {
+            Role::Assistant => {
+                for tc in &msg.tool_calls {
+                    sent.insert(tc.id.clone());
+                }
+            }
+            Role::Tool => {
+                if let Some(ref cid) = msg.tool_call_id {
+                    received.insert(cid.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Lazy allocation: diagnostic Vecs are only built when orphans are present.
+    let has_orphan_calls = sent.iter().any(|id| !received.contains(id));
+    let has_orphan_results = received.iter().any(|id| !sent.contains(id));
+    let diag = if has_orphan_calls || has_orphan_results {
+        OrphanDiag {
+            orphaned_calls: sent
+                .iter()
+                .filter(|id| !received.contains(*id))
+                .cloned()
+                .collect(),
+            orphaned_results: received
+                .iter()
+                .filter(|id| !sent.contains(*id))
+                .cloned()
+                .collect(),
+        }
+    } else {
+        OrphanDiag::default()
+    };
+
+    let valid = sent
+        .into_iter()
+        .filter(|id| received.contains(id))
+        .collect();
+    (valid, diag)
 }
 
 /// Port: spill storage used by context pruning and recall().
@@ -262,5 +350,51 @@ mod tests {
         ];
         let filtered = strip_tool_history(&messages);
         assert_eq!(filtered.len(), 3);
+    }
+
+    // --- #311: filter_orphan_tool_pairs domain function ---
+
+    #[test]
+    fn filter_orphan_pairs_matched_calls_preserved() {
+        let mut assistant = Message::assistant("", vec![make_tool_call("bash")]);
+        assistant.tool_calls[0].id = "call-1".to_string();
+        let mut tool_result = Message::tool("call-1", "output");
+        tool_result.tool_call_id = Some("call-1".to_string());
+        let messages = vec![assistant, tool_result];
+        let (valid, diag) = filter_orphan_tool_pairs(&messages);
+        assert!(valid.contains("call-1"));
+        assert!(!diag.has_orphans());
+    }
+
+    #[test]
+    fn filter_orphan_pairs_unmatched_call_excluded() {
+        let mut assistant = Message::assistant("", vec![make_tool_call("bash")]);
+        assistant.tool_calls[0].id = "call-orphan".to_string();
+        // No matching tool result
+        let messages = vec![assistant];
+        let (valid, diag) = filter_orphan_tool_pairs(&messages);
+        assert!(!valid.contains("call-orphan"));
+        assert!(diag.has_orphans());
+        assert!(diag.orphaned_calls.contains(&"call-orphan".to_string()));
+    }
+
+    #[test]
+    fn filter_orphan_pairs_unmatched_result_excluded() {
+        let mut tool_result = Message::tool("ghost-id", "output");
+        tool_result.tool_call_id = Some("ghost-id".to_string());
+        // No matching assistant call
+        let messages = vec![tool_result];
+        let (valid, diag) = filter_orphan_tool_pairs(&messages);
+        assert!(!valid.contains("ghost-id"));
+        assert!(diag.has_orphans());
+        assert!(diag.orphaned_results.contains(&"ghost-id".to_string()));
+    }
+
+    #[test]
+    fn filter_orphan_pairs_empty_messages_returns_empty() {
+        let messages: Vec<Message> = vec![];
+        let (valid, diag) = filter_orphan_tool_pairs(&messages);
+        assert!(valid.is_empty());
+        assert!(!diag.has_orphans());
     }
 }

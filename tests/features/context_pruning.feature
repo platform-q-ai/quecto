@@ -115,6 +115,20 @@ Feature: Context pruning via sliding window (no tool-result collapse)
     Then the first user message remains in context
     And later user messages may be dropped
 
+  # --- #305: Improved token estimation heuristic ---
+
+  Scenario: Token estimation uses 4 chars per token for ASCII prose
+    Given a string of 400 ASCII characters
+    Then the estimated token count should be 100
+
+  Scenario: Token estimation applies ceiling division for short strings
+    Given a string of 2 ASCII characters
+    Then the estimated token count should be 1
+
+  Scenario: Token estimation for CJK text uses 1 token per character
+    Given a string of 100 CJK characters
+    Then the estimated token count should be 100
+
   # --- Default max context tokens is 190,000 ---
 
   Scenario: Default max context tokens is 190000
