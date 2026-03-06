@@ -74,7 +74,7 @@ pub(crate) fn cmd_gateway_run(ctx: &CliContext) -> i32 {
     use crate::interface::gateway::Gateway;
 
     let base_dir = ctx.base_dir();
-    let config_path = base_dir.join("config.json");
+    let config_path = ctx.config_path();
 
     if !config_path.exists() {
         eprintln!("config not found at {}", config_path.display());

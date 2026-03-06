@@ -47,6 +47,8 @@ pub struct CliOutput {
 pub struct CliContext {
     /// Override for the base directory (default: ~/.quecto).
     pub base_dir: Option<PathBuf>,
+    /// Override config file path (default: <base_dir>/config.json).
+    pub config_path: Option<PathBuf>,
     /// Pre-loaded stdin data for testing interactive commands.
     pub stdin_data: Option<String>,
     /// Override OAuth base URL for testing (e.g. wiremock URI).
@@ -56,6 +58,13 @@ pub struct CliContext {
 }
 
 impl CliContext {
+    /// Resolve the config file path: explicit override > base_dir/config.json.
+    pub(crate) fn config_path(&self) -> PathBuf {
+        self.config_path
+            .clone()
+            .unwrap_or_else(|| self.base_dir().join("config.json"))
+    }
+
     /// Resolve the base directory: explicit override > QUECTO_BASE_DIR env var > default.
     pub(crate) fn base_dir(&self) -> PathBuf {
         self.base_dir
@@ -66,10 +75,44 @@ impl CliContext {
     }
 }
 
+/// Extract `--config <path>` from args (consumed globally).
+/// Skips values of flags that take arguments (e.g. `-m`, `--system`) to avoid
+/// misinterpreting message text like `-m "--config"` as the flag.
+fn extract_config_flag(args: &[String]) -> Option<PathBuf> {
+    /// Flags that consume the next arg as a value (skip their value during scan).
+    const VALUE_FLAGS: &[&str] = &[
+        "-m",
+        "--message",
+        "-s",
+        "--session",
+        "--system",
+        "--model",
+        "--max-iterations",
+        "--max-time",
+        "--mode",
+        "--socket",
+    ];
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--config" && i + 1 < args.len() {
+            return Some(PathBuf::from(&args[i + 1]));
+        }
+        if VALUE_FLAGS.contains(&args[i].as_str()) {
+            i += 2; // skip the flag and its value
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
 /// Run the CLI with the given args, printing to real stdout/stderr.
 /// Returns the exit code.
 pub fn run(args: Vec<String>) -> i32 {
-    let ctx = CliContext::default();
+    let ctx = CliContext {
+        config_path: extract_config_flag(&args),
+        ..Default::default()
+    };
 
     // Handle gateway specially — it's a long-running async process
     if args.len() >= 2 && args[1] == "gateway" {
@@ -98,6 +141,21 @@ pub fn run(args: Vec<String>) -> i32 {
 
 /// Run the CLI with the given args and context, capturing all output for testing.
 pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
+    // Merge --config from args into context if not already set.
+    let merged_ctx;
+    let ctx = if ctx.config_path.is_none() {
+        if let Some(path) = extract_config_flag(&args) {
+            merged_ctx = CliContext {
+                config_path: Some(path),
+                ..ctx.clone()
+            };
+            &merged_ctx
+        } else {
+            ctx
+        }
+    } else {
+        ctx
+    };
     let mut stdout = String::new();
     let mut stderr = String::new();
 
@@ -300,7 +358,7 @@ fn cmd_repl_with_progress<R: std::io::BufRead, W: std::io::Write>(
     };
 
     let base_dir = ctx.base_dir();
-    let config_path = base_dir.join("config.json");
+    let config_path = ctx.config_path();
     if !config_path.exists() {
         let _ = writeln!(io.writer, "Config not found at {}", config_path.display());
         let _ = writeln!(io.writer, "Run 'quecto onboard' first");
@@ -386,6 +444,13 @@ fn parse_repl_flags(args: &[String]) -> Result<ReplFlags, String> {
                 network = true;
                 i += 1;
             }
+            "--config" => {
+                // Consumed globally by CliContext, but skip the value here.
+                if i + 1 >= args.len() {
+                    return Err("--config requires a path".to_string());
+                }
+                i += 2;
+            }
             other if other.starts_with("--") || other.starts_with('-') => {
                 return Err(format!("unknown flag '{other}'"));
             }
@@ -436,6 +501,10 @@ fn help_text(out: &mut String) {
     out.push_str("\nUsage: quecto [command]\n");
     out.push_str("\nWhen run with no arguments, quecto enters interactive REPL mode.\n");
     out.push_str("  REPL options: -s <name>, --system <p>, --model <m>, --no-sandbox, --network\n");
+    out.push_str("\nGlobal options:\n");
+    out.push_str(
+        "  --config <path>  Override config file path (default: <base_dir>/config.json)\n",
+    );
     out.push_str("\nCommands:\n");
     out.push_str("  onboard     Initialize configuration and workspace\n");
     out.push_str("  agent       Run a one-shot agent session (-m required)\n");

@@ -196,6 +196,11 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                 socket_path = Some(std::path::PathBuf::from(val));
                 i += 2;
             }
+            "--config" => {
+                // Value consumed globally by extract_config_flag; validate here too.
+                let _val = next_arg(args, i, "--config requires a path", stderr)?;
+                i += 2;
+            }
             _ => {
                 i += 1;
             }
@@ -245,7 +250,9 @@ pub(crate) fn cmd_agent(
     }
 
     let base_dir = ctx.base_dir();
-    let (agent, wf_config) = match build_agent_from_config(&base_dir, &flags, stderr) {
+    let config_path = ctx.config_path();
+    let (agent, wf_config) = match build_agent_from_config(&base_dir, &config_path, &flags, stderr)
+    {
         Some(r) => r,
         None => return 1,
     };
@@ -264,10 +271,10 @@ pub(crate) fn cmd_agent(
 /// Load config, build provider, and construct the agent loop. Returns None on error.
 pub(crate) fn build_agent_from_config(
     base_dir: &std::path::Path,
+    config_path: &std::path::Path,
     flags: &AgentFlags,
     stderr: &mut String,
 ) -> Option<(AgentLoopImpl, crate::domain::workflow::WorkflowConfig)> {
-    let config_path = base_dir.join("config.json");
     if !config_path.exists() {
         stderr.push_str(&format!(
             "config not found at {}\nrun 'quecto onboard' first\n",
@@ -528,10 +535,12 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     }
 
     let base_dir = ctx.base_dir();
-    let (mut agent, wf_config) = match build_agent_from_config(&base_dir, &flags, stderr) {
-        Some(r) => r,
-        None => return 1,
-    };
+    let config_path = ctx.config_path();
+    let (mut agent, wf_config) =
+        match build_agent_from_config(&base_dir, &config_path, &flags, stderr) {
+            Some(r) => r,
+            None => return 1,
+        };
     // Enable incremental streaming so the UDS layer emits token events.
     agent.set_streaming(true);
 
@@ -547,8 +556,7 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         .model_override
         .clone()
         .or_else(|| {
-            // Re-read config to get the default model.
-            let config_path = base_dir.join("config.json");
+            // Re-read config to get the default model (using the same config_path).
             let env_overrides: HashMap<String, String> = std::env::vars()
                 .filter(|(k, _)| k.starts_with("QUECTO_"))
                 .collect();
@@ -733,3 +741,7 @@ mod no_session_tests;
 #[cfg(test)]
 #[path = "agent_no_sandbox_tests.rs"]
 mod no_sandbox_tests;
+
+#[cfg(test)]
+#[path = "agent_config_tests.rs"]
+mod config_tests;

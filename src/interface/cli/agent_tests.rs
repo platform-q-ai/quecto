@@ -511,7 +511,8 @@ fn test_build_agent_from_config_no_config_file() {
         socket_path: None,
     };
     let mut stderr = String::new();
-    let result = build_agent_from_config(tmp.path(), &flags, &mut stderr);
+    let cfg = tmp.path().join("config.json");
+    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr);
     assert!(result.is_none());
     assert!(stderr.contains("config not found"));
 }
@@ -534,7 +535,8 @@ fn test_build_agent_from_config_invalid_json() {
         socket_path: None,
     };
     let mut stderr = String::new();
-    let result = build_agent_from_config(tmp.path(), &flags, &mut stderr);
+    let cfg = tmp.path().join("config.json");
+    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr);
     assert!(result.is_none());
     assert!(stderr.contains("failed to load config"));
 }
@@ -561,7 +563,8 @@ fn test_build_agent_from_config_no_providers() {
         socket_path: None,
     };
     let mut stderr = String::new();
-    let result = build_agent_from_config(tmp.path(), &flags, &mut stderr);
+    let cfg = tmp.path().join("config.json");
+    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr);
     assert!(result.is_none());
     assert!(stderr.contains("no LLM providers"));
 }
@@ -588,7 +591,8 @@ fn test_build_agent_from_config_with_model_override() {
         socket_path: None,
     };
     let mut stderr = String::new();
-    let result = build_agent_from_config(tmp.path(), &flags, &mut stderr);
+    let cfg = tmp.path().join("config.json");
+    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr);
     assert!(result.is_some(), "stderr: {}", stderr);
 }
 

@@ -602,9 +602,7 @@ fn test_run_agent_session_loads_existing_with_system_prompt() {
     assert!(stderr.contains("Error:"), "stderr: {stderr}");
 }
 
-// ===================================================================
 // build_agent_from_config with various workspace configs
-// ===================================================================
 
 #[test]
 fn test_build_agent_from_config_with_workspace_path() {
@@ -630,7 +628,8 @@ fn test_build_agent_from_config_with_workspace_path() {
         socket_path: None,
     };
     let mut stderr = String::new();
-    let result = build_agent_from_config(tmp.path(), &flags, &mut stderr);
+    let cfg = tmp.path().join("config.json");
+    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr);
     assert!(result.is_some(), "stderr: {}", stderr);
 }
 
@@ -656,7 +655,8 @@ fn test_build_agent_from_config_with_max_iterations() {
         socket_path: None,
     };
     let mut stderr = String::new();
-    let result = build_agent_from_config(tmp.path(), &flags, &mut stderr);
+    let cfg = tmp.path().join("config.json");
+    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr);
     assert!(result.is_some(), "stderr: {}", stderr);
 }
 
