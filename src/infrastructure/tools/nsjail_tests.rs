@@ -303,30 +303,22 @@ fn test_nsjail_default_memory_limit_is_4096_mb() {
 }
 
 #[test]
-fn test_nsjail_default_cpu_time_limit_is_28800_secs() {
-    // 2 cores × 14 400 s wall budget = 28 800 CPU-seconds.
+fn test_nsjail_default_no_cpu_time_limit() {
+    // No default CPU time limit — operators configure via config.
     let args = nsjail_args_str(&NsjailOptions::default());
     assert!(
-        args.contains("--rlimit_cpu"),
-        "missing --rlimit_cpu: {args}"
-    );
-    assert!(
-        args.contains("28800"),
-        "default rlimit_cpu should be 28800 CPU-s: {args}"
+        !args.contains("--rlimit_cpu"),
+        "default should not set --rlimit_cpu: {args}"
     );
 }
 
 #[test]
-fn test_nsjail_default_wall_time_limit_is_14400_secs() {
-    // 4 hours = 14 400 wall-clock seconds.
+fn test_nsjail_default_no_wall_time_limit() {
+    // No default wall time limit — operators configure via config.
     let args = nsjail_args_str(&NsjailOptions::default());
     assert!(
-        args.contains("--time_limit"),
-        "missing --time_limit: {args}"
-    );
-    assert!(
-        args.contains("14400"),
-        "default --time_limit should be 14400 s: {args}"
+        !args.contains("--time_limit"),
+        "default should not set --time_limit: {args}"
     );
 }
 
@@ -359,17 +351,13 @@ fn test_nsjail_tmp_size_is_configurable() {
 }
 
 #[test]
-fn test_exec_options_default_timeout_matches_nsjail_wall_limit() {
-    // Tokio timeout must be >= --time_limit so nsjail fires first.
-    use crate::infrastructure::tools::bash::DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS;
-    use std::time::Duration;
+fn test_exec_options_default_timeout_is_max() {
+    // No default timeout — Duration::MAX when no wall limit configured.
     let exec_default = ExecOptions::default();
-    let nsjail_wall = Duration::from_secs(DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS);
-    assert!(
-        exec_default.timeout >= nsjail_wall,
-        "ExecOptions default timeout ({:?}) must be >= nsjail wall limit ({:?})",
+    assert_eq!(
         exec_default.timeout,
-        nsjail_wall
+        std::time::Duration::MAX,
+        "ExecOptions default timeout should be Duration::MAX (no timeout)"
     );
 }
 

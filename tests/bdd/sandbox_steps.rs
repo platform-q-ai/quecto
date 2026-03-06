@@ -165,6 +165,16 @@ fn then_exec_tool_default_timeout(world: &mut QuectoWorld, expected: u64) {
     );
 }
 
+#[then("the exec tool should have no timeout")]
+fn then_exec_tool_no_timeout(world: &mut QuectoWorld) {
+    let tool = world.exec_tool.as_ref().expect("exec tool not set");
+    assert_eq!(
+        tool.timeout(),
+        std::time::Duration::MAX,
+        "expected no timeout (Duration::MAX)"
+    );
+}
+
 // --- Env sanitization steps ---
 
 #[given("an exec tool in a sandboxed workspace")]
