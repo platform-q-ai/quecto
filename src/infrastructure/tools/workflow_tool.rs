@@ -363,8 +363,8 @@ fn extract_bash_command(arguments: &str) -> String {
 /// - `echo "git commit"` (best-effort — not a full shell parser)
 /// - `# git commit` (comments)
 fn contains_git_commit_or_push(command: &str) -> bool {
-    // Split on command separators to handle chained commands
-    for segment in command.split(&['&', '|', ';'][..]) {
+    // Split on command separators and newlines to handle chained/multiline commands
+    for segment in command.split(&['&', '|', ';', '\n'][..]) {
         let segment = segment.trim();
 
         // Skip empty segments and comments
@@ -410,6 +410,45 @@ fn contains_git_commit_or_push(command: &str) -> bool {
             }
         }
     }
+
+    // Check subshells: $(...) and backticks
+    contains_git_in_subshell(command)
+}
+
+/// Detect git commit/push inside subshells: `$(...)` and backtick expressions.
+fn contains_git_in_subshell(command: &str) -> bool {
+    let lower = command.to_lowercase();
+
+    // Extract $(...) contents and check recursively
+    let mut pos = 0;
+    while let Some(start) = lower[pos..].find("$(") {
+        let abs_start = pos + start + 2;
+        if let Some(end) = lower[abs_start..].find(')') {
+            let inside = &lower[abs_start..abs_start + end];
+            if contains_git_commit_or_push(inside) {
+                return true;
+            }
+            pos = abs_start + end + 1;
+        } else {
+            break;
+        }
+    }
+
+    // Check all backtick pairs
+    let mut pos = 0;
+    while let Some(start) = lower[pos..].find('`') {
+        let abs_start = pos + start + 1;
+        if let Some(end) = lower[abs_start..].find('`') {
+            let inside = &lower[abs_start..abs_start + end];
+            if contains_git_commit_or_push(inside) {
+                return true;
+            }
+            pos = abs_start + end + 1;
+        } else {
+            break;
+        }
+    }
+
     false
 }
 

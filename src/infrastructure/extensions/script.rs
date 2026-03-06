@@ -10,6 +10,9 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
+/// Maximum bytes captured from script extension stdout/stderr (1 MiB).
+const MAX_SCRIPT_OUTPUT_BYTES: usize = 1024 * 1024;
+
 use crate::domain::error::DomainError;
 use crate::domain::extension::Extension;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
@@ -32,6 +35,11 @@ fn default_timeout() -> u64 {
 
 impl ExtensionManifest {
     /// Parse a manifest from TOML string.
+    /// Parse a manifest from a subset of TOML.
+    ///
+    /// Supported: `key = "value"`, `key = 'value'`, `key = value`,
+    /// triple-quoted multiline strings (`"""`), comments (`#`).
+    /// NOT supported: escape sequences, inline tables, arrays, dotted keys.
     pub fn from_toml(toml_str: &str) -> Result<Self, String> {
         Self::parse_toml_manual(toml_str)
     }
@@ -158,8 +166,36 @@ pub struct ScriptTool {
 }
 
 impl ScriptTool {
+    /// Create a `ScriptTool` without path validation (test use only).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn new(manifest: ExtensionManifest, cwd: PathBuf) -> Self {
         Self { manifest, cwd }
+    }
+
+    /// Create a `ScriptTool`, validating the command path is safe.
+    ///
+    /// Requirements:
+    /// - Must start with `./` (relative to extension directory)
+    /// - Must not contain `..` parent traversal components
+    /// - Absolute paths and bare command names (PATH lookup) are rejected
+    pub fn try_new(manifest: ExtensionManifest, cwd: PathBuf) -> Result<Self, String> {
+        let cmd = &manifest.command;
+        if !cmd.starts_with("./") {
+            return Err(format!(
+                "command must start with './' to be relative to extension dir: {}",
+                cmd
+            ));
+        }
+        if std::path::Path::new(cmd)
+            .components()
+            .any(|c| c == std::path::Component::ParentDir)
+        {
+            return Err(format!(
+                "parent traversal in command path not allowed: {}",
+                cmd
+            ));
+        }
+        Ok(Self { manifest, cwd })
     }
 }
 
@@ -169,18 +205,22 @@ impl ScriptTool {
         let timeout = Duration::from_secs(self.manifest.timeout_secs);
         let command_path = self.resolve_command_path();
 
-        let mut child = tokio::process::Command::new(&command_path)
-            .current_dir(&self.cwd)
+        let mut cmd = tokio::process::Command::new(&command_path);
+        cmd.current_dir(&self.cwd)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                DomainError::Tool(format!(
-                    "failed to execute extension '{}': {}",
-                    self.manifest.name, e
-                ))
-            })?;
+            .stderr(std::process::Stdio::piped());
+
+        // Create a new process group so we can kill all descendants on timeout (#290).
+        #[cfg(unix)]
+        cmd.process_group(0);
+
+        let mut child = cmd.spawn().map_err(|e| {
+            DomainError::Tool(format!(
+                "failed to execute extension '{}': {}",
+                self.manifest.name, e
+            ))
+        })?;
 
         if let Some(mut stdin) = child.stdin.take() {
             use tokio::io::AsyncWriteExt;
@@ -188,17 +228,83 @@ impl ScriptTool {
             drop(stdin);
         }
 
-        match tokio::time::timeout(timeout, child.wait_with_output()).await {
+        // Capture child PID before passing ownership, for process group kill on timeout.
+        #[cfg(unix)]
+        let child_pid = child.id();
+
+        match tokio::time::timeout(timeout, Self::wait_bounded(child)).await {
             Ok(Ok(output)) => Ok(output),
             Ok(Err(e)) => Err(DomainError::Tool(format!(
                 "extension '{}' execution error: {}",
                 self.manifest.name, e
             ))),
-            Err(_) => Err(DomainError::Tool(format!(
-                "extension '{}' timed out after {}s",
-                self.manifest.name, self.manifest.timeout_secs
-            ))),
+            Err(_) => {
+                // Kill the entire process group on timeout (#290)
+                #[cfg(unix)]
+                if let Some(pid) = child_pid {
+                    kill_process_group(pid);
+                }
+                Err(DomainError::Tool(format!(
+                    "extension '{}' timed out after {}s",
+                    self.manifest.name, self.manifest.timeout_secs
+                )))
+            }
         }
+    }
+
+    /// Wait for child, reading stdout/stderr with a size cap (1 MiB).
+    /// Returns an error if output exceeds the cap.
+    async fn wait_bounded(
+        mut child: tokio::process::Child,
+    ) -> Result<std::process::Output, std::io::Error> {
+        use tokio::io::AsyncReadExt;
+
+        let cap = MAX_SCRIPT_OUTPUT_BYTES;
+        let stdout_pipe = child.stdout.take();
+        let stderr_pipe = child.stderr.take();
+
+        // Read stdout and stderr concurrently with take() to cap reads.
+        // Pre-allocate to avoid repeated reallocs.
+        let stdout_fut = async {
+            let mut buf = Vec::with_capacity(cap + 1);
+            if let Some(pipe) = stdout_pipe {
+                let mut limited = pipe.take((cap + 1) as u64);
+                limited.read_to_end(&mut buf).await?;
+            }
+            Ok::<_, std::io::Error>(buf)
+        };
+
+        let stderr_fut = async {
+            let mut buf = Vec::with_capacity(cap + 1);
+            if let Some(pipe) = stderr_pipe {
+                let mut limited = pipe.take((cap + 1) as u64);
+                limited.read_to_end(&mut buf).await?;
+            }
+            Ok::<_, std::io::Error>(buf)
+        };
+
+        let (stdout_result, stderr_result) = tokio::join!(stdout_fut, stderr_fut);
+        let stdout_buf = stdout_result.unwrap_or_default();
+        let stderr_buf = stderr_result.unwrap_or_default();
+
+        // Kill child (and process group) if output exceeded, before waiting
+        if stdout_buf.len() > cap || stderr_buf.len() > cap {
+            let _ = child.kill().await;
+            #[cfg(unix)]
+            if let Some(pid) = child.id() {
+                kill_process_group(pid);
+            }
+            let _ = child.wait().await;
+            return Err(std::io::Error::other("output exceeded 1MiB cap"));
+        }
+
+        let status = child.wait().await?;
+
+        Ok(std::process::Output {
+            status,
+            stdout: stdout_buf,
+            stderr: stderr_buf,
+        })
     }
 
     fn resolve_command_path(&self) -> PathBuf {
@@ -319,6 +425,66 @@ impl Extension for ScriptExtension {
     }
 }
 
+/// Kill an entire process group by PID using the `kill` command.
+/// Uses negative PID to target the process group (#290).
+#[cfg(unix)]
+fn kill_process_group(pid: u32) {
+    let _ = std::process::Command::new("kill")
+        .args(["-9", &format!("-{pid}")])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+/// Try to load a single extension from a directory entry.
+fn load_extension_from_entry(entry: &std::fs::DirEntry) -> Option<Arc<dyn Extension>> {
+    let path = entry.path();
+    if !path.is_dir() {
+        return None;
+    }
+
+    // Reject symlinks — could point outside the extensions directory (#291)
+    if path
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink())
+    {
+        tracing::warn!("skipping symlinked extension dir: {:?}", path);
+        return None;
+    }
+
+    let manifest_path = path.join("extension.toml");
+    if !manifest_path.exists() {
+        return None;
+    }
+
+    let content = match std::fs::read_to_string(&manifest_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("failed to read {:?}: {}", manifest_path, e);
+            return None;
+        }
+    };
+
+    let manifest = match ExtensionManifest::from_toml(&content) {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!("invalid manifest {:?}: {}", manifest_path, e);
+            return None;
+        }
+    };
+
+    let cwd = path.clone();
+    let tool = match ScriptTool::try_new(manifest.clone(), cwd) {
+        Ok(t) => Arc::new(t),
+        Err(e) => {
+            tracing::warn!("rejected extension {:?}: {}", manifest_path, e);
+            return None;
+        }
+    };
+
+    Some(Arc::new(ScriptExtension { manifest, tool }) as Arc<dyn Extension>)
+}
+
 /// Scan a directory for `*/extension.toml` and return discovered extensions.
 ///
 /// Directories without `extension.toml` are skipped.  Invalid manifests
@@ -332,35 +498,9 @@ pub fn discover_script_extensions(dir: &Path) -> Vec<Arc<dyn Extension>> {
     };
 
     for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
+        if let Some(ext) = load_extension_from_entry(&entry) {
+            extensions.push(ext);
         }
-
-        let manifest_path = path.join("extension.toml");
-        if !manifest_path.exists() {
-            continue;
-        }
-
-        let content = match std::fs::read_to_string(&manifest_path) {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!("failed to read {:?}: {}", manifest_path, e);
-                continue;
-            }
-        };
-
-        let manifest = match ExtensionManifest::from_toml(&content) {
-            Ok(m) => m,
-            Err(e) => {
-                tracing::warn!("invalid manifest {:?}: {}", manifest_path, e);
-                continue;
-            }
-        };
-
-        let cwd = path.clone();
-        let tool = Arc::new(ScriptTool::new(manifest.clone(), cwd));
-        extensions.push(Arc::new(ScriptExtension { manifest, tool }) as Arc<dyn Extension>);
     }
 
     extensions
