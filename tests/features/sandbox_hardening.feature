@@ -124,9 +124,9 @@ Feature: Sandbox Hardening
     Then the tool result should be an error
     And the tool result should contain "timed out"
 
-  Scenario: Default timeout is applied when not configured
+  Scenario: Default timeout is not set when not configured
     Given an exec tool with no explicit timeout
-    Then the exec tool should have a default timeout of 30 seconds
+    Then the exec tool should have no timeout
 
   # --- Environment variable sanitization ---
 

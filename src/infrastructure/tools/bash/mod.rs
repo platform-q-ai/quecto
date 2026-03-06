@@ -41,14 +41,15 @@ pub struct ExecOptions {
 
 impl Default for ExecOptions {
     fn default() -> Self {
-        // The Tokio-side timeout must be >= the nsjail --time_limit so that
-        // nsjail's own wall-clock enforcer fires first (or simultaneously),
-        // rather than the outer kill making nsjail limits unreachable.
-        // We add DEFAULT_EXEC_TIMEOUT (30 s) as a grace period on top so
-        // nsjail has time to send SIGKILL and clean up before Tokio steps in.
-        let timeout = Duration::from_secs(
-            DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS + DEFAULT_EXEC_TIMEOUT.as_secs(),
-        );
+        // No default timeout — processes run indefinitely unless configured.
+        // When nsjail wall_time_limit is set, add a 30s grace period so
+        // nsjail's own SIGKILL fires before Tokio steps in.
+        let wall = DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS;
+        let timeout = if wall == 0 {
+            Duration::MAX
+        } else {
+            Duration::from_secs(wall + DEFAULT_EXEC_TIMEOUT.as_secs())
+        };
         Self {
             timeout,
             max_capture_bytes: MAX_CAPTURE_BYTES,

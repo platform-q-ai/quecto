@@ -11,7 +11,9 @@ use std::os::unix::fs::PermissionsExt;
 // Constants
 // ---------------------------------------------------------------------------
 
-pub(super) const DEFAULT_EXEC_TIMEOUT: Duration = Duration::from_secs(30);
+/// Tokio-side timeout grace period beyond nsjail's wall limit.
+/// Set to 0 (no default timeout) — operators configure via config.json.
+pub(super) const DEFAULT_EXEC_TIMEOUT: Duration = Duration::from_secs(0);
 pub(super) const SECRET_ENV_PREFIX: &str = "QUECTO_";
 /// Maximum bytes captured per stream before the stream reader stops collecting.
 /// Raised to 10 MiB so the tail-truncation window (50 KB) always sees the true
@@ -43,16 +45,13 @@ const DEFAULT_NSJAIL_PID_LIMIT: u64 = 256;
 /// workload that fully saturates two cores will hit this limit at exactly the
 /// same moment as `--time_limit`; single-threaded jobs never hit it before the
 /// wall-clock limit does.  Operators on single-core hosts can halve this value.
-const DEFAULT_NSJAIL_CPU_TIME_LIMIT_SECS: u64 = 28_800; // 2 cores × 14 400 s
-/// Wall-clock timeout: 4 hours (14 400 seconds).
+// CPU time limit removed from defaults — operators configure via config.json.
+/// No default wall-clock timeout — operators configure via config.json.
 ///
-/// This is nsjail's own `--time_limit` timer.  It fires regardless of CPU
-/// usage, catching hung or I/O-blocked processes that would never accumulate
-/// enough CPU-seconds to trigger `RLIMIT_CPU`.
-///
+/// When 0, nsjail's `--time_limit` is not set, allowing indefinite execution.
 /// Exposed as `pub` so `ExecOptions::default()` can derive its Tokio-side
-/// timeout from this value, keeping the two limits in sync.
-pub const DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS: u64 = 14_400; // 4 × 60 × 60
+/// timeout from this value.
+pub const DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS: u64 = 0;
 /// Writable `/tmp` tmpfs cap: 512 MB (536 870 912 bytes).
 ///
 /// Conservative default that is safe for the project's primary targets
@@ -194,8 +193,8 @@ impl Default for NsjailOptions {
             network_passthrough: false,
             memory_limit_mb: Some(DEFAULT_NSJAIL_MEMORY_LIMIT_MB),
             pid_limit: Some(DEFAULT_NSJAIL_PID_LIMIT),
-            cpu_time_limit_secs: Some(DEFAULT_NSJAIL_CPU_TIME_LIMIT_SECS),
-            wall_time_limit_secs: Some(DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS),
+            cpu_time_limit_secs: None,
+            wall_time_limit_secs: None,
             tmp_size_mb: Some(DEFAULT_NSJAIL_TMP_SIZE_MB),
         }
     }

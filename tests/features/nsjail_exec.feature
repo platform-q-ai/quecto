@@ -130,18 +130,16 @@ Feature: nsjail Exec Isolation
     And the nsjail command for "echo test" should contain "4096"
 
   @done
-  Scenario: default nsjail CPU time limit is 28800 seconds (2 cores x 4-hour wall budget)
+  Scenario: default nsjail has no CPU time limit
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with default options
-    Then the nsjail command for "echo test" should contain "--rlimit_cpu"
-    And the nsjail command for "echo test" should contain "28800"
+    Then the nsjail command for "echo test" should not contain "--rlimit_cpu"
 
   @done
-  Scenario: default nsjail wall-clock time limit is 14400 seconds (4 hours)
+  Scenario: default nsjail has no wall-clock time limit
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with default options
-    Then the nsjail command for "echo test" should contain "--time_limit"
-    And the nsjail command for "echo test" should contain "14400"
+    Then the nsjail command for "echo test" should not contain "--time_limit"
 
   @done
   Scenario: default nsjail tmp filesystem limit is 512 MB
