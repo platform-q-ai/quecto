@@ -2,6 +2,14 @@
 
 /// Candidate byte values that can start a secret prefix: `s` (sk-), `g` (gsk_/gsk-),
 /// or an ASCII digit (Telegram token).
+///
+/// All entries are ASCII (≤0x7F) so they will never appear as UTF-8 continuation
+/// bytes (0x80–0xBF), guaranteeing that a position match always lands on a
+/// codepoint boundary.
+///
+/// NOTE: Must stay in sync with the prefix checks inside `detect_secret()`. If a
+/// new secret type is added (e.g. `xoxb-` for Slack, starting with `x`), add its
+/// first byte here too.
 const CANDIDATE_STARTS: &[u8] = b"sg0123456789";
 
 /// Redact API keys from a string.
@@ -27,6 +35,13 @@ pub fn redact_api_keys(input: &str) -> String {
     let mut i = 0;
 
     while i < bytes.len() {
+        // i must always point at a codepoint boundary (guaranteed by initialisation
+        // to 0 and subsequent advances via ch.len_utf8() or char-counted redacted_len).
+        debug_assert!(
+            input.is_char_boundary(i),
+            "i={i} is not a codepoint boundary"
+        );
+
         // Skip ahead to the next byte that could begin a secret.
         let next_candidate = bytes[i..]
             .iter()

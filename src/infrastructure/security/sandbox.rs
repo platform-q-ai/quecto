@@ -25,13 +25,19 @@ const DANGEROUS_PATTERNS: &[&str] = &[
     "init 6",
     ":(){ :",
     "chmod -R 777 /",
-    // #304: Narrowed from "chown -R " (blocked legitimate workspace-scoped usage).
-    // Target system-critical paths only; nsjail mount namespace prevents escapes in
-    // sandboxed mode. Patterns cover both spaced and compact flag forms (-R/-Rroot).
-    "chown -r root",
-    "chown -rroot",
-    "chown -r 0 /",
-    "chown -r 0:0",
+    // #304: Narrowed from "chown -R " (blocked legitimate workspace-scoped usage and
+    // missed the no-space variant -Rroot). Patterns target system-root ownership changes;
+    // nsjail mount namespace prevents escapes in sandboxed mode.
+    //
+    // Known gap: non-recursive `chown root /` (no -R) is not covered here — this is
+    // intentional; the denylist only targets recursive forms. nsjail is the primary
+    // defence for sandboxed deployments.
+    "chown -r root", // -R root (spaced); also catches -R newroot via substring
+    "chown -rroot",  // -Rroot (no space, compact form)
+    "chown --recursive root", // GNU long-flag form
+    "chown -r 0 /",  // -R UID 0, system root path
+    "chown --recursive 0", // GNU long-flag, UID 0
+    "chown -r 0:0",  // -R UID 0:GID 0
     "> /dev/sda",
     "wget|sh",
     "wget | sh",
