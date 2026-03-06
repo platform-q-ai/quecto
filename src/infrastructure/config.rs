@@ -578,8 +578,22 @@ mod tests {
         let config: Config = serde_json::from_str(json).unwrap();
         assert_eq!(config.agents.defaults.max_session_messages, 12);
     }
-}
 
-#[cfg(test)]
-#[path = "config_tests.rs"]
-mod extended_tests;
+    #[test]
+    fn test_legacy_config_with_removed_sections_still_deserializes() {
+        // Guard against regressions: existing config.json files may contain
+        // telegram, heartbeat, gateway, health, voice, and cron sections that
+        // were removed in #317. serde's default handling must silently ignore
+        // these unknown fields.
+        let json = r#"{
+            "agents": { "defaults": { "model": "gpt-4" } },
+            "channels": { "telegram": { "enabled": true, "token": "123:ABC" } },
+            "heartbeat": { "enabled": true, "interval": 300 },
+            "gateway": { "host": "0.0.0.0", "port": 8080 },
+            "health": { "enabled": true, "port": 9090 },
+            "voice": { "groq": { "api_key": "gsk-test" } }
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.agents.defaults.model, "gpt-4");
+    }
+}

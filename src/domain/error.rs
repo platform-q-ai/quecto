@@ -11,9 +11,6 @@ pub enum DomainError {
     #[error("session error: {0}")]
     Session(String),
 
-    #[error("channel error: {0}")]
-    Channel(String),
-
     #[error("security violation: {0}")]
     Security(String),
 

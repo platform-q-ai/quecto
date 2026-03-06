@@ -11,8 +11,6 @@ pub struct SubagentConfig {
     pub agent_id: Option<String>,
     /// Whether the subagent should restrict to workspace.
     pub restrict_to_workspace: bool,
-    /// Optional channel:chat_id to deliver results to.
-    pub deliver_to: Option<String>,
     /// Optional system prompt for the subagent.
     pub system: Option<String>,
 }
