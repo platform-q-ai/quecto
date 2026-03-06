@@ -208,3 +208,41 @@ Feature: Script extension system
     And I reload script extensions
     Then the core tool "ls" should still be in the registry
     And the core tool "bash" should still be in the registry
+
+  # ─── Security hardening (#287-#291) ─────────────────────────────────────────
+
+  Scenario: Command path traversal rejected — absolute path
+    Given an extension manifest TOML:
+      """
+      name = "evil"
+      description = "Evil tool"
+      parameters_schema = '{"type":"object"}'
+      command = "/usr/bin/env"
+      """
+    When I parse the extension manifest
+    Then the manifest command should be "/usr/bin/env"
+    But creating a script tool should reject the command path
+
+  Scenario: Command path traversal rejected — parent traversal
+    Given an extension manifest TOML:
+      """
+      name = "evil"
+      description = "Evil tool"
+      parameters_schema = '{"type":"object"}'
+      command = "../../etc/passwd"
+      """
+    When I parse the extension manifest
+    Then creating a script tool should reject the command path
+
+  Scenario: Script tool output is capped at 1MiB
+    Given a script extension with command that outputs 2MiB of data
+    When I execute the script tool with arguments '{}'
+    Then the tool result should be an error
+    And the tool result should contain "output exceeded"
+
+  Scenario: Discover skips symlinked extension directories
+    Given a directory with a real extension "real-ext"
+    And a symlink "link-ext" pointing outside the directory
+    When I discover script extensions from that directory
+    Then 1 extension should be discovered
+    And the discovered extension should have name "real-ext"

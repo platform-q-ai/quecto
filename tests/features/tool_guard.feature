@@ -149,3 +149,23 @@ Feature: Tool guard mechanism
     Given a workflow config with guard_commit false and enabled true
     When workflow tools are registered with that config
     Then the tool registry should have 0 guards
+
+  # ─── Security hardening (#288) ──────────────────────────────────────────────
+
+  Scenario: WorkflowGuard blocks git commit in multiline command
+    Given a workflow guard with commit enforcement at 6
+    And no workflow steps are completed
+    When the guard checks tool "bash" with arguments '{"command": "echo hello\ngit commit -m wip"}'
+    Then the guard should block the call
+
+  Scenario: WorkflowGuard blocks git commit in subshell
+    Given a workflow guard with commit enforcement at 6
+    And no workflow steps are completed
+    When the guard checks tool "bash" with arguments '{"command": "echo $(git commit -m wip)"}'
+    Then the guard should block the call
+
+  Scenario: WorkflowGuard blocks git push in backtick subshell
+    Given a workflow guard with commit enforcement at 6
+    And no workflow steps are completed
+    When the guard checks tool "bash" with arguments '{"command": "echo `git push origin main`"}'
+    Then the guard should block the call

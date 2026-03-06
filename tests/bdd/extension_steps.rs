@@ -626,3 +626,53 @@ fn then_core_tool_present(world: &mut QuectoWorld, name: String) {
         name
     );
 }
+
+// ─── Security hardening steps (#287-#291) ────────────────────────────────────
+
+#[then("creating a script tool should reject the command path")]
+fn then_script_tool_rejects_command(world: &mut QuectoWorld) {
+    let manifest = world
+        .ext_manifest_result
+        .as_ref()
+        .unwrap()
+        .as_ref()
+        .unwrap();
+    let tmp = TempDir::new().unwrap();
+    let result = ScriptTool::try_new(manifest.clone(), tmp.path().to_path_buf());
+    assert!(
+        result.is_err(),
+        "expected command path to be rejected, got Ok"
+    );
+}
+
+#[given("a script extension with command that outputs 2MiB of data")]
+fn given_script_outputs_2mib(world: &mut QuectoWorld) {
+    // Use dd to output 2MiB of 'A' characters quickly
+    let script = "#!/bin/sh\ndd if=/dev/zero bs=1048576 count=2 2>/dev/null | tr '\\0' 'A'\n";
+    setup_script_tool(world, script, 10);
+}
+
+#[given(expr = "a directory with a real extension {string}")]
+fn given_dir_with_real_ext(world: &mut QuectoWorld, name: String) {
+    let dir = ensure_discover_dir(world);
+    create_extension_in_dir(&dir, &name);
+}
+
+#[given(expr = "a symlink {string} pointing outside the directory")]
+fn given_symlink_outside(world: &mut QuectoWorld, name: String) {
+    let dir = world
+        ._ext_discover_dir
+        .as_ref()
+        .unwrap()
+        .path()
+        .to_path_buf();
+    let link_path = dir.join(&name);
+    // Point to /tmp which is outside the extensions dir
+    #[cfg(unix)]
+    std::os::unix::fs::symlink("/tmp", &link_path).unwrap();
+    #[cfg(not(unix))]
+    {
+        // On non-unix, just create a regular dir (test will pass vacuously)
+        std::fs::create_dir_all(&link_path).unwrap();
+    }
+}
