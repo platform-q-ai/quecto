@@ -20,18 +20,28 @@ use crate::domain::session::{ContextSpillStore, SpillIndex};
 /// `current_turn.saturating_sub(turn)` can never reach this threshold.
 pub const COLLAPSE_DISABLED: u32 = u32::MAX;
 
-/// Estimate token count from text content.
+/// Estimate token count from text content (#305).
 ///
-/// Uses character count rather than byte length (#305). One token is
-/// approximately 4 Unicode code points for English prose and code.
-/// This is more accurate than the previous byte-based estimate (`len/3`),
-/// which overestimated ASCII prose by ~33% and underestimated CJK text
-/// (3 bytes per char but still ~1 token per char).
+/// Uses a two-class character heuristic that is accurate for both ASCII prose
+/// and non-ASCII (CJK, emoji, etc.):
+///
+/// - ASCII codepoints: ~4 chars per token (matches GPT cl100k_base for English)
+/// - Non-ASCII codepoints: ~1 char per token (CJK, emoji, etc. are typically
+///   1 token per codepoint in current tokenisers)
+///
+/// The old byte-based estimate (`len/3`) overcounted ASCII by ~33% and gave
+/// the same token count for 100 CJK chars as for 300 ASCII chars, which is
+/// inaccurate in opposite directions. This heuristic is more balanced: it
+/// reduces pruning pressure on ASCII-heavy sessions without undercounting CJK
+/// (which would weaken pruning as a prompt-injection defence).
 ///
 /// The estimate is intentionally slightly conservative — it is better to
 /// prune a turn early than to exceed the provider's context limit.
 pub fn estimate_tokens(text: &str) -> usize {
-    text.chars().count().div_ceil(4)
+    let (ascii, non_ascii) = text.chars().fold((0usize, 0usize), |(a, n), c| {
+        if c.is_ascii() { (a + 1, n) } else { (a, n + 1) }
+    });
+    ascii.div_ceil(4) + non_ascii
 }
 
 /// Estimate total tokens for a slice of messages.
@@ -440,23 +450,30 @@ mod tests {
     }
 
     #[test]
-    fn estimate_tokens_four_chars_per_token_ceiling() {
-        // div_ceil(300, 4) = 75 tokens for 300 chars
-        let text = "x_".repeat(150); // 300 chars
+    fn estimate_tokens_ascii_ceiling_division() {
+        // div_ceil(300, 4) = 75 tokens for 300 ASCII chars
+        let text = "x_".repeat(150); // 300 ASCII chars
         assert_eq!(estimate_tokens(&text), 75);
     }
 
     #[test]
-    fn estimate_tokens_cjk_lower_than_old_byte_heuristic() {
-        // Old heuristic (bytes/3): 300 bytes / 3 = 100 tokens.
-        // New heuristic (chars/4): 100 CJK chars / 4 = 25 tokens.
-        // Char-based is more accurate for CJK: each CJK char ≈ 1 token, so
-        // 100 chars → ~100 real tokens. We underestimate slightly but avoid
-        // the 3× over-count that byte-based produced for ASCII.
-        let cjk = "中".repeat(100); // 100 chars = 300 UTF-8 bytes
-        assert_eq!(estimate_tokens(&cjk), 25); // 100/4 = 25
-        // Crucially, old byte-based would give 100 (300/3) — same as 400 ASCII chars.
-        // New heuristic gives less pruning pressure for CJK (correct direction).
+    fn estimate_tokens_cjk_one_token_per_char() {
+        // CJK chars use the non-ASCII branch: 1 token per codepoint.
+        // 100 CJK chars → 100 tokens (accurate: GPT tokeniser gives ~1 token/CJK char).
+        // This is better than the old byte heuristic: 300 bytes/3 = 100 (same answer,
+        // but correct reasoning). For pure ASCII, bytes/3 overcounted; chars/4 is accurate.
+        let cjk = "中".repeat(100); // 100 non-ASCII codepoints
+        assert_eq!(estimate_tokens(&cjk), 100); // 100 * 1 = 100
+    }
+
+    #[test]
+    fn estimate_tokens_mixed_ascii_and_cjk() {
+        // 8 ASCII chars → div_ceil(8,4)=2 tokens; 3 CJK chars → 3 tokens = 5 total
+        let mixed = "hello!! 中文日";
+        assert_eq!(
+            estimate_tokens(mixed),
+            estimate_tokens("hello!! ") + estimate_tokens("中文日")
+        );
     }
 
     #[test]

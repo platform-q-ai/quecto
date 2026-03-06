@@ -58,21 +58,22 @@ impl CodexProvider {
             .header("accept", "text/event-stream")
     }
 
-    /// Scan messages and return the set of call IDs that appear on BOTH the
-    /// assistant side (function_call) and the tool side (function_call_output).
-    ///
-    /// Delegates to [`crate::domain::session::filter_orphan_tool_pairs`] (#311).
-    fn valid_call_id_pairs(messages: &[Message]) -> std::collections::HashSet<String> {
-        crate::domain::session::filter_orphan_tool_pairs(messages)
-    }
-
     /// Convert our domain messages into Responses API `input` array.
     ///
-    /// Performs orphaned-pair repair via [`Self::valid_call_id_pairs`] so the
-    /// Responses API never sees a mismatched function_call/function_call_output
-    /// (which would cause HTTP 400).
+    /// Calls [`crate::domain::session::filter_orphan_tool_pairs`] to exclude
+    /// mismatched function_call/function_call_output pairs (which would cause
+    /// HTTP 400). Logs any orphaned pairs with Codex-specific context.
     fn build_input(messages: &[Message]) -> (Option<String>, Vec<serde_json::Value>) {
-        let valid_pairs = Self::valid_call_id_pairs(messages);
+        let (valid_pairs, diag) = crate::domain::session::filter_orphan_tool_pairs(messages);
+        if diag.has_orphans() {
+            tracing::warn!(
+                orphaned_calls = ?diag.orphaned_calls,
+                orphaned_outputs = ?diag.orphaned_results,
+                "Codex: orphaned function_call/output pairs removed \
+                 (session corrupted mid-turn or by context pruning). \
+                 OpenAI and Anthropic have the same pairing constraint."
+            );
+        }
         let mut instructions: Option<String> = None;
         let mut input = Vec::new();
 
