@@ -8,19 +8,25 @@ use crate::domain::message::Message;
 ///
 /// Uses an allow-list approach (fail-closed): unknown models are assumed
 /// to NOT support vision. This avoids sending images to models that would
-/// reject them. When a new vision model is released, add its prefix here.
+/// reject them. When a new vision model family is released, add its
+/// lowercase prefix here.
+///
+/// Matching is case-insensitive for consistency with `domain::message::model_pricing`.
+/// If vision detection is ever needed for other providers, consider migrating
+/// this function to `domain::message` alongside `model_pricing`.
 pub(super) fn model_supports_vision(model: &str) -> bool {
-    // Prefixes for model families known to support vision (Claude 3+).
+    // Lowercase prefixes for model families known to support vision (Claude 3+).
+    // All Claude 3.x IDs use dashes (e.g. `claude-3-opus-…`, `claude-3-5-sonnet-…`).
     const VISION_PREFIXES: &[&str] = &[
         "claude-3-",
-        "claude-3.",
         "claude-sonnet-",
         "claude-opus-",
         "claude-haiku-",
     ];
+    let model_lower = model.to_lowercase();
     VISION_PREFIXES
         .iter()
-        .any(|prefix| model.starts_with(prefix))
+        .any(|prefix| model_lower.starts_with(prefix))
 }
 
 /// Build the Anthropic API content value for a user message.
@@ -117,5 +123,12 @@ mod tests {
         assert!(!model_supports_vision("unknown-future-model"));
         assert!(!model_supports_vision("gpt-4o"));
         assert!(!model_supports_vision("some-random-model"));
+    }
+
+    #[test]
+    fn matching_is_case_insensitive() {
+        // Consistent with domain::message::model_pricing case handling
+        assert!(model_supports_vision("Claude-3-Opus-20240229"));
+        assert!(model_supports_vision("CLAUDE-SONNET-4-20250514"));
     }
 }

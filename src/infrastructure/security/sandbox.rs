@@ -3,7 +3,8 @@
 use std::path::{Path, PathBuf};
 
 /// Shell metacharacters that indicate command chaining/substitution.
-const SHELL_METACHARACTERS: &[&str] = &[";", "&&", "||", "|", "$(", "`", "<(", ">("];
+/// Includes `\n` because bash treats newlines as command separators equivalent to `;`.
+const SHELL_METACHARACTERS: &[&str] = &[";", "\n", "&&", "||", "|", "$(", "`", "<(", ">("];
 
 /// Dangerous command patterns that are always blocked regardless of workspace restriction.
 /// All patterns MUST be lowercase (compared against lowercased input).
@@ -369,10 +370,19 @@ fn is_two_byte_meta(bytes: &[u8], i: usize) -> bool {
     )
 }
 
-/// Returns true if `b` is a single-byte shell metacharacter (`;`, `|`, `` ` ``).
+/// Returns true if `b` is a single-byte shell metacharacter (`;`, `|`, `` ` ``, `\n`).
+///
+/// Note: callers must check `is_two_byte_meta` **before** this function when
+/// consuming (not just detecting) a metacharacter, because `|` is a prefix of
+/// the two-byte sequence `||`. The token-collection loop detects via this
+/// function; the consume loop checks two-byte first. This ordering is
+/// intentional and must be preserved.
+///
+/// `\n` is included because bash treats newlines as command separators
+/// equivalent to `;`.
 #[inline]
 fn is_one_byte_meta(b: u8) -> bool {
-    matches!(b, b';' | b'|' | b'`')
+    matches!(b, b';' | b'|' | b'`' | b'\n')
 }
 
 /// Advance `i` past a metacharacter boundary; returns the updated index.
@@ -392,7 +402,7 @@ fn skip_meta(bytes: &[u8], i: usize) -> usize {
 /// allocations (#307).
 pub(crate) fn extract_all_command_tokens(command: &str) -> Vec<String> {
     let bytes = command.as_bytes();
-    let mut tokens = Vec::new();
+    let mut tokens = Vec::with_capacity(4); // most commands have 1–5 segments
     let mut i = 0;
 
     while i < bytes.len() {
