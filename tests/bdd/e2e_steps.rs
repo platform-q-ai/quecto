@@ -287,7 +287,13 @@ pub(crate) fn rewrite_config_to_uri(world: &mut QuectoWorld, new_uri: &str) {
     config["agents"]["defaults"]["workspace"] = serde_json::json!(workspace.display().to_string());
 
     let config_json = serde_json::to_string_pretty(&config).expect("serialize config");
-    std::fs::write(&config_path, config_json).expect("rewrite config");
+    std::fs::write(&config_path, &config_json).expect("rewrite config");
+
+    // Also update the custom config path if one was set (for --config flag scenarios).
+    if let Some(ref custom_path) = world.custom_config_path {
+        std::fs::write(custom_path, &config_json).expect("rewrite custom config");
+    }
+
     world._wiremock_server_uri = Some(new_uri.to_string());
 }
 
@@ -1864,4 +1870,72 @@ fn then_llm_system_message_preamble_rich_format(world: &mut QuectoWorld) {
         "preamble should include timezone after AM/PM, got: {}",
         preamble
     );
+}
+
+// ===========================================================================
+// --config flag steps (Issue #300)
+// ===========================================================================
+
+#[given("a config file at a custom path with an OpenAI provider pointing at a mock server")]
+fn given_config_at_custom_path(world: &mut QuectoWorld) {
+    // Start a wiremock server and leak it so it stays alive for the scenario.
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let server = rt.block_on(wiremock::MockServer::start());
+    let uri = server.uri();
+
+    ensure_temp_dir(world);
+    let base = base_path(world);
+
+    // Write config to a non-standard path (not base_dir/config.json)
+    let custom_path = base.join("custom-config.json");
+    let workspace = base.join("workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace dir");
+
+    let config_json = serde_json::json!({
+        "providers": {
+            "openai": {
+                "api_key": "sk-test-key",
+                "api_base": uri
+            }
+        },
+        "agents": {
+            "defaults": {
+                "workspace": workspace.display().to_string()
+            }
+        }
+    });
+    std::fs::write(
+        &custom_path,
+        serde_json::to_string_pretty(&config_json).unwrap(),
+    )
+    .expect("write custom config");
+
+    world.custom_config_path = Some(custom_path.to_string_lossy().to_string());
+    world._wiremock_server_uri = Some(uri);
+    std::mem::forget(server);
+    std::mem::forget(rt);
+}
+
+#[when(regex = r"^I run quecto agent --config (.+)$")]
+fn when_run_agent_with_config_flag(world: &mut QuectoWorld, rest: String) {
+    // Replace <custom-config-path> placeholder with the actual path, if set.
+    let resolved = if rest.starts_with("<custom-config-path>") {
+        let config_path = world
+            .custom_config_path
+            .as_ref()
+            .expect("custom config path not set");
+        rest.replacen("<custom-config-path>", config_path, 1)
+    } else {
+        rest.clone()
+    };
+    let mut args = vec![
+        "quecto".to_string(),
+        "agent".to_string(),
+        "--config".to_string(),
+    ];
+    args.extend(shell_split(&resolved));
+    let output = cli::run_with_output(args, &world.cli_context);
+    world.exit_code = output.exit_code;
+    world.stdout = output.stdout;
+    world.stderr = output.stderr;
 }
