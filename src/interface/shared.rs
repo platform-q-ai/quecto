@@ -91,9 +91,11 @@ pub fn append_workflow_prompt(
     system.push_str(&state.system_prompt_snippet_with_config(wf_config.enforce_commit_after_step));
 }
 
-/// Register the workflow tool in a tool registry if workflow is enabled.
+/// Register the workflow tool and guard in a tool registry if workflow is enabled.
 ///
-/// Returns the shared workflow state for use in system prompt injection.
+/// Registers:
+/// 1. The workflow tool (so the LLM can check/uncheck steps)
+/// 2. A workflow guard (blocks `git commit`/`git push` at the wrong workflow stage)
 pub fn register_workflow_tool(
     registry: &mut crate::infrastructure::tools::registry::ToolRegistryImpl,
     wf_config: &crate::domain::workflow::WorkflowConfig,
@@ -104,9 +106,18 @@ pub fn register_workflow_tool(
     let state = std::sync::Arc::new(std::sync::Mutex::new(
         crate::domain::workflow::WorkflowState::from_config(wf_config),
     ));
-    let mut tool = crate::infrastructure::tools::workflow_tool::WorkflowTool::new(state);
+
+    // Register tool
+    let mut tool = crate::infrastructure::tools::workflow_tool::WorkflowTool::new(state.clone());
     tool.set_enforce_commit(wf_config.enforce_commit_after_step);
     registry.register(std::sync::Arc::new(tool));
+
+    // Register guard (blocks git commit/push at wrong workflow stage)
+    let guard = crate::infrastructure::tools::workflow_tool::WorkflowGuard::new(
+        state,
+        wf_config.enforce_commit_after_step,
+    );
+    registry.register_guard(std::sync::Arc::new(guard));
 }
 
 /// Resolve an API key for a provider from a credential snapshot.

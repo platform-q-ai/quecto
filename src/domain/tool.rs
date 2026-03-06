@@ -52,6 +52,18 @@ pub trait Tool: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>>;
 }
 
+/// A guard that can inspect and block tool calls before execution.
+///
+/// Guards run in registration order before every `execute()` call on the
+/// tool registry.  The first `Err` short-circuits — remaining guards and
+/// the tool itself are skipped.  The error string is returned to the LLM
+/// as a `ToolResult { is_error: true }` so it can act on the feedback.
+pub trait ToolGuard: Send + Sync {
+    /// Inspect a tool call before execution.
+    /// Return `Ok(())` to allow, `Err(reason)` to block.
+    fn check(&self, tool_name: &str, arguments: &str) -> Result<(), String>;
+}
+
 /// Port: a registry of tools that can be queried and executed.
 ///
 /// Uses `Pin<Box<dyn Future>>` for dyn-compatibility.

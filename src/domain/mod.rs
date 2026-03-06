@@ -2,6 +2,7 @@ pub mod agent;
 pub mod channel;
 pub mod cron;
 pub mod error;
+pub mod extension;
 pub mod message;
 pub mod provider;
 pub mod session;

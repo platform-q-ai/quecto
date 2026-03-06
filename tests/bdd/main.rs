@@ -293,6 +293,37 @@ impl AgentLoop for SlowMockAgent {
 // Wrapper for Arc<dyn AgentLoop> that implements Debug (opaque).
 struct DebugAgent(Arc<dyn AgentLoop>);
 
+// Wrapper for Arc<dyn Extension> that implements Debug (opaque).
+pub struct DebugExtension(pub std::sync::Arc<dyn quecto::domain::extension::Extension>);
+
+impl std::fmt::Debug for DebugExtension {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<Extension>")
+    }
+}
+
+impl Default for DebugExtension {
+    fn default() -> Self {
+        struct NullExt;
+        impl quecto::domain::extension::Extension for NullExt {
+            fn name(&self) -> &str {
+                ""
+            }
+            fn tools(&self) -> Vec<std::sync::Arc<dyn quecto::domain::tool::Tool>> {
+                vec![]
+            }
+        }
+        Self(std::sync::Arc::new(NullExt))
+    }
+}
+
+impl std::ops::Deref for DebugExtension {
+    type Target = std::sync::Arc<dyn quecto::domain::extension::Extension>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 // Wrapper for Arc<dyn ContextSpillStore> that implements Debug (opaque).
 #[derive(Clone)]
 struct DebugSpillStore(Arc<dyn ContextSpillStore>);
@@ -736,6 +767,35 @@ pub struct QuectoWorld {
     pub commit_check_result: Option<Result<(), String>>,
     /// Serialized workflow state JSON for persistence scenarios
     pub workflow_serialized: Option<String>,
+    // --- Extension system BDD fields ---
+    /// Test extension for extension trait scenarios (Debug-opaque)
+    pub test_extension: Option<DebugExtension>,
+    /// Extension registry for extension registry scenarios
+    pub ext_registry: Option<quecto::infrastructure::extensions::registry::ExtensionRegistry>,
+    /// Extension manifest parse result
+    pub ext_manifest_result:
+        Option<Result<quecto::infrastructure::extensions::script::ExtensionManifest, String>>,
+    /// Extension manifest TOML source
+    pub ext_manifest_toml: Option<String>,
+    /// Script tool for script execution scenarios
+    pub ext_script_tool:
+        Option<std::sync::Arc<quecto::infrastructure::extensions::script::ScriptTool>>,
+    /// Discovered extensions (Debug-opaque)
+    pub ext_discovered: Option<Vec<DebugExtension>>,
+    /// Extension discover directory (kept alive)
+    pub _ext_discover_dir: Option<TempDir>,
+    /// Watch directory for hot-reload scenarios (kept alive)
+    pub _ext_watch_dir: Option<TempDir>,
+    /// Fingerprint A for comparison
+    pub ext_fingerprint_a: Option<std::collections::HashMap<PathBuf, (std::time::SystemTime, u64)>>,
+    /// Fingerprint B for comparison
+    pub ext_fingerprint_b: Option<std::collections::HashMap<PathBuf, (std::time::SystemTime, u64)>>,
+    /// Guard check result
+    pub guard_check_result: Option<Result<(), String>>,
+    /// Captured guard tool name
+    pub guard_captured_name: Option<String>,
+    /// Captured guard arguments
+    pub guard_captured_args: Option<String>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
@@ -1005,6 +1065,7 @@ mod e2e_steps;
 mod edit_tool_steps;
 mod ensure_tool_steps;
 mod exec_tool_steps;
+mod extension_steps;
 mod find_steps;
 mod gateway_steps;
 mod grep_steps;
@@ -1023,6 +1084,7 @@ mod skills_steps;
 mod subagent_steps;
 mod telegram_steps;
 mod tool_empty_args_steps;
+mod tool_guard_steps;
 mod truncate_steps;
 mod uds_steps;
 mod voice_steps;
