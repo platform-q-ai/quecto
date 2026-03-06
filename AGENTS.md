@@ -31,6 +31,7 @@ Zero deps except `thiserror`, `serde` (derive), `serde_yaml`. Defines system voc
 | `workspace.rs` | `HeartbeatTaskSource` and `OnboardStore` ports |
 | `subagent.rs` | `SubagentConfig`, `validate_agent_id()` |
 | `voice.rs` | `VoiceTranscriber` trait, `TranscriptionResult`, `TranscriptionError` |
+| `workflow.rs` | `WorkflowState`, `WorkflowConfig` (`guard_commit`, `enforce_commit_after_step`, `steps`), `WorkflowStep`, `WorkflowPersistable`, `default_steps()` (returns empty — steps must be configured in config.json), `bdd_steps()` (test-only 16-step template), `from_persistable_with_steps()` |
 | `error.rs` | `DomainError` enum (Provider, Tool, Session, Channel, Security, Config, Other) |
 
 Traits use `Pin<Box<dyn Future + Send + '_>>` for `Arc<dyn Trait>` compatibility.
@@ -54,9 +55,9 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 
 | Component | Contents |
 |---|---|
-| `config.rs` | `Config` with serde, env overrides, exec isolation settings (nsjail binary/limits/fallback), `TelegramConfig.default_send_to` |
+| `config.rs` | `Config` with serde, env overrides, exec isolation settings (nsjail binary/limits/fallback), `TelegramConfig.default_send_to`, `WorkflowConfig` (steps must be explicit in config.json, `guard_commit` controls WorkflowGuard registration) |
 | `providers/` | `OpenAiProvider`, `AnthropicProvider` (SSE streaming), `CodexProvider` (Responses API, SSE, `prompt_cache_key`, orphan pair repair), `FallbackProvider` (cooldown + error classification + `claude-*` model routing). URL validation: https required for non-loopback |
-| `tools/` | `bash/` (shell, 1MiB cap, per-invocation timeout, `commandPrefix`, native/nsjail modes), `filesystem/` (`ReadTool` with image base64+auto-resize, `WriteTool`, `EditTool` with fuzzy match+CRLF/BOM+LCS diff, `LsTool` with limit+case-insensitive sort), `grep.rs` (rg JSON output, file-cache context), `find.rs` (fd, nested .gitignore, path-segment globs via `--full-path`), `ensure_tool.rs` (auto-download rg/fd from GitHub), `spawn.rs`, `cron_tool.rs`, `message.rs` (with `default_send_to` fallback), `web_search.rs` (Brave+DDG), `recall.rs` (spill retrieval), `path_utils.rs`, `truncate.rs`, `registry.rs` (`ToolRegistryImpl`) |
+| `tools/` | `bash/` (shell, 1MiB cap, per-invocation timeout, `commandPrefix`, native/nsjail modes), `filesystem/` (`ReadTool` with image base64+auto-resize, `WriteTool`, `EditTool` with fuzzy match+CRLF/BOM+LCS diff, `LsTool` with limit+case-insensitive sort), `grep.rs` (rg JSON output, file-cache context), `find.rs` (fd, nested .gitignore, path-segment globs via `--full-path`), `ensure_tool.rs` (auto-download rg/fd from GitHub), `spawn.rs`, `cron_tool.rs`, `message.rs` (with `default_send_to` fallback), `web_search.rs` (Brave+DDG), `recall.rs` (spill retrieval), `workflow_tool.rs` (`WorkflowTool` + `WorkflowGuard` — blocks `git commit`/`git push` when workflow steps incomplete; registration controlled by `guard_commit` config), `path_utils.rs`, `truncate.rs`, `registry.rs` (`ToolRegistryImpl`, `guard_count()`) |
 | `persistence/` | `FileSessionStore` (round-trips all Message fields), `MemoryStore`, `FileCronStore` (Mutex-serialized read-modify-write, atomic temp-file rename), `FileSkillLoader`, `FileHeartbeatTaskSource`, `FileOnboardStore`, `FileContextSpillStore` (JSONL append-only) |
 | `security/` | `Sandbox` — workspace path validation + command filtering |
 | `auth/` | `CredentialStore` (file-based), `oauth.rs` (browser + device code flows, Anthropic OAuth) |

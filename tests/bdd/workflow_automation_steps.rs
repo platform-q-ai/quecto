@@ -274,10 +274,11 @@ fn when_roundtrip(world: &mut QuectoWorld) {
         .as_ref()
         .expect("workflow state should exist");
     let s = state.lock().unwrap();
+    let steps = s.steps().to_vec();
     let persistable = s.to_persistable();
     let json = serde_json::to_string(&persistable).expect("should serialize");
     let restored: WorkflowPersistable = serde_json::from_str(&json).expect("should deserialize");
-    let new_state = WorkflowState::from_persistable(&restored);
+    let new_state = WorkflowState::from_persistable_with_steps(&restored, Some(steps));
     drop(s);
     world.workflow_state = Some(Arc::new(Mutex::new(new_state)));
 }

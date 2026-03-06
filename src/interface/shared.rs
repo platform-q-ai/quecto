@@ -113,11 +113,13 @@ pub fn register_workflow_tool(
     registry.register(std::sync::Arc::new(tool));
 
     // Register guard (blocks git commit/push at wrong workflow stage)
-    let guard = crate::infrastructure::tools::workflow_tool::WorkflowGuard::new(
-        state,
-        wf_config.enforce_commit_after_step,
-    );
-    registry.register_guard(std::sync::Arc::new(guard));
+    if wf_config.guard_commit {
+        let guard = crate::infrastructure::tools::workflow_tool::WorkflowGuard::new(
+            state,
+            wf_config.enforce_commit_after_step,
+        );
+        registry.register_guard(std::sync::Arc::new(guard));
+    }
 }
 
 /// Resolve an API key for a provider from a credential snapshot.

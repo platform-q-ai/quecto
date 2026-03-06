@@ -93,9 +93,10 @@ impl WorkflowState {
         Self::new(config.steps.clone())
     }
 
-    /// Create a default 16-step BDD/TDD workflow.
+    /// Create the 16-step BDD/TDD workflow (test-only convenience).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn default_bdd() -> Self {
-        Self::new(default_steps())
+        Self::new(bdd_steps())
     }
 
     /// Return all steps.
@@ -352,8 +353,11 @@ impl WorkflowState {
     /// Restore state from a persisted snapshot.
     ///
     /// Uses the provided steps (from config), or falls back to
-    /// [`default_steps()`] if `None`. If the persisted done vector length
-    /// doesn't match the step count, it is padded with `false` or truncated.
+    /// **Deprecated:** Use [`from_persistable_with_steps`] with explicit steps.
+    ///
+    /// Since `default_steps()` returns empty, this discards all persisted
+    /// done-state when called without explicit steps.
+    #[deprecated(note = "use from_persistable_with_steps with explicit steps from config")]
     pub fn from_persistable(p: &WorkflowPersistable) -> Self {
         Self::from_persistable_with_steps(p, None)
     }
@@ -448,6 +452,14 @@ pub struct WorkflowConfig {
         skip_serializing_if = "is_default_enforce"
     )]
     pub enforce_commit_after_step: Option<u32>,
+    /// When true (default), a WorkflowGuard is registered that blocks
+    /// `git commit`/`git push` until required steps are complete.
+    /// Set to false to disable the guard while keeping the workflow tool.
+    ///
+    /// **Note:** This is a developer convenience, NOT a security boundary.
+    /// Any user with config.json write access can disable it.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub guard_commit: bool,
 }
 
 impl Default for WorkflowConfig {
@@ -458,6 +470,7 @@ impl Default for WorkflowConfig {
             auto_continue: true,
             completion_nudge: true,
             enforce_commit_after_step: default_enforce_commit_after_step(),
+            guard_commit: true,
         }
     }
 }
@@ -477,14 +490,7 @@ fn is_default_enforce(val: &Option<u32>) -> bool {
 /// Used by `skip_serializing_if` to avoid injecting default workflow
 /// config into serialized config files on round-trip.
 fn is_default_steps(steps: &[WorkflowStep]) -> bool {
-    let defaults = default_steps();
-    if steps.len() != defaults.len() {
-        return false;
-    }
-    steps
-        .iter()
-        .zip(defaults.iter())
-        .all(|(a, b)| a.id == b.id && a.label == b.label && a.phase == b.phase)
+    steps.is_empty()
 }
 
 fn default_true() -> bool {
@@ -495,8 +501,15 @@ fn is_true(val: &bool) -> bool {
     *val
 }
 
-/// The default 16-step BDD/TDD workflow matching AGENTS.md.
+/// Default steps: empty. Steps must be configured explicitly via config.json.
 pub fn default_steps() -> Vec<WorkflowStep> {
+    vec![]
+}
+
+/// The 16-step BDD/TDD workflow matching AGENTS.md.
+/// Test-only: used by `default_bdd()` as a reference template.
+#[cfg(any(test, feature = "test-support"))]
+pub fn bdd_steps() -> Vec<WorkflowStep> {
     vec![
         WorkflowStep {
             id: 1,

@@ -383,6 +383,8 @@ pub struct QuectoWorld {
     pub validation_result: Option<Result<(), String>>,
     /// Tool registry for agent_tools scenarios
     pub tool_registry: Option<ToolRegistryImpl>,
+    /// Temp dir for tool guard scenarios (kept alive)
+    pub _tool_guard_tmp: Option<TempDir>,
     /// Path to the tool workspace (for file assertions)
     pub tool_workspace: Option<PathBuf>,
     /// Temp dir for tool workspace (kept alive)
