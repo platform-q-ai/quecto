@@ -86,21 +86,17 @@ Feature: Built-in workflow tool
     Given a default workflow config
     Then the workflow config should not be enabled
     And the workflow config should have 0 steps
-    And the workflow config guard_commit should be true
+    And the workflow config should have 0 guards
 
   Scenario: Workflow config can be disabled
     Given a workflow config with enabled false
     Then the workflow config should not be enabled
 
-  Scenario: Workflow config guard_commit can be disabled
-    Given a workflow config with guard_commit false
-    Then the workflow config guard_commit should be false
-
-  Scenario: Config deserializes guard_commit false
-    Given a config file with workflow enabled and guard_commit false
+  Scenario: Workflow config with guards
+    Given a config file with workflow enabled and guards configured
     When I load the config
     Then the workflow config should be enabled
-    And the workflow config guard_commit should be false
+    And the workflow config should have 1 guards
 
   # ─── Config integration ────────────────────────────────────────────────────
 

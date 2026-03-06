@@ -258,19 +258,17 @@ impl WorkflowState {
         out
     }
 
-    /// Build a system prompt snippet that also includes enforcement reminders.
-    pub fn system_prompt_snippet_with_config(
-        &self,
-        enforce_commit_after_step: Option<u32>,
-    ) -> String {
+    /// Build a system prompt snippet that also includes guard rule reminders.
+    pub fn system_prompt_snippet_with_guards(&self, guards: &[GuardRule]) -> String {
         let mut snippet = self.system_prompt_snippet();
-        if let Some(step) = enforce_commit_after_step {
-            if step > 0 {
-                snippet.push_str(&format!(
-                    "\n⚠ Commit enforcement: `git commit` is blocked until steps 1–{} are checked. Use workflow(action=\"check_commit\") before committing.\n",
-                    step
-                ));
-            }
+        for rule in guards {
+            let cmds = rule.commands.join(", ");
+            snippet.push_str(&format!(
+                "\n⚠ Guard: `{}` blocked until steps 1–{} are checked. {}\n",
+                cmds,
+                rule.before_step.saturating_sub(1),
+                rule.message
+            ));
         }
         snippet
     }
@@ -323,18 +321,27 @@ impl WorkflowState {
         &self,
         enforce_commit_after_step: Option<u32>,
     ) -> Result<(), WorkflowError> {
-        let threshold = match enforce_commit_after_step {
-            None => return Ok(()),
-            Some(0) => return Ok(()),
-            Some(n) => n,
-        };
+        self.check_steps_complete(enforce_commit_after_step.unwrap_or(0))
+    }
+
+    /// Check whether all steps before `before_step` are completed.
+    ///
+    /// - `before_step = 0` → always allowed
+    /// - `before_step = n` → all steps 1..=(n-1) must be checked
+    ///
+    /// Returns `Ok(())` if allowed, `Err(WorkflowError::CommitBlocked)` if blocked.
+    pub fn check_steps_complete(&self, before_step: u32) -> Result<(), WorkflowError> {
+        if before_step == 0 {
+            return Ok(());
+        }
+        let threshold = before_step.saturating_sub(1);
         let limit = std::cmp::min(threshold as usize, self.steps.len());
         for i in 0..limit {
             if !self.done[i] {
                 return Err(WorkflowError::CommitBlocked(format!(
-                    "commit blocked: complete step {} ({}) before committing. \
-                     Steps 1–{} must be checked (enforce_commit_after_step = {}).",
-                    self.steps[i].id, self.steps[i].label, threshold, threshold
+                    "blocked: complete step {} ({}) first. \
+                     Steps 1–{} must be checked.",
+                    self.steps[i].id, self.steps[i].label, threshold
                 )));
             }
         }
@@ -430,6 +437,23 @@ pub struct WorkflowPersistable {
     pub active_issue: Option<(u32, String)>,
 }
 
+/// A guard rule that blocks specific commands before a workflow step.
+///
+/// **Note:** This is a developer convenience, NOT a security boundary.
+/// Any user with config.json write access can modify or remove guards.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GuardRule {
+    /// Command patterns to match, e.g. `["git commit", "git push"]`.
+    /// Each pattern is `<binary> <subcommand>` — matched against bash
+    /// tool arguments with flag-skipping and subshell detection.
+    pub commands: Vec<String>,
+    /// Block until all steps up to (but not including) this step number
+    /// are completed. E.g. `before_step: 7` blocks until steps 1-6 are done.
+    pub before_step: u32,
+    /// Custom message returned to the LLM when the command is blocked.
+    pub message: String,
+}
+
 /// Workflow configuration section for config.json.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowConfig {
@@ -445,21 +469,20 @@ pub struct WorkflowConfig {
     /// to close the current issue and pick the next one.
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub completion_nudge: bool,
-    /// Block `git commit` via the bash tool if steps up to this number are not
-    /// all checked.  Set to `null` to disable.
-    #[serde(
-        default = "default_enforce_commit_after_step",
-        skip_serializing_if = "is_default_enforce"
-    )]
+    /// Guard rules that block specific commands before specific workflow steps.
+    /// Empty by default — no commands are blocked unless configured.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub guards: Vec<GuardRule>,
+
+    // ── Deprecated fields (backward compat) ─────────────────────────────
+    // Silently consumed during deserialization to avoid "unknown field" errors
+    // on existing config files. Not used — replaced by `guards`.
+    #[serde(default, skip_serializing)]
+    #[doc(hidden)]
+    pub guard_commit: Option<bool>,
+    #[serde(default, skip_serializing)]
+    #[doc(hidden)]
     pub enforce_commit_after_step: Option<u32>,
-    /// When true (default), a WorkflowGuard is registered that blocks
-    /// `git commit`/`git push` until required steps are complete.
-    /// Set to false to disable the guard while keeping the workflow tool.
-    ///
-    /// **Note:** This is a developer convenience, NOT a security boundary.
-    /// Any user with config.json write access can disable it.
-    #[serde(default = "default_true", skip_serializing_if = "is_true")]
-    pub guard_commit: bool,
 }
 
 impl Default for WorkflowConfig {
@@ -469,21 +492,38 @@ impl Default for WorkflowConfig {
             steps: default_steps(),
             auto_continue: true,
             completion_nudge: true,
-            enforce_commit_after_step: default_enforce_commit_after_step(),
-            guard_commit: true,
+            guards: vec![],
+            guard_commit: None,
+            enforce_commit_after_step: None,
         }
     }
 }
 
-fn default_enforce_commit_after_step() -> Option<u32> {
-    Some(6)
-}
-
-/// Returns true when `enforce_commit_after_step` is the default `Some(6)`.
-/// Used by `skip_serializing_if` to avoid injecting the default value into
-/// serialized config files on round-trip.
-fn is_default_enforce(val: &Option<u32>) -> bool {
-    *val == Some(6)
+impl WorkflowConfig {
+    /// Migrate deprecated `guard_commit`/`enforce_commit_after_step` to `guards`.
+    /// Logs a warning if deprecated fields are detected.
+    /// Call this after deserialization to ensure backward compatibility.
+    pub fn migrate_deprecated(&mut self) {
+        if self.guards.is_empty() && self.guard_commit == Some(true) {
+            let step = self.enforce_commit_after_step.unwrap_or(6);
+            self.guards.push(GuardRule {
+                commands: vec!["git commit".into(), "git push".into()],
+                before_step: step + 1,
+                message: format!(
+                    "Complete steps 1–{} before committing. \
+                     (Migrated from deprecated guard_commit/enforce_commit_after_step config.)",
+                    step
+                ),
+            });
+            tracing::warn!(
+                "Deprecated workflow config: 'guard_commit' and 'enforce_commit_after_step' \
+                 have been replaced by 'guards'. Please update your config.json."
+            );
+        }
+        // Clear deprecated fields after migration
+        self.guard_commit = None;
+        self.enforce_commit_after_step = None;
+    }
 }
 
 /// Returns true if the steps match the default 16-step template.

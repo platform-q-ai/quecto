@@ -1,6 +1,6 @@
 use cucumber::{given, then, when};
 use quecto::domain::tool::ToolGuard;
-use quecto::domain::workflow::WorkflowState;
+use quecto::domain::workflow::{GuardRule, WorkflowState};
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 use quecto::infrastructure::tools::workflow_tool::WorkflowGuard;
@@ -41,18 +41,6 @@ impl ToolGuard for BlockSpecificGuard {
     }
 }
 
-struct CapturingGuard {
-    captured_name: Arc<Mutex<String>>,
-    captured_args: Arc<Mutex<String>>,
-}
-impl ToolGuard for CapturingGuard {
-    fn check(&self, tool_name: &str, arguments: &str) -> Result<(), String> {
-        *self.captured_name.lock().unwrap() = tool_name.to_string();
-        *self.captured_args.lock().unwrap() = arguments.to_string();
-        Ok(())
-    }
-}
-
 // ─── Helper to create registry with core tools ──────────────────────────────
 
 pub(crate) fn create_test_registry(world: &mut QuectoWorld) {
@@ -87,27 +75,6 @@ fn given_block_guard(world: &mut QuectoWorld, reason: String) {
     reg.register_guard(Arc::new(BlockAllGuard { reason }));
 }
 
-#[given("a guard that captures tool name and arguments")]
-fn given_capturing_guard(world: &mut QuectoWorld) {
-    let name = Arc::new(Mutex::new(String::new()));
-    let args = Arc::new(Mutex::new(String::new()));
-    let name_clone = name.clone();
-    let args_clone = args.clone();
-    let reg = world.tool_registry.as_mut().expect("need registry");
-    reg.register_guard(Arc::new(CapturingGuard {
-        captured_name: name_clone,
-        captured_args: args_clone,
-    }));
-    world.guard_captured_name = Some(String::new());
-    world.guard_captured_args = Some(String::new());
-    // Store Arcs for later retrieval — we'll read from guard after execute
-    // Use a workaround: store them as a global for this world instance
-    // Actually, we'll just store them on the world in a type-erased way.
-    // For simplicity, we read from the guard via re-execution pattern.
-    // Instead, just use the capturing guard Arcs via a Box::leak approach.
-    // SIMPLER: Just read the captured values after execution by storing the Arcs.
-}
-
 #[given(expr = "a guard that blocks only {string} with reason {string}")]
 fn given_block_specific_guard(world: &mut QuectoWorld, target: String, reason: String) {
     let reg = world.tool_registry.as_mut().expect("need registry");
@@ -126,26 +93,41 @@ fn when_execute_tool(world: &mut QuectoWorld, tool_name: String, arguments: Stri
     world.tool_result = Some(result.map_err(|e| e.to_string()));
 }
 
-// Tool result assertions reuse existing steps from agent_tools_steps.rs:
-// "the tool result should not be an error"
-// "the tool result should be an error"
-// "the tool result should contain {string}"
+// ─── Configurable WorkflowGuard steps ────────────────────────────────────────
 
-// ─── WorkflowGuard steps ─────────────────────────────────────────────────────
-
-#[given(expr = "a workflow guard with commit enforcement at {int}")]
-fn given_workflow_guard_with_enforce(world: &mut QuectoWorld, threshold: i32) {
-    let threshold = threshold as u32;
-    let state = Arc::new(Mutex::new(WorkflowState::default_bdd()));
-    world.workflow_state = Some(state.clone());
-    world.enforce_commit_after_step = Some(Some(threshold));
+/// Parse a cucumber data table row into a GuardRule.
+fn parse_guard_rule(row: &[String]) -> GuardRule {
+    // row: [commands, before_step, message]
+    let commands: Vec<String> = row[0].split(',').map(|s| s.trim().to_string()).collect();
+    let before_step: u32 = row[1].trim().parse().expect("before_step must be a number");
+    let message = row[2].trim().to_string();
+    GuardRule {
+        commands,
+        before_step,
+        message,
+    }
 }
 
-#[given("a workflow guard with no enforcement")]
-fn given_workflow_guard_no_enforce(world: &mut QuectoWorld) {
+#[given("a workflow guard with guards:")]
+fn given_workflow_guard_with_table(world: &mut QuectoWorld, step: &cucumber::gherkin::Step) {
     let state = Arc::new(Mutex::new(WorkflowState::default_bdd()));
     world.workflow_state = Some(state.clone());
-    world.enforce_commit_after_step = Some(None);
+
+    let table = step.table.as_ref().expect("need data table");
+    let rules: Vec<GuardRule> = table
+        .rows
+        .iter()
+        .skip(1) // skip header row
+        .map(|row| parse_guard_rule(row))
+        .collect();
+    world.guard_rules = Some(rules);
+}
+
+#[given("a workflow guard with no guard rules")]
+fn given_workflow_guard_no_rules(world: &mut QuectoWorld) {
+    let state = Arc::new(Mutex::new(WorkflowState::default_bdd()));
+    world.workflow_state = Some(state.clone());
+    world.guard_rules = Some(vec![]);
 }
 
 #[given("no workflow steps are completed")]
@@ -165,10 +147,12 @@ fn given_steps_completed(world: &mut QuectoWorld, through: i32) {
 #[when(expr = "the guard checks tool {string} with arguments {string}")]
 fn when_guard_checks(world: &mut QuectoWorld, tool_name: String, arguments: String) {
     let state = world.workflow_state.as_ref().expect("need workflow state");
-    let enforce = world
-        .enforce_commit_after_step
-        .expect("need enforce setting");
-    let guard = WorkflowGuard::new(state.clone(), enforce);
+    let rules = world
+        .guard_rules
+        .as_ref()
+        .expect("need guard rules")
+        .clone();
+    let guard = WorkflowGuard::new(state.clone(), rules);
     let result = guard.check(&tool_name, &arguments);
     world.guard_check_result = Some(result);
 }
@@ -208,11 +192,11 @@ fn then_guard_reason_contains(world: &mut QuectoWorld, expected: String) {
 
 // ─── Guard config integration ────────────────────────────────────────────────
 
-#[given("a workflow config with guard_commit false and enabled true")]
-fn given_wf_config_no_guard(world: &mut QuectoWorld) {
+#[given("a workflow config with empty guards and enabled true")]
+fn given_wf_config_empty_guards(world: &mut QuectoWorld) {
     world.workflow_config = Some(quecto::domain::workflow::WorkflowConfig {
         enabled: true,
-        guard_commit: false,
+        guards: vec![],
         ..Default::default()
     });
 }

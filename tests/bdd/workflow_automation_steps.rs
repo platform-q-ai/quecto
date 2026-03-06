@@ -1,5 +1,5 @@
 use cucumber::{given, then, when};
-use quecto::domain::workflow::{WorkflowConfig, WorkflowPersistable, WorkflowState};
+use quecto::domain::workflow::{GuardRule, WorkflowConfig, WorkflowPersistable, WorkflowState};
 use quecto::infrastructure::tools::workflow_tool::WorkflowTool;
 use std::sync::{Arc, Mutex};
 
@@ -31,21 +31,16 @@ fn then_completion_nudge_false(world: &mut QuectoWorld) {
     assert!(!config.completion_nudge);
 }
 
-#[then(expr = "the workflow config enforce_commit_after_step should be {int}")]
-fn then_enforce_commit_step(world: &mut QuectoWorld, num: i32) {
+#[then(expr = "the workflow config should have {int} guards")]
+fn then_config_guards_count(world: &mut QuectoWorld, count: i32) {
     let config = resolve_workflow_config(world);
     assert_eq!(
-        config.enforce_commit_after_step,
-        Some(num as u32),
-        "expected enforce_commit_after_step to be Some({})",
-        num
+        config.guards.len(),
+        count as usize,
+        "expected {} guards, got {}",
+        count,
+        config.guards.len()
     );
-}
-
-#[then("the workflow config enforce_commit_after_step should be None")]
-fn then_enforce_commit_none(world: &mut QuectoWorld) {
-    let config = resolve_workflow_config(world);
-    assert_eq!(config.enforce_commit_after_step, None);
 }
 
 fn resolve_workflow_config(world: &QuectoWorld) -> WorkflowConfig {
@@ -74,31 +69,32 @@ fn given_config_completion_nudge_false(world: &mut QuectoWorld) {
     });
 }
 
-#[given("a workflow config with enforce_commit_after_step null")]
-fn given_config_enforce_null(world: &mut QuectoWorld) {
+#[given("a workflow config with guards:")]
+fn given_config_with_guards(world: &mut QuectoWorld, step: &cucumber::gherkin::Step) {
+    let table = step.table.as_ref().expect("need data table");
+    let rules: Vec<GuardRule> = table
+        .rows
+        .iter()
+        .skip(1)
+        .map(|row| {
+            let commands: Vec<String> = row[0].split(',').map(|s| s.trim().to_string()).collect();
+            GuardRule {
+                commands,
+                before_step: row[1].trim().parse().unwrap(),
+                message: row[2].trim().to_string(),
+            }
+        })
+        .collect();
     world.workflow_config = Some(WorkflowConfig {
-        enforce_commit_after_step: None,
+        guards: rules,
         ..Default::default()
     });
 }
 
-#[given(expr = "a workflow config with enforce_commit_after_step {int}")]
-fn given_config_enforce_step(world: &mut QuectoWorld, num: i32) {
-    world.workflow_config = Some(WorkflowConfig {
-        enforce_commit_after_step: Some(num as u32),
-        ..Default::default()
-    });
-}
-
-#[given(
-    expr = "a config JSON with workflow auto_continue false and completion_nudge false and enforce_commit_after_step {int}"
-)]
-fn given_config_json_all_fields(world: &mut QuectoWorld, num: i32) {
-    let json = format!(
-        r#"{{"auto_continue":false,"completion_nudge":false,"enforce_commit_after_step":{}}}"#,
-        num
-    );
-    world.workflow_config_json = Some(json);
+#[given("a config JSON with workflow auto_continue false and completion_nudge false")]
+fn given_config_json_all_fields(world: &mut QuectoWorld) {
+    world.workflow_config_json =
+        Some(r#"{"auto_continue":false,"completion_nudge":false}"#.to_string());
 }
 
 #[given("an empty config JSON")]
@@ -172,17 +168,7 @@ fn when_completion_nudge(world: &mut QuectoWorld) {
     world.workflow_nudge = s.completion_nudge();
 }
 
-// ─── Domain: Commit enforcement ─────────────────────────────────────────────
-
-#[given(expr = "enforce_commit_after_step is {int}")]
-fn given_enforce_step(world: &mut QuectoWorld, num: i32) {
-    world.enforce_commit_after_step = Some(Some(num as u32));
-}
-
-#[given("enforce_commit_after_step is None")]
-fn given_enforce_none(world: &mut QuectoWorld) {
-    world.enforce_commit_after_step = Some(None);
-}
+// ─── Domain: Step threshold check ───────────────────────────────────────────
 
 #[given(expr = "a workflow state with steps 1 through {int} checked")]
 fn given_steps_through(world: &mut QuectoWorld, n: i32) {
@@ -193,37 +179,37 @@ fn given_steps_through(world: &mut QuectoWorld, n: i32) {
     world.workflow_state = Some(Arc::new(Mutex::new(state)));
 }
 
-#[when("I check if commit is allowed")]
-fn when_check_commit(world: &mut QuectoWorld) {
+#[when(expr = "I check steps complete before step {int}")]
+fn when_check_steps_complete(world: &mut QuectoWorld, before_step: i32) {
     let state = world
         .workflow_state
         .as_ref()
         .expect("workflow state should exist");
     let s = state.lock().unwrap();
-    let enforce = world
-        .enforce_commit_after_step
-        .expect("enforce_commit_after_step should be set");
-    world.commit_check_result = Some(s.check_commit_allowed(enforce).map_err(|e| e.to_string()));
+    world.commit_check_result = Some(
+        s.check_steps_complete(before_step as u32)
+            .map_err(|e| e.to_string()),
+    );
 }
 
-#[then("the commit should be blocked")]
-fn then_commit_blocked(world: &mut QuectoWorld) {
+#[then("the check should fail")]
+fn then_check_fails(world: &mut QuectoWorld) {
     let result = world
         .commit_check_result
         .as_ref()
         .expect("commit check result should exist");
-    assert!(result.is_err(), "expected commit to be blocked, got Ok");
+    assert!(result.is_err(), "expected check to fail, got Ok");
 }
 
-#[then("the commit should be allowed")]
-fn then_commit_allowed(world: &mut QuectoWorld) {
+#[then("the check should pass")]
+fn then_check_passes(world: &mut QuectoWorld) {
     let result = world
         .commit_check_result
         .as_ref()
         .expect("commit check result should exist");
     assert!(
         result.is_ok(),
-        "expected commit to be allowed, got Err: {}",
+        "expected check to pass, got Err: {}",
         result.as_ref().unwrap_err()
     );
 }
@@ -328,52 +314,58 @@ fn then_serialized_issue(world: &mut QuectoWorld, number: i32, title: String) {
 
 // ─── Tool: check_commit action ──────────────────────────────────────────────
 
-#[given(expr = "a workflow tool with default state and enforce_commit_after_step {int}")]
-fn given_tool_with_enforce(world: &mut QuectoWorld, num: i32) {
+#[given(expr = "a workflow tool with default state and guard before step {int}")]
+fn given_tool_with_guard(world: &mut QuectoWorld, num: i32) {
     let state = Arc::new(Mutex::new(WorkflowState::default_bdd()));
     world.workflow_state = Some(state.clone());
-    world.workflow_tool = Some(WorkflowTool::with_enforce_commit(state, Some(num as u32)));
+    let mut tool = WorkflowTool::new(state);
+    tool.set_guards(vec![GuardRule {
+        commands: vec!["git commit".into()],
+        before_step: num as u32,
+        message: "Complete steps first.".into(),
+    }]);
+    world.workflow_tool = Some(tool);
 }
 
-#[given("a workflow tool with default state and enforce_commit_after_step None")]
-fn given_tool_with_no_enforce(world: &mut QuectoWorld) {
+#[given("a workflow tool with default state and no guards")]
+fn given_tool_with_no_guards(world: &mut QuectoWorld) {
     let state = Arc::new(Mutex::new(WorkflowState::default_bdd()));
     world.workflow_state = Some(state.clone());
-    world.workflow_tool = Some(WorkflowTool::with_enforce_commit(state, None));
+    world.workflow_tool = Some(WorkflowTool::new(state));
 }
 
-// ─── System prompt with enforcement ─────────────────────────────────────────
+// ─── System prompt with guards ──────────────────────────────────────────────
 
-#[when(expr = "I build the workflow system prompt snippet with enforce_commit_after_step {int}")]
-fn when_build_snippet_with_enforce(world: &mut QuectoWorld, num: i32) {
+#[when("I build the workflow system prompt snippet with guards")]
+fn when_build_snippet_with_guards(world: &mut QuectoWorld) {
     let state = world
         .workflow_state
         .as_ref()
         .expect("workflow state should exist");
     let s = state.lock().unwrap();
-    world.workflow_snippet = Some(s.system_prompt_snippet_with_config(Some(num as u32)));
+    let guards = vec![GuardRule {
+        commands: vec!["git commit".into()],
+        before_step: 7,
+        message: "Complete steps first.".into(),
+    }];
+    world.workflow_snippet = Some(s.system_prompt_snippet_with_guards(&guards));
 }
 
 // ─── Config integration ─────────────────────────────────────────────────────
 
-#[given(
-    expr = "a config file with workflow auto_continue true and enforce_commit_after_step {int}"
-)]
-fn given_config_with_auto_and_enforce(world: &mut QuectoWorld, num: i32) {
+#[given("a config file with workflow auto_continue true and guards configured")]
+fn given_config_with_auto_and_guards(world: &mut QuectoWorld) {
     super::ensure_temp_dir(world);
     let base = super::base_path(world);
     let config_path = base.join("config.json");
-    let config_json = format!(
-        r#"{{
-            "workflow": {{
-                "enabled": true,
-                "auto_continue": true,
-                "enforce_commit_after_step": {}
-            }},
-            "providers": {{ "openai": {{ "api_key": "sk-test" }} }}
-        }}"#,
-        num
-    );
+    let config_json = r#"{
+        "workflow": {
+            "enabled": true,
+            "auto_continue": true,
+            "guards": [{"commands": ["git commit"], "before_step": 7, "message": "Not yet."}]
+        },
+        "providers": { "openai": { "api_key": "sk-test" } }
+    }"#;
     std::fs::write(&config_path, config_json).unwrap();
     world.config_path = Some(config_path.to_string_lossy().to_string());
 }
@@ -390,6 +382,3 @@ fn given_config_enabled_only(world: &mut QuectoWorld) {
     std::fs::write(&config_path, config_json).unwrap();
     world.config_path = Some(config_path.to_string_lossy().to_string());
 }
-
-// Note: "the snippet should contain {string}" step is defined in workflow_steps.rs
-// and shared across both feature files.

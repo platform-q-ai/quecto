@@ -763,8 +763,8 @@ pub struct QuectoWorld {
     pub workflow_config_json: Option<String>,
     /// Generated nudge message (auto_continue or completion)
     pub workflow_nudge: Option<String>,
-    /// enforce_commit_after_step setting for commit enforcement scenarios
-    pub enforce_commit_after_step: Option<Option<u32>>,
+    /// Guard rules for configurable guard scenarios
+    pub guard_rules: Option<Vec<quecto::domain::workflow::GuardRule>>,
     /// Commit check result (Ok = allowed, Err = blocked with reason)
     pub commit_check_result: Option<Result<(), String>>,
     /// Serialized workflow state JSON for persistence scenarios

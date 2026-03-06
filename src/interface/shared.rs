@@ -88,7 +88,7 @@ pub fn append_workflow_prompt(
     }
     let state = crate::domain::workflow::WorkflowState::from_config(wf_config);
     system.push_str("\n\n");
-    system.push_str(&state.system_prompt_snippet_with_config(wf_config.enforce_commit_after_step));
+    system.push_str(&state.system_prompt_snippet_with_guards(&wf_config.guards));
 }
 
 /// Register the workflow tool and guard in a tool registry if workflow is enabled.
@@ -109,14 +109,14 @@ pub fn register_workflow_tool(
 
     // Register tool
     let mut tool = crate::infrastructure::tools::workflow_tool::WorkflowTool::new(state.clone());
-    tool.set_enforce_commit(wf_config.enforce_commit_after_step);
+    tool.set_guards(wf_config.guards.clone());
     registry.register(std::sync::Arc::new(tool));
 
-    // Register guard (blocks git commit/push at wrong workflow stage)
-    if wf_config.guard_commit {
+    // Register guard if any guard rules are configured
+    if !wf_config.guards.is_empty() {
         let guard = crate::infrastructure::tools::workflow_tool::WorkflowGuard::new(
             state,
-            wf_config.enforce_commit_after_step,
+            wf_config.guards.clone(),
         );
         registry.register_guard(std::sync::Arc::new(guard));
     }
