@@ -3,7 +3,8 @@
 use std::path::{Path, PathBuf};
 
 /// Shell metacharacters that indicate command chaining/substitution.
-const SHELL_METACHARACTERS: &[&str] = &[";", "&&", "||", "|", "$(", "`", "<(", ">("];
+/// Includes `\n` because bash treats newlines as command separators equivalent to `;`.
+const SHELL_METACHARACTERS: &[&str] = &[";", "\n", "&&", "||", "|", "$(", "`", "<(", ">("];
 
 /// Dangerous command patterns that are always blocked regardless of workspace restriction.
 /// All patterns MUST be lowercase (compared against lowercased input).
@@ -200,84 +201,25 @@ pub(crate) fn expand_bash_escapes(command: &str) -> String {
 
     let mut result = String::with_capacity(command.len());
     let chars: Vec<char> = command.chars().collect();
-    let len = chars.len();
     let mut i = 0;
 
-    while i < len {
+    while i < chars.len() {
         // Match $'...' ANSI-C quoting
-        if i + 1 < len && chars[i] == '$' && chars[i + 1] == '\'' {
+        if i + 1 < chars.len() && chars[i] == '$' && chars[i + 1] == '\'' {
             i += 2; // skip $'
-            while i < len && chars[i] != '\'' {
-                if chars[i] == '\\' && i + 1 < len {
-                    match chars[i + 1] {
-                        'x' | 'X' => {
-                            // \xHH — up to 2 hex digits
-                            let hex: String =
-                                chars.get(i + 2..).unwrap_or(&[]).iter().take(2).collect();
-                            if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                                result.push(byte as char);
-                                i += 2 + hex.len();
-                            } else {
-                                // Skip \x entirely on failure
-                                i += 2;
-                            }
-                        }
-                        'u' | 'U' => {
-                            // \uHHHH or \UHHHHHHHH
-                            let max_digits = if chars[i + 1] == 'U' { 8 } else { 4 };
-                            let hex: String = chars
-                                .get(i + 2..)
-                                .unwrap_or(&[])
-                                .iter()
-                                .take(max_digits)
-                                .take_while(|c| c.is_ascii_hexdigit())
-                                .collect();
-                            if let Ok(cp) = u32::from_str_radix(&hex, 16) {
-                                if let Some(ch) = char::from_u32(cp) {
-                                    result.push(ch);
-                                }
-                                // Invalid codepoints (surrogates) are silently dropped —
-                                // this is intentional for denylist safety.
-                            }
-                            i += 2 + hex.len();
-                        }
-                        '0'..='7' => {
-                            // \OOO — up to 3 octal digits (starting at i+1)
-                            let oct: String = chars
-                                .get(i + 1..)
-                                .unwrap_or(&[])
-                                .iter()
-                                .take(3)
-                                .take_while(|c| matches!(c, '0'..='7'))
-                                .collect();
-                            if let Ok(byte) = u8::from_str_radix(&oct, 8) {
-                                result.push(byte as char);
-                            }
-                            i += 1 + oct.len();
-                        }
-                        'n' => {
-                            result.push('\n');
-                            i += 2;
-                        }
-                        't' => {
-                            result.push('\t');
-                            i += 2;
-                        }
-                        '\\' => {
-                            result.push('\\');
-                            i += 2;
-                        }
-                        _ => {
-                            result.push(chars[i + 1]);
-                            i += 2;
-                        }
+            while i < chars.len() && chars[i] != '\'' {
+                if chars[i] == '\\' && i + 1 < chars.len() {
+                    let (ch, advance) = expand_escape_sequence(&chars, i);
+                    if let Some(ch) = ch {
+                        result.push(ch);
                     }
+                    i += advance;
                 } else {
                     result.push(chars[i]);
                     i += 1;
                 }
             }
-            if i < len {
+            if i < chars.len() {
                 i += 1; // skip closing '
             }
         } else {
@@ -287,6 +229,50 @@ pub(crate) fn expand_bash_escapes(command: &str) -> String {
     }
 
     result
+}
+
+/// Expand a single bash `$'...'` escape sequence starting at `chars[i]` (the `\`).
+/// Returns `(Option<char>, bytes_consumed)`.
+fn expand_escape_sequence(chars: &[char], i: usize) -> (Option<char>, usize) {
+    match chars[i + 1] {
+        'x' | 'X' => {
+            let hex: String = chars.get(i + 2..).unwrap_or(&[]).iter().take(2).collect();
+            if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                (Some(byte as char), 2 + hex.len())
+            } else {
+                (None, 2)
+            }
+        }
+        'u' | 'U' => {
+            let max_digits = if chars[i + 1] == 'U' { 8 } else { 4 };
+            let hex: String = chars
+                .get(i + 2..)
+                .unwrap_or(&[])
+                .iter()
+                .take(max_digits)
+                .take_while(|c| c.is_ascii_hexdigit())
+                .collect();
+            let ch = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32);
+            // Invalid codepoints (surrogates) are silently dropped —
+            // intentional for denylist safety.
+            (ch, 2 + hex.len())
+        }
+        '0'..='7' => {
+            let oct: String = chars
+                .get(i + 1..)
+                .unwrap_or(&[])
+                .iter()
+                .take(3)
+                .take_while(|c| matches!(c, '0'..='7'))
+                .collect();
+            let ch = u8::from_str_radix(&oct, 8).ok().map(|b| b as char);
+            (ch, 1 + oct.len())
+        }
+        'n' => (Some('\n'), 2),
+        't' => (Some('\t'), 2),
+        '\\' => (Some('\\'), 2),
+        other => (Some(other), 2),
+    }
 }
 
 /// Extract string literal values from variable assignments (e.g. `cmd='rm -rf /'`)
@@ -370,26 +356,88 @@ fn normalize_command_for_denylist(command: &str) -> String {
     normalized
 }
 
+/// Returns true if `bytes[i..]` starts with a two-byte shell metacharacter
+/// (`&&`, `||`, `<(`, `>(`, `$(`).
+#[inline]
+fn is_two_byte_meta(bytes: &[u8], i: usize) -> bool {
+    if i + 1 >= bytes.len() {
+        return false;
+    }
+    let (b, next) = (bytes[i], bytes[i + 1]);
+    matches!(
+        (b, next),
+        (b'&', b'&') | (b'|', b'|') | (b'<', b'(') | (b'>', b'(') | (b'$', b'(')
+    )
+}
+
+/// Returns true if `b` is a single-byte shell metacharacter (`;`, `|`, `` ` ``, `\n`).
+///
+/// Note: callers must check `is_two_byte_meta` **before** this function when
+/// consuming (not just detecting) a metacharacter, because `|` is a prefix of
+/// the two-byte sequence `||`. The token-collection loop detects via this
+/// function; the consume loop checks two-byte first. This ordering is
+/// intentional and must be preserved.
+///
+/// `\n` is included because bash treats newlines as command separators
+/// equivalent to `;`.
+#[inline]
+fn is_one_byte_meta(b: u8) -> bool {
+    matches!(b, b';' | b'|' | b'`' | b'\n')
+}
+
+/// Advance `i` past a metacharacter boundary; returns the updated index.
+#[inline]
+fn skip_meta(bytes: &[u8], i: usize) -> usize {
+    if is_two_byte_meta(bytes, i) {
+        i + 2
+    } else {
+        i + 1
+    }
+}
+
 /// Extract all command tokens (first words) from a shell command string,
 /// splitting on metacharacters like `;`, `|`, `&&`, `||`.
+///
+/// Uses a single-pass byte scanner that avoids intermediate `String`
+/// allocations (#307).
 pub(crate) fn extract_all_command_tokens(command: &str) -> Vec<String> {
-    // Replace metacharacters with a common separator
-    let mut normalized = command.to_string();
-    // Order matters: longer patterns first
-    for mc in &["&&", "||", "<(", ">(", "$("] {
-        normalized = normalized.replace(mc, "\x00");
-    }
-    for mc in &[";", "|", "`"] {
-        normalized = normalized.replace(mc, "\x00");
+    let bytes = command.as_bytes();
+    let mut tokens = Vec::with_capacity(4); // most commands have 1–5 segments
+    let mut i = 0;
+
+    while i < bytes.len() {
+        // Skip whitespace between segments.
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
+
+        // Collect the first token of this segment (stop at whitespace or meta).
+        let token_start = i;
+        while i < bytes.len()
+            && !bytes[i].is_ascii_whitespace()
+            && !is_one_byte_meta(bytes[i])
+            && !is_two_byte_meta(bytes, i)
+        {
+            i += 1;
+        }
+        if i > token_start {
+            tokens.push(command[token_start..i].to_string());
+        }
+
+        // Consume the rest of the segment up to (and including) the next meta.
+        while i < bytes.len() {
+            if is_two_byte_meta(bytes, i) || is_one_byte_meta(bytes[i]) {
+                i = skip_meta(bytes, i);
+                break;
+            }
+            i += 1;
+        }
     }
 
-    normalized
-        .split('\x00')
-        .filter_map(|segment| {
-            let token = segment.split_whitespace().next()?;
-            Some(token.to_string())
-        })
-        .collect()
+    tokens
 }
 
 /// Resolve a path by normalizing ".." and "." components without requiring the path to exist.

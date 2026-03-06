@@ -228,3 +228,31 @@ fn test_extract_tokens_backtick() {
         vec!["echo", "id"]
     );
 }
+
+// --- #307: Verify extract_all_command_tokens handles all metacharacters in one pass ---
+
+#[test]
+fn test_extract_tokens_mixed_metacharacters() {
+    // Combines multiple metacharacter types in one command
+    assert_eq!(
+        super::sandbox::extract_all_command_tokens("echo a && ls b || cat c; head d | tail"),
+        vec!["echo", "ls", "cat", "head", "tail"]
+    );
+}
+
+#[test]
+fn test_extract_tokens_process_substitution() {
+    assert_eq!(
+        super::sandbox::extract_all_command_tokens("diff <(sort a.txt) >(tee b.txt)"),
+        vec!["diff", "sort", "tee"]
+    );
+}
+
+#[test]
+fn test_extract_tokens_empty_segments_skipped() {
+    // Adjacent metacharacters should not produce empty tokens
+    assert_eq!(
+        super::sandbox::extract_all_command_tokens("echo a;; ls"),
+        vec!["echo", "ls"]
+    );
+}

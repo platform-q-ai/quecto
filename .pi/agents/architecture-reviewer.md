@@ -22,6 +22,13 @@ System boundaries, dependency direction, interface design, upstream compatibilit
 6. Prefix each comment: `[arch]`, `[coupling]`, `[boundary]`, `[compat]`, `[state]`, `[nit]`
 7. Each comment must be self-contained and actionable: state the problem, why it matters, and what to do
 
+## GitHub API Notes
+- **Post reviews** via REST: `gh api repos/{owner}/{repo}/pulls/{number}/reviews -f event=COMMENT -f body="" --input <json-with-comments>`
+- **Reply to review threads** via REST: `gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies -f body="..."`
+- **Resolve review threads** via GraphQL: `gh api graphql -f query='mutation { resolveReviewThread(input: {threadId: "<THREAD_NODE_ID>"}) { thread { isResolved } } }'`
+- **List unresolved threads** via GraphQL: `gh api graphql -f query='query { repository(owner:"OWNER",name:"REPO") { pullRequest(number:N) { reviewThreads(first:50) { nodes { id isResolved comments(first:1) { nodes { body } } } } } } }'`
+- Always use `gh api` (not `gh pr review`) — the CLI `gh pr review` doesn't support inline comments reliably
+
 ## Rules
 - **NEVER** put findings in the review `body` field — always use the `comments` array so each comment becomes a separately resolvable GitHub review thread
 - **NEVER** use a single comment that lists multiple unrelated issues — split them into separate inline comments on the relevant lines
