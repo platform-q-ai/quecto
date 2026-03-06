@@ -174,7 +174,7 @@ fn given_default_config(world: &mut QuectoWorld) {
 fn given_disabled_config(world: &mut QuectoWorld) {
     world.workflow_config = Some(WorkflowConfig {
         enabled: false,
-        steps: quecto::domain::workflow::default_steps(),
+        ..Default::default()
     });
 }
 

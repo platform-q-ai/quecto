@@ -53,6 +53,8 @@ pub enum WorkflowError {
     InvalidStep(String),
     /// Step ordering not satisfied.
     OrderingViolation(String),
+    /// Commit blocked because required steps are incomplete.
+    CommitBlocked(String),
 }
 
 impl std::fmt::Display for WorkflowError {
@@ -60,6 +62,7 @@ impl std::fmt::Display for WorkflowError {
         match self {
             WorkflowError::InvalidStep(msg) => write!(f, "{}", msg),
             WorkflowError::OrderingViolation(msg) => write!(f, "{}", msg),
+            WorkflowError::CommitBlocked(msg) => write!(f, "{}", msg),
         }
     }
 }
@@ -247,7 +250,129 @@ impl WorkflowState {
             }
         }
 
+        if progress.done >= progress.total && progress.total > 0 {
+            out.push_str("\n✓ All steps complete! You may start a new workflow cycle with `workflow reset`.\n");
+        }
+
         out
+    }
+
+    /// Build a system prompt snippet that also includes enforcement reminders.
+    pub fn system_prompt_snippet_with_config(
+        &self,
+        enforce_commit_after_step: Option<u32>,
+    ) -> String {
+        let mut snippet = self.system_prompt_snippet();
+        if let Some(step) = enforce_commit_after_step {
+            if step > 0 {
+                snippet.push_str(&format!(
+                    "\n⚠ Commit enforcement: `git commit` is blocked until steps 1–{} are checked. Use workflow(action=\"check_commit\") before committing.\n",
+                    step
+                ));
+            }
+        }
+        snippet
+    }
+
+    /// Generate an auto-continue nudge message, if there are incomplete steps.
+    ///
+    /// Returns `None` when all steps are complete (no nudge needed).
+    /// Returns `Some(message)` with the next incomplete step to work on.
+    pub fn auto_continue_nudge(&self) -> Option<String> {
+        // position() returns None when all steps are done — no need for
+        // a separate progress() call.
+        let next_idx = self.done.iter().position(|&d| !d)?;
+        let step = &self.steps[next_idx];
+        Some(format!(
+            "Continue the workflow — next incomplete step is step {} ({}). \
+             Proceed with this step now, then call workflow(action=\"check\", step={}).",
+            step.id, step.label, step.id
+        ))
+    }
+
+    /// Generate a completion nudge message when all steps are done.
+    ///
+    /// Returns `None` when steps are still incomplete.
+    /// Returns `Some(message)` prompting the agent to close the issue and pick the next.
+    pub fn completion_nudge(&self) -> Option<String> {
+        let progress = self.progress();
+        if progress.done < progress.total {
+            return None;
+        }
+        Some(
+            "All steps complete! You have completed all 16 workflow steps for this issue. \
+             Please now:\n\
+             1. Close the current issue (if applicable)\n\
+             2. Pick the next open issue — if no open issues exist, respond with just the word NONE\n\
+             3. Record it: call the workflow tool with action=\"set_issue\", issueNumber=<n>, issueTitle=\"...\"\n\
+             4. Reset the checklist: call the workflow tool with action=\"reset\"\n\
+             5. Begin Step 1 immediately for the new issue"
+                .to_string(),
+        )
+    }
+
+    /// Check whether `git commit` is allowed given the enforcement threshold.
+    ///
+    /// - `enforce_commit_after_step = None` → always allowed (enforcement disabled)
+    /// - `enforce_commit_after_step = Some(0)` → always allowed
+    /// - `enforce_commit_after_step = Some(n)` → all steps 1..=n must be checked
+    ///
+    /// Returns `Ok(())` if allowed, `Err(WorkflowError::CommitBlocked)` if blocked.
+    pub fn check_commit_allowed(
+        &self,
+        enforce_commit_after_step: Option<u32>,
+    ) -> Result<(), WorkflowError> {
+        let threshold = match enforce_commit_after_step {
+            None => return Ok(()),
+            Some(0) => return Ok(()),
+            Some(n) => n,
+        };
+        let limit = std::cmp::min(threshold as usize, self.steps.len());
+        for i in 0..limit {
+            if !self.done[i] {
+                return Err(WorkflowError::CommitBlocked(format!(
+                    "commit blocked: complete step {} ({}) before committing. \
+                     Steps 1–{} must be checked (enforce_commit_after_step = {}).",
+                    self.steps[i].id, self.steps[i].label, threshold, threshold
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Serialize the dynamic state (done flags + active issue) for persistence.
+    /// Step definitions come from config and are not persisted.
+    pub fn to_persistable(&self) -> WorkflowPersistable {
+        WorkflowPersistable {
+            done: self.done.clone(),
+            active_issue: self.active_issue.clone(),
+        }
+    }
+
+    /// Restore state from a persisted snapshot.
+    ///
+    /// Uses the provided steps (from config), or falls back to
+    /// [`default_steps()`] if `None`. If the persisted done vector length
+    /// doesn't match the step count, it is padded with `false` or truncated.
+    pub fn from_persistable(p: &WorkflowPersistable) -> Self {
+        Self::from_persistable_with_steps(p, None)
+    }
+
+    /// Restore state from a persisted snapshot with explicit step definitions.
+    pub fn from_persistable_with_steps(
+        p: &WorkflowPersistable,
+        steps: Option<Vec<WorkflowStep>>,
+    ) -> Self {
+        let steps = steps.unwrap_or_else(default_steps);
+        let len = steps.len();
+        let mut done = p.done.clone();
+        // resize handles both padding (len > done.len()) and truncation.
+        done.resize(len, false);
+        Self {
+            steps,
+            done,
+            active_issue: p.active_issue.clone(),
+        }
     }
 
     /// Create a snapshot of the current state for event serialization.
@@ -291,6 +416,16 @@ fn phase_display_name(phase: &str) -> &str {
     }
 }
 
+/// Serializable snapshot of workflow state for session persistence.
+///
+/// Contains only the dynamic state (done flags + active issue) — the step
+/// definitions come from config and are not persisted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowPersistable {
+    pub done: Vec<bool>,
+    pub active_issue: Option<(u32, String)>,
+}
+
 /// Workflow configuration section for config.json.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowConfig {
@@ -298,6 +433,21 @@ pub struct WorkflowConfig {
     pub enabled: bool,
     #[serde(default = "default_steps", skip_serializing_if = "is_default_steps")]
     pub steps: Vec<WorkflowStep>,
+    /// When true, after each agent run completes with incomplete steps, the
+    /// system injects a nudge message to continue with the next step.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub auto_continue: bool,
+    /// When true, after all steps are checked, the system prompts the agent
+    /// to close the current issue and pick the next one.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub completion_nudge: bool,
+    /// Block `git commit` via the bash tool if steps up to this number are not
+    /// all checked.  Set to `null` to disable.
+    #[serde(
+        default = "default_enforce_commit_after_step",
+        skip_serializing_if = "is_default_enforce"
+    )]
+    pub enforce_commit_after_step: Option<u32>,
 }
 
 impl Default for WorkflowConfig {
@@ -305,8 +455,22 @@ impl Default for WorkflowConfig {
         Self {
             enabled: true,
             steps: default_steps(),
+            auto_continue: true,
+            completion_nudge: true,
+            enforce_commit_after_step: default_enforce_commit_after_step(),
         }
     }
+}
+
+fn default_enforce_commit_after_step() -> Option<u32> {
+    Some(6)
+}
+
+/// Returns true when `enforce_commit_after_step` is the default `Some(6)`.
+/// Used by `skip_serializing_if` to avoid injecting the default value into
+/// serialized config files on round-trip.
+fn is_default_enforce(val: &Option<u32>) -> bool {
+    *val == Some(6)
 }
 
 /// Returns true if the steps match the default 16-step template.
@@ -325,6 +489,10 @@ fn is_default_steps(steps: &[WorkflowStep]) -> bool {
 
 fn default_true() -> bool {
     true
+}
+
+fn is_true(val: &bool) -> bool {
+    *val
 }
 
 /// The default 16-step BDD/TDD workflow matching AGENTS.md.
@@ -414,270 +582,5 @@ pub fn default_steps() -> Vec<WorkflowStep> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_default_state_has_16_steps() {
-        let state = WorkflowState::default_bdd();
-        assert_eq!(state.steps().len(), 16);
-        assert!(state.done_flags().iter().all(|&d| !d));
-        assert!(state.active_issue().is_none());
-    }
-
-    #[test]
-    fn test_check_step() {
-        let mut state = WorkflowState::default_bdd();
-        state.check(1).unwrap();
-        assert!(state.is_done(1).unwrap());
-        assert!(!state.is_done(2).unwrap());
-    }
-
-    #[test]
-    fn test_uncheck_step() {
-        let mut state = WorkflowState::default_bdd();
-        state.check(1).unwrap();
-        state.uncheck(1).unwrap();
-        assert!(!state.is_done(1).unwrap());
-    }
-
-    #[test]
-    fn test_check_enforces_ordering() {
-        let mut state = WorkflowState::default_bdd();
-        let err = state.check(3).unwrap_err();
-        assert!(err.to_string().contains("complete step 1 first"));
-    }
-
-    #[test]
-    fn test_check_allows_next_step() {
-        let mut state = WorkflowState::default_bdd();
-        state.check(1).unwrap();
-        state.check(2).unwrap();
-        assert!(state.is_done(2).unwrap());
-    }
-
-    #[test]
-    fn test_skip_bypasses_ordering() {
-        let mut state = WorkflowState::default_bdd();
-        state.skip(5).unwrap();
-        assert!(state.is_done(5).unwrap());
-        assert!(!state.is_done(4).unwrap());
-    }
-
-    #[test]
-    fn test_reset_clears_all() {
-        let mut state = WorkflowState::default_bdd();
-        state.check(1).unwrap();
-        state.set_issue(42, "My feature".into());
-        state.reset();
-        assert!(state.done_flags().iter().all(|&d| !d));
-        assert!(state.active_issue().is_none());
-    }
-
-    #[test]
-    fn test_set_issue() {
-        let mut state = WorkflowState::default_bdd();
-        state.set_issue(42, "My feature".into());
-        let issue = state.active_issue().unwrap();
-        assert_eq!(issue.0, 42);
-        assert_eq!(issue.1, "My feature");
-    }
-
-    #[test]
-    fn test_set_issue_truncates_long_title() {
-        let mut state = WorkflowState::default_bdd();
-        let long_title = "x".repeat(1000);
-        state.set_issue(1, long_title);
-        let issue = state.active_issue().unwrap();
-        assert!(issue.1.len() <= MAX_ISSUE_TITLE_LEN);
-    }
-
-    #[test]
-    fn test_clear_issue() {
-        let mut state = WorkflowState::default_bdd();
-        state.set_issue(42, "My feature".into());
-        state.clear_issue();
-        assert!(state.active_issue().is_none());
-    }
-
-    #[test]
-    fn test_progress() {
-        let mut state = WorkflowState::default_bdd();
-        state.check(1).unwrap();
-        state.check(2).unwrap();
-        let progress = state.progress();
-        assert_eq!(progress.done, 2);
-        assert_eq!(progress.total, 16);
-        assert_eq!(progress.percent, 12);
-    }
-
-    #[test]
-    fn test_check_out_of_range() {
-        let mut state = WorkflowState::default_bdd();
-        let err = state.check(0).unwrap_err();
-        assert!(err.to_string().contains("invalid step"));
-        let err = state.check(17).unwrap_err();
-        assert!(err.to_string().contains("invalid step"));
-    }
-
-    #[test]
-    fn test_uncheck_out_of_range() {
-        let mut state = WorkflowState::default_bdd();
-        let err = state.uncheck(0).unwrap_err();
-        assert!(err.to_string().contains("invalid step"));
-    }
-
-    #[test]
-    fn test_new_clamps_steps_to_max() {
-        let steps: Vec<WorkflowStep> = (0..200)
-            .map(|i| WorkflowStep {
-                id: i,
-                label: format!("Step {}", i),
-                phase: "red".into(),
-            })
-            .collect();
-        let state = WorkflowState::new(steps);
-        assert_eq!(state.steps().len(), MAX_STEPS);
-    }
-
-    #[test]
-    fn test_from_config() {
-        let config = WorkflowConfig::default();
-        let state = WorkflowState::from_config(&config);
-        assert_eq!(state.steps().len(), 16);
-    }
-
-    #[test]
-    fn test_snapshot() {
-        let mut state = WorkflowState::default_bdd();
-        state.check(1).unwrap();
-        state.set_issue(42, "feat".into());
-        let snap = state.snapshot();
-        assert_eq!(snap.steps.len(), 16);
-        assert!(snap.steps[0].1); // first step done
-        assert!(!snap.steps[1].1);
-        assert_eq!(snap.progress.done, 1);
-        assert_eq!(snap.active_issue, Some((42, "feat".into())));
-    }
-
-    // ─── WorkflowConfig tests ────────────────────────────────────────────────
-
-    #[test]
-    fn test_default_config() {
-        let config = WorkflowConfig::default();
-        assert!(config.enabled);
-        assert_eq!(config.steps.len(), 16);
-        assert_eq!(config.steps[0].id, 1);
-        assert_eq!(config.steps[0].label, "Update Scenarios / Add new features");
-        assert_eq!(config.steps[0].phase, "red");
-        assert_eq!(config.steps[15].id, 16);
-        assert_eq!(config.steps[15].label, "Move to local master and pull");
-        assert_eq!(config.steps[15].phase, "ci_cd");
-    }
-
-    #[test]
-    fn test_config_disabled() {
-        let config = WorkflowConfig {
-            enabled: false,
-            steps: default_steps(),
-        };
-        assert!(!config.enabled);
-    }
-
-    #[test]
-    fn test_config_deserialize() {
-        let json = r#"{"enabled":true,"steps":[{"id":1,"label":"Test","phase":"red"}]}"#;
-        let config: WorkflowConfig = serde_json::from_str(json).unwrap();
-        assert!(config.enabled);
-        assert_eq!(config.steps.len(), 1);
-    }
-
-    #[test]
-    fn test_config_deserialize_empty() {
-        let json = r#"{}"#;
-        let config: WorkflowConfig = serde_json::from_str(json).unwrap();
-        assert!(config.enabled);
-        assert_eq!(config.steps.len(), 16);
-    }
-
-    #[test]
-    fn test_config_roundtrip_skips_default_steps() {
-        let config = WorkflowConfig::default();
-        let json = serde_json::to_string(&config).unwrap();
-        // Default steps should be skipped in serialization
-        assert!(!json.contains("Update Scenarios"));
-    }
-
-    // ─── System prompt snippet tests ─────────────────────────────────────────
-
-    #[test]
-    fn test_system_prompt_snippet_with_checked_step() {
-        let mut state = WorkflowState::default_bdd();
-        state.check(1).unwrap();
-        let snippet = state.system_prompt_snippet();
-        assert!(snippet.contains("1/16"));
-        assert!(snippet.contains("CURRENT STEP"));
-    }
-
-    #[test]
-    fn test_system_prompt_snippet_with_active_issue() {
-        let mut state = WorkflowState::default_bdd();
-        state.set_issue(42, "My feature".into());
-        let snippet = state.system_prompt_snippet();
-        assert!(snippet.contains("#42"));
-        assert!(snippet.contains("My feature"));
-    }
-
-    #[test]
-    fn test_system_prompt_snippet_no_issue() {
-        let state = WorkflowState::default_bdd();
-        let snippet = state.system_prompt_snippet();
-        assert!(snippet.contains("(not set)"));
-    }
-
-    #[test]
-    fn test_system_prompt_snippet_custom_steps() {
-        let steps = vec![
-            WorkflowStep {
-                id: 1,
-                label: "Custom step A".into(),
-                phase: "alpha".into(),
-            },
-            WorkflowStep {
-                id: 2,
-                label: "Custom step B".into(),
-                phase: "alpha".into(),
-            },
-            WorkflowStep {
-                id: 3,
-                label: "Custom step C".into(),
-                phase: "beta".into(),
-            },
-        ];
-        let state = WorkflowState::new(steps);
-        let snippet = state.system_prompt_snippet();
-        assert!(snippet.contains("[alpha]"));
-        assert!(snippet.contains("[beta]"));
-        assert!(snippet.contains("Custom step A"));
-    }
-
-    // ─── WorkflowError tests ─────────────────────────────────────────────────
-
-    #[test]
-    fn test_workflow_error_display() {
-        let err = WorkflowError::InvalidStep("invalid step 0".into());
-        assert_eq!(err.to_string(), "invalid step 0");
-        let err = WorkflowError::OrderingViolation("complete step 1 first".into());
-        assert_eq!(err.to_string(), "complete step 1 first");
-    }
-
-    #[test]
-    fn test_phase_display_name() {
-        assert_eq!(phase_display_name("red"), "RED");
-        assert_eq!(phase_display_name("green"), "GREEN");
-        assert_eq!(phase_display_name("refactor"), "REFACTOR");
-        assert_eq!(phase_display_name("ci_cd"), "CI/CD");
-        assert_eq!(phase_display_name("review"), "REVIEW");
-        assert_eq!(phase_display_name("custom"), "custom");
-    }
-}
+#[path = "workflow_tests.rs"]
+mod tests;
