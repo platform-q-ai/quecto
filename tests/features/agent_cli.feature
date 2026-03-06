@@ -137,6 +137,36 @@ Feature: Agent CLI — Headless One-Shot Mode
     Then the exit code should be 0
     And stdout should contain "--network"
 
+  # --- Issue #300: --config flag ---
+
+  Scenario: --config flag loads config from custom path
+    Given a temp base directory
+    And a config file at a custom path with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "custom config works"
+    When I run quecto agent --config <custom-config-path> -m "hello"
+    Then the exit code should be 0
+    And stdout should contain "custom config works"
+
+  Scenario: --config flag with nonexistent path shows error
+    Given a temp base directory
+    When I run quecto agent --config /tmp/nonexistent-config.json -m "hello"
+    Then the exit code should be 1
+    And stderr should contain "config not found"
+
+  Scenario: --config flag is documented in help
+    Given a temp base directory
+    When I run quecto help
+    Then the exit code should be 0
+    And stdout should contain "--config"
+
+  Scenario: --config with --model override (flag takes priority)
+    Given a temp base directory
+    And a config file at a custom path with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "model override works"
+    When I run quecto agent --config <custom-config-path> --model gpt-5-mini -m "Hi"
+    Then the exit code should be 0
+    And stdout should contain "model override works"
+
   # --no-sandbox uses CWD as workspace root
   # Tested at unit level in agent_no_sandbox_tests.rs::test_resolve_agent_workspace_*
   # BDD scenario is pending because in-process CWD mutation is global and unsafe in

@@ -404,6 +404,7 @@ fn test_cli_context_oauth_base_url() {
 fn test_cli_context_all_fields() {
     let ctx = CliContext {
         base_dir: Some(PathBuf::from("/tmp/test")),
+        config_path: None,
         stdin_data: Some("input".to_string()),
         oauth_base_url: Some("http://oauth.local".to_string()),
         github_raw_base_url: Some("http://raw.local".to_string()),
@@ -577,4 +578,52 @@ fn test_parse_repl_flags_network_combined_with_no_sandbox() {
     let flags = parse_repl_flags(&args).unwrap();
     assert!(flags.network);
     assert!(flags.no_sandbox);
+}
+
+// --- Issue #300: --config flag ---
+
+#[test]
+fn test_config_flag_extracted_from_args() {
+    let args: Vec<String> = vec![
+        "quecto".into(),
+        "--config".into(),
+        "/tmp/custom.json".into(),
+        "agent".into(),
+        "-m".into(),
+        "hi".into(),
+    ];
+    let path = super::extract_config_flag(&args);
+    assert_eq!(path, Some(std::path::PathBuf::from("/tmp/custom.json")));
+}
+
+#[test]
+fn test_config_flag_not_present() {
+    let args: Vec<String> = vec!["quecto".into(), "agent".into(), "-m".into(), "hi".into()];
+    let path = super::extract_config_flag(&args);
+    assert_eq!(path, None);
+}
+
+#[test]
+fn test_cli_context_config_path_override() {
+    let ctx = CliContext {
+        base_dir: Some(std::path::PathBuf::from("/home/test/.quecto")),
+        config_path: Some(std::path::PathBuf::from("/tmp/custom.json")),
+        ..Default::default()
+    };
+    assert_eq!(
+        ctx.config_path(),
+        std::path::PathBuf::from("/tmp/custom.json")
+    );
+}
+
+#[test]
+fn test_cli_context_config_path_default() {
+    let ctx = CliContext {
+        base_dir: Some(std::path::PathBuf::from("/home/test/.quecto")),
+        ..Default::default()
+    };
+    assert_eq!(
+        ctx.config_path(),
+        std::path::PathBuf::from("/home/test/.quecto/config.json")
+    );
 }
