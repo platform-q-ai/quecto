@@ -1316,3 +1316,145 @@ fn then_client_received_response_with_id(
         "expected client {client_id} to have received response with id {expected_id:?}\nevents: {events:#?}",
     );
 }
+
+// ─── tool_call_id assertion steps (#318) ──────────────────────────────────────
+
+/// Helper: find a specific event type's JSON in a list of event lines.
+fn find_event_json(events: &[String], event_type: &str) -> Option<serde_json::Value> {
+    events.iter().find_map(|l| {
+        let v: serde_json::Value = serde_json::from_str(l).ok()?;
+        if v["type"].as_str() == Some(event_type) {
+            Some(v)
+        } else {
+            None
+        }
+    })
+}
+
+#[then(
+    expr = "client {int} should have received a tool_execution_start with a non-empty tool_call_id"
+)]
+fn then_client_received_tool_start_with_id(world: &mut QuectoWorld, client_id: u32) {
+    execute_multi_client_uds(world);
+    let events = world
+        .mc_client_events
+        .get(&client_id)
+        .cloned()
+        .unwrap_or_default();
+    let ev = find_event_json(&events, "tool_execution_start");
+    assert!(
+        ev.is_some(),
+        "expected client {client_id} to have received tool_execution_start\nevents: {events:#?}"
+    );
+    let ev_val = ev.unwrap();
+    let tool_call_id = ev_val["toolCallId"].as_str().unwrap_or("");
+    assert!(
+        !tool_call_id.is_empty(),
+        "expected non-empty toolCallId in tool_execution_start\nevents: {events:#?}"
+    );
+}
+
+#[then(
+    expr = "client {int} should have received a tool_execution_end with a non-empty tool_call_id"
+)]
+fn then_client_received_tool_end_with_id(world: &mut QuectoWorld, client_id: u32) {
+    execute_multi_client_uds(world);
+    let events = world
+        .mc_client_events
+        .get(&client_id)
+        .cloned()
+        .unwrap_or_default();
+    let ev = find_event_json(&events, "tool_execution_end");
+    assert!(
+        ev.is_some(),
+        "expected client {client_id} to have received tool_execution_end\nevents: {events:#?}"
+    );
+    let ev_val = ev.unwrap();
+    let tool_call_id = ev_val["toolCallId"].as_str().unwrap_or("");
+    assert!(
+        !tool_call_id.is_empty(),
+        "expected non-empty toolCallId in tool_execution_end\nevents: {events:#?}"
+    );
+}
+
+#[then("the agent output should contain a tool_execution_start with a non-empty tool_call_id")]
+fn then_agent_output_tool_start_with_id(world: &mut QuectoWorld) {
+    execute_uds(world);
+    let ev = find_event_json(&world.agent_events, "tool_execution_start");
+    assert!(
+        ev.is_some(),
+        "expected tool_execution_start event\nevents: {:#?}",
+        world.agent_events
+    );
+    let ev_val = ev.unwrap();
+    let tool_call_id = ev_val["toolCallId"].as_str().unwrap_or("");
+    assert!(
+        !tool_call_id.is_empty(),
+        "expected non-empty toolCallId in tool_execution_start\nevents: {:#?}",
+        world.agent_events
+    );
+}
+
+// ─── Extension wiring steps (#318 Part 2) ─────────────────────────────────────
+
+#[given(expr = "a script extension {string} in the workspace extensions directory")]
+fn given_script_extension(world: &mut QuectoWorld, name: String) {
+    given_script_extension_with_prompt(world, name, None);
+}
+
+#[given(
+    expr = "a script extension {string} with system prompt {string} in the workspace extensions directory"
+)]
+fn given_script_extension_with_system_prompt(
+    world: &mut QuectoWorld,
+    name: String,
+    prompt: String,
+) {
+    given_script_extension_with_prompt(world, name, Some(prompt));
+}
+
+fn given_script_extension_with_prompt(
+    world: &mut QuectoWorld,
+    name: String,
+    system_prompt: Option<String>,
+) {
+    let base = world
+        .cli_context
+        .base_dir
+        .clone()
+        .expect("no base dir — add 'Given a temp base directory'");
+    // Extensions live under <workspace>/extensions/. The workspace is typically
+    // base/workspace (set by rewrite_config_to_uri / config setup steps).
+    let workspace = base.join("workspace");
+    std::fs::create_dir_all(&workspace).ok();
+    let ext_dir = workspace.join("extensions").join(&name);
+    std::fs::create_dir_all(&ext_dir).expect("failed to create extension dir");
+
+    let system_prompt_line = system_prompt
+        .map(|p| format!("system_prompt = \"{p}\""))
+        .unwrap_or_default();
+
+    let manifest = format!(
+        r#"name = "{name}"
+description = "Test extension: {name}"
+parameters_schema = '{{"type":"object","properties":{{"input":{{"type":"string"}}}},"required":["input"]}}'
+command = "./run.sh"
+{system_prompt_line}
+"#,
+    );
+    std::fs::write(ext_dir.join("extension.toml"), manifest)
+        .expect("failed to write extension manifest");
+
+    let script = "#!/bin/sh\necho '{\"content\": \"ok\", \"is_error\": false}'";
+    std::fs::write(ext_dir.join("run.sh"), script).expect("failed to write extension script");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            ext_dir.join("run.sh"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .expect("failed to set script permissions");
+    }
+}

@@ -9,6 +9,7 @@ use crate::domain::provider::LlmProvider;
 use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::auth::credential_store::CredentialStore;
 use crate::infrastructure::config::Config;
+use crate::infrastructure::extensions::registry::ExtensionRegistry;
 use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::providers;
@@ -251,21 +252,33 @@ pub(crate) fn cmd_agent(
 
     let base_dir = ctx.base_dir();
     let config_path = ctx.config_path();
-    let (agent, wf_config) = match build_agent_from_config(&base_dir, &config_path, &flags, stderr)
-    {
+    let build = match build_agent_from_config(&base_dir, &config_path, &flags, stderr) {
         Some(r) => r,
         None => return 1,
     };
 
-    // Build system prompt: datetime preamble + skills + workflow + user prompt
+    // Build system prompt: datetime preamble + skills + extensions + workflow + user prompt
     let skill_prompt = crate::interface::shared::load_skill_prompt(&base_dir);
     let mut system =
         crate::interface::shared::build_system_prompt(&skill_prompt, &flags.system_prompt);
-    crate::interface::shared::append_workflow_prompt(&mut system, &wf_config);
+    crate::interface::shared::append_extension_prompt(
+        &mut system,
+        &build.extension_prompt_snippets,
+    );
+    crate::interface::shared::append_workflow_prompt(&mut system, &build.workflow_config);
     flags.system_prompt = Some(system);
-
     let mut out = AgentOutput { stdout, stderr };
-    run_agent_session(&base_dir, agent, &flags, &mut out)
+    run_agent_session(&base_dir, build.agent, &flags, &mut out)
+}
+
+/// Result of building an agent from config.
+pub(crate) struct AgentBuildResult {
+    pub agent: AgentLoopImpl,
+    pub workflow_config: crate::domain::workflow::WorkflowConfig,
+    /// Concatenated system prompt snippets from discovered extensions.
+    pub extension_prompt_snippets: String,
+    /// Resolved model name (after config + flag override).
+    pub model: String,
 }
 
 /// Load config, build provider, and construct the agent loop. Returns None on error.
@@ -274,7 +287,7 @@ pub(crate) fn build_agent_from_config(
     config_path: &std::path::Path,
     flags: &AgentFlags,
     stderr: &mut String,
-) -> Option<(AgentLoopImpl, crate::domain::workflow::WorkflowConfig)> {
+) -> Option<AgentBuildResult> {
     if !config_path.exists() {
         stderr.push_str(&format!(
             "config not found at {}\nrun 'quecto onboard' first\n",
@@ -328,6 +341,7 @@ pub(crate) fn build_agent_from_config(
     }
     // Capture network_passthrough before exec_settings is moved into the registry.
     let effective_network = exec_settings.network_passthrough;
+    let extensions_dir = workspace.join("extensions");
     let mut registry =
         ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
     let session_key = if flags.no_session || flags.session_name.as_deref() == Some("-") {
@@ -347,11 +361,19 @@ pub(crate) fn build_agent_from_config(
             .with_network(effective_network),
     ));
     crate::interface::shared::register_workflow_tool(&mut registry, &config.workflow);
+
+    // Discover and register script extensions from <workspace>/extensions/.
+    let ext_registry = ExtensionRegistry::discover(&[extensions_dir]);
+    let extension_prompt_snippets = ext_registry.system_prompt_snippets();
+    for tool in ext_registry.all_tools() {
+        registry.register(tool);
+    }
+
     let wf_config = config.workflow.clone();
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),
-        model,
+        model: model.clone(),
         max_tokens: config.agents.defaults.max_tokens,
         temperature: config.agents.defaults.temperature,
         spill_store: Some(spill_store),
@@ -367,7 +389,12 @@ pub(crate) fn build_agent_from_config(
             .unwrap_or(config.agents.defaults.max_tool_iterations),
     );
 
-    Some((agent, wf_config))
+    Some(AgentBuildResult {
+        agent,
+        workflow_config: wf_config,
+        extension_prompt_snippets,
+        model,
+    })
 }
 
 /// Run the agent loop with session load/save. Returns the exit code.
@@ -504,22 +531,6 @@ pub(crate) fn run_with_deadline(
 /// owned by the user and mode `0700`.  We additionally verify it is writable
 /// before using it so a misconfigured or container-injected value does not
 /// cause a confusing bind error later.
-fn xdg_runtime_dir_or_temp() -> std::path::PathBuf {
-    if let Some(xdg) = std::env::var_os("XDG_RUNTIME_DIR") {
-        let path = std::path::PathBuf::from(xdg);
-        // Validate: must exist and be a directory we can write to.
-        if path.is_dir() {
-            // Probe writability by attempting to create a temp file inside.
-            let probe = path.join(".quecto-probe");
-            if std::fs::File::create(&probe).is_ok() {
-                let _ = std::fs::remove_file(&probe);
-                return path;
-            }
-        }
-    }
-    std::env::temp_dir()
-}
-
 /// Validates config/provider, then enters the async JSON-lines loop.
 /// Returns an exit code.
 fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i32 {
@@ -536,11 +547,11 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
 
     let base_dir = ctx.base_dir();
     let config_path = ctx.config_path();
-    let (mut agent, wf_config) =
-        match build_agent_from_config(&base_dir, &config_path, &flags, stderr) {
-            Some(r) => r,
-            None => return 1,
-        };
+    let build = match build_agent_from_config(&base_dir, &config_path, &flags, stderr) {
+        Some(r) => r,
+        None => return 1,
+    };
+    let mut agent = build.agent;
     // Enable incremental streaming so the UDS layer emits token events.
     agent.set_streaming(true);
 
@@ -552,32 +563,21 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         crate::domain::session::Session::build_key("cli", name)
     };
 
-    let model = flags
-        .model_override
-        .clone()
-        .or_else(|| {
-            // Re-read config to get the default model (using the same config_path).
-            let env_overrides: HashMap<String, String> = std::env::vars()
-                .filter(|(k, _)| k.starts_with("QUECTO_"))
-                .collect();
-            crate::infrastructure::config::Config::load_with_env(
-                config_path.to_str().unwrap_or(""),
-                &env_overrides,
-            )
-            .ok()
-            .map(|c| c.agents.defaults.model)
-        })
-        .unwrap_or_else(|| "default".to_string());
+    let model = build.model.clone();
 
-    // Build system prompt: datetime preamble + skills + workflow + user prompt.
+    // Build system prompt: datetime preamble + skills + extensions + workflow + user prompt.
     let skill_prompt = crate::interface::shared::load_skill_prompt(&base_dir);
     let mut system_prompt =
         crate::interface::shared::build_system_prompt(&skill_prompt, &flags.system_prompt);
-    crate::interface::shared::append_workflow_prompt(&mut system_prompt, &wf_config);
+    crate::interface::shared::append_extension_prompt(
+        &mut system_prompt,
+        &build.extension_prompt_snippets,
+    );
+    crate::interface::shared::append_workflow_prompt(&mut system_prompt, &build.workflow_config);
 
     // Use --socket path if provided; otherwise auto-generate in $XDG_RUNTIME_DIR or temp.
     let socket_path = flags.socket_path.clone().unwrap_or_else(|| {
-        let dir = xdg_runtime_dir_or_temp();
+        let dir = crate::interface::shared::xdg_runtime_dir_or_temp();
         // Best-effort: remove stale quecto-agent-*.sock files older than 24 h.
         // Drop guards do not run on SIGKILL so stale sockets can accumulate.
         crate::interface::cli::uds::reap_stale_sockets(

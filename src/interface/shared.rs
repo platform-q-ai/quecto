@@ -78,6 +78,14 @@ pub fn build_system_prompt(skill_prompt: &str, user_prompt: &Option<String>) -> 
     }
 }
 
+/// Append extension system prompt snippets if non-empty.
+pub fn append_extension_prompt(system: &mut String, snippets: &str) {
+    if !snippets.is_empty() {
+        system.push_str("\n\n");
+        system.push_str(snippets);
+    }
+}
+
 /// Append the workflow state snippet to a system prompt if workflow is enabled.
 pub fn append_workflow_prompt(
     system: &mut String,
@@ -473,6 +481,24 @@ pub fn check_provider_readiness(creds: &HashMap<String, Credential>) -> Vec<Stri
         .filter(|c| c.is_expired())
         .map(|c| c.provider.clone())
         .collect()
+}
+
+/// Resolve the XDG runtime directory or fall back to temp.
+///
+/// Returns `$XDG_RUNTIME_DIR` if it exists, is a directory, and is writable.
+/// Otherwise returns `std::env::temp_dir()`.
+pub fn xdg_runtime_dir_or_temp() -> std::path::PathBuf {
+    if let Some(xdg) = std::env::var_os("XDG_RUNTIME_DIR") {
+        let path = std::path::PathBuf::from(xdg);
+        if path.is_dir() {
+            let probe = path.join(".quecto-probe");
+            if std::fs::File::create(&probe).is_ok() {
+                let _ = std::fs::remove_file(&probe);
+                return path;
+            }
+        }
+    }
+    std::env::temp_dir()
 }
 
 #[cfg(test)]

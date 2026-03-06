@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::agent::{AgentLoop, AgentProgressEvent};
-use crate::domain::message::{Message, Role};
+use crate::domain::message::Message;
 use crate::interface::cli::protocol::{AgentEvent, ToolResultContent, TurnMessage};
 use crate::interface::cli::uds_session::{AgentSession, message_to_json};
 
@@ -165,7 +165,8 @@ pub async fn run_agent_prompt(args: PromptArgs<'_>) -> PromptOutcome {
             PromptOutcome::Cancelled
         }
         Some(Ok(agent_result)) => {
-            emit_tool_events(stdout, &messages[before_len..]).await;
+            // Tool events are now forwarded in real-time via
+            // forward_progress_event — no post-hoc emit needed.
             let turn_end = AgentEvent::TurnEnd {
                 message: TurnMessage {
                     role: "assistant".to_string(),
@@ -239,51 +240,53 @@ async fn run_with_token_drain(
 }
 
 /// Forward a single progress event to the UDS writer.
-/// Currently only `Token` events are forwarded — other progress events
-/// (Thinking, ToolStarted, etc.) use the existing tool_execution events.
-async fn forward_progress_event(
+///
+/// Forwards `Token`, `ToolStarted`, and `ToolFinished` events in real time.
+/// `Thinking` and `Done` are not forwarded (they have no UDS event mapping).
+pub(crate) async fn forward_progress_event(
     ev: AgentProgressEvent,
     stdout: &mut (dyn tokio::io::AsyncWrite + Send + Unpin),
 ) {
-    if let AgentProgressEvent::Token(t) = ev {
-        emit_event(stdout, &AgentEvent::Token { token: t }).await;
-    }
-}
-
-/// Emit `tool_execution_start` / `tool_execution_end` events from a message slice.
-async fn emit_tool_events(
-    stdout: &mut (dyn tokio::io::AsyncWrite + Send + Unpin),
-    messages: &[Message],
-) {
-    for msg in messages {
-        if msg.role == Role::Assistant {
-            for tc in &msg.tool_calls {
-                let args: serde_json::Value =
-                    serde_json::from_str(&tc.arguments).unwrap_or_default();
-                emit_event(
-                    stdout,
-                    &AgentEvent::ToolExecutionStart {
-                        tool_call_id: tc.id.clone(),
-                        tool_name: tc.name.clone(),
-                        args,
-                    },
-                )
-                .await;
-            }
-        } else if msg.role == Role::Tool {
+    match ev {
+        AgentProgressEvent::Token(t) => {
+            emit_event(stdout, &AgentEvent::Token { token: t }).await;
+        }
+        AgentProgressEvent::ToolStarted {
+            tool_call_id,
+            name,
+            arguments,
+        } => {
+            let args: serde_json::Value = serde_json::from_str(&arguments).unwrap_or_default();
             emit_event(
                 stdout,
-                &AgentEvent::ToolExecutionEnd {
-                    tool_call_id: msg.tool_call_id.clone().unwrap_or_default(),
-                    tool_name: msg.tool_name.clone().unwrap_or_default(),
-                    result: ToolResultContent {
-                        content: vec![serde_json::json!({"type":"text","text": msg.content})],
-                    },
-                    is_error: msg.is_error,
+                &AgentEvent::ToolExecutionStart {
+                    tool_call_id,
+                    tool_name: name,
+                    args,
                 },
             )
             .await;
         }
+        AgentProgressEvent::ToolFinished {
+            tool_call_id,
+            name,
+            is_error,
+            ..
+        } => {
+            emit_event(
+                stdout,
+                &AgentEvent::ToolExecutionEnd {
+                    tool_call_id,
+                    tool_name: name,
+                    result: ToolResultContent {
+                        content: vec![serde_json::json!({"type":"text","text":""})],
+                    },
+                    is_error,
+                },
+            )
+            .await;
+        }
+        _ => {}
     }
 }
 

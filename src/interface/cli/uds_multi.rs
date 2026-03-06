@@ -448,22 +448,31 @@ fn forward_progress_event_broadcast(
         AgentProgressEvent::Token(t) => {
             broadcast_event(tx, &AgentEvent::Token { token: t });
         }
-        AgentProgressEvent::ToolStarted { name, arguments } => {
+        AgentProgressEvent::ToolStarted {
+            tool_call_id,
+            name,
+            arguments,
+        } => {
             let args: serde_json::Value = serde_json::from_str(&arguments).unwrap_or_default();
             broadcast_event(
                 tx,
                 &AgentEvent::ToolExecutionStart {
-                    tool_call_id: String::new(),
+                    tool_call_id,
                     tool_name: name,
                     args,
                 },
             );
         }
-        AgentProgressEvent::ToolFinished { name, is_error, .. } => {
+        AgentProgressEvent::ToolFinished {
+            tool_call_id,
+            name,
+            is_error,
+            ..
+        } => {
             broadcast_event(
                 tx,
                 &AgentEvent::ToolExecutionEnd {
-                    tool_call_id: String::new(),
+                    tool_call_id,
                     tool_name: name,
                     result: crate::interface::cli::protocol::ToolResultContent {
                         content: vec![serde_json::json!({"type":"text","text":""})],

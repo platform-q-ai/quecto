@@ -22,6 +22,9 @@ pub enum AgentProgressEvent {
     },
     /// A tool call has been dispatched.
     ToolStarted {
+        /// The provider-assigned tool call ID (e.g. `call_abc123`).
+        /// Used by UDS clients to correlate start → end event pairs.
+        tool_call_id: String,
         /// The name of the tool being called.
         name: String,
         /// Raw tool arguments JSON (not pre-truncated).
@@ -33,6 +36,9 @@ pub enum AgentProgressEvent {
     },
     /// A tool call has completed.
     ToolFinished {
+        /// The provider-assigned tool call ID (e.g. `call_abc123`).
+        /// Used by UDS clients to correlate start → end event pairs.
+        tool_call_id: String,
         /// The name of the tool that finished.
         name: String,
         /// Raw tool arguments JSON (not pre-truncated).

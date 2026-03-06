@@ -191,7 +191,9 @@ impl<W: Write + Send> ProgressRenderer<W> {
                 self.status_detail = Some(sanitize_and_truncate(&detail, MAX_STATUS_LINE_CHARS));
                 self.render_status("Thinking...");
             }
-            AgentProgressEvent::ToolStarted { name, arguments } => {
+            AgentProgressEvent::ToolStarted {
+                name, arguments, ..
+            } => {
                 let status = format_tool_status(&name, &arguments);
                 self.render_status(&status);
             }
@@ -200,6 +202,7 @@ impl<W: Write + Send> ProgressRenderer<W> {
                 arguments,
                 duration_ms,
                 is_error,
+                ..
             } => {
                 let icon = if is_error { "✗" } else { "✓" };
                 let safe_tool = format_tool_status(&name, &arguments);

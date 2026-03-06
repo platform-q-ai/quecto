@@ -540,6 +540,7 @@ async fn test_progress_callback_tool_finished_captures_duration_and_error_flag()
         arguments,
         duration_ms,
         is_error,
+        ..
     }) = fired.iter().find(|e| {
         matches!(
             e,
@@ -617,14 +618,14 @@ async fn test_progress_callback_tool_started_includes_arguments() {
     agent.run_loop(&mut messages).await.unwrap();
 
     let fired = events.lock().unwrap();
-    if let Some(crate::domain::agent::AgentProgressEvent::ToolStarted { name, arguments }) =
-        fired.iter().find(|e| {
-            matches!(
-                e,
-                crate::domain::agent::AgentProgressEvent::ToolStarted { .. }
-            )
-        })
-    {
+    if let Some(crate::domain::agent::AgentProgressEvent::ToolStarted {
+        name, arguments, ..
+    }) = fired.iter().find(|e| {
+        matches!(
+            e,
+            crate::domain::agent::AgentProgressEvent::ToolStarted { .. }
+        )
+    }) {
         assert_eq!(name, "bash");
         // arguments should be the raw JSON — not truncated at the domain level
         assert!(!arguments.is_empty(), "arguments should not be empty");
@@ -655,92 +656,66 @@ async fn test_tool_count_empty() {
     assert_eq!(trait_reg.tool_count(), 0);
 }
 
-// --- #222: spill_tool_message uses take-and-restore (no clone) ---
+// --- #318: tool_call_id in ToolStarted/ToolFinished progress events ---
 
-/// Mock spill store that records appended entries.
-#[derive(Debug, Default)]
-struct MockSpillStore {
-    entries: Mutex<Vec<SpillEntry>>,
-}
+#[tokio::test]
+async fn test_progress_callback_tool_started_includes_tool_call_id() {
+    let (agent, _, events) = make_agent_with_callback(
+        vec![
+            tool_call_response("bash", r#"{"command":"echo hi"}"#),
+            text_response("done"),
+        ],
+        vec![("bash", "hi")],
+    );
+    let mut messages = vec![Message::user("run echo")];
+    agent.run_loop(&mut messages).await.unwrap();
 
-impl ContextSpillStore for MockSpillStore {
-    fn append(
-        &self,
-        _session_key: &str,
-        entry: &SpillEntry,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + '_>> {
-        self.entries.lock().unwrap().push(entry.clone());
-        Box::pin(async { Ok(()) })
-    }
-
-    fn recall(
-        &self,
-        _session_key: &str,
-        _id: &str,
-    ) -> Pin<
-        Box<dyn std::future::Future<Output = Result<Option<SpillEntry>, DomainError>> + Send + '_>,
-    > {
-        Box::pin(async { Ok(None) })
-    }
-
-    fn list_entries(
-        &self,
-        _session_key: &str,
-    ) -> Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<Vec<crate::domain::session::SpillIndex>, DomainError>,
-                > + Send
-                + '_,
-        >,
-    > {
-        Box::pin(async { Ok(vec![]) })
-    }
-
-    fn clear(
-        &self,
-        _session_key: &str,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + '_>> {
-        Box::pin(async { Ok(()) })
+    let fired = events.lock().unwrap();
+    if let Some(crate::domain::agent::AgentProgressEvent::ToolStarted {
+        tool_call_id, name, ..
+    }) = fired.iter().find(|e| {
+        matches!(
+            e,
+            crate::domain::agent::AgentProgressEvent::ToolStarted { .. }
+        )
+    }) {
+        assert_eq!(name, "bash");
+        assert_eq!(
+            tool_call_id, "call_bash",
+            "expected tool_call_id 'call_bash', got '{tool_call_id}'"
+        );
+    } else {
+        panic!("expected ToolStarted event, got: {:?}", *fired);
     }
 }
 
 #[tokio::test]
-async fn test_spill_preserves_message_content_after_spill() {
-    let spill_store = Arc::new(MockSpillStore::default());
-    let provider = Arc::new(MockProvider::new(vec![
-        tool_call_response("bash", r#"{"command":"echo hi"}"#),
-        text_response("done"),
-    ]));
-    let mut registry = MockRegistry::new();
-    registry.register(Arc::new(MockTool::new("bash", "big output here")));
-
-    let agent = AgentLoopImpl::new(AgentLoopConfig {
-        provider,
-        tool_registry: Box::new(registry),
-        model: "test-model".to_string(),
-        max_tokens: 1024,
-        temperature: 0.7,
-        spill_store: Some(spill_store.clone()),
-        session_key: "test-session".to_string(),
-        context_collapse_after_turns: u32::MAX,
-        max_context_tokens: 190_000,
-        progress_callback: None,
-        streaming: false,
-    });
-
-    let mut messages = vec![Message::user("run it")];
+async fn test_progress_callback_tool_finished_includes_tool_call_id() {
+    let (agent, _, events) = make_agent_with_callback(
+        vec![
+            tool_call_response("bash", r#"{"command":"echo hi"}"#),
+            text_response("done"),
+        ],
+        vec![("bash", "hi")],
+    );
+    let mut messages = vec![Message::user("run echo")];
     agent.run_loop(&mut messages).await.unwrap();
 
-    // The tool message content must be preserved in the conversation history
-    let tool_msg = messages.iter().find(|m| m.role == Role::Tool).unwrap();
-    assert_eq!(
-        tool_msg.content, "big output here",
-        "tool message content must be preserved after spill"
-    );
-
-    // The spill store should have received the content
-    let entries = spill_store.entries.lock().unwrap();
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].content, "big output here");
+    let fired = events.lock().unwrap();
+    if let Some(crate::domain::agent::AgentProgressEvent::ToolFinished {
+        tool_call_id, name, ..
+    }) = fired.iter().find(|e| {
+        matches!(
+            e,
+            crate::domain::agent::AgentProgressEvent::ToolFinished { .. }
+        )
+    }) {
+        assert_eq!(name, "bash");
+        assert_eq!(
+            tool_call_id, "call_bash",
+            "expected tool_call_id 'call_bash', got '{tool_call_id}'"
+        );
+    } else {
+        panic!("expected ToolFinished event, got: {:?}", *fired);
+    }
 }

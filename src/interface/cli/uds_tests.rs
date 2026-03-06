@@ -453,3 +453,63 @@ fn test_reap_stale_sockets_leaves_fresh_files() {
 
     assert!(fresh.exists(), "fresh socket should not be removed");
 }
+
+// ─── forward_progress_event forwards ToolStarted/ToolFinished (#318) ─────────
+
+#[tokio::test]
+async fn test_forward_progress_event_emits_tool_started_with_tool_call_id() {
+    use crate::domain::agent::AgentProgressEvent;
+    use crate::interface::cli::uds_cancel::forward_progress_event;
+
+    let mut buf = Vec::new();
+    let ev = AgentProgressEvent::ToolStarted {
+        tool_call_id: "call_abc".to_string(),
+        name: "bash".to_string(),
+        arguments: r#"{"command":"echo hi"}"#.to_string(),
+    };
+    forward_progress_event(ev, &mut buf).await;
+
+    let output = String::from_utf8(buf).unwrap();
+    assert!(
+        output.contains("tool_execution_start"),
+        "expected tool_execution_start event, got: {output}"
+    );
+    assert!(
+        output.contains("call_abc"),
+        "expected tool_call_id 'call_abc', got: {output}"
+    );
+    assert!(
+        output.contains("bash"),
+        "expected tool_name 'bash', got: {output}"
+    );
+}
+
+#[tokio::test]
+async fn test_forward_progress_event_emits_tool_finished_with_tool_call_id() {
+    use crate::domain::agent::AgentProgressEvent;
+    use crate::interface::cli::uds_cancel::forward_progress_event;
+
+    let mut buf = Vec::new();
+    let ev = AgentProgressEvent::ToolFinished {
+        tool_call_id: "call_xyz".to_string(),
+        name: "read".to_string(),
+        arguments: r#"{"path":"a.txt"}"#.to_string(),
+        duration_ms: 42,
+        is_error: false,
+    };
+    forward_progress_event(ev, &mut buf).await;
+
+    let output = String::from_utf8(buf).unwrap();
+    assert!(
+        output.contains("tool_execution_end"),
+        "expected tool_execution_end event, got: {output}"
+    );
+    assert!(
+        output.contains("call_xyz"),
+        "expected tool_call_id 'call_xyz', got: {output}"
+    );
+    assert!(
+        output.contains("read"),
+        "expected tool_name 'read', got: {output}"
+    );
+}

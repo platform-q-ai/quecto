@@ -31,10 +31,12 @@ fn test_progress_renderer_non_tty_produces_no_output() {
 
     renderer.handle_event(sample_thinking_event());
     renderer.handle_event(AgentProgressEvent::ToolStarted {
+        tool_call_id: String::new(),
         name: "bash".to_string(),
         arguments: "echo hi".to_string(),
     });
     renderer.handle_event(AgentProgressEvent::ToolFinished {
+        tool_call_id: String::new(),
         name: "bash".to_string(),
         arguments: "{\"command\": \"echo hi\"}".to_string(),
         duration_ms: 42,
@@ -87,6 +89,7 @@ fn test_progress_renderer_tty_tool_started_shows_tool_name() {
     let mut renderer = ProgressRenderer::new_with_writer(true, buf.clone());
 
     renderer.handle_event(AgentProgressEvent::ToolStarted {
+        tool_call_id: String::new(),
         name: "read".to_string(),
         arguments: "src/main.rs".to_string(),
     });
@@ -106,6 +109,7 @@ fn test_progress_renderer_tty_tool_started_shows_tool_arguments() {
     let mut renderer = ProgressRenderer::new_with_writer(true, buf.clone());
 
     renderer.handle_event(AgentProgressEvent::ToolStarted {
+        tool_call_id: String::new(),
         name: "bash".to_string(),
         arguments: "{\"command\": \"echo hi\"}".to_string(),
     });
@@ -125,6 +129,7 @@ fn test_progress_renderer_tty_tool_finished_shows_tool_name_and_duration() {
     let mut renderer = ProgressRenderer::new_with_writer(true, buf.clone());
 
     renderer.handle_event(AgentProgressEvent::ToolFinished {
+        tool_call_id: String::new(),
         name: "bash".to_string(),
         arguments: "{\"command\": \"echo hi\"}".to_string(),
         duration_ms: 1234,
@@ -156,6 +161,7 @@ fn test_progress_renderer_tty_tool_finished_error_indicates_failure() {
     let mut renderer = ProgressRenderer::new_with_writer(true, buf.clone());
 
     renderer.handle_event(AgentProgressEvent::ToolFinished {
+        tool_call_id: String::new(),
         name: "bash".to_string(),
         arguments: "{\"command\": \"echo fail\"}".to_string(),
         duration_ms: 50,
@@ -269,6 +275,7 @@ fn test_progress_channel_sends_events() {
 
     callback(sample_thinking_event());
     callback(AgentProgressEvent::ToolStarted {
+        tool_call_id: String::new(),
         name: "bash".to_string(),
         arguments: "echo hi".to_string(),
     });
@@ -383,10 +390,12 @@ fn test_agent_progress_event_debug_and_clone() {
     let events = vec![
         sample_thinking_event(),
         AgentProgressEvent::ToolStarted {
+            tool_call_id: String::new(),
             name: "bash".to_string(),
             arguments: "echo hi".to_string(),
         },
         AgentProgressEvent::ToolFinished {
+            tool_call_id: String::new(),
             name: "bash".to_string(),
             arguments: "{\"command\": \"echo hi\"}".to_string(),
             duration_ms: 100,
