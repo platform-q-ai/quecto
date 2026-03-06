@@ -2,23 +2,21 @@
  * Quecto Workflow Extension - Enforces the BDD/TDD Red-Green-Refactor development workflow
  * from AGENTS.md as an interactive todo checklist in Pi.
  *
- * The workflow has 16 steps:
+ * The workflow has 14 steps:
  *  1. Update Scenarios / Add new features as necessary
  *  2. Write/update unit tests
  *  3. Ensure new/modified tests fail (RED)
  *  4. Implement code (GREEN)
- *  5. Refactor (performance, security, clean architecture)
- *  6. Ensure tests still pass (GREEN)
- *  7. Commit
- *  8. Push
- *  9. Create PR
- * 10. Despatch Architecture, Security, Performance Reviewers
- * 11. Fix all valid concerns raised in review comments
- * 12. Push changes to remote
- * 13. Reply to comments and mark resolved
- * 14. Run pre-merge hooks (real-LLM, machete, deny)
- * 15. Merge
- * 16. Move to local master and pull
+ *  5. Commit
+ *  6. Push (pre-push hook runs tests and linting)
+ *  7. Create PR
+ *  8. Despatch sub agents in parallel as reviewers (Architecture, Security, Performance)
+ *  9. Fix all valid review concerns
+ * 10. Push changes to remote
+ * 11. Reply to reviewers comments and mark resolved (use graphql)
+ * 12. Run pre-merge hooks (real-LLM, machete, deny)
+ * 13. Merge
+ * 14. Move to local master and pull
  *
  * Features:
  * - `/workflow` command opens an interactive checklist UI
@@ -57,18 +55,16 @@ const WORKFLOW_TEMPLATE: Omit<WorkflowStep, "done">[] = [
 	{ id: 2, label: "Write/update unit tests", phase: "red" },
 	{ id: 3, label: "Ensure new/modified tests FAIL (RED)", phase: "red" },
 	{ id: 4, label: "Implement code (GREEN)", phase: "green" },
-	{ id: 5, label: "Refactor (perf, security, clean arch)", phase: "refactor" },
-	{ id: 6, label: "Ensure tests still pass (GREEN)", phase: "green" },
-	{ id: 7, label: "Commit", phase: "ci" },
-	{ id: 8, label: "Push", phase: "ci" },
-	{ id: 9, label: "Create PR", phase: "ci" },
-	{ id: 10, label: "Despatch reviewers (Arch, Security, Perf)", phase: "review" },
-	{ id: 11, label: "Fix all valid review concerns", phase: "review" },
-	{ id: 12, label: "Push changes to remote", phase: "review" },
-	{ id: 13, label: "Reply to comments and mark resolved", phase: "review" },
-	{ id: 14, label: "Run pre-merge hooks (real-LLM, machete, deny)", phase: "ci" },
-	{ id: 15, label: "Merge", phase: "ci" },
-	{ id: 16, label: "Move to local master and pull", phase: "ci" },
+	{ id: 5, label: "Commit", phase: "ci" },
+	{ id: 6, label: "Push (pre-push hook will run tests and linting)", phase: "ci" },
+	{ id: 7, label: "Create PR", phase: "ci" },
+	{ id: 8, label: "Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)", phase: "review" },
+	{ id: 9, label: "Fix all valid review concerns", phase: "review" },
+	{ id: 10, label: "Push changes to remote", phase: "review" },
+	{ id: 11, label: "Reply to the reviewers comments on the PR and mark resolved (use graphql)", phase: "review" },
+	{ id: 12, label: "Run pre-merge hooks (real-LLM, machete, deny)", phase: "ci" },
+	{ id: 13, label: "Merge", phase: "ci" },
+	{ id: 14, label: "Move to local master and pull", phase: "ci" },
 ];
 
 function freshSteps(): WorkflowStep[] {
@@ -350,8 +346,8 @@ export default function (pi: ExtensionAPI) {
 		// Only guard `git commit` (not push, not other git commands)
 		if (!/\bgit\s+commit\b/.test(cmd)) return;
 
-		// Steps 1-6 must be done before committing (RED → GREEN → REFACTOR → GREEN)
-		const preCommitSteps = steps.filter((s) => s.id <= 6);
+		// Steps 1-4 must be done before committing (RED → GREEN)
+		const preCommitSteps = steps.filter((s) => s.id <= 4);
 		const incomplete = preCommitSteps.filter((s) => !s.done);
 
 		if (incomplete.length > 0) {
@@ -369,7 +365,7 @@ export default function (pi: ExtensionAPI) {
 				`These BDD/TDD steps are not checked off:\n\n${missing}\n\nCommit anyway?`,
 			);
 			if (!ok) {
-				return { block: true, reason: "Blocked by workflow extension — incomplete BDD/TDD steps" };
+				return { block: true, reason: "Blocked by workflow extension — incomplete RED/GREEN steps" };
 			}
 		}
 	});
@@ -437,8 +433,8 @@ export default function (pi: ExtensionAPI) {
 			injection += `Do NOT skip ahead — complete steps in order.\n`;
 
 			// Step-specific instructions
-			if (current.id === 10) {
-				injection += `\n### Step 10: Dispatch Reviewer Subagents\n`;
+			if (current.id === 8) {
+				injection += `\n### Step 8: Dispatch Reviewer Subagents\n`;
 				injection += `Use the \`subagent\` tool in parallel mode to dispatch all three reviewers simultaneously.\n`;
 				injection += `Each reviewer will submit a formal GitHub PR review with inline comments.\n`;
 				injection += `\nExample:\n`;
@@ -451,11 +447,11 @@ export default function (pi: ExtensionAPI) {
 				injection += `  ]\n`;
 				injection += `}\n`;
 				injection += "```\n";
-				injection += `Get the PR number from \`gh pr view --json number -q .number\` or from the PR URL created in step 9.\n`;
+				injection += `Get the PR number from \`gh pr view --json number -q .number\` or from the PR URL created in step 7.\n`;
 			}
 
-			if (current.id === 14) {
-				injection += `\n### Step 14: Run Pre-Merge Hooks\n`;
+			if (current.id === 12) {
+				injection += `\n### Step 12: Run Pre-Merge Hooks\n`;
 				injection += `Run the pre-merge-commit checks (real-LLM e2e tests, cargo machete, cargo deny).\n`;
 				injection += `Use the sharded runner — do NOT run BDD tests in a single process:\n`;
 				injection += "```bash\n";
@@ -479,7 +475,7 @@ export default function (pi: ExtensionAPI) {
 
 	const WorkflowParams = Type.Object({
 		action: StringEnum(["status", "check", "uncheck", "reset", "skip", "set_issue", "clear_issue"] as const),
-		step: Type.Optional(Type.Number({ description: "Step number (1-16)" })),
+		step: Type.Optional(Type.Number({ description: "Step number (1-14)" })),
 		issueNumber: Type.Optional(Type.Number({ description: "GitHub issue number (required for set_issue)" })),
 		issueTitle: Type.Optional(Type.String({ description: "GitHub issue title (required for set_issue)" })),
 	});
@@ -503,7 +499,9 @@ export default function (pi: ExtensionAPI) {
 			"  4:   GREEN phase (implement until tests pass)",
 			"  5:   REFACTOR phase (clean up)",
 			"  6:   GREEN phase (verify tests still pass)",
-			"  7-16: CI/CD and review",
+			"  5-7: CI/CD (commit, push, PR)",
+			"  8-11: Review",
+			"  12-14: Pre-merge and merge",
 		].join("\n"),
 		parameters: WorkflowParams,
 
@@ -653,7 +651,7 @@ export default function (pi: ExtensionAPI) {
 						? ` (still tracking issue #${activeIssue.number} — call set_issue once you have picked the next one)`
 						: "";
 					return {
-						content: [{ type: "text", text: `Workflow reset — all 16 steps cleared for new cycle${issuePart}` }],
+						content: [{ type: "text", text: `Workflow reset — all ${steps.length} steps cleared for new cycle${issuePart}` }],
 						details: makeDetails("reset"),
 					};
 				}
@@ -840,8 +838,8 @@ export default function (pi: ExtensionAPI) {
 		if (allDone && !completionNudgeFired && completionNudgeEnabled) {
 			completionNudgeFired = true;
 			const issueLine = activeIssue
-				? `You have completed all 16 workflow steps for issue #${activeIssue.number}: "${activeIssue.title}". `
-				: "You have completed all 16 workflow steps. ";
+				? `You have completed all ${steps.length} workflow steps for issue #${activeIssue.number}: "${activeIssue.title}". `
+				: `You have completed all ${steps.length} workflow steps. `;
 
 			pi.sendUserMessage(
 				issueLine +
