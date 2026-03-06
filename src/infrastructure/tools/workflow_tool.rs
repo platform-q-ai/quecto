@@ -8,7 +8,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use crate::domain::error::DomainError;
-use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+use crate::domain::tool::{Tool, ToolDefinition, ToolGuard, ToolResult};
 use crate::domain::workflow::{WorkflowState, WorkflowStateSnapshot};
 
 /// Callback for emitting workflow_state UDS events.
@@ -279,6 +279,138 @@ impl Tool for WorkflowTool {
             }
         })
     }
+}
+
+// ─── WorkflowGuard ───────────────────────────────────────────────────────────
+
+/// Guard that blocks `git commit` and `git push` in bash calls when the
+/// workflow hasn't reached the required step.
+///
+/// Non-bash tools always pass.  Bash calls without commit/push always pass.
+/// When `enforce_commit_after_step` is `None`, all calls pass.
+#[derive(Debug)]
+pub struct WorkflowGuard {
+    state: Arc<Mutex<WorkflowState>>,
+    enforce_commit_after_step: Option<u32>,
+}
+
+impl WorkflowGuard {
+    /// Create a new workflow guard.
+    pub fn new(state: Arc<Mutex<WorkflowState>>, enforce_commit_after_step: Option<u32>) -> Self {
+        Self {
+            state,
+            enforce_commit_after_step,
+        }
+    }
+}
+
+impl ToolGuard for WorkflowGuard {
+    fn check(&self, tool_name: &str, arguments: &str) -> Result<(), String> {
+        // Only guard bash calls
+        if tool_name != "bash" {
+            return Ok(());
+        }
+
+        // If enforcement is disabled, allow everything
+        let threshold = match self.enforce_commit_after_step {
+            Some(t) => t,
+            None => return Ok(()),
+        };
+
+        // Extract the command from bash arguments
+        let command = extract_bash_command(arguments);
+
+        // Only check git commit and git push
+        if !contains_git_commit_or_push(&command) {
+            return Ok(());
+        }
+
+        // Check if the required steps are complete
+        let state = self
+            .state
+            .lock()
+            .map_err(|e| format!("workflow state poisoned: {}", e))?;
+
+        state.check_commit_allowed(Some(threshold)).map_err(|e| {
+            format!(
+                "BLOCKED: {} Run workflow(action='status') to see current progress.",
+                e
+            )
+        })
+    }
+}
+
+/// Extract the command string from bash tool JSON arguments.
+fn extract_bash_command(arguments: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(arguments)
+        .ok()
+        .and_then(|v| v.get("command").and_then(|c| c.as_str()).map(String::from))
+        .unwrap_or_default()
+}
+
+/// Check if a bash command contains `git commit` or `git push` as actual
+/// commands (not just mentioned in strings or comments).
+///
+/// Detects patterns like:
+/// - `git commit -m "msg"`
+/// - `git push origin main`
+/// - `git -c key=val commit`
+/// - `git -C /path commit`
+/// - `git add . && git commit`
+///
+/// Does NOT false-positive on:
+/// - `git add`, `git status`, `git diff`, `git log`
+/// - `echo "git commit"` (best-effort — not a full shell parser)
+/// - `# git commit` (comments)
+fn contains_git_commit_or_push(command: &str) -> bool {
+    // Split on command separators to handle chained commands
+    for segment in command.split(&['&', '|', ';'][..]) {
+        let segment = segment.trim();
+
+        // Skip empty segments and comments
+        if segment.is_empty() || segment.starts_with('#') {
+            continue;
+        }
+
+        let tokens: Vec<&str> = segment.split_whitespace().collect();
+
+        // Look for "git" followed (eventually) by "commit" or "push"
+        // Skipping git flags (tokens starting with '-') and their values
+        let mut found_git = false;
+        let mut skip_next = false;
+        for token in &tokens {
+            if skip_next {
+                skip_next = false;
+                continue;
+            }
+            if *token == "git" {
+                found_git = true;
+                continue;
+            }
+            if found_git {
+                // Git flags that take a value argument: -c, -C, --git-dir, etc.
+                if *token == "-c"
+                    || *token == "-C"
+                    || *token == "--git-dir"
+                    || *token == "--work-tree"
+                {
+                    skip_next = true;
+                    continue;
+                }
+                // Skip other flags
+                if token.starts_with('-') {
+                    continue;
+                }
+                // First non-flag token after "git" is the subcommand
+                if *token == "commit" || *token == "push" {
+                    return true;
+                }
+                // It's a different subcommand (add, status, etc.)
+                found_git = false;
+            }
+        }
+    }
+    false
 }
 
 #[cfg(test)]

@@ -7,7 +7,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::domain::error::DomainError;
-use crate::domain::tool::{Tool, ToolDefinition, ToolRegistry, ToolResult};
+use crate::domain::tool::{Tool, ToolDefinition, ToolGuard, ToolRegistry, ToolResult};
 use crate::infrastructure::config::{Config, ExecIsolationConfig};
 use crate::infrastructure::security::sandbox::Sandbox;
 
@@ -36,6 +36,7 @@ use super::grep::GrepTool;
 pub struct ToolRegistryImpl {
     tools: HashMap<String, Arc<dyn Tool>>,
     definitions: Vec<ToolDefinition>,
+    guards: Vec<Arc<dyn ToolGuard>>,
 }
 
 impl std::fmt::Debug for ToolRegistryImpl {
@@ -79,7 +80,15 @@ impl ToolRegistryImpl {
         Self {
             tools: HashMap::new(),
             definitions: Vec::new(),
+            guards: Vec::new(),
         }
+    }
+
+    /// Register a guard that runs before every tool execution.
+    ///
+    /// Guards run in registration order. The first `Err` short-circuits.
+    pub fn register_guard(&mut self, guard: Arc<dyn ToolGuard>) {
+        self.guards.push(guard);
     }
 
     /// Create a registry with the core filesystem and exec tools.
@@ -184,19 +193,35 @@ impl ToolRegistryImpl {
 
     /// Execute a tool by name with JSON arguments.
     ///
+    /// Runs all registered guards before execution.  The first guard that
+    /// returns `Err(reason)` short-circuits — the tool is never invoked and
+    /// the reason is returned as `ToolResult { is_error: true }`.
+    ///
     /// Empty or whitespace-only argument strings are normalised to `"{}"` to
     /// prevent cryptic `"EOF while parsing a value"` errors from serde_json.
     /// This happens when an LLM returns a tool call with no argument deltas
     /// during SSE streaming.
     pub async fn execute(&self, name: &str, arguments: &str) -> Result<ToolResult, DomainError> {
-        let tool = self
-            .get(name)
-            .ok_or_else(|| DomainError::Tool(format!("unknown tool: {}", name)))?;
         let normalised = if arguments.trim().is_empty() {
             "{}"
         } else {
             arguments
         };
+
+        // Run guards before tool execution
+        for guard in &self.guards {
+            if let Err(reason) = guard.check(name, normalised) {
+                return Ok(ToolResult {
+                    content: reason,
+                    is_error: true,
+                    image_blocks: vec![],
+                });
+            }
+        }
+
+        let tool = self
+            .get(name)
+            .ok_or_else(|| DomainError::Tool(format!("unknown tool: {}", name)))?;
         tool.execute(normalised).await
     }
 }
