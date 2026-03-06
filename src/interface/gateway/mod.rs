@@ -428,6 +428,7 @@ impl Gateway {
             spill_store.clone(),
             session_key.clone(),
         )));
+        crate::interface::shared::register_workflow_tool(&mut registry, &self.config.workflow);
 
         let agent = AgentLoopImpl::new(AgentLoopConfig {
             provider,

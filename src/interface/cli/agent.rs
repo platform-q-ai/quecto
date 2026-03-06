@@ -245,17 +245,17 @@ pub(crate) fn cmd_agent(
     }
 
     let base_dir = ctx.base_dir();
-    let agent = match build_agent_from_config(&base_dir, &flags, stderr) {
-        Some(a) => a,
+    let (agent, wf_config) = match build_agent_from_config(&base_dir, &flags, stderr) {
+        Some(r) => r,
         None => return 1,
     };
 
-    // Build system prompt: datetime preamble + skills + user prompt
+    // Build system prompt: datetime preamble + skills + workflow + user prompt
     let skill_prompt = crate::interface::shared::load_skill_prompt(&base_dir);
-    flags.system_prompt = Some(crate::interface::shared::build_system_prompt(
-        &skill_prompt,
-        &flags.system_prompt,
-    ));
+    let mut system =
+        crate::interface::shared::build_system_prompt(&skill_prompt, &flags.system_prompt);
+    crate::interface::shared::append_workflow_prompt(&mut system, &wf_config);
+    flags.system_prompt = Some(system);
 
     let mut out = AgentOutput { stdout, stderr };
     run_agent_session(&base_dir, agent, &flags, &mut out)
@@ -266,7 +266,7 @@ pub(crate) fn build_agent_from_config(
     base_dir: &std::path::Path,
     flags: &AgentFlags,
     stderr: &mut String,
-) -> Option<AgentLoopImpl> {
+) -> Option<(AgentLoopImpl, crate::domain::workflow::WorkflowConfig)> {
     let config_path = base_dir.join("config.json");
     if !config_path.exists() {
         stderr.push_str(&format!(
@@ -304,20 +304,15 @@ pub(crate) fn build_agent_from_config(
         .model_override
         .clone()
         .unwrap_or(config.agents.defaults.model.clone());
-    // --no-sandbox overrides config: disables workspace path restriction for all
-    // filesystem tools. The dangerous-command denylist remains active regardless.
+    // --no-sandbox: disables workspace path restriction (denylist still active).
     let restrict_to_workspace = !flags.no_sandbox && config.agents.defaults.restrict_to_workspace;
     if flags.no_sandbox {
         stderr.push_str("WARNING: --no-sandbox is active — workspace path restriction disabled\n");
     }
     let sandbox = Sandbox::new(Some(workspace.clone()), restrict_to_workspace);
-    // Build exec settings from config first, then apply CLI overrides.
-    // ORDERING: overrides must happen before with_core_tools_and_exec_settings — do not reorder.
+    // Build exec settings; CLI overrides must precede with_core_tools_and_exec_settings.
     let mut exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
-    // --network overrides config: enables network access inside bash tool calls by
-    // disabling nsjail's network namespace isolation. nsjail still runs for all other
-    // isolation (filesystem, PIDs, memory, CPU). The dangerous-command denylist
-    // remains active regardless.
+    // --network: disables nsjail network namespace (other isolation remains active).
     if flags.network {
         exec_settings.network_passthrough = true;
         stderr
@@ -326,9 +321,8 @@ pub(crate) fn build_agent_from_config(
     }
     // Capture network_passthrough before exec_settings is moved into the registry.
     let effective_network = exec_settings.network_passthrough;
-    let registry =
+    let mut registry =
         ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
-    let mut registry = registry;
     let session_key = if flags.no_session || flags.session_name.as_deref() == Some("-") {
         String::new()
     } else {
@@ -340,14 +334,13 @@ pub(crate) fn build_agent_from_config(
         spill_store.clone(),
         session_key.clone(),
     )));
-    // Propagate network_passthrough (which reflects both config and --network override)
-    // so child agents spawned via SpawnTool inherit the same network posture as the
-    // parent. The flag is also forwarded via argv (--network) so grandchild agents
-    // are covered too.
+    // Propagate network_passthrough so child agents inherit the same network posture.
     registry.register(Arc::new(
         SpawnTool::with_base_dir(vec![], restrict_to_workspace, base_dir.to_path_buf())
             .with_network(effective_network),
     ));
+    crate::interface::shared::register_workflow_tool(&mut registry, &config.workflow);
+    let wf_config = config.workflow.clone();
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),
@@ -367,7 +360,7 @@ pub(crate) fn build_agent_from_config(
             .unwrap_or(config.agents.defaults.max_tool_iterations),
     );
 
-    Some(agent)
+    Some((agent, wf_config))
 }
 
 /// Run the agent loop with session load/save. Returns the exit code.
@@ -535,8 +528,8 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     }
 
     let base_dir = ctx.base_dir();
-    let mut agent = match build_agent_from_config(&base_dir, &flags, stderr) {
-        Some(a) => a,
+    let (mut agent, wf_config) = match build_agent_from_config(&base_dir, &flags, stderr) {
+        Some(r) => r,
         None => return 1,
     };
     // Enable incremental streaming so the UDS layer emits token events.
@@ -568,20 +561,13 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         })
         .unwrap_or_else(|| "default".to_string());
 
-    // Build system prompt (datetime preamble + skills + user-supplied --system),
-    // mirroring what one-shot mode does before run_agent_session.
-    // build_system_prompt() always returns a non-empty string (contains at
-    // least the datetime preamble), so the UdsLoopArgs field is a plain String.
+    // Build system prompt: datetime preamble + skills + workflow + user prompt.
     let skill_prompt = crate::interface::shared::load_skill_prompt(&base_dir);
-    let system_prompt =
+    let mut system_prompt =
         crate::interface::shared::build_system_prompt(&skill_prompt, &flags.system_prompt);
+    crate::interface::shared::append_workflow_prompt(&mut system_prompt, &wf_config);
 
-    // Use --socket path if provided, otherwise auto-generate.
-    // Prefer $XDG_RUNTIME_DIR (/run/user/<uid>, mode 0700 on systemd) so the
-    // socket is not enumerable by other users via `ls /tmp/`.  The directory
-    // must exist and be writable by the current user; if not, fall back to
-    // temp_dir().  Fall back unconditionally when XDG_RUNTIME_DIR is unset.
-    // Callers discover the path by watching stderr for "quecto-agent-socket: <path>".
+    // Use --socket path if provided; otherwise auto-generate in $XDG_RUNTIME_DIR or temp.
     let socket_path = flags.socket_path.clone().unwrap_or_else(|| {
         let dir = xdg_runtime_dir_or_temp();
         // Best-effort: remove stale quecto-agent-*.sock files older than 24 h.

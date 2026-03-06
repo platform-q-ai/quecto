@@ -1027,6 +1027,7 @@ mod truncate_steps;
 mod uds_steps;
 mod voice_steps;
 mod workflow_automation_steps;
+mod workflow_e2e_steps;
 mod workflow_steps;
 
 // Runner

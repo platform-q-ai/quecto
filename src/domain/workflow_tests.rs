@@ -148,7 +148,10 @@ fn test_snapshot() {
 #[test]
 fn test_default_config() {
     let config = WorkflowConfig::default();
-    assert!(config.enabled);
+    assert!(
+        !config.enabled,
+        "workflow is opt-in; default should be disabled"
+    );
     assert_eq!(config.steps.len(), 16);
     assert_eq!(config.steps[0].id, 1);
     assert_eq!(config.steps[0].label, "Update Scenarios / Add new features");
