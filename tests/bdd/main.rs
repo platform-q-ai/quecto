@@ -554,6 +554,19 @@ pub struct QuectoWorld {
     pub guard_captured_name: Option<String>,
     /// Captured guard arguments
     pub guard_captured_args: Option<String>,
+    // --- Multi-client UDS (#318) ---
+    /// Multi-client UDS: per-client command queues (client_id -> commands)
+    pub mc_client_commands: HashMap<u32, Vec<String>>,
+    /// Multi-client UDS: per-client received events (client_id -> event lines)
+    pub mc_client_events: HashMap<u32, Vec<String>>,
+    /// Multi-client UDS: set of connected client IDs
+    pub mc_connected_clients: Vec<u32>,
+    /// Multi-client UDS: set of client IDs that explicitly disconnected
+    pub mc_disconnected_clients: Vec<u32>,
+    /// Multi-client UDS: whether multi-client mode is requested
+    pub mc_mode: bool,
+    /// Multi-client UDS: exit code from multi-client execution
+    pub mc_exit_code: Option<i32>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.

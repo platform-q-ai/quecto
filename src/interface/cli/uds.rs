@@ -3,6 +3,12 @@
 /// Entry point: `run_uds_loop` — called from `cmd_agent` when `--mode uds` is set.
 /// Session state and statistics live in `uds_session`.
 /// Cancellation infrastructure and prompt execution live in `uds_cancel`.
+/// Multi-client accept loop and broadcast live in `uds_multi`.
+///
+/// ## Multi-client architecture (#318)
+///
+/// The UDS agent accepts multiple simultaneous client connections (Docker-style
+/// event bus).  See `uds_multi.rs` for the implementation.
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::message::{Message, Role};
 use crate::domain::session::{Session, SessionStore};
@@ -10,9 +16,10 @@ use crate::infrastructure::persistence::session_store::FileSessionStore;
 
 use super::protocol::{AgentCommand, AgentEvent, StreamingBehavior};
 use super::uds_cancel::{
-    CancelHandle, CancelSlot, PromptArgs, PromptOutcome, arm_cancel, disarm_cancel, emit_event,
-    fire_cancel, run_agent_prompt,
+    CancelHandle, CancelSlot, PromptArgs, PromptOutcome, arm_cancel, disarm_cancel, fire_cancel,
+    run_agent_prompt,
 };
+use super::uds_multi::{MultiClientArgs, PromptArgsBroadcast, run_agent_prompt_broadcast};
 use super::uds_session::{
     AgentSession, compute_session_stats, message_to_json, messages_tail_json,
 };
@@ -29,22 +36,18 @@ pub struct UdsLoopArgs<'a> {
     pub model: String,
     pub ephemeral: bool,
     /// System prompt (datetime preamble + skills + user `--system`).
-    /// Prepended as transient `Message::system`; stripped before persisting.
-    /// NOTE: datetime is fixed at process-start — stale for long sessions.
     pub system_prompt: String,
-    /// Path to the Unix domain socket.  Bound and announced in production;
-    /// unused in tests (see `socket_override`).
+    /// Path to the Unix domain socket.
     pub socket_path: std::path::PathBuf,
-    /// Pre-connected stream injected by tests instead of accepting from a listener.
-    /// `None` = bind `socket_path` with mode `0600` (chmod-after-bind), accept one connection.
+    /// Pre-connected stream injected by tests.
+    /// `None` = multi-client mode (production).
+    /// `Some` = single-client mode (backward-compatible tests).
     pub socket_override: Option<std::os::unix::net::UnixStream>,
     /// Injected session store for testing.  `None` = use `FileSessionStore`.
     pub session_store_override: Option<Box<dyn SessionStore + 'static>>,
 }
 
-/// Run the UDS event loop.  Binds a `UnixListener`, announces path on stderr,
-/// accepts one client, processes JSON-lines commands.  In tests, uses
-/// `socket_override` instead of binding.  Returns exit code.
+/// Run the UDS event loop.  Returns exit code.
 pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     let rt = match crate::interface::cli::build_tokio_runtime() {
         Ok(rt) => rt,
@@ -57,10 +60,6 @@ pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
 }
 
 /// Remove stale `quecto-agent-*.sock` files older than `max_age` from `dir`.
-/// Best-effort (ignores errors).  Drop guards don't run on SIGKILL so sockets
-/// can accumulate; call this at startup.  `metadata()` follows symlinks
-/// (symlinks in the socket dir are not expected).  TOCTOU between stat and
-/// unlink is acceptable at 24h granularity with UUID-named sockets.
 pub(crate) fn reap_stale_sockets(dir: &std::path::Path, max_age: std::time::Duration) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -94,16 +93,11 @@ impl Drop for SocketGuard {
 }
 
 /// Remove stale socket, bind at `path`, apply `chmod 0600`, return listener.
-/// On chmod failure the socket is removed before returning `Err`.
-/// On `$XDG_RUNTIME_DIR` systems (mode `0700`) the post-bind TOCTOU window
-/// is unreachable; on `/tmp` the window is nanoseconds.
 fn bind_secure_socket(path: &std::path::Path) -> std::io::Result<tokio::net::UnixListener> {
     use std::os::unix::fs::PermissionsExt;
     let _ = std::fs::remove_file(path);
     let listener = tokio::net::UnixListener::bind(path)?;
     if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
-        // Remove the bound-but-insecure socket so it does not linger on disk
-        // with overly permissive mode.  The caller will exit on the error.
         let _ = std::fs::remove_file(path);
         return Err(e);
     }
@@ -140,20 +134,23 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         }
     };
 
-    // Build reader/writer from the socket, plus an optional cleanup guard.
-    // Test path: pre-connected std UnixStream injected via socket_override.
-    // Production path: bind UnixListener, accept one client, return guard.
-    let (reader, writer, guard) = if let Some(std_stream) = socket_override {
-        std_stream
-            .set_nonblocking(true)
-            .expect("set_nonblocking failed for test socket");
-        let tokio_stream = tokio::net::UnixStream::from_std(std_stream)
-            .expect("failed to convert std UnixStream to tokio");
-        let (r, w) = tokio::io::split(tokio_stream);
-        let r: Box<dyn tokio::io::AsyncRead + Send + Unpin> = Box::new(r);
-        let w: Box<dyn tokio::io::AsyncWrite + Send + Unpin> = Box::new(w);
-        (r, w, None::<SocketGuard>)
+    if let Some(std_stream) = socket_override {
+        // Single-client path: backward-compatible with existing tests.
+        single_client_loop(
+            SingleClientArgs {
+                agent,
+                messages,
+                model,
+                session_key,
+                ephemeral,
+                system_prompt,
+            },
+            std_stream,
+            session_store,
+        )
+        .await
     } else {
+        // Multi-client path: bind, accept loop, broadcast events.
         let listener = match bind_secure_socket(&socket_path) {
             Ok(l) => l,
             Err(e) => {
@@ -161,80 +158,74 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 return 1;
             }
         };
-        // Print socket path to stderr — callers poll for this line to discover the path.
         eprintln!("quecto-agent-socket: {}", socket_path.display());
-        let stream = match listener.accept().await {
-            Ok((s, _)) => s,
-            Err(e) => {
-                eprintln!("failed to accept connection: {e}");
-                return 1;
-            }
-        };
-        let (r, w) = tokio::io::split(stream);
-        let r: Box<dyn tokio::io::AsyncRead + Send + Unpin> = Box::new(r);
-        let w: Box<dyn tokio::io::AsyncWrite + Send + Unpin> = Box::new(w);
-        (r, w, Some(SocketGuard(socket_path)))
-    };
-
-    // Run the command loop. `guard` is dropped here after the loop finishes,
-    // which unlinks the socket file (production path only).
-    uds_loop_with_streams(
-        StreamLoopArgs {
-            reader,
-            writer,
-            _guard: guard,
-            agent,
-            messages,
-            agent_session: AgentSession::new(model, session_key.clone()),
-            session_key,
-            ephemeral,
-            system_prompt,
-        },
-        session_store,
-    )
-    .await
+        let _guard = SocketGuard(socket_path);
+        super::uds_multi::multi_client_loop(
+            MultiClientArgs {
+                agent,
+                messages,
+                model,
+                session_key,
+                ephemeral,
+                system_prompt,
+            },
+            listener,
+            session_store,
+        )
+        .await
+    }
 }
 
-/// Arguments for [`uds_loop_with_streams`] — avoids the clippy too-many-arguments lint.
-struct StreamLoopArgs {
-    reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
-    writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin>,
-    /// Drop guard that unlinks the socket file on exit (production path only).
-    _guard: Option<SocketGuard>,
+// ═══════════════════════════════════════════════════════════════════════════════
+// Single-client path (backward-compatible with existing tests)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+struct SingleClientArgs {
     agent: AgentLoopImpl,
     messages: Vec<Message>,
-    agent_session: AgentSession,
+    model: String,
     session_key: String,
     ephemeral: bool,
     system_prompt: String,
 }
 
-/// Run the command loop with already-established reader/writer streams.
-/// The `_guard` (if present) unlinks the socket file when dropped.
-async fn uds_loop_with_streams(args: StreamLoopArgs, session_store: &dyn SessionStore) -> i32 {
-    let StreamLoopArgs {
-        reader,
-        mut writer,
-        _guard,
-        mut agent,
+async fn single_client_loop(
+    args: SingleClientArgs,
+    std_stream: std::os::unix::net::UnixStream,
+    session_store: &dyn SessionStore,
+) -> i32 {
+    let SingleClientArgs {
+        agent,
         mut messages,
-        mut agent_session,
+        model,
         session_key,
         ephemeral,
         system_prompt,
     } = args;
 
+    std_stream
+        .set_nonblocking(true)
+        .expect("set_nonblocking failed for test socket");
+    let tokio_stream = tokio::net::UnixStream::from_std(std_stream)
+        .expect("failed to convert std UnixStream to tokio");
+    let (r, w) = tokio::io::split(tokio_stream);
+    let reader: Box<dyn tokio::io::AsyncRead + Send + Unpin> = Box::new(r);
+    let mut writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin> = Box::new(w);
+
     inject_system_prompt(&mut messages, &system_prompt);
+
+    let mut agent_session = AgentSession::new(model, session_key.clone());
 
     run_command_loop(
         reader,
         &mut DispatchCtx {
-            agent: &mut agent,
+            agent: &mut { agent },
             messages: &mut messages,
             session: &mut agent_session,
             stdout: &mut *writer,
             session_key: &session_key,
             cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
+            broadcast_tx: None,
         },
     )
     .await;
@@ -248,39 +239,25 @@ async fn uds_loop_with_streams(args: StreamLoopArgs, session_store: &dyn Session
         let _ = session_store.save(&session).await;
     }
 
-    0 // _guard dropped here — socket file unlinked (production path)
+    0
 }
 
-/// Prepend a system message if `prompt` is non-empty and no system message
-/// already exists at the front of `messages`.
-///
-/// The injected message is **transient** — it is added before the command
-/// loop runs and stripped before the session is persisted.  Callers must
-/// pair each `inject_system_prompt` with a matching
-/// `remove_injected_system_prompt` call.
-///
-/// If the session already has a leading `Role::System` message (e.g. loaded
-/// from a previous run that saved one, or a future feature), the new system
-/// prompt is silently skipped to preserve the existing context.  Callers
-/// that need to override a persisted system message should strip it first.
+// ═══════════════════════════════════════════════════════════════════════════════
+// Shared infrastructure
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Prepend a transient system message.
 pub(crate) fn inject_system_prompt(messages: &mut Vec<Message>, prompt: &str) {
     if prompt.is_empty() {
         return;
     }
-    // Skip injection if a system message is already present (e.g. loaded from session).
     if messages.first().is_some_and(|m| m.role == Role::System) {
         return;
     }
     messages.insert(0, Message::system(prompt.to_string()));
 }
 
-/// Remove the injected system prompt from `messages` before persisting.
-///
-/// Only removes the first message if it is a system message with content
-/// matching `prompt` exactly — never silently removes user-authored system
-/// messages from session history.  Uses an exact content comparison so
-/// that an in-flight mutation of the first message (e.g. by a buggy tool)
-/// does not accidentally delete session content.
+/// Remove the injected system prompt before persisting.
 pub(crate) fn remove_injected_system_prompt(messages: &mut Vec<Message>, prompt: &str) {
     if prompt.is_empty() {
         return;
@@ -293,36 +270,28 @@ pub(crate) fn remove_injected_system_prompt(messages: &mut Vec<Message>, prompt:
     }
 }
 
-// 1 MiB per line — matches the bash tool cap and guards against OOM from
-// unbounded JSON allocations in both the reader task and the dispatch loop.
-const MAX_LINE_BYTES: usize = 1024 * 1024;
+/// 1 MiB per line cap.
+pub(super) const MAX_LINE_BYTES: usize = 1024 * 1024;
 
-/// Return `true` if a trimmed JSON line looks like an `abort` or `steer` command.
-///
-/// Uses a cheap substring search rather than a full JSON parse to avoid
-/// allocating a Value DOM in the hot-path reader task.  The check is
-/// intentionally permissive; the dispatch loop re-parses canonically.
-fn is_cancel_command(trimmed: &str) -> bool {
+/// Cheap substring check for cancel commands.
+pub(super) fn is_cancel_command(trimmed: &str) -> bool {
     trimmed.contains("\"type\":\"abort\"") || trimmed.contains("\"type\":\"steer\"")
 }
 
-/// Parsed command line or a line-too-long error.
-enum LineResult {
+/// Parsed command line or error.
+pub(super) enum LineResult {
     Command(AgentCommand),
     ParseError(String),
     LineTooLong,
 }
 
 /// Parse a raw text line into a `LineResult`.
-fn parse_line(line: &str) -> LineResult {
+pub(super) fn parse_line(line: &str) -> LineResult {
     if line.len() > MAX_LINE_BYTES {
         return LineResult::LineTooLong;
     }
     let line = line.trim();
     if line.is_empty() {
-        // Treat empty lines as a no-op by returning a vacuous parse error
-        // that the loop discards silently.  A sentinel variant would be
-        // cleaner but adds noise for a rare case.
         return LineResult::ParseError(String::new());
     }
     match parse_command_line(line) {
@@ -331,54 +300,24 @@ fn parse_line(line: &str) -> LineResult {
     }
 }
 
-/// Read JSON commands from the socket and dispatch them until EOF or a fatal error.
-///
-/// A background reader task reads lines concurrently and sends them to an
-/// mpsc channel.  Abort and steer commands are recognised by the reader and
-/// immediately signal `cancel_notify` — this unblocks any `select!` inside
-/// `run_agent_prompt` that is waiting for `process()` to finish, causing the
-/// in-flight HTTP request to be dropped.  The command is also forwarded to the
-/// main dispatch channel so a response can be emitted.
+/// Read JSON commands from a single-client socket and dispatch them.
 async fn run_command_loop(
     reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ctx: &mut DispatchCtx<'_>,
 ) {
     use tokio::io::{AsyncBufReadExt, BufReader};
 
-    // Clone the cancel handle for the concurrent reader task.
     let cancel_for_reader = std::sync::Arc::clone(&ctx.cancel_handle);
 
-    // Bounded channel — prevents unbounded memory growth if the client sends
-    // commands faster than the dispatch loop can process them.  64 slots is
-    // generous for a single-client UDS session; the reader task will yield
-    // when full, providing natural back-pressure.
-    // `None` in the channel signals EOF.
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Option<String>>(64);
 
-    // Spawn the reader task — it runs concurrently with the dispatch loop.
-    // When it sees an abort or steer command it immediately fires the shared
-    // cancel handle so any in-flight select!(process | cancel_rx) unblocks and
-    // drops the in-flight HTTP request without waiting for the dispatch loop
-    // to dequeue the command from the main mpsc channel.
-    // The JoinHandle is stored so we can abort the task when the dispatch loop
-    // exits early (fatal error, disconnect), preventing a resource leak.
     let reader_task = tokio::spawn(async move {
         let mut lines = BufReader::new(reader).lines();
         loop {
             match lines.next_line().await {
                 Ok(Some(line)) => {
-                    // Apply the same size guard used by the dispatch loop so
-                    // the reader never allocates memory for oversized lines.
-                    // Lines that are too long are forwarded as-is and the
-                    // dispatch loop emits the error response.
-                    if line.len() <= MAX_LINE_BYTES {
-                        // Use a cheap substring check rather than a full JSON
-                        // parse so the reader does not allocate a Value DOM for
-                        // every line.  The check is intentionally loose — the
-                        // dispatch loop re-parses canonically.
-                        if is_cancel_command(line.trim()) {
-                            fire_cancel(&cancel_for_reader);
-                        }
+                    if line.len() <= MAX_LINE_BYTES && is_cancel_command(line.trim()) {
+                        fire_cancel(&cancel_for_reader);
                     }
                     if tx.send(Some(line)).await.is_err() {
                         break;
@@ -401,11 +340,9 @@ async fn run_command_loop(
         match parse_line(&raw) {
             LineResult::LineTooLong => {
                 let ev = AgentEvent::err(None, "parse_error", "line exceeds 1 MiB limit");
-                emit_event(ctx.stdout, &ev).await;
+                emit_event_to_broadcast_or_writer(ctx, &ev).await;
             }
-            LineResult::ParseError(e) if e.is_empty() => {
-                // Empty line — skip silently.
-            }
+            LineResult::ParseError(e) if e.is_empty() => {}
             LineResult::ParseError(e) => {
                 let ev = AgentEvent::Response {
                     id: None,
@@ -414,7 +351,7 @@ async fn run_command_loop(
                     data: None,
                     error: Some(e),
                 };
-                emit_event(ctx.stdout, &ev).await;
+                emit_event_to_broadcast_or_writer(ctx, &ev).await;
             }
             LineResult::Command(cmd) => {
                 if dispatch_command(cmd, ctx).await {
@@ -424,13 +361,10 @@ async fn run_command_loop(
         }
     }
 
-    // Abort the reader task so it doesn't linger after the dispatch loop exits
-    // (e.g. on a fatal agent error or explicit disconnect command).  If the
-    // task already finished (EOF) this is a harmless no-op.
     reader_task.abort();
 }
 
-/// Load session messages, or return an empty vec for ephemeral/missing sessions.
+/// Load session messages.
 async fn load_session(
     store: &dyn SessionStore,
     session_key: &str,
@@ -447,16 +381,28 @@ async fn load_session(
 }
 
 /// Mutable context threaded through each command dispatch.
-struct DispatchCtx<'a> {
-    agent: &'a mut AgentLoopImpl,
-    messages: &'a mut Vec<Message>,
-    session: &'a mut AgentSession,
-    stdout: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
-    session_key: &'a str,
-    /// Shared cancellation state.  The reader task fires cancellation the
-    /// moment it sees an abort/steer line; [`arm_cancel`] installs the oneshot
-    /// for the current run (or detects a pre-fired cancel).
-    cancel_handle: CancelHandle,
+pub(super) struct DispatchCtx<'a> {
+    pub agent: &'a mut AgentLoopImpl,
+    pub messages: &'a mut Vec<Message>,
+    pub session: &'a mut AgentSession,
+    pub stdout: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
+    pub session_key: &'a str,
+    pub cancel_handle: CancelHandle,
+    /// `Some` in multi-client mode; `None` in single-client mode.
+    pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+}
+
+/// Emit an event: broadcast if available, otherwise write directly.
+pub(super) async fn emit_event_to_broadcast_or_writer(
+    ctx: &mut DispatchCtx<'_>,
+    event: &AgentEvent,
+) {
+    if let Some(ref tx) = ctx.broadcast_tx {
+        let line = event.to_json_line() + "\n";
+        let _ = tx.send(line);
+    } else {
+        super::uds_cancel::emit_event(ctx.stdout, event).await;
+    }
 }
 
 fn resolve_set_model_target(
@@ -467,7 +413,6 @@ fn resolve_set_model_target(
     if let Some(m) = model.filter(|m| !m.trim().is_empty()) {
         return Ok(m);
     }
-
     match (provider, model_id) {
         (Some(provider), Some(model_id)) => {
             if provider.trim().is_empty() || model_id.trim().is_empty() {
@@ -480,7 +425,6 @@ fn resolve_set_model_target(
     }
 }
 
-/// Arguments for `handle_set_model` — bundles the command fields with context.
 struct SetModelArgs {
     id: Option<String>,
     type_name: String,
@@ -489,7 +433,6 @@ struct SetModelArgs {
     model_id: Option<String>,
 }
 
-/// Handle a `set_model` command: resolve, apply, and emit a response event.
 async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'_>) -> bool {
     let SetModelArgs {
         id,
@@ -502,7 +445,7 @@ async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'_>) -> bool
         Ok(m) => m,
         Err(msg) => {
             let ev = AgentEvent::err(id.as_deref(), &type_name, msg);
-            emit_event(ctx.stdout, &ev).await;
+            emit_event_to_broadcast_or_writer(ctx, &ev).await;
             return false;
         }
     };
@@ -510,13 +453,10 @@ async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'_>) -> bool
     ctx.session.set_model(resolved_model);
     tracing::debug!(new_model = %ctx.session.model(), "UDS: model switched");
     let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
-    emit_event(ctx.stdout, &ev).await;
+    emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
 }
 
-/// Build the response data payload for read-only query commands.
-///
-/// Returns `Some(data)` when the command is a recognised query, `None` otherwise.
 fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serde_json::Value> {
     match cmd {
         AgentCommand::GetState { .. } => {
@@ -539,14 +479,13 @@ fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serd
 }
 
 /// Dispatch a single UDS command.  Returns `true` if the loop should exit.
-async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool {
+pub(super) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool {
     let id = cmd.id().map(str::to_owned);
     let type_name = cmd.type_name().to_owned();
 
-    // Fast path: read-only query commands share the same emit pattern.
     if let Some(data) = query_response_data(&cmd, ctx) {
         let ev = AgentEvent::ok(id.as_deref(), &type_name, Some(data));
-        emit_event(ctx.stdout, &ev).await;
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
 
@@ -567,43 +506,29 @@ async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool 
             )
             .await
         }
-
-        // Steer: cancel any in-flight run, then enqueue the steer message as the
-        // *first* pending entry so it runs next (true interrupt semantics, not
-        // queue-append).  When idle, steer behaves like follow_up.
         AgentCommand::Steer { message, .. } => {
             if ctx.session.is_streaming() {
-                // Belt-and-suspenders: reader task already fired this, but fire
-                // again in case the dispatch loop races ahead of the reader.
                 fire_cancel(&ctx.cancel_handle);
-                // Prepend so the steer message is processed before any earlier
-                // enqueued follow-ups.
                 ctx.session.prepend_pending(message);
             } else {
                 ctx.session.enqueue_pending(message);
             }
             let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
-            emit_event(ctx.stdout, &ev).await;
+            emit_event_to_broadcast_or_writer(ctx, &ev).await;
             false
         }
-
-        // FollowUp: always enqueue (append), never interrupt.
         AgentCommand::FollowUp { message, .. } => {
             ctx.session.enqueue_pending(message);
             let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
-            emit_event(ctx.stdout, &ev).await;
+            emit_event_to_broadcast_or_writer(ctx, &ev).await;
             false
         }
-
-        // Abort: cancel any in-flight run.  Belt-and-suspenders — the reader
-        // task already fired this when it saw the abort line.
         AgentCommand::Abort { .. } => {
             fire_cancel(&ctx.cancel_handle);
             let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
-            emit_event(ctx.stdout, &ev).await;
+            emit_event_to_broadcast_or_writer(ctx, &ev).await;
             false
         }
-
         AgentCommand::SetModel {
             model,
             provider,
@@ -622,27 +547,22 @@ async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool 
             )
             .await
         }
-
-        // Query variants are handled by the fast path above; this arm is a safety
-        // net in case query_response_data is not updated when a new query variant is
-        // added. It emits a graceful error rather than panicking.
         AgentCommand::GetState { .. }
         | AgentCommand::GetMessages { .. }
         | AgentCommand::GetMessagesTail { .. }
         | AgentCommand::GetSessionStats { .. } => {
-            tracing::error!(command = %type_name, "query variant reached dispatch fallback — update query_response_data");
+            tracing::error!(command = %type_name, "query variant reached dispatch fallback");
             let ev = AgentEvent::err(
                 id.as_deref(),
                 &type_name,
                 "internal: unhandled query command",
             );
-            emit_event(ctx.stdout, &ev).await;
+            emit_event_to_broadcast_or_writer(ctx, &ev).await;
             false
         }
     }
 }
 
-/// Arguments for [`handle_prompt`].
 struct PromptCommand {
     id: Option<String>,
     type_name: String,
@@ -650,8 +570,6 @@ struct PromptCommand {
     streaming_behavior: Option<StreamingBehavior>,
 }
 
-/// Handle a `prompt` command: run agent, emit events, drain follow-ups.
-/// Returns `true` if the loop should exit (agent error).
 async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
     let PromptCommand {
         id,
@@ -660,13 +578,12 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
         streaming_behavior,
     } = cmd;
 
-    // If the agent is currently running, require streamingBehavior.
     if ctx.session.is_streaming() {
         match streaming_behavior {
             Some(StreamingBehavior::FollowUp) | Some(StreamingBehavior::Steer) => {
                 ctx.session.enqueue_pending(message);
                 let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
-                emit_event(ctx.stdout, &ev).await;
+                emit_event_to_broadcast_or_writer(ctx, &ev).await;
                 return false;
             }
             None => {
@@ -675,52 +592,55 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
                     &type_name,
                     "agent is running; provide streamingBehavior",
                 );
-                emit_event(ctx.stdout, &ev).await;
+                emit_event_to_broadcast_or_writer(ctx, &ev).await;
                 return false;
             }
         }
     }
 
-    // Arm the cancellation slot.  Returns None if a cancel was already
-    // requested before this run started (pre-fired cancel).
     let Some(cancel_rx) = arm_cancel(&ctx.cancel_handle) else {
-        // Pre-cancelled — treat as if the run was cancelled immediately.
         return false;
     };
 
-    let outcome = run_agent_prompt(PromptArgs {
-        agent: ctx.agent,
-        messages: ctx.messages,
-        session: ctx.session,
-        stdout: ctx.stdout,
-        message,
-        cancel_rx,
-    })
-    .await;
+    let outcome = if let Some(ref tx) = ctx.broadcast_tx {
+        run_agent_prompt_broadcast(PromptArgsBroadcast {
+            agent: ctx.agent,
+            messages: ctx.messages,
+            session: ctx.session,
+            broadcast_tx: tx.clone(),
+            message,
+            cancel_rx,
+        })
+        .await
+    } else {
+        run_agent_prompt(PromptArgs {
+            agent: ctx.agent,
+            messages: ctx.messages,
+            session: ctx.session,
+            stdout: ctx.stdout,
+            message,
+            cancel_rx,
+        })
+        .await
+    };
 
     disarm_cancel(&ctx.cancel_handle);
 
     match outcome {
         PromptOutcome::Cancelled => {
-            // Run was cancelled — do not emit agent_end; drain pending (steer
-            // message may have been prepended).
             drain_and_run_pending(ctx).await;
             false
         }
-        PromptOutcome::Error => {
-            // Fatal agent error — exit the loop.
-            true
-        }
+        PromptOutcome::Error => true,
         PromptOutcome::Success => {
             let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
-            emit_event(ctx.stdout, &ev).await;
+            emit_event_to_broadcast_or_writer(ctx, &ev).await;
             drain_and_run_pending(ctx).await;
             false
         }
     }
 }
 
-/// Drain the pending queue and run each enqueued message as a follow-up prompt.
 async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
     loop {
         let pending = ctx.session.drain_pending();
@@ -729,17 +649,29 @@ async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
         }
         for follow_msg in pending {
             let Some(cancel_rx) = arm_cancel(&ctx.cancel_handle) else {
-                break; // pre-cancelled — stop draining
+                break;
             };
-            run_agent_prompt(PromptArgs {
-                agent: ctx.agent,
-                messages: ctx.messages,
-                session: ctx.session,
-                stdout: ctx.stdout,
-                message: follow_msg,
-                cancel_rx,
-            })
-            .await;
+            if let Some(ref tx) = ctx.broadcast_tx {
+                run_agent_prompt_broadcast(PromptArgsBroadcast {
+                    agent: ctx.agent,
+                    messages: ctx.messages,
+                    session: ctx.session,
+                    broadcast_tx: tx.clone(),
+                    message: follow_msg,
+                    cancel_rx,
+                })
+                .await;
+            } else {
+                run_agent_prompt(PromptArgs {
+                    agent: ctx.agent,
+                    messages: ctx.messages,
+                    session: ctx.session,
+                    stdout: ctx.stdout,
+                    message: follow_msg,
+                    cancel_rx,
+                })
+                .await;
+            }
             disarm_cancel(&ctx.cancel_handle);
         }
     }

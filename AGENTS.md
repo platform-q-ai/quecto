@@ -71,7 +71,7 @@ Manual arg parsing (no clap). Entry point: `cli::run(args) -> i32`.
 | Command | Description |
 |---|---|
 | `quecto` | Interactive REPL (`-s` session, `--system` prompt, `--model` override) with live progress spinner |
-| `quecto agent -m <msg>` | Headless one-shot / automation (`-s`, `--no-session`, `--system`, `--model`, `--max-iterations`, `--max-time`, `--mode uds`) |
+| `quecto agent -m <msg>` | Headless one-shot / automation (`-s`, `--no-session`, `--system`, `--model`, `--max-iterations`, `--max-time`, `--mode uds`). UDS mode: multi-client event bus (accept loop, broadcast events to all clients, commands merge via mpsc) |
 | `quecto onboard` | Creates workspace + default config |
 | `quecto skills list\|remove\|install` | Skill management |
 | `quecto status` | Config summary, provider availability |
