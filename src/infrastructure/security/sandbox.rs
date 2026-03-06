@@ -189,7 +189,15 @@ impl Sandbox {
 /// characters. Also concatenates adjacent `$'...'` and literal fragments like
 /// `$'\x72'm` → `rm`. This is a best-effort defence-in-depth pre-processing
 /// step; for security-critical deployments, use the command allowlist.
+/// Best-effort expansion of bash `$'...'` ANSI-C quoting sequences.
+/// Not a full bash parser — intended as a defence-in-depth pre-processing step
+/// for the command denylist. Use the command allowlist for security-critical deployments.
 pub(crate) fn expand_bash_escapes(command: &str) -> String {
+    // Fast path: no $' sequences → return as-is (zero allocation)
+    if !command.contains("$'") {
+        return command.to_string();
+    }
+
     let mut result = String::with_capacity(command.len());
     let chars: Vec<char> = command.chars().collect();
     let len = chars.len();
@@ -203,33 +211,41 @@ pub(crate) fn expand_bash_escapes(command: &str) -> String {
                 if chars[i] == '\\' && i + 1 < len {
                     match chars[i + 1] {
                         'x' | 'X' => {
-                            // \xHH — 2 hex digits
-                            let hex: String = chars[i + 2..].iter().take(2).collect();
+                            // \xHH — up to 2 hex digits
+                            let hex: String =
+                                chars.get(i + 2..).unwrap_or(&[]).iter().take(2).collect();
                             if let Ok(byte) = u8::from_str_radix(&hex, 16) {
                                 result.push(byte as char);
                                 i += 2 + hex.len();
                             } else {
-                                result.push(chars[i]);
-                                i += 1;
+                                // Skip \x entirely on failure
+                                i += 2;
                             }
                         }
                         'u' | 'U' => {
-                            // \uHHHH — up to 4 hex digits
-                            let hex: String = chars[i + 2..]
+                            // \uHHHH or \UHHHHHHHH
+                            let max_digits = if chars[i + 1] == 'U' { 8 } else { 4 };
+                            let hex: String = chars
+                                .get(i + 2..)
+                                .unwrap_or(&[])
                                 .iter()
-                                .take(if chars[i + 1] == 'U' { 8 } else { 4 })
+                                .take(max_digits)
                                 .take_while(|c| c.is_ascii_hexdigit())
                                 .collect();
                             if let Ok(cp) = u32::from_str_radix(&hex, 16) {
                                 if let Some(ch) = char::from_u32(cp) {
                                     result.push(ch);
                                 }
+                                // Invalid codepoints (surrogates) are silently dropped —
+                                // this is intentional for denylist safety.
                             }
                             i += 2 + hex.len();
                         }
                         '0'..='7' => {
-                            // \OOO — up to 3 octal digits
-                            let oct: String = chars[i + 1..]
+                            // \OOO — up to 3 octal digits (starting at i+1)
+                            let oct: String = chars
+                                .get(i + 1..)
+                                .unwrap_or(&[])
                                 .iter()
                                 .take(3)
                                 .take_while(|c| matches!(c, '0'..='7'))
@@ -275,23 +291,36 @@ pub(crate) fn expand_bash_escapes(command: &str) -> String {
 
 /// Extract string literal values from variable assignments (e.g. `cmd='rm -rf /'`)
 /// and append them to the command for denylist scanning.
+/// Splits on all shell metacharacters (`;`, `&&`, `||`, `|`, newlines).
 fn extract_string_literals(command: &str) -> String {
+    // Fast path: no '=' → no assignments
+    if !command.contains('=') {
+        return String::new();
+    }
+
     let mut extra = String::new();
-    // Match patterns like VAR='value' or VAR="value"
-    for segment in command.split(';') {
+    // Normalize metacharacters to a common separator
+    let mut normalized = command.to_string();
+    for mc in &["&&", "||"] {
+        normalized = normalized.replace(mc, ";");
+    }
+    normalized = normalized.replace('|', ";");
+    normalized = normalized.replace('\n', ";");
+
+    for segment in normalized.split(';') {
         let trimmed = segment.trim();
         if let Some(eq_pos) = trimmed.find('=') {
             let before = &trimmed[..eq_pos];
-            // Verify it looks like a variable name (alphanumeric/underscore)
             if before
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '_')
                 && !before.is_empty()
             {
                 let after = trimmed[eq_pos + 1..].trim();
-                // Strip quotes
-                let unquoted = if (after.starts_with('\'') && after.ends_with('\''))
-                    || (after.starts_with('"') && after.ends_with('"'))
+                // Strip single/double quotes
+                let unquoted = if after.len() >= 2
+                    && ((after.starts_with('\'') && after.ends_with('\''))
+                        || (after.starts_with('"') && after.ends_with('"')))
                 {
                     &after[1..after.len() - 1]
                 } else {

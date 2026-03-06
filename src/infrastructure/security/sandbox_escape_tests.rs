@@ -147,6 +147,18 @@ fn test_mixed_escape_literal_blocked() {
     assert!(sb.validate_command("$'\\x72'm -rf /").is_err());
 }
 
+#[test]
+fn test_variable_indirection_via_and_blocked() {
+    let sb = sandbox("/tmp/test", false);
+    assert!(sb.validate_command("cmd='rm -rf /' && $cmd").is_err());
+}
+
+#[test]
+fn test_variable_indirection_via_pipe_blocked() {
+    let sb = sandbox("/tmp/test", false);
+    assert!(sb.validate_command("x='shutdown' | $x").is_err());
+}
+
 // --- expand_bash_escapes unit tests ---
 
 #[test]
