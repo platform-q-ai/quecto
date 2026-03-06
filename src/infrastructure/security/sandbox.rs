@@ -25,7 +25,13 @@ const DANGEROUS_PATTERNS: &[&str] = &[
     "init 6",
     ":(){ :",
     "chmod -R 777 /",
-    "chown -R ",
+    // #304: Narrowed from "chown -R " (blocked legitimate workspace-scoped usage).
+    // Target system-critical paths only; nsjail mount namespace prevents escapes in
+    // sandboxed mode. Patterns cover both spaced and compact flag forms (-R/-Rroot).
+    "chown -r root",
+    "chown -rroot",
+    "chown -r 0 /",
+    "chown -r 0:0",
     "> /dev/sda",
     "wget|sh",
     "wget | sh",
@@ -676,4 +682,26 @@ mod tests {
     // --- Sandbox hardening: allowlist tests ---
 
     // Allowlist, escape bypass, and token extraction tests in sandbox_escape_tests.rs
+
+    // --- #304: Narrowed chown denylist ---
+
+    #[test]
+    fn test_chown_system_root_blocked() {
+        let sb = sandbox("/tmp/quecto-test", false);
+        assert!(sb.validate_command("chown -R root:root /").is_err());
+    }
+
+    #[test]
+    fn test_chown_workspace_scoped_allowed() {
+        // Legitimate workspace-scoped chown should not be blocked
+        let sb = sandbox("/tmp/quecto-test", false);
+        assert!(sb.validate_command("chown -R user:group ./src").is_ok());
+    }
+
+    #[test]
+    fn test_chown_no_space_variant_blocked() {
+        // chown -Rroot (no space) previously bypassed the trailing-space pattern
+        let sb = sandbox("/tmp/quecto-test", false);
+        assert!(sb.validate_command("chown -Rroot /").is_err());
+    }
 }

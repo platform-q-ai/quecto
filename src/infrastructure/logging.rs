@@ -1,11 +1,19 @@
 // Logging utilities: API key redaction for tracing output.
 
+/// Candidate byte values that can start a secret prefix: `s` (sk-), `g` (gsk_/gsk-),
+/// or an ASCII digit (Telegram token).
+const CANDIDATE_STARTS: &[u8] = b"sg0123456789";
+
 /// Redact API keys from a string.
 ///
 /// Matches patterns like `sk-...`, `sk-ant-...`, and similar API key prefixes.
 /// Replaces the key with a redacted placeholder preserving the prefix.
+///
+/// Uses a skip-ahead scan (#306): instead of walking every character, the inner
+/// loop advances directly to the next byte that *could* start a secret, copying
+/// the clean run in one `push_str` rather than char-by-char.
 pub fn redact_api_keys(input: &str) -> String {
-    // Fast path: skip scanning if no API key prefix present
+    // Fast path: skip entirely if none of the triggering prefixes are present.
     if !input.contains("sk-")
         && !input.contains("gsk_")
         && !input.contains("gsk-")
@@ -14,20 +22,40 @@ pub fn redact_api_keys(input: &str) -> String {
         return input.to_string();
     }
 
+    let bytes = input.as_bytes();
     let mut result = String::with_capacity(input.len());
     let mut i = 0;
 
-    while i < input.len() {
+    while i < bytes.len() {
+        // Skip ahead to the next byte that could begin a secret.
+        let next_candidate = bytes[i..]
+            .iter()
+            .position(|b| CANDIDATE_STARTS.contains(b))
+            .map(|pos| i + pos)
+            .unwrap_or(bytes.len());
+
+        // Copy the clean run before the candidate in one shot.
+        if next_candidate > i {
+            result.push_str(&input[i..next_candidate]);
+            i = next_candidate;
+        }
+        if i >= bytes.len() {
+            break;
+        }
+
+        // Try to detect a secret at this position.
         if let Some((redacted_len, replacement)) = detect_secret(&input[i..]) {
             let key = &input[i..i + redacted_len];
             if replacement.is_empty() {
                 result.push_str("***");
             } else {
                 let prefix = extract_prefix(key, replacement);
-                result.push_str(&format!("{}***", prefix));
+                result.push_str(prefix);
+                result.push_str("***");
             }
             i += redacted_len;
         } else {
+            // Not a secret — copy the byte and advance.
             let ch = input[i..].chars().next().unwrap_or_default();
             result.push(ch);
             i += ch.len_utf8();
@@ -210,5 +238,32 @@ mod tests {
     #[test]
     fn test_detect_api_key_not_sk() {
         assert!(detect_api_key("pk-test-key-12345").is_none());
+    }
+
+    // --- #306: fast-path correctness after prefix-scan optimisation ---
+
+    #[test]
+    fn fast_path_returns_same_string_no_alloc_for_clean_lines() {
+        // Lines without any key prefix must take the fast path and return identical content.
+        let input = "HTTP 200 OK — response received in 42ms";
+        let result = redact_api_keys(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn partial_prefix_sk_dash_not_matching_minimum_length_is_left_intact() {
+        // "sk-" appearing in a word like "disk-" should not be redacted
+        let input = "reading from /dev/disk-0 via udev";
+        let result = redact_api_keys(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn redact_mid_line_key_leaves_surrounding_text() {
+        let input = "auth=sk-abcdefghijklmno next=foo";
+        let result = redact_api_keys(input);
+        assert!(!result.contains("abcdefghijklmno"));
+        assert!(result.starts_with("auth=sk-***"));
+        assert!(result.ends_with("next=foo"));
     }
 }
