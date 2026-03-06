@@ -951,3 +951,35 @@ fn then_tool_result_turn1_still_has_spill_id(world: &mut QuectoWorld, expected: 
         "spill_id should survive save/load round-trip"
     );
 }
+
+// ===========================================================================
+// Token estimation heuristic steps (#305)
+// ===========================================================================
+
+#[given(expr = "a string of {int} ASCII characters")]
+fn given_ascii_string(world: &mut QuectoWorld, count: usize) {
+    world.token_estimate_input = Some("x".repeat(count));
+}
+
+#[given(expr = "a string of {int} CJK characters")]
+fn given_cjk_string(world: &mut QuectoWorld, count: usize) {
+    // Use a common CJK character (U+4E2D = 中)
+    world.token_estimate_input = Some("中".repeat(count));
+}
+
+#[then(expr = "the estimated token count should be {int}")]
+fn then_estimated_token_count(world: &mut QuectoWorld, expected: usize) {
+    let input = world
+        .token_estimate_input
+        .as_ref()
+        .expect("no input string set");
+    let actual = context_pruning::estimate_tokens(input);
+    assert_eq!(
+        actual,
+        expected,
+        "expected {} tokens for {} chars, got {}",
+        expected,
+        input.len(),
+        actual
+    );
+}

@@ -544,6 +544,10 @@ pub struct QuectoWorld {
     pub ext_fingerprint_a: Option<std::collections::HashMap<PathBuf, (std::time::SystemTime, u64)>>,
     /// Fingerprint B for comparison
     pub ext_fingerprint_b: Option<std::collections::HashMap<PathBuf, (std::time::SystemTime, u64)>>,
+    /// Custom config path for --config flag scenarios
+    pub custom_config_path: Option<String>,
+    /// Token estimation: input string for estimate_tokens scenarios
+    pub token_estimate_input: Option<String>,
     /// Guard check result
     pub guard_check_result: Option<Result<(), String>>,
     /// Captured guard tool name

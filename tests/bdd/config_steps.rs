@@ -231,6 +231,18 @@ fn then_output_contains(world: &mut QuectoWorld, expected: String) {
     );
 }
 
+#[then(expr = "the output should not contain {string}")]
+fn then_output_not_contains(world: &mut QuectoWorld, unexpected: String) {
+    let combined = format!("{}{}", world.stdout, world.stderr);
+    assert!(
+        !combined.contains(&unexpected),
+        "expected output NOT to contain '{}', got:\nstdout: {}\nstderr: {}",
+        unexpected,
+        world.stdout,
+        world.stderr
+    );
+}
+
 #[then(expr = "the stderr should contain {string}")]
 fn then_stderr_contains(world: &mut QuectoWorld, expected: String) {
     assert!(
@@ -324,4 +336,46 @@ fn then_config_should_have_restrict(world: &mut QuectoWorld, expected: String) {
         "expected restrict_to_workspace {}, got {}",
         expected_bool, config.agents.defaults.restrict_to_workspace
     );
+}
+
+// ===========================================================================
+// Config steps for CLI/Observability scenarios (restored from deleted voice_steps.rs)
+// ===========================================================================
+
+#[given("a valid config with OpenAI API key set")]
+fn given_valid_config_with_openai(world: &mut QuectoWorld) {
+    ensure_temp_dir(world);
+    let config_json = r#"{
+        "providers": {
+            "openai": { "api_key": "sk-test-key-123" }
+        }
+    }"#;
+    let config_path = base_path(world).join("config.json");
+    std::fs::write(&config_path, config_json).expect("write config");
+}
+
+#[given("a config with OpenAI api_key set and Anthropic not set")]
+fn given_config_openai_set_anthropic_not(world: &mut QuectoWorld) {
+    ensure_temp_dir(world);
+    let config_json = r#"{
+        "providers": {
+            "openai": { "api_key": "sk-test-key-456" },
+            "anthropic": { "api_key": "" }
+        }
+    }"#;
+    let config_path = base_path(world).join("config.json");
+    std::fs::write(&config_path, config_json).expect("write config");
+}
+
+#[given(expr = "a config with OpenAI api_key {string} set")]
+fn given_config_with_specific_openai_key(world: &mut QuectoWorld, api_key: String) {
+    ensure_temp_dir(world);
+    let config = serde_json::json!({
+        "providers": {
+            "openai": { "api_key": api_key }
+        }
+    });
+    let config_path = base_path(world).join("config.json");
+    std::fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap())
+        .expect("write config");
 }
