@@ -61,6 +61,16 @@ impl WorkflowTool {
         }
     }
 
+    /// Set the enforce_commit_after_step threshold.
+    pub fn set_enforce_commit(&mut self, threshold: Option<u32>) {
+        self.enforce_commit_after_step = threshold;
+    }
+
+    /// Set the event emitter.
+    pub fn set_event_emitter(&mut self, emitter: WorkflowEventEmitter) {
+        self.event_emitter = Some(emitter);
+    }
+
     /// Get a reference to the shared workflow state.
     pub fn state(&self) -> &Arc<Mutex<WorkflowState>> {
         &self.state
@@ -94,7 +104,7 @@ impl WorkflowTool {
             let state = self.lock_state()?;
             return match state.check_commit_allowed(self.enforce_commit_after_step) {
                 Ok(()) => Ok("Commit allowed.".to_string()),
-                Err(reason) => Err(reason),
+                Err(e) => Err(e.to_string()),
             };
         }
 

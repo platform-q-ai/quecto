@@ -203,7 +203,7 @@ fn when_check_commit(world: &mut QuectoWorld) {
     let enforce = world
         .enforce_commit_after_step
         .expect("enforce_commit_after_step should be set");
-    world.commit_check_result = Some(s.check_commit_allowed(enforce));
+    world.commit_check_result = Some(s.check_commit_allowed(enforce).map_err(|e| e.to_string()));
 }
 
 #[then("the commit should be blocked")]

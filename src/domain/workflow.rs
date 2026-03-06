@@ -53,6 +53,8 @@ pub enum WorkflowError {
     InvalidStep(String),
     /// Step ordering not satisfied.
     OrderingViolation(String),
+    /// Commit blocked because required steps are incomplete.
+    CommitBlocked(String),
 }
 
 impl std::fmt::Display for WorkflowError {
@@ -60,6 +62,7 @@ impl std::fmt::Display for WorkflowError {
         match self {
             WorkflowError::InvalidStep(msg) => write!(f, "{}", msg),
             WorkflowError::OrderingViolation(msg) => write!(f, "{}", msg),
+            WorkflowError::CommitBlocked(msg) => write!(f, "{}", msg),
         }
     }
 }
@@ -276,10 +279,8 @@ impl WorkflowState {
     /// Returns `None` when all steps are complete (no nudge needed).
     /// Returns `Some(message)` with the next incomplete step to work on.
     pub fn auto_continue_nudge(&self) -> Option<String> {
-        let progress = self.progress();
-        if progress.done >= progress.total {
-            return None;
-        }
+        // position() returns None when all steps are done — no need for
+        // a separate progress() call.
         let next_idx = self.done.iter().position(|&d| !d)?;
         let step = &self.steps[next_idx];
         Some(format!(
@@ -316,11 +317,11 @@ impl WorkflowState {
     /// - `enforce_commit_after_step = Some(0)` → always allowed
     /// - `enforce_commit_after_step = Some(n)` → all steps 1..=n must be checked
     ///
-    /// Returns `Ok(())` if allowed, `Err(reason)` if blocked.
+    /// Returns `Ok(())` if allowed, `Err(WorkflowError::CommitBlocked)` if blocked.
     pub fn check_commit_allowed(
         &self,
         enforce_commit_after_step: Option<u32>,
-    ) -> Result<(), String> {
+    ) -> Result<(), WorkflowError> {
         let threshold = match enforce_commit_after_step {
             None => return Ok(()),
             Some(0) => return Ok(()),
@@ -329,11 +330,11 @@ impl WorkflowState {
         let limit = std::cmp::min(threshold as usize, self.steps.len());
         for i in 0..limit {
             if !self.done[i] {
-                return Err(format!(
+                return Err(WorkflowError::CommitBlocked(format!(
                     "commit blocked: complete step {} ({}) before committing. \
                      Steps 1–{} must be checked (enforce_commit_after_step = {}).",
                     self.steps[i].id, self.steps[i].label, threshold, threshold
-                ));
+                )));
             }
         }
         Ok(())
@@ -348,15 +349,25 @@ impl WorkflowState {
         }
     }
 
-    /// Restore state from a persisted snapshot. Uses default steps.
-    /// If the persisted done vector length doesn't match the step count,
-    /// it is padded with `false` or truncated.
+    /// Restore state from a persisted snapshot.
+    ///
+    /// Uses the provided steps (from config), or falls back to
+    /// [`default_steps()`] if `None`. If the persisted done vector length
+    /// doesn't match the step count, it is padded with `false` or truncated.
     pub fn from_persistable(p: &WorkflowPersistable) -> Self {
-        let steps = default_steps();
+        Self::from_persistable_with_steps(p, None)
+    }
+
+    /// Restore state from a persisted snapshot with explicit step definitions.
+    pub fn from_persistable_with_steps(
+        p: &WorkflowPersistable,
+        steps: Option<Vec<WorkflowStep>>,
+    ) -> Self {
+        let steps = steps.unwrap_or_else(default_steps);
         let len = steps.len();
         let mut done = p.done.clone();
+        // resize handles both padding (len > done.len()) and truncation.
         done.resize(len, false);
-        done.truncate(len);
         Self {
             steps,
             done,
@@ -424,17 +435,17 @@ pub struct WorkflowConfig {
     pub steps: Vec<WorkflowStep>,
     /// When true, after each agent run completes with incomplete steps, the
     /// system injects a nudge message to continue with the next step.
-    #[serde(default = "default_true")]
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub auto_continue: bool,
     /// When true, after all steps are checked, the system prompts the agent
     /// to close the current issue and pick the next one.
-    #[serde(default = "default_true")]
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub completion_nudge: bool,
     /// Block `git commit` via the bash tool if steps up to this number are not
     /// all checked.  Set to `null` to disable.
     #[serde(
         default = "default_enforce_commit_after_step",
-        skip_serializing_if = "Option::is_none"
+        skip_serializing_if = "is_default_enforce"
     )]
     pub enforce_commit_after_step: Option<u32>,
 }
@@ -455,6 +466,13 @@ fn default_enforce_commit_after_step() -> Option<u32> {
     Some(6)
 }
 
+/// Returns true when `enforce_commit_after_step` is the default `Some(6)`.
+/// Used by `skip_serializing_if` to avoid injecting the default value into
+/// serialized config files on round-trip.
+fn is_default_enforce(val: &Option<u32>) -> bool {
+    *val == Some(6)
+}
+
 /// Returns true if the steps match the default 16-step template.
 /// Used by `skip_serializing_if` to avoid injecting default workflow
 /// config into serialized config files on round-trip.
@@ -471,6 +489,10 @@ fn is_default_steps(steps: &[WorkflowStep]) -> bool {
 
 fn default_true() -> bool {
     true
+}
+
+fn is_true(val: &bool) -> bool {
+    *val
 }
 
 /// The default 16-step BDD/TDD workflow matching AGENTS.md.

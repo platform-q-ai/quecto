@@ -336,7 +336,7 @@ fn test_check_commit_blocked() {
     let state = WorkflowState::default_bdd();
     let result = state.check_commit_allowed(Some(6));
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("step 1"));
+    assert!(result.unwrap_err().to_string().contains("step 1"));
 }
 
 #[test]
@@ -356,7 +356,7 @@ fn test_check_commit_blocked_partial() {
     }
     let result = state.check_commit_allowed(Some(6));
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("step 5"));
+    assert!(result.unwrap_err().to_string().contains("step 5"));
 }
 
 // ─── Persistence tests ──────────────────────────────────────────────────
