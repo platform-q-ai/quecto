@@ -110,6 +110,44 @@ Feature: Sandbox Hardening
     Then the validation should be an error
     And the error should mention "dangerous pattern"
 
+  # --- Issue #301: Bash encoding/escaping bypass prevention ---
+
+  Scenario: Hex escape bypass of dangerous command is blocked
+    Given a sandbox without a command allowlist
+    When the agent tries to validate command "$'\x72\x6d' -rf /"
+    Then the validation should be an error
+    And the error should mention "dangerous pattern"
+
+  Scenario: Octal escape bypass of dangerous command is blocked
+    Given a sandbox without a command allowlist
+    When the agent tries to validate command "$'\162\155' -rf /"
+    Then the validation should be an error
+    And the error should mention "dangerous pattern"
+
+  Scenario: Variable indirection bypass is blocked
+    Given a sandbox without a command allowlist
+    When the agent tries to validate command "cmd='rm -rf /'; $cmd"
+    Then the validation should be an error
+    And the error should mention "dangerous pattern"
+
+  Scenario: Unicode escape bypass is blocked
+    Given a sandbox without a command allowlist
+    When the agent tries to validate command "$'\u0072\u006d' -rf /"
+    Then the validation should be an error
+    And the error should mention "dangerous pattern"
+
+  Scenario: Mixed escape and literal bypass is blocked
+    Given a sandbox without a command allowlist
+    When the agent tries to validate command "$'\x72'm -rf /"
+    Then the validation should be an error
+    And the error should mention "dangerous pattern"
+
+  Scenario: Hex escape of reboot is blocked
+    Given a sandbox without a command allowlist
+    When the agent tries to validate command "$'\x72\x65\x62\x6f\x6f\x74'"
+    Then the validation should be an error
+    And the error should mention "dangerous pattern"
+
   # --- Exec timeout enforcement ---
 
   Scenario: Command completes within timeout

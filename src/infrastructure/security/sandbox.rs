@@ -185,11 +185,171 @@ impl Sandbox {
     }
 }
 
+/// Expand bash `$'...'` escape sequences (hex, octal, unicode) to their literal
+/// characters. Also concatenates adjacent `$'...'` and literal fragments like
+/// `$'\x72'm` → `rm`. This is a best-effort defence-in-depth pre-processing
+/// step; for security-critical deployments, use the command allowlist.
+/// Best-effort expansion of bash `$'...'` ANSI-C quoting sequences.
+/// Not a full bash parser — intended as a defence-in-depth pre-processing step
+/// for the command denylist. Use the command allowlist for security-critical deployments.
+pub(crate) fn expand_bash_escapes(command: &str) -> String {
+    // Fast path: no $' sequences → return as-is (zero allocation)
+    if !command.contains("$'") {
+        return command.to_string();
+    }
+
+    let mut result = String::with_capacity(command.len());
+    let chars: Vec<char> = command.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+
+    while i < len {
+        // Match $'...' ANSI-C quoting
+        if i + 1 < len && chars[i] == '$' && chars[i + 1] == '\'' {
+            i += 2; // skip $'
+            while i < len && chars[i] != '\'' {
+                if chars[i] == '\\' && i + 1 < len {
+                    match chars[i + 1] {
+                        'x' | 'X' => {
+                            // \xHH — up to 2 hex digits
+                            let hex: String =
+                                chars.get(i + 2..).unwrap_or(&[]).iter().take(2).collect();
+                            if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                                result.push(byte as char);
+                                i += 2 + hex.len();
+                            } else {
+                                // Skip \x entirely on failure
+                                i += 2;
+                            }
+                        }
+                        'u' | 'U' => {
+                            // \uHHHH or \UHHHHHHHH
+                            let max_digits = if chars[i + 1] == 'U' { 8 } else { 4 };
+                            let hex: String = chars
+                                .get(i + 2..)
+                                .unwrap_or(&[])
+                                .iter()
+                                .take(max_digits)
+                                .take_while(|c| c.is_ascii_hexdigit())
+                                .collect();
+                            if let Ok(cp) = u32::from_str_radix(&hex, 16) {
+                                if let Some(ch) = char::from_u32(cp) {
+                                    result.push(ch);
+                                }
+                                // Invalid codepoints (surrogates) are silently dropped —
+                                // this is intentional for denylist safety.
+                            }
+                            i += 2 + hex.len();
+                        }
+                        '0'..='7' => {
+                            // \OOO — up to 3 octal digits (starting at i+1)
+                            let oct: String = chars
+                                .get(i + 1..)
+                                .unwrap_or(&[])
+                                .iter()
+                                .take(3)
+                                .take_while(|c| matches!(c, '0'..='7'))
+                                .collect();
+                            if let Ok(byte) = u8::from_str_radix(&oct, 8) {
+                                result.push(byte as char);
+                            }
+                            i += 1 + oct.len();
+                        }
+                        'n' => {
+                            result.push('\n');
+                            i += 2;
+                        }
+                        't' => {
+                            result.push('\t');
+                            i += 2;
+                        }
+                        '\\' => {
+                            result.push('\\');
+                            i += 2;
+                        }
+                        _ => {
+                            result.push(chars[i + 1]);
+                            i += 2;
+                        }
+                    }
+                } else {
+                    result.push(chars[i]);
+                    i += 1;
+                }
+            }
+            if i < len {
+                i += 1; // skip closing '
+            }
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+
+    result
+}
+
+/// Extract string literal values from variable assignments (e.g. `cmd='rm -rf /'`)
+/// and append them to the command for denylist scanning.
+/// Splits on all shell metacharacters (`;`, `&&`, `||`, `|`, newlines).
+fn extract_string_literals(command: &str) -> String {
+    // Fast path: no '=' → no assignments
+    if !command.contains('=') {
+        return String::new();
+    }
+
+    let mut extra = String::new();
+    // Normalize metacharacters to a common separator
+    let mut normalized = command.to_string();
+    for mc in &["&&", "||"] {
+        normalized = normalized.replace(mc, ";");
+    }
+    normalized = normalized.replace('|', ";");
+    normalized = normalized.replace('\n', ";");
+
+    for segment in normalized.split(';') {
+        let trimmed = segment.trim();
+        if let Some(eq_pos) = trimmed.find('=') {
+            let before = &trimmed[..eq_pos];
+            if before
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && !before.is_empty()
+            {
+                let after = trimmed[eq_pos + 1..].trim();
+                // Strip single/double quotes
+                let unquoted = if after.len() >= 2
+                    && ((after.starts_with('\'') && after.ends_with('\''))
+                        || (after.starts_with('"') && after.ends_with('"')))
+                {
+                    &after[1..after.len() - 1]
+                } else {
+                    after
+                };
+                if !unquoted.is_empty() {
+                    extra.push(' ');
+                    extra.push_str(unquoted);
+                }
+            }
+        }
+    }
+    extra
+}
+
 fn normalize_command_for_denylist(command: &str) -> String {
-    let mut normalized = String::with_capacity(command.len());
+    // Pre-process: expand bash escape sequences and extract string literals
+    let expanded = expand_bash_escapes(command);
+    let literals = extract_string_literals(&expanded);
+    let combined = if literals.is_empty() {
+        expanded
+    } else {
+        format!("{expanded}{literals}")
+    };
+
+    let mut normalized = String::with_capacity(combined.len());
     let mut in_whitespace = false;
 
-    for ch in command.chars() {
+    for ch in combined.chars() {
         for lower in ch.to_lowercase() {
             if lower.is_whitespace() {
                 if !in_whitespace && !normalized.is_empty() {
@@ -212,7 +372,7 @@ fn normalize_command_for_denylist(command: &str) -> String {
 
 /// Extract all command tokens (first words) from a shell command string,
 /// splitting on metacharacters like `;`, `|`, `&&`, `||`.
-fn extract_all_command_tokens(command: &str) -> Vec<String> {
+pub(crate) fn extract_all_command_tokens(command: &str) -> Vec<String> {
     // Replace metacharacters with a common separator
     let mut normalized = command.to_string();
     // Order matters: longer patterns first
@@ -467,145 +627,5 @@ mod tests {
 
     // --- Sandbox hardening: allowlist tests ---
 
-    #[test]
-    fn test_allowlist_permits_listed_command() {
-        let mut sb = Sandbox::new(None, false);
-        sb.command_allowlist = Some(vec!["echo".to_string(), "ls".to_string()]);
-        assert!(sb.validate_command("echo hello").is_ok());
-    }
-
-    #[test]
-    fn test_allowlist_rejects_unlisted_command() {
-        let mut sb = Sandbox::new(None, false);
-        sb.command_allowlist = Some(vec!["echo".to_string(), "ls".to_string()]);
-        let result = sb.validate_command("curl http://evil.com");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not in allowlist"));
-    }
-
-    #[test]
-    fn test_allowlist_rejects_semicolon_bypass() {
-        let mut sb = Sandbox::new(None, false);
-        sb.command_allowlist = Some(vec!["echo".to_string(), "ls".to_string()]);
-        let result = sb.validate_command("echo hello; curl evil.com");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not in allowlist"));
-    }
-
-    #[test]
-    fn test_allowlist_rejects_command_substitution() {
-        let mut sb = Sandbox::new(None, false);
-        sb.command_allowlist = Some(vec!["echo".to_string(), "ls".to_string()]);
-        let result = sb.validate_command("echo $(cat /etc/shadow)");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not in allowlist"));
-    }
-
-    #[test]
-    fn test_allowlist_rejects_backtick_substitution() {
-        let mut sb = Sandbox::new(None, false);
-        sb.command_allowlist = Some(vec!["echo".to_string(), "ls".to_string()]);
-        let result = sb.validate_command("echo `id`");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not in allowlist"));
-    }
-
-    #[test]
-    fn test_allowlist_rejects_pipe_to_disallowed() {
-        let mut sb = Sandbox::new(None, false);
-        sb.command_allowlist = Some(vec!["echo".to_string(), "ls".to_string()]);
-        let result = sb.validate_command("ls | bash");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not in allowlist"));
-    }
-
-    #[test]
-    fn test_empty_allowlist_blocks_all() {
-        let mut sb = Sandbox::new(None, false);
-        sb.command_allowlist = Some(vec![]);
-        let result = sb.validate_command("echo hello");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not in allowlist"));
-    }
-
-    #[test]
-    fn test_no_allowlist_falls_back_to_denylist() {
-        let sb = Sandbox::new(None, false);
-        // No allowlist set — should fall back to denylist, allowing safe commands
-        assert!(sb.validate_command("echo hello").is_ok());
-    }
-
-    #[test]
-    fn test_allowlist_still_blocks_dangerous_patterns() {
-        // Even with "rm" in the allowlist, dangerous patterns should be blocked
-        let mut sb = Sandbox::new(None, false);
-        sb.command_allowlist = Some(vec!["rm".to_string(), "echo".to_string()]);
-        let result = sb.validate_command("rm -rf /");
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("dangerous pattern")
-        );
-    }
-
-    #[test]
-    fn test_dangerous_command_rm_rf_with_extra_spaces() {
-        let sb = sandbox("/tmp/quecto-test", false);
-        let result = sb.validate_command("rm  -rf /");
-        assert!(
-            result.is_err(),
-            "expected repeated whitespace variant to be blocked"
-        );
-    }
-
-    #[test]
-    fn test_dangerous_command_rm_with_split_flags() {
-        let sb = sandbox("/tmp/quecto-test", false);
-        let result = sb.validate_command("rm -r -f /");
-        assert!(result.is_err(), "expected split-flag variant to be blocked");
-    }
-
-    #[test]
-    fn test_dangerous_command_pipe_to_shell_with_spaces() {
-        let sb = sandbox("/tmp/quecto-test", false);
-        let result = sb.validate_command("curl | sh");
-        assert!(
-            result.is_err(),
-            "expected spaced pipe-to-shell variant to be blocked"
-        );
-    }
-
-    // --- extract_all_command_tokens tests ---
-
-    #[test]
-    fn test_extract_tokens_simple() {
-        let tokens = extract_all_command_tokens("echo hello");
-        assert_eq!(tokens, vec!["echo"]);
-    }
-
-    #[test]
-    fn test_extract_tokens_semicolon() {
-        let tokens = extract_all_command_tokens("echo hello; curl evil.com");
-        assert_eq!(tokens, vec!["echo", "curl"]);
-    }
-
-    #[test]
-    fn test_extract_tokens_pipe() {
-        let tokens = extract_all_command_tokens("ls | bash");
-        assert_eq!(tokens, vec!["ls", "bash"]);
-    }
-
-    #[test]
-    fn test_extract_tokens_command_substitution() {
-        let tokens = extract_all_command_tokens("echo $(cat /etc/shadow)");
-        assert_eq!(tokens, vec!["echo", "cat"]);
-    }
-
-    #[test]
-    fn test_extract_tokens_backtick() {
-        let tokens = extract_all_command_tokens("echo `id`");
-        assert_eq!(tokens, vec!["echo", "id"]);
-    }
+    // Allowlist, escape bypass, and token extraction tests in sandbox_escape_tests.rs
 }
