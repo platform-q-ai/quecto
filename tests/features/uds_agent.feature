@@ -450,3 +450,101 @@ Feature: UDS mode for headless agent operation
     And the agent output should contain a token event with "Hello"
     And the agent output should contain a token event with " world"
     And the agent output should contain a turn_end event with content "Hello world"
+
+  # ─── Multi-client UDS event bus (#318) ───────────────────────────────────────
+
+  @done @multi-client
+  Scenario: second client connects while first is already connected
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "hello from multi"
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And client 2 connects
+    And client 1 sends prompt "hi"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 1 should have received an event of type "agent_end"
+    And client 2 should have received an event of type "agent_end"
+
+  @done @multi-client
+  Scenario: events from a prompt are broadcast to all connected clients
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "broadcast test"
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And client 2 connects
+    And client 1 sends prompt "trigger events"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 1 should have received an event of type "agent_start"
+    And client 2 should have received an event of type "agent_start"
+    And client 1 should have received an event of type "turn_end"
+    And client 2 should have received an event of type "turn_end"
+
+  @done @multi-client
+  Scenario: command from any client is dispatched correctly
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "from client 2"
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And client 2 connects
+    And client 2 sends prompt "hello from client 2"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 1 should have received an event of type "agent_end"
+    And client 2 should have received an event of type "agent_end"
+
+  @done @multi-client
+  Scenario: client disconnect does not crash the agent
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "still alive"
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And client 2 connects
+    And client 1 disconnects
+    And client 2 sends prompt "after disconnect"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 2 should have received an event of type "agent_end"
+
+  @done @multi-client
+  Scenario: response event carries correlation id back to requesting client
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "correlated"
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And client 2 connects
+    And client 1 sends prompt with id "req-c1" and message "hello"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 1 should have received a response with id "req-c1"
+    And client 2 should have received a response with id "req-c1"
+
+  @done @multi-client
+  Scenario: agent shuts down when all clients disconnect
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And client 2 connects
+    And client 1 disconnects
+    And client 2 disconnects
+    Then the UDS agent exits with code 0
+
+  @done @multi-client
+  Scenario: ToolStarted progress events are forwarded over UDS
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a tool call then a text response "done"
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And client 1 sends prompt "run a tool"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 1 should have received an event of type "tool_execution_start"
+    And client 1 should have received an event of type "tool_execution_end"

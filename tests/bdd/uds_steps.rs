@@ -988,3 +988,331 @@ fn then_agent_output_contains_turn_end(world: &mut QuectoWorld, expected: String
         "expected a turn_end event with content {expected:?} in events:\n{events:#?}"
     );
 }
+
+// ─── Multi-client UDS steps (#318) ────────────────────────────────────────────
+
+/// Start the UDS agent in multi-client mode (real listener, not socket_override).
+/// The agent binds a real socket and accepts multiple connections.
+#[when("I start the multi-client UDS agent")]
+fn when_start_multi_client_uds(world: &mut QuectoWorld) {
+    world.mc_mode = true;
+    world.no_session = true;
+}
+
+/// Register a client for multi-client mode.
+#[when(expr = "client {int} connects")]
+fn when_client_connects(world: &mut QuectoWorld, client_id: u32) {
+    world.mc_connected_clients.push(client_id);
+    world.mc_client_commands.entry(client_id).or_default();
+    world.mc_client_events.entry(client_id).or_default();
+}
+
+/// Queue a prompt command on a specific client.
+#[when(expr = "client {int} sends prompt {string}")]
+fn when_client_sends_prompt(world: &mut QuectoWorld, client_id: u32, message: String) {
+    let cmd = serde_json::json!({"type": "prompt", "message": message});
+    world
+        .mc_client_commands
+        .entry(client_id)
+        .or_default()
+        .push(cmd.to_string());
+}
+
+/// Queue a prompt command with an id on a specific client.
+#[when(expr = "client {int} sends prompt with id {string} and message {string}")]
+fn when_client_sends_prompt_with_id(
+    world: &mut QuectoWorld,
+    client_id: u32,
+    id: String,
+    message: String,
+) {
+    let cmd = serde_json::json!({"type": "prompt", "id": id, "message": message});
+    world
+        .mc_client_commands
+        .entry(client_id)
+        .or_default()
+        .push(cmd.to_string());
+}
+
+/// Mark a client as disconnected (will close its connection before others).
+#[when(expr = "client {int} disconnects")]
+fn when_client_disconnects(world: &mut QuectoWorld, client_id: u32) {
+    world.mc_disconnected_clients.push(client_id);
+}
+
+/// Close all multi-client connections and wait for the agent to exit.
+#[when("I close all UDS clients")]
+fn when_close_all_uds_clients(world: &mut QuectoWorld) {
+    execute_multi_client_uds(world);
+}
+
+/// Execute the multi-client UDS test scenario.
+///
+/// 1. Bind a real socket (like production)
+/// 2. Spawn the UDS loop in a thread
+/// 3. Connect N clients sequentially
+/// 4. Send each client's queued commands
+/// 5. Handle disconnections
+/// 6. Close remaining clients
+/// 7. Collect events per-client
+fn execute_multi_client_uds(world: &mut QuectoWorld) {
+    if world.mc_exit_code.is_some() {
+        return;
+    }
+
+    let base = world
+        .cli_context
+        .base_dir
+        .clone()
+        .expect("no base dir — add 'Given a temp base directory'");
+
+    if !base.join("config.json").exists() {
+        world.agent_stderr = "config not found".to_string();
+        world.mc_exit_code = Some(1);
+        return;
+    }
+
+    let ctx = match build_uds_agent(world, &base) {
+        Ok(c) => c,
+        Err(e) => {
+            world.agent_stderr = e;
+            world.mc_exit_code = Some(1);
+            return;
+        }
+    };
+
+    let socket_path = base.join("mc-test-agent.sock");
+    let _ = std::fs::remove_file(&socket_path);
+
+    let (handle, socket_path) = match mc_spawn_agent(ctx, &base, socket_path) {
+        Ok(pair) => pair,
+        Err(msg) => {
+            world.agent_stderr = msg;
+            world.mc_exit_code = Some(1);
+            return;
+        }
+    };
+
+    let connected = world.mc_connected_clients.clone();
+    let disconnected = world.mc_disconnected_clients.clone();
+    let commands = world.mc_client_commands.clone();
+
+    mc_drive_clients(
+        world,
+        McClientActions {
+            socket_path: &socket_path,
+            connected: &connected,
+            disconnected: &disconnected,
+            commands: &commands,
+        },
+    );
+
+    let exit = handle.join().unwrap_or(1);
+    world.mc_exit_code = Some(exit);
+    world.uds_exit_code = Some(exit);
+}
+
+/// Spawn the UDS agent loop in a background thread and wait for the socket.
+fn mc_spawn_agent(
+    ctx: UdsAgentContext,
+    base: &std::path::Path,
+    socket_path: std::path::PathBuf,
+) -> Result<(std::thread::JoinHandle<i32>, std::path::PathBuf), String> {
+    let UdsAgentContext {
+        agent,
+        model,
+        session_key,
+        ephemeral,
+    } = ctx;
+    let base_for_thread = base.to_path_buf();
+    let sp = socket_path.clone();
+    let handle = std::thread::spawn(move || {
+        quecto::interface::cli::uds::run_uds_loop(UdsLoopArgs {
+            agent,
+            base_dir: &base_for_thread,
+            session_key,
+            model,
+            ephemeral,
+            system_prompt: String::new(),
+            socket_path: sp,
+            socket_override: None,
+            session_store_override: None,
+        })
+    });
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !socket_path.exists() {
+        if std::time::Instant::now() > deadline {
+            return Err("timeout waiting for socket".to_string());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    Ok((handle, socket_path))
+}
+
+/// Collected multi-client test parameters.
+struct McClientActions<'a> {
+    socket_path: &'a std::path::Path,
+    connected: &'a [u32],
+    disconnected: &'a [u32],
+    commands: &'a HashMap<u32, Vec<String>>,
+}
+
+/// Connect clients, send commands, handle disconnections, collect events.
+fn mc_drive_clients(world: &mut QuectoWorld, actions: McClientActions<'_>) {
+    use std::os::unix::net::UnixStream;
+
+    let McClientActions {
+        socket_path,
+        connected,
+        disconnected,
+        commands,
+    } = actions;
+
+    let mut streams: HashMap<u32, UnixStream> = HashMap::new();
+    for &cid in connected {
+        match UnixStream::connect(socket_path) {
+            Ok(s) => {
+                s.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .ok();
+                s.set_nonblocking(false).ok();
+                streams.insert(cid, s);
+            }
+            Err(e) => {
+                world.agent_stderr = format!("client {cid} connect failed: {e}");
+                world.mc_exit_code = Some(1);
+                return;
+            }
+        }
+    }
+
+    mc_disconnect_early(&mut streams, disconnected);
+    mc_send_commands(&mut streams, connected, disconnected, commands);
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    mc_collect_events(world, &mut streams, connected, disconnected);
+}
+
+/// Disconnect clients marked for early disconnection.
+fn mc_disconnect_early(
+    streams: &mut HashMap<u32, std::os::unix::net::UnixStream>,
+    disconnected: &[u32],
+) {
+    for &cid in disconnected {
+        if let Some(stream) = streams.remove(&cid) {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+            drop(stream);
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+}
+
+/// Send queued commands to connected clients.
+fn mc_send_commands(
+    streams: &mut HashMap<u32, std::os::unix::net::UnixStream>,
+    connected: &[u32],
+    disconnected: &[u32],
+    commands: &HashMap<u32, Vec<String>>,
+) {
+    use std::io::Write;
+    for &cid in connected {
+        if disconnected.contains(&cid) {
+            continue;
+        }
+        if let (Some(cmds), Some(stream)) = (commands.get(&cid), streams.get_mut(&cid)) {
+            for cmd in cmds {
+                let _ = stream.write_all(format!("{cmd}\n").as_bytes());
+            }
+            let _ = stream.flush();
+        }
+    }
+}
+
+/// Read events from connected clients and close their connections.
+fn mc_collect_events(
+    world: &mut QuectoWorld,
+    streams: &mut HashMap<u32, std::os::unix::net::UnixStream>,
+    connected: &[u32],
+    disconnected: &[u32],
+) {
+    use std::io::{BufRead, BufReader};
+    for &cid in connected {
+        if disconnected.contains(&cid) {
+            continue;
+        }
+        if let Some(stream) = streams.remove(&cid) {
+            let _ = stream.shutdown(std::net::Shutdown::Write);
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                .ok();
+            let events: Vec<String> = BufReader::new(&stream)
+                .lines()
+                .take_while(|l| l.is_ok())
+                .filter_map(|l| l.ok())
+                .filter(|l| !l.is_empty())
+                .collect();
+            world.mc_client_events.insert(cid, events);
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
+    }
+}
+
+/// Helper: get event types for a specific client.
+fn mc_client_event_types(world: &QuectoWorld, client_id: u32) -> Vec<String> {
+    world
+        .mc_client_events
+        .get(&client_id)
+        .map(|events| {
+            events
+                .iter()
+                .filter_map(|l| {
+                    serde_json::from_str::<serde_json::Value>(l)
+                        .ok()
+                        .and_then(|v| v["type"].as_str().map(str::to_owned))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[then(expr = "client {int} should have received an event of type {string}")]
+fn then_client_received_event_type(world: &mut QuectoWorld, client_id: u32, event_type: String) {
+    execute_multi_client_uds(world);
+    let types = mc_client_event_types(world, client_id);
+    assert!(
+        types.contains(&event_type),
+        "expected client {client_id} to have received event {event_type:?}\ngot: {types:?}\nevents: {:#?}",
+        world.mc_client_events.get(&client_id),
+    );
+}
+
+#[then(expr = "client {int} should have received a response with id {string}")]
+fn then_client_received_response_with_id(
+    world: &mut QuectoWorld,
+    client_id: u32,
+    expected_id: String,
+) {
+    execute_multi_client_uds(world);
+    let events = world
+        .mc_client_events
+        .get(&client_id)
+        .cloned()
+        .unwrap_or_default();
+    let found = events.iter().any(|l| {
+        serde_json::from_str::<serde_json::Value>(l)
+            .ok()
+            .and_then(|v| {
+                if v["type"] == "response" {
+                    v["id"].as_str().map(str::to_owned)
+                } else {
+                    None
+                }
+            })
+            .as_deref()
+            == Some(expected_id.as_str())
+    });
+    assert!(
+        found,
+        "expected client {client_id} to have received response with id {expected_id:?}\nevents: {events:#?}",
+    );
+}

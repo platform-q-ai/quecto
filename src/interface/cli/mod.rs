@@ -4,6 +4,7 @@ mod commands;
 pub mod protocol;
 pub mod uds;
 pub mod uds_cancel;
+mod uds_multi;
 pub mod uds_session;
 
 use std::path::PathBuf;
