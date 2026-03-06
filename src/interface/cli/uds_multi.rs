@@ -7,7 +7,7 @@
 //! mutation).  Agent shuts down when all clients disconnect.
 
 use crate::application::agent_loop::AgentLoopImpl;
-use crate::domain::message::{Message, Role};
+use crate::domain::message::Message;
 use crate::domain::session::{Session, SessionStore};
 
 use super::protocol::AgentEvent;
@@ -17,6 +17,11 @@ use super::uds::{
 };
 use super::uds_cancel::{CancelHandle, CancelSlot, PromptOutcome, fire_cancel};
 use super::uds_session::{AgentSession, message_to_json};
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+/// Maximum number of concurrent client connections.
+const MAX_CLIENTS: u32 = 64;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -43,6 +48,27 @@ enum ClientMessage {
     Disconnected(ClientDisconnected),
 }
 
+/// RAII guard that decrements `live_clients` on drop (normal exit or panic).
+struct ClientGuard {
+    live_clients: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    cmd_tx: tokio::sync::mpsc::Sender<ClientMessage>,
+}
+
+impl Drop for ClientGuard {
+    fn drop(&mut self) {
+        self.live_clients
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        // Best-effort sentinel — if channel is closed the dispatch loop already
+        // exited, so the message is not needed.
+        if let Err(e) = self
+            .cmd_tx
+            .try_send(ClientMessage::Disconnected(ClientDisconnected))
+        {
+            tracing::debug!("disconnect sentinel not delivered: {e}");
+        }
+    }
+}
+
 // ─── Accept loop + dispatch ───────────────────────────────────────────────────
 
 pub(super) async fn multi_client_loop(
@@ -63,7 +89,7 @@ pub(super) async fn multi_client_loop(
 
     let mut agent_session = AgentSession::new(model, session_key.clone());
 
-    let (broadcast_tx, _) = tokio::sync::broadcast::channel::<String>(1024);
+    let (broadcast_tx, _) = tokio::sync::broadcast::channel::<String>(256);
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(256);
     let cancel_handle: CancelHandle = std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle));
     let live_clients = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
@@ -129,13 +155,27 @@ fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
         loop {
             match listener.accept().await {
                 Ok((stream, _addr)) => {
+                    let current = live_clients.load(std::sync::atomic::Ordering::SeqCst);
+                    if current >= MAX_CLIENTS {
+                        tracing::warn!(
+                            current,
+                            max = MAX_CLIENTS,
+                            "rejecting connection: max clients reached"
+                        );
+                        drop(stream);
+                        continue;
+                    }
                     live_clients.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let guard = ClientGuard {
+                        live_clients: live_clients.clone(),
+                        cmd_tx: cmd_tx.clone(),
+                    };
                     let args = ClientHandlerArgs {
                         stream,
                         broadcast_rx: broadcast_tx.subscribe(),
                         cmd_tx: cmd_tx.clone(),
                         cancel_handle: cancel_handle.clone(),
-                        live_clients: live_clients.clone(),
+                        _guard: guard,
                     };
                     tokio::spawn(async move { handle_client(args).await });
                 }
@@ -162,13 +202,16 @@ async fn run_dispatch_loop(
                     emit_event_to_broadcast_or_writer(ctx, &ev).await;
                 }
                 LineResult::ParseError(e) if e.is_empty() => {}
-                LineResult::ParseError(e) => {
+                LineResult::ParseError(_) => {
+                    // Suppress raw error content — broadcasting the parse error
+                    // from one client would leak its command content to all
+                    // connected clients.
                     let ev = AgentEvent::Response {
                         id: None,
                         command: "parse_error".to_string(),
                         success: false,
                         data: None,
-                        error: Some(e),
+                        error: Some("invalid JSON command".to_string()),
                     };
                     emit_event_to_broadcast_or_writer(ctx, &ev).await;
                 }
@@ -195,7 +238,8 @@ struct ClientHandlerArgs {
     broadcast_rx: tokio::sync::broadcast::Receiver<String>,
     cmd_tx: tokio::sync::mpsc::Sender<ClientMessage>,
     cancel_handle: CancelHandle,
-    live_clients: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    /// RAII guard — decrements `live_clients` and sends `Disconnected` on drop.
+    _guard: ClientGuard,
 }
 
 async fn handle_client(args: ClientHandlerArgs) {
@@ -204,7 +248,7 @@ async fn handle_client(args: ClientHandlerArgs) {
         mut broadcast_rx,
         cmd_tx,
         cancel_handle,
-        live_clients,
+        _guard,
     } = args;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -223,6 +267,14 @@ async fn handle_client(args: ClientHandlerArgs) {
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                     tracing::warn!("client lagged by {n} events");
+                    // Notify the client so it can request a state refresh.
+                    let msg = format!(
+                        "{{\"type\":\"error\",\"message\":\"dropped {} events — use get_messages to re-sync\"}}\n",
+                        n
+                    );
+                    if writer.write_all(msg.as_bytes()).await.is_err() {
+                        break;
+                    }
                     continue;
                 }
             }
@@ -230,8 +282,17 @@ async fn handle_client(args: ClientHandlerArgs) {
     });
 
     // Reader loop: commands → dispatch mpsc.
+    // Guard oversized lines — `next_line()` allocates the full line before
+    // returning, but we drop it immediately if it exceeds MAX_LINE_BYTES
+    // to prevent queuing oversized payloads in the mpsc channel.
     while let Ok(Some(line)) = lines.next_line().await {
-        if line.len() <= MAX_LINE_BYTES && is_cancel_command(line.trim()) {
+        if line.len() > MAX_LINE_BYTES {
+            // Already allocated unfortunately (AsyncBufReadExt limitation),
+            // but at least we don't queue it in the mpsc channel.
+            tracing::warn!(len = line.len(), "dropping oversized line from client");
+            continue;
+        }
+        if is_cancel_command(line.trim()) {
             fire_cancel(&cancel_handle);
         }
         let msg = ClientMessage::Command(ClientCommand { line });
@@ -241,10 +302,8 @@ async fn handle_client(args: ClientHandlerArgs) {
     }
 
     writer_task.abort();
-    live_clients.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-    let _ = cmd_tx
-        .send(ClientMessage::Disconnected(ClientDisconnected))
-        .await;
+    // `_guard` is dropped here (or on panic), which decrements live_clients
+    // and sends the Disconnected sentinel.
 }
 
 // ─── Broadcast prompt execution ───────────────────────────────────────────────
@@ -304,7 +363,9 @@ pub(super) async fn run_agent_prompt_broadcast(args: PromptArgsBroadcast<'_>) ->
             PromptOutcome::Cancelled
         }
         Some(Ok(agent_result)) => {
-            emit_tool_events_broadcast(&broadcast_tx, &messages[before_len..]);
+            // Post-hoc tool events are NOT emitted here — ToolStarted/Finished
+            // are already forwarded in real-time via forward_progress_event_broadcast.
+            // Emitting them again would cause duplicate events with conflicting IDs.
             let turn_end = AgentEvent::TurnEnd {
                 message: TurnMessage {
                     role: "assistant".to_string(),
@@ -331,7 +392,8 @@ pub(super) async fn run_agent_prompt_broadcast(args: PromptArgsBroadcast<'_>) ->
 }
 
 fn broadcast_event(tx: &tokio::sync::broadcast::Sender<String>, event: &AgentEvent) {
-    let line = event.to_json_line() + "\n";
+    let mut line = event.to_json_line();
+    line.push('\n');
     let _ = tx.send(line);
 }
 
@@ -411,36 +473,5 @@ fn forward_progress_event_broadcast(
             );
         }
         _ => {}
-    }
-}
-
-fn emit_tool_events_broadcast(tx: &tokio::sync::broadcast::Sender<String>, messages: &[Message]) {
-    for msg in messages {
-        if msg.role == Role::Assistant {
-            for tc in &msg.tool_calls {
-                let args: serde_json::Value =
-                    serde_json::from_str(&tc.arguments).unwrap_or_default();
-                broadcast_event(
-                    tx,
-                    &AgentEvent::ToolExecutionStart {
-                        tool_call_id: tc.id.clone(),
-                        tool_name: tc.name.clone(),
-                        args,
-                    },
-                );
-            }
-        } else if msg.role == Role::Tool {
-            broadcast_event(
-                tx,
-                &AgentEvent::ToolExecutionEnd {
-                    tool_call_id: msg.tool_call_id.clone().unwrap_or_default(),
-                    tool_name: msg.tool_name.clone().unwrap_or_default(),
-                    result: crate::interface::cli::protocol::ToolResultContent {
-                        content: vec![serde_json::json!({"type":"text","text": msg.content})],
-                    },
-                    is_error: msg.is_error,
-                },
-            );
-        }
     }
 }

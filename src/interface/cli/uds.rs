@@ -398,7 +398,8 @@ pub(super) async fn emit_event_to_broadcast_or_writer(
     event: &AgentEvent,
 ) {
     if let Some(ref tx) = ctx.broadcast_tx {
-        let line = event.to_json_line() + "\n";
+        let mut line = event.to_json_line();
+        line.push('\n');
         let _ = tx.send(line);
     } else {
         super::uds_cancel::emit_event(ctx.stdout, event).await;
