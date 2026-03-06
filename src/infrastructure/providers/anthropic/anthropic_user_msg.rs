@@ -18,7 +18,9 @@ pub(super) fn model_supports_vision(model: &str) -> bool {
         "claude-opus-",
         "claude-haiku-",
     ];
-    VISION_PREFIXES.iter().any(|prefix| model.starts_with(prefix))
+    VISION_PREFIXES
+        .iter()
+        .any(|prefix| model.starts_with(prefix))
 }
 
 /// Build the Anthropic API content value for a user message.
