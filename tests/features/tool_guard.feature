@@ -143,3 +143,9 @@ Feature: Tool guard mechanism
     When the guard checks tool "bash" with arguments '{"command": "git commit -m \"wip\""}'
     Then the guard should block the call
     And the guard block reason should contain "status"
+
+
+  Scenario: WorkflowGuard not registered when guard_commit is false
+    Given a workflow config with guard_commit false and enabled true
+    When workflow tools are registered with that config
+    Then the tool registry should have 0 guards

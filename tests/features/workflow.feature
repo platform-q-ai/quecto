@@ -6,10 +6,9 @@ Feature: Built-in workflow tool
 
   # ─── Domain: WorkflowState ──────────────────────────────────────────────────
 
-  Scenario: Default workflow state has 16 unchecked steps
-    Given a default workflow state
-    Then the workflow state should have 16 steps
-    And all steps should be unchecked
+  Scenario: Default workflow state has 0 steps when no steps configured
+    Given a workflow state with no steps
+    Then the workflow state should have 0 steps
     And the active issue should be None
 
   Scenario: Check marks a step as done
@@ -83,16 +82,25 @@ Feature: Built-in workflow tool
 
   # ─── Domain: WorkflowConfig ────────────────────────────────────────────────
 
-  Scenario: Default workflow config has enabled false and 16 default steps
+  Scenario: Default workflow config has enabled false and no steps
     Given a default workflow config
     Then the workflow config should not be enabled
-    And the workflow config should have 16 steps
-    And the first step should be id 1 label "Update Scenarios / Add new features" phase "red"
-    And the last step should be id 16 label "Move to local master and pull" phase "ci_cd"
+    And the workflow config should have 0 steps
+    And the workflow config guard_commit should be true
 
   Scenario: Workflow config can be disabled
     Given a workflow config with enabled false
     Then the workflow config should not be enabled
+
+  Scenario: Workflow config guard_commit can be disabled
+    Given a workflow config with guard_commit false
+    Then the workflow config guard_commit should be false
+
+  Scenario: Config deserializes guard_commit false
+    Given a config file with workflow enabled and guard_commit false
+    When I load the config
+    Then the workflow config should be enabled
+    And the workflow config guard_commit should be false
 
   # ─── Config integration ────────────────────────────────────────────────────
 
@@ -105,7 +113,7 @@ Feature: Built-in workflow tool
     Given a config file without workflow section
     When I load the config
     Then the workflow config should not be enabled
-    And the workflow config should have 16 steps
+    And the workflow config should have 0 steps
 
   # ─── Tool: WorkflowTool ────────────────────────────────────────────────────
 

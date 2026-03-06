@@ -22,6 +22,12 @@ fn given_default_state(world: &mut QuectoWorld) {
     world.workflow_error = None;
 }
 
+#[given("a workflow state with no steps")]
+fn given_empty_state(world: &mut QuectoWorld) {
+    world.workflow_state = Some(Arc::new(Mutex::new(WorkflowState::new(vec![]))));
+    world.workflow_error = None;
+}
+
 #[when(expr = "I check step {int}")]
 fn when_check_step(world: &mut QuectoWorld, num: i32) {
     let state = get_or_create_state(world);
@@ -236,7 +242,58 @@ fn then_last_step(world: &mut QuectoWorld, id: i32, label: String, phase: String
     assert_eq!(step.phase, phase);
 }
 
+#[given("a workflow config with guard_commit false")]
+fn given_config_guard_commit_false(world: &mut QuectoWorld) {
+    world.workflow_config = Some(WorkflowConfig {
+        guard_commit: false,
+        ..Default::default()
+    });
+}
+
+#[then("the workflow config guard_commit should be true")]
+fn then_config_guard_commit_true(world: &mut QuectoWorld) {
+    if let Some(ref config) = world.workflow_config {
+        assert!(config.guard_commit);
+    } else if let Some(ref config) = world.config {
+        assert!(config.workflow.guard_commit);
+    } else {
+        panic!("no workflow config or loaded config available");
+    }
+}
+
+#[then("the workflow config guard_commit should be false")]
+fn then_config_guard_commit_false(world: &mut QuectoWorld) {
+    if let Some(ref config) = world.workflow_config {
+        assert!(!config.guard_commit);
+    } else if let Some(ref config) = world.config {
+        assert!(!config.workflow.guard_commit);
+    } else {
+        panic!("no workflow config or loaded config available");
+    }
+}
+
 // ─── Config integration ────────────────────────────────────────────────────
+
+#[given("a config file with workflow enabled and guard_commit false")]
+fn given_config_with_guard_commit_false(world: &mut QuectoWorld) {
+    super::ensure_temp_dir(world);
+    let base = super::base_path(world);
+    let config_path = base.join("config.json");
+    let config_json = r#"{
+        "workflow": {
+            "enabled": true,
+            "guard_commit": false,
+            "steps": [
+                {"id": 1, "label": "Test Step", "phase": "red"}
+            ]
+        },
+        "providers": {
+            "openai": { "api_key": "sk-test" }
+        }
+    }"#;
+    std::fs::write(&config_path, config_json).unwrap();
+    world.config_path = Some(config_path.to_string_lossy().to_string());
+}
 
 #[given("a config file with workflow enabled and custom steps")]
 fn given_config_with_workflow(world: &mut QuectoWorld) {

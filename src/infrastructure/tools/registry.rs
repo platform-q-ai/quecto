@@ -91,6 +91,11 @@ impl ToolRegistryImpl {
         self.guards.push(guard);
     }
 
+    /// Return the number of registered guards.
+    pub fn guard_count(&self) -> usize {
+        self.guards.len()
+    }
+
     /// Create a registry with the core filesystem and exec tools.
     pub fn with_core_tools(workspace: PathBuf, sandbox: Sandbox) -> Self {
         Self::with_core_tools_and_exec_capture_bytes(workspace, sandbox, 1024 * 1024)

@@ -127,6 +127,16 @@ fn test_new_clamps_steps_to_max() {
 fn test_from_config() {
     let config = WorkflowConfig::default();
     let state = WorkflowState::from_config(&config);
+    assert_eq!(state.steps().len(), 0, "default config has no steps");
+}
+
+#[test]
+fn test_from_config_with_bdd_steps() {
+    let config = WorkflowConfig {
+        steps: bdd_steps(),
+        ..Default::default()
+    };
+    let state = WorkflowState::from_config(&config);
     assert_eq!(state.steps().len(), 16);
 }
 
@@ -152,13 +162,8 @@ fn test_default_config() {
         !config.enabled,
         "workflow is opt-in; default should be disabled"
     );
-    assert_eq!(config.steps.len(), 16);
-    assert_eq!(config.steps[0].id, 1);
-    assert_eq!(config.steps[0].label, "Update Scenarios / Add new features");
-    assert_eq!(config.steps[0].phase, "red");
-    assert_eq!(config.steps[15].id, 16);
-    assert_eq!(config.steps[15].label, "Move to local master and pull");
-    assert_eq!(config.steps[15].phase, "ci_cd");
+    assert_eq!(config.steps.len(), 0, "no hardcoded default steps");
+    assert!(config.guard_commit, "guard_commit should default to true");
 }
 
 #[test]
@@ -183,7 +188,26 @@ fn test_config_deserialize_empty() {
     let json = r#"{}"#;
     let config: WorkflowConfig = serde_json::from_str(json).unwrap();
     assert!(config.enabled);
-    assert_eq!(config.steps.len(), 16);
+    assert_eq!(config.steps.len(), 0, "no hardcoded default steps");
+    assert!(
+        config.guard_commit,
+        "guard_commit defaults to true via serde"
+    );
+}
+
+#[test]
+fn test_config_guard_commit_false() {
+    let json = r#"{"enabled":true,"guard_commit":false}"#;
+    let config: WorkflowConfig = serde_json::from_str(json).unwrap();
+    assert!(config.enabled);
+    assert!(!config.guard_commit);
+}
+
+#[test]
+fn test_config_guard_commit_default_true() {
+    let json = r#"{"enabled":true}"#;
+    let config: WorkflowConfig = serde_json::from_str(json).unwrap();
+    assert!(config.guard_commit);
 }
 
 #[test]
@@ -377,11 +401,12 @@ fn test_to_persistable() {
 
 #[test]
 fn test_from_persistable() {
+    let steps = bdd_steps();
     let p = WorkflowPersistable {
         done: vec![true, false, true],
         active_issue: Some((42, "feat".into())),
     };
-    let state = WorkflowState::from_persistable(&p);
+    let state = WorkflowState::from_persistable_with_steps(&p, Some(steps));
     assert!(state.is_done(1).unwrap());
     assert!(!state.is_done(2).unwrap());
     assert!(state.is_done(3).unwrap());
@@ -396,7 +421,7 @@ fn test_persistable_roundtrip() {
     let p = state.to_persistable();
     let json = serde_json::to_string(&p).unwrap();
     let p2: WorkflowPersistable = serde_json::from_str(&json).unwrap();
-    let state2 = WorkflowState::from_persistable(&p2);
+    let state2 = WorkflowState::from_persistable_with_steps(&p2, Some(bdd_steps()));
     assert!(state2.is_done(1).unwrap());
     assert!(!state2.is_done(2).unwrap());
     assert_eq!(state2.active_issue(), Some(&(42, "feat".into())));
@@ -408,7 +433,7 @@ fn test_persistable_size_mismatch_pads() {
         done: vec![true, false], // Only 2 items
         active_issue: None,
     };
-    let state = WorkflowState::from_persistable(&p);
+    let state = WorkflowState::from_persistable_with_steps(&p, Some(bdd_steps()));
     assert_eq!(state.steps().len(), 16);
     assert!(state.is_done(1).unwrap());
     assert!(!state.is_done(2).unwrap());

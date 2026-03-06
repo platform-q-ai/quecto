@@ -205,3 +205,39 @@ fn then_guard_reason_contains(world: &mut QuectoWorld, expected: String) {
         reason
     );
 }
+
+// ─── Guard config integration ────────────────────────────────────────────────
+
+#[given("a workflow config with guard_commit false and enabled true")]
+fn given_wf_config_no_guard(world: &mut QuectoWorld) {
+    world.workflow_config = Some(quecto::domain::workflow::WorkflowConfig {
+        enabled: true,
+        guard_commit: false,
+        ..Default::default()
+    });
+}
+
+#[when("workflow tools are registered with that config")]
+fn when_register_workflow_tools(world: &mut QuectoWorld) {
+    let tmp = TempDir::new().unwrap();
+    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
+    let mut registry = ToolRegistryImpl::with_core_tools(tmp.path().to_path_buf(), sandbox);
+    let config = world
+        .workflow_config
+        .as_ref()
+        .expect("need workflow config");
+    quecto::interface::shared::register_workflow_tool(&mut registry, config);
+    world.tool_registry = Some(registry);
+    world._tool_guard_tmp = Some(tmp);
+}
+
+#[then(expr = "the tool registry should have {int} guards")]
+fn then_registry_guard_count(world: &mut QuectoWorld, expected: i32) {
+    let reg = world.tool_registry.as_ref().expect("need registry");
+    assert_eq!(
+        reg.guard_count(),
+        expected as usize,
+        "expected {} guards",
+        expected
+    );
+}
