@@ -372,24 +372,82 @@ fn normalize_command_for_denylist(command: &str) -> String {
 
 /// Extract all command tokens (first words) from a shell command string,
 /// splitting on metacharacters like `;`, `|`, `&&`, `||`.
+///
+/// Uses a single-pass parser that scans for metacharacter boundaries without
+/// intermediate `String` allocations (#307).
 pub(crate) fn extract_all_command_tokens(command: &str) -> Vec<String> {
-    // Replace metacharacters with a common separator
-    let mut normalized = command.to_string();
-    // Order matters: longer patterns first
-    for mc in &["&&", "||", "<(", ">(", "$("] {
-        normalized = normalized.replace(mc, "\x00");
-    }
-    for mc in &[";", "|", "`"] {
-        normalized = normalized.replace(mc, "\x00");
+    let bytes = command.as_bytes();
+    let len = bytes.len();
+    let mut tokens = Vec::new();
+    let mut i = 0;
+
+    loop {
+        // Skip whitespace to find start of a segment
+        while i < len && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= len {
+            break;
+        }
+
+        // Record start of the first token in this segment
+        let token_start = i;
+
+        // Scan forward until we hit whitespace or a metacharacter
+        while i < len {
+            let b = bytes[i];
+            // Check multi-char metacharacters first: &&, ||, <(, >(, $(
+            if i + 1 < len {
+                let next = bytes[i + 1];
+                if (b == b'&' && next == b'&')
+                    || (b == b'|' && next == b'|')
+                    || (b == b'<' && next == b'(')
+                    || (b == b'>' && next == b'(')
+                    || (b == b'$' && next == b'(')
+                {
+                    break;
+                }
+            }
+            // Single-char metacharacters: ; | `
+            if b == b';' || b == b'|' || b == b'`' {
+                break;
+            }
+            if b.is_ascii_whitespace() {
+                break;
+            }
+            i += 1;
+        }
+
+        // Capture the token if non-empty
+        if i > token_start {
+            tokens.push(command[token_start..i].to_string());
+        }
+
+        // Skip past the rest of the segment (non-metacharacter, non-whitespace chars)
+        // until we hit a metacharacter boundary
+        while i < len {
+            let b = bytes[i];
+            if i + 1 < len {
+                let next = bytes[i + 1];
+                if (b == b'&' && next == b'&')
+                    || (b == b'|' && next == b'|')
+                    || (b == b'<' && next == b'(')
+                    || (b == b'>' && next == b'(')
+                    || (b == b'$' && next == b'(')
+                {
+                    i += 2; // skip the 2-char metacharacter
+                    break;
+                }
+            }
+            if b == b';' || b == b'|' || b == b'`' {
+                i += 1; // skip the 1-char metacharacter
+                break;
+            }
+            i += 1;
+        }
     }
 
-    normalized
-        .split('\x00')
-        .filter_map(|segment| {
-            let token = segment.split_whitespace().next()?;
-            Some(token.to_string())
-        })
-        .collect()
+    tokens
 }
 
 /// Resolve a path by normalizing ".." and "." components without requiring the path to exist.

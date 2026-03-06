@@ -6,19 +6,19 @@ use crate::domain::message::Message;
 
 /// Returns `true` for models known to support image inputs.
 ///
-/// Defaults to `true` for unknown models (fail-open). Legacy models that
-/// predate vision support are explicitly denied. Uses exact match to avoid
-/// false positives from future models with similar prefixes (e.g. "claude-2025-x").
+/// Uses an allow-list approach (fail-closed): unknown models are assumed
+/// to NOT support vision. This avoids sending images to models that would
+/// reject them. When a new vision model is released, add its prefix here.
 pub(super) fn model_supports_vision(model: &str) -> bool {
-    // Exact model identifiers known NOT to support vision.
-    const NON_VISION: &[&str] = &[
-        "claude-instant-1",
-        "claude-instant-1.2",
-        "claude-2",
-        "claude-2.0",
-        "claude-2.1",
+    // Prefixes for model families known to support vision (Claude 3+).
+    const VISION_PREFIXES: &[&str] = &[
+        "claude-3-",
+        "claude-3.",
+        "claude-sonnet-",
+        "claude-opus-",
+        "claude-haiku-",
     ];
-    !NON_VISION.contains(&model)
+    VISION_PREFIXES.iter().any(|prefix| model.starts_with(prefix))
 }
 
 /// Build the Anthropic API content value for a user message.
@@ -80,5 +80,40 @@ pub(super) fn build_user_content(m: &Message, supports_vision: bool) -> Option<s
             .map(|t| serde_json::Value::String(t.to_string()))
     } else {
         Some(serde_json::Value::Array(blocks))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- #310: Vision allow-list (fail-closed) ---
+
+    #[test]
+    fn known_vision_models_return_true() {
+        // All Claude 3+ models support vision
+        assert!(model_supports_vision("claude-3-opus-20240229"));
+        assert!(model_supports_vision("claude-3-sonnet-20240229"));
+        assert!(model_supports_vision("claude-3-haiku-20240307"));
+        assert!(model_supports_vision("claude-3-5-sonnet-20241022"));
+        assert!(model_supports_vision("claude-sonnet-4-20250514"));
+        assert!(model_supports_vision("claude-opus-4-5"));
+    }
+
+    #[test]
+    fn known_non_vision_models_return_false() {
+        assert!(!model_supports_vision("claude-instant-1"));
+        assert!(!model_supports_vision("claude-instant-1.2"));
+        assert!(!model_supports_vision("claude-2"));
+        assert!(!model_supports_vision("claude-2.0"));
+        assert!(!model_supports_vision("claude-2.1"));
+    }
+
+    #[test]
+    fn unknown_model_returns_false_fail_closed() {
+        // #310: Unknown models should NOT be assumed to support vision
+        assert!(!model_supports_vision("unknown-future-model"));
+        assert!(!model_supports_vision("gpt-4o"));
+        assert!(!model_supports_vision("some-random-model"));
     }
 }

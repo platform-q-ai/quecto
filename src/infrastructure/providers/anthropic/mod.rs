@@ -593,7 +593,6 @@ impl LlmProvider for AnthropicProvider {
         &self,
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + '_>> {
-        let model = request.model.to_string();
         let (_system, mut body) = Self::build_request_body(&request);
         body["stream"] = serde_json::Value::Bool(true);
         let url = format!("{}/v1/messages", self.api_base);
@@ -624,7 +623,6 @@ impl LlmProvider for AnthropicProvider {
                 provider
                     .stream_chat_incremental_with_body(body, &url, tx)
                     .await;
-                drop(model); // suppress unused-variable warning; cost attachment is future work.
             });
 
             rx

@@ -409,6 +409,13 @@ Feature: LLM Providers
     Then the user message content should be a block array
     And the block array should contain an image block of media_type "image/png"
 
+  # --- #310: Vision allow-list (fail-closed for unknown models) ---
+
+  Scenario: Unknown model is treated as non-vision (fail-closed)
+    Given a user message with text "look at this" and one image block of type "image/png"
+    When I build Anthropic messages from that history for model "unknown-future-model"
+    Then the user message content should be the string "look at this"
+
   # Empty content filtering
   Scenario: User message with only whitespace text and no images is skipped
     Given a user message with text "   " and no image blocks
