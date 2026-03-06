@@ -14,9 +14,9 @@ Feature: Workflow automation — auto-continue, completion nudge, enforcement, p
     Given a default workflow config
     Then the workflow config completion_nudge should be true
 
-  Scenario: Default workflow config has enforce_commit_after_step set to 6
+  Scenario: Default workflow config has no guards
     Given a default workflow config
-    Then the workflow config enforce_commit_after_step should be 6
+    Then the workflow config should have 0 guards
 
   Scenario: Workflow config with auto_continue disabled
     Given a workflow config with auto_continue false
@@ -26,27 +26,24 @@ Feature: Workflow automation — auto-continue, completion nudge, enforcement, p
     Given a workflow config with completion_nudge false
     Then the workflow config completion_nudge should be false
 
-  Scenario: Workflow config with enforce_commit_after_step set to null
-    Given a workflow config with enforce_commit_after_step null
-    Then the workflow config enforce_commit_after_step should be None
-
-  Scenario: Workflow config with custom enforce_commit_after_step
-    Given a workflow config with enforce_commit_after_step 4
-    Then the workflow config enforce_commit_after_step should be 4
+  Scenario: Workflow config with guards
+    Given a workflow config with guards:
+      | commands    | before_step | message        |
+      | git commit  | 7           | Not yet.       |
+    Then the workflow config should have 1 guards
 
   Scenario: Workflow config deserializes from JSON with all new fields
-    Given a config JSON with workflow auto_continue false and completion_nudge false and enforce_commit_after_step 3
+    Given a config JSON with workflow auto_continue false and completion_nudge false
     When I deserialize the workflow config
     Then the workflow config auto_continue should be false
     And the workflow config completion_nudge should be false
-    And the workflow config enforce_commit_after_step should be 3
 
   Scenario: Workflow config deserializes from empty JSON with defaults
     Given an empty config JSON
     When I deserialize the workflow config
     Then the workflow config auto_continue should be true
     And the workflow config completion_nudge should be true
-    And the workflow config enforce_commit_after_step should be 6
+    And the workflow config should have 0 guards
 
   # ─── Domain: Auto-continue nudge generation ─────────────────────────────────
 
@@ -79,38 +76,28 @@ Feature: Workflow automation — auto-continue, completion nudge, enforcement, p
     When I generate the completion nudge
     Then the nudge should be None
 
-  # ─── Domain: Commit enforcement check ──────────────────────────────────────
+  # ─── Domain: Step threshold check ───────────────────────────────────────────
 
-  Scenario: Commit blocked when required steps incomplete
+  Scenario: Steps incomplete fails threshold check
     Given a default workflow state
-    And enforce_commit_after_step is 6
-    When I check if commit is allowed
-    Then the commit should be blocked
+    When I check steps complete before step 7
+    Then the check should fail
     And the block reason should contain "step 1"
 
-  Scenario: Commit allowed when required steps complete
+  Scenario: Steps complete passes threshold check
     Given a workflow state with steps 1 through 6 checked
-    And enforce_commit_after_step is 6
-    When I check if commit is allowed
-    Then the commit should be allowed
+    When I check steps complete before step 7
+    Then the check should pass
 
-  Scenario: Commit allowed when enforcement disabled
+  Scenario: Threshold 0 always passes
     Given a default workflow state
-    And enforce_commit_after_step is None
-    When I check if commit is allowed
-    Then the commit should be allowed
+    When I check steps complete before step 0
+    Then the check should pass
 
-  Scenario: Commit allowed when enforcement step is 0
-    Given a default workflow state
-    And enforce_commit_after_step is 0
-    When I check if commit is allowed
-    Then the commit should be allowed
-
-  Scenario: Commit blocked with partial steps
+  Scenario: Partial steps fail threshold check
     Given a workflow state with steps 1 through 4 checked
-    And enforce_commit_after_step is 6
-    When I check if commit is allowed
-    Then the commit should be blocked
+    When I check steps complete before step 7
+    Then the check should fail
     And the block reason should contain "step 5"
 
   # ─── Domain: Workflow state persistence (serialization) ────────────────────
@@ -139,14 +126,14 @@ Feature: Workflow automation — auto-continue, completion nudge, enforcement, p
 
   # ─── Tool: Commit enforcement via workflow tool ────────────────────────────
 
-  Scenario: Workflow tool check_commit action returns blocked when steps incomplete
-    Given a workflow tool with default state and enforce_commit_after_step 6
+  Scenario: Workflow tool check_commit action returns blocked when guards unsatisfied
+    Given a workflow tool with default state and guard before step 7
     When I execute the workflow tool with action "check_commit"
     Then the workflow tool result should be an error
     And the workflow tool result should contain "step 1"
 
-  Scenario: Workflow tool check_commit action returns allowed when steps complete
-    Given a workflow tool with default state and enforce_commit_after_step 6
+  Scenario: Workflow tool check_commit action returns satisfied when guards met
+    Given a workflow tool with default state and guard before step 7
     When I execute the workflow tool with action "check" and step 1
     And I execute the workflow tool with action "check" and step 2
     And I execute the workflow tool with action "check" and step 3
@@ -155,13 +142,13 @@ Feature: Workflow automation — auto-continue, completion nudge, enforcement, p
     And I execute the workflow tool with action "check" and step 6
     And I execute the workflow tool with action "check_commit"
     Then the workflow tool result should not be an error
-    And the workflow tool result should contain "allowed"
+    And the workflow tool result should contain "satisfied"
 
-  Scenario: Workflow tool check_commit returns allowed when enforcement disabled
-    Given a workflow tool with default state and enforce_commit_after_step None
+  Scenario: Workflow tool check_commit returns satisfied when no guards
+    Given a workflow tool with default state and no guards
     When I execute the workflow tool with action "check_commit"
     Then the workflow tool result should not be an error
-    And the workflow tool result should contain "allowed"
+    And the workflow tool result should contain "satisfied"
 
   # ─── System prompt: completion and enforcement annotations ─────────────────
 
@@ -170,23 +157,23 @@ Feature: Workflow automation — auto-continue, completion nudge, enforcement, p
     When I build the workflow system prompt snippet
     Then the snippet should contain "All steps complete"
 
-  Scenario: System prompt snippet includes enforcement reminder
+  Scenario: System prompt snippet includes guard reminder
     Given a default workflow state
-    When I build the workflow system prompt snippet with enforce_commit_after_step 6
-    Then the snippet should contain "commit"
-    And the snippet should contain "steps 1"
+    When I build the workflow system prompt snippet with guards
+    Then the snippet should contain "Guard"
+    And the snippet should contain "git commit"
 
   # ─── Config integration: new fields round-trip ─────────────────────────────
 
   Scenario: Full config with workflow automation fields loads correctly
-    Given a config file with workflow auto_continue true and enforce_commit_after_step 4
+    Given a config file with workflow auto_continue true and guards configured
     When I load the config
     Then the workflow config auto_continue should be true
-    And the workflow config enforce_commit_after_step should be 4
+    And the workflow config should have 1 guards
 
   Scenario: Config without new workflow fields uses defaults
     Given a config file with only workflow enabled true
     When I load the config
     Then the workflow config auto_continue should be true
     And the workflow config completion_nudge should be true
-    And the workflow config enforce_commit_after_step should be 6
+    And the workflow config should have 0 guards

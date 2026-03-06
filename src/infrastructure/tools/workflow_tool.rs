@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolGuard, ToolResult};
-use crate::domain::workflow::{WorkflowState, WorkflowStateSnapshot};
+use crate::domain::workflow::{GuardRule, WorkflowState, WorkflowStateSnapshot};
 
 /// Callback for emitting workflow_state UDS events.
 pub type WorkflowEventEmitter = Arc<dyn Fn(serde_json::Value) + Send + Sync>;
@@ -18,7 +18,7 @@ pub type WorkflowEventEmitter = Arc<dyn Fn(serde_json::Value) + Send + Sync>;
 pub struct WorkflowTool {
     state: Arc<Mutex<WorkflowState>>,
     event_emitter: Option<WorkflowEventEmitter>,
-    enforce_commit_after_step: Option<u32>,
+    guards: Vec<GuardRule>,
 }
 
 impl std::fmt::Debug for WorkflowTool {
@@ -33,7 +33,7 @@ impl WorkflowTool {
         Self {
             state,
             event_emitter: None,
-            enforce_commit_after_step: None,
+            guards: vec![],
         }
     }
 
@@ -45,25 +45,13 @@ impl WorkflowTool {
         Self {
             state,
             event_emitter: Some(emitter),
-            enforce_commit_after_step: None,
+            guards: vec![],
         }
     }
 
-    /// Create a new workflow tool with commit enforcement configuration.
-    pub fn with_enforce_commit(
-        state: Arc<Mutex<WorkflowState>>,
-        enforce_commit_after_step: Option<u32>,
-    ) -> Self {
-        Self {
-            state,
-            event_emitter: None,
-            enforce_commit_after_step,
-        }
-    }
-
-    /// Set the enforce_commit_after_step threshold.
-    pub fn set_enforce_commit(&mut self, threshold: Option<u32>) {
-        self.enforce_commit_after_step = threshold;
+    /// Set the guard rules for the workflow tool.
+    pub fn set_guards(&mut self, guards: Vec<GuardRule>) {
+        self.guards = guards;
     }
 
     /// Set the event emitter.
@@ -99,13 +87,19 @@ impl WorkflowTool {
             return Ok(state.system_prompt_snippet());
         }
 
-        // check_commit is read-only — no mutation, no event emission.
+        // check_commit is read-only — checks all guard rules.
         if action == "check_commit" {
             let state = self.lock_state()?;
-            return match state.check_commit_allowed(self.enforce_commit_after_step) {
-                Ok(()) => Ok("Commit allowed.".to_string()),
-                Err(e) => Err(e.to_string()),
-            };
+            for rule in &self.guards {
+                if let Err(e) = state.check_steps_complete(rule.before_step) {
+                    return Err(format!(
+                        "{} (blocked commands: {})",
+                        e,
+                        rule.commands.join(", ")
+                    ));
+                }
+            }
+            return Ok("All guard rules satisfied.".to_string());
         }
 
         // All other actions mutate state. Acquire lock once for both
@@ -283,174 +277,74 @@ impl Tool for WorkflowTool {
 
 // ─── WorkflowGuard ───────────────────────────────────────────────────────────
 
-/// Guard that blocks `git commit` and `git push` in bash calls when the
+/// Pre-parsed guard rule with patterns already split into (binary, subcmds).
+#[derive(Debug)]
+struct ParsedGuardRule {
+    parsed_commands: Vec<(String, Vec<String>)>,
+    before_step: u32,
+    message: String,
+}
+
+/// Guard that blocks configured commands in bash calls when the
 /// workflow hasn't reached the required step.
 ///
-/// Non-bash tools always pass.  Bash calls without commit/push always pass.
-/// When `enforce_commit_after_step` is `None`, all calls pass.
+/// Non-bash tools always pass. Commands not matching any guard rule pass.
+/// Empty `rules` means no blocking.
 #[derive(Debug)]
 pub struct WorkflowGuard {
     state: Arc<Mutex<WorkflowState>>,
-    enforce_commit_after_step: Option<u32>,
+    rules: Vec<ParsedGuardRule>,
 }
 
 impl WorkflowGuard {
-    /// Create a new workflow guard.
-    pub fn new(state: Arc<Mutex<WorkflowState>>, enforce_commit_after_step: Option<u32>) -> Self {
+    /// Create a new workflow guard with configurable rules.
+    /// Patterns are pre-parsed at construction time to avoid per-call allocation.
+    pub fn new(state: Arc<Mutex<WorkflowState>>, rules: Vec<GuardRule>) -> Self {
+        let parsed = rules
+            .into_iter()
+            .map(|r| ParsedGuardRule {
+                parsed_commands: parse_patterns(&r.commands),
+                before_step: r.before_step,
+                message: r.message,
+            })
+            .collect();
         Self {
             state,
-            enforce_commit_after_step,
+            rules: parsed,
         }
     }
 }
 
 impl ToolGuard for WorkflowGuard {
     fn check(&self, tool_name: &str, arguments: &str) -> Result<(), String> {
-        // Only guard bash calls
-        if tool_name != "bash" {
+        if tool_name != "bash" || self.rules.is_empty() {
             return Ok(());
         }
 
-        // If enforcement is disabled, allow everything
-        let threshold = match self.enforce_commit_after_step {
-            Some(t) => t,
-            None => return Ok(()),
-        };
-
-        // Extract the command from bash arguments
         let command = extract_bash_command(arguments);
 
-        // Only check git commit and git push
-        if !contains_git_commit_or_push(&command) {
-            return Ok(());
-        }
-
-        // Check if the required steps are complete
+        // Lock once for all rules (avoid TOCTOU between rules)
         let state = self
             .state
             .lock()
             .map_err(|e| format!("workflow state poisoned: {}", e))?;
 
-        state.check_commit_allowed(Some(threshold)).map_err(|e| {
-            format!(
-                "BLOCKED: {} Run workflow(action='status') to see current progress.",
-                e
-            )
-        })
+        for rule in &self.rules {
+            if command_matches_parsed(&command, &rule.parsed_commands) {
+                state.check_steps_complete(rule.before_step).map_err(|_| {
+                    format!(
+                        "BLOCKED: {} Run workflow(action='status') to see current progress.",
+                        rule.message
+                    )
+                })?;
+            }
+        }
+
+        Ok(())
     }
 }
 
-/// Extract the command string from bash tool JSON arguments.
-fn extract_bash_command(arguments: &str) -> String {
-    serde_json::from_str::<serde_json::Value>(arguments)
-        .ok()
-        .and_then(|v| v.get("command").and_then(|c| c.as_str()).map(String::from))
-        .unwrap_or_default()
-}
-
-/// Check if a bash command contains `git commit` or `git push` as actual
-/// commands (not just mentioned in strings or comments).
-///
-/// Detects patterns like:
-/// - `git commit -m "msg"`
-/// - `git push origin main`
-/// - `git -c key=val commit`
-/// - `git -C /path commit`
-/// - `git add . && git commit`
-///
-/// Does NOT false-positive on:
-/// - `git add`, `git status`, `git diff`, `git log`
-/// - `echo "git commit"` (best-effort — not a full shell parser)
-/// - `# git commit` (comments)
-fn contains_git_commit_or_push(command: &str) -> bool {
-    // Split on command separators and newlines to handle chained/multiline commands
-    for segment in command.split(&['&', '|', ';', '\n'][..]) {
-        let segment = segment.trim();
-
-        // Skip empty segments and comments
-        if segment.is_empty() || segment.starts_with('#') {
-            continue;
-        }
-
-        let tokens: Vec<&str> = segment.split_whitespace().collect();
-
-        // Look for "git" followed (eventually) by "commit" or "push"
-        // Skipping git flags (tokens starting with '-') and their values
-        let mut found_git = false;
-        let mut skip_next = false;
-        for token in &tokens {
-            if skip_next {
-                skip_next = false;
-                continue;
-            }
-            if *token == "git" {
-                found_git = true;
-                continue;
-            }
-            if found_git {
-                // Git flags that take a value argument: -c, -C, --git-dir, etc.
-                if *token == "-c"
-                    || *token == "-C"
-                    || *token == "--git-dir"
-                    || *token == "--work-tree"
-                {
-                    skip_next = true;
-                    continue;
-                }
-                // Skip other flags
-                if token.starts_with('-') {
-                    continue;
-                }
-                // First non-flag token after "git" is the subcommand
-                if *token == "commit" || *token == "push" {
-                    return true;
-                }
-                // It's a different subcommand (add, status, etc.)
-                found_git = false;
-            }
-        }
-    }
-
-    // Check subshells: $(...) and backticks
-    contains_git_in_subshell(command)
-}
-
-/// Detect git commit/push inside subshells: `$(...)` and backtick expressions.
-fn contains_git_in_subshell(command: &str) -> bool {
-    let lower = command.to_lowercase();
-
-    // Extract $(...) contents and check recursively
-    let mut pos = 0;
-    while let Some(start) = lower[pos..].find("$(") {
-        let abs_start = pos + start + 2;
-        if let Some(end) = lower[abs_start..].find(')') {
-            let inside = &lower[abs_start..abs_start + end];
-            if contains_git_commit_or_push(inside) {
-                return true;
-            }
-            pos = abs_start + end + 1;
-        } else {
-            break;
-        }
-    }
-
-    // Check all backtick pairs
-    let mut pos = 0;
-    while let Some(start) = lower[pos..].find('`') {
-        let abs_start = pos + start + 1;
-        if let Some(end) = lower[abs_start..].find('`') {
-            let inside = &lower[abs_start..abs_start + end];
-            if contains_git_commit_or_push(inside) {
-                return true;
-            }
-            pos = abs_start + end + 1;
-        } else {
-            break;
-        }
-    }
-
-    false
-}
+use super::command_match::{command_matches_parsed, extract_bash_command, parse_patterns};
 
 #[cfg(test)]
 mod tests {
@@ -707,14 +601,20 @@ mod tests {
 
     // ─── check_commit action tests ──────────────────────────────────────────
 
-    fn test_tool_with_enforce(threshold: Option<u32>) -> WorkflowTool {
+    fn test_tool_with_guards(guards: Vec<GuardRule>) -> WorkflowTool {
         let state = Arc::new(Mutex::new(WorkflowState::default_bdd()));
-        WorkflowTool::with_enforce_commit(state, threshold)
+        let mut tool = WorkflowTool::new(state);
+        tool.set_guards(guards);
+        tool
     }
 
     #[tokio::test]
     async fn test_check_commit_blocked() {
-        let tool = test_tool_with_enforce(Some(6));
+        let tool = test_tool_with_guards(vec![GuardRule {
+            commands: vec!["git commit".into()],
+            before_step: 7,
+            message: "Complete steps first.".into(),
+        }]);
         let result = tool.execute(r#"{"action":"check_commit"}"#).await.unwrap();
         assert!(result.is_error);
         assert!(result.content.contains("step 1"));
@@ -722,7 +622,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_commit_allowed_after_steps() {
-        let tool = test_tool_with_enforce(Some(6));
+        let tool = test_tool_with_guards(vec![GuardRule {
+            commands: vec!["git commit".into()],
+            before_step: 7,
+            message: "Complete steps first.".into(),
+        }]);
         for i in 1..=6 {
             tool.execute(&format!(r#"{{"action":"check","step":{}}}"#, i))
                 .await
@@ -730,14 +634,16 @@ mod tests {
         }
         let result = tool.execute(r#"{"action":"check_commit"}"#).await.unwrap();
         assert!(!result.is_error);
-        assert!(result.content.contains("allowed"));
+        assert!(result.content.contains("satisfied"));
     }
 
     #[tokio::test]
-    async fn test_check_commit_allowed_when_disabled() {
-        let tool = test_tool_with_enforce(None);
+    async fn test_check_commit_no_guards() {
+        let tool = test_tool_with_guards(vec![]);
         let result = tool.execute(r#"{"action":"check_commit"}"#).await.unwrap();
         assert!(!result.is_error);
-        assert!(result.content.contains("allowed"));
+        assert!(result.content.contains("satisfied"));
     }
+
+    // Pattern matching tests are in command_match.rs
 }

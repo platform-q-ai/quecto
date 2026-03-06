@@ -1,4 +1,5 @@
 pub mod bash;
+pub mod command_match;
 pub mod cron_tool;
 pub mod ensure_tool;
 pub mod filesystem;

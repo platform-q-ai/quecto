@@ -242,47 +242,19 @@ fn then_last_step(world: &mut QuectoWorld, id: i32, label: String, phase: String
     assert_eq!(step.phase, phase);
 }
 
-#[given("a workflow config with guard_commit false")]
-fn given_config_guard_commit_false(world: &mut QuectoWorld) {
-    world.workflow_config = Some(WorkflowConfig {
-        guard_commit: false,
-        ..Default::default()
-    });
-}
-
-#[then("the workflow config guard_commit should be true")]
-fn then_config_guard_commit_true(world: &mut QuectoWorld) {
-    if let Some(ref config) = world.workflow_config {
-        assert!(config.guard_commit);
-    } else if let Some(ref config) = world.config {
-        assert!(config.workflow.guard_commit);
-    } else {
-        panic!("no workflow config or loaded config available");
-    }
-}
-
-#[then("the workflow config guard_commit should be false")]
-fn then_config_guard_commit_false(world: &mut QuectoWorld) {
-    if let Some(ref config) = world.workflow_config {
-        assert!(!config.guard_commit);
-    } else if let Some(ref config) = world.config {
-        assert!(!config.workflow.guard_commit);
-    } else {
-        panic!("no workflow config or loaded config available");
-    }
-}
+// "the workflow config should have N guards" step is in workflow_automation_steps.rs
 
 // ─── Config integration ────────────────────────────────────────────────────
 
-#[given("a config file with workflow enabled and guard_commit false")]
-fn given_config_with_guard_commit_false(world: &mut QuectoWorld) {
+#[given("a config file with workflow enabled and guards configured")]
+fn given_config_with_guards(world: &mut QuectoWorld) {
     super::ensure_temp_dir(world);
     let base = super::base_path(world);
     let config_path = base.join("config.json");
     let config_json = r#"{
         "workflow": {
             "enabled": true,
-            "guard_commit": false,
+            "guards": [{"commands": ["git commit"], "before_step": 7, "message": "Not yet."}],
             "steps": [
                 {"id": 1, "label": "Test Step", "phase": "red"}
             ]

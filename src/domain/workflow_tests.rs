@@ -163,7 +163,7 @@ fn test_default_config() {
         "workflow is opt-in; default should be disabled"
     );
     assert_eq!(config.steps.len(), 0, "no hardcoded default steps");
-    assert!(config.guard_commit, "guard_commit should default to true");
+    assert!(config.guards.is_empty(), "no default guards");
 }
 
 #[test]
@@ -189,25 +189,24 @@ fn test_config_deserialize_empty() {
     let config: WorkflowConfig = serde_json::from_str(json).unwrap();
     assert!(config.enabled);
     assert_eq!(config.steps.len(), 0, "no hardcoded default steps");
-    assert!(
-        config.guard_commit,
-        "guard_commit defaults to true via serde"
-    );
+    assert!(config.guards.is_empty(), "no default guards via serde");
 }
 
 #[test]
-fn test_config_guard_commit_false() {
-    let json = r#"{"enabled":true,"guard_commit":false}"#;
+fn test_config_with_guards() {
+    let json = r#"{"enabled":true,"guards":[{"commands":["git commit"],"before_step":7,"message":"Not yet."}]}"#;
     let config: WorkflowConfig = serde_json::from_str(json).unwrap();
-    assert!(config.enabled);
-    assert!(!config.guard_commit);
+    assert_eq!(config.guards.len(), 1);
+    assert_eq!(config.guards[0].commands, vec!["git commit"]);
+    assert_eq!(config.guards[0].before_step, 7);
+    assert_eq!(config.guards[0].message, "Not yet.");
 }
 
 #[test]
-fn test_config_guard_commit_default_true() {
+fn test_config_empty_guards() {
     let json = r#"{"enabled":true}"#;
     let config: WorkflowConfig = serde_json::from_str(json).unwrap();
-    assert!(config.guard_commit);
+    assert!(config.guards.is_empty());
 }
 
 #[test]
@@ -447,23 +446,15 @@ fn test_default_config_has_new_fields() {
     let config = WorkflowConfig::default();
     assert!(config.auto_continue);
     assert!(config.completion_nudge);
-    assert_eq!(config.enforce_commit_after_step, Some(6));
+    assert!(config.guards.is_empty());
 }
 
 #[test]
 fn test_config_deserialize_new_fields() {
-    let json = r#"{"auto_continue":false,"completion_nudge":false,"enforce_commit_after_step":3}"#;
+    let json = r#"{"auto_continue":false,"completion_nudge":false}"#;
     let config: WorkflowConfig = serde_json::from_str(json).unwrap();
     assert!(!config.auto_continue);
     assert!(!config.completion_nudge);
-    assert_eq!(config.enforce_commit_after_step, Some(3));
-}
-
-#[test]
-fn test_config_deserialize_null_enforcement() {
-    let json = r#"{"enforce_commit_after_step":null}"#;
-    let config: WorkflowConfig = serde_json::from_str(json).unwrap();
-    assert_eq!(config.enforce_commit_after_step, None);
 }
 
 #[test]
@@ -472,17 +463,46 @@ fn test_config_deserialize_missing_new_fields_uses_defaults() {
     let config: WorkflowConfig = serde_json::from_str(json).unwrap();
     assert!(config.auto_continue);
     assert!(config.completion_nudge);
-    assert_eq!(config.enforce_commit_after_step, Some(6));
+    assert!(config.guards.is_empty());
 }
 
-// ─── System prompt with config tests ────────────────────────────────────
+// ─── System prompt with guards tests ────────────────────────────────────
 
 #[test]
-fn test_system_prompt_snippet_with_config_enforcement() {
+fn test_system_prompt_snippet_with_guards() {
     let state = WorkflowState::default_bdd();
-    let snippet = state.system_prompt_snippet_with_config(Some(6));
-    assert!(snippet.contains("commit"));
-    assert!(snippet.contains("step"));
+    let guards = vec![GuardRule {
+        commands: vec!["git commit".into()],
+        before_step: 7,
+        message: "Complete steps first.".into(),
+    }];
+    let snippet = state.system_prompt_snippet_with_guards(&guards);
+    assert!(snippet.contains("git commit"));
+    assert!(snippet.contains("Guard"));
+}
+
+#[test]
+fn test_system_prompt_snippet_no_guards() {
+    let state = WorkflowState::default_bdd();
+    let snippet = state.system_prompt_snippet_with_guards(&[]);
+    assert!(!snippet.contains("Guard"));
+}
+
+#[test]
+fn test_check_steps_complete() {
+    let mut state = WorkflowState::default_bdd();
+    // before_step=7 requires steps 1-6
+    assert!(state.check_steps_complete(7).is_err());
+    for i in 1..=6 {
+        state.check(i).unwrap();
+    }
+    assert!(state.check_steps_complete(7).is_ok());
+}
+
+#[test]
+fn test_check_steps_complete_zero_always_ok() {
+    let state = WorkflowState::default_bdd();
+    assert!(state.check_steps_complete(0).is_ok());
 }
 
 #[test]
