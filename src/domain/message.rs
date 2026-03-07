@@ -1,5 +1,5 @@
 /// A single message in a conversation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Message {
     pub role: Role,
     pub content: String,
@@ -60,19 +60,8 @@ impl Message {
         Self {
             role: Role::System,
             content: content.into(),
-            tool_calls: vec![],
-            tool_call_id: None,
-            turn: None,
             is_pinned: true,
-            is_manifest: false,
-            is_collapsed: false,
-            tool_name: None,
-            input_preview: None,
-            spill_id: None,
-            image_blocks: vec![],
-            is_error: false,
-            stop_reason: None,
-            user_image_blocks: vec![],
+            ..Default::default()
         }
     }
 
@@ -80,19 +69,7 @@ impl Message {
         Self {
             role: Role::User,
             content: content.into(),
-            tool_calls: vec![],
-            tool_call_id: None,
-            turn: None,
-            is_pinned: false,
-            is_manifest: false,
-            is_collapsed: false,
-            tool_name: None,
-            input_preview: None,
-            spill_id: None,
-            image_blocks: vec![],
-            is_error: false,
-            stop_reason: None,
-            user_image_blocks: vec![],
+            ..Default::default()
         }
     }
 
@@ -101,18 +78,7 @@ impl Message {
             role: Role::Assistant,
             content: content.into(),
             tool_calls,
-            tool_call_id: None,
-            turn: None,
-            is_pinned: false,
-            is_manifest: false,
-            is_collapsed: false,
-            tool_name: None,
-            input_preview: None,
-            spill_id: None,
-            image_blocks: vec![],
-            is_error: false,
-            stop_reason: None,
-            user_image_blocks: vec![],
+            ..Default::default()
         }
     }
 
@@ -120,27 +86,17 @@ impl Message {
         Self {
             role: Role::Tool,
             content: content.into(),
-            tool_calls: vec![],
             tool_call_id: Some(tool_call_id.into()),
-            turn: None,
-            is_pinned: false,
-            is_manifest: false,
-            is_collapsed: false,
-            tool_name: None,
-            input_preview: None,
-            spill_id: None,
-            image_blocks: vec![],
-            is_error: false,
-            stop_reason: None,
-            user_image_blocks: vec![],
+            ..Default::default()
         }
     }
 }
 
 /// The role of a message sender.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Role {
     System,
+    #[default]
     User,
     Assistant,
     Tool,
@@ -185,8 +141,14 @@ pub enum StopReason {
 }
 
 impl StopReason {
-    /// Parse an Anthropic stop_reason string.
-    pub fn from_anthropic(reason: &str) -> Self {
+    /// Parse a stop reason string into a `StopReason` variant.
+    ///
+    /// Accepts the canonical strings used by Anthropic (`end_turn`,
+    /// `max_tokens`, `tool_use`, etc.) which are also used as the
+    /// serialisation format in `FileSessionStore`. Provider-specific
+    /// aliases (`pause_turn`, `stop_sequence`, `sensitive`) are mapped
+    /// to the appropriate canonical variant.
+    pub fn parse(reason: &str) -> Self {
         match reason {
             "end_turn" => Self::EndTurn,
             "max_tokens" => Self::MaxTokens,

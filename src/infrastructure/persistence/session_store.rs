@@ -62,7 +62,7 @@ fn skip_if_false(v: &bool) -> bool {
 
 /// Serialise `StopReason` to a stable canonical string for persistence.
 ///
-/// Uses the same strings that `StopReason::from_anthropic` accepts so that
+/// Uses the same strings that `StopReason::parse` accepts so that
 /// round-trips are lossless regardless of which provider produced the value.
 fn stop_reason_to_str(sr: &StopReason) -> String {
     match sr {
@@ -253,7 +253,7 @@ fn record_to_message(rec: MessageRecord) -> Message {
     // `None` = absent (old session file), keep constructor default
     // (true for System, false for others).
     msg.is_error = rec.is_error;
-    msg.stop_reason = rec.stop_reason.as_deref().map(StopReason::from_anthropic);
+    msg.stop_reason = rec.stop_reason.as_deref().map(StopReason::parse);
     if let Some(pinned) = rec.is_pinned {
         msg.is_pinned = pinned;
     }

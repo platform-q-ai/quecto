@@ -2369,7 +2369,7 @@ fn given_assistant_message_with_stop_reason(world: &mut QuectoWorld, stop_reason
     asst.stop_reason = if stop_reason.is_empty() {
         None
     } else {
-        Some(StopReason::from_anthropic(&stop_reason))
+        Some(StopReason::parse(&stop_reason))
     };
     world.context_messages = Some(vec![Message::user("hello"), asst]);
 }
@@ -2888,7 +2888,7 @@ fn then_stream_has_error_containing(world: &mut QuectoWorld, expected: String) {
 #[given(expr = "a stop reason string {string}")]
 fn given_stop_reason_string(world: &mut QuectoWorld, reason: String) {
     use quecto::domain::message::StopReason;
-    world.parsed_stop_reason = Some(StopReason::from_anthropic(&reason));
+    world.parsed_stop_reason = Some(StopReason::parse(&reason));
 }
 
 #[when("I parse the stop reason")]

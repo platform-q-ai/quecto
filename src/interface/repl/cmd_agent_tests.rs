@@ -5,37 +5,15 @@ use std::sync::Arc;
 
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Message, Role};
-use crate::domain::provider::{ChatRequest, LlmProvider};
+use crate::domain::message::{Message, Role};
+use crate::domain::provider::LlmProvider;
 use crate::domain::tool::{ToolDefinition, ToolRegistry, ToolResult};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
+use crate::interface::test_support::StubProvider;
 
 use super::super::{ReplLoop, ReplSession};
 
 // -- Stubs --
-
-#[derive(Debug)]
-struct StubProvider;
-
-impl LlmProvider for StubProvider {
-    fn name(&self) -> &str {
-        "stub"
-    }
-
-    fn chat(
-        &self,
-        _request: ChatRequest<'_>,
-    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
-        Box::pin(async {
-            Ok(LlmResponse {
-                content: Some("stub".to_string()),
-                tool_calls: vec![],
-                usage: None,
-                stop_reason: None,
-            })
-        })
-    }
-}
 
 struct EmptyRegistry;
 
@@ -382,7 +360,7 @@ fn test_agent_run_success() {
     );
     let last = repl.session.messages.last().unwrap();
     assert_eq!(last.role, Role::Assistant);
-    assert_eq!(last.content, "stub");
+    assert_eq!(last.content, "stub response");
 }
 
 #[test]
@@ -597,7 +575,7 @@ fn test_agent_run_injects_into_session() {
     assert_eq!(repl.session.messages.len(), 2);
     assert_eq!(repl.session.messages[0].role, Role::User);
     assert_eq!(repl.session.messages[1].role, Role::Assistant);
-    assert_eq!(repl.session.messages[1].content, "stub");
+    assert_eq!(repl.session.messages[1].content, "stub response");
 }
 
 #[test]

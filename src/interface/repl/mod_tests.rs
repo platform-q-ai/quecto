@@ -144,43 +144,7 @@ fn test_build_system_prompt_with_user_prompt() {
     );
 }
 
-/// Stub provider for unit tests that never makes real HTTP calls.
-fn make_stub_provider() -> Arc<dyn LlmProvider> {
-    use crate::domain::message::LlmResponse;
-    use crate::domain::provider::{ChatRequest, LlmProvider};
-
-    #[derive(Debug)]
-    struct StubProvider;
-
-    impl LlmProvider for StubProvider {
-        fn name(&self) -> &str {
-            "stub"
-        }
-
-        fn chat(
-            &self,
-            _request: ChatRequest<'_>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<LlmResponse, crate::domain::error::DomainError>,
-                    > + Send
-                    + '_,
-            >,
-        > {
-            Box::pin(async {
-                Ok(LlmResponse {
-                    content: Some("stub response".to_string()),
-                    tool_calls: vec![],
-                    usage: None,
-                    stop_reason: None,
-                })
-            })
-        }
-    }
-
-    Arc::new(StubProvider)
-}
+use crate::interface::test_support::make_stub_provider;
 
 // ---------------------------------------------------------------
 // Helpers for ReplLoop tests
