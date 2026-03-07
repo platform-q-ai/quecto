@@ -586,6 +586,11 @@ fn find_agent_response(world: &QuectoWorld, command: &str) -> Option<serde_json:
     })
 }
 
+/// Public accessor for `find_agent_response` — used by e2e_steps.rs.
+pub fn find_agent_response_pub(world: &QuectoWorld, command: &str) -> Option<serde_json::Value> {
+    find_agent_response(world, command)
+}
+
 #[then(expr = "the agent output should contain a response command {string} with success true")]
 fn then_agent_output_response_success(world: &mut QuectoWorld, command: String) {
     let resp = find_agent_response(world, &command);
@@ -1878,6 +1883,8 @@ fn then_client_received_response_command_success(
 struct RealLlmReaderState {
     events: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     prompt_completions: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    agent_end_count: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    last_event_time: std::sync::Arc<std::sync::Mutex<std::time::Instant>>,
 }
 
 /// Spawn a reader thread that collects events and tracks prompt completions.
@@ -1888,9 +1895,13 @@ fn spawn_real_llm_reader(
     let state = RealLlmReaderState {
         events: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         prompt_completions: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
+        agent_end_count: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
+        last_event_time: std::sync::Arc::new(std::sync::Mutex::new(std::time::Instant::now())),
     };
     let events = state.events.clone();
     let completions = state.prompt_completions.clone();
+    let agent_ends = state.agent_end_count.clone();
+    let last_event = state.last_event_time.clone();
 
     let handle = std::thread::spawn(move || {
         let mut buf = String::new();
@@ -1909,7 +1920,11 @@ fn spawn_real_llm_reader(
                         if t == "response" && (cmd == "prompt" || cmd == "agent_error") {
                             completions.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                         }
+                        if t == "agent_end" {
+                            agent_ends.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        }
                     }
+                    *last_event.lock().unwrap() = std::time::Instant::now();
                     events.lock().unwrap().push(l);
                 }
                 Err(ref e)
@@ -1925,13 +1940,32 @@ fn spawn_real_llm_reader(
     (handle, state)
 }
 
+/// Arguments for [`send_real_llm_commands`].
+struct SendCommandsArgs<'a> {
+    commands: &'a [String],
+    writer: &'a mut std::os::unix::net::UnixStream,
+    state: &'a RealLlmReaderState,
+    stderr: &'a mut String,
+    has_follow_ups: bool,
+}
+
 /// Send commands to a real-LLM UDS agent, waiting for prompt completions.
-fn send_real_llm_commands(
-    commands: &[String],
-    writer: &mut std::os::unix::net::UnixStream,
-    state: &RealLlmReaderState,
-    stderr: &mut String,
-) {
+///
+/// When `has_follow_ups` is true, waits for a quiet period (no new events for
+/// 3s) after all prompts complete.  This handles follow_up scenarios where the
+/// server processes pending messages asynchronously after the prompt response
+/// — those pending runs produce their own agent_end events, and we must not
+/// shut down the write side until they finish (because the server aborts the
+/// client writer task on read-EOF, which would prevent us from receiving the
+/// follow-up events).
+fn send_real_llm_commands(args: SendCommandsArgs<'_>) {
+    let SendCommandsArgs {
+        commands,
+        writer,
+        state,
+        stderr,
+        has_follow_ups,
+    } = args;
     use std::io::Write;
     let mut expected_completions: u32 = 0;
     for cmd_str in commands {
@@ -1959,6 +1993,25 @@ fn send_real_llm_commands(
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
         } else {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    }
+
+    // When follow_ups are queued, wait for a quiet period so the server has
+    // time to process pending messages (which run asynchronously after the
+    // prompt response is emitted).
+    if has_follow_ups {
+        let quiet_duration = std::time::Duration::from_secs(3);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        loop {
+            if std::time::Instant::now() > deadline {
+                stderr.push_str("timeout waiting for follow-up processing\n");
+                break;
+            }
+            let elapsed = state.last_event_time.lock().unwrap().elapsed();
+            if elapsed >= quiet_duration {
+                break;
+            }
             std::thread::sleep(std::time::Duration::from_millis(200));
         }
     }
@@ -2026,7 +2079,22 @@ fn execute_real_llm_uds(world: &mut QuectoWorld) {
     let (reader_handle, state) = spawn_real_llm_reader(BufReader::new(reader_stream));
 
     let commands = world.uds_commands.clone();
-    send_real_llm_commands(&commands, &mut writer, &state, &mut world.agent_stderr);
+
+    // Count follow_up commands — they produce extra agent_end events
+    // after the explicit prompt completes, so we need to wait for them.
+    let has_follow_ups = commands.iter().any(|c| {
+        serde_json::from_str::<serde_json::Value>(c)
+            .map(|v| v["type"].as_str() == Some("follow_up"))
+            .unwrap_or(false)
+    });
+
+    send_real_llm_commands(SendCommandsArgs {
+        commands: &commands,
+        writer: &mut writer,
+        state: &state,
+        stderr: &mut world.agent_stderr,
+        has_follow_ups,
+    });
 
     // Give the server time to flush responses for non-prompt commands,
     // then shut down the write half to signal EOF.

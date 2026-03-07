@@ -2105,3 +2105,57 @@ fn then_agent_error_mentions(world: &mut QuectoWorld, expected: String) {
         world.agent_events,
     );
 }
+
+// ─── Real-LLM get_state assertions ──────────────────────────────────────────
+
+/// Assert that the get_state response messageCount is at least N.
+#[then(expr = "the get_state response messageCount should be at least {int}")]
+fn then_get_state_message_count_at_least(world: &mut QuectoWorld, minimum: usize) {
+    let resp =
+        uds_steps::find_agent_response_pub(world, "get_state").expect("no get_state response");
+    let count = resp["data"]["messageCount"]
+        .as_u64()
+        .expect("messageCount not a number") as usize;
+    assert!(
+        count >= minimum,
+        "expected messageCount >= {minimum}, got {count}"
+    );
+}
+
+// ─── Real-LLM get_messages assertions ───────────────────────────────────────
+
+/// Assert that the get_messages response contains a user message with specific text.
+#[then(expr = "the get_messages response should include a user message containing {string}")]
+fn then_get_messages_has_user_message(world: &mut QuectoWorld, expected: String) {
+    let resp = uds_steps::find_agent_response_pub(world, "get_messages")
+        .expect("no get_messages response");
+    let msgs = resp["data"]["messages"]
+        .as_array()
+        .expect("messages not an array");
+    let found = msgs.iter().any(|m| {
+        m["role"].as_str() == Some("user")
+            && m["content"]
+                .as_str()
+                .map(|c| c.contains(&expected))
+                .unwrap_or(false)
+    });
+    assert!(
+        found,
+        "expected a user message containing {expected:?}\nmessages: {msgs:?}"
+    );
+}
+
+/// Assert that the get_messages response contains at least one assistant message.
+#[then("the get_messages response should include an assistant message")]
+fn then_get_messages_has_assistant(world: &mut QuectoWorld) {
+    let resp = uds_steps::find_agent_response_pub(world, "get_messages")
+        .expect("no get_messages response");
+    let msgs = resp["data"]["messages"]
+        .as_array()
+        .expect("messages not an array");
+    let found = msgs.iter().any(|m| m["role"].as_str() == Some("assistant"));
+    assert!(
+        found,
+        "expected at least one assistant message\nmessages: {msgs:?}"
+    );
+}
