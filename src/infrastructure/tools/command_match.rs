@@ -18,8 +18,9 @@ pub(crate) fn extract_bash_command(arguments: &str) -> String {
 /// Handles chained commands (`&&`, `||`, `;`, newlines), flags between
 /// binary and subcommand, and subshells (`$(...)`, backticks).
 /// Convenience wrapper that parses patterns and matches in one call.
-/// Used by tests; production code uses `parse_patterns` + `command_matches_parsed`
+/// Used by tests only; production code uses `parse_patterns` + `command_matches_parsed`
 /// to avoid per-call allocation.
+#[cfg(test)]
 pub fn command_matches_patterns(command: &str, patterns: &[String]) -> bool {
     if patterns.is_empty() {
         return false;

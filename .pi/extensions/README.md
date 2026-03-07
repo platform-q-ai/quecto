@@ -1,6 +1,6 @@
 # Quecto Workflow Extension
 
-A [Pi](https://github.com/badlogic/pi-mono) extension that enforces the BDD/TDD Red→Green→Refactor development workflow defined in [`AGENTS.md`](../../AGENTS.md) as an interactive checklist.
+A [Pi](https://github.com/badlogic/pi-mono) extension that enforces the BDD/TDD Red→Green→Refactor development workflow defined in [`README.md`](../../README.md) as an interactive checklist.
 
 ## Why
 

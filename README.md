@@ -1,8 +1,11 @@
 # Quecto
 
-A single-binary personal AI assistant that runs on minimal Linux systems. Quecto receives messages via Telegram or the command line, routes them through an LLM (OpenAI, Anthropic, or ChatGPT Codex), executes tools (shell commands, file operations, search, scheduled tasks), and persists conversations to disk.
+A single-binary personal AI assistant that runs on minimal Linux systems. Quecto receives messages via the command line or a UDS event bus, routes them through an LLM (OpenAI, Anthropic, or ChatGPT Codex), executes tools (shell commands, file operations, search), and persists conversations to disk.
 
 Built in Rust. No runtime dependencies. Runs on a VPS, Raspberry Pi, or container.
+
+**ALWAYS FOLLOW BDD/TDD RED, GREEN, REFACTOR PROCESS WHEN MAKING CHANGES**
+**ALWAYS USE FULL DEVELOPMENT WORKFLOW**
 
 ## Release Notes
 
@@ -27,6 +30,110 @@ quecto agent -m "Hello, what can you do?"
 quecto
 ```
 
+## Architecture
+
+Four layers, strict dependency direction. Inner layers never import outer.
+
+```
+interface/ --> application/ --> domain/
+                    |
+infrastructure/ ----+
+```
+
+### domain/ — Pure types and traits
+Zero deps except `thiserror`, `serde` (derive), `serde_yaml`. Defines system vocabulary.
+
+| File | Purpose |
+|---|---|
+| `message.rs` | `Message` (constructors `::system/user/assistant/tool`; pruning fields: `turn`, `is_pinned`, `is_manifest`, `is_collapsed`, `tool_name`, `input_preview`, `spill_id`; `image_blocks` for tool results, `user_image_blocks` for user images, `is_error`, `stop_reason`), `Role`, `ToolCall`, `LlmResponse`, `UsageInfo`, `StopReason`, `UserImageBlock` |
+| `provider.rs` | `LlmProvider` trait (dyn-compatible), `ChatRequest` (with `session_id` for prompt caching, `cancel_flag`, `thinking_level`, `tool_choice`, `metadata`), `chat()` + `chat_stream()` (SSE with non-streaming fallback) + `chat_stream_incremental()` (real-time `StreamEvent` channel), `CancelFlag`, `ThinkingLevel`, `ToolChoice`, `RequestMetadata` |
+| `tool.rs` | `Tool` trait, `ToolRegistry` trait, `ToolGuard` trait, `ToolDefinition` (with `Cow<'static, str>` fields), `ToolResult` (with `image_blocks` for base64 images), `ImageBlock` |
+| `agent.rs` | `AgentLoop` trait, `AgentInfo`, `AgentResult`, `AgentProgressEvent` (with `tool_call_id` on `ToolStarted`/`ToolFinished`, `Token` for streaming, `Thinking` with context stats), `ProgressCallback` |
+| `session.rs` | `Session`, `SessionStore` trait, `SpillEntry`, `SpillIndex`, `ContextSpillStore` trait, `strip_tool_history()`, `filter_orphan_tool_pairs()` (with `OrphanDiag`) |
+| `skill.rs` | `Skill`, `SkillSource`, `SkillFrontmatter`, `SkillLoader` trait, `split_skill_md()`, `validate_frontmatter()`, `is_valid_skill_name()` |
+| `extension.rs` | `Extension` trait (`name()`, `tools()`, `system_prompt_snippet()`, `is_script()`) |
+| `workspace.rs` | `OnboardStore` port |
+| `subagent.rs` | `SubagentConfig`, `validate_agent_id()` |
+| `workflow.rs` | `WorkflowState`, `WorkflowConfig` (`guard_commit`, `enforce_commit_after_step`, `steps`), `WorkflowStep`, `WorkflowPersistable`, `WorkflowProgress`, `WorkflowError`, `default_steps()` (returns empty — steps must be configured in config.json), `bdd_steps()` (test-only 16-step template), `from_persistable_with_steps()` |
+| `error.rs` | `DomainError` enum (Provider, Tool, Session, Security, Config, Other) |
+
+Traits use `Pin<Box<dyn Future + Send + '_>>` for `Arc<dyn Trait>` compatibility.
+
+### application/ — Use cases
+Depends only on `domain/`. Orchestration logic, no I/O.
+
+| File | Purpose |
+|---|---|
+| `agent_loop.rs` | Core LLM-tool loop: send → execute tools → repeat. Traces `tool_name`, `duration_ms`, `is_error`. Progress callbacks for REPL spinner. Supports incremental streaming via `chat_stream_incremental()` |
+| `context_pruning.rs` | Token estimation, sliding window, pinned manifest. Collapse disabled by default (`context_collapse_after_turns = u32::MAX`); spill-to-disk when enabled |
+| `onboard.rs` | Onboarding orchestration via `OnboardStore` |
+| `reload.rs` | `/reload` use case: strips stale tool history via `strip_tool_history()`, clears spill index, coordinates `SessionStore` + `ContextSpillStore` |
+| `subagent.rs` | `SubagentContext` — child agent contexts with inherited sandbox |
+
+### infrastructure/ — Concrete adapters
+Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
+
+| Component | Contents |
+|---|---|
+| `config.rs` | `Config` with serde, env overrides, exec isolation settings (nsjail binary/limits/fallback), `WorkflowConfig` (steps must be explicit in config.json, `guard_commit` controls WorkflowGuard registration). Tolerates unknown fields (forward-compatible) |
+| `providers/` | `OpenAiProvider` (SSE streaming via `openai_sse`), `AnthropicProvider` (SSE streaming via `anthropic_sse`, extended thinking support), `CodexProvider` (Responses API, SSE, `prompt_cache_key`, orphan pair repair), `RefreshableProvider` (OAuth 401 → auto-refresh → retry), `FallbackProvider` (cooldown + error classification + `provider/model` routing syntax). URL validation: https required for non-loopback (override with `QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS=1`) |
+| `tools/` | `bash/` (shell, 1MiB cap, per-invocation timeout, `commandPrefix`, native/nsjail modes), `filesystem/` (`ReadTool` with image base64+auto-resize, `WriteTool`, `EditTool` with fuzzy match+CRLF/BOM+LCS diff, `LsTool` with limit+case-insensitive sort), `grep.rs` (rg JSON output, file-cache context), `find.rs` (fd, nested .gitignore, path-segment globs via `--full-path`), `ensure_tool.rs` (auto-download rg/fd from GitHub), `spawn.rs` (background subagent spawning), `web_search.rs` (Brave+DDG), `recall.rs` (spill retrieval), `workflow_tool.rs` (`WorkflowTool` + `WorkflowGuard` — blocks `git commit`/`git push` when workflow steps incomplete; registration controlled by `guard_commit` config), `path_utils.rs`, `truncate.rs`, `command_match.rs`, `registry.rs` (`ToolRegistryImpl`, `guard_count()`) |
+| `persistence/` | `FileSessionStore` (round-trips all Message fields), `MemoryStore`, `FileSkillLoader`, `FileOnboardStore` (`workspace_store.rs`), `FileContextSpillStore` (JSONL append-only) |
+| `security/` | `Sandbox` — workspace path validation + command filtering |
+| `extensions/` | `ExtensionRegistry` (discover `<workspace>/extensions/*/extension.toml`, register tools, inject system prompt snippets), `ScriptTool` (TOML manifest, subprocess exec, timeout, 1 MiB cap), `ExtensionWatcher` (fingerprint-based hot-reload via mtime+size polling) |
+| `auth/` | `CredentialStore` (file-based, `AuthMethod::Token`/`OAuth`), `oauth.rs` (browser + device code flows, Anthropic OAuth, OpenAI account ID extraction from JWT) |
+| `logging.rs` | `redact_api_keys()` — pattern-based secret redaction |
+
+### Tool isolation
+
+**Filesystem tools** (`read`, `write`, `edit`, `ls`): `Sandbox::validate_path` — canonicalises the path, follows symlinks at every component, and rejects anything outside `canonical_workspace`. Called before any I/O.
+
+**bash** (exec only): nsjail for process isolation via Linux kernel namespaces + rlimits. Workspace RW, toolchain RO, memory/PID/CPU limits via `--rlimit_as`/`--rlimit_nproc`/`--rlimit_cpu` (no cgroup access required). Defaults: 4 GB AS, 256 PIDs, no timeout (configure CPU/wall limits via config), 512 MB tmpfs. Configure via `tools.exec.isolation`, `tools.exec.nsjail_binary`, `tools.exec.allow_native_fallback`. Network namespace isolation disabled with `--network` flag or `tools.exec.network_passthrough` config.
+
+**Tool binary resolution** (`rg`, `fd`): `ensure_tool` resolves via system PATH → cache dir (`~/.local/share/quecto/tools/`) → auto-download from GitHub releases. Set `QUECTO_OFFLINE=1` to disable downloads.
+
+### interface/ — CLI (composition root)
+Manual arg parsing (no clap). Entry point: `cli::run(args) -> i32`.
+
+| Command | Description |
+|---|---|
+| `quecto` | Interactive REPL (`-s` session, `--system` prompt, `--model` override, `--no-sandbox`, `--network`) with live progress spinner |
+| `quecto agent -m <msg>` | Headless one-shot (`-s`, `--no-session`, `--system`, `--model`, `--max-iterations`, `--max-time`, `--no-sandbox`, `--network`) |
+| `quecto agent --mode uds` | Persistent UDS event bus: multi-client JSON-lines protocol over Unix domain socket (`--socket <path>` for explicit path, auto-generated otherwise) |
+| `quecto onboard` | Creates workspace + default config |
+| `quecto skills list\|remove\|install` | Skill management |
+| `quecto status` | Config summary, provider availability |
+| `quecto auth login\|logout\|status` | Credential management (token/OAuth/device-code) |
+| `quecto help\|version` | Self-explanatory |
+
+REPL commands: `/help`, `/clear`, `/agent`, `/spawn`, `/exit`, `/quit`. Uses abstracted I/O for testing.
+
+REPL progress: `ProgressRenderer` drives a braille spinner at ~12fps on stderr (TTY only). Shows thinking state, tool name, arguments preview, and execution status. Pure ANSI escape codes — no external crates.
+
+All entry points (REPL, CLI agent) prepend a datetime preamble to the system prompt via `build_system_prompt()` so the agent always knows the current date/time/timezone — critical for time-aware tasks.
+
+Headless CLI agent includes `SpawnTool` for background subagent spawning. Subagent timeout: 24 hours.
+
+### UDS event bus (`quecto agent --mode uds`)
+
+The UDS agent is the sole integration point for external consumers (TUIs, IDE plugins, web UIs). Architecture:
+
+| Module | Responsibility |
+|---|---|
+| `protocol.rs` | `AgentCommand` enum (9 variants: `prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_messages`, `get_messages_tail`, `get_session_stats`, `set_model`), `AgentEvent` enum (events: `agent_start`, `agent_end`, `token`, `turn_start`, `turn_end`, `tool_execution_start`, `tool_execution_end`, `response`), `StreamingBehavior`, `SessionState`, `SessionStats`. All commands carry optional `id` for request/response correlation |
+| `uds.rs` | Entry point (`run_uds_loop`), socket binding (`chmod 0600`), stale socket reaping, single-client backward-compatible path, shared dispatch loop (`dispatch_command`), system prompt injection/removal |
+| `uds_multi.rs` | Multi-client accept loop (Docker-style event bus). `tokio::sync::broadcast` delivers events to all connected clients. `tokio::sync::mpsc` merges commands from all clients into a single dispatch loop (no concurrent session mutation). Max 64 clients. Agent shuts down when all clients disconnect. RAII `ClientGuard` tracks client count. Lagged clients receive a re-sync notification |
+| `uds_session.rs` | `AgentSession` — in-memory state tracker (model, streaming flag, pending message queue with `VecDeque`, max 64 pending). `compute_session_stats()`, `message_to_json()`, `messages_tail_json()` |
+| `uds_cancel.rs` | `CancelSlot`/`CancelHandle` state machine (Idle → Armed → Fired) for race-free steer/abort. `run_agent_prompt()` with real-time progress event forwarding. `emit_event()` helper |
+
+Socket path: `--socket <path>` (max 104 bytes, macOS `sockaddr_un` limit) or auto-generated in `$XDG_RUNTIME_DIR` / `$TMPDIR` with UUID. Stale sockets older than 24h are reaped on startup. Socket printed to stderr: `quecto-agent-socket: <path>`.
+
+## Dependency rule
+- `domain/` imports nothing from project
+- `application/` imports `domain/` only
+- `infrastructure/` imports `domain/` only (implements traits)
+- `interface/` imports all three (composition root)
+
 ## Commands
 
 ### `quecto` — Interactive REPL
@@ -44,6 +151,8 @@ The REPL reads input line by line, sends each to the LLM agent, prints the respo
 | `-s` / `--session` | Session name for persistence. Default: `repl:repl_default`. Use `-` for ephemeral |
 | `--system` | System prompt prepended to each turn (not persisted) |
 | `--model` | Override the default model from config |
+| `--no-sandbox` | Disable workspace path restriction (DANGEROUS) |
+| `--network` | Enable outbound network in bash (disables nsjail net namespace) |
 
 REPL commands:
 
@@ -51,8 +160,6 @@ REPL commands:
 |---|---|
 | `/help` | Show available commands |
 | `/clear` | Clear conversation history |
-| `/cron` | Manage scheduled cron jobs (subcommands: `list`, `add`, `remove`, `enable`, `disable`) |
-| `/heartbeat` | Manage heartbeat tasks (subcommands: `show`, `add`, `remove`, `enable`, `disable`, `interval`, `status`) |
 | `/agent` | Manage subagent profiles (subcommands: `list`, `create`, `show`, `edit`, `remove`, `run`) |
 | `/spawn` | Spawn a task as a child agent (flags: `--agent`, `--system`, `--model`, `--max-time`, `--help`) |
 | `/exit` / `/quit` | Exit the REPL |
@@ -69,14 +176,17 @@ quecto agent -m "Write a Python script that generates primes"
 
 | Flag | Required | Description |
 |---|---|---|
-| `-m` / `--message` | Yes | The message to send |
+| `-m` / `--message` | Yes (one-shot) | The message to send |
 | `-s` / `--session` | No | Session name for persistence. Omit for `cli:default`. Use `-` for ephemeral |
 | `--no-session` | No | Ephemeral mode — nothing saved or loaded (mutually exclusive with `-s`) |
+| `--no-sandbox` | No | Disable workspace path restriction (DANGEROUS) |
+| `--network` | No | Enable outbound network in bash (disables nsjail net namespace) |
 | `--system` | No | System prompt prepended to conversation |
 | `--model` | No | Override model. Accepts bare id (`gpt-5.3-codex`) or provider-qualified (`openai/gpt-4o`). Default: `gpt-5.2` |
 | `--max-iterations` | No | Max tool call rounds before stopping |
 | `--max-time` | No | Wall-clock timeout in seconds (exit code 2 on timeout) |
-| `--mode` | No | Operation mode: default one-shot, or `rpc` for JSON-lines automation protocol |
+| `--mode` | No | Operation mode: default one-shot, or `uds` for UDS event bus |
+| `--socket` | No | Explicit socket path for `--mode uds` (default: auto-generated in tmpdir) |
 
 **Sessions** persist conversation history so the agent remembers context across runs:
 
@@ -87,54 +197,50 @@ quecto agent -s myproject -m "Add error handling to what we discussed"
 
 Use `-s -` or `--no-session` for one-off questions that don't need history.
 
-### `quecto agent --mode rpc` — JSON-lines protocol
+### `quecto agent --mode uds` — UDS event bus
 
-For automation and long-lived agent processes, use RPC mode:
+For automation, long-lived agent processes, and external integrations (TUIs, IDE plugins, web UIs), use UDS mode:
 
 ```bash
-quecto agent --mode rpc
+quecto agent --mode uds
+# stderr: quecto-agent-socket: /tmp/quecto-agent-<uuid>.sock
 ```
 
-Send one JSON command per line on `stdin` (and read JSON events from `stdout`).
+Multiple clients connect to the same Unix domain socket simultaneously. Events are broadcast to all connected clients; commands from all clients merge into a single dispatch loop.
 
-Basic example:
+Connect with any Unix socket client (e.g. `socat`) and send one JSON command per line:
 
-```text
+```bash
+socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 {"type":"prompt","id":"msg-1","message":"Summarize the CHANGELOG.md file"}
-{"type":"get_state","id":"state-1"}
-{"type":"abort","id":"msg-cancel-1"}
-{"type":"get_session_stats","id":"stats-1"}
 ```
 
-Supported command types include:
-`prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_messages`, `get_session_stats`, and `set_model`.
+**Commands:**
 
-Refer to `src/interface/cli/rpc_types.rs` for the full protocol schema and optional fields.
+| Type | Fields | Description |
+|---|---|---|
+| `prompt` | `message`, optional `id`, `streamingBehavior` | Send a user message. When agent is running, `streamingBehavior` (`"steer"` or `"followUp"`) is required |
+| `steer` | `message`, optional `id` | Interrupt after current tool, deliver this message next |
+| `follow_up` | `message`, optional `id` | Queue message for after current run completes |
+| `abort` | optional `id` | Cancel the current agent run |
+| `get_state` | optional `id` | Return session state (model, streaming, message count) |
+| `get_messages` | optional `id` | Return full conversation history |
+| `get_messages_tail` | `count`, optional `id` | Return last N messages |
+| `get_session_stats` | optional `id` | Return token usage and cost statistics |
+| `set_model` | `model` or `provider`+`modelId`, optional `id` | Switch model at runtime |
 
-### `quecto gateway` — Run as a Telegram bot
+**Events** (emitted as JSON lines):
 
-Starts a long-running service that polls Telegram for messages and responds through the agent. The gateway has access to additional tools not available in CLI mode (web search, cron scheduling, subagent spawning, message sending).
-
-```bash
-quecto gateway
-```
-
-Requires Telegram configuration in `config.json` (see [Configuration](#configuration)).
-
-Gateway sessions are bounded to prevent unbounded history growth. The gateway keeps the most recent non-system messages and preserves system messages, using `agents.defaults.max_session_messages` (default: `200`).
-
-#### Telegram bot commands
-
-The gateway intercepts the following bot commands directly, without routing them through the agent:
-
-| Command | Response |
+| Type | Description |
 |---|---|
-| `/start` | Welcome message |
-| `/help` | Lists available bot commands |
-| `/status` | Shows current model and Telegram status |
-| `/reload` | Remove stale tool history from the session, keep conversation. Clears spill index |
-
-Any other message (including unknown `/commands`) is forwarded to the agent for processing.
+| `agent_start` | Agent begins processing a prompt |
+| `agent_end` | Agent finished; includes messages from this run |
+| `token` | Incremental text token from streaming LLM |
+| `turn_start` | New LLM call begins |
+| `turn_end` | LLM call completed; includes assistant message |
+| `tool_execution_start` | Tool began executing (with `toolCallId`, `toolName`, `args`) |
+| `tool_execution_end` | Tool finished (with `toolCallId`, `toolName`, `result`, `isError`) |
+| `response` | Response to a command (with `id`, `command`, `success`, optional `data`/`error`) |
 
 ### `quecto auth` — Manage API keys
 
@@ -220,7 +326,7 @@ You are an expert at ...
 
 ### `quecto status` — Check configuration
 
-Shows the current config, workspace path, model, API key status, and Telegram/heartbeat settings. Secret values are redacted in status/debug output.
+Shows the current config, workspace path, model, and API key status. Secret values are redacted in status/debug output.
 
 ```bash
 quecto status
@@ -288,15 +394,6 @@ Config file: `~/.quecto/config.json`
       "api_base": "https://api.anthropic.com"
     }
   },
-  "channels": {
-    "telegram": {
-      "enabled": true,
-      "token": "your-bot-token-from-botfather",
-      "api_base": "https://api.telegram.org",
-      "allow_from": ["123456789"],
-      "default_send_to": "telegram:123456789"
-    }
-  },
   "tools": {
     "exec": {
       "isolation": "nsjail",
@@ -321,9 +418,13 @@ Config file: `~/.quecto/config.json`
       }
     }
   },
-  "heartbeat": {
-    "enabled": true,
-    "interval": 30
+  "workflow": {
+    "guard_commit": true,
+    "enforce_commit_after_step": 6,
+    "steps": [
+      { "id": 1, "label": "Update Scenarios / Add new features", "phase": "RED" },
+      { "id": 2, "label": "Write/update unit tests", "phase": "RED" }
+    ]
   }
 }
 ```
@@ -335,7 +436,7 @@ All fields are optional. An empty `{}` is valid — everything uses sensible def
 Set `providers.<name>.api_base` only when you need a non-default endpoint (for example, a local mock server).
 
 - URLs must be valid and must not include username/password, query params, or fragments.
-- `https://` is required for non-local hosts.
+- `https://` is required for non-local hosts (override with `QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS=1`).
 - `http://` is allowed only for loopback hosts: `localhost`, `127.0.0.1`, or `::1`.
 - Invalid `api_base` values cause that provider to be rejected during startup.
 
@@ -357,18 +458,6 @@ nsjail resource limits use rlimits (`--rlimit_as`, `--rlimit_nproc`, `--rlimit_c
 
 nsjail mounts `/bin`, `/usr`, `/lib`, `/lib64` read-only inside the jail, plus individual `/etc` files needed by the dynamic linker and NSS (`ld.so.cache`, `ld.so.conf`, `nsswitch.conf`, `passwd`, `group`, `ssl`, `alternatives`). Only paths that exist on the host are mounted.
 
-### Telegram configuration
-
-| Field | Description |
-|---|---|
-| `channels.telegram.enabled` | Enable Telegram channel |
-| `channels.telegram.token` | Bot token from BotFather |
-| `channels.telegram.api_base` | API endpoint (default: `https://api.telegram.org`) |
-| `channels.telegram.allow_from` | User ID allowlist (empty `[]` disables the channel) |
-| `channels.telegram.default_send_to` | Default outbound address for `message` tool and cron delivery (format: `"telegram:<chat_id>"`) |
-
-`default_send_to` is intended for single-user deployments. When set, cron jobs and heartbeat tasks fall back to this address if no explicit `deliver_to` or `target` is specified.
-
 ### Environment variable overrides
 
 | Variable | Overrides |
@@ -383,6 +472,7 @@ nsjail mounts `/bin`, `/usr`, `/lib`, `/lib64` read-only inside the jail, plus i
 | `QUECTO_PROVIDERS_OPENAI_API_KEY` | `providers.openai.api_key` |
 | `QUECTO_PROVIDERS_ANTHROPIC_API_KEY` | `providers.anthropic.api_key` |
 | `QUECTO_OFFLINE` | Set to `1`/`true`/`yes` to disable auto-download of tool binaries (rg, fd) |
+| `QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS` | Set to `1` to allow non-default HTTPS hosts for provider API bases |
 
 ## Tools
 
@@ -391,8 +481,6 @@ The agent has access to tools it can call autonomously to accomplish tasks.
 Tool definitions are cached in the registry at registration time (sorted once, reused for subsequent definition lookups).
 
 External tool binaries (`rg`, `fd`) are resolved via `ensure_tool`: system PATH → cache dir (`~/.local/share/quecto/tools/`) → auto-download from GitHub releases. Set `QUECTO_OFFLINE=1` to disable downloads.
-
-### CLI mode tools
 
 | Tool | Description |
 |---|---|
@@ -405,19 +493,10 @@ External tool binaries (`rg`, `fd`) are resolved via `ensure_tool`: system PATH 
 | `find` | Find files by glob pattern with fd. Respects nested `.gitignore` files, path-segment patterns via `--full-path`, configurable limit (default 1000), 50KB output cap |
 | `recall` | Retrieve a previously collapsed tool output by its spill ID (e.g. `turn20:bash:0`). Use `recall("list")` for the full index |
 | `spawn` | Spawn a background subagent for long-running tasks |
+| `web_search` | Search the web via Brave Search or DuckDuckGo |
+| `workflow` | Manage the BDD/TDD development workflow (status, check, uncheck, reset, skip, set_issue, clear_issue). `WorkflowGuard` blocks `git commit`/`git push` when steps are incomplete |
 
 Filesystem tools (`read`, `write`, `edit`, `ls`) run on async `tokio::fs` adapters.
-
-### Gateway-only tools
-
-These are available when running `quecto gateway` but not in CLI or REPL mode:
-
-| Tool | Description |
-|---|---|
-| `web_search` | Search the web via Brave Search or DuckDuckGo |
-| `cron` | Manage scheduled tasks (add, remove, list, enable, disable). Interval schedules execute; cron-expression schedules are currently skipped and marked with `last_error` |
-| `spawn` | Spawn a background subagent for long-running tasks |
-| `message` | Send a message to the user's channel. Falls back to `default_send_to` when no explicit target |
 
 ## Security
 
@@ -428,10 +507,11 @@ The agent operates inside a sandbox:
 - **Exec runtime isolation**: The `bash` tool runs in `nsjail` mode by default with rlimit-based resource bounds (no cgroup access required); `native` remains available as an explicit opt-in via `tools.exec.isolation`.
 - **Environment isolation**: `QUECTO_*` environment variables (including API keys) are stripped from child processes spawned by the `bash` tool.
 - **Secret redaction**: Log/status output redacts OpenAI/Anthropic (`sk-*`), Groq (`gsk_*`/`gsk-*`), and Telegram bot token values.
+- **UDS socket security**: Socket files are created with `chmod 0600` (owner-only). Stale sockets older than 24h are reaped on startup.
 
 ## Provider Fallback
 
-Quecto supports OpenAI, Anthropic, and ChatGPT Codex as LLM providers. OpenAI and Anthropic support SSE streaming (`chat_stream()`) for incremental response assembly, with automatic fallback to non-streaming mode. The Codex provider uses the Responses API with SSE streaming.
+Quecto supports OpenAI, Anthropic, and ChatGPT Codex as LLM providers. OpenAI and Anthropic support SSE streaming (`chat_stream()` and `chat_stream_incremental()`) for incremental response assembly, with automatic fallback to non-streaming mode. The Codex provider uses the Responses API with SSE streaming.
 
 If multiple providers are configured, automatic fallback applies:
 
@@ -440,7 +520,7 @@ If multiple providers are configured, automatic fallback applies:
 - Authentication errors (wrong API key) do not trigger fallback
 - Providers enter a cooldown period after failures
 - Classification is provider-scoped (`DomainError::Provider`), using extracted HTTP status codes first, then semantic message matching
-- Model routing: `claude-*` models (case-insensitive) are automatically routed to the Anthropic provider, skipping OpenAI
+- Model routing: use `provider/model` syntax (e.g. `anthropic/claude-sonnet-4-20250514`) to target a specific provider
 
 ### ChatGPT Codex provider
 
@@ -451,44 +531,77 @@ OAuth tokens from `auth.openai.com` (obtained via `quecto auth login --provider 
 - Orphaned tool call pair repair: mismatched `function_call`/`function_call_output` pairs (from context pruning or mid-turn interruption) are detected and dropped before sending to the API
 - Parallel tool calls enabled
 
+### OAuth auto-refresh
+
+OAuth-backed providers are wrapped in `RefreshableProvider` so that expired tokens are automatically refreshed mid-session on 401. The decorator intercepts auth errors, refreshes the token via the credential store, rebuilds the inner provider with the new token, and retries the request once.
+
 API key resolution order: credential store (`quecto auth login`) > config file > environment variable.
 
-## Health Endpoints
+## Development workflow
 
-When running as a gateway, Quecto exposes HTTP health endpoints for monitoring:
+1 - Update Scenarios/Add new features as necessary
+2 - Write/update unit tests
+3 - ensure new/modified tests fail -RED
+4 - Implement code - GREEN
+5 - Refactor based in performance, security and clean architecture standards - REFACTOR
+6 - Ensure tests still pass - GREEN
+7 - Commit
+8 - Push
+9 - Create PR
+10 - Despatch Architecture, Security, Performance Reviewers
+11 - Fix all valid concerns raised in review comments
+12 - Push changes to remote
+13 - Reply to comments and mark resolved
+14 - Merge
+15 - Move to local master and pull
 
-| Endpoint | Description | Response |
-|---|---|---|
-| `GET /health` | Liveness check | Always `200 OK` with `{"status":"ok"}` |
-| `GET /ready` | Readiness check | `200 OK` with `{"ready":true}` if providers available, `503` with `{"ready":false}` otherwise |
+## Quality gates
 
-The health server uses raw tokio TCP (no hyper/axum) for minimal binary footprint.
+| Gate | Command |
+|---|---|
+| Quality scripts | `scripts/check-quality.sh`, `scripts/check-bdd-quality.sh` |
+| Format | `cargo fmt --check` |
+| Lint | `cargo clippy -- -D warnings` (zero warnings) |
+| Unit tests | `cargo test --no-fail-fast --lib 2>&1 \| scripts/test-filter.sh` |
+| Architecture | `cargo test --no-fail-fast --test architecture 2>&1 \| scripts/test-filter.sh` |
+| BDD (sharded) | See [Sharded BDD](#sharded-bdd-24-way-parallel) below |
 
-## Telegram Setup
+All test commands pipe through `scripts/test-filter.sh` which strips the per-test `... ok` noise and shows only:
+- **Summary totals** (passed/failed counts)
+- **Failure details** (test name, file:line, assertion message, panic reason)
+- **BDD failures** with Feature/Scenario context
 
-1. Create a bot with [@BotFather](https://t.me/BotFather) on Telegram
-2. Copy the bot token
-3. Add to your config:
-   ```json
-    {
-      "channels": {
-        "telegram": {
-          "enabled": true,
-          "token": "your-bot-token",
-          "api_base": "https://api.telegram.org",
-          "allow_from": ["your-telegram-user-id"],
-          "default_send_to": "telegram:your-telegram-user-id"
-        }
-      }
-    }
-   ```
-4. Run `quecto gateway`
+`--no-fail-fast` ensures all failures are reported in a single run, not just the first.
 
-An empty `allow_from` array `[]` disables the Telegram channel entirely (fail closed). You must list at least one user ID for the channel to accept messages.
+Three-tier hooks: pre-commit (~20-40s: quality+fmt+clippy), pre-push (~30-60s: tests+24-shard BDD), pre-merge (~30-90s: real-LLM+machete+deny). SHA-based caching. Install via `scripts/install-hooks.sh`.
 
-Set `api_base` only when you need to override the Telegram API endpoint (for example, local integration tests with a mock server). Leave it as the default `https://api.telegram.org` for normal use.
+### Sharded BDD (24-way parallel)
 
-The gateway shuts down cleanly on Ctrl+C (SIGINT). The Telegram polling loop exits and all in-flight tasks are dropped without error.
+Non-real-LLM (fast, no API key needed):
+```bash
+(for i in $(seq 0 23); do
+  (timeout 12m env QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=24 cargo test --no-fail-fast --features test-support --test bdd 2>&1 | scripts/test-filter.sh) &
+done
+wait)
+```
+
+Real-LLM (requires `OPENAI_API_KEY`):
+```bash
+(for i in $(seq 0 23); do
+  (timeout 12m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=24 cargo test --no-fail-fast --features test-support --test bdd 2>&1 | scripts/test-filter.sh) &
+done
+wait)
+```
+
+Use `QUECTO_TAG=real-llm-smoke` for quicker paid smoke runs.
+
+### Running individual features or scenarios
+
+To debug a single scenario, add a temporary tag (e.g. `@focus`) to the scenario in the `.feature` file, then run:
+```bash
+QUECTO_TAG=focus cargo test --no-fail-fast --features test-support --test bdd 2>&1 | scripts/test-filter.sh
+```
+Remove the tag before committing.
 
 ## Testing
 
@@ -530,14 +643,14 @@ Coverage is intentionally not part of git hooks. Run coverage in nightly CI (rec
   sessions/                # Persisted conversation history (safe filename mapping)
     cli_default.json
     repl_repl_default.json
-    telegram_123456.json
-  cron/
-    jobs.json              # Scheduled task definitions
   workspace/
     skills/                # Skill definitions (YAML frontmatter required)
       my-skill/
         SKILL.md
-    HEARTBEAT.md           # Periodic task list (for gateway heartbeat)
+    extensions/            # Script extensions (TOML manifest + executable)
+      my-ext/
+        extension.toml
+        run.sh
     ...                    # Agent working directory (files created by the agent)
 ```
 
@@ -547,6 +660,9 @@ Tool binary cache (auto-downloaded `rg`, `fd`):
   rg
   fd
 ```
+
+## Tech stack
+Rust 2024, Tokio, reqwest+rustls, serde/serde_json/serde_yaml, uuid, chrono, tracing, dirs, thiserror, similar, base64, sha2, image, flate2, tar, rand, urlencoding, unicode-normalization. Dev: cucumber 0.21, futures, tempfile, wiremock 0.6, regex.
 
 ## License
 

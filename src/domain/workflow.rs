@@ -204,7 +204,7 @@ impl WorkflowState {
     pub fn system_prompt_snippet(&self) -> String {
         let progress = self.progress();
         let mut out = format!(
-            "## Active Development Workflow (Quecto AGENTS.md)\n\
+            "## Active Development Workflow (Quecto README.md)\n\
              Progress: {}/{} steps complete.\n",
             progress.done, progress.total
         );
@@ -546,7 +546,7 @@ pub fn default_steps() -> Vec<WorkflowStep> {
     vec![]
 }
 
-/// The 16-step BDD/TDD workflow matching AGENTS.md.
+/// The 16-step BDD/TDD workflow matching README.md.
 /// Test-only: used by `default_bdd()` as a reference template.
 #[cfg(any(test, feature = "test-support"))]
 pub fn bdd_steps() -> Vec<WorkflowStep> {

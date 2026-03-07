@@ -38,7 +38,7 @@ Codebase optimizer. Analyze the full source tree and produce a **prioritized rep
 - Module organization that hinders readability
 
 ## Process
-1. Map the project structure: `find src/ -name '*.rs'` and read `AGENTS.md` / `Cargo.toml`
+1. Map the project structure: `find src/ -name '*.rs'` and read `README.md` / `Cargo.toml`
 2. Read each layer systematically: `domain/` → `application/` → `infrastructure/` → `interface/`
 3. For each file, note concrete findings with **exact file paths and line numbers**
 4. Cross-reference: look for patterns that repeat across files (duplication, consistent anti-patterns)

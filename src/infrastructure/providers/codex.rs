@@ -363,8 +363,8 @@ impl CodexProvider {
         };
         let status = response.status().as_u16();
         if status != 200 {
-            let mut text = response.text().await.unwrap_or_default();
-            text.truncate(4096);
+            let text =
+                super::sse_common::truncate_error_body(response.text().await.unwrap_or_default());
             let _ = tx
                 .send(StreamEvent::Error(format!(
                     "HTTP {status} from Codex: {text}"
@@ -579,8 +579,8 @@ async fn extend_codex_carry(
     bytes: &[u8],
     tx: &tokio::sync::mpsc::Sender<StreamEvent>,
 ) -> bool {
-    const MAX_LINE_BYTES: usize = 1024 * 1024; // 1 MiB
-    if carry.len() + bytes.len() > MAX_LINE_BYTES && !carry.contains(&b'\n') {
+    if carry.len() + bytes.len() > super::sse_common::MAX_SSE_LINE_BYTES && !carry.contains(&b'\n')
+    {
         let _ = tx
             .send(StreamEvent::Error("SSE line exceeds 1 MiB limit".into()))
             .await;

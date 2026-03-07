@@ -263,8 +263,8 @@ impl OpenAiProvider {
         };
         let status = response.status().as_u16();
         if status != 200 {
-            let mut text = response.text().await.unwrap_or_default();
-            text.truncate(4096);
+            let text =
+                super::sse_common::truncate_error_body(response.text().await.unwrap_or_default());
             let _ = tx
                 .send(StreamEvent::Error(format!(
                     "HTTP {status} from OpenAI: {text}"

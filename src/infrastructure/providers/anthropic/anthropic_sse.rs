@@ -271,11 +271,9 @@ impl AnthropicProvider {
 
         let status = response.status().as_u16();
         if status != 200 {
-            // Cap error body to avoid unbounded memory usage on malformed responses.
-            const MAX_ERROR_BODY: usize = 4096;
-            let body_bytes = response.bytes().await.unwrap_or_default();
-            let truncated = &body_bytes[..body_bytes.len().min(MAX_ERROR_BODY)];
-            let text = String::from_utf8_lossy(truncated);
+            let text = crate::infrastructure::providers::sse_common::truncate_error_body(
+                response.text().await.unwrap_or_default(),
+            );
             let _ = tx
                 .send(StreamEvent::Error(format!(
                     "HTTP {} from Anthropic: {}",
@@ -319,8 +317,10 @@ async fn pump_sse_bytes(
         };
 
         // Guard against unbounded line growth from a misbehaving server.
-        const MAX_LINE_BYTES: usize = 1024 * 1024; // 1 MiB
-        if carry.len() + bytes.len() > MAX_LINE_BYTES && !carry.contains(&b'\n') {
+        if carry.len() + bytes.len()
+            > crate::infrastructure::providers::sse_common::MAX_SSE_LINE_BYTES
+            && !carry.contains(&b'\n')
+        {
             let _ = tx
                 .send(StreamEvent::Error("SSE line exceeded 1 MiB".to_string()))
                 .await;

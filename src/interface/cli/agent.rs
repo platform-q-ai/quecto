@@ -359,7 +359,7 @@ pub(crate) fn build_agent_from_config(
 
     // Discover and register script extensions from <workspace>/extensions/.
     // Discovery runs once at agent construction — hot-reload requires
-    // ExtensionWatcher (not wired here; see AGENTS.md).
+    // ExtensionWatcher (not wired here; see README.md).
     let ext_registry = ExtensionRegistry::discover(&[extensions_dir]);
     let extension_prompt_snippets = ext_registry.system_prompt_snippets();
     crate::interface::shared::register_extension_tools(&mut registry, &ext_registry);

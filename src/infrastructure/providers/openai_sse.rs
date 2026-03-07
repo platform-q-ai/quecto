@@ -66,8 +66,7 @@ impl Accum {
     }
 }
 
-/// Maximum SSE line buffer before rejecting a misbehaving server.
-const MAX_LINE_BYTES: usize = 1024 * 1024; // 1 MiB
+use crate::infrastructure::providers::sse_common::MAX_SSE_LINE_BYTES;
 
 /// Append a chunk to the carry buffer, guarding against runaway lines.
 async fn extend_carry(
@@ -75,7 +74,7 @@ async fn extend_carry(
     bytes: &[u8],
     tx: &tokio::sync::mpsc::Sender<StreamEvent>,
 ) -> bool {
-    if carry.len() + bytes.len() > MAX_LINE_BYTES && !carry.contains(&b'\n') {
+    if carry.len() + bytes.len() > MAX_SSE_LINE_BYTES && !carry.contains(&b'\n') {
         let _ = tx
             .send(StreamEvent::Error("SSE line exceeds 1 MiB limit".into()))
             .await;
