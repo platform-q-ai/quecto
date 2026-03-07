@@ -114,38 +114,24 @@ pub(super) async fn multi_client_loop(
     });
 
     // Spawn hot-reload watcher if an extension registry and interval are configured.
+    // The callback sends a `reload_extensions` command through `cmd_tx` so the
+    // dispatch loop (which has `&mut AgentLoopImpl`) can sync the tool registry.
     let watcher_task = if let (Some(ext_reg), Some(interval)) = (&ext_registry, hot_reload_interval)
     {
         let watcher_ext_reg = ext_reg.clone();
-        let read_ext_reg = ext_reg.clone();
-        let watcher_broadcast = broadcast_tx.clone();
+        let watcher_cmd_tx = cmd_tx.clone();
         Some(
             crate::infrastructure::extensions::watcher::spawn_watcher_with_callback(
                 watcher_ext_reg,
                 interval,
                 std::sync::Arc::new(move |_count| {
-                    // Build extensions_changed event from the reloaded registry.
-                    // The watcher already called reload_scripts() on the registry,
-                    // so we just read the current state and broadcast.
-                    let ext_list: Vec<crate::interface::cli::protocol::ExtensionInfo> = {
-                        let reg = read_ext_reg.lock().unwrap();
-                        reg.all_tools()
-                            .iter()
-                            .map(|t| {
-                                let def = t.definition();
-                                crate::interface::cli::protocol::ExtensionInfo {
-                                    name: def.name.to_string(),
-                                    description: def.description.to_string(),
-                                }
-                            })
-                            .collect()
-                    };
-                    let ev = super::protocol::AgentEvent::ExtensionsChanged {
-                        extensions: ext_list,
-                    };
-                    let mut line = ev.to_json_line();
-                    line.push('\n');
-                    let _ = watcher_broadcast.send(line);
+                    let cmd = ClientMessage::Command(ClientCommand {
+                        line: r#"{"type":"reload_extensions","id":"hot-reload"}"#.to_string(),
+                    });
+                    // Use try_send (not blocking_send) since this runs inside
+                    // an async context (tokio::spawn). Channel buffer is large
+                    // enough that this should not fail under normal load.
+                    let _ = watcher_cmd_tx.try_send(cmd);
                 }),
             ),
         )

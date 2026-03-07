@@ -145,6 +145,17 @@ impl AgentLoopImpl {
         self.tool_registry.extension_names()
     }
 
+    /// Replace all extension tools in the registry with the given set.
+    ///
+    /// Delegates to `ToolRegistry::replace_extensions`, which removes old
+    /// extension tools and registers the new ones (rejecting shadows).
+    pub fn replace_extensions(
+        &mut self,
+        tools: Vec<std::sync::Arc<dyn crate::domain::tool::Tool>>,
+    ) {
+        self.tool_registry.replace_extensions(tools);
+    }
+
     /// Enable or disable incremental streaming for LLM calls.
     pub fn set_streaming(&mut self, enabled: bool) {
         self.streaming = enabled;

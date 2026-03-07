@@ -86,6 +86,12 @@ pub trait ToolRegistry: Send + Sync {
         vec![]
     }
 
+    /// Replace all extension tools with the given set.
+    ///
+    /// Removes previously registered extension tools and registers the new
+    /// ones, rejecting any that shadow core tools. Default: no-op.
+    fn replace_extensions(&mut self, _tools: Vec<std::sync::Arc<dyn Tool>>) {}
+
     /// Execute a tool by name with JSON arguments.
     fn execute(
         &self,

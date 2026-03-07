@@ -18,7 +18,7 @@ pub(super) fn build_extension_list(ctx: &DispatchCtx<'_>) -> Vec<serde_json::Val
     let Some(ref ext_reg) = ctx.ext_registry else {
         return vec![];
     };
-    let reg = ext_reg.lock().unwrap();
+    let reg = ext_reg.lock().unwrap_or_else(|e| e.into_inner());
     reg.all_tools()
         .iter()
         .filter(|t| ext_names.contains(t.definition().name.as_ref()))
@@ -44,18 +44,28 @@ pub(super) async fn handle_reload_extensions(
         return;
     };
 
-    // 1. Reload script extensions from disk
-    {
-        let mut ext_reg = ext_reg_arc.lock().unwrap();
+    // 1. Reload script extensions from disk and collect updated tools
+    let new_tools = {
+        let mut ext_reg = ext_reg_arc.lock().unwrap_or_else(|e| e.into_inner());
         ext_reg.reload_scripts();
-    }
+        ext_reg.all_tools()
+    };
 
-    // 2. Build updated extension list for the broadcast event
+    // 2. Sync the agent's tool registry with the reloaded extensions
+    ctx.agent.replace_extensions(new_tools);
+
+    // 3. Build extension list from the now-synced tool registry
+    let ext_names: std::collections::HashSet<String> = ctx
+        .agent
+        .tool_registry_extension_names()
+        .into_iter()
+        .collect();
     let extension_list: Vec<super::protocol::ExtensionInfo> = {
-        let ext_reg = ext_reg_arc.lock().unwrap();
+        let ext_reg = ext_reg_arc.lock().unwrap_or_else(|e| e.into_inner());
         ext_reg
             .all_tools()
             .iter()
+            .filter(|t| ext_names.contains(t.definition().name.as_ref()))
             .map(|t| {
                 let def = t.definition();
                 super::protocol::ExtensionInfo {
@@ -66,11 +76,11 @@ pub(super) async fn handle_reload_extensions(
             .collect()
     };
 
-    // 3. Send success response
+    // 4. Send success response
     let ev = AgentEvent::ok(id, type_name, Some(serde_json::json!({})));
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
 
-    // 4. Broadcast extensions_changed event to all clients
+    // 5. Broadcast extensions_changed event (only non-shadow extensions)
     let ext_changed_ev = AgentEvent::ExtensionsChanged {
         extensions: extension_list,
     };
