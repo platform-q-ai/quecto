@@ -403,7 +403,10 @@ impl AnthropicProvider {
             content_blocks.push(serde_json::json!({"type": "text", "text": m.content}));
         }
         for tc in &m.tool_calls {
-            let input: serde_json::Value = serde_json::from_str(&tc.arguments).unwrap_or_default();
+            let input: serde_json::Value = serde_json::from_str(&tc.arguments)
+                .ok()
+                .filter(|v: &serde_json::Value| v.is_object())
+                .unwrap_or_else(|| serde_json::json!({}));
             content_blocks.push(serde_json::json!({
                 "type": "tool_use",
                 "id": tc.id,
