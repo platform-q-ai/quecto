@@ -475,6 +475,14 @@ fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serd
             let stats = compute_session_stats(ctx.session_key, ctx.messages);
             Some(serde_json::to_value(&stats).unwrap_or_default())
         }
+        AgentCommand::GetExtensions { .. } => {
+            // TODO(#318): return real extension list from shared ExtensionRegistry
+            Some(serde_json::json!({ "extensions": [] }))
+        }
+        AgentCommand::ReloadExtensions { .. } => {
+            // TODO(#318): trigger ExtensionRegistry reload, sync tools, broadcast
+            Some(serde_json::json!({}))
+        }
         _ => None,
     }
 }
@@ -548,7 +556,9 @@ pub(super) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             )
             .await
         }
-        AgentCommand::GetState { .. }
+        AgentCommand::GetExtensions { .. }
+        | AgentCommand::ReloadExtensions { .. }
+        | AgentCommand::GetState { .. }
         | AgentCommand::GetMessages { .. }
         | AgentCommand::GetMessagesTail { .. }
         | AgentCommand::GetSessionStats { .. } => {

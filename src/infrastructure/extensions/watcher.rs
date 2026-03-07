@@ -72,6 +72,45 @@ pub fn spawn_watcher_with_dirs(
     })
 }
 
+/// Type alias for a reload notification callback.
+///
+/// Called after `reload_scripts()` succeeds.  The `usize` argument is
+/// the new extension count.  Used by the UDS layer to sync the tool
+/// registry and broadcast `extensions_changed` events.
+pub type ReloadCallback = Arc<dyn Fn(usize) + Send + Sync>;
+
+/// Spawn a watcher that calls `on_reload` after each reload.
+///
+/// This is the primary entry point for the UDS agent: it triggers
+/// tool registry sync and event broadcast via the callback.
+pub fn spawn_watcher_with_callback(
+    registry: Arc<Mutex<ExtensionRegistry>>,
+    poll_interval: Duration,
+    on_reload: ReloadCallback,
+) -> JoinHandle<()> {
+    let watch_dirs: Vec<PathBuf> = {
+        let reg = registry.lock().unwrap();
+        reg.watch_dirs().to_vec()
+    };
+    tokio::spawn(async move {
+        let mut last_fingerprint = fingerprint_dirs(&watch_dirs);
+        loop {
+            tokio::time::sleep(poll_interval).await;
+            let current = fingerprint_dirs(&watch_dirs);
+            if current != last_fingerprint {
+                let count = {
+                    let mut reg = registry.lock().unwrap();
+                    reg.reload_scripts();
+                    reg.extension_count()
+                };
+                tracing::info!("extensions reloaded ({} total)", count);
+                on_reload(count);
+                last_fingerprint = current;
+            }
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,5 +153,87 @@ mod tests {
         let fp1 = fingerprint_dirs(&[tmp.path().to_path_buf()]);
         let fp2 = fingerprint_dirs(&[tmp.path().to_path_buf()]);
         assert_eq!(fp1, fp2);
+    }
+
+    #[tokio::test]
+    async fn test_spawn_watcher_with_callback_fires_on_change() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_path_buf();
+
+        let mut reg = ExtensionRegistry::new();
+        reg.set_watch_dirs(vec![dir.clone()]);
+        let registry = Arc::new(Mutex::new(reg));
+
+        let callback_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let cc = callback_count.clone();
+        let cb: ReloadCallback = Arc::new(move |_count| {
+            cc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        });
+
+        // Add an extension to trigger reload BEFORE starting the watcher,
+        // so the first fingerprint includes nothing, then the change is detected.
+        let ext_dir = dir.join("test-ext");
+        std::fs::create_dir_all(&ext_dir).unwrap();
+        let manifest = r#"
+name = "test"
+description = "Test"
+parameters_schema = '{"type":"object"}'
+command = "./run.sh"
+"#;
+
+        let handle = spawn_watcher_with_callback(registry, Duration::from_millis(50), cb);
+
+        // Give watcher time to take initial fingerprint (empty), then add extension
+        tokio::time::sleep(Duration::from_millis(80)).await;
+
+        std::fs::write(ext_dir.join("extension.toml"), manifest).unwrap();
+        let script = "#!/bin/sh\necho '{\"content\":\"ok\",\"is_error\":false}'";
+        std::fs::write(ext_dir.join("run.sh"), script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                ext_dir.join("run.sh"),
+                std::fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+        }
+
+        // Wait for at least two poll cycles after file creation
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        handle.abort();
+
+        assert!(
+            callback_count.load(std::sync::atomic::Ordering::SeqCst) >= 1,
+            "callback should have been called at least once"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_spawn_watcher_with_callback_no_spurious_calls() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_path_buf();
+
+        let mut reg = ExtensionRegistry::new();
+        reg.set_watch_dirs(vec![dir.clone()]);
+        let registry = Arc::new(Mutex::new(reg));
+
+        let callback_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let cc = callback_count.clone();
+        let cb: ReloadCallback = Arc::new(move |_count| {
+            cc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        });
+
+        let handle = spawn_watcher_with_callback(registry, Duration::from_millis(50), cb);
+
+        // Don't change anything — callback should not fire
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        handle.abort();
+
+        assert_eq!(
+            callback_count.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "callback should not fire when no changes occur"
+        );
     }
 }
