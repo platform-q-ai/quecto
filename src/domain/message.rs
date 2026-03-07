@@ -202,14 +202,6 @@ impl CostInfo {
     pub fn output_cost_usd(&self) -> f64 {
         self.output_cost_micro_usd as f64 / 1_000_000.0
     }
-    /// Cache-read cost in USD.
-    pub fn cache_read_cost_usd(&self) -> f64 {
-        self.cache_read_cost_micro_usd as f64 / 1_000_000.0
-    }
-    /// Cache-write cost in USD.
-    pub fn cache_write_cost_usd(&self) -> f64 {
-        self.cache_write_cost_micro_usd as f64 / 1_000_000.0
-    }
     /// Total cost in USD.
     pub fn total_cost_usd(&self) -> f64 {
         self.total_cost_micro_usd as f64 / 1_000_000.0

@@ -357,18 +357,6 @@ impl WorkflowState {
         }
     }
 
-    /// Restore state from a persisted snapshot.
-    ///
-    /// Uses the provided steps (from config), or falls back to
-    /// **Deprecated:** Use [`from_persistable_with_steps`] with explicit steps.
-    ///
-    /// Since `default_steps()` returns empty, this discards all persisted
-    /// done-state when called without explicit steps.
-    #[deprecated(note = "use from_persistable_with_steps with explicit steps from config")]
-    pub fn from_persistable(p: &WorkflowPersistable) -> Self {
-        Self::from_persistable_with_steps(p, None)
-    }
-
     /// Restore state from a persisted snapshot with explicit step definitions.
     pub fn from_persistable_with_steps(
         p: &WorkflowPersistable,

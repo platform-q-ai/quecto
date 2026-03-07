@@ -62,36 +62,26 @@ fn allowed_https_host(provider: &str, host: &str) -> bool {
 }
 
 fn validate_provider_api_base(provider: &str, api_base: &str) -> Result<(), ProviderFactoryError> {
+    let invalid = |reason: String| ProviderFactoryError::InvalidApiBase {
+        provider: provider.to_string(),
+        api_base: api_base.to_string(),
+        reason,
+    };
+
     let Ok(url) = reqwest::Url::parse(api_base) else {
-        return Err(ProviderFactoryError::InvalidApiBase {
-            provider: provider.to_string(),
-            api_base: api_base.to_string(),
-            reason: "URL parse failed".to_string(),
-        });
+        return Err(invalid("URL parse failed".to_string()));
     };
 
     if !url.username().is_empty() || url.password().is_some() {
-        return Err(ProviderFactoryError::InvalidApiBase {
-            provider: provider.to_string(),
-            api_base: api_base.to_string(),
-            reason: "credentials in URL are not allowed".to_string(),
-        });
+        return Err(invalid("credentials in URL are not allowed".to_string()));
     }
 
     if url.query().is_some() || url.fragment().is_some() {
-        return Err(ProviderFactoryError::InvalidApiBase {
-            provider: provider.to_string(),
-            api_base: api_base.to_string(),
-            reason: "query and fragment are not allowed".to_string(),
-        });
+        return Err(invalid("query and fragment are not allowed".to_string()));
     }
 
     let Some(host) = url.host_str() else {
-        return Err(ProviderFactoryError::InvalidApiBase {
-            provider: provider.to_string(),
-            api_base: api_base.to_string(),
-            reason: "host is missing".to_string(),
-        });
+        return Err(invalid("host is missing".to_string()));
     };
 
     match url.scheme() {
@@ -99,35 +89,25 @@ fn validate_provider_api_base(provider: &str, api_base: &str) -> Result<(), Prov
             if allowed_https_host(provider, host) || is_loopback_host(host) {
                 Ok(())
             } else {
-                Err(ProviderFactoryError::InvalidApiBase {
-                    provider: provider.to_string(),
-                    api_base: api_base.to_string(),
-                    reason: format!(
-                        "host '{}' is not allowed (set {}=1 to allow custom hosts)",
-                        host, ALLOW_CUSTOM_HOSTS_ENV
-                    ),
-                })
+                Err(invalid(format!(
+                    "host '{}' is not allowed (set {}=1 to allow custom hosts)",
+                    host, ALLOW_CUSTOM_HOSTS_ENV
+                )))
             }
         }
         "http" => {
             if is_loopback_host(host) {
                 Ok(())
             } else {
-                Err(ProviderFactoryError::InvalidApiBase {
-                    provider: provider.to_string(),
-                    api_base: api_base.to_string(),
-                    reason: "http is allowed only for loopback hosts".to_string(),
-                })
+                Err(invalid(
+                    "http is allowed only for loopback hosts".to_string(),
+                ))
             }
         }
-        scheme => Err(ProviderFactoryError::InvalidApiBase {
-            provider: provider.to_string(),
-            api_base: api_base.to_string(),
-            reason: format!(
-                "unsupported URL scheme '{}'; use https or loopback http",
-                scheme
-            ),
-        }),
+        scheme => Err(invalid(format!(
+            "unsupported URL scheme '{}'; use https or loopback http",
+            scheme
+        ))),
     }
 }
 

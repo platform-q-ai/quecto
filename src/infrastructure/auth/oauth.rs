@@ -419,12 +419,6 @@ pub fn extract_openai_account_id(token: &str) -> Option<String> {
     None
 }
 
-/// Check if a token is an OpenAI OAuth JWT (has three dot-separated parts).
-pub fn is_openai_oauth_token(token: &str) -> bool {
-    // OpenAI OAuth tokens are JWTs (eyJ...), standard API keys start with sk-
-    token.starts_with("eyJ") && token.split('.').count() == 3
-}
-
 /// Response from an OAuth token exchange or refresh.
 ///
 /// Per RFC 6749 §5.1, `refresh_token` is OPTIONAL. Some servers omit it
