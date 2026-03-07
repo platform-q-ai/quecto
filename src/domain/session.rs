@@ -180,7 +180,7 @@ pub fn filter_orphan_tool_pairs(messages: &[Message]) -> (HashSet<String>, Orpha
     }
 
     // Single-pass partition: split `sent` into valid (matched) and orphaned in one drain.
-    let mut valid = HashSet::new();
+    let mut valid = HashSet::with_capacity(sent.len());
     let mut orphaned_calls = Vec::new();
     for id in sent {
         if received.contains(&id) {
