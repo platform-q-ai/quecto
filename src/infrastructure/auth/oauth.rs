@@ -81,17 +81,7 @@ pub fn generate_pkce() -> PkceCodes {
     }
 }
 
-/// Maximum size for error response bodies to prevent memory exhaustion.
-const MAX_ERROR_BODY_LEN: usize = 4096;
-
-/// Truncate an error response body to a safe length.
-fn truncate_error_body(body: String) -> String {
-    if body.len() > MAX_ERROR_BODY_LEN {
-        format!("{}... (truncated)", &body[..MAX_ERROR_BODY_LEN])
-    } else {
-        body
-    }
-}
+use crate::infrastructure::providers::sse_common::truncate_error_body;
 
 /// Build the Anthropic OAuth authorization URL with PKCE.
 pub fn build_anthropic_auth_url(config: &OAuthConfig, pkce: &PkceCodes, state: &str) -> String {

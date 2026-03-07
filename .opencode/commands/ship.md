@@ -41,7 +41,7 @@ Once the PR exists, dispatch all four reviewer subagents in parallel to review i
 1. `@architecture-reviewer` — Review the PR for architectural soundness, system design, modularity, and upstream compatibility.
 2. `@security-reviewer` — Review the PR for security vulnerabilities, input validation, auth flaws, and data exposure risks.
 3. `@performance-reviewer` — Review the PR for performance regressions, memory leaks, unbounded growth, and hot path efficiency.
-4. `@documentation-updater` — Review PR changes and update README.md and AGENTS.md to reflect new features, commands, tools, agents, or configuration changes.
+4. `@documentation-updater` — Review PR changes and update README.md to reflect new features, commands, tools, agents, or configuration changes.
 
 Each agent should submit a formal GitHub PR review with inline comments. Pass each agent the PR number and repo (`$ARGUMENTS` if provided, otherwise detect from current branch).
 

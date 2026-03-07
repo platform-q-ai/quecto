@@ -96,22 +96,9 @@ impl ToolRegistryImpl {
         self.guards.len()
     }
 
-    /// Create a registry with the core filesystem and exec tools.
+    /// Create a registry with the core filesystem and exec tools (default options).
     pub fn with_core_tools(workspace: PathBuf, sandbox: Sandbox) -> Self {
-        Self::with_core_tools_and_exec_capture_bytes(workspace, sandbox, 1024 * 1024)
-    }
-
-    /// Create a registry with core tools and configurable exec output capture bytes.
-    pub fn with_core_tools_and_exec_capture_bytes(
-        workspace: PathBuf,
-        sandbox: Sandbox,
-        exec_max_capture_bytes: usize,
-    ) -> Self {
-        let exec_options = ExecOptions {
-            max_capture_bytes: exec_max_capture_bytes,
-            ..ExecOptions::default()
-        };
-        Self::with_core_tools_and_exec_options(workspace, sandbox, exec_options)
+        Self::with_core_tools_and_exec_options(workspace, sandbox, ExecOptions::default())
     }
 
     /// Create a registry with core tools and exec isolation mode settings.

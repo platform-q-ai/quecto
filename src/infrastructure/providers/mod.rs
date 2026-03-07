@@ -4,6 +4,7 @@ pub mod error;
 pub mod fallback;
 pub mod openai;
 pub mod refreshable;
+pub mod sse_common;
 
 use std::sync::Arc;
 
@@ -166,16 +167,11 @@ pub fn create_provider_with_client(
     }
 }
 
-/// Create a Codex provider for ChatGPT OAuth tokens.
-///
-/// OAuth tokens from `auth.openai.com` only work against the ChatGPT
-/// backend using the Responses API. Requires an `account_id` extracted
-/// from the JWT.
-pub fn create_codex_provider(api_key: String, account_id: String) -> Arc<dyn LlmProvider> {
-    create_codex_provider_with_client(api_key, account_id, reqwest::Client::new())
-}
-
 /// Create a Codex provider with a shared `reqwest::Client`.
+///
+/// Used for ChatGPT OAuth tokens from `auth.openai.com`, which only work
+/// against the ChatGPT backend using the Responses API. Requires an
+/// `account_id` extracted from the JWT.
 pub fn create_codex_provider_with_client(
     api_key: String,
     account_id: String,
