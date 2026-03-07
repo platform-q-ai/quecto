@@ -56,20 +56,8 @@ pub fn spawn_watcher_with_dirs(
     poll_interval: Duration,
     watch_dirs: Vec<PathBuf>,
 ) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut last_fingerprint = fingerprint_dirs(&watch_dirs);
-        loop {
-            tokio::time::sleep(poll_interval).await;
-            let current = fingerprint_dirs(&watch_dirs);
-            if current != last_fingerprint {
-                let mut reg = registry.lock().unwrap();
-                reg.reload_scripts();
-                let count = reg.extension_count();
-                tracing::info!("extensions reloaded ({} total)", count);
-                last_fingerprint = current;
-            }
-        }
-    })
+    // Delegate to the callback variant with a no-op callback.
+    spawn_watcher_with_dirs_and_callback(registry, poll_interval, watch_dirs, None)
 }
 
 /// Type alias for a reload notification callback.
@@ -83,6 +71,10 @@ pub type ReloadCallback = Arc<dyn Fn(usize) + Send + Sync>;
 ///
 /// This is the primary entry point for the UDS agent: it triggers
 /// tool registry sync and event broadcast via the callback.
+///
+/// NOTE: `watch_dirs` are captured once at spawn from the registry;
+/// changes to `ExtensionRegistry::watch_dirs` after this point are
+/// not observed by the running watcher.
 pub fn spawn_watcher_with_callback(
     registry: Arc<Mutex<ExtensionRegistry>>,
     poll_interval: Duration,
@@ -92,6 +84,19 @@ pub fn spawn_watcher_with_callback(
         let reg = registry.lock().unwrap();
         reg.watch_dirs().to_vec()
     };
+    spawn_watcher_with_dirs_and_callback(registry, poll_interval, watch_dirs, Some(on_reload))
+}
+
+/// Core poll loop shared by all watcher variants.
+///
+/// Polls `watch_dirs` at `poll_interval`, reloads script extensions when
+/// fingerprints change, and optionally fires `on_reload`.
+fn spawn_watcher_with_dirs_and_callback(
+    registry: Arc<Mutex<ExtensionRegistry>>,
+    poll_interval: Duration,
+    watch_dirs: Vec<PathBuf>,
+    on_reload: Option<ReloadCallback>,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut last_fingerprint = fingerprint_dirs(&watch_dirs);
         loop {
@@ -104,7 +109,9 @@ pub fn spawn_watcher_with_callback(
                     reg.extension_count()
                 };
                 tracing::info!("extensions reloaded ({} total)", count);
-                on_reload(count);
+                if let Some(ref cb) = on_reload {
+                    cb(count);
+                }
                 last_fingerprint = current;
             }
         }

@@ -167,8 +167,17 @@ impl ToolRegistryImpl {
     ///
     /// Extension tools can be removed via `unregister_extension` or
     /// replaced in bulk via `sync_extension_tools`.
+    ///
+    /// Rejects tools that shadow core tool names (same protection as
+    /// `sync_extension_tools`).  For bulk registration, prefer
+    /// `sync_extension_tools` which batches the `rebuild_definitions` call.
     pub fn register_extension(&mut self, tool: Arc<dyn Tool>) {
         let name = tool.definition().name.to_string();
+        // Reject if name exists and is NOT already an extension tool (i.e. it's core)
+        if self.tools.contains_key(&name) && !self.extension_tool_names.contains(&name) {
+            tracing::warn!(tool = %name, "register_extension rejected: shadows core tool");
+            return;
+        }
         self.extension_tool_names.insert(name.clone());
         self.tools.insert(name, tool);
         self.rebuild_definitions();
@@ -195,23 +204,15 @@ impl ToolRegistryImpl {
         &mut self,
         ext_registry: &crate::infrastructure::extensions::registry::ExtensionRegistry,
     ) {
-        // Collect core tool names (everything NOT in extension_tool_names)
-        let core_names: std::collections::HashSet<String> = self
-            .tools
-            .keys()
-            .filter(|k| !self.extension_tool_names.contains(k.as_str()))
-            .cloned()
-            .collect();
-
         // Remove all old extension tools
         for name in std::mem::take(&mut self.extension_tool_names) {
             self.tools.remove(&name);
         }
 
-        // Add new extension tools, rejecting shadows
+        // Add new extension tools, rejecting any that shadow remaining (core) tools
         for tool in ext_registry.all_tools() {
             let name = tool.definition().name.to_string();
-            if core_names.contains(&name) {
+            if self.tools.contains_key(&name) {
                 tracing::warn!(tool = %name, "extension tool rejected: shadows core tool");
                 continue;
             }
@@ -498,6 +499,17 @@ mod tests {
         // Core tools should not appear in extension_names
         assert!(!reg.extension_names().contains(&"bash".to_string()));
         assert!(reg.extension_names().contains(&"ext_greet".to_string()));
+    }
+
+    #[test]
+    fn test_register_extension_rejects_shadow_of_core_tool() {
+        let (mut reg, _tmp) = test_registry();
+        let initial_count = reg.definitions().len();
+        let tool: Arc<dyn Tool> = Arc::new(DummyTestTool::new("bash")); // shadows core
+        reg.register_extension(tool);
+        // Should NOT have replaced the core tool or added to extension_names
+        assert_eq!(reg.definitions().len(), initial_count);
+        assert!(!reg.extension_names().contains(&"bash".to_string()));
     }
 
     #[test]

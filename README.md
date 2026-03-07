@@ -80,7 +80,7 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 | `tools/` | `bash/` (shell, 1MiB cap, per-invocation timeout, `commandPrefix`, native/nsjail modes), `filesystem/` (`ReadTool` with image base64+auto-resize, `WriteTool`, `EditTool` with fuzzy match+CRLF/BOM+LCS diff, `LsTool` with limit+case-insensitive sort), `grep.rs` (rg JSON output, file-cache context), `find.rs` (fd, nested .gitignore, path-segment globs via `--full-path`), `ensure_tool.rs` (auto-download rg/fd from GitHub), `spawn.rs` (background subagent spawning), `web_search.rs` (Brave+DDG), `recall.rs` (spill retrieval), `workflow_tool.rs` (`WorkflowTool` + `WorkflowGuard` — blocks `git commit`/`git push` when workflow steps incomplete; registration controlled by `guard_commit` config), `path_utils.rs`, `truncate.rs`, `command_match.rs`, `registry.rs` (`ToolRegistryImpl`, `guard_count()`) |
 | `persistence/` | `FileSessionStore` (round-trips all Message fields), `MemoryStore`, `FileSkillLoader`, `FileOnboardStore` (`workspace_store.rs`), `FileContextSpillStore` (JSONL append-only) |
 | `security/` | `Sandbox` — workspace path validation + command filtering |
-| `extensions/` | `ExtensionRegistry` (discover `<workspace>/extensions/*/extension.toml`, register tools, inject system prompt snippets), `ScriptTool` (TOML manifest, subprocess exec, timeout, 1 MiB cap), `ExtensionWatcher` (fingerprint-based hot-reload via mtime+size polling) |
+| `extensions/` | `ExtensionRegistry` (discover `<workspace>/extensions/*/extension.toml`, register tools, inject system prompt snippets), `ScriptTool` (TOML manifest, subprocess exec, timeout, 1 MiB cap), `ExtensionWatcher` (fingerprint-based hot-reload via mtime+size polling). See [Extensions guide](docs/extensions.md) |
 | `auth/` | `CredentialStore` (file-based, `AuthMethod::Token`/`OAuth`), `oauth.rs` (browser + device code flows, Anthropic OAuth, OpenAI account ID extraction from JWT) |
 | `logging.rs` | `redact_api_keys()` — pattern-based secret redaction |
 
@@ -660,6 +660,12 @@ Tool binary cache (auto-downloaded `rg`, `fd`):
   rg
   fd
 ```
+
+## Documentation
+
+| Guide | Description |
+|---|---|
+| [Extensions](docs/extensions.md) | Add custom tools via script extensions on disk — manifest format, script protocol, hot-reload, security |
 
 ## Tech stack
 Rust 2024, Tokio, reqwest+rustls, serde/serde_json/serde_yaml, uuid, chrono, tracing, dirs, thiserror, similar, base64, sha2, image, flate2, tar, rand, urlencoding, unicode-normalization. Dev: cucumber 0.21, futures, tempfile, wiremock 0.6, regex.

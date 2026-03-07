@@ -14,6 +14,14 @@ pub trait Extension: Send + Sync {
     /// Unique name for this extension.
     fn name(&self) -> &str;
 
+    /// Human-readable description of this extension.
+    ///
+    /// Defaults to an empty string.  Script extensions populate this
+    /// from the `description` field in `extension.toml`.
+    fn description(&self) -> &str {
+        ""
+    }
+
     /// Tools this extension provides.
     fn tools(&self) -> Vec<Arc<dyn Tool>>;
 

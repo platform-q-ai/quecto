@@ -412,6 +412,10 @@ impl Extension for ScriptExtension {
         &self.manifest.name
     }
 
+    fn description(&self) -> &str {
+        &self.manifest.description
+    }
+
     fn tools(&self) -> Vec<Arc<dyn Tool>> {
         vec![self.tool.clone() as Arc<dyn Tool>]
     }
