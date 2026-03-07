@@ -492,18 +492,10 @@ pub fn register_extension_tools(
     registry: &mut crate::infrastructure::tools::registry::ToolRegistryImpl,
     ext_registry: &crate::infrastructure::extensions::registry::ExtensionRegistry,
 ) {
-    let core_names: std::collections::HashSet<String> = registry
-        .definitions()
-        .iter()
-        .map(|d| d.name.to_string())
-        .collect();
     for tool in ext_registry.all_tools() {
-        let name = tool.definition().name.to_string();
-        if core_names.contains(&name) {
-            tracing::warn!(tool = %name, "extension tool rejected: shadows core tool");
-            continue;
-        }
-        registry.register(tool);
+        // `register_extension` tracks the tool as an extension and rejects
+        // shadows of core tools automatically.
+        registry.register_extension(tool);
     }
 }
 

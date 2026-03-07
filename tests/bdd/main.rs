@@ -567,6 +567,10 @@ pub struct QuectoWorld {
     pub mc_mode: bool,
     /// Multi-client UDS: exit code from multi-client execution
     pub mc_exit_code: Option<i32>,
+    /// Multi-client UDS: whether hot-reload watcher should be enabled
+    pub _mc_hot_reload: bool,
+    /// Multi-client UDS: extensions to create after agent starts (for hot-reload tests)
+    pub _mc_deferred_extensions: Vec<(String, Option<String>)>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.

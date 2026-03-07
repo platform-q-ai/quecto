@@ -78,6 +78,20 @@ pub trait ToolRegistry: Send + Sync {
         self.definitions().len()
     }
 
+    /// Return names of tools registered from extensions (not core tools).
+    ///
+    /// Default: empty (no extension tracking). Override in registries that
+    /// track extension tools separately (e.g. `ToolRegistryImpl`).
+    fn extension_names(&self) -> Vec<String> {
+        vec![]
+    }
+
+    /// Replace all extension tools with the given set.
+    ///
+    /// Removes previously registered extension tools and registers the new
+    /// ones, rejecting any that shadow core tools. Default: no-op.
+    fn replace_extensions(&mut self, _tools: Vec<std::sync::Arc<dyn Tool>>) {}
+
     /// Execute a tool by name with JSON arguments.
     fn execute(
         &self,

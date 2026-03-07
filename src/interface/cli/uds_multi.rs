@@ -32,6 +32,14 @@ pub(super) struct MultiClientArgs {
     pub session_key: String,
     pub ephemeral: bool,
     pub system_prompt: String,
+    /// Shared extension registry for get_extensions / reload_extensions.
+    pub ext_registry: Option<
+        std::sync::Arc<
+            std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
+        >,
+    >,
+    /// When `Some`, spawn a hot-reload watcher at the given poll interval.
+    pub hot_reload_interval: Option<std::time::Duration>,
 }
 
 /// A command line from a client.
@@ -76,6 +84,8 @@ pub(super) async fn multi_client_loop(
     listener: tokio::net::UnixListener,
     session_store: &dyn SessionStore,
 ) -> i32 {
+    let ext_registry = args.ext_registry;
+    let hot_reload_interval = args.hot_reload_interval;
     let MultiClientArgs {
         mut agent,
         mut messages,
@@ -83,6 +93,7 @@ pub(super) async fn multi_client_loop(
         session_key,
         ephemeral,
         system_prompt,
+        ..
     } = args;
 
     inject_system_prompt(&mut messages, &system_prompt);
@@ -102,6 +113,32 @@ pub(super) async fn multi_client_loop(
         live_clients: live_clients.clone(),
     });
 
+    // Spawn hot-reload watcher if an extension registry and interval are configured.
+    // The callback sends a `reload_extensions` command through `cmd_tx` so the
+    // dispatch loop (which has `&mut AgentLoopImpl`) can sync the tool registry.
+    let watcher_task = if let (Some(ext_reg), Some(interval)) = (&ext_registry, hot_reload_interval)
+    {
+        let watcher_ext_reg = ext_reg.clone();
+        let watcher_cmd_tx = cmd_tx.clone();
+        Some(
+            crate::infrastructure::extensions::watcher::spawn_watcher_with_callback(
+                watcher_ext_reg,
+                interval,
+                std::sync::Arc::new(move |_count| {
+                    let cmd = ClientMessage::Command(ClientCommand {
+                        line: r#"{"type":"reload_extensions","id":"hot-reload"}"#.to_string(),
+                    });
+                    // Use try_send (not blocking_send) since this runs inside
+                    // an async context (tokio::spawn). Channel buffer is large
+                    // enough that this should not fail under normal load.
+                    let _ = watcher_cmd_tx.try_send(cmd);
+                }),
+            ),
+        )
+    } else {
+        None
+    };
+
     // Drop our clone so cmd_rx closes when all clients are gone.
     drop(cmd_tx);
 
@@ -115,11 +152,15 @@ pub(super) async fn multi_client_loop(
         session_key: &session_key,
         cancel_handle,
         broadcast_tx: Some(broadcast_tx),
+        ext_registry,
     };
 
     run_dispatch_loop(&mut ctx, cmd_rx, &live_clients).await;
 
     accept_task.abort();
+    if let Some(watcher) = watcher_task {
+        watcher.abort();
+    }
 
     if !ephemeral && !session_key.is_empty() {
         remove_injected_system_prompt(&mut messages, &system_prompt);
