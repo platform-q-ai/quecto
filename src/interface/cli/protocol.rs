@@ -83,6 +83,16 @@ pub enum AgentCommand {
         #[serde(rename = "modelId", skip_serializing_if = "Option::is_none")]
         model_id: Option<String>,
     },
+    /// Return the list of registered extensions.
+    GetExtensions {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
+    /// Re-scan extension directories and reload script extensions.
+    ReloadExtensions {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
 }
 
 impl AgentCommand {
@@ -95,6 +105,8 @@ impl AgentCommand {
             Self::Abort { id } => id.as_deref(),
             Self::GetState { id } => id.as_deref(),
             Self::GetMessages { id } => id.as_deref(),
+            Self::GetExtensions { id } => id.as_deref(),
+            Self::ReloadExtensions { id } => id.as_deref(),
             Self::GetMessagesTail { id, .. } => id.as_deref(),
             Self::GetSessionStats { id } => id.as_deref(),
             Self::SetModel { id, .. } => id.as_deref(),
@@ -113,6 +125,8 @@ impl AgentCommand {
             Self::GetMessagesTail { .. } => "get_messages_tail",
             Self::GetSessionStats { .. } => "get_session_stats",
             Self::SetModel { .. } => "set_model",
+            Self::GetExtensions { .. } => "get_extensions",
+            Self::ReloadExtensions { .. } => "reload_extensions",
         }
     }
 }
@@ -176,6 +190,16 @@ pub enum AgentEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
+    /// Extension list changed (after reload or hot-reload).
+    ExtensionsChanged { extensions: Vec<ExtensionInfo> },
+}
+
+/// Metadata for a registered extension, used in `ExtensionsChanged` events
+/// and `get_extensions` responses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtensionInfo {
+    pub name: String,
+    pub description: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -628,6 +652,79 @@ mod tests {
             .type_name(),
             "steer"
         );
+        assert_eq!(
+            AgentCommand::GetExtensions { id: None }.type_name(),
+            "get_extensions"
+        );
+        assert_eq!(
+            AgentCommand::ReloadExtensions { id: None }.type_name(),
+            "reload_extensions"
+        );
+    }
+
+    // ─── GetExtensions command ────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_get_extensions_command() {
+        let json = r#"{"type":"get_extensions"}"#;
+        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
+        assert_eq!(cmd.type_name(), "get_extensions");
+        assert!(cmd.id().is_none());
+    }
+
+    #[test]
+    fn test_parse_get_extensions_with_id() {
+        let json = r#"{"type":"get_extensions","id":"ge-1"}"#;
+        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
+        assert_eq!(cmd.id(), Some("ge-1"));
+        assert_eq!(cmd.type_name(), "get_extensions");
+    }
+
+    // ─── ReloadExtensions command ─────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_reload_extensions_command() {
+        let json = r#"{"type":"reload_extensions"}"#;
+        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
+        assert_eq!(cmd.type_name(), "reload_extensions");
+        assert!(cmd.id().is_none());
+    }
+
+    #[test]
+    fn test_parse_reload_extensions_with_id() {
+        let json = r#"{"type":"reload_extensions","id":"re-1"}"#;
+        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
+        assert_eq!(cmd.id(), Some("re-1"));
+        assert_eq!(cmd.type_name(), "reload_extensions");
+    }
+
+    // ─── ExtensionsChanged event ──────────────────────────────────────────────
+
+    #[test]
+    fn test_extensions_changed_event_serializes() {
+        let ev = AgentEvent::ExtensionsChanged {
+            extensions: vec![
+                ExtensionInfo {
+                    name: "greet".to_string(),
+                    description: "Greet the user".to_string(),
+                },
+                ExtensionInfo {
+                    name: "weather".to_string(),
+                    description: "Get weather".to_string(),
+                },
+            ],
+        };
+        let json = ev.to_json_line();
+        assert!(json.contains("\"type\":\"extensions_changed\""));
+        assert!(json.contains("\"greet\""));
+        assert!(json.contains("\"weather\""));
+    }
+
+    #[test]
+    fn test_extensions_changed_event_empty_list() {
+        let ev = AgentEvent::ExtensionsChanged { extensions: vec![] };
+        let json = ev.to_json_line();
+        assert!(json.contains("\"extensions\":[]"));
     }
 }
 

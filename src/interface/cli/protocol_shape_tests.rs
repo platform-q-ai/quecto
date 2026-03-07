@@ -198,6 +198,60 @@ fn agent_end_has_messages_array() {
 }
 
 #[test]
+fn get_extensions_command_serializes() {
+    let cmd = AgentCommand::GetExtensions {
+        id: Some("ge-1".into()),
+    };
+    let j = round_trip(&cmd);
+    assert_eq!(j["type"], "get_extensions");
+    assert_eq!(j["id"], "ge-1");
+}
+
+#[test]
+fn reload_extensions_command_serializes() {
+    let cmd = AgentCommand::ReloadExtensions {
+        id: Some("re-1".into()),
+    };
+    let j = round_trip(&cmd);
+    assert_eq!(j["type"], "reload_extensions");
+    assert_eq!(j["id"], "re-1");
+}
+
+#[test]
+fn extensions_changed_event_matches_spec_shape() {
+    let ev = AgentEvent::ExtensionsChanged {
+        extensions: vec![ExtensionInfo {
+            name: "greet".into(),
+            description: "Say hello".into(),
+        }],
+    };
+    let j = round_trip(&ev);
+    assert_eq!(j["type"], "extensions_changed");
+    assert!(j["extensions"].is_array());
+    assert_eq!(j["extensions"][0]["name"], "greet");
+    assert_eq!(j["extensions"][0]["description"], "Say hello");
+}
+
+#[test]
+fn extensions_changed_roundtrip() {
+    let ev = AgentEvent::ExtensionsChanged {
+        extensions: vec![
+            ExtensionInfo {
+                name: "a".into(),
+                description: "desc a".into(),
+            },
+            ExtensionInfo {
+                name: "b".into(),
+                description: "desc b".into(),
+            },
+        ],
+    };
+    let json = ev.to_json_line();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed["extensions"].as_array().unwrap().len(), 2);
+}
+
+#[test]
 fn follow_up_command_serializes_type_as_follow_up() {
     // The spec uses "follow_up" (snake_case) for the type field
     let cmd = AgentCommand::FollowUp {

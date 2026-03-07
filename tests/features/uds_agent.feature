@@ -589,6 +589,18 @@ Feature: UDS mode for headless agent operation
     And the agent output should contain a tool_execution_start with a non-empty tool_call_id
 
   # ─── Extension wiring (#318 Part 2) ─────────────────────────────────────────
+  #
+  # Goal: fully wire extensions into the UDS event bus so that:
+  #   1. Extensions are discovered at agent startup (CLI and UDS modes)
+  #   2. Hot-reload watcher runs during UDS sessions
+  #   3. Clients are notified when extensions change
+  #   4. Clients can query and manually reload extensions
+  #   5. New/removed extensions take effect on subsequent LLM calls
+  #
+  # This enables external integrations (Telegram bot, IDE plugins) to
+  # dynamically add tools by dropping extension.toml files on disk.
+
+  # ─── Discovery at startup (CLI mode) ────────────────────────────────────────
 
   @wip @extensions
   Scenario: Extension tools are discovered and registered during agent construction
@@ -607,3 +619,182 @@ Feature: UDS mode for headless agent operation
     When I run quecto agent -m "hello"
     Then the exit code should be 0
     And the LLM should have received a system message containing "Always be polite."
+
+  # ─── Discovery at startup (UDS mode) ────────────────────────────────────────
+
+  @wip @extensions
+  Scenario: Extension tools are discovered and available in UDS mode
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "ok"
+    And a script extension "greet" in the workspace extensions directory
+    When I start the UDS agent with no session
+    And I send prompt "hello"
+    And I close the UDS connection
+    Then the UDS agent exits with code 0
+    And the agent output should contain an event of type "agent_end"
+
+  @wip @extensions
+  Scenario: Extension system prompt snippets are active in UDS mode
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "ok"
+    And a script extension "greet" with system prompt "Always be polite." in the workspace extensions directory
+    When I start the UDS agent with no session
+    And I send prompt "hello"
+    And I close the UDS connection
+    Then the UDS agent exits with code 0
+    And the agent output should contain an event of type "agent_end"
+
+  # ─── get_extensions UDS command ──────────────────────────────────────────────
+
+  @wip @extensions
+  Scenario: get_extensions returns discovered extension names
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And a script extension "greet" in the workspace extensions directory
+    And a script extension "summarize" in the workspace extensions directory
+    When I start the UDS agent with no session
+    And I send command "get_extensions" with id "ge-1"
+    And I close the UDS connection
+    Then the UDS agent exits with code 0
+    And the agent output should contain a response command "get_extensions" with success true
+    And the get_extensions response should list extension "greet"
+    And the get_extensions response should list extension "summarize"
+
+  @wip @extensions
+  Scenario: get_extensions returns empty list when no extensions are installed
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the UDS agent with no session
+    And I send command "get_extensions" with id "ge-2"
+    And I close the UDS connection
+    Then the UDS agent exits with code 0
+    And the agent output should contain a response command "get_extensions" with success true
+    And the get_extensions response should have 0 extensions
+
+  # ─── reload_extensions UDS command ───────────────────────────────────────────
+
+  @wip @extensions @multi-client
+  Scenario: reload_extensions re-discovers extensions from disk
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And a script extension "alpha" in the workspace extensions directory
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And client 1 sends command "get_extensions" with id "pre-reload"
+    And a script extension "beta" is added to the workspace extensions directory
+    And client 1 sends command "reload_extensions" with id "re-1"
+    And client 1 sends command "get_extensions" with id "post-reload"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 1 should have received a response command "reload_extensions" with success true
+    And the post-reload get_extensions response should list extension "alpha"
+    And the post-reload get_extensions response should list extension "beta"
+
+  @wip @extensions @multi-client
+  Scenario: reload_extensions removes deleted extension tools
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And a script extension "alpha" in the workspace extensions directory
+    And a script extension "beta" in the workspace extensions directory
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And extension "beta" is removed from the workspace extensions directory
+    And client 1 sends command "reload_extensions" with id "re-2"
+    And client 1 sends command "get_extensions" with id "post-remove"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 1 should have received a response command "reload_extensions" with success true
+    And the post-remove get_extensions response should list extension "alpha"
+    And the post-remove get_extensions response should not list extension "beta"
+
+  # ─── Extension reload event broadcast ────────────────────────────────────────
+
+  @wip @extensions @multi-client
+  Scenario: reload_extensions broadcasts an extensions_changed event to all clients
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And a script extension "alpha" in the workspace extensions directory
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And client 2 connects
+    And client 1 sends command "reload_extensions" with id "re-3"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 1 should have received an event of type "extensions_changed"
+    And client 2 should have received an event of type "extensions_changed"
+
+  @wip @extensions @multi-client
+  Scenario: extensions_changed event includes updated extension list
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And a script extension "alpha" in the workspace extensions directory
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And a script extension "beta" is added to the workspace extensions directory
+    And client 1 sends command "reload_extensions" with id "re-4"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 1 should have received an extensions_changed event listing "alpha"
+    And client 1 should have received an extensions_changed event listing "beta"
+
+  # ─── Hot-reload watcher in UDS mode ──────────────────────────────────────────
+
+  @wip @extensions @multi-client
+  Scenario: Hot-reload watcher detects new extension and broadcasts event
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the multi-client UDS agent with hot-reload enabled
+    And client 1 connects
+    And a script extension "dynamic" is added to the workspace extensions directory
+    And I wait for the hot-reload watcher to trigger
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 1 should have received an event of type "extensions_changed"
+
+  # ─── Extension tool execution via UDS ────────────────────────────────────────
+
+  @wip @extensions
+  Scenario: Extension tool is executed when the LLM calls it via UDS
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And a script extension "greet" in the workspace extensions directory
+    And the mock LLM returns a tool call to "greet" then a text response "done"
+    When I start the UDS agent with no session
+    And I send prompt "greet the user"
+    And I close the UDS connection
+    Then the UDS agent exits with code 0
+    And the agent output should contain a tool_execution_start with tool name "greet"
+    And the agent output should contain a tool_execution_end with tool name "greet"
+    And the agent output should contain an event of type "agent_end"
+
+  # ─── Extension shadowing protection ──────────────────────────────────────────
+
+  @wip @extensions
+  Scenario: Extension tool that shadows a core tool is rejected
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "ok"
+    And a script extension "bash" in the workspace extensions directory
+    When I start the UDS agent with no session
+    And I send command "get_extensions" with id "ge-shadow"
+    And I close the UDS connection
+    Then the UDS agent exits with code 0
+    And the get_extensions response should have 0 extensions
+
+  # ─── Extension prompt update after reload ────────────────────────────────────
+
+  @wip @extensions @multi-client
+  Scenario: Extension system prompt snippet updates after reload
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "ok"
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And a script extension "helper" with system prompt "Be concise." is added to the workspace extensions directory
+    And client 1 sends command "reload_extensions" with id "re-prompt"
+    And client 1 sends prompt "hello"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And the agent output should contain an event of type "agent_end"

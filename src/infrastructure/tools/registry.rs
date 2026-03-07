@@ -37,6 +37,9 @@ pub struct ToolRegistryImpl {
     tools: HashMap<String, Arc<dyn Tool>>,
     definitions: Vec<ToolDefinition>,
     guards: Vec<Arc<dyn ToolGuard>>,
+    /// Names of tools that came from extensions (not core).
+    /// Used by `sync_extension_tools` to know which tools to remove on reload.
+    extension_tool_names: std::collections::HashSet<String>,
 }
 
 impl std::fmt::Debug for ToolRegistryImpl {
@@ -81,6 +84,7 @@ impl ToolRegistryImpl {
             tools: HashMap::new(),
             definitions: Vec::new(),
             guards: Vec::new(),
+            extension_tool_names: std::collections::HashSet::new(),
         }
     }
 
@@ -157,6 +161,73 @@ impl ToolRegistryImpl {
         self.tools.insert(name, tool);
 
         self.rebuild_definitions();
+    }
+
+    /// Register a tool as an extension tool (tracked for reload).
+    ///
+    /// Extension tools can be removed via `unregister_extension` or
+    /// replaced in bulk via `sync_extension_tools`.
+    ///
+    /// Rejects tools that shadow core tool names (same protection as
+    /// `sync_extension_tools`).  For bulk registration, prefer
+    /// `sync_extension_tools` which batches the `rebuild_definitions` call.
+    pub fn register_extension(&mut self, tool: Arc<dyn Tool>) {
+        let name = tool.definition().name.to_string();
+        // Reject if name exists and is NOT already an extension tool (i.e. it's core)
+        if self.tools.contains_key(&name) && !self.extension_tool_names.contains(&name) {
+            tracing::warn!(tool = %name, "register_extension rejected: shadows core tool");
+            return;
+        }
+        self.extension_tool_names.insert(name.clone());
+        self.tools.insert(name, tool);
+        self.rebuild_definitions();
+    }
+
+    /// Remove an extension tool by name.
+    ///
+    /// No-op if `name` is not in the extension set (prevents removing core tools).
+    pub fn unregister_extension(&mut self, name: &str) {
+        if !self.extension_tool_names.contains(name) {
+            return;
+        }
+        self.extension_tool_names.remove(name);
+        self.tools.remove(name);
+        self.rebuild_definitions();
+    }
+
+    /// Synchronise the registry with an `ExtensionRegistry`.
+    ///
+    /// 1. Remove all currently tracked extension tools.
+    /// 2. Add tools from the new `ExtensionRegistry`, rejecting any
+    ///    that shadow core tool names.
+    pub fn sync_extension_tools(
+        &mut self,
+        ext_registry: &crate::infrastructure::extensions::registry::ExtensionRegistry,
+    ) {
+        // Remove all old extension tools
+        for name in std::mem::take(&mut self.extension_tool_names) {
+            self.tools.remove(&name);
+        }
+
+        // Add new extension tools, rejecting any that shadow remaining (core) tools
+        for tool in ext_registry.all_tools() {
+            let name = tool.definition().name.to_string();
+            if self.tools.contains_key(&name) {
+                tracing::warn!(tool = %name, "extension tool rejected: shadows core tool");
+                continue;
+            }
+            self.extension_tool_names.insert(name.clone());
+            self.tools.insert(name, tool);
+        }
+
+        self.rebuild_definitions();
+    }
+
+    /// Return the names of currently registered extension tools.
+    pub fn extension_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.extension_tool_names.iter().cloned().collect();
+        names.sort();
+        names
     }
 
     /// Rebuild the cached definitions list from all registered tools.
@@ -408,6 +479,186 @@ mod tests {
     }
 
     // --- #215: rebuild_definitions works without HashSet ---
+
+    // --- #318: Extension tool tracking ---
+
+    #[test]
+    fn test_register_extension_tool() {
+        let mut reg = ToolRegistryImpl::new();
+        let tool: Arc<dyn Tool> = Arc::new(DummyTestTool::new("ext_greet"));
+        reg.register_extension(tool);
+        assert!(reg.get("ext_greet").is_some());
+        assert!(reg.extension_names().contains(&"ext_greet".to_string()));
+    }
+
+    #[test]
+    fn test_register_extension_tool_does_not_mark_as_core() {
+        let (mut reg, _tmp) = test_registry();
+        let tool: Arc<dyn Tool> = Arc::new(DummyTestTool::new("ext_greet"));
+        reg.register_extension(tool);
+        // Core tools should not appear in extension_names
+        assert!(!reg.extension_names().contains(&"bash".to_string()));
+        assert!(reg.extension_names().contains(&"ext_greet".to_string()));
+    }
+
+    #[test]
+    fn test_register_extension_rejects_shadow_of_core_tool() {
+        let (mut reg, _tmp) = test_registry();
+        let initial_count = reg.definitions().len();
+        let tool: Arc<dyn Tool> = Arc::new(DummyTestTool::new("bash")); // shadows core
+        reg.register_extension(tool);
+        // Should NOT have replaced the core tool or added to extension_names
+        assert_eq!(reg.definitions().len(), initial_count);
+        assert!(!reg.extension_names().contains(&"bash".to_string()));
+    }
+
+    #[test]
+    fn test_unregister_extension_tool() {
+        let mut reg = ToolRegistryImpl::new();
+        let tool: Arc<dyn Tool> = Arc::new(DummyTestTool::new("ext_greet"));
+        reg.register_extension(tool);
+        assert!(reg.get("ext_greet").is_some());
+
+        reg.unregister_extension("ext_greet");
+        assert!(reg.get("ext_greet").is_none());
+        assert!(!reg.extension_names().contains(&"ext_greet".to_string()));
+    }
+
+    #[test]
+    fn test_unregister_extension_does_not_remove_core_tools() {
+        let (mut reg, _tmp) = test_registry();
+        // Attempting to unregister a core tool via unregister_extension should be a no-op
+        reg.unregister_extension("bash");
+        assert!(reg.get("bash").is_some(), "core tool should not be removed");
+    }
+
+    #[test]
+    fn test_sync_extension_tools_adds_new() {
+        let (mut reg, _tmp) = test_registry();
+        let initial_count = reg.definitions().len();
+
+        let mut ext_reg = crate::infrastructure::extensions::registry::ExtensionRegistry::new();
+        ext_reg.register(Arc::new(TestExtensionForRegistry {
+            name: "ext1".into(),
+            tool: Arc::new(DummyTestTool::new("ext1")),
+        }));
+
+        reg.sync_extension_tools(&ext_reg);
+        assert_eq!(reg.definitions().len(), initial_count + 1);
+        assert!(reg.get("ext1").is_some());
+        assert!(reg.extension_names().contains(&"ext1".to_string()));
+    }
+
+    #[test]
+    fn test_sync_extension_tools_removes_stale() {
+        let (mut reg, _tmp) = test_registry();
+        let tool: Arc<dyn Tool> = Arc::new(DummyTestTool::new("old_ext"));
+        reg.register_extension(tool);
+        assert!(reg.get("old_ext").is_some());
+
+        // Sync with empty registry — old_ext should be removed
+        let ext_reg = crate::infrastructure::extensions::registry::ExtensionRegistry::new();
+        reg.sync_extension_tools(&ext_reg);
+        assert!(reg.get("old_ext").is_none());
+    }
+
+    #[test]
+    fn test_sync_extension_tools_rejects_shadow() {
+        let (mut reg, _tmp) = test_registry();
+        let initial_count = reg.definitions().len();
+
+        let mut ext_reg = crate::infrastructure::extensions::registry::ExtensionRegistry::new();
+        ext_reg.register(Arc::new(TestExtensionForRegistry {
+            name: "bash".into(), // shadows core tool
+            tool: Arc::new(DummyTestTool::new("bash")),
+        }));
+
+        reg.sync_extension_tools(&ext_reg);
+        // Should NOT have added the shadowing extension
+        assert_eq!(reg.definitions().len(), initial_count);
+        assert!(!reg.extension_names().contains(&"bash".to_string()));
+    }
+
+    #[test]
+    fn test_sync_extension_tools_replaces_existing() {
+        let (mut reg, _tmp) = test_registry();
+
+        // First sync: add ext1
+        let mut ext_reg1 = crate::infrastructure::extensions::registry::ExtensionRegistry::new();
+        ext_reg1.register(Arc::new(TestExtensionForRegistry {
+            name: "ext1".into(),
+            tool: Arc::new(DummyTestTool::new("ext1")),
+        }));
+        reg.sync_extension_tools(&ext_reg1);
+        assert!(reg.get("ext1").is_some());
+
+        // Second sync: replace with ext2 only
+        let mut ext_reg2 = crate::infrastructure::extensions::registry::ExtensionRegistry::new();
+        ext_reg2.register(Arc::new(TestExtensionForRegistry {
+            name: "ext2".into(),
+            tool: Arc::new(DummyTestTool::new("ext2")),
+        }));
+        reg.sync_extension_tools(&ext_reg2);
+        assert!(reg.get("ext1").is_none(), "ext1 should be removed");
+        assert!(reg.get("ext2").is_some(), "ext2 should be added");
+    }
+
+    #[test]
+    fn test_extension_names_empty_by_default() {
+        let (reg, _tmp) = test_registry();
+        assert!(reg.extension_names().is_empty());
+    }
+
+    /// Minimal test tool for extension tracking tests.
+    struct DummyTestTool {
+        name: String,
+    }
+
+    impl DummyTestTool {
+        fn new(name: &str) -> Self {
+            Self {
+                name: name.to_string(),
+            }
+        }
+    }
+
+    impl Tool for DummyTestTool {
+        fn definition(&self) -> ToolDefinition {
+            ToolDefinition {
+                name: self.name.clone().into(),
+                description: format!("Test tool {}", self.name).into(),
+                parameters_schema: r#"{"type":"object"}"#.into(),
+            }
+        }
+
+        fn execute(
+            &self,
+            _arguments: &str,
+        ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
+            Box::pin(async {
+                Ok(ToolResult {
+                    content: "ok".into(),
+                    is_error: false,
+                    image_blocks: vec![],
+                })
+            })
+        }
+    }
+
+    /// Minimal extension for sync_extension_tools tests.
+    struct TestExtensionForRegistry {
+        name: String,
+        tool: Arc<dyn Tool>,
+    }
+
+    impl crate::domain::extension::Extension for TestExtensionForRegistry {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn tools(&self) -> Vec<Arc<dyn Tool>> {
+            vec![self.tool.clone()]
+        }
+    }
 
     #[test]
     fn test_rebuild_definitions_no_duplicates_after_re_register() {
