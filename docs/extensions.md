@@ -1,6 +1,6 @@
 # Extensions
 
-Extensions let you add custom tools to Quecto without recompiling. Each extension is a directory containing a TOML manifest and an executable script. The agent discovers extensions at startup, makes them available as tools, and hot-reloads them when files change on disk.
+Extensions let you add custom tools to Quecto without recompiling. Each extension is a directory containing a TOML manifest and an executable script. The agent discovers extensions at startup and makes them available as tools alongside the built-ins (`bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, etc.).
 
 ## Quick start
 
@@ -23,12 +23,8 @@ command = "./hello.sh"
 
 ```bash
 #!/bin/bash
-# Arguments arrive as JSON on stdin
-name=$(echo "$1" | jq -r '.name // "World"')
-# Read from stdin since that's how arguments are actually passed
 input=$(cat)
 name=$(echo "$input" | jq -r '.name // "World"')
-
 echo "{\"content\": \"Hello, ${name}!\", \"is_error\": false}"
 ```
 
@@ -38,12 +34,26 @@ echo "{\"content\": \"Hello, ${name}!\", \"is_error\": false}"
 chmod +x ~/.quecto/workspace/extensions/hello/hello.sh
 ```
 
-The `hello` tool is now available to the agent. It will appear alongside the built-in tools (`bash`, `read`, `write`, etc.) in the next agent session.
+The `hello` tool is now available. It will appear alongside the built-in tools in the next agent session.
 
 ## Directory layout
 
+Extensions live under `<workspace>/extensions/`. The workspace path comes from your `config.json`:
+
+```json
+{
+  "agents": {
+    "defaults": {
+      "workspace": "/home/you/.quecto/workspace"
+    }
+  }
+}
 ```
-~/.quecto/workspace/extensions/
+
+The directory structure is:
+
+```
+<workspace>/extensions/
   hello/
     extension.toml     # Required — tool manifest
     hello.sh           # The executable referenced by `command`
@@ -52,7 +62,7 @@ The `hello` tool is now available to the agent. It will appear alongside the bui
     weather.py
 ```
 
-Each subdirectory of `extensions/` is treated as one extension. The directory must contain an `extension.toml` file. Directories without a manifest are silently skipped.
+Each subdirectory is treated as one extension. The directory must contain an `extension.toml` file. Directories without a valid manifest are silently skipped.
 
 ## Manifest reference
 
@@ -60,12 +70,12 @@ The `extension.toml` file defines how the tool appears to the LLM and how it is 
 
 | Field | Required | Default | Description |
 |---|---|---|---|
-| `name` | Yes | — | Tool name (used in LLM tool calls). Must be unique across all extensions |
-| `description` | Yes | — | Description shown to the LLM. Supports multi-line via triple-quoted strings (`"""`) |
-| `parameters_schema` | Yes | — | JSON Schema string defining the tool's input parameters |
-| `command` | Yes | — | Path to the executable, relative to the extension directory. Must start with `./` |
-| `timeout_secs` | No | `30` | Maximum execution time in seconds before the process is killed |
-| `system_prompt` | No | `None` | Text injected into the agent's system prompt when this extension is loaded |
+| `name` | yes | — | Tool name (used in LLM tool calls). Must be unique and must not shadow a core tool |
+| `description` | yes | — | Description shown to the LLM. Supports multi-line via triple-quoted strings (`"""`) |
+| `parameters_schema` | yes | — | JSON Schema string defining the tool's input parameters |
+| `command` | yes | — | Path to the executable, relative to the extension directory. Must start with `./` |
+| `timeout_secs` | no | `30` | Maximum execution time in seconds before the process is killed |
+| `system_prompt` | no | none | Text injected into the agent's system prompt when this extension is loaded |
 
 ### Full example
 
@@ -82,13 +92,24 @@ timeout_secs = 10
 system_prompt = "When looking up users, always verify the email format first."
 ```
 
+### Manifest parser limitations
+
+The manifest uses a minimal TOML parser. Supported features:
+
+- Simple key-value pairs: `key = "value"` or `key = 'value'`
+- Unquoted values: `timeout_secs = 30`
+- Multi-line strings: `""" ... """`
+- Comments: `# ...`
+
+**Not supported:** escape sequences (`\n`, `\t`), inline tables, arrays, dotted keys, or other advanced TOML features. If you need newlines in a field, use the `"""` multi-line syntax.
+
 ## Script protocol
 
-Extensions communicate via a simple stdin/stdout JSON protocol:
+Extensions communicate via a stdin/stdout JSON protocol.
 
 ### Input
 
-The tool arguments (as a JSON string matching your `parameters_schema`) are written to the script's **stdin**.
+The tool arguments (a JSON string matching your `parameters_schema`) are written to the script's **stdin**. Your script reads from stdin, not from command-line arguments.
 
 ### Output
 
@@ -103,17 +124,17 @@ The script must print a single JSON object to **stdout**:
 
 | Field | Type | Description |
 |---|---|---|
-| `content` | `string` | The text result returned to the agent |
-| `is_error` | `bool` | `true` if the result represents an error condition |
+| `content` | string | The text result returned to the agent |
+| `is_error` | boolean | `true` if the result represents an error condition |
 
 ### Error handling
 
 | Condition | Behavior |
 |---|---|
-| Non-zero exit code | Result is marked as error. `stderr` output is returned as the error content |
-| Invalid JSON output | Result is marked as error with message: `"invalid output from extension '<name>': <stdout>"` |
-| Timeout exceeded | Process group is killed (SIGKILL). Result: `"extension '<name>' timed out after <N>s"` |
-| Output exceeds 1 MiB | Process is killed. Result: `"output exceeded 1MiB cap"` |
+| Non-zero exit code | Result is marked as error. If stderr has content, it's returned as the error message. Otherwise: `"extension '<name>' exited with code <N>"` |
+| Invalid JSON on stdout | Result is marked as error: `"invalid output from extension '<name>': <raw stdout>"` |
+| Timeout exceeded | Entire process group is killed with `SIGKILL`. Result: `"extension '<name>' timed out after <N>s"` |
+| stdout or stderr exceeds 1 MiB | Process group is killed. Result: `"output exceeded 1MiB cap"` |
 
 ### Example scripts
 
@@ -151,7 +172,7 @@ process.stdin.on('end', () => {
 
 ## System prompt injection
 
-Extensions can contribute to the agent's system prompt via the `system_prompt` manifest field. All non-empty snippets from loaded extensions are collected and injected into a delimited section:
+Extensions can contribute to the agent's system prompt via the `system_prompt` manifest field. All non-empty snippets from loaded extensions are collected and injected into a clearly delimited section:
 
 ```
 ## Extensions
@@ -161,19 +182,45 @@ Always format dates in ISO 8601.
 ## End Extensions
 ```
 
-This gives extensions a way to provide behavioral instructions to the LLM alongside their tool definitions.
+The delimiters prevent extension snippets from being misinterpreted as core system instructions by the LLM. Snippets from multiple extensions are separated by double newlines.
 
-## Hot reload
+## Discovery and lifecycle
 
-Quecto watches extension directories for changes using fingerprint-based polling (file modification time + size). When a change is detected:
+### Startup discovery
 
-- **New extensions** are discovered and their tools become available
-- **Removed extensions** have their tools unregistered
-- **Modified manifests** cause the extension to be reloaded with the updated configuration
+Extensions are discovered once when the agent starts. The agent scans `<workspace>/extensions/` and:
 
-Core built-in tools (`bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, etc.) are never affected by extension reloads.
+1. Lists all subdirectories (skipping symlinks — see [Security](#security))
+2. Reads `extension.toml` from each subdirectory
+3. Validates the manifest (all required fields present, valid `command` path)
+4. Registers each extension tool in the tool registry (rejecting shadows — see [Tool name shadowing](#tool-name-shadowing))
+5. Collects system prompt snippets from loaded extensions
 
-No restart is needed — changes take effect automatically.
+After startup, the tool set is fixed unless explicitly reloaded.
+
+### Manual reload via UDS
+
+In UDS mode (`quecto agent --mode uds`), clients can reload extensions at runtime:
+
+```json
+{"type":"reload_extensions","id":"re-1"}
+```
+
+This re-scans `<workspace>/extensions/` from disk, replaces all script extension tools in the registry, and broadcasts an `extensions_changed` event to all connected clients. See [UDS Protocol Reference](uds-protocol.md) for details.
+
+Clients can also query the current extension list:
+
+```json
+{"type":"get_extensions","id":"ge-1"}
+```
+
+### Hot-reload watcher
+
+The infrastructure for automatic hot-reload (polling for changes to `extension.toml` files based on mtime and file size) is implemented but **not enabled by default** from the CLI. It is available for programmatic use via `UdsLoopArgs::hot_reload_interval`. When enabled, the watcher polls at the configured interval and triggers `reload_extensions` automatically when changes are detected.
+
+### Tool deduplication
+
+If multiple extensions define tools with the same name, the last one registered wins. Extension registration order follows filesystem directory listing order, which may vary by platform. Use unique tool names to avoid conflicts.
 
 ## Security
 
@@ -181,55 +228,54 @@ Extensions run as subprocesses of the Quecto agent. Several security measures ar
 
 ### Command path restrictions
 
-- The `command` field **must** start with `./` (relative to the extension directory)
-- Parent directory traversal (`..`) in command paths is rejected
-- Absolute paths (e.g. `/usr/bin/env`) are rejected
+The `command` field **must** start with `./` (relative to the extension directory). This ensures extensions can only execute scripts within their own directory:
 
 ```toml
 # ✓ Valid
 command = "./run.sh"
 command = "./bin/tool"
 
-# ✗ Rejected
-command = "/usr/bin/python3"
-command = "../../etc/passwd"
-command = "curl"
+# ✗ Rejected at registration time
+command = "/usr/bin/python3"    # absolute path
+command = "../../etc/passwd"    # parent traversal
+command = "curl"                # bare command (PATH lookup)
 ```
 
-### Output cap
-
-Script stdout and stderr are each capped at **1 MiB**. If either stream exceeds this limit, the process (and its entire process group) is killed and the tool returns an error.
-
-### Timeout enforcement
-
-When a script exceeds `timeout_secs`, the entire process group is killed with `SIGKILL` (not just the lead process). This prevents orphaned child processes from lingering.
+Parent directory traversal (`..`) anywhere in the path is rejected.
 
 ### Symlink rejection
 
-Symlinked extension directories are skipped during discovery. This prevents extensions from pointing outside the trusted extensions directory.
+Symlinked extension directories are skipped during discovery. This prevents extensions from pointing outside the trusted extensions directory. The check uses `symlink_metadata()` to detect symlinks before following them.
 
 ### Tool name shadowing
 
-Extension tools cannot shadow core built-in tools. If an extension defines a tool with the same name as a built-in (e.g. `bash`, `read`), it is rejected with a warning and not registered.
+Extension tools cannot shadow core built-in tools. If an extension defines a tool with the same name as a built-in (e.g. `bash`, `read`, `write`, `edit`), it is rejected with a warning logged and **not** registered. The extension will not appear in `get_extensions` responses.
 
-## Deduplication
+This applies both at startup and during reload/re-registration.
 
-If multiple extensions define tools with the same name, the **last one registered wins**. Extension registration order follows filesystem directory listing order, which may vary by platform. To avoid conflicts, use unique tool names.
+### Output cap
+
+Script stdout **and** stderr are each capped at **1 MiB**. Both streams are read concurrently with size limits. If either stream exceeds this limit, the process and its entire process group are killed with `SIGKILL` and the tool returns an error.
+
+### Timeout enforcement
+
+When a script exceeds `timeout_secs`, the entire process group is killed with `SIGKILL` (via `kill -9 -<pgid>`), not just the lead process. This prevents orphaned child processes from lingering. Each extension runs in its own process group (via `process_group(0)` on spawn).
 
 ## Troubleshooting
 
 ### Extension not appearing
 
-1. Verify the directory structure: `~/.quecto/workspace/extensions/<name>/extension.toml`
+1. Verify the directory structure: `<workspace>/extensions/<name>/extension.toml`
 2. Check that `extension.toml` has all required fields (`name`, `description`, `parameters_schema`, `command`)
 3. Ensure `command` starts with `./`
 4. Ensure the script is executable (`chmod +x`)
 5. Check that the extension directory is not a symlink
+6. Check that the extension name does not shadow a core tool (look for `"register_extension rejected: shadows core tool"` or `"extension tool rejected: shadows core tool"` in logs)
 
 ### Tool returns "invalid output"
 
 The script must output valid JSON with `content` and `is_error` fields to stdout. Common causes:
-- Debug/log output mixed into stdout (redirect logs to stderr instead)
+- Debug/log output mixed into stdout — redirect logs to stderr instead
 - Missing JSON encoding of special characters
 - Script printing raw text instead of JSON
 
@@ -239,4 +285,10 @@ Increase `timeout_secs` in the manifest, or optimize the script. The default is 
 
 ### Extension shadows a core tool
 
-Check the agent logs for: `"extension tool rejected: shadows core tool"`. Rename the tool in your `extension.toml`.
+Extension tool names that conflict with built-in tools (`bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, `spawn`, `recall`, `web_search`, `workflow`) are silently rejected. Rename the `name` field in your `extension.toml` to something unique.
+
+### Changes not taking effect
+
+Extensions are discovered once at startup. To pick up new or modified extensions:
+- **Restart** the agent, or
+- **Send `reload_extensions`** via UDS (see [UDS Protocol Reference](uds-protocol.md))
