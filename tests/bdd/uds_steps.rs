@@ -29,6 +29,9 @@ struct UdsAgentContext {
     model: String,
     session_key: String,
     ephemeral: bool,
+    ext_registry: std::sync::Arc<
+        std::sync::Mutex<quecto::infrastructure::extensions::registry::ExtensionRegistry>,
+    >,
 }
 
 /// Build the agent and session key from world state + config.
@@ -54,8 +57,19 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         config.agents.defaults.restrict_to_workspace,
     );
     let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
-    let registry =
-        ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
+    let mut registry = ToolRegistryImpl::with_core_tools_and_exec_settings(
+        workspace.clone(),
+        sandbox,
+        exec_settings,
+    );
+
+    // Discover extensions from <workspace>/extensions/ (matching production behavior).
+    let extensions_dir = workspace.join("extensions");
+    let ext_registry =
+        quecto::infrastructure::extensions::registry::ExtensionRegistry::discover(&[
+            extensions_dir,
+        ]);
+    quecto::interface::shared::register_extension_tools(&mut registry, &ext_registry);
 
     let ephemeral = world.no_session || world.session_name.as_deref() == Some("-");
     let session_key = if ephemeral {
@@ -87,6 +101,7 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         model,
         session_key,
         ephemeral,
+        ext_registry: std::sync::Arc::new(std::sync::Mutex::new(ext_registry)),
     })
 }
 
@@ -126,6 +141,7 @@ fn execute_uds(world: &mut QuectoWorld) {
         model,
         session_key,
         ephemeral,
+        ext_registry,
     } = ctx;
 
     // Create a socket path in the temp dir.
@@ -165,6 +181,8 @@ fn execute_uds(world: &mut QuectoWorld) {
             socket_path: socket_path_for_thread,
             socket_override: Some(server_tokio),
             session_store_override: None,
+            ext_registry: Some(ext_registry),
+            hot_reload_interval: None,
         })
     });
 
@@ -837,6 +855,7 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
         model,
         session_key,
         ephemeral,
+        ext_registry,
     } = ctx;
     let base_dir = base.clone();
     let sp = socket_path.clone();
@@ -852,6 +871,8 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
             socket_path: sp,
             socket_override: None,
             session_store_override: None,
+            ext_registry: Some(ext_registry),
+            hot_reload_interval: None,
         })
     });
 
@@ -1084,7 +1105,12 @@ fn execute_multi_client_uds(world: &mut QuectoWorld) {
     let socket_path = base.join("mc-test-agent.sock");
     let _ = std::fs::remove_file(&socket_path);
 
-    let (handle, socket_path) = match mc_spawn_agent(ctx, &base, socket_path) {
+    let hot_reload = if world._mc_hot_reload {
+        Some(std::time::Duration::from_millis(100))
+    } else {
+        None
+    };
+    let (handle, socket_path) = match mc_spawn_agent(ctx, &base, socket_path, hot_reload) {
         Ok(pair) => pair,
         Err(msg) => {
             world.agent_stderr = msg;
@@ -1096,6 +1122,7 @@ fn execute_multi_client_uds(world: &mut QuectoWorld) {
     let connected = world.mc_connected_clients.clone();
     let disconnected = world.mc_disconnected_clients.clone();
     let commands = world.mc_client_commands.clone();
+    let deferred_extensions = world._mc_deferred_extensions.clone();
 
     mc_drive_clients(
         world,
@@ -1104,6 +1131,7 @@ fn execute_multi_client_uds(world: &mut QuectoWorld) {
             connected: &connected,
             disconnected: &disconnected,
             commands: &commands,
+            deferred_extensions: &deferred_extensions,
         },
     );
 
@@ -1117,12 +1145,14 @@ fn mc_spawn_agent(
     ctx: UdsAgentContext,
     base: &std::path::Path,
     socket_path: std::path::PathBuf,
+    hot_reload_interval: Option<std::time::Duration>,
 ) -> Result<(std::thread::JoinHandle<i32>, std::path::PathBuf), String> {
     let UdsAgentContext {
         agent,
         model,
         session_key,
         ephemeral,
+        ext_registry,
     } = ctx;
     let base_for_thread = base.to_path_buf();
     let sp = socket_path.clone();
@@ -1137,6 +1167,8 @@ fn mc_spawn_agent(
             socket_path: sp,
             socket_override: None,
             session_store_override: None,
+            ext_registry: Some(ext_registry),
+            hot_reload_interval,
         })
     });
 
@@ -1157,6 +1189,7 @@ struct McClientActions<'a> {
     connected: &'a [u32],
     disconnected: &'a [u32],
     commands: &'a HashMap<u32, Vec<String>>,
+    deferred_extensions: &'a [(String, Option<String>)],
 }
 
 /// Connect clients, send commands, handle disconnections, collect events.
@@ -1168,6 +1201,7 @@ fn mc_drive_clients(world: &mut QuectoWorld, actions: McClientActions<'_>) {
         connected,
         disconnected,
         commands,
+        deferred_extensions,
     } = actions;
 
     let mut streams: HashMap<u32, UnixStream> = HashMap::new();
@@ -1185,6 +1219,19 @@ fn mc_drive_clients(world: &mut QuectoWorld, actions: McClientActions<'_>) {
                 return;
             }
         }
+    }
+
+    // Create deferred extensions AFTER clients are connected (for hot-reload tests).
+    // This ensures the watcher's initial fingerprint is taken before the extension
+    // exists, and clients are subscribed to the broadcast channel to receive events.
+    if !deferred_extensions.is_empty() {
+        // Wait for watcher to take initial fingerprint (at least 1 poll interval).
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        for (name, prompt) in deferred_extensions {
+            given_script_extension_with_prompt(world, name.clone(), prompt.clone());
+        }
+        // Wait for watcher to detect the change (3+ poll intervals @ 100ms).
+        std::thread::sleep(std::time::Duration::from_millis(500));
     }
 
     mc_disconnect_early(&mut streams, disconnected);
@@ -1457,4 +1504,359 @@ command = "./run.sh"
         )
         .expect("failed to set script permissions");
     }
+}
+
+// ─── Extension mid-session steps (add/remove extensions during UDS session) ──
+
+/// Add a script extension to the workspace mid-session (for reload scenarios).
+/// If hot-reload is enabled, defer creation until after the UDS loop starts.
+#[when(expr = "a script extension {string} is added to the workspace extensions directory")]
+fn when_script_extension_added(world: &mut QuectoWorld, name: String) {
+    if world._mc_hot_reload {
+        world._mc_deferred_extensions.push((name, None));
+    } else {
+        given_script_extension_with_prompt(world, name, None);
+    }
+}
+
+/// Add a script extension with system prompt to the workspace mid-session.
+#[when(
+    expr = "a script extension {string} with system prompt {string} is added to the workspace extensions directory"
+)]
+fn when_script_extension_added_with_prompt(world: &mut QuectoWorld, name: String, prompt: String) {
+    given_script_extension_with_prompt(world, name, Some(prompt));
+}
+
+/// Remove a script extension from the workspace mid-session.
+#[when(expr = "extension {string} is removed from the workspace extensions directory")]
+fn when_extension_removed(world: &mut QuectoWorld, name: String) {
+    let base = world.cli_context.base_dir.clone().expect("no base dir");
+    let ext_dir = base.join("workspace").join("extensions").join(&name);
+    if ext_dir.exists() {
+        std::fs::remove_dir_all(&ext_dir).expect("failed to remove extension dir");
+    }
+}
+
+/// Queue a command on a specific multi-client connection.
+#[when(expr = "client {int} sends command {string} with id {string}")]
+fn when_client_sends_command_with_id(
+    world: &mut QuectoWorld,
+    client_id: u32,
+    command: String,
+    id: String,
+) {
+    let cmd = serde_json::json!({"type": command, "id": id});
+    world
+        .mc_client_commands
+        .entry(client_id)
+        .or_default()
+        .push(cmd.to_string());
+}
+
+/// Start the multi-client UDS agent with hot-reload enabled.
+/// Uses a short poll interval so tests don't have to wait long.
+#[when("I start the multi-client UDS agent with hot-reload enabled")]
+fn when_start_multi_client_uds_hot_reload(world: &mut QuectoWorld) {
+    world.mc_mode = true;
+    world.no_session = true;
+    // Mark hot-reload requested — execute_multi_client_uds will check this.
+    world._mc_hot_reload = true;
+}
+
+/// Wait for the hot-reload watcher to detect changes and trigger.
+#[when("I wait for the hot-reload watcher to trigger")]
+fn when_wait_for_hot_reload(_world: &mut QuectoWorld) {
+    // The hot-reload watcher polls every 100ms in test mode.
+    // Wait enough time for at least 2 poll cycles + processing.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+}
+
+/// Mock LLM returns a tool call to a named extension tool, then text.
+#[given(expr = "the mock LLM returns a tool call to {string} then a text response {string}")]
+fn given_mock_llm_extension_tool_call_then_text(
+    world: &mut QuectoWorld,
+    tool_name: String,
+    text: String,
+) {
+    assert!(
+        world._wiremock_server_uri.is_some(),
+        "mock server URI not set"
+    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+
+        let tool_call_body = serde_json::json!({
+            "id": "chatcmpl-tool",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": format!("call_{tool_name}"),
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": "{\"input\":\"test\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        });
+        let text_body = serde_json::json!({
+            "id": "chatcmpl-text",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": text },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 15, "completion_tokens": 5, "total_tokens": 20}
+        });
+
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(tool_call_body))
+            .up_to_n_times(1)
+            .with_priority(2)
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(text_body))
+            .mount(&server)
+            .await;
+
+        e2e_steps::rewrite_config_to_uri(world, &new_uri);
+        std::mem::forget(server);
+    });
+    std::mem::forget(rt);
+}
+
+// ─── get_extensions assertion steps ───────────────────────────────────────────
+
+/// Find the get_extensions response (first or post-reload depending on context).
+fn find_get_extensions_response(
+    events: &[String],
+    id_prefix: Option<&str>,
+) -> Option<serde_json::Value> {
+    events.iter().find_map(|l| {
+        let v: serde_json::Value = serde_json::from_str(l).ok()?;
+        if v["type"] == "response" && v["command"] == "get_extensions" {
+            if let Some(prefix) = id_prefix {
+                if v["id"].as_str()?.starts_with(prefix) {
+                    return Some(v);
+                }
+                return None;
+            }
+            Some(v)
+        } else {
+            None
+        }
+    })
+}
+
+/// Find a get_extensions response in multi-client events.
+fn find_mc_get_extensions_response(
+    events: &[String],
+    id_prefix: Option<&str>,
+) -> Option<serde_json::Value> {
+    find_get_extensions_response(events, id_prefix)
+}
+
+#[then(expr = "the get_extensions response should list extension {string}")]
+fn then_get_extensions_lists(world: &mut QuectoWorld, name: String) {
+    execute_uds(world);
+    let resp = find_get_extensions_response(&world.agent_events, None)
+        .expect("no get_extensions response");
+    let exts = resp["data"]["extensions"]
+        .as_array()
+        .expect("extensions not an array");
+    let found = exts.iter().any(|e| e["name"].as_str() == Some(&name));
+    assert!(
+        found,
+        "expected get_extensions to list extension {name:?}\nexts: {exts:?}"
+    );
+}
+
+#[then(expr = "the get_extensions response should have {int} extensions")]
+fn then_get_extensions_count(world: &mut QuectoWorld, count: usize) {
+    execute_uds(world);
+    let resp = find_get_extensions_response(&world.agent_events, None)
+        .expect("no get_extensions response");
+    let exts = resp["data"]["extensions"]
+        .as_array()
+        .expect("extensions not an array");
+    assert_eq!(
+        exts.len(),
+        count,
+        "expected {count} extensions, got {}\nexts: {exts:?}",
+        exts.len()
+    );
+}
+
+#[then(expr = "the get_extensions response should not list extension {string}")]
+fn then_get_extensions_not_lists(world: &mut QuectoWorld, name: String) {
+    execute_uds(world);
+    let resp = find_get_extensions_response(&world.agent_events, None)
+        .expect("no get_extensions response");
+    let exts = resp["data"]["extensions"]
+        .as_array()
+        .expect("extensions not an array");
+    let found = exts.iter().any(|e| e["name"].as_str() == Some(&name));
+    assert!(
+        !found,
+        "expected get_extensions NOT to list extension {name:?}\nexts: {exts:?}"
+    );
+}
+
+// ─── post-reload / post-remove get_extensions assertions (multi-client) ──────
+
+#[then(expr = "the post-reload get_extensions response should list extension {string}")]
+fn then_post_reload_lists(world: &mut QuectoWorld, name: String) {
+    execute_multi_client_uds(world);
+    let events = world.mc_client_events.get(&1).cloned().unwrap_or_default();
+    let resp = find_mc_get_extensions_response(&events, Some("post-reload"))
+        .expect("no post-reload get_extensions response");
+    let exts = resp["data"]["extensions"]
+        .as_array()
+        .expect("extensions not an array");
+    let found = exts.iter().any(|e| e["name"].as_str() == Some(&name));
+    assert!(
+        found,
+        "expected post-reload get_extensions to list extension {name:?}\nexts: {exts:?}"
+    );
+}
+
+#[then(expr = "the post-remove get_extensions response should list extension {string}")]
+fn then_post_remove_lists(world: &mut QuectoWorld, name: String) {
+    execute_multi_client_uds(world);
+    let events = world.mc_client_events.get(&1).cloned().unwrap_or_default();
+    let resp = find_mc_get_extensions_response(&events, Some("post-remove"))
+        .expect("no post-remove get_extensions response");
+    let exts = resp["data"]["extensions"]
+        .as_array()
+        .expect("extensions not an array");
+    let found = exts.iter().any(|e| e["name"].as_str() == Some(&name));
+    assert!(
+        found,
+        "expected post-remove get_extensions to list extension {name:?}\nexts: {exts:?}"
+    );
+}
+
+#[then(expr = "the post-remove get_extensions response should not list extension {string}")]
+fn then_post_remove_not_lists(world: &mut QuectoWorld, name: String) {
+    execute_multi_client_uds(world);
+    let events = world.mc_client_events.get(&1).cloned().unwrap_or_default();
+    let resp = find_mc_get_extensions_response(&events, Some("post-remove"))
+        .expect("no post-remove get_extensions response");
+    let exts = resp["data"]["extensions"]
+        .as_array()
+        .expect("extensions not an array");
+    let found = exts.iter().any(|e| e["name"].as_str() == Some(&name));
+    assert!(
+        !found,
+        "expected post-remove get_extensions NOT to list extension {name:?}\nexts: {exts:?}"
+    );
+}
+
+// ─── extensions_changed event assertions ──────────────────────────────────────
+
+#[then(expr = "client {int} should have received an extensions_changed event listing {string}")]
+fn then_client_received_extensions_changed_listing(
+    world: &mut QuectoWorld,
+    client_id: u32,
+    name: String,
+) {
+    execute_multi_client_uds(world);
+    let events = world
+        .mc_client_events
+        .get(&client_id)
+        .cloned()
+        .unwrap_or_default();
+    let found = events.iter().any(|l| {
+        let v: serde_json::Value = match serde_json::from_str(l) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        if v["type"].as_str() != Some("extensions_changed") {
+            return false;
+        }
+        v["extensions"]
+            .as_array()
+            .map(|exts| exts.iter().any(|e| e["name"].as_str() == Some(&name)))
+            .unwrap_or(false)
+    });
+    assert!(
+        found,
+        "expected client {client_id} to receive extensions_changed listing {name:?}\nevents: {events:#?}"
+    );
+}
+
+// ─── Extension tool execution assertions ──────────────────────────────────────
+
+#[then(expr = "the agent output should contain a tool_execution_start with tool name {string}")]
+fn then_agent_output_tool_start_with_name(world: &mut QuectoWorld, name: String) {
+    execute_uds(world);
+    let found = world.agent_events.iter().any(|l| {
+        let v: serde_json::Value = match serde_json::from_str(l) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        v["type"].as_str() == Some("tool_execution_start") && v["toolName"].as_str() == Some(&name)
+    });
+    assert!(
+        found,
+        "expected tool_execution_start with toolName={name:?}\nevents: {:#?}",
+        world.agent_events
+    );
+}
+
+#[then(expr = "the agent output should contain a tool_execution_end with tool name {string}")]
+fn then_agent_output_tool_end_with_name(world: &mut QuectoWorld, name: String) {
+    execute_uds(world);
+    let found = world.agent_events.iter().any(|l| {
+        let v: serde_json::Value = match serde_json::from_str(l) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        v["type"].as_str() == Some("tool_execution_end") && v["toolName"].as_str() == Some(&name)
+    });
+    assert!(
+        found,
+        "expected tool_execution_end with toolName={name:?}\nevents: {:#?}",
+        world.agent_events
+    );
+}
+
+// ─── Multi-client command response assertions ─────────────────────────────────
+
+#[then(expr = "client {int} should have received a response command {string} with success true")]
+fn then_client_received_response_command_success(
+    world: &mut QuectoWorld,
+    client_id: u32,
+    command: String,
+) {
+    execute_multi_client_uds(world);
+    let events = world
+        .mc_client_events
+        .get(&client_id)
+        .cloned()
+        .unwrap_or_default();
+    let found = events.iter().any(|l| {
+        let v: serde_json::Value = match serde_json::from_str(l) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        v["type"] == "response" && v["command"] == command && v["success"] == true
+    });
+    assert!(
+        found,
+        "expected client {client_id} to receive response command {command:?} with success=true\nevents: {events:#?}"
+    );
 }

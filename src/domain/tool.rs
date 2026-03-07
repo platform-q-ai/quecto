@@ -78,6 +78,14 @@ pub trait ToolRegistry: Send + Sync {
         self.definitions().len()
     }
 
+    /// Return names of tools registered from extensions (not core tools).
+    ///
+    /// Default: empty (no extension tracking). Override in registries that
+    /// track extension tools separately (e.g. `ToolRegistryImpl`).
+    fn extension_names(&self) -> Vec<String> {
+        vec![]
+    }
+
     /// Execute a tool by name with JSON arguments.
     fn execute(
         &self,

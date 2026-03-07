@@ -128,6 +128,23 @@ impl AgentLoopImpl {
         self
     }
 
+    /// Replace the tool registry with a new one.
+    ///
+    /// Zero-overhead: one pointer swap, O(1). Called between `process()` calls
+    /// by the UDS dispatch loop when extensions are reloaded. No changes to
+    /// the hot path (`run_loop`, `execute_single_tool_call`).
+    pub fn swap_registry(&mut self, registry: Box<dyn ToolRegistry>) {
+        self.tool_registry = registry;
+    }
+
+    /// Return names of tools registered from extensions.
+    ///
+    /// Used by UDS `get_extensions` to report only tools that are actually
+    /// available (shadows are rejected during registration).
+    pub fn tool_registry_extension_names(&self) -> Vec<String> {
+        self.tool_registry.extension_names()
+    }
+
     /// Enable or disable incremental streaming for LLM calls.
     pub fn set_streaming(&mut self, enabled: bool) {
         self.streaming = enabled;
@@ -463,3 +480,7 @@ mod tests;
 #[cfg(test)]
 #[path = "agent_loop_spill_tests.rs"]
 mod spill_tests;
+
+#[cfg(test)]
+#[path = "agent_loop_swap_tests.rs"]
+mod swap_tests;

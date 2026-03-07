@@ -279,6 +279,8 @@ pub(crate) struct AgentBuildResult {
     pub extension_prompt_snippets: String,
     /// Resolved model name (after config + flag override).
     pub model: String,
+    /// Shared extension registry for UDS get_extensions / reload_extensions.
+    pub ext_registry: std::sync::Arc<std::sync::Mutex<ExtensionRegistry>>,
 }
 
 /// Load config, build provider, and construct the agent loop. Returns None on error.
@@ -389,6 +391,7 @@ pub(crate) fn build_agent_from_config(
         workflow_config: wf_config,
         extension_prompt_snippets,
         model,
+        ext_registry: std::sync::Arc::new(std::sync::Mutex::new(ext_registry)),
     })
 }
 
@@ -593,6 +596,8 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         socket_path,
         socket_override: None,
         session_store_override: None,
+        ext_registry: Some(build.ext_registry),
+        hot_reload_interval: None,
     })
 }
 

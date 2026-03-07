@@ -294,6 +294,10 @@ impl ToolRegistry for ToolRegistryImpl {
         self.definitions()
     }
 
+    fn extension_names(&self) -> Vec<String> {
+        self.extension_names()
+    }
+
     fn execute(
         &self,
         name: &str,

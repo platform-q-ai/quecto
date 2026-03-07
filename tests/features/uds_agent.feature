@@ -283,7 +283,7 @@ Feature: UDS mode for headless agent operation
 
   # ─── parse_error event shape ─────────────────────────────────────────────────
 
-  @wip
+  @done
   Scenario: parse error response uses type response with command parse_error
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -346,7 +346,7 @@ Feature: UDS mode for headless agent operation
 
   # ─── compute_session_stats correctness ───────────────────────────────────────
 
-  @wip
+  @done
   Scenario: get_session_stats message counts are accurate after a prompt
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -551,7 +551,7 @@ Feature: UDS mode for headless agent operation
 
   # ─── tool_call_id propagation (#318) ─────────────────────────────────────────
 
-  @wip @multi-client
+  @done @multi-client
   Scenario: tool_execution_start carries tool_call_id in multi-client mode
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -563,7 +563,7 @@ Feature: UDS mode for headless agent operation
     Then the UDS agent exits with code 0
     And client 1 should have received a tool_execution_start with a non-empty tool_call_id
 
-  @wip @multi-client
+  @done @multi-client
   Scenario: tool_execution_end carries tool_call_id in multi-client mode
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -577,7 +577,7 @@ Feature: UDS mode for headless agent operation
 
   # ─── Single-client real-time tool events (#318) ──────────────────────────────
 
-  @wip
+  @done
   Scenario: tool_execution_start is emitted with tool_call_id in single-client mode
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -602,7 +602,7 @@ Feature: UDS mode for headless agent operation
 
   # ─── Discovery at startup (CLI mode) ────────────────────────────────────────
 
-  @wip @extensions
+  @done @extensions
   Scenario: Extension tools are discovered and registered during agent construction
     Given a temp base directory
     And a mock LLM that captures requests and returns text "ok"
@@ -611,7 +611,7 @@ Feature: UDS mode for headless agent operation
     Then the exit code should be 0
     And the LLM request should have included tool "greet"
 
-  @wip @extensions
+  @done @extensions
   Scenario: Extension system prompt snippets are injected into the agent
     Given a temp base directory
     And a mock LLM that captures requests and returns text "ok"
@@ -622,7 +622,7 @@ Feature: UDS mode for headless agent operation
 
   # ─── Discovery at startup (UDS mode) ────────────────────────────────────────
 
-  @wip @extensions
+  @done @extensions
   Scenario: Extension tools are discovered and available in UDS mode
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -634,7 +634,7 @@ Feature: UDS mode for headless agent operation
     Then the UDS agent exits with code 0
     And the agent output should contain an event of type "agent_end"
 
-  @wip @extensions
+  @done @extensions
   Scenario: Extension system prompt snippets are active in UDS mode
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -648,7 +648,7 @@ Feature: UDS mode for headless agent operation
 
   # ─── get_extensions UDS command ──────────────────────────────────────────────
 
-  @wip @extensions
+  @done @extensions
   Scenario: get_extensions returns discovered extension names
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -662,7 +662,7 @@ Feature: UDS mode for headless agent operation
     And the get_extensions response should list extension "greet"
     And the get_extensions response should list extension "summarize"
 
-  @wip @extensions
+  @done @extensions
   Scenario: get_extensions returns empty list when no extensions are installed
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -675,7 +675,7 @@ Feature: UDS mode for headless agent operation
 
   # ─── reload_extensions UDS command ───────────────────────────────────────────
 
-  @wip @extensions @multi-client
+  @done @extensions @multi-client
   Scenario: reload_extensions re-discovers extensions from disk
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -692,7 +692,7 @@ Feature: UDS mode for headless agent operation
     And the post-reload get_extensions response should list extension "alpha"
     And the post-reload get_extensions response should list extension "beta"
 
-  @wip @extensions @multi-client
+  @done @extensions @multi-client
   Scenario: reload_extensions removes deleted extension tools
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -711,7 +711,7 @@ Feature: UDS mode for headless agent operation
 
   # ─── Extension reload event broadcast ────────────────────────────────────────
 
-  @wip @extensions @multi-client
+  @done @extensions @multi-client
   Scenario: reload_extensions broadcasts an extensions_changed event to all clients
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -725,7 +725,7 @@ Feature: UDS mode for headless agent operation
     And client 1 should have received an event of type "extensions_changed"
     And client 2 should have received an event of type "extensions_changed"
 
-  @wip @extensions @multi-client
+  @done @extensions @multi-client
   Scenario: extensions_changed event includes updated extension list
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -741,7 +741,7 @@ Feature: UDS mode for headless agent operation
 
   # ─── Hot-reload watcher in UDS mode ──────────────────────────────────────────
 
-  @wip @extensions @multi-client
+  @done @extensions @multi-client
   Scenario: Hot-reload watcher detects new extension and broadcasts event
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -755,7 +755,7 @@ Feature: UDS mode for headless agent operation
 
   # ─── Extension tool execution via UDS ────────────────────────────────────────
 
-  @wip @extensions
+  @done @extensions
   Scenario: Extension tool is executed when the LLM calls it via UDS
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -771,7 +771,7 @@ Feature: UDS mode for headless agent operation
 
   # ─── Extension shadowing protection ──────────────────────────────────────────
 
-  @wip @extensions
+  @done @extensions
   Scenario: Extension tool that shadows a core tool is rejected
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -785,7 +785,7 @@ Feature: UDS mode for headless agent operation
 
   # ─── Extension prompt update after reload ────────────────────────────────────
 
-  @wip @extensions @multi-client
+  @done @extensions @multi-client
   Scenario: Extension system prompt snippet updates after reload
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -797,4 +797,4 @@ Feature: UDS mode for headless agent operation
     And client 1 sends prompt "hello"
     And I close all UDS clients
     Then the UDS agent exits with code 0
-    And the agent output should contain an event of type "agent_end"
+    And client 1 should have received an event of type "agent_end"

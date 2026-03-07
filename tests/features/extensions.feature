@@ -1,4 +1,4 @@
-@wip
+@done
 Feature: Script extension system
   As an agent operator
   I want to add tools via script extensions on disk

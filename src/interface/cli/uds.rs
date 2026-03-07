@@ -45,6 +45,14 @@ pub struct UdsLoopArgs<'a> {
     pub socket_override: Option<std::os::unix::net::UnixStream>,
     /// Injected session store for testing.  `None` = use `FileSessionStore`.
     pub session_store_override: Option<Box<dyn SessionStore + 'static>>,
+    /// Shared extension registry for get_extensions / reload_extensions.
+    pub ext_registry: Option<
+        std::sync::Arc<
+            std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
+        >,
+    >,
+    /// When `Some`, spawn a hot-reload watcher at the given poll interval (multi-client only).
+    pub hot_reload_interval: Option<std::time::Duration>,
 }
 
 /// Run the UDS event loop.  Returns exit code.
@@ -116,6 +124,8 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         socket_path,
         socket_override,
         session_store_override,
+        ext_registry,
+        hot_reload_interval,
     } = args;
 
     let file_store;
@@ -144,6 +154,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 session_key,
                 ephemeral,
                 system_prompt,
+                ext_registry,
             },
             std_stream,
             session_store,
@@ -168,6 +179,8 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 session_key,
                 ephemeral,
                 system_prompt,
+                ext_registry,
+                hot_reload_interval,
             },
             listener,
             session_store,
@@ -187,6 +200,11 @@ struct SingleClientArgs {
     session_key: String,
     ephemeral: bool,
     system_prompt: String,
+    ext_registry: Option<
+        std::sync::Arc<
+            std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
+        >,
+    >,
 }
 
 async fn single_client_loop(
@@ -201,6 +219,7 @@ async fn single_client_loop(
         session_key,
         ephemeral,
         system_prompt,
+        ext_registry,
     } = args;
 
     std_stream
@@ -226,6 +245,7 @@ async fn single_client_loop(
             session_key: &session_key,
             cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
             broadcast_tx: None,
+            ext_registry,
         },
     )
     .await;
@@ -390,6 +410,13 @@ pub(super) struct DispatchCtx<'a> {
     pub cancel_handle: CancelHandle,
     /// `Some` in multi-client mode; `None` in single-client mode.
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    /// Shared extension registry for get_extensions / reload_extensions.
+    /// `None` when extensions are not wired (e.g. legacy tests).
+    pub ext_registry: Option<
+        std::sync::Arc<
+            std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
+        >,
+    >,
 }
 
 /// Emit an event: broadcast if available, otherwise write directly.
@@ -476,12 +503,11 @@ fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serd
             Some(serde_json::to_value(&stats).unwrap_or_default())
         }
         AgentCommand::GetExtensions { .. } => {
-            // TODO(#318): return real extension list from shared ExtensionRegistry
-            Some(serde_json::json!({ "extensions": [] }))
+            Some(serde_json::json!({ "extensions": build_extension_list(ctx) }))
         }
         AgentCommand::ReloadExtensions { .. } => {
-            // TODO(#318): trigger ExtensionRegistry reload, sync tools, broadcast
-            Some(serde_json::json!({}))
+            // Handled in dispatch_command (needs async I/O + broadcast).
+            None
         }
         _ => None,
     }
@@ -516,28 +542,12 @@ pub(super) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             .await
         }
         AgentCommand::Steer { message, .. } => {
-            if ctx.session.is_streaming() {
-                fire_cancel(&ctx.cancel_handle);
-                ctx.session.prepend_pending(message);
-            } else {
-                ctx.session.enqueue_pending(message);
-            }
-            let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
-            emit_event_to_broadcast_or_writer(ctx, &ev).await;
-            false
+            handle_steer(ctx, id.as_deref(), &type_name, message).await
         }
         AgentCommand::FollowUp { message, .. } => {
-            ctx.session.enqueue_pending(message);
-            let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
-            emit_event_to_broadcast_or_writer(ctx, &ev).await;
-            false
+            handle_follow_up(ctx, id.as_deref(), &type_name, message).await
         }
-        AgentCommand::Abort { .. } => {
-            fire_cancel(&ctx.cancel_handle);
-            let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
-            emit_event_to_broadcast_or_writer(ctx, &ev).await;
-            false
-        }
+        AgentCommand::Abort { .. } => handle_abort(ctx, id.as_deref(), &type_name).await,
         AgentCommand::SetModel {
             model,
             provider,
@@ -556,8 +566,11 @@ pub(super) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             )
             .await
         }
+        AgentCommand::ReloadExtensions { .. } => {
+            handle_reload_extensions(ctx, id.as_deref(), &type_name).await;
+            false
+        }
         AgentCommand::GetExtensions { .. }
-        | AgentCommand::ReloadExtensions { .. }
         | AgentCommand::GetState { .. }
         | AgentCommand::GetMessages { .. }
         | AgentCommand::GetMessagesTail { .. }
@@ -573,6 +586,44 @@ pub(super) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         }
     }
 }
+
+async fn handle_steer(
+    ctx: &mut DispatchCtx<'_>,
+    id: Option<&str>,
+    type_name: &str,
+    message: String,
+) -> bool {
+    if ctx.session.is_streaming() {
+        fire_cancel(&ctx.cancel_handle);
+        ctx.session.prepend_pending(message);
+    } else {
+        ctx.session.enqueue_pending(message);
+    }
+    let ev = AgentEvent::ok(id, type_name, None);
+    emit_event_to_broadcast_or_writer(ctx, &ev).await;
+    false
+}
+
+async fn handle_follow_up(
+    ctx: &mut DispatchCtx<'_>,
+    id: Option<&str>,
+    type_name: &str,
+    message: String,
+) -> bool {
+    ctx.session.enqueue_pending(message);
+    let ev = AgentEvent::ok(id, type_name, None);
+    emit_event_to_broadcast_or_writer(ctx, &ev).await;
+    false
+}
+
+async fn handle_abort(ctx: &mut DispatchCtx<'_>, id: Option<&str>, type_name: &str) -> bool {
+    fire_cancel(&ctx.cancel_handle);
+    let ev = AgentEvent::ok(id, type_name, None);
+    emit_event_to_broadcast_or_writer(ctx, &ev).await;
+    false
+}
+
+use super::uds_extensions::{build_extension_list, handle_reload_extensions};
 
 struct PromptCommand {
     id: Option<String>,
