@@ -126,42 +126,16 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
 
 #[cfg(test)]
 mod tests {
-    use std::future::Future;
     use std::io::Cursor;
-    use std::pin::Pin;
     use std::sync::Arc;
 
     use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
-    use crate::domain::error::DomainError;
-    use crate::domain::message::LlmResponse;
-    use crate::domain::provider::{ChatRequest, LlmProvider};
+    use crate::domain::provider::LlmProvider;
     use crate::infrastructure::persistence::session_store::FileSessionStore;
     use crate::infrastructure::tools::registry::ToolRegistryImpl;
+    use crate::interface::test_support::StubProvider;
 
     use super::super::{ReplLoop, ReplSession};
-
-    #[derive(Debug)]
-    struct StubProvider;
-
-    impl LlmProvider for StubProvider {
-        fn name(&self) -> &str {
-            "stub"
-        }
-
-        fn chat(
-            &self,
-            _request: ChatRequest<'_>,
-        ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
-            Box::pin(async {
-                Ok(LlmResponse {
-                    content: Some("stub response".to_string()),
-                    tool_calls: vec![],
-                    usage: None,
-                    stop_reason: None,
-                })
-            })
-        }
-    }
 
     /// Build a minimal `ReplLoop` backed by in-memory buffers and a stub provider.
     fn make_repl() -> (ReplLoop<Cursor<Vec<u8>>, Vec<u8>>, tempfile::TempDir) {

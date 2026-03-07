@@ -76,7 +76,7 @@ impl SseAccumulator {
 
     pub(super) fn handle_message_delta(&mut self, chunk: &serde_json::Value) {
         if let Some(reason) = chunk["delta"]["stop_reason"].as_str() {
-            self.stop_reason = Some(StopReason::from_anthropic(reason));
+            self.stop_reason = Some(StopReason::parse(reason));
         }
         if let Some(usage) = chunk["usage"].as_object() {
             if let Some(v) = usage.get("output_tokens").and_then(|v| v.as_u64()) {

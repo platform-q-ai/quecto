@@ -503,7 +503,7 @@ impl AnthropicProvider {
             cost: None,
         });
 
-        let stop_reason = body["stop_reason"].as_str().map(StopReason::from_anthropic);
+        let stop_reason = body["stop_reason"].as_str().map(StopReason::parse);
 
         Ok(LlmResponse {
             content,
