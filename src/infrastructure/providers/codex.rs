@@ -372,7 +372,8 @@ impl CodexProvider {
                 .await;
             return;
         }
-        codex_pump_sse_bytes(&mut response, &tx).await;
+        let mut handler = CodexSseHandler::new();
+        super::sse_common::pump_sse(&mut response, &tx, &mut handler).await;
     }
 
     /// Public accessor for `parse_sse_response` (for BDD/integration tests).
@@ -544,103 +545,56 @@ impl LlmProvider for CodexProvider {
     }
 }
 
-/// Outcome from processing a single Codex SSE data payload.
-enum CodexSseOutcome {
-    Continue,
-    Done,
+use super::sse_common::{SseHandler, SseLineOutcome};
+
+/// SSE line handler for the Codex Responses API.
+struct CodexSseHandler {
+    acc: SseAccumulator,
 }
 
-/// Process a single SSE `data:` payload from the Codex Responses API.
-async fn process_codex_data(
-    data: &str,
-    acc: &mut SseAccumulator,
-    tx: &tokio::sync::mpsc::Sender<StreamEvent>,
-) -> CodexSseOutcome {
-    if data == "[DONE]" {
-        return CodexSseOutcome::Done;
-    }
-    if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
-        if event["type"].as_str() == Some("response.output_text.delta") {
-            if let Some(delta) = event["delta"].as_str() {
-                let _ = tx.send(StreamEvent::TextDelta(delta.to_string())).await;
-            }
-        }
-        acc.handle_event(&event);
-        if event["type"].as_str() == Some("response.completed") {
-            return CodexSseOutcome::Done;
+impl CodexSseHandler {
+    fn new() -> Self {
+        Self {
+            acc: SseAccumulator::default(),
         }
     }
-    CodexSseOutcome::Continue
-}
 
-/// Append a chunk to the carry buffer, guarding against runaway lines.
-async fn extend_codex_carry(
-    carry: &mut Vec<u8>,
-    bytes: &[u8],
-    tx: &tokio::sync::mpsc::Sender<StreamEvent>,
-) -> bool {
-    if carry.len() + bytes.len() > super::sse_common::MAX_SSE_LINE_BYTES && !carry.contains(&b'\n')
-    {
-        let _ = tx
-            .send(StreamEvent::Error("SSE line exceeds 1 MiB limit".into()))
-            .await;
-        return false;
+    fn take_response(&mut self) -> LlmResponse {
+        std::mem::take(&mut self.acc).into_response()
     }
-    carry.extend_from_slice(bytes);
-    true
 }
 
-/// Drain complete lines from `carry`, returning `true` on stream completion.
-async fn drain_codex_lines(
-    carry: &mut Vec<u8>,
-    acc: &mut SseAccumulator,
-    tx: &tokio::sync::mpsc::Sender<StreamEvent>,
-) -> bool {
-    while let Some(pos) = carry.iter().position(|&b| b == b'\n') {
-        let raw_line = carry.drain(..=pos).collect::<Vec<u8>>();
-        if let Ok(line) = std::str::from_utf8(&raw_line) {
-            let line = line.trim();
-            if let Some(data) = line.strip_prefix("data: ") {
-                if matches!(
-                    process_codex_data(data, acc, tx).await,
-                    CodexSseOutcome::Done
-                ) {
-                    return true;
+impl SseHandler for CodexSseHandler {
+    async fn process_line(
+        &mut self,
+        line: &str,
+        tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+    ) -> SseLineOutcome {
+        let Some(data) = line.strip_prefix("data: ") else {
+            return SseLineOutcome::Continue;
+        };
+        if data == "[DONE]" {
+            let _ = tx.send(StreamEvent::Done(self.take_response())).await;
+            return SseLineOutcome::Done;
+        }
+        if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
+            if event["type"].as_str() == Some("response.output_text.delta") {
+                if let Some(delta) = event["delta"].as_str() {
+                    let _ = tx.send(StreamEvent::TextDelta(delta.to_string())).await;
                 }
             }
-        }
-    }
-    false
-}
-
-/// Consume Codex Responses API SSE byte stream, emitting `StreamEvent`s.
-async fn codex_pump_sse_bytes(
-    response: &mut reqwest::Response,
-    tx: &tokio::sync::mpsc::Sender<StreamEvent>,
-) {
-    let mut carry: Vec<u8> = Vec::new();
-    let mut acc = SseAccumulator::default();
-
-    loop {
-        let bytes = match response.chunk().await {
-            Ok(Some(b)) => b,
-            Ok(None) => break,
-            Err(e) => {
-                let _ = tx
-                    .send(StreamEvent::Error(format!("stream read error: {e}")))
-                    .await;
-                return;
+            self.acc.handle_event(&event);
+            if event["type"].as_str() == Some("response.completed") {
+                let _ = tx.send(StreamEvent::Done(self.take_response())).await;
+                return SseLineOutcome::Done;
             }
-        };
-        if !extend_codex_carry(&mut carry, &bytes, tx).await {
-            return;
         }
-        if drain_codex_lines(&mut carry, &mut acc, tx).await {
-            let _ = tx.send(StreamEvent::Done(acc.into_response())).await;
-            return;
-        }
+        SseLineOutcome::Continue
     }
-    let _ = tx.send(StreamEvent::Done(acc.into_response())).await;
+
+    async fn on_eof(&mut self, tx: &tokio::sync::mpsc::Sender<StreamEvent>) {
+        let _ = tx.send(StreamEvent::Done(self.take_response())).await;
+    }
 }
 
 #[cfg(test)]

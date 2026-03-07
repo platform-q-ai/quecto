@@ -76,30 +76,9 @@ impl FileContextSpillStore {
     fn spill_path(&self, session_key: &str) -> PathBuf {
         self.base_dir
             .join("sessions")
-            .join(sanitize_filename(session_key))
+            .join(super::filename::sanitize_session_key(session_key))
             .join("spill.jsonl")
     }
-}
-
-/// Sanitize a session key for use as a directory name.
-/// Replaces characters that are invalid in filenames, strips null bytes,
-/// handles empty strings and leading dots (path traversal).
-fn sanitize_filename(key: &str) -> String {
-    if key.is_empty() {
-        return "_empty".to_string();
-    }
-    let sanitized: String = key
-        .chars()
-        .filter(|c| *c != '\0') // strip null bytes
-        .map(|c| match c {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '.' => '_',
-            _ => c,
-        })
-        .collect();
-    if sanitized.is_empty() {
-        return "_empty".to_string();
-    }
-    sanitized
 }
 
 /// Lightweight index record for list_entries — avoids deserializing content.
@@ -354,26 +333,6 @@ mod tests {
             .await
             .unwrap();
         assert!(recalled.is_some());
-    }
-
-    #[test]
-    fn test_sanitize_filename() {
-        assert_eq!(sanitize_filename("simple"), "simple");
-        assert_eq!(sanitize_filename("telegram:12345"), "telegram_12345");
-        assert_eq!(sanitize_filename("a/b\\c"), "a_b_c");
-    }
-
-    #[test]
-    fn test_sanitize_filename_edge_cases() {
-        // Empty string
-        assert_eq!(sanitize_filename(""), "_empty");
-        // Null bytes stripped
-        assert_eq!(sanitize_filename("a\0b"), "ab");
-        // Only null bytes
-        assert_eq!(sanitize_filename("\0\0"), "_empty");
-        // Dots replaced (prevents path traversal via "..")
-        assert_eq!(sanitize_filename(".."), "__");
-        assert_eq!(sanitize_filename(".hidden"), "_hidden");
     }
 
     #[tokio::test]

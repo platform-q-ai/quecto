@@ -1,6 +1,5 @@
 // File-based SessionStore: persists sessions as JSON files in a directory.
 
-use std::fmt::Write as _;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -92,19 +91,9 @@ impl FileSessionStore {
         }
     }
 
-    /// Convert a session key to a safe filename.
-    /// Keeps legacy-safe keys readable (`:` -> `_`) and encodes other keys
-    /// to avoid path traversal and filename collisions.
+    /// Convert a session key to a safe filename with `.json` extension.
     fn key_to_filename(key: &str) -> String {
-        if key.chars().all(is_legacy_safe_key_char) {
-            return format!("{}.json", key.replace(':', "_"));
-        }
-
-        let mut encoded = String::with_capacity(key.len() * 2);
-        for b in key.as_bytes() {
-            let _ = write!(encoded, "{b:02x}");
-        }
-        format!("key_{}.json", encoded)
+        format!("{}.json", super::filename::sanitize_session_key(key))
     }
 
     fn session_path(&self, key: &str) -> PathBuf {
@@ -117,10 +106,6 @@ impl FileSessionStore {
             .await
             .map_err(|e| DomainError::Session(format!("failed to create sessions dir: {}", e)))
     }
-}
-
-fn is_legacy_safe_key_char(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || matches!(ch, ':' | '_' | '-' | '.')
 }
 
 impl SessionStore for FileSessionStore {

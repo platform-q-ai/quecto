@@ -283,86 +283,58 @@ impl AnthropicProvider {
             return;
         }
 
-        // Delegate byte-stream consumption to a dedicated helper so this
-        // function stays within the line and complexity limits.
-        pump_sse_bytes(&mut response, &tx).await;
+        // Delegate byte-stream consumption to the shared SSE pump.
+        let mut handler = AnthropicSseHandler::new();
+        crate::infrastructure::providers::sse_common::pump_sse(&mut response, &tx, &mut handler)
+            .await;
     }
 }
 
-/// Consume `response` body incrementally, emitting [`StreamEvent`]s via `tx`.
+use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
+
+/// SSE line handler for the Anthropic Messages API.
 ///
-/// Extracted from `stream_chat_incremental_with_body` to reduce its cognitive
-/// complexity and line count.
-async fn pump_sse_bytes(
-    response: &mut reqwest::Response,
-    tx: &tokio::sync::mpsc::Sender<StreamEvent>,
-) {
-    // `carry` holds an incomplete line fragment from the previous chunk.
-    // Using a Vec<u8> avoids re-encoding and handles UTF-8 boundaries:
-    // we only decode to &str once a complete '\n'-terminated line is ready.
-    let mut carry: Vec<u8> = Vec::new();
-    let mut current_event = String::new();
-    let mut acc = SseAccumulator::default();
-
-    loop {
-        let bytes = match response.chunk().await {
-            Ok(Some(b)) => b,
-            Ok(None) => break,
-            Err(e) => {
-                let _ = tx
-                    .send(StreamEvent::Error(format!("stream read error: {}", e)))
-                    .await;
-                return;
-            }
-        };
-
-        // Guard against unbounded line growth from a misbehaving server.
-        if carry.len() + bytes.len()
-            > crate::infrastructure::providers::sse_common::MAX_SSE_LINE_BYTES
-            && !carry.contains(&b'\n')
-        {
-            let _ = tx
-                .send(StreamEvent::Error("SSE line exceeded 1 MiB".to_string()))
-                .await;
-            return;
-        }
-        // Extend the carry buffer with this chunk, then scan for complete lines.
-        // This correctly handles UTF-8 sequences split across chunk boundaries.
-        carry.extend_from_slice(&bytes);
-
-        while let Some(pos) = carry.iter().position(|&b| b == b'\n') {
-            // Extract the complete line (including the newline).
-            let raw_line = carry.drain(..=pos).collect::<Vec<u8>>();
-            // Decode to str; SSE is always valid UTF-8 — skip malformed lines.
-            if let Ok(line) = std::str::from_utf8(&raw_line) {
-                let line = line.trim_end_matches(['\n', '\r']);
-                if process_sse_line(line, &mut current_event, &mut acc, tx).await {
-                    return; // message_stop received
-                }
-            }
-        }
-    }
-
-    // Clean EOF without message_stop.
-    let _ = tx.send(StreamEvent::Done(acc.into_response())).await;
+/// Unlike OpenAI/Codex, Anthropic's SSE protocol uses `event:` lines to
+/// name the event type before the corresponding `data:` line. This handler
+/// tracks the current event type across lines.
+struct AnthropicSseHandler {
+    current_event: String,
+    acc: SseAccumulator,
 }
 
-/// Process one SSE line from the incremental byte stream.
-///
-/// Returns `true` when `message_stop` is received (caller should terminate).
-async fn process_sse_line(
-    line: &str,
-    current_event: &mut String,
-    acc: &mut SseAccumulator,
-    tx: &tokio::sync::mpsc::Sender<StreamEvent>,
-) -> bool {
-    if let Some(event_type) = line.strip_prefix("event: ") {
-        *current_event = event_type.to_string();
-    } else if let Some(data) = line.strip_prefix("data: ") {
-        let chunk_val: serde_json::Value = serde_json::from_str(data).unwrap_or_default();
-        return dispatch_sse_event(current_event, &chunk_val, acc, tx).await;
+impl AnthropicSseHandler {
+    fn new() -> Self {
+        Self {
+            current_event: String::new(),
+            acc: SseAccumulator::default(),
+        }
     }
-    false
+}
+
+impl SseHandler for AnthropicSseHandler {
+    async fn process_line(
+        &mut self,
+        line: &str,
+        tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+    ) -> SseLineOutcome {
+        if let Some(event_type) = line.strip_prefix("event: ") {
+            self.current_event = event_type.to_string();
+        } else if let Some(data) = line.strip_prefix("data: ") {
+            let chunk_val: serde_json::Value = serde_json::from_str(data).unwrap_or_default();
+            if dispatch_sse_event(&self.current_event, &chunk_val, &mut self.acc, tx).await {
+                return SseLineOutcome::Done;
+            }
+        }
+        SseLineOutcome::Continue
+    }
+
+    async fn on_eof(&mut self, tx: &tokio::sync::mpsc::Sender<StreamEvent>) {
+        let _ = tx
+            .send(StreamEvent::Done(
+                std::mem::take(&mut self.acc).into_response(),
+            ))
+            .await;
+    }
 }
 
 /// Dispatch one parsed SSE event to the accumulator and channel.
