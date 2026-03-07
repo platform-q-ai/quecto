@@ -43,7 +43,7 @@ use crate::domain::provider::StreamEvent;
 pub enum SseLineOutcome {
     /// Continue processing the next line.
     Continue,
-    /// The stream is complete — the callback has already sent `StreamEvent::Done`.
+    /// The stream is complete — the handler has already sent `StreamEvent::Done`.
     Done,
 }
 
@@ -51,24 +51,28 @@ pub enum SseLineOutcome {
 ///
 /// Each provider implements this to define how individual SSE lines are
 /// interpreted and how the final response is assembled on EOF.
+///
+/// Uses native `async fn` in traits (RPITIT, stable since Rust 1.75) to
+/// avoid per-line `Box::pin` heap allocations on the streaming hot path.
 pub trait SseHandler: Send {
-    /// Process one complete SSE line (with trailing `\n`/`\r` already stripped).
+    /// Process one complete SSE line (with trailing `\n`/`\r` already stripped,
+    /// per the SSE spec — lines are right-trimmed only, not fully trimmed).
     ///
     /// Return [`SseLineOutcome::Done`] when the stream should terminate.
     /// The handler must send `StreamEvent::Done` itself before returning `Done`.
-    fn process_line<'a>(
-        &'a mut self,
-        line: &'a str,
-        tx: &'a tokio::sync::mpsc::Sender<StreamEvent>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = SseLineOutcome> + Send + 'a>>;
+    fn process_line(
+        &mut self,
+        line: &str,
+        tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+    ) -> impl std::future::Future<Output = SseLineOutcome> + Send;
 
     /// Called when the response body is fully consumed without `process_line`
     /// ever returning `Done`. The handler should send `StreamEvent::Done`
     /// with whatever state it has accumulated.
-    fn on_eof<'a>(
-        &'a mut self,
-        tx: &'a tokio::sync::mpsc::Sender<StreamEvent>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>>;
+    fn on_eof(
+        &mut self,
+        tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+    ) -> impl std::future::Future<Output = ()> + Send;
 }
 
 /// Read an SSE byte stream from `response`, split into newline-terminated
@@ -81,10 +85,14 @@ pub trait SseHandler: Send {
 /// - UTF-8 decoding of complete lines (skipping malformed lines)
 /// - Stream read errors (emitted as `StreamEvent::Error`)
 /// - Clean EOF (delegates to `handler.on_eof()`)
-pub async fn pump_sse(
+///
+/// Lines are right-trimmed only (`\n`, `\r`), not fully trimmed, per the
+/// SSE specification. Providers that previously used `.trim()` are unaffected
+/// in practice since well-formed SSE servers do not emit leading whitespace.
+pub async fn pump_sse<H: SseHandler>(
     response: &mut reqwest::Response,
     tx: &tokio::sync::mpsc::Sender<StreamEvent>,
-    handler: &mut dyn SseHandler,
+    handler: &mut H,
 ) {
     let mut carry: Vec<u8> = Vec::new();
 
@@ -109,14 +117,17 @@ pub async fn pump_sse(
         }
         carry.extend_from_slice(&bytes);
 
-        // Drain complete lines.
+        // Drain complete lines — decode in-place to avoid per-line allocation.
         while let Some(pos) = carry.iter().position(|&b| b == b'\n') {
-            let raw_line = carry.drain(..=pos).collect::<Vec<u8>>();
-            if let Ok(line) = std::str::from_utf8(&raw_line) {
+            let done = if let Ok(line) = std::str::from_utf8(&carry[..=pos]) {
                 let line = line.trim_end_matches(['\n', '\r']);
-                if matches!(handler.process_line(line, tx).await, SseLineOutcome::Done) {
-                    return;
-                }
+                matches!(handler.process_line(line, tx).await, SseLineOutcome::Done)
+            } else {
+                false
+            };
+            carry.drain(..=pos);
+            if done {
+                return;
             }
         }
     }

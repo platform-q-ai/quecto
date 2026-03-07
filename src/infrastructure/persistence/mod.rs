@@ -1,5 +1,5 @@
 pub mod context_spill;
-pub mod filename;
+pub(crate) mod filename;
 pub mod memory_store;
 pub mod session_store;
 pub mod skill_loader;

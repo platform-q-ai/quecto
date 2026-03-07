@@ -18,24 +18,31 @@ use std::fmt::Write;
 /// append `.json`, `.jsonl`, or use it as a directory name as needed.
 pub fn sanitize_session_key(key: &str) -> String {
     if key.is_empty() {
-        return "_empty".to_string();
+        return hex_encode(key);
     }
 
-    // Reject `.` and `..` outright — they are valid "safe" chars but
-    // dangerous as standalone directory names.
-    if key == "." || key == ".." {
-        let mut encoded = String::with_capacity(key.len() * 2 + 4);
-        encoded.push_str("key_");
-        for b in key.as_bytes() {
-            let _ = write!(encoded, "{b:02x}");
-        }
-        return encoded;
+    // Hex-encode dot-only keys (`.`, `..`, `...`, etc.) — they are
+    // dangerous as directory/file names (traversal, current-dir, or
+    // platform-specific weirdness like Windows stripping trailing dots).
+    if key.chars().all(|c| c == '.') {
+        return hex_encode(key);
+    }
+
+    // Hex-encode keys starting with a dot — they create hidden
+    // files/directories on Unix, which may be missed by backups or `ls`.
+    if key.starts_with('.') {
+        return hex_encode(key);
     }
 
     if key.chars().all(is_legacy_safe_char) {
         return key.replace(':', "_");
     }
 
+    hex_encode(key)
+}
+
+/// Hex-encode a key with a `key_` prefix for collision-resistant filenames.
+fn hex_encode(key: &str) -> String {
     let mut encoded = String::with_capacity(key.len() * 2 + 4);
     encoded.push_str("key_");
     for b in key.as_bytes() {
@@ -70,8 +77,9 @@ mod tests {
     }
 
     #[test]
-    fn empty_key_returns_empty_sentinel() {
-        assert_eq!(sanitize_session_key(""), "_empty");
+    fn empty_key_hex_encoded() {
+        // Empty key produces `key_` (hex-encode of empty string).
+        assert_eq!(sanitize_session_key(""), "key_");
     }
 
     #[test]
@@ -115,9 +123,11 @@ mod tests {
     }
 
     #[test]
-    fn leading_dot_preserved_when_not_traversal() {
-        // `.hidden` is safe — it's just a hidden file/dir name, not traversal.
-        assert_eq!(sanitize_session_key(".hidden"), ".hidden");
+    fn leading_dot_hex_encoded() {
+        // Leading-dot keys create hidden files/dirs on Unix — hex-encode them.
+        let result = sanitize_session_key(".hidden");
+        assert!(result.starts_with("key_"));
+        assert!(!result.starts_with('.'));
     }
 
     #[test]

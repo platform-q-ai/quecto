@@ -565,42 +565,35 @@ impl CodexSseHandler {
 }
 
 impl SseHandler for CodexSseHandler {
-    fn process_line<'a>(
-        &'a mut self,
-        line: &'a str,
-        tx: &'a tokio::sync::mpsc::Sender<StreamEvent>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = SseLineOutcome> + Send + 'a>> {
-        Box::pin(async move {
-            let Some(data) = line.strip_prefix("data: ") else {
-                return SseLineOutcome::Continue;
-            };
-            if data == "[DONE]" {
+    async fn process_line(
+        &mut self,
+        line: &str,
+        tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+    ) -> SseLineOutcome {
+        let Some(data) = line.strip_prefix("data: ") else {
+            return SseLineOutcome::Continue;
+        };
+        if data == "[DONE]" {
+            let _ = tx.send(StreamEvent::Done(self.take_response())).await;
+            return SseLineOutcome::Done;
+        }
+        if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
+            if event["type"].as_str() == Some("response.output_text.delta") {
+                if let Some(delta) = event["delta"].as_str() {
+                    let _ = tx.send(StreamEvent::TextDelta(delta.to_string())).await;
+                }
+            }
+            self.acc.handle_event(&event);
+            if event["type"].as_str() == Some("response.completed") {
                 let _ = tx.send(StreamEvent::Done(self.take_response())).await;
                 return SseLineOutcome::Done;
             }
-            if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
-                if event["type"].as_str() == Some("response.output_text.delta") {
-                    if let Some(delta) = event["delta"].as_str() {
-                        let _ = tx.send(StreamEvent::TextDelta(delta.to_string())).await;
-                    }
-                }
-                self.acc.handle_event(&event);
-                if event["type"].as_str() == Some("response.completed") {
-                    let _ = tx.send(StreamEvent::Done(self.take_response())).await;
-                    return SseLineOutcome::Done;
-                }
-            }
-            SseLineOutcome::Continue
-        })
+        }
+        SseLineOutcome::Continue
     }
 
-    fn on_eof<'a>(
-        &'a mut self,
-        tx: &'a tokio::sync::mpsc::Sender<StreamEvent>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
-        Box::pin(async move {
-            let _ = tx.send(StreamEvent::Done(self.take_response())).await;
-        })
+    async fn on_eof(&mut self, tx: &tokio::sync::mpsc::Sender<StreamEvent>) {
+        let _ = tx.send(StreamEvent::Done(self.take_response())).await;
     }
 }
 

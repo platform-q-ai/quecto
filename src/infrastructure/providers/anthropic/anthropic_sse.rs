@@ -312,35 +312,28 @@ impl AnthropicSseHandler {
 }
 
 impl SseHandler for AnthropicSseHandler {
-    fn process_line<'a>(
-        &'a mut self,
-        line: &'a str,
-        tx: &'a tokio::sync::mpsc::Sender<StreamEvent>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = SseLineOutcome> + Send + 'a>> {
-        Box::pin(async move {
-            if let Some(event_type) = line.strip_prefix("event: ") {
-                self.current_event = event_type.to_string();
-            } else if let Some(data) = line.strip_prefix("data: ") {
-                let chunk_val: serde_json::Value = serde_json::from_str(data).unwrap_or_default();
-                if dispatch_sse_event(&self.current_event, &chunk_val, &mut self.acc, tx).await {
-                    return SseLineOutcome::Done;
-                }
+    async fn process_line(
+        &mut self,
+        line: &str,
+        tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+    ) -> SseLineOutcome {
+        if let Some(event_type) = line.strip_prefix("event: ") {
+            self.current_event = event_type.to_string();
+        } else if let Some(data) = line.strip_prefix("data: ") {
+            let chunk_val: serde_json::Value = serde_json::from_str(data).unwrap_or_default();
+            if dispatch_sse_event(&self.current_event, &chunk_val, &mut self.acc, tx).await {
+                return SseLineOutcome::Done;
             }
-            SseLineOutcome::Continue
-        })
+        }
+        SseLineOutcome::Continue
     }
 
-    fn on_eof<'a>(
-        &'a mut self,
-        tx: &'a tokio::sync::mpsc::Sender<StreamEvent>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
-        Box::pin(async move {
-            let _ = tx
-                .send(StreamEvent::Done(
-                    std::mem::take(&mut self.acc).into_response(),
-                ))
-                .await;
-        })
+    async fn on_eof(&mut self, tx: &tokio::sync::mpsc::Sender<StreamEvent>) {
+        let _ = tx
+            .send(StreamEvent::Done(
+                std::mem::take(&mut self.acc).into_response(),
+            ))
+            .await;
     }
 }
 

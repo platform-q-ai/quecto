@@ -39,43 +39,36 @@ impl OpenAiSseHandler {
 }
 
 impl SseHandler for OpenAiSseHandler {
-    fn process_line<'a>(
-        &'a mut self,
-        line: &'a str,
-        tx: &'a tokio::sync::mpsc::Sender<StreamEvent>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = SseLineOutcome> + Send + 'a>> {
-        Box::pin(async move {
-            let Some(data) = line.strip_prefix("data: ") else {
-                return SseLineOutcome::Continue;
-            };
-            if data == "[DONE]" {
-                let _ = tx.send(StreamEvent::Done(self.take_response())).await;
-                return SseLineOutcome::Done;
-            }
-            if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(data) {
-                if let Some(choices) = chunk["choices"].as_array() {
-                    for choice in choices {
-                        let delta = &choice["delta"];
-                        if let Some(text) = delta["content"].as_str() {
-                            self.content.push_str(text);
-                            let _ = tx.send(StreamEvent::TextDelta(text.to_string())).await;
-                        }
-                        let mut discard = String::new();
-                        OpenAiProvider::apply_delta(delta, &mut discard, &mut self.tool_calls);
+    async fn process_line(
+        &mut self,
+        line: &str,
+        tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+    ) -> SseLineOutcome {
+        let Some(data) = line.strip_prefix("data: ") else {
+            return SseLineOutcome::Continue;
+        };
+        if data == "[DONE]" {
+            let _ = tx.send(StreamEvent::Done(self.take_response())).await;
+            return SseLineOutcome::Done;
+        }
+        if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(data) {
+            if let Some(choices) = chunk["choices"].as_array() {
+                for choice in choices {
+                    let delta = &choice["delta"];
+                    if let Some(text) = delta["content"].as_str() {
+                        self.content.push_str(text);
+                        let _ = tx.send(StreamEvent::TextDelta(text.to_string())).await;
                     }
+                    let mut discard = String::new();
+                    OpenAiProvider::apply_delta(delta, &mut discard, &mut self.tool_calls);
                 }
             }
-            SseLineOutcome::Continue
-        })
+        }
+        SseLineOutcome::Continue
     }
 
-    fn on_eof<'a>(
-        &'a mut self,
-        tx: &'a tokio::sync::mpsc::Sender<StreamEvent>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
-        Box::pin(async move {
-            let _ = tx.send(StreamEvent::Done(self.take_response())).await;
-        })
+    async fn on_eof(&mut self, tx: &tokio::sync::mpsc::Sender<StreamEvent>) {
+        let _ = tx.send(StreamEvent::Done(self.take_response())).await;
     }
 }
 
