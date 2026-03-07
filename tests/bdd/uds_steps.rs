@@ -115,6 +115,12 @@ fn execute_uds(world: &mut QuectoWorld) {
         return;
     }
 
+    // Delegate to the real-LLM UDS executor when the scenario uses real credentials.
+    if world._real_llm_uds {
+        execute_real_llm_uds(world);
+        return;
+    }
+
     let base = world
         .cli_context
         .base_dir
@@ -1859,4 +1865,182 @@ fn then_client_received_response_command_success(
         found,
         "expected client {client_id} to receive response command {command:?} with success=true\nevents: {events:#?}"
     );
+}
+
+// ─── Real-LLM UDS executor ───────────────────────────────────────────────────
+//
+// Uses real OAuth credentials and a real socket bind.  Sends commands
+// sequentially, waiting for each prompt to complete before sending the next.
+
+/// Execute the real-LLM UDS test: spawn agent with real socket, send commands
+/// one at a time, wait for prompt completions, collect all events.
+/// Shared state for the real-LLM UDS reader thread.
+struct RealLlmReaderState {
+    events: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    prompt_completions: std::sync::Arc<std::sync::atomic::AtomicU32>,
+}
+
+/// Spawn a reader thread that collects events and tracks prompt completions.
+fn spawn_real_llm_reader(
+    mut reader: std::io::BufReader<std::os::unix::net::UnixStream>,
+) -> (std::thread::JoinHandle<()>, RealLlmReaderState) {
+    use std::io::BufRead;
+    let state = RealLlmReaderState {
+        events: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        prompt_completions: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
+    };
+    let events = state.events.clone();
+    let completions = state.prompt_completions.clone();
+
+    let handle = std::thread::spawn(move || {
+        let mut buf = String::new();
+        loop {
+            buf.clear();
+            match reader.read_line(&mut buf) {
+                Ok(0) => break,
+                Ok(_) => {
+                    let l = buf.trim().to_string();
+                    if l.is_empty() {
+                        continue;
+                    }
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&l) {
+                        let t = v["type"].as_str().unwrap_or("");
+                        let cmd = v["command"].as_str().unwrap_or("");
+                        if t == "response" && (cmd == "prompt" || cmd == "agent_error") {
+                            completions.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        }
+                    }
+                    events.lock().unwrap().push(l);
+                }
+                Err(ref e)
+                    if e.kind() == std::io::ErrorKind::TimedOut
+                        || e.kind() == std::io::ErrorKind::WouldBlock =>
+                {
+                    break;
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    (handle, state)
+}
+
+/// Send commands to a real-LLM UDS agent, waiting for prompt completions.
+fn send_real_llm_commands(
+    commands: &[String],
+    writer: &mut std::os::unix::net::UnixStream,
+    state: &RealLlmReaderState,
+    stderr: &mut String,
+) {
+    use std::io::Write;
+    let mut expected_completions: u32 = 0;
+    for cmd_str in commands {
+        let _ = writer.write_all(format!("{cmd_str}\n").as_bytes());
+        let _ = writer.flush();
+
+        let is_prompt = serde_json::from_str::<serde_json::Value>(cmd_str)
+            .map(|v| v["type"].as_str() == Some("prompt"))
+            .unwrap_or(false);
+
+        if is_prompt {
+            expected_completions += 1;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+            loop {
+                if std::time::Instant::now() > deadline {
+                    stderr.push_str("timeout waiting for prompt completion\n");
+                    break;
+                }
+                let current = state
+                    .prompt_completions
+                    .load(std::sync::atomic::Ordering::SeqCst);
+                if current >= expected_completions {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        } else {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    }
+}
+
+fn execute_real_llm_uds(world: &mut QuectoWorld) {
+    use std::io::BufReader;
+    use std::os::unix::net::UnixStream;
+
+    if world.uds_exit_code.is_some() {
+        return;
+    }
+
+    let base = world
+        .cli_context
+        .base_dir
+        .clone()
+        .expect("no base dir — add 'Given a real LLM UDS workspace is configured'");
+
+    if !base.join("config.json").exists() {
+        world.agent_stderr = "config not found".to_string();
+        world.uds_exit_code = Some(1);
+        return;
+    }
+
+    let ctx = match build_uds_agent(world, &base) {
+        Ok(c) => c,
+        Err(e) => {
+            world.agent_stderr = e;
+            world.uds_exit_code = Some(1);
+            return;
+        }
+    };
+
+    let socket_path = base.join("real-llm-uds.sock");
+    let _ = std::fs::remove_file(&socket_path);
+
+    let (agent_handle, socket_path) = match mc_spawn_agent(ctx, &base, socket_path, None) {
+        Ok(pair) => pair,
+        Err(msg) => {
+            world.agent_stderr = msg;
+            world.uds_exit_code = Some(1);
+            return;
+        }
+    };
+
+    // Connect a single client
+    let stream = match UnixStream::connect(&socket_path) {
+        Ok(s) => s,
+        Err(e) => {
+            world.agent_stderr = format!("connect failed: {e}");
+            world.uds_exit_code = Some(1);
+            return;
+        }
+    };
+    stream.set_nonblocking(false).ok();
+    let reader_stream = stream.try_clone().expect("clone stream for reader");
+    // SO_RCVTIMEO must be set on the clone used for reading — try_clone
+    // does not inherit socket options from the original FD.
+    reader_stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .ok();
+    let mut writer = stream;
+
+    let (reader_handle, state) = spawn_real_llm_reader(BufReader::new(reader_stream));
+
+    let commands = world.uds_commands.clone();
+    send_real_llm_commands(&commands, &mut writer, &state, &mut world.agent_stderr);
+
+    // Give the server time to flush responses for non-prompt commands,
+    // then shut down the write half to signal EOF.
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    let _ = writer.shutdown(std::net::Shutdown::Write);
+
+    let _ = reader_handle.join();
+    let exit = agent_handle.join().unwrap_or(1);
+
+    world.agent_events = state.events.lock().unwrap().clone();
+    world.uds_exit_code = Some(exit);
+    world.mc_exit_code = Some(exit);
+    world
+        .agent_stderr
+        .push_str(&format!("quecto-agent-socket: {}\n", socket_path.display()));
+    world._uds_socket_path = Some(socket_path);
 }

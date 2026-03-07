@@ -571,6 +571,8 @@ pub struct QuectoWorld {
     pub _mc_hot_reload: bool,
     /// Multi-client UDS: extensions to create after agent starts (for hot-reload tests)
     pub _mc_deferred_extensions: Vec<(String, Option<String>)>,
+    /// Real-LLM UDS mode: use real credentials and real socket bind with sequential prompts
+    pub _real_llm_uds: bool,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.

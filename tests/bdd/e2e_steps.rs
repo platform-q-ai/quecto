@@ -1975,3 +1975,133 @@ fn then_llm_request_included_tool(world: &mut QuectoWorld, tool_name: String) {
         tool_name
     );
 }
+
+// ===========================================================================
+// E2E Real LLM UDS Steps
+// ===========================================================================
+//
+// These steps exercise the UDS agent with real Anthropic/OpenAI OAuth
+// credentials.  They use real socket bind (production path) and wait for
+// each prompt to complete before sending the next.
+
+/// Set up a workspace for real-LLM UDS tests.
+///
+/// Copies `~/.quecto/credentials.json` into the temp base dir and creates
+/// a config with `auth_method: "oauth"` for the anthropic provider (no static
+/// API keys).  The default model is `anthropic/claude-sonnet-4-20250514` for
+/// fast, cheap tests.
+#[given("a real LLM UDS workspace is configured")]
+fn given_real_llm_uds_workspace(world: &mut QuectoWorld) {
+    ensure_temp_dir(world);
+    let base = base_path(world);
+    let workspace = base.join("workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace");
+
+    // Copy credentials from home dir
+    let home_creds = dirs::home_dir()
+        .expect("no home dir")
+        .join(".quecto")
+        .join("credentials.json");
+    if !home_creds.exists() {
+        panic!("~/.quecto/credentials.json not found — run 'quecto auth login' first");
+    }
+    std::fs::copy(&home_creds, base.join("credentials.json")).expect("copy credentials.json");
+
+    // Create config with oauth auth_method for anthropic
+    let config = serde_json::json!({
+        "providers": {
+            "anthropic": {
+                "api_key": "",
+                "api_base": "",
+                "auth_method": "oauth"
+            }
+        },
+        "agents": {
+            "defaults": {
+                "model": "anthropic/claude-sonnet-4-20250514",
+                "workspace": workspace.to_string_lossy()
+            }
+        }
+    });
+    let config_json = serde_json::to_string_pretty(&config).expect("serialize config");
+    std::fs::write(base.join("config.json"), config_json).expect("write real LLM UDS config");
+}
+
+/// Start the real LLM UDS agent in multi-client mode (real socket bind).
+#[when("I start the real LLM UDS agent")]
+fn when_start_real_llm_uds(world: &mut QuectoWorld) {
+    world.no_session = true;
+    world._uds_streaming_enabled = true;
+    world._real_llm_uds = true;
+}
+
+// Real-LLM UDS execution is handled by `execute_real_llm_uds` in `uds_steps.rs`.
+// The flag `world._real_llm_uds` is set by "I start the real LLM UDS agent" and
+// detected by `execute_uds` which delegates to the real-LLM executor.
+
+// ─── Real-LLM UDS Then steps ────────────────────────────────────────────────
+
+/// Assert that agent_end messages contain a specific string.
+#[then(expr = "the agent_end messages should contain {string}")]
+fn then_agent_end_contains(world: &mut QuectoWorld, expected: String) {
+    let found = world.agent_events.iter().any(|l| {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(l) {
+            if v["type"].as_str() == Some("agent_end") {
+                if let Some(msgs) = v["messages"].as_array() {
+                    return msgs.iter().any(|m| {
+                        m["content"]
+                            .as_str()
+                            .map(|c| c.contains(&expected))
+                            .unwrap_or(false)
+                    });
+                }
+            }
+        }
+        false
+    });
+    assert!(
+        found,
+        "expected agent_end messages to contain {expected:?}\nevents: {:#?}",
+        world.agent_events,
+    );
+}
+
+/// Assert that an agent_error event was emitted.
+#[then("the agent output should contain an agent_error event")]
+fn then_agent_output_has_error_event(world: &mut QuectoWorld) {
+    let found = world.agent_events.iter().any(|l| {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(l) {
+            let t = v["type"].as_str().unwrap_or("");
+            let cmd = v["command"].as_str().unwrap_or("");
+            t == "response" && cmd == "agent_error"
+        } else {
+            false
+        }
+    });
+    assert!(
+        found,
+        "expected an agent_error event in output\nevents: {:#?}",
+        world.agent_events,
+    );
+}
+
+/// Assert that the agent_error event mentions a specific string.
+#[then(expr = "the agent_error event should mention {string}")]
+fn then_agent_error_mentions(world: &mut QuectoWorld, expected: String) {
+    let found = world.agent_events.iter().any(|l| {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(l) {
+            let t = v["type"].as_str().unwrap_or("");
+            let cmd = v["command"].as_str().unwrap_or("");
+            if t == "response" && cmd == "agent_error" {
+                let err = v["error"].as_str().unwrap_or("");
+                return err.contains(&expected);
+            }
+        }
+        false
+    });
+    assert!(
+        found,
+        "expected agent_error event mentioning {expected:?}\nevents: {:#?}",
+        world.agent_events,
+    );
+}

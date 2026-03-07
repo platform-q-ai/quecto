@@ -340,12 +340,14 @@ impl LlmProvider for FallbackProvider {
         let model = request.model.to_string();
         Box::pin(async move {
             let qualified = parse_qualified_model(&model);
+            let mut matched_qualified_provider = false;
             // Find the first available provider (with model routing).
             for entry in &self.entries {
                 let effective_model = if let Some((prefix, bare)) = qualified {
                     if !provider_prefix_matches(prefix, entry.provider.name()) {
                         continue;
                     }
+                    matched_qualified_provider = true;
                     bare
                 } else {
                     &model
@@ -368,10 +370,21 @@ impl LlmProvider for FallbackProvider {
                 return entry.provider.chat_stream_incremental(req).await;
             }
             // No provider available — return a channel with an error.
+            let error_msg = if let Some((prefix, _)) = qualified {
+                if !matched_qualified_provider {
+                    let truncated = &prefix[..prefix.len().min(MAX_PREFIX_IN_ERROR)];
+                    format!(
+                        "no configured provider matches model prefix '{}'",
+                        truncated
+                    )
+                } else {
+                    "no LLM providers available".to_string()
+                }
+            } else {
+                "no LLM providers available".to_string()
+            };
             let (tx, rx) = tokio::sync::mpsc::channel(1);
-            let _ = tx
-                .send(StreamEvent::Error("no LLM providers available".to_string()))
-                .await;
+            let _ = tx.send(StreamEvent::Error(error_msg)).await;
             rx
         })
     }
