@@ -153,9 +153,10 @@ impl OrphanDiag {
 ///
 /// # Allocation note
 ///
-/// The happy path (no orphans) is zero-alloc beyond the two `HashSet`s:
-/// `OrphanDiag::orphaned_calls` and `orphaned_results` are only populated
-/// (and thus only allocate) when mismatches are actually detected.
+/// Single-pass partition over the `sent` set: each ID is classified as
+/// valid or orphaned in one drain. Empty `Vec`s in `OrphanDiag` do not
+/// heap-allocate (Rust `Vec::new()` has zero capacity), so the happy
+/// path (no orphans) is effectively zero-alloc beyond the two `HashSet`s.
 pub fn filter_orphan_tool_pairs(messages: &[Message]) -> (HashSet<String>, OrphanDiag) {
     use super::message::Role;
 
