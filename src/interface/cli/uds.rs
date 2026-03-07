@@ -694,10 +694,9 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
             false
         }
         PromptOutcome::Error => {
-            // Error event was already emitted by run_agent_prompt /
-            // run_agent_prompt_broadcast.  Keep the loop alive so the
-            // client can send subsequent commands (e.g. set_model to a
-            // valid model, then retry).
+            // Error was already emitted.  Drain pending follow-ups so
+            // they don't fire unexpectedly on a later prompt.
+            drain_and_run_pending(ctx).await;
             false
         }
         PromptOutcome::Success => {

@@ -575,7 +575,8 @@ fn then_agent_output_contains_response_with_id(world: &mut QuectoWorld, expected
     );
 }
 
-fn find_agent_response(world: &QuectoWorld, command: &str) -> Option<serde_json::Value> {
+/// Find the first response event for a given command name.
+pub fn find_agent_response(world: &QuectoWorld, command: &str) -> Option<serde_json::Value> {
     world.agent_events.iter().find_map(|l| {
         let v: serde_json::Value = serde_json::from_str(l).ok()?;
         if v["type"] == "response" && v["command"] == command {
@@ -584,11 +585,6 @@ fn find_agent_response(world: &QuectoWorld, command: &str) -> Option<serde_json:
             None
         }
     })
-}
-
-/// Public accessor for `find_agent_response` — used by e2e_steps.rs.
-pub fn find_agent_response_pub(world: &QuectoWorld, command: &str) -> Option<serde_json::Value> {
-    find_agent_response(world, command)
 }
 
 #[then(expr = "the agent output should contain a response command {string} with success true")]
@@ -1883,7 +1879,8 @@ fn then_client_received_response_command_success(
 struct RealLlmReaderState {
     events: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     prompt_completions: std::sync::Arc<std::sync::atomic::AtomicU32>,
-    agent_end_count: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    /// Timestamp of the last event received — used to detect quiet periods
+    /// when waiting for asynchronous follow-up processing.
     last_event_time: std::sync::Arc<std::sync::Mutex<std::time::Instant>>,
 }
 
@@ -1895,12 +1892,10 @@ fn spawn_real_llm_reader(
     let state = RealLlmReaderState {
         events: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         prompt_completions: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
-        agent_end_count: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0)),
         last_event_time: std::sync::Arc::new(std::sync::Mutex::new(std::time::Instant::now())),
     };
     let events = state.events.clone();
     let completions = state.prompt_completions.clone();
-    let agent_ends = state.agent_end_count.clone();
     let last_event = state.last_event_time.clone();
 
     let handle = std::thread::spawn(move || {
@@ -1919,9 +1914,6 @@ fn spawn_real_llm_reader(
                         let cmd = v["command"].as_str().unwrap_or("");
                         if t == "response" && (cmd == "prompt" || cmd == "agent_error") {
                             completions.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                        }
-                        if t == "agent_end" {
-                            agent_ends.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                         }
                     }
                     *last_event.lock().unwrap() = std::time::Instant::now();

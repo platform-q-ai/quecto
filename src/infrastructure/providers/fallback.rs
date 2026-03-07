@@ -199,7 +199,7 @@ impl FallbackProvider {
 
         if let Some((provider_prefix, _)) = qualified {
             if !matched_qualified_provider {
-                let truncated = &provider_prefix[..provider_prefix.len().min(MAX_PREFIX_IN_ERROR)];
+                let truncated = truncate_prefix(provider_prefix, MAX_PREFIX_IN_ERROR);
                 return Err(DomainError::Provider(format!(
                     "no configured provider matches model prefix '{}'",
                     truncated
@@ -207,8 +207,7 @@ impl FallbackProvider {
             }
         }
 
-        Err(last_error
-            .unwrap_or_else(|| DomainError::Provider("no providers available".to_string())))
+        Err(last_error.unwrap_or_else(|| DomainError::Provider(ERR_NO_PROVIDERS.to_string())))
     }
 }
 
@@ -255,6 +254,21 @@ fn provider_prefix_matches(prefix: &str, provider_name: &str) -> bool {
 /// Maximum length of a provider prefix included in error messages.
 /// Prevents unbounded user input from bloating log lines.
 const MAX_PREFIX_IN_ERROR: usize = 64;
+
+/// Error when all providers are unavailable (on cooldown or otherwise).
+const ERR_NO_PROVIDERS: &str = "no LLM providers available";
+
+/// Truncate a string to at most `max_bytes`, respecting UTF-8 char boundaries.
+fn truncate_prefix(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
 
 fn extract_http_status(msg: &str) -> Option<u16> {
     let lowered = msg.to_ascii_lowercase();
@@ -372,16 +386,16 @@ impl LlmProvider for FallbackProvider {
             // No provider available — return a channel with an error.
             let error_msg = if let Some((prefix, _)) = qualified {
                 if !matched_qualified_provider {
-                    let truncated = &prefix[..prefix.len().min(MAX_PREFIX_IN_ERROR)];
+                    let truncated = truncate_prefix(prefix, MAX_PREFIX_IN_ERROR);
                     format!(
                         "no configured provider matches model prefix '{}'",
                         truncated
                     )
                 } else {
-                    "no LLM providers available".to_string()
+                    ERR_NO_PROVIDERS.to_string()
                 }
             } else {
-                "no LLM providers available".to_string()
+                ERR_NO_PROVIDERS.to_string()
             };
             let (tx, rx) = tokio::sync::mpsc::channel(1);
             let _ = tx.send(StreamEvent::Error(error_msg)).await;

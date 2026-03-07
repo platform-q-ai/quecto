@@ -2005,7 +2005,14 @@ fn given_real_llm_uds_workspace(world: &mut QuectoWorld) {
     if !home_creds.exists() {
         panic!("~/.quecto/credentials.json not found — run 'quecto auth login' first");
     }
-    std::fs::copy(&home_creds, base.join("credentials.json")).expect("copy credentials.json");
+    let dest = base.join("credentials.json");
+    std::fs::copy(&home_creds, &dest).expect("copy credentials.json");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o600))
+            .expect("set credentials permissions");
+    }
 
     // Create config with oauth auth_method for anthropic
     let config = serde_json::json!({
@@ -2111,8 +2118,7 @@ fn then_agent_error_mentions(world: &mut QuectoWorld, expected: String) {
 /// Assert that the get_state response messageCount is at least N.
 #[then(expr = "the get_state response messageCount should be at least {int}")]
 fn then_get_state_message_count_at_least(world: &mut QuectoWorld, minimum: usize) {
-    let resp =
-        uds_steps::find_agent_response_pub(world, "get_state").expect("no get_state response");
+    let resp = uds_steps::find_agent_response(world, "get_state").expect("no get_state response");
     let count = resp["data"]["messageCount"]
         .as_u64()
         .expect("messageCount not a number") as usize;
@@ -2127,8 +2133,8 @@ fn then_get_state_message_count_at_least(world: &mut QuectoWorld, minimum: usize
 /// Assert that the get_messages response contains a user message with specific text.
 #[then(expr = "the get_messages response should include a user message containing {string}")]
 fn then_get_messages_has_user_message(world: &mut QuectoWorld, expected: String) {
-    let resp = uds_steps::find_agent_response_pub(world, "get_messages")
-        .expect("no get_messages response");
+    let resp =
+        uds_steps::find_agent_response(world, "get_messages").expect("no get_messages response");
     let msgs = resp["data"]["messages"]
         .as_array()
         .expect("messages not an array");
@@ -2148,8 +2154,8 @@ fn then_get_messages_has_user_message(world: &mut QuectoWorld, expected: String)
 /// Assert that the get_messages response contains at least one assistant message.
 #[then("the get_messages response should include an assistant message")]
 fn then_get_messages_has_assistant(world: &mut QuectoWorld) {
-    let resp = uds_steps::find_agent_response_pub(world, "get_messages")
-        .expect("no get_messages response");
+    let resp =
+        uds_steps::find_agent_response(world, "get_messages").expect("no get_messages response");
     let msgs = resp["data"]["messages"]
         .as_array()
         .expect("messages not an array");
