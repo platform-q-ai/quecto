@@ -140,7 +140,12 @@ async fn test_no_providers() {
     let provider = FallbackProvider::new(vec![]);
     let result = provider.chat(test_request(&test_messages())).await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("no providers"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("no LLM providers available")
+    );
 }
 
 #[test]

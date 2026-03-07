@@ -693,7 +693,12 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
             drain_and_run_pending(ctx).await;
             false
         }
-        PromptOutcome::Error => true,
+        PromptOutcome::Error => {
+            // Error was already emitted.  Drain pending follow-ups so
+            // they don't fire unexpectedly on a later prompt.
+            drain_and_run_pending(ctx).await;
+            false
+        }
         PromptOutcome::Success => {
             let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
             emit_event_to_broadcast_or_writer(ctx, &ev).await;
