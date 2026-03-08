@@ -9,7 +9,7 @@ Built in Rust. No runtime dependencies. Runs on a VPS, Raspberry Pi, or containe
 
 ## Release Notes
 
-Recent updates and PR-level release notes are tracked in [`CHANGELOG.md`](CHANGELOG.md).
+Current version: **0.18.0** — see [`CHANGELOG.md`](CHANGELOG.md) for full history.
 
 ## Quick Start
 
@@ -187,6 +187,7 @@ quecto agent -m "Write a Python script that generates primes"
 | `--max-time` | No | Wall-clock timeout in seconds (exit code 2 on timeout) |
 | `--mode` | No | Operation mode: default one-shot, or `uds` for UDS event bus |
 | `--socket` | No | Explicit socket path for `--mode uds` (default: auto-generated in tmpdir) |
+| `--persist` | No | UDS mode only — keep agent alive when all clients disconnect (default: exit on last disconnect) |
 
 **Sessions** persist conversation history so the agent remembers context across runs:
 
@@ -204,6 +205,9 @@ For automation, long-lived agent processes, and external integrations (TUIs, IDE
 ```bash
 quecto agent --mode uds
 # stderr: quecto-agent-socket: /tmp/quecto-agent-<uuid>.sock
+
+# Keep alive even when all clients disconnect
+quecto agent --mode uds --persist
 ```
 
 Multiple clients connect to the same Unix domain socket simultaneously. Events are broadcast to all connected clients; commands from all clients merge into a single dispatch loop.

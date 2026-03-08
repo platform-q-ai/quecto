@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.18.0 (2026-06-10)
+
+### Added
+- **`--persist` flag for UDS mode**: `quecto agent --mode uds --persist` keeps the agent alive when all clients disconnect, rather than exiting. Useful for long-lived background agents.
+- **Complete extension system**: Extensions are now fully wired end-to-end — `swap_registry` for atomic hot-swap, live UDS commands (`get_extensions`, `reload_extensions`), fingerprint-based hot-reload watcher (mtime + size polling), `extensions_changed` broadcast event to all connected clients.
+- **Workflow tool and `WorkflowGuard`**: Built-in `workflow` tool for BDD/TDD step tracking (status, check, uncheck, reset, skip, set_issue, clear_issue). `WorkflowGuard` blocks `git commit`/`git push` when configured steps are incomplete. Steps are fully configurable in `config.json` — no hardcoded defaults. `guard_commit` and `enforce_commit_after_step` config options.
+- **Real-time tool streaming over UDS**: `tool_execution_start` / `tool_execution_end` events carry `toolCallId` for per-call correlation. Incremental `token` events forwarded in real time from `chat_stream_incremental()`.
+- **Configurable workflow guards**: Any command can be blocked before any step via `config.json`. `guard_commit` controls `WorkflowGuard` registration.
+- **`--config` flag**: Override the config file path at startup (`quecto --config /path/to/config.json`).
+- **`--persist` UDS flag**: Agent stays alive after all clients disconnect (opt-in).
+- **Steer/abort via `CancelSlot`**: Real interrupt-after-tool semantics for `steer` and `abort` UDS commands via a race-free `Idle → Armed → Fired` state machine.
+- **Multi-client UDS event bus**: `tokio::sync::broadcast` delivers events to all connected clients simultaneously. Up to 64 concurrent clients. RAII `ClientGuard` for accurate client-count tracking. Lagged clients receive a re-sync notification.
+- **Incremental token streaming**: `chat_stream_incremental()` delivers real-time `StreamEvent` tokens through a channel, forwarded as `token` events over UDS.
+- **`--network` flag**: Per-invocation network access for the `bash` tool (disables nsjail network namespace).
+- **Mid-session OAuth refresh**: `RefreshableProvider` intercepts 401 errors, refreshes the token, rebuilds the provider, and retries automatically — no session interruption.
+- **`set_model` UDS command**: Switch model at runtime; takes effect on the next prompt.
+- **`get_session_stats` UDS command**: Token usage and cost statistics for the current session.
+- **`get_messages_tail` UDS command**: Fetch the last N messages without loading the full history.
+- **`spawn` tool**: Headless CLI agent can spawn background subagents for long-running tasks.
+- **`recall` tool**: Retrieve previously spilled (collapsed) tool outputs by spill ID.
+- **`web_search` tool**: Brave Search and DuckDuckGo integration.
+
+### Changed
+- **UDS replaces stdin/stdout transport**: The persistent agent mode now exclusively uses Unix Domain Sockets. The old stdin/stdout RPC transport has been removed.
+- **`AgentMode` enum removed**: Simplified to a `uds_mode: bool` flag internally.
+- **Gateway, Telegram, cron, heartbeat, voice, and message bus removed**: Dead subsystems stripped to reduce surface area and complexity.
+- **Tool registry caches definitions at registration**: Sorted once, reused for all subsequent lookups — no repeated allocations.
+- **`StopReason::parse` renamed**: Cleaner API surface.
+- **`Message` constructors simplified**: `::system`, `::user`, `::assistant`, `::tool` — reduced boilerplate throughout.
+- **Shared SSE pump extracted**: OpenAI and Anthropic providers share a unified SSE streaming implementation.
+- **`filter_orphan_tool_pairs` optimised**: Faster orphan detection with diagnostic output (`OrphanDiag`).
+- **Stale socket reaping**: Sockets older than 24h are removed on startup.
+- **Socket permissions**: Created with `chmod 0600` (owner-only).
+
+### Fixed
+- `PromptOutcome::Error` no longer kills the UDS event loop — the agent stays alive and accepts new commands after an LLM error.
+- Streaming unroutable model errors now surface as `agent_error` response events rather than crashing the loop.
+- `tool_use` input is always a JSON object, never `null` — prevents provider serialization errors.
+- Poisoned mutex handling in extension registry reload.
+- Tool registry sync on extension reload.
+- nsjail `/etc/ca-certificates`, `/etc/resolv.conf`, and `/etc/hosts` bind-mounts for SSL and DNS inside the jail.
+- Consistent `expires_at` safety margin across all OAuth paths.
+- `OAuthTokenResponse.refresh_token` is now optional per RFC 6749.
+- Denylist hardened against bash encoding/escaping bypass variants.
+- UDS socket permissions and `XDG_RUNTIME_DIR` preference.
+
+### Source PRs
+#269–#349 (UDS transport, multi-client bus, extension system, workflow tool, streaming, security hardening, OAuth refresh, --persist, --config, --network)
+
+---
+
 ## 0.15.0 (2026-03-03)
 
 ### Added / Updated

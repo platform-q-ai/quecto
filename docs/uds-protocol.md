@@ -7,6 +7,9 @@ Quecto's UDS (Unix Domain Socket) mode runs a persistent agent process that acce
 ```bash
 quecto agent --mode uds
 # stderr: quecto-agent-socket: /tmp/quecto-agent-<uuid>.sock
+
+# Keep the agent alive even when all clients disconnect
+quecto agent --mode uds --persist
 ```
 
 The agent prints the socket path to stderr on startup. Options:
@@ -18,6 +21,7 @@ The agent prints the socket path to stderr on startup. Options:
 | `--session <name>` | Named session for persistence across restarts |
 | `--no-session` | Ephemeral mode — no session saved to disk |
 | `--system <text>` | Inject a system prompt (not persisted in session history) |
+| `--persist` | Stay alive when all clients disconnect. Default: agent exits when the last client disconnects |
 
 ## Wire format
 
@@ -25,7 +29,7 @@ The agent prints the socket path to stderr on startup. Options:
 - **Framing:** One JSON object per line (`\n`-delimited), max 1 MiB per line
 - **Direction:** Client sends **commands**, agent emits **events**
 - **Multi-client:** Multiple clients can connect simultaneously. Events are broadcast to all clients; commands from all clients merge into a single serial dispatch loop
-- **Shutdown:** The agent exits when all clients disconnect. Socket file is removed on exit
+- **Shutdown:** By default the agent exits when all clients disconnect. Pass `--persist` to keep it running.  Socket file is removed on exit
 - **Security:** Socket file is created with `chmod 0600` (owner-only). Stale sockets older than 24h are reaped on startup
 
 ## Correlation IDs
