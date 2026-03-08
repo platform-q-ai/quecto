@@ -40,6 +40,8 @@ pub(super) struct MultiClientArgs {
     >,
     /// When `Some`, spawn a hot-reload watcher at the given poll interval.
     pub hot_reload_interval: Option<std::time::Duration>,
+    /// When true, keep the agent alive after all clients disconnect (#348).
+    pub persist: bool,
 }
 
 /// A command line from a client.
@@ -86,6 +88,7 @@ pub(super) async fn multi_client_loop(
 ) -> i32 {
     let ext_registry = args.ext_registry;
     let hot_reload_interval = args.hot_reload_interval;
+    let persist = args.persist;
     let MultiClientArgs {
         mut agent,
         mut messages,
@@ -139,7 +142,9 @@ pub(super) async fn multi_client_loop(
         None
     };
 
-    // Drop our clone so cmd_rx closes when all clients are gone.
+    // Drop our clone so cmd_rx closes when all client senders (accept loop,
+    // watcher) are gone.  The accept loop's clone keeps the channel open while
+    // it runs — the `!persist` guard in `run_dispatch_loop` controls shutdown.
     drop(cmd_tx);
 
     let mut null_writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin> =
@@ -155,7 +160,7 @@ pub(super) async fn multi_client_loop(
         ext_registry,
     };
 
-    run_dispatch_loop(&mut ctx, cmd_rx, &live_clients).await;
+    run_dispatch_loop(&mut ctx, cmd_rx, &live_clients, persist).await;
 
     accept_task.abort();
     if let Some(watcher) = watcher_task {
@@ -234,6 +239,7 @@ async fn run_dispatch_loop(
     ctx: &mut DispatchCtx<'_>,
     mut cmd_rx: tokio::sync::mpsc::Receiver<ClientMessage>,
     live_clients: &std::sync::atomic::AtomicU32,
+    persist: bool,
 ) {
     while let Some(client_msg) = cmd_rx.recv().await {
         match client_msg {
@@ -263,7 +269,7 @@ async fn run_dispatch_loop(
                 }
             },
             ClientMessage::Disconnected(_) => {
-                if live_clients.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                if !persist && live_clients.load(std::sync::atomic::Ordering::SeqCst) == 0 {
                     break;
                 }
             }

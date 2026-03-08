@@ -32,6 +32,24 @@ fn write_fake_config(dir: &std::path::Path) {
     .unwrap();
 }
 
+/// Helper: create default AgentFlags with common overrides.
+fn test_flags(msg: Option<&str>, session: Option<&str>, sys: Option<&str>) -> AgentFlags {
+    AgentFlags {
+        session_name: session.map(String::from),
+        no_session: false,
+        message: msg.map(String::from),
+        system_prompt: sys.map(String::from),
+        model_override: None,
+        max_iterations: None,
+        max_time: None,
+        uds_mode: false,
+        no_sandbox: false,
+        network: false,
+        socket_path: None,
+        persist: false,
+    }
+}
+
 /// Helper: create a minimal AgentLoopImpl with a fake provider that always fails.
 /// Uses 127.0.0.1:1 which gives immediate connection-refused (fast failure).
 fn make_test_agent(base_dir: &std::path::Path) -> AgentLoopImpl {
@@ -348,19 +366,7 @@ fn test_agent_with_all_flags_and_config() {
 fn test_run_agent_session_ephemeral_no_save() {
     let tmp = tempfile::TempDir::new().unwrap();
     let agent = make_test_agent(tmp.path());
-    let flags = AgentFlags {
-        session_name: Some("-".to_string()),
-        no_session: false,
-        message: Some("hello ephemeral".to_string()),
-        system_prompt: None,
-        model_override: None,
-        max_iterations: None,
-        max_time: None,
-        uds_mode: false,
-        no_sandbox: false,
-        network: false,
-        socket_path: None,
-    };
+    let flags = test_flags(Some("hello ephemeral"), Some("-"), None);
     let mut stdout = String::new();
     let mut stderr = String::new();
     let mut out = AgentOutput {
@@ -384,19 +390,7 @@ fn test_run_agent_session_ephemeral_no_save() {
 fn test_run_agent_session_default_session_key() {
     let tmp = tempfile::TempDir::new().unwrap();
     let agent = make_test_agent(tmp.path());
-    let flags = AgentFlags {
-        session_name: None,
-        no_session: false,
-        message: Some("hello default".to_string()),
-        system_prompt: None,
-        model_override: None,
-        max_iterations: None,
-        max_time: None,
-        uds_mode: false,
-        no_sandbox: false,
-        network: false,
-        socket_path: None,
-    };
+    let flags = test_flags(Some("hello default"), None, None);
     let mut stdout = String::new();
     let mut stderr = String::new();
     let mut out = AgentOutput {
@@ -412,19 +406,7 @@ fn test_run_agent_session_default_session_key() {
 fn test_run_agent_session_with_system_prompt_injection() {
     let tmp = tempfile::TempDir::new().unwrap();
     let agent = make_test_agent(tmp.path());
-    let flags = AgentFlags {
-        session_name: Some("-".to_string()),
-        no_session: false,
-        message: Some("hello".to_string()),
-        system_prompt: Some("You are a test bot".to_string()),
-        model_override: None,
-        max_iterations: None,
-        max_time: None,
-        uds_mode: false,
-        no_sandbox: false,
-        network: false,
-        socket_path: None,
-    };
+    let flags = test_flags(Some("hello"), Some("-"), Some("You are a test bot"));
     let mut stdout = String::new();
     let mut stderr = String::new();
     let mut out = AgentOutput {
@@ -440,19 +422,8 @@ fn test_run_agent_session_with_system_prompt_injection() {
 fn test_run_agent_session_with_deadline() {
     let tmp = tempfile::TempDir::new().unwrap();
     let agent = make_test_agent(tmp.path());
-    let flags = AgentFlags {
-        session_name: Some("-".to_string()),
-        no_session: false,
-        message: Some("hello deadline".to_string()),
-        system_prompt: None,
-        model_override: None,
-        max_iterations: None,
-        max_time: Some(2),
-        uds_mode: false,
-        no_sandbox: false,
-        network: false,
-        socket_path: None,
-    };
+    let mut flags = test_flags(Some("hello deadline"), Some("-"), None);
+    flags.max_time = Some(2);
     let mut stdout = String::new();
     let mut stderr = String::new();
     let mut out = AgentOutput {
@@ -539,19 +510,7 @@ fn test_run_agent_session_loads_existing_session() {
     std::fs::write(sessions_dir.join("cli_existing.json"), session_json).unwrap();
 
     let agent = make_test_agent(tmp.path());
-    let flags = AgentFlags {
-        session_name: Some("existing".to_string()),
-        no_session: false,
-        message: Some("follow-up".to_string()),
-        system_prompt: None,
-        model_override: None,
-        max_iterations: None,
-        max_time: None,
-        uds_mode: false,
-        no_sandbox: false,
-        network: false,
-        socket_path: None,
-    };
+    let flags = test_flags(Some("follow-up"), Some("existing"), None);
     let mut stdout = String::new();
     let mut stderr = String::new();
     let mut out = AgentOutput {
@@ -578,19 +537,11 @@ fn test_run_agent_session_loads_existing_with_system_prompt() {
     std::fs::write(sessions_dir.join("cli_sysprompt.json"), session_json).unwrap();
 
     let agent = make_test_agent(tmp.path());
-    let flags = AgentFlags {
-        session_name: Some("sysprompt".to_string()),
-        no_session: false,
-        message: Some("new message".to_string()),
-        system_prompt: Some("New system instructions".to_string()),
-        model_override: None,
-        max_iterations: None,
-        max_time: None,
-        uds_mode: false,
-        no_sandbox: false,
-        network: false,
-        socket_path: None,
-    };
+    let flags = test_flags(
+        Some("new message"),
+        Some("sysprompt"),
+        Some("New system instructions"),
+    );
     let mut stdout = String::new();
     let mut stderr = String::new();
     let mut out = AgentOutput {
@@ -614,19 +565,7 @@ fn test_build_agent_from_config_with_workspace_path() {
         ws = ws.display()
     );
     std::fs::write(tmp.path().join("config.json"), config_json).unwrap();
-    let flags = AgentFlags {
-        session_name: None,
-        no_session: false,
-        message: Some("hi".into()),
-        system_prompt: None,
-        model_override: None,
-        max_iterations: None,
-        max_time: None,
-        uds_mode: false,
-        no_sandbox: false,
-        network: false,
-        socket_path: None,
-    };
+    let flags = test_flags(Some("hi"), None, None);
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
     let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr);
@@ -641,19 +580,8 @@ fn test_build_agent_from_config_with_max_iterations() {
         r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#,
     )
     .unwrap();
-    let flags = AgentFlags {
-        session_name: None,
-        no_session: false,
-        message: Some("hi".into()),
-        system_prompt: None,
-        model_override: None,
-        max_iterations: Some(7),
-        max_time: None,
-        uds_mode: false,
-        no_sandbox: false,
-        network: false,
-        socket_path: None,
-    };
+    let mut flags = test_flags(Some("hi"), None, None);
+    flags.max_iterations = Some(7);
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
     let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr);

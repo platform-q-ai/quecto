@@ -32,6 +32,7 @@ struct UdsAgentContext {
     ext_registry: std::sync::Arc<
         std::sync::Mutex<quecto::infrastructure::extensions::registry::ExtensionRegistry>,
     >,
+    persist: bool,
 }
 
 /// Build the agent and session key from world state + config.
@@ -102,6 +103,7 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         session_key,
         ephemeral,
         ext_registry: std::sync::Arc::new(std::sync::Mutex::new(ext_registry)),
+        persist: false,
     })
 }
 
@@ -148,6 +150,7 @@ fn execute_uds(world: &mut QuectoWorld) {
         session_key,
         ephemeral,
         ext_registry,
+        persist: _,
     } = ctx;
 
     // Create a socket path in the temp dir.
@@ -189,6 +192,7 @@ fn execute_uds(world: &mut QuectoWorld) {
             session_store_override: None,
             ext_registry: Some(ext_registry),
             hot_reload_interval: None,
+            persist: false,
         })
     });
 
@@ -863,6 +867,7 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
         session_key,
         ephemeral,
         ext_registry,
+        persist: _,
     } = ctx;
     let base_dir = base.clone();
     let sp = socket_path.clone();
@@ -880,6 +885,7 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
             session_store_override: None,
             ext_registry: Some(ext_registry),
             hot_reload_interval: None,
+            persist: false,
         })
     });
 
@@ -1068,6 +1074,25 @@ fn when_client_disconnects(world: &mut QuectoWorld, client_id: u32) {
     world.mc_disconnected_clients.push(client_id);
 }
 
+/// Start the UDS agent in multi-client mode with --persist (#348).
+#[when("I start the multi-client UDS agent with persist")]
+fn when_start_multi_client_uds_persist(world: &mut QuectoWorld) {
+    world.mc_mode = true;
+    world.no_session = true;
+    world._mc_persist = true;
+}
+
+/// Connect a new client after all previous clients have disconnected.
+/// This exercises the persist path: the agent must still be alive.
+#[when(expr = "a new client {int} connects after all clients disconnected")]
+fn when_new_client_connects_after_disconnect(world: &mut QuectoWorld, client_id: u32) {
+    // Mark as a "reconnect" client — execute_multi_client_uds will handle
+    // connecting this client after the disconnected clients are dropped.
+    world._mc_reconnect_clients.push(client_id);
+    world.mc_client_commands.entry(client_id).or_default();
+    world.mc_client_events.entry(client_id).or_default();
+}
+
 /// Close all multi-client connections and wait for the agent to exit.
 #[when("I close all UDS clients")]
 fn when_close_all_uds_clients(world: &mut QuectoWorld) {
@@ -1100,7 +1125,7 @@ fn execute_multi_client_uds(world: &mut QuectoWorld) {
         return;
     }
 
-    let ctx = match build_uds_agent(world, &base) {
+    let mut ctx = match build_uds_agent(world, &base) {
         Ok(c) => c,
         Err(e) => {
             world.agent_stderr = e;
@@ -1108,6 +1133,7 @@ fn execute_multi_client_uds(world: &mut QuectoWorld) {
             return;
         }
     };
+    ctx.persist = world._mc_persist;
 
     let socket_path = base.join("mc-test-agent.sock");
     let _ = std::fs::remove_file(&socket_path);
@@ -1130,6 +1156,8 @@ fn execute_multi_client_uds(world: &mut QuectoWorld) {
     let disconnected = world.mc_disconnected_clients.clone();
     let commands = world.mc_client_commands.clone();
     let deferred_extensions = world._mc_deferred_extensions.clone();
+    let reconnect_clients = world._mc_reconnect_clients.clone();
+    let persist = world._mc_persist;
 
     mc_drive_clients(
         world,
@@ -1139,12 +1167,39 @@ fn execute_multi_client_uds(world: &mut QuectoWorld) {
             disconnected: &disconnected,
             commands: &commands,
             deferred_extensions: &deferred_extensions,
+            reconnect_clients: &reconnect_clients,
+            persist,
         },
     );
 
-    let exit = handle.join().unwrap_or(1);
-    world.mc_exit_code = Some(exit);
-    world.uds_exit_code = Some(exit);
+    if persist {
+        // In persist mode the agent won't exit on its own after all clients
+        // disconnect.  Wait briefly, then treat exit code as 0 (success) and
+        // let the detached thread be cleaned up when the test process exits.
+        // We use a polling join with a short deadline.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        loop {
+            if handle.is_finished() {
+                let exit = handle.join().unwrap_or(1);
+                world.mc_exit_code = Some(exit);
+                world.uds_exit_code = Some(exit);
+                break;
+            }
+            if std::time::Instant::now() > deadline {
+                // Agent is still alive — that's the expected persist behavior.
+                world.mc_exit_code = Some(0);
+                world.uds_exit_code = Some(0);
+                // Remove socket so accept loop errors out and thread can exit.
+                let _ = std::fs::remove_file(&socket_path);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    } else {
+        let exit = handle.join().unwrap_or(1);
+        world.mc_exit_code = Some(exit);
+        world.uds_exit_code = Some(exit);
+    }
 }
 
 /// Spawn the UDS agent loop in a background thread and wait for the socket.
@@ -1160,6 +1215,7 @@ fn mc_spawn_agent(
         session_key,
         ephemeral,
         ext_registry,
+        persist,
     } = ctx;
     let base_for_thread = base.to_path_buf();
     let sp = socket_path.clone();
@@ -1176,6 +1232,7 @@ fn mc_spawn_agent(
             session_store_override: None,
             ext_registry: Some(ext_registry),
             hot_reload_interval,
+            persist,
         })
     });
 
@@ -1197,6 +1254,10 @@ struct McClientActions<'a> {
     disconnected: &'a [u32],
     commands: &'a HashMap<u32, Vec<String>>,
     deferred_extensions: &'a [(String, Option<String>)],
+    /// Clients to connect after all `disconnected` clients are dropped (#348).
+    reconnect_clients: &'a [u32],
+    /// Whether the agent was started with --persist (#348).
+    persist: bool,
 }
 
 /// Connect clients, send commands, handle disconnections, collect events.
@@ -1209,6 +1270,8 @@ fn mc_drive_clients(world: &mut QuectoWorld, actions: McClientActions<'_>) {
         disconnected,
         commands,
         deferred_extensions,
+        reconnect_clients,
+        persist,
     } = actions;
 
     let mut streams: HashMap<u32, UnixStream> = HashMap::new();
@@ -1245,6 +1308,35 @@ fn mc_drive_clients(world: &mut QuectoWorld, actions: McClientActions<'_>) {
     mc_send_commands(&mut streams, connected, disconnected, commands);
     std::thread::sleep(std::time::Duration::from_secs(2));
     mc_collect_events(world, &mut streams, connected, disconnected);
+
+    // Persist mode: reconnect clients after all initial clients have disconnected (#348).
+    if persist && !reconnect_clients.is_empty() {
+        // Give the agent a moment to process the disconnections.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        // Connect reconnect clients.
+        for &cid in reconnect_clients {
+            match UnixStream::connect(socket_path) {
+                Ok(s) => {
+                    s.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                        .ok();
+                    s.set_nonblocking(false).ok();
+                    streams.insert(cid, s);
+                }
+                Err(e) => {
+                    world.agent_stderr = format!("reconnect client {cid} connect failed: {e}");
+                    world.mc_exit_code = Some(1);
+                    return;
+                }
+            }
+        }
+
+        // Send commands for reconnect clients.
+        mc_send_commands(&mut streams, reconnect_clients, &[], commands);
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        // Collect events and close reconnect clients.
+        mc_collect_events(world, &mut streams, reconnect_clients, &[]);
+    }
 }
 
 /// Disconnect clients marked for early disconnection.

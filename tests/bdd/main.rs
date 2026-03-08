@@ -571,6 +571,10 @@ pub struct QuectoWorld {
     pub _mc_hot_reload: bool,
     /// Multi-client UDS: extensions to create after agent starts (for hot-reload tests)
     pub _mc_deferred_extensions: Vec<(String, Option<String>)>,
+    /// Multi-client UDS: when true, start with --persist flag (#348)
+    pub _mc_persist: bool,
+    /// Multi-client UDS: clients to connect after all others have disconnected (#348)
+    pub _mc_reconnect_clients: Vec<u32>,
     /// Real-LLM UDS mode: use real credentials and real socket bind with sequential prompts
     pub _real_llm_uds: bool,
 }

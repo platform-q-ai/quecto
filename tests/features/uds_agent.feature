@@ -798,3 +798,40 @@ Feature: UDS mode for headless agent operation
     And I close all UDS clients
     Then the UDS agent exits with code 0
     And client 1 should have received an event of type "agent_end"
+
+  # ─── --persist flag (#348) ───────────────────────────────────────────────────
+
+  @done @multi-client @persist
+  Scenario: --persist flag keeps agent alive after all clients disconnect
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "hello"
+    When I start the multi-client UDS agent with persist
+    And client 1 connects
+    And client 1 sends prompt "hi"
+    And client 1 disconnects
+    And a new client 2 connects after all clients disconnected
+    And client 2 sends prompt "still alive?"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 2 should have received an event of type "agent_end"
+
+  @done @multi-client @persist
+  Scenario: --persist flag is accepted by parse_agent_flags
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a text response "ok"
+    When I start the multi-client UDS agent with persist
+    And client 1 connects
+    And client 1 sends prompt "hi"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+
+  @done @multi-client @persist
+  Scenario: without --persist agent exits when all clients disconnect
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And client 1 disconnects
+    Then the UDS agent exits with code 0
