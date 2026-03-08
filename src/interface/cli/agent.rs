@@ -20,11 +20,8 @@ use crate::infrastructure::tools::recall::RecallTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use crate::infrastructure::tools::spawn::SpawnTool;
 
-/// Maximum byte length for user-supplied `--socket` paths.
-///
-/// Linux `sockaddr_un.sun_path` is 108 bytes (107 usable + NUL terminator).
-/// macOS/BSDs use 104 bytes.  We enforce the stricter macOS limit so the same
-/// path works cross-platform.  Auto-generated UUID paths are always ≤70 bytes.
+/// Max byte length for `--socket` paths.  Linux allows 108, macOS 104;
+/// we use the stricter limit for portability.
 const MAX_SOCKET_PATH_BYTES: usize = 104;
 
 /// Parsed flags for the `agent` subcommand.
@@ -44,18 +41,16 @@ pub(crate) struct AgentFlags {
     /// When true, enter UDS mode: read JSON commands from a Unix domain socket.
     /// When false (default), run in one-shot mode: process one prompt then exit.
     pub(crate) uds_mode: bool,
-    /// When true, disable workspace path restriction for all filesystem tools.
-    /// Overrides `config.agents.defaults.restrict_to_workspace`.
-    /// WARNING: allows the agent to read/write any path on the system.
+    /// Disable workspace path restriction. WARNING: allows any path access.
     pub(crate) no_sandbox: bool,
-    /// When true, enable network access inside bash tool calls by disabling
-    /// nsjail's network namespace isolation (`--disable_clone_newnet`).
-    /// Overrides `config.tools.exec.network_passthrough`.
-    /// WARNING: allows bash commands to make outbound network connections.
+    /// Enable network access in bash tool calls. WARNING: allows outbound connections.
     pub(crate) network: bool,
     /// Explicit socket path for `--mode uds`.
     /// If `None`, a path is auto-generated in `$TMPDIR` and printed to stderr.
     pub(crate) socket_path: Option<std::path::PathBuf>,
+    /// When true (with `--mode uds`), keep the agent alive after all clients
+    /// disconnect.  Shutdown only via SIGTERM/SIGINT.
+    pub(crate) persist: bool,
 }
 
 /// Bundles the stdout/stderr pair passed through the agent pipeline.
@@ -135,20 +130,19 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut no_sandbox = false;
     let mut network = false;
     let mut socket_path: Option<std::path::PathBuf> = None;
+    let mut persist = false;
     let mut i = 0;
 
     while i < args.len() {
         match args[i].as_str() {
-            "--no-session" => {
-                no_session = true;
-                i += 1;
-            }
-            "--no-sandbox" => {
-                no_sandbox = true;
-                i += 1;
-            }
-            "--network" => {
-                network = true;
+            "--no-session" | "--no-sandbox" | "--network" | "--persist" => {
+                match args[i].as_str() {
+                    "--no-session" => no_session = true,
+                    "--no-sandbox" => no_sandbox = true,
+                    "--network" => network = true,
+                    "--persist" => persist = true,
+                    _ => unreachable!(),
+                }
                 i += 1;
             }
             "-s" | "--session" => {
@@ -225,6 +219,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         no_sandbox,
         network,
         socket_path,
+        persist,
     })
 }
 
@@ -598,6 +593,7 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         session_store_override: None,
         ext_registry: Some(build.ext_registry),
         hot_reload_interval: None,
+        persist: flags.persist,
     })
 }
 

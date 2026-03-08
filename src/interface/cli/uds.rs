@@ -1,14 +1,6 @@
-/// UDS agent loop — headless operation via JSON-lines protocol over a Unix domain socket.
-///
+/// UDS agent loop — headless JSON-lines protocol over a Unix domain socket.
 /// Entry point: `run_uds_loop` — called from `cmd_agent` when `--mode uds` is set.
-/// Session state and statistics live in `uds_session`.
-/// Cancellation infrastructure and prompt execution live in `uds_cancel`.
-/// Multi-client accept loop and broadcast live in `uds_multi`.
-///
-/// ## Multi-client architecture (#318)
-///
-/// The UDS agent accepts multiple simultaneous client connections (Docker-style
-/// event bus).  See `uds_multi.rs` for the implementation.
+/// Multi-client accept loop and broadcast: `uds_multi.rs` (#318).
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::message::{Message, Role};
 use crate::domain::session::{Session, SessionStore};
@@ -53,6 +45,8 @@ pub struct UdsLoopArgs<'a> {
     >,
     /// When `Some`, spawn a hot-reload watcher at the given poll interval (multi-client only).
     pub hot_reload_interval: Option<std::time::Duration>,
+    /// When true, keep the agent alive after all clients disconnect (#348).
+    pub persist: bool,
 }
 
 /// Run the UDS event loop.  Returns exit code.
@@ -126,6 +120,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         session_store_override,
         ext_registry,
         hot_reload_interval,
+        persist,
     } = args;
 
     let file_store;
@@ -181,6 +176,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 system_prompt,
                 ext_registry,
                 hot_reload_interval,
+                persist,
             },
             listener,
             session_store,

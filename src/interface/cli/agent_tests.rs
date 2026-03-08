@@ -257,57 +257,32 @@ fn test_agent_parses_max_time_flag() {
 }
 
 #[test]
-fn test_agent_max_iterations_missing_value() {
-    let mut stderr = String::new();
-    let a: Vec<String> = vec!["--max-iterations".into()];
-    let result = parse_agent_flags(&a, &mut stderr);
-    assert!(result.is_none());
-    assert!(stderr.contains("--max-iterations requires a value"));
+fn test_agent_max_iterations_errors() {
+    // missing value
+    let mut e = String::new();
+    assert!(parse_agent_flags(&["--max-iterations".into()], &mut e).is_none());
+    assert!(e.contains("requires a value"));
+    // invalid value
+    e.clear();
+    assert!(parse_agent_flags(&["--max-iterations".into(), "abc".into()], &mut e).is_none());
+    assert!(e.contains("positive integer"));
+    // zero rejected
+    e.clear();
+    assert!(parse_agent_flags(&["--max-iterations".into(), "0".into()], &mut e).is_none());
+    assert!(e.contains("positive integer"));
 }
 
 #[test]
-fn test_agent_max_time_missing_value() {
-    let mut stderr = String::new();
-    let a: Vec<String> = vec!["--max-time".into()];
-    let result = parse_agent_flags(&a, &mut stderr);
-    assert!(result.is_none());
-    assert!(stderr.contains("--max-time requires a value"));
-}
-
-#[test]
-fn test_agent_max_iterations_invalid_value() {
-    let mut stderr = String::new();
-    let a: Vec<String> = vec!["--max-iterations".into(), "abc".into()];
-    let result = parse_agent_flags(&a, &mut stderr);
-    assert!(result.is_none());
-    assert!(stderr.contains("positive integer"));
-}
-
-#[test]
-fn test_agent_max_time_invalid_value() {
-    let mut stderr = String::new();
-    let a: Vec<String> = vec!["--max-time".into(), "xyz".into()];
-    let result = parse_agent_flags(&a, &mut stderr);
-    assert!(result.is_none());
-    assert!(stderr.contains("positive integer"));
-}
-
-#[test]
-fn test_agent_max_iterations_zero_rejected() {
-    let mut stderr = String::new();
-    let a: Vec<String> = vec!["--max-iterations".into(), "0".into()];
-    let result = parse_agent_flags(&a, &mut stderr);
-    assert!(result.is_none());
-    assert!(stderr.contains("positive integer"));
-}
-
-#[test]
-fn test_agent_max_time_zero_rejected() {
-    let mut stderr = String::new();
-    let a: Vec<String> = vec!["--max-time".into(), "0".into()];
-    let result = parse_agent_flags(&a, &mut stderr);
-    assert!(result.is_none());
-    assert!(stderr.contains("positive integer"));
+fn test_agent_max_time_errors() {
+    let mut e = String::new();
+    assert!(parse_agent_flags(&["--max-time".into()], &mut e).is_none());
+    assert!(e.contains("requires a value"));
+    e.clear();
+    assert!(parse_agent_flags(&["--max-time".into(), "xyz".into()], &mut e).is_none());
+    assert!(e.contains("positive integer"));
+    e.clear();
+    assert!(parse_agent_flags(&["--max-time".into(), "0".into()], &mut e).is_none());
+    assert!(e.contains("positive integer"));
 }
 
 #[test]
@@ -509,6 +484,7 @@ fn test_build_agent_from_config_no_config_file() {
         no_sandbox: false,
         network: false,
         socket_path: None,
+        persist: false,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -533,6 +509,7 @@ fn test_build_agent_from_config_invalid_json() {
         no_sandbox: false,
         network: false,
         socket_path: None,
+        persist: false,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -561,6 +538,7 @@ fn test_build_agent_from_config_no_providers() {
         no_sandbox: false,
         network: false,
         socket_path: None,
+        persist: false,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -589,6 +567,7 @@ fn test_build_agent_from_config_with_model_override() {
         no_sandbox: false,
         network: false,
         socket_path: None,
+        persist: false,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -739,5 +718,30 @@ fn test_headless_agent_registry_includes_spawn_tool() {
         names.contains(&"spawn".to_string()),
         "headless agent registry must include 'spawn' tool, got: {:?}",
         names
+    );
+}
+
+// --persist flag (#348)
+
+#[test]
+fn test_agent_persist_flag() {
+    let mut e = String::new();
+    // Default: persist is false
+    let a = vec!["--mode".into(), "uds".into()];
+    assert!(!parse_agent_flags(&a, &mut e).unwrap().persist);
+    // Explicit --persist sets it to true, combines with other flags
+    let a = vec![
+        "--mode".into(),
+        "uds".into(),
+        "--persist".into(),
+        "--no-session".into(),
+        "--socket".into(),
+        "/tmp/t.sock".into(),
+    ];
+    let f = parse_agent_flags(&a, &mut e).unwrap();
+    assert!(f.persist && f.no_session && f.uds_mode);
+    assert_eq!(
+        f.socket_path.as_deref(),
+        Some(std::path::Path::new("/tmp/t.sock"))
     );
 }
