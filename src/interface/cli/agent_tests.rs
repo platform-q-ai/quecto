@@ -258,15 +258,12 @@ fn test_agent_parses_max_time_flag() {
 
 #[test]
 fn test_agent_max_iterations_errors() {
-    // missing value
     let mut e = String::new();
     assert!(parse_agent_flags(&["--max-iterations".into()], &mut e).is_none());
     assert!(e.contains("requires a value"));
-    // invalid value
     e.clear();
     assert!(parse_agent_flags(&["--max-iterations".into(), "abc".into()], &mut e).is_none());
     assert!(e.contains("positive integer"));
-    // zero rejected
     e.clear();
     assert!(parse_agent_flags(&["--max-iterations".into(), "0".into()], &mut e).is_none());
     assert!(e.contains("positive integer"));
@@ -744,4 +741,9 @@ fn test_agent_persist_flag() {
         f.socket_path.as_deref(),
         Some(std::path::Path::new("/tmp/t.sock"))
     );
+    // --persist without --mode uds is rejected
+    e.clear();
+    let a = vec!["--persist".into(), "-m".into(), "hi".into()];
+    assert!(parse_agent_flags(&a, &mut e).is_none());
+    assert!(e.contains("--persist requires --mode uds"));
 }

@@ -135,14 +135,13 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
 
     while i < args.len() {
         match args[i].as_str() {
-            "--no-session" | "--no-sandbox" | "--network" | "--persist" => {
-                match args[i].as_str() {
-                    "--no-session" => no_session = true,
-                    "--no-sandbox" => no_sandbox = true,
-                    "--network" => network = true,
-                    "--persist" => persist = true,
-                    _ => unreachable!(),
-                }
+            f @ ("--no-session" | "--no-sandbox" | "--network" | "--persist") => {
+                *match f {
+                    "--no-session" => &mut no_session,
+                    "--no-sandbox" => &mut no_sandbox,
+                    "--network" => &mut network,
+                    _ => &mut persist,
+                } = true;
                 i += 1;
             }
             "-s" | "--session" => {
@@ -204,6 +203,9 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
 
     if no_session && session_name.is_some() {
         stderr.push_str("agent: --no-session and -s are mutually exclusive\n");
+        return None;
+    } else if persist && !uds_mode {
+        stderr.push_str("agent: --persist requires --mode uds\n");
         return None;
     }
 
@@ -536,6 +538,9 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
                 .push_str("agent: --socket path exceeds the Unix socket path limit (104 bytes)\n");
             return 1;
         }
+    }
+    if flags.persist {
+        stderr.push_str("WARNING: --persist keeps the agent alive indefinitely. Shutdown via SIGTERM/SIGINT only.\n");
     }
 
     let base_dir = ctx.base_dir();

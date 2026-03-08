@@ -142,12 +142,10 @@ pub(super) async fn multi_client_loop(
         None
     };
 
-    // In non-persist mode, drop our clone so cmd_rx closes when all clients
-    // are gone.  In persist mode, keep cmd_tx alive so cmd_rx.recv() blocks
-    // indefinitely instead of returning None when all clients disconnect (#348).
-    if !persist {
-        drop(cmd_tx);
-    }
+    // Drop our clone so cmd_rx closes when all client senders (accept loop,
+    // watcher) are gone.  The accept loop's clone keeps the channel open while
+    // it runs — the `!persist` guard in `run_dispatch_loop` controls shutdown.
+    drop(cmd_tx);
 
     let mut null_writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin> =
         Box::new(tokio::io::sink());
