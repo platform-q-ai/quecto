@@ -9,7 +9,7 @@ Built in Rust. No runtime dependencies. Runs on a VPS, Raspberry Pi, or containe
 
 ## Release Notes
 
-Current version: **0.18.0** — see [`CHANGELOG.md`](CHANGELOG.md) for full history.
+Current version: **0.19.0** — see [`CHANGELOG.md`](CHANGELOG.md) for full history.
 
 ## Quick Start
 
@@ -51,7 +51,7 @@ Zero deps except `thiserror`, `serde` (derive), `serde_yaml`. Defines system voc
 | `agent.rs` | `AgentLoop` trait, `AgentInfo`, `AgentResult`, `AgentProgressEvent` (with `tool_call_id` on `ToolStarted`/`ToolFinished`, `Token` for streaming, `Thinking` with context stats), `ProgressCallback` |
 | `session.rs` | `Session`, `SessionStore` trait, `SpillEntry`, `SpillIndex`, `ContextSpillStore` trait, `strip_tool_history()`, `filter_orphan_tool_pairs()` (with `OrphanDiag`) |
 | `skill.rs` | `Skill`, `SkillSource`, `SkillFrontmatter`, `SkillLoader` trait, `split_skill_md()`, `validate_frontmatter()`, `is_valid_skill_name()` |
-| `extension.rs` | `Extension` trait (`name()`, `tools()`, `system_prompt_snippet()`, `is_script()`) |
+| `extension.rs` | `Extension` trait (`name()`, `tools()`, `system_prompt_snippet()`) |
 | `workspace.rs` | `OnboardStore` port |
 | `subagent.rs` | `SubagentConfig`, `validate_agent_id()` |
 | `workflow.rs` | `WorkflowState`, `WorkflowConfig` (`guard_commit`, `enforce_commit_after_step`, `steps`), `WorkflowStep`, `WorkflowPersistable`, `WorkflowProgress`, `WorkflowError`, `default_steps()` (returns empty — steps must be configured in config.json), `bdd_steps()` (test-only 16-step template), `from_persistable_with_steps()` |
@@ -80,7 +80,7 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 | `tools/` | `bash/` (shell, 1MiB cap, per-invocation timeout, `commandPrefix`, native/nsjail modes), `filesystem/` (`ReadTool` with image base64+auto-resize, `WriteTool`, `EditTool` with fuzzy match+CRLF/BOM+LCS diff, `LsTool` with limit+case-insensitive sort), `grep.rs` (rg JSON output, file-cache context), `find.rs` (fd, nested .gitignore, path-segment globs via `--full-path`), `ensure_tool.rs` (auto-download rg/fd from GitHub), `spawn.rs` (background subagent spawning), `web_search.rs` (Brave+DDG), `recall.rs` (spill retrieval), `workflow_tool.rs` (`WorkflowTool` + `WorkflowGuard` — blocks `git commit`/`git push` when workflow steps incomplete; registration controlled by `guard_commit` config), `path_utils.rs`, `truncate.rs`, `command_match.rs`, `registry.rs` (`ToolRegistryImpl`, `guard_count()`) |
 | `persistence/` | `FileSessionStore` (round-trips all Message fields), `MemoryStore`, `FileSkillLoader`, `FileOnboardStore` (`workspace_store.rs`), `FileContextSpillStore` (JSONL append-only) |
 | `security/` | `Sandbox` — workspace path validation + command filtering |
-| `extensions/` | `ExtensionRegistry` (discover `<workspace>/extensions/*/extension.toml`, register tools, inject system prompt snippets), `ScriptTool` (TOML manifest, subprocess exec, timeout, 1 MiB cap), `ExtensionWatcher` (fingerprint-based hot-reload via mtime+size polling). See [Extensions guide](docs/extensions.md) |
+| `extensions/` | `ExtensionRegistry` (register extensions, aggregate tools + system prompt snippets), `NativeExtension` (compiled-in config-gated tools, e.g. `web_search`), `UdsExtensionTool` (routes tool execution to connected UDS clients via mpsc/oneshot channels). See [Extensions guide](docs/extensions.md) |
 | `auth/` | `CredentialStore` (file-based, `AuthMethod::Token`/`OAuth`), `oauth.rs` (browser + device code flows, Anthropic OAuth, OpenAI account ID extraction from JWT) |
 | `logging.rs` | `redact_api_keys()` — pattern-based secret redaction |
 
@@ -651,10 +651,6 @@ Coverage is intentionally not part of git hooks. Run coverage in nightly CI (rec
     skills/                # Skill definitions (YAML frontmatter required)
       my-skill/
         SKILL.md
-    extensions/            # Script extensions (TOML manifest + executable)
-      my-ext/
-        extension.toml
-        run.sh
     ...                    # Agent working directory (files created by the agent)
 ```
 
@@ -669,7 +665,7 @@ Tool binary cache (auto-downloaded `rg`, `fd`):
 
 | Guide | Description |
 |---|---|
-| [Extensions](docs/extensions.md) | Add custom tools via script extensions on disk — manifest format, script protocol, hot-reload, security |
+| [Extensions](docs/extensions.md) | Add custom tools via native extensions (config-gated) or UDS extensions (external processes) |
 
 ## Tech stack
 Rust 2024, Tokio, reqwest+rustls, serde/serde_json/serde_yaml, uuid, chrono, tracing, dirs, thiserror, similar, base64, sha2, image, flate2, tar, rand, urlencoding, unicode-normalization. Dev: cucumber 0.21, futures, tempfile, wiremock 0.6, regex.
