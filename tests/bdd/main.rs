@@ -832,6 +832,7 @@ mod observability_steps;
 mod path_utils_steps;
 mod provider_steps;
 mod read_tool_steps;
+mod release_profile_steps;
 mod repl_steps;
 mod sandbox_steps;
 mod security_steps;
