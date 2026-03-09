@@ -504,9 +504,8 @@ pub fn build_http_client() -> reqwest::Client {
 /// Returns an `ExtensionRegistry` containing native extensions.
 /// Native extensions are evaluated once at agent construction and are not
 /// affected by `reload_extensions`. Changes to config require an agent restart.
-pub fn discover_and_register_extensions(
+pub fn build_and_register_native_extensions(
     config: &crate::infrastructure::config::Config,
-    _extensions_dir: &std::path::Path,
     http_client: &reqwest::Client,
 ) -> crate::infrastructure::extensions::registry::ExtensionRegistry {
     let mut ext_registry = crate::infrastructure::extensions::registry::ExtensionRegistry::new();
