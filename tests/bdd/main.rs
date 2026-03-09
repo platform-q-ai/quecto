@@ -236,9 +236,9 @@ pub struct QuectoWorld {
     /// Error classification result
     pub error_class: Option<ErrorClass>,
     /// Fallback provider for fallback/cooldown scenarios
-    pub fallback_provider: Option<Arc<ProviderRouter>>,
+    pub provider_router: Option<Arc<ProviderRouter>>,
     /// Response from fallback provider
-    pub fallback_response: Option<LlmResponse>,
+    pub router_response: Option<LlmResponse>,
     /// Mock LLM provider for agent_loop scenarios
     pub mock_llm: Option<Arc<MockLlmProvider>>,
     /// Agent loop result from the last process() call

@@ -132,13 +132,13 @@ fn given_router_failing_openai_succeeding_anthropic(world: &mut QuectoWorld) {
     let anthropic =
         BddTestProvider::succeeding("anthropic", "Anthropic response") as Arc<dyn LlmProvider>;
     let router = ProviderRouter::new(vec![openai, anthropic]);
-    world.fallback_provider = Some(Arc::new(router));
+    world.provider_router = Some(Arc::new(router));
 }
 
 #[when(expr = "I send a chat request with model {string} through the router")]
 fn when_send_through_router_with_model(world: &mut QuectoWorld, model: String) {
     let router = world
-        .fallback_provider
+        .provider_router
         .as_ref()
         .expect("provider router not set");
     let messages = vec![Message::user("test")];
@@ -159,7 +159,7 @@ fn when_send_through_router_with_model(world: &mut QuectoWorld, model: String) {
         .block_on(router.chat(req))
     {
         Ok(response) => {
-            world.fallback_response = Some(response);
+            world.router_response = Some(response);
             world.routing_succeeded = Some(true);
         }
         Err(e) => {
@@ -181,9 +181,9 @@ fn then_request_fails_with_provider_error(world: &mut QuectoWorld) {
 }
 
 #[then(expr = "the fallback response content should be {string}")]
-fn then_fallback_response_content(world: &mut QuectoWorld, expected: String) {
+fn then_router_response_content(world: &mut QuectoWorld, expected: String) {
     let response = world
-        .fallback_response
+        .router_response
         .as_ref()
         .expect("no fallback response");
     let content = response.content.as_ref().expect("response has no content");
@@ -289,7 +289,7 @@ fn when_send_chat_with_tool(world: &mut QuectoWorld, message: String, tool_name:
     let result = rt.block_on(provider.chat(req));
     match result {
         Ok(response) => {
-            world.fallback_response = Some(response);
+            world.router_response = Some(response);
         }
         Err(e) => {
             panic!("chat request failed: {}", e);
@@ -299,7 +299,7 @@ fn when_send_chat_with_tool(world: &mut QuectoWorld, message: String, tool_name:
 
 #[then(expr = "the chat response content should be {string}")]
 fn then_chat_response_content(world: &mut QuectoWorld, expected: String) {
-    let response = world.fallback_response.as_ref().expect("no chat response");
+    let response = world.router_response.as_ref().expect("no chat response");
     let content = response.content.as_ref().expect("response has no content");
     assert_eq!(
         content, &expected,
@@ -315,7 +315,7 @@ fn then_chat_had_auth_header(world: &mut QuectoWorld) {
     // sends the wrong header, the mock returns no match and the request fails.
     // A successful response with content therefore proves the header was sent.
     let response = world
-        .fallback_response
+        .router_response
         .as_ref()
         .expect("no chat response — provider may not have sent the Authorization header");
     assert!(
@@ -521,7 +521,7 @@ fn given_router_openai_then_anthropic(world: &mut QuectoWorld) {
     let openai = RoutingTracker::succeeding("openai", "response") as Arc<dyn LlmProvider>;
     let anthropic = RoutingTracker::succeeding("anthropic", "response") as Arc<dyn LlmProvider>;
     let router = ProviderRouter::new(vec![openai, anthropic]);
-    world.fallback_provider = Some(Arc::new(router));
+    world.provider_router = Some(Arc::new(router));
 }
 
 /// Provider that captures the messages slice pointer for zero-copy verification.
@@ -556,14 +556,15 @@ fn given_router_single_provider(world: &mut QuectoWorld) {
         captured_ptr: Mutex::new(None),
     });
     let router = ProviderRouter::new(vec![inner.clone() as Arc<dyn LlmProvider>]);
-    world.fallback_provider = Some(Arc::new(router));
-    drop(inner);
+    world.provider_router = Some(Arc::new(router));
+    // inner Arc is also held inside the router; no separate storage needed.
+    // Zero-copy pointer equality is verified by the unit tests in router_tests.rs.
 }
 
 #[when("I send a chat request through the router and track the messages pointer")]
 fn when_send_and_track_ptr(world: &mut QuectoWorld) {
     let router = world
-        .fallback_provider
+        .provider_router
         .as_ref()
         .expect("provider router not set");
     let messages = vec![Message::user("test")];
@@ -602,7 +603,7 @@ fn then_same_ptr(world: &mut QuectoWorld) {
 #[when(expr = "I send a chat request with model {string}")]
 fn when_send_chat_with_model(world: &mut QuectoWorld, model: String) {
     let fp = world
-        .fallback_provider
+        .provider_router
         .as_ref()
         .expect("fallback provider not set");
     let messages = vec![Message::user("test message")];
@@ -653,23 +654,6 @@ fn then_handled_by_provider(world: &mut QuectoWorld, expected: String) {
         handled_by, expected,
         "expected model to be routed to '{}' but was handled by '{}'",
         expected, handled_by
-    );
-}
-
-#[then("the request should succeed with the Anthropic response")]
-fn then_request_succeeds_with_anthropic(world: &mut QuectoWorld) {
-    assert!(
-        world.routing_succeeded == Some(true),
-        "expected routing to succeed but it failed"
-    );
-    let handled_by = world
-        .routing_handled_by
-        .as_deref()
-        .expect("no routing handler recorded");
-    assert_eq!(
-        handled_by, "anthropic",
-        "expected Anthropic to handle the request, got '{}'",
-        handled_by
     );
 }
 

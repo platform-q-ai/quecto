@@ -33,10 +33,13 @@ impl ProviderRouter {
     ///
     /// - `provider/model` syntax → match by provider name, strip prefix
     /// - Bare model → first provider in the list
-    fn resolve<'a>(
+    ///
+    /// Lifetimes are decoupled: the provider reference borrows from `self`,
+    /// while the bare model borrows from the input `model` string.
+    fn resolve<'a, 'b>(
         &'a self,
-        model: &'a str,
-    ) -> Result<(&'a Arc<dyn LlmProvider>, &'a str), DomainError> {
+        model: &'b str,
+    ) -> Result<(&'a Arc<dyn LlmProvider>, &'b str), DomainError> {
         if let Some((prefix, bare_model)) = parse_qualified_model(model) {
             for p in &self.providers {
                 if provider_prefix_matches(prefix, p.name()) {
@@ -58,6 +61,31 @@ impl ProviderRouter {
     }
 }
 
+impl ProviderRouter {
+    /// Resolve the target provider and build a forwarding request with the
+    /// provider prefix stripped.  All borrowed fields are forwarded as-is
+    /// (zero-copy).
+    fn forward<'a>(
+        &'a self,
+        request: ChatRequest<'a>,
+    ) -> Result<(&'a Arc<dyn LlmProvider>, ChatRequest<'a>), DomainError> {
+        let (provider, effective_model) = self.resolve(request.model)?;
+        let req = ChatRequest {
+            messages: request.messages,
+            tools: request.tools,
+            model: effective_model,
+            max_tokens: request.max_tokens,
+            temperature: request.temperature,
+            session_id: request.session_id,
+            tool_choice: request.tool_choice,
+            metadata: request.metadata,
+            thinking_level: request.thinking_level,
+            cancel_flag: request.cancel_flag,
+        };
+        Ok((provider, req))
+    }
+}
+
 impl LlmProvider for ProviderRouter {
     fn name(&self) -> &str {
         "router"
@@ -68,19 +96,7 @@ impl LlmProvider for ProviderRouter {
         request: ChatRequest<'a>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>> {
         Box::pin(async move {
-            let (provider, effective_model) = self.resolve(request.model)?;
-            let req = ChatRequest {
-                messages: request.messages,
-                tools: request.tools,
-                model: effective_model,
-                max_tokens: request.max_tokens,
-                temperature: request.temperature,
-                session_id: request.session_id,
-                tool_choice: request.tool_choice,
-                metadata: request.metadata,
-                thinking_level: request.thinking_level,
-                cancel_flag: request.cancel_flag,
-            };
+            let (provider, req) = self.forward(request)?;
             provider.chat(req).await
         })
     }
@@ -90,19 +106,7 @@ impl LlmProvider for ProviderRouter {
         request: ChatRequest<'a>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>> {
         Box::pin(async move {
-            let (provider, effective_model) = self.resolve(request.model)?;
-            let req = ChatRequest {
-                messages: request.messages,
-                tools: request.tools,
-                model: effective_model,
-                max_tokens: request.max_tokens,
-                temperature: request.temperature,
-                session_id: request.session_id,
-                tool_choice: request.tool_choice,
-                metadata: request.metadata,
-                thinking_level: request.thinking_level,
-                cancel_flag: request.cancel_flag,
-            };
+            let (provider, req) = self.forward(request)?;
             provider.chat_stream(req).await
         })
     }
@@ -112,25 +116,13 @@ impl LlmProvider for ProviderRouter {
         request: ChatRequest<'a>,
     ) -> Pin<Box<dyn Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + 'a>> {
         Box::pin(async move {
-            let (provider, effective_model) = match self.resolve(request.model) {
+            let (provider, req) = match self.forward(request) {
                 Ok(resolved) => resolved,
                 Err(e) => {
                     let (tx, rx) = tokio::sync::mpsc::channel(1);
                     let _ = tx.send(StreamEvent::Error(e.to_string())).await;
                     return rx;
                 }
-            };
-            let req = ChatRequest {
-                messages: request.messages,
-                tools: request.tools,
-                model: effective_model,
-                max_tokens: request.max_tokens,
-                temperature: request.temperature,
-                session_id: request.session_id,
-                tool_choice: request.tool_choice,
-                metadata: request.metadata,
-                thinking_level: request.thinking_level,
-                cancel_flag: request.cancel_flag,
             };
             provider.chat_stream_incremental(req).await
         })
