@@ -13,8 +13,8 @@ use crate::infrastructure::extensions::registry::ExtensionRegistry;
 use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::providers;
-use crate::infrastructure::providers::fallback::FallbackProvider;
 use crate::infrastructure::providers::refreshable::{RefreshableConfig, RefreshableProvider};
+use crate::infrastructure::providers::router::ProviderRouter;
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::recall::RecallTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
@@ -602,7 +602,7 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     })
 }
 
-/// Build a FallbackProvider from config + credential store, suitable for the agent CLI.
+/// Build a ProviderRouter from config + credential store, suitable for the agent CLI.
 ///
 /// OAuth-backed providers are wrapped in [`RefreshableProvider`] so that
 /// expired tokens are automatically refreshed mid-session on 401 (issue #255).
@@ -700,7 +700,7 @@ pub fn build_agent_provider(
         );
     }
 
-    Ok(Arc::new(FallbackProvider::new(provider_list)))
+    Ok(Arc::new(ProviderRouter::new(provider_list)))
 }
 
 /// Build a single provider from name, key, and base URL.

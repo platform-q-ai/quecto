@@ -1,9 +1,9 @@
 pub mod anthropic;
 pub mod codex;
 pub mod error;
-pub mod fallback;
 pub mod openai;
 pub mod refreshable;
+pub mod router;
 pub mod sse_common;
 
 use std::sync::Arc;

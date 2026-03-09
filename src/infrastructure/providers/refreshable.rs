@@ -78,8 +78,7 @@ impl RefreshableProvider {
 
     /// Check if the error is a 401 that might be fixable by refreshing.
     fn is_refreshable_auth_error(err: &DomainError) -> bool {
-        let class =
-            crate::infrastructure::providers::fallback::FallbackProvider::classify_error(err);
+        let class = crate::infrastructure::providers::error::classify_error(err);
         class == ErrorClass::Auth
     }
 

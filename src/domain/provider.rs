@@ -135,19 +135,23 @@ pub trait LlmProvider: Send + Sync + std::fmt::Debug {
     fn name(&self) -> &str;
 
     /// Send a chat request and return the LLM response.
-    fn chat(
-        &self,
-        request: ChatRequest<'_>,
-    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>>;
+    ///
+    /// The lifetime `'a` ties `&self`, the request's borrowed data, and
+    /// the returned future together. This allows wrappers (e.g. routers)
+    /// to forward borrowed slices without cloning.
+    fn chat<'a>(
+        &'a self,
+        request: ChatRequest<'a>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>>;
 
     /// Send a streaming chat request and return the assembled response.
     ///
     /// Default implementation delegates to `chat()` (non-streaming).
     /// Providers that support SSE streaming override this method.
-    fn chat_stream(
-        &self,
-        request: ChatRequest<'_>,
-    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+    fn chat_stream<'a>(
+        &'a self,
+        request: ChatRequest<'a>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>> {
         self.chat(request)
     }
 
@@ -161,10 +165,10 @@ pub trait LlmProvider: Send + Sync + std::fmt::Debug {
     /// Default implementation wraps `chat_stream()` and emits a single
     /// `Done` or `Error` event — no true incremental delivery.
     /// Providers that support byte-stream SSE should override this method.
-    fn chat_stream_incremental(
-        &self,
-        request: ChatRequest<'_>,
-    ) -> Pin<Box<dyn Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + '_>> {
+    fn chat_stream_incremental<'a>(
+        &'a self,
+        request: ChatRequest<'a>,
+    ) -> Pin<Box<dyn Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + 'a>> {
         let fut = self.chat_stream(request);
         Box::pin(async move {
             let (tx, rx) = tokio::sync::mpsc::channel(32);
