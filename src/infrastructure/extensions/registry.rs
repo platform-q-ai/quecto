@@ -1,29 +1,23 @@
-//! Extension registry: discovers, loads, and manages extensions.
+//! Extension registry: manages extensions.
 //!
 //! Holds registered extensions and provides aggregate access to their
-//! tools and system prompt snippets.  Supports hot-reload of script
-//! extensions via `reload_scripts()`.
+//! tools and system prompt snippets.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::domain::extension::Extension;
 use crate::domain::tool::Tool;
 
-use super::script::discover_script_extensions;
-
-/// Registry of all extensions (compiled-in and script-based).
+/// Registry of all extensions (native and UDS-registered).
 pub struct ExtensionRegistry {
     extensions: Vec<Arc<dyn Extension>>,
-    watch_dirs: Vec<PathBuf>,
 }
 
 impl std::fmt::Debug for ExtensionRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExtensionRegistry")
             .field("extension_count", &self.extensions.len())
-            .field("watch_dirs", &self.watch_dirs)
             .finish()
     }
 }
@@ -39,30 +33,7 @@ impl ExtensionRegistry {
     pub fn new() -> Self {
         Self {
             extensions: Vec::new(),
-            watch_dirs: Vec::new(),
         }
-    }
-
-    /// Set directories to watch for script extensions.
-    pub fn set_watch_dirs(&mut self, dirs: Vec<PathBuf>) {
-        self.watch_dirs = dirs;
-    }
-
-    /// Get the configured watch directories.
-    pub fn watch_dirs(&self) -> &[PathBuf] {
-        &self.watch_dirs
-    }
-
-    /// Discover script extensions from configured watch directories.
-    pub fn discover(dirs: &[PathBuf]) -> Self {
-        let mut reg = Self::new();
-        reg.watch_dirs = dirs.to_vec();
-        for dir in dirs {
-            for ext in discover_script_extensions(dir) {
-                reg.extensions.push(ext);
-            }
-        }
-        reg
     }
 
     /// Register an extension.
@@ -92,35 +63,10 @@ impl ExtensionRegistry {
             .join("\n\n")
     }
 
-    /// Re-scan watched directories, replacing script extensions.
-    /// Non-script extensions (builtins) are retained.
-    pub fn reload_scripts(&mut self) {
-        // Remove script extensions
-        self.extensions
-            .retain(|ext| !is_script_extension(ext.as_ref()));
-
-        // Re-discover from watched directories
-        for dir in &self.watch_dirs {
-            for ext in discover_script_extensions(dir) {
-                self.extensions.push(ext);
-            }
-        }
-    }
-
     /// Return the number of registered extensions.
     pub fn extension_count(&self) -> usize {
         self.extensions.len()
     }
-}
-
-/// Check if an extension is a script extension.
-///
-/// We use the extension name prefix convention rather than downcasting
-/// since `dyn Extension` is not `dyn Any`.  Script extensions discovered
-/// from disk are tagged by the `ScriptExtension` wrapper which implements
-/// a marker method.
-fn is_script_extension(ext: &dyn Extension) -> bool {
-    ext.is_script()
 }
 
 #[cfg(test)]

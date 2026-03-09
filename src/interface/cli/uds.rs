@@ -40,8 +40,6 @@ pub struct UdsLoopArgs<'a> {
             std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
         >,
     >,
-    /// When `Some`, spawn a hot-reload watcher at the given poll interval (multi-client only).
-    pub hot_reload_interval: Option<std::time::Duration>,
     /// When true, keep the agent alive after all clients disconnect (#348).
     pub persist: bool,
 }
@@ -110,7 +108,6 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         socket_override,
         session_store_override,
         ext_registry,
-        hot_reload_interval,
         persist,
     } = args;
 
@@ -166,7 +163,6 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 ephemeral,
                 system_prompt,
                 ext_registry,
-                hot_reload_interval,
                 persist,
             },
             listener,

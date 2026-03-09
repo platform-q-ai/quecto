@@ -1,8 +1,7 @@
 // Native extension: wraps a compiled-in Tool as an Extension.
 //
-// Unlike ScriptTool (subprocess execution), native extensions are pure Rust
-// implementations registered conditionally based on config. They have zero
-// overhead when disabled and are not removed during reload_scripts().
+// Native extensions are pure Rust implementations registered conditionally
+// based on config. They have zero overhead when disabled.
 
 use std::sync::Arc;
 
@@ -12,10 +11,8 @@ use crate::domain::tool::Tool;
 /// A compiled-in extension that wraps a `Tool` implementation.
 ///
 /// Native extensions are registered conditionally at startup based on config
-/// (e.g., `tools.web.brave.enabled`). They differ from script extensions in
-/// that they:
+/// (e.g., `tools.web.brave.enabled`). They:
 /// - Execute in-process (no subprocess, no external runtime)
-/// - Return `is_script() -> false` (not removed by `reload_scripts()`)
 /// - Share the process's `reqwest::Client` and other resources
 pub struct NativeExtension {
     name: String,
@@ -71,10 +68,6 @@ impl Extension for NativeExtension {
 
     fn system_prompt_snippet(&self) -> Option<String> {
         self.system_prompt.clone()
-    }
-
-    fn is_script(&self) -> bool {
-        false
     }
 }
 
@@ -200,16 +193,6 @@ mod tests {
     }
 
     #[test]
-    fn test_native_extension_is_not_script() {
-        let ext = NativeExtension::new(
-            "web_search",
-            "Search the web",
-            dummy_tool("web_search", "Search"),
-        );
-        assert!(!ext.is_script());
-    }
-
-    #[test]
     fn test_native_extension_no_system_prompt_by_default() {
         let ext = NativeExtension::new(
             "web_search",
@@ -230,26 +213,6 @@ mod tests {
         assert_eq!(
             ext.system_prompt_snippet().as_deref(),
             Some("Use web_search to find information.")
-        );
-    }
-
-    #[test]
-    fn test_native_extension_not_removed_by_reload_scripts() {
-        let mut reg = crate::infrastructure::extensions::registry::ExtensionRegistry::new();
-        let ext = Arc::new(NativeExtension::new(
-            "web_search",
-            "Search the web",
-            dummy_tool("web_search", "Search"),
-        ));
-        reg.register(ext);
-        assert_eq!(reg.all_tools().len(), 1);
-
-        // reload_scripts only removes extensions where is_script() == true
-        reg.reload_scripts();
-        assert_eq!(
-            reg.all_tools().len(),
-            1,
-            "native extension should survive reload"
         );
     }
 

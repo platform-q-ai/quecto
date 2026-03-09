@@ -7,7 +7,7 @@ use super::uds::{DispatchCtx, emit_event_to_broadcast_or_writer};
 
 /// Build the list of registered extension tools for `get_extensions` responses.
 ///
-/// Includes tools from both the `ExtensionRegistry` (script/native) and
+/// Includes tools from both the `ExtensionRegistry` (native) and
 /// UDS-registered tools (from `register_tools` protocol commands).
 pub(super) fn build_extension_list(ctx: &DispatchCtx<'_>) -> Vec<serde_json::Value> {
     let ext_names: std::collections::HashSet<String> = ctx
@@ -22,7 +22,7 @@ pub(super) fn build_extension_list(ctx: &DispatchCtx<'_>) -> Vec<serde_json::Val
     let mut covered: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut result = Vec::new();
 
-    // Include tools from the ExtensionRegistry (script/native extensions).
+    // Include tools from the ExtensionRegistry (native extensions).
     if let Some(ref ext_reg) = ctx.ext_registry {
         let reg = ext_reg.lock().unwrap_or_else(|e| e.into_inner());
         for t in reg.all_tools() {
@@ -52,57 +52,16 @@ pub(super) fn build_extension_list(ctx: &DispatchCtx<'_>) -> Vec<serde_json::Val
     result
 }
 
-/// Handle `reload_extensions`: re-scan disk, sync tool registry, broadcast event.
+/// Handle `reload_extensions`: respond with current extension state.
+///
+/// Since script extensions have been removed (#353), this is now a no-op
+/// that returns the current extension list. Native extensions are loaded
+/// once at startup; UDS extensions are managed via register/unregister.
 pub(super) async fn handle_reload_extensions(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
     type_name: &str,
 ) {
-    let Some(ref ext_reg_arc) = ctx.ext_registry else {
-        let ev = AgentEvent::ok(id, type_name, Some(serde_json::json!({})));
-        emit_event_to_broadcast_or_writer(ctx, &ev).await;
-        return;
-    };
-
-    // 1. Reload script extensions from disk and collect updated tools
-    let new_tools = {
-        let mut ext_reg = ext_reg_arc.lock().unwrap_or_else(|e| e.into_inner());
-        ext_reg.reload_scripts();
-        ext_reg.all_tools()
-    };
-
-    // 2. Sync the agent's tool registry with the reloaded extensions
-    ctx.agent.replace_extensions(new_tools);
-
-    // 3. Build extension list from the now-synced tool registry
-    let ext_names: std::collections::HashSet<String> = ctx
-        .agent
-        .tool_registry_extension_names()
-        .into_iter()
-        .collect();
-    let extension_list: Vec<super::protocol::ExtensionInfo> = {
-        let ext_reg = ext_reg_arc.lock().unwrap_or_else(|e| e.into_inner());
-        ext_reg
-            .all_tools()
-            .iter()
-            .filter(|t| ext_names.contains(t.definition().name.as_ref()))
-            .map(|t| {
-                let def = t.definition();
-                super::protocol::ExtensionInfo {
-                    name: def.name.to_string(),
-                    description: def.description.to_string(),
-                }
-            })
-            .collect()
-    };
-
-    // 4. Send success response
     let ev = AgentEvent::ok(id, type_name, Some(serde_json::json!({})));
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
-
-    // 5. Broadcast extensions_changed event (only non-shadow extensions)
-    let ext_changed_ev = AgentEvent::ExtensionsChanged {
-        extensions: extension_list,
-    };
-    emit_event_to_broadcast_or_writer(ctx, &ext_changed_ev).await;
 }
