@@ -157,9 +157,9 @@ impl CodexProvider {
 
     /// Validate request constraints that are specific to the ChatGPT Codex backend.
     ///
-    /// The slash check is defense-in-depth: `FallbackProvider` strips the
+    /// The slash check is defense-in-depth: `ProviderRouter` strips the
     /// provider prefix before dispatching here, so a well-formed call never
-    /// carries a slash. However callers that bypass `FallbackProvider` (e.g.
+    /// carries a slash. However callers that bypass `ProviderRouter` (e.g.
     /// tests, future code paths) could pass a provider-qualified name, which
     /// the Codex backend would silently reject with an opaque HTTP 400. The
     /// check surfaces this misconfiguration early with a clear message.
@@ -505,17 +505,17 @@ impl LlmProvider for CodexProvider {
         })
     }
 
-    fn chat_stream(
-        &self,
-        request: ChatRequest<'_>,
-    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+    fn chat_stream<'a>(
+        &'a self,
+        request: ChatRequest<'a>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>> {
         self.chat(request)
     }
 
-    fn chat_stream_incremental(
-        &self,
-        request: ChatRequest<'_>,
-    ) -> Pin<Box<dyn Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + '_>> {
+    fn chat_stream_incremental<'a>(
+        &'a self,
+        request: ChatRequest<'a>,
+    ) -> Pin<Box<dyn Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + 'a>> {
         if let Err(err) = Self::validate_request(&request) {
             return Box::pin(async move {
                 let (tx, rx) = tokio::sync::mpsc::channel(1);

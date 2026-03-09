@@ -39,24 +39,10 @@ Feature: LLM Providers
     Then the error should be classified as "server"
     And the error should be retryable
 
-  Scenario: Provider fallback triggered on HTTP 529 overloaded response
-    Given a primary provider that returns a server error "HTTP 529 from Anthropic: overloaded_error"
-    And a fallback provider that returns "Fallback after overload"
-    When I send a chat request through the fallback provider
-    Then the fallback response content should be "Fallback after overload"
-
-  Scenario: Provider fallback on server error
-    Given a primary provider that returns a server error "HTTP 500 Internal Server Error"
-    And a fallback provider that returns "Fallback response"
-    When I send a chat request through the fallback provider
-    Then the fallback response content should be "Fallback response"
-
-  Scenario: Provider respects cooldown after rate limit
-    Given a primary provider that returns a rate limit error "HTTP 429 rate limit"
-    And a fallback provider that returns "Cooldown fallback"
-    When I send a chat request through the fallback provider
-    And I send a second chat request through the fallback provider
-    Then the fallback response content should be "Cooldown fallback"
+  Scenario: Provider router forwards error without fallback
+    Given a provider router with a failing OpenAI and a succeeding Anthropic
+    When I send a chat request with model "gpt-4o" through the router
+    Then the request should fail with a provider error
 
   Scenario: Provider sends chat request with tools
     Given an OpenAI provider with a mock server
@@ -83,29 +69,29 @@ Feature: LLM Providers
     Then the streaming response content should be "Hello from Claude"
 
   Scenario: Explicit anthropic/ prefix routes to Anthropic provider
-    Given a fallback provider with OpenAI first and Anthropic second
+    Given a provider router with OpenAI first and Anthropic second
     When I send a chat request with model "anthropic/claude-opus-4-5"
     Then the request should be handled by the "anthropic" provider
 
   Scenario: Explicit openai/ prefix routes to OpenAI provider
-    Given a fallback provider with OpenAI first and Anthropic second
+    Given a provider router with OpenAI first and Anthropic second
     When I send a chat request with model "openai/gpt-4o"
     Then the request should be handled by the "openai" provider
 
   Scenario: Bare model name goes to first provider in order
-    Given a fallback provider with OpenAI first and Anthropic second
+    Given a provider router with OpenAI first and Anthropic second
     When I send a chat request with model "claude-opus-4-5"
     Then the request should be handled by the "openai" provider
 
-  Scenario: Bare model falls back on retryable error
-    Given a fallback provider with a failing OpenAI and a succeeding Anthropic
-    When I send a chat request with model "claude-sonnet-4-20250514"
-    Then the request should succeed with the Anthropic response
-
-  Scenario: Unknown model falls back through providers in order
-    Given a fallback provider with OpenAI first and Anthropic second
+  Scenario: Unknown model goes to first provider in order
+    Given a provider router with OpenAI first and Anthropic second
     When I send a chat request with model "some-unknown-model"
     Then the request should be handled by the "openai" provider
+
+  Scenario: Provider router forwards request without cloning messages
+    Given a provider router with a single provider
+    When I send a chat request through the router and track the messages pointer
+    Then the provider should receive the same messages pointer as the caller
 
   # --- #178: is_error flag on tool result messages ---
 

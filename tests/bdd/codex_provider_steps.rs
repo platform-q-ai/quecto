@@ -395,15 +395,12 @@ fn when_parse_codex_sse(world: &mut QuectoWorld) {
     let response =
         quecto::infrastructure::providers::codex::CodexProvider::parse_sse_response_public(&sse)
             .expect("SSE parse should succeed");
-    world.fallback_response = Some(response);
+    world.router_response = Some(response);
 }
 
 #[then(expr = "the parsed response should have {int} tool call(s)")]
 fn then_parsed_has_n_tool_calls(world: &mut QuectoWorld, count: usize) {
-    let response = world
-        .fallback_response
-        .as_ref()
-        .expect("no parsed response");
+    let response = world.router_response.as_ref().expect("no parsed response");
     assert_eq!(
         response.tool_calls.len(),
         count,
@@ -415,10 +412,7 @@ fn then_parsed_has_n_tool_calls(world: &mut QuectoWorld, count: usize) {
 
 #[then(expr = "the tool call should have name {string}")]
 fn then_tool_call_has_name(world: &mut QuectoWorld, expected_name: String) {
-    let response = world
-        .fallback_response
-        .as_ref()
-        .expect("no parsed response");
+    let response = world.router_response.as_ref().expect("no parsed response");
     assert_eq!(
         response.tool_calls[0].name, expected_name,
         "expected tool call name '{}', got '{}'",
@@ -428,10 +422,7 @@ fn then_tool_call_has_name(world: &mut QuectoWorld, expected_name: String) {
 
 #[then(expr = "the tool call should have arguments containing {string}")]
 fn then_tool_call_has_args(world: &mut QuectoWorld, expected_arg: String) {
-    let response = world
-        .fallback_response
-        .as_ref()
-        .expect("no parsed response");
+    let response = world.router_response.as_ref().expect("no parsed response");
     assert!(
         response.tool_calls[0].arguments.contains(&expected_arg),
         "expected tool call arguments to contain '{}', got '{}'",
@@ -447,10 +438,7 @@ fn then_tool_call_n_has_name_and_args(
     expected_name: String,
     expected_arg: String,
 ) {
-    let response = world
-        .fallback_response
-        .as_ref()
-        .expect("no parsed response");
+    let response = world.router_response.as_ref().expect("no parsed response");
     assert!(
         response.tool_calls.len() > index,
         "expected at least {} tool calls, got {}",

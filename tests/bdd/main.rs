@@ -20,7 +20,7 @@ use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::infrastructure::persistence::skill_loader::FileSkillLoader;
 use quecto::infrastructure::providers;
 use quecto::infrastructure::providers::error::ErrorClass;
-use quecto::infrastructure::providers::fallback::FallbackProvider;
+use quecto::infrastructure::providers::router::ProviderRouter;
 
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::bash::{ExecIsolationMode, ExecTool};
@@ -236,9 +236,9 @@ pub struct QuectoWorld {
     /// Error classification result
     pub error_class: Option<ErrorClass>,
     /// Fallback provider for fallback/cooldown scenarios
-    pub fallback_provider: Option<Arc<FallbackProvider>>,
+    pub provider_router: Option<Arc<ProviderRouter>>,
     /// Response from fallback provider
-    pub fallback_response: Option<LlmResponse>,
+    pub router_response: Option<LlmResponse>,
     /// Mock LLM provider for agent_loop scenarios
     pub mock_llm: Option<Arc<MockLlmProvider>>,
     /// Agent loop result from the last process() call

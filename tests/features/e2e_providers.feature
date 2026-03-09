@@ -22,16 +22,16 @@ Feature: End-to-End Provider Wiring
     Then the exit code should be 0
     And stdout should contain "Hello from Anthropic"
 
-  # --- Fallback ---
+  # --- No silent fallback (ProviderRouter) ---
 
-  Scenario: Agent falls back to secondary provider on server error
+  Scenario: Agent fails immediately on first-provider error (no silent fallback)
     Given a temp base directory
     And a config file with both OpenAI and Anthropic providers pointing at mock servers
     And the OpenAI mock returns an HTTP 500 error
     And the Anthropic mock returns a text response "Fallback worked"
     When I run quecto agent -s - -m "Hi"
-    Then the exit code should be 0
-    And stdout should contain "Fallback worked"
+    Then the exit code should be 1
+    And stderr should contain "Error"
 
   Scenario: Agent fails when all providers return errors
     Given a temp base directory
