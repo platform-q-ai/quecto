@@ -1573,6 +1573,62 @@ fn given_real_llm_workspace(world: &mut QuectoWorld) {
     std::fs::write(base.join("config.json"), config_json).expect("write real LLM config");
 }
 
+/// Set up a real-LLM workspace with web fetch enabled.
+#[given("a real LLM workspace is configured with web fetch enabled")]
+fn given_real_llm_workspace_web_fetch(world: &mut QuectoWorld) {
+    ensure_temp_dir(world);
+    let base = base_path(world);
+    let workspace = base.join("workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace");
+
+    let api_key = resolve_openai_api_key();
+
+    let config = serde_json::json!({
+        "providers": {
+            "openai": { "api_key": api_key }
+        },
+        "agents": {
+            "defaults": {
+                "workspace": workspace.to_string_lossy()
+            }
+        },
+        "tools": {
+            "web": {
+                "fetch": { "enabled": true }
+            }
+        }
+    });
+    let config_json = serde_json::to_string_pretty(&config).expect("serialize config");
+    std::fs::write(base.join("config.json"), config_json).expect("write real LLM config");
+}
+
+/// Set up a real-LLM workspace with workflow enabled.
+#[given("a real LLM workspace is configured with workflow enabled")]
+fn given_real_llm_workspace_workflow(world: &mut QuectoWorld) {
+    ensure_temp_dir(world);
+    let base = base_path(world);
+    let workspace = base.join("workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace");
+
+    let api_key = resolve_openai_api_key();
+
+    let config = serde_json::json!({
+        "providers": {
+            "openai": { "api_key": api_key }
+        },
+        "agents": {
+            "defaults": {
+                "workspace": workspace.to_string_lossy()
+            }
+        },
+        "workflow": {
+            "enabled": true
+        }
+    });
+    let config_json = serde_json::to_string_pretty(&config).expect("serialize config");
+    std::fs::write(base.join("config.json"), config_json).expect("write real LLM config");
+}
+
 /// Run the agent against the real OpenAI endpoint with a cheap model, bounded iterations,
 /// and a wall-clock timeout to prevent hung HTTP requests from blocking the suite.
 #[when(expr = "I run the real LLM agent with message {string}")]

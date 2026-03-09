@@ -377,6 +377,10 @@ pub struct QuectoWorld {
     pub web_search_mock_server: Option<&'static wiremock::MockServer>,
     /// Whether the web search used DDG (for fallback assertion)
     pub web_search_used_ddg: bool,
+    /// Leaked wiremock server ref for web_fetch mock
+    pub _web_fetch_mock_server: Option<&'static wiremock::MockServer>,
+    /// Mock server URI for web_fetch tool
+    pub _web_fetch_mock_uri: Option<String>,
     /// Pending CLI args for interactive auth scenarios (set by "I start quecto")
     pub pending_cli_args: Option<Vec<String>>,
     /// Captured tracing log output for observability scenarios
@@ -838,6 +842,7 @@ mod tool_empty_args_steps;
 mod tool_guard_steps;
 mod truncate_steps;
 mod uds_steps;
+mod web_fetch_steps;
 mod workflow_automation_steps;
 mod workflow_e2e_steps;
 mod workflow_steps;
