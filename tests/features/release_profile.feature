@@ -1,7 +1,7 @@
 @done
-Feature: Release profile optimizations
+Feature: Release profile and dependency hygiene
   As a maintainer
-  I want Cargo.toml to include release profile tuning
+  I want Cargo.toml to include release profile tuning and lean dependencies
   So that release binaries are smaller and faster without manual configuration
 
   Scenario: Cargo.toml contains a release profile section
@@ -10,3 +10,6 @@ Feature: Release profile optimizations
     And Cargo.toml should contain a release profile with "codegen-units = 1"
     And Cargo.toml should contain a release profile with "strip = true"
     And Cargo.toml should contain a release profile with 'panic = "abort"'
+
+  Scenario: image crate is not a direct dependency
+    Then Cargo.toml should not contain a direct dependency on "image"

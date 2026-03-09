@@ -2,27 +2,11 @@
 //
 // Existing image-file steps (PNG/JPEG/GIF/WebP with the canonical extension)
 // are in agent_tools_steps.rs. This module adds steps for:
-//   - Large image generation (auto-resize testing)
 //   - Byte-count and line-count file creation
 
 use cucumber::given;
 
 use super::*;
-
-/// Create a large PNG image of the given dimensions using the `image` crate.
-/// Used to test the auto-resize feature (images > 2000×2000 should be shrunk).
-#[given(
-    regex = r#"^a large PNG image file "([^"]+)" of size (\d+)x(\d+) exists in the workspace$"#
-)]
-fn given_large_png_file(world: &mut QuectoWorld, filename: String, width: u32, height: u32) {
-    use image::{ImageBuffer, Rgb};
-    let ws = world
-        .tool_workspace
-        .as_ref()
-        .expect("tool workspace not set");
-    let img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::new(width, height);
-    img.save(ws.join(&filename)).expect("write large PNG");
-}
 
 /// Create a file with approximately N bytes of multi-line ASCII content.
 /// Each line is 40 bytes + newline = 41 bytes. N lines → ~41*N bytes.

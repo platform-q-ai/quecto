@@ -102,22 +102,15 @@ impl Tool for ReadTool {
                         image_blocks: vec![],
                     });
                 }
-                // Auto-resize on a blocking thread (avoids blocking the Tokio runtime).
-                let raw_clone = raw_bytes.clone();
-                let (image_bytes, mime, resize_note) = tokio::task::spawn_blocking(move || {
-                    resize_image_if_needed(&raw_clone, orig_mime)
-                })
-                .await
-                .unwrap_or_else(|_| (raw_bytes.to_vec(), orig_mime, String::new()));
                 use base64::Engine as _;
-                let data = base64::engine::general_purpose::STANDARD.encode(&image_bytes);
+                let data = base64::engine::general_purpose::STANDARD.encode(&raw_bytes);
                 let size = format_size(raw_bytes.len());
-                let content = format!("Read image file [{}] ({size}){resize_note}", orig_mime);
+                let content = format!("Read image file [{}] ({size})", orig_mime);
                 return Ok(ToolResult {
                     content,
                     is_error: false,
                     image_blocks: vec![crate::domain::tool::ImageBlock {
-                        mime_type: mime,
+                        mime_type: orig_mime,
                         data,
                     }],
                 });
@@ -181,64 +174,6 @@ fn detect_image_mime_by_ext(path: &std::path::Path) -> Option<&'static str> {
         "webp" => Some("image/webp"),
         _ => None,
     }
-}
-
-/// Auto-resize an image to fit within 2000×2000 pixels.
-///
-/// Returns `(image_bytes, &'static mime, resize_note)`.
-/// - No resize needed: original bytes, original mime, empty note.
-/// - Resize needed: PNG-encoded bytes, `"image/png"`, dimension note.
-///
-/// Limits guard against decompression bombs (max 8192×8192 input).
-/// Uses CatmullRom filter — adequate for LLM vision, much faster than Lanczos3.
-/// Intended to run in `spawn_blocking`.
-fn resize_image_if_needed(bytes: &[u8], mime: &'static str) -> (Vec<u8>, &'static str, String) {
-    const MAX_DIM: u32 = 2_000;
-    const BOMB_MAX_W: u32 = 8_192;
-    const BOMB_MAX_H: u32 = 8_192;
-
-    let format = match mime {
-        "image/png" => image::ImageFormat::Png,
-        "image/jpeg" => image::ImageFormat::Jpeg,
-        "image/gif" => image::ImageFormat::Gif,
-        "image/webp" => image::ImageFormat::WebP,
-        _ => return (bytes.to_vec(), mime, String::new()),
-    };
-
-    let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
-    let mut limits = image::Limits::no_limits();
-    limits.max_image_width = Some(BOMB_MAX_W);
-    limits.max_image_height = Some(BOMB_MAX_H);
-    reader.limits(limits);
-    let img = match reader.decode() {
-        Ok(img) => img,
-        Err(_) => return (bytes.to_vec(), mime, String::new()),
-    };
-
-    let (orig_w, orig_h) = (img.width(), img.height());
-    if orig_w <= MAX_DIM && orig_h <= MAX_DIM {
-        return (bytes.to_vec(), mime, String::new());
-    }
-
-    // Compute new dimensions preserving aspect ratio.
-    let scale = (MAX_DIM as f64 / orig_w.max(orig_h) as f64).min(1.0);
-    let new_w = ((orig_w as f64 * scale).round() as u32).max(1);
-    let new_h = ((orig_h as f64 * scale).round() as u32).max(1);
-
-    // CatmullRom: good quality, much faster than Lanczos3.
-    let resized = img.resize(new_w, new_h, image::imageops::FilterType::CatmullRom);
-
-    // Re-encode as PNG — ensures correct MIME after format change.
-    let mut buf = std::io::Cursor::new(Vec::new());
-    if resized.write_to(&mut buf, image::ImageFormat::Png).is_err() {
-        return (bytes.to_vec(), mime, String::new());
-    }
-
-    let note = format!(
-        " [resized from {}×{} to {}×{}]",
-        orig_w, orig_h, new_w, new_h
-    );
-    (buf.into_inner(), "image/png", note)
 }
 
 /// Apply offset/limit pagination and head-truncation to text file content.
@@ -630,37 +565,11 @@ mod tests {
         );
     }
 
-    // --- Auto-resize ---
-
     #[tokio::test]
-    async fn test_large_image_auto_resized() {
-        use image::{ImageBuffer, Rgb};
+    async fn test_image_read_no_resize_note() {
         let (ws, sb, tmp) = test_tools();
         let tool = ReadTool::new(ws, sb);
-        // Create a 3000×3000 PNG (exceeds 2000 max)
-        let img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::new(3000, 3000);
-        img.save(tmp.path().join("big.png")).unwrap();
-        let result = tool.execute(r#"{"path": "big.png"}"#).await.unwrap();
-        assert!(
-            !result.is_error,
-            "large image should be handled: {}",
-            result.content
-        );
-        assert!(
-            result.image_blocks.len() == 1,
-            "should return one image block"
-        );
-        assert!(
-            result.content.contains("resized"),
-            "content should mention resize, got: {}",
-            result.content
-        );
-    }
-
-    #[tokio::test]
-    async fn test_small_image_not_resized() {
-        let (ws, sb, tmp) = test_tools();
-        let tool = ReadTool::new(ws, sb);
+        // Minimal valid 1×1 PNG
         let png_bytes: &[u8] = &[
             0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
             0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
@@ -669,9 +578,15 @@ mod tests {
         std::fs::write(tmp.path().join("small.png"), png_bytes).unwrap();
         let result = tool.execute(r#"{"path": "small.png"}"#).await.unwrap();
         assert!(!result.is_error);
+        assert_eq!(
+            result.image_blocks.len(),
+            1,
+            "should return one image block"
+        );
         assert!(
             !result.content.contains("resized"),
-            "small image should not mention resize"
+            "should not mention resize, got: {}",
+            result.content
         );
     }
 
