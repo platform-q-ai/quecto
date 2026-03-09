@@ -487,6 +487,27 @@ pub fn check_provider_readiness(creds: &HashMap<String, Credential>) -> Vec<Stri
         .collect()
 }
 
+/// Discover script extensions from disk and register native (config-gated) extensions.
+///
+/// Returns a unified `ExtensionRegistry` containing both script and native extensions.
+/// Native extensions use `is_script() -> false`, so `reload_scripts()` won't remove them.
+pub fn discover_and_register_extensions(
+    config: &crate::infrastructure::config::Config,
+    extensions_dir: &std::path::Path,
+) -> crate::infrastructure::extensions::registry::ExtensionRegistry {
+    let mut ext_registry =
+        crate::infrastructure::extensions::registry::ExtensionRegistry::discover(&[
+            extensions_dir.to_path_buf()
+        ]);
+    let http_client = reqwest::Client::new();
+    for ext in
+        crate::infrastructure::extensions::native::build_native_extensions(config, &http_client)
+    {
+        ext_registry.register(ext);
+    }
+    ext_registry
+}
+
 /// Register extension tools, rejecting any that shadow core tools.
 pub fn register_extension_tools(
     registry: &mut crate::infrastructure::tools::registry::ToolRegistryImpl,

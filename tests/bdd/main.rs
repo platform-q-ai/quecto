@@ -544,6 +544,10 @@ pub struct QuectoWorld {
     pub ext_fingerprint_a: Option<std::collections::HashMap<PathBuf, (std::time::SystemTime, u64)>>,
     /// Fingerprint B for comparison
     pub ext_fingerprint_b: Option<std::collections::HashMap<PathBuf, (std::time::SystemTime, u64)>>,
+    /// Native extension under test (Debug-opaque)
+    pub native_extension: Option<DebugExtension>,
+    /// Built native extensions from config (Debug-opaque)
+    pub native_extensions_built: Option<Vec<DebugExtension>>,
     /// Custom config path for --config flag scenarios
     pub custom_config_path: Option<String>,
     /// Token estimation: input string for estimate_tokens scenarios
