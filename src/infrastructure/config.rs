@@ -320,6 +320,9 @@ impl Config {
         if let Some(v) = env.get("QUECTO_PROVIDERS_ANTHROPIC_API_KEY") {
             config.providers.anthropic.api_key = v.clone();
         }
+        if let Some(v) = env.get("QUECTO_TOOLS_WEB_BRAVE_API_KEY") {
+            config.tools.web.brave.api_key = v.clone();
+        }
     }
 
     /// Resolve the workspace path, expanding `~` to the user's home directory.

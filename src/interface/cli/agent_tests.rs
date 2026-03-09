@@ -299,7 +299,7 @@ fn test_agent_max_iterations_absent_is_none() {
 fn test_build_agent_provider_openai_only() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config = config_from_str(r#"{"providers":{"openai":{"api_key":"sk-test-key"}}}"#);
-    let result = build_agent_provider(&config, tmp.path());
+    let result = build_agent_provider(&config, tmp.path(), &reqwest::Client::new());
     assert!(result.is_ok());
 }
 
@@ -307,7 +307,7 @@ fn test_build_agent_provider_openai_only() {
 fn test_build_agent_provider_anthropic_only() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config = config_from_str(r#"{"providers":{"anthropic":{"api_key":"sk-ant-test-key"}}}"#);
-    let result = build_agent_provider(&config, tmp.path());
+    let result = build_agent_provider(&config, tmp.path(), &reqwest::Client::new());
     assert!(result.is_ok());
 }
 
@@ -317,7 +317,7 @@ fn test_build_agent_provider_both_providers() {
     let config = config_from_str(
         r#"{"providers":{"openai":{"api_key":"sk-test"},"anthropic":{"api_key":"sk-ant-test"}}}"#,
     );
-    let result = build_agent_provider(&config, tmp.path());
+    let result = build_agent_provider(&config, tmp.path(), &reqwest::Client::new());
     assert!(result.is_ok());
 }
 
@@ -326,7 +326,7 @@ fn test_build_agent_provider_no_keys() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config =
         config_from_str(r#"{"providers":{"openai":{"api_key":""},"anthropic":{"api_key":""}}}"#);
-    let result = build_agent_provider(&config, tmp.path());
+    let result = build_agent_provider(&config, tmp.path(), &reqwest::Client::new());
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("no LLM providers"));
 }
@@ -337,7 +337,7 @@ fn test_build_agent_provider_rejects_unapproved_api_base_host() {
     let config = config_from_str(
         r#"{"providers":{"openai":{"api_key":"sk-test","api_base":"https://custom.openai.com/v1"}}}"#,
     );
-    let result = build_agent_provider(&config, tmp.path());
+    let result = build_agent_provider(&config, tmp.path(), &reqwest::Client::new());
     assert!(result.is_err());
     assert!(
         result
@@ -362,7 +362,7 @@ fn test_build_agent_provider_with_credential_store() {
         .unwrap();
 
     let config = config_from_str(r#"{"providers":{"openai":{"api_key":""}}}"#);
-    let result = build_agent_provider(&config, tmp.path());
+    let result = build_agent_provider(&config, tmp.path(), &reqwest::Client::new());
     assert!(result.is_ok());
 }
 

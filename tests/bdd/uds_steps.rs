@@ -48,8 +48,8 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
     )
     .map_err(|e| format!("failed to load config: {e}"))?;
 
-    let provider =
-        build_agent_provider(&config, base).map_err(|e| format!("provider error: {e}"))?;
+    let provider = build_agent_provider(&config, base, &reqwest::Client::new())
+        .map_err(|e| format!("provider error: {e}"))?;
 
     let workspace = std::path::PathBuf::from(config.workspace_path());
     let model = config.agents.defaults.model.clone();

@@ -307,7 +307,9 @@ pub(crate) fn build_agent_from_config(
         }
     };
 
-    let provider = match build_agent_provider(&config, base_dir) {
+    let http_client = crate::interface::shared::build_http_client();
+
+    let provider = match build_agent_provider(&config, base_dir, &http_client) {
         Ok(p) => p,
         Err(msg) => {
             stderr.push_str(&format!("{}\n", msg));
@@ -357,8 +359,11 @@ pub(crate) fn build_agent_from_config(
     crate::interface::shared::register_workflow_tool(&mut registry, &config.workflow);
 
     // Discover script extensions + register native extensions (config-gated).
-    let ext_registry =
-        crate::interface::shared::discover_and_register_extensions(&config, &extensions_dir);
+    let ext_registry = crate::interface::shared::discover_and_register_extensions(
+        &config,
+        &extensions_dir,
+        &http_client,
+    );
     let extension_prompt_snippets = ext_registry.system_prompt_snippets();
     crate::interface::shared::register_extension_tools(&mut registry, &ext_registry);
 
@@ -608,6 +613,7 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
 pub fn build_agent_provider(
     config: &Config,
     base_dir: &std::path::Path,
+    http_client: &reqwest::Client,
 ) -> Result<Arc<dyn LlmProvider>, String> {
     let store = CredentialStore::new(base_dir);
 
@@ -618,9 +624,6 @@ pub fn build_agent_provider(
         .map_err(|e| format!("failed to create runtime for token refresh: {}", e))?;
 
     let mut provider_list: Vec<Arc<dyn crate::domain::provider::LlmProvider>> = Vec::new();
-
-    // Shared HTTP client for all providers — avoids duplicate connection pools and TLS contexts.
-    let http_client = reqwest::Client::new();
     let store_arc = Arc::new(CredentialStore::new(base_dir));
     let refresh_fn = crate::interface::shared::make_oauth_refresh_fn();
 
@@ -640,7 +643,7 @@ pub fn build_agent_provider(
         } else {
             Some(config.providers.openai.api_base.clone())
         };
-        let inner = build_single_provider("openai", &openai_key, &openai_base, &http_client)?;
+        let inner = build_single_provider("openai", &openai_key, &openai_base, http_client)?;
         if is_oauth {
             let factory = crate::interface::shared::make_provider_factory(
                 "openai",
@@ -676,7 +679,7 @@ pub fn build_agent_provider(
             Some(config.providers.anthropic.api_base.clone())
         };
         let inner =
-            build_single_provider("anthropic", &anthropic_key, &anthropic_base, &http_client)?;
+            build_single_provider("anthropic", &anthropic_key, &anthropic_base, http_client)?;
         if is_oauth {
             let factory = crate::interface::shared::make_provider_factory(
                 "anthropic",

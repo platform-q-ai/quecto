@@ -20,7 +20,7 @@ use crate::domain::tool::Tool;
 pub struct NativeExtension {
     name: String,
     description: String,
-    tool: Arc<dyn Tool>,
+    tools: Vec<Arc<dyn Tool>>,
     system_prompt: Option<String>,
 }
 
@@ -29,12 +29,13 @@ impl std::fmt::Debug for NativeExtension {
         f.debug_struct("NativeExtension")
             .field("name", &self.name)
             .field("description", &self.description)
+            .field("tool_count", &self.tools.len())
             .finish()
     }
 }
 
 impl NativeExtension {
-    /// Create a new native extension wrapping a tool.
+    /// Create a new native extension wrapping a single tool.
     pub fn new(
         name: impl Into<String>,
         description: impl Into<String>,
@@ -43,7 +44,7 @@ impl NativeExtension {
         Self {
             name: name.into(),
             description: description.into(),
-            tool,
+            tools: vec![tool],
             system_prompt: None,
         }
     }
@@ -65,7 +66,7 @@ impl Extension for NativeExtension {
     }
 
     fn tools(&self) -> Vec<Arc<dyn Tool>> {
-        vec![self.tool.clone()]
+        self.tools.clone()
     }
 
     fn system_prompt_snippet(&self) -> Option<String> {
@@ -77,29 +78,28 @@ impl Extension for NativeExtension {
     }
 }
 
-/// Build native extensions from config.
+/// Build native extensions from web tool config.
 ///
 /// Currently supports:
-/// - `web_search` — registered when `tools.web.brave.enabled` or
-///   `tools.web.duckduckgo.enabled` is true in config.
+/// - `web_search` — registered when `brave.enabled` or
+///   `duckduckgo.enabled` is true in config.
 ///
 /// Returns a list of extensions to register. Caller is responsible for
 /// registering them via `ExtensionRegistry::register()` and/or
 /// `ToolRegistryImpl::register_extension()`.
 pub fn build_native_extensions(
-    config: &crate::infrastructure::config::Config,
+    web_config: &crate::infrastructure::config::WebToolConfig,
     http_client: &reqwest::Client,
 ) -> Vec<Arc<dyn Extension>> {
     let mut extensions: Vec<Arc<dyn Extension>> = Vec::new();
 
     // Web search: Brave or DuckDuckGo
-    if config.tools.web.brave.enabled || config.tools.web.duckduckgo.enabled {
-        let api_key =
-            if config.tools.web.brave.enabled && !config.tools.web.brave.api_key.is_empty() {
-                Some(config.tools.web.brave.api_key.clone())
-            } else {
-                None
-            };
+    if web_config.brave.enabled || web_config.duckduckgo.enabled {
+        let api_key = if web_config.brave.enabled && !web_config.brave.api_key.is_empty() {
+            Some(web_config.brave.api_key.clone())
+        } else {
+            None
+        };
 
         let tool = Arc::new(
             crate::infrastructure::tools::web_search::WebSearchTool::with_client(
@@ -255,48 +255,48 @@ mod tests {
 
     #[test]
     fn test_build_native_extensions_brave_enabled() {
-        let config = config_with_web(true, "test-key", false);
+        let web = web_config(true, "test-key", false);
         let client = reqwest::Client::new();
-        let exts = build_native_extensions(&config, &client);
+        let exts = build_native_extensions(&web, &client);
         assert_eq!(exts.len(), 1);
         assert_eq!(exts[0].name(), "web_search");
     }
 
     #[test]
     fn test_build_native_extensions_ddg_enabled() {
-        let config = config_with_web(false, "", true);
+        let web = web_config(false, "", true);
         let client = reqwest::Client::new();
-        let exts = build_native_extensions(&config, &client);
+        let exts = build_native_extensions(&web, &client);
         assert_eq!(exts.len(), 1);
         assert_eq!(exts[0].name(), "web_search");
     }
 
     #[test]
     fn test_build_native_extensions_both_disabled() {
-        let config = config_with_web(false, "", false);
+        let web = web_config(false, "", false);
         let client = reqwest::Client::new();
-        let exts = build_native_extensions(&config, &client);
+        let exts = build_native_extensions(&web, &client);
         assert!(exts.is_empty());
     }
 
     #[test]
     fn test_build_native_extensions_brave_enabled_no_key_falls_back() {
         // Brave enabled but no API key — should still register (DDG fallback)
-        let config = config_with_web(true, "", false);
+        let web = web_config(true, "", false);
         let client = reqwest::Client::new();
-        let exts = build_native_extensions(&config, &client);
+        let exts = build_native_extensions(&web, &client);
         assert_eq!(exts.len(), 1);
     }
 
-    fn config_with_web(
+    fn web_config(
         brave_enabled: bool,
         brave_key: &str,
         ddg_enabled: bool,
-    ) -> crate::infrastructure::config::Config {
-        let mut config = crate::infrastructure::config::Config::default();
-        config.tools.web.brave.enabled = brave_enabled;
-        config.tools.web.brave.api_key = brave_key.to_string();
-        config.tools.web.duckduckgo.enabled = ddg_enabled;
-        config
+    ) -> crate::infrastructure::config::WebToolConfig {
+        let mut web = crate::infrastructure::config::WebToolConfig::default();
+        web.brave.enabled = brave_enabled;
+        web.brave.api_key = brave_key.to_string();
+        web.duckduckgo.enabled = ddg_enabled;
+        web
     }
 }

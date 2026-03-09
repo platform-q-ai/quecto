@@ -858,7 +858,7 @@ fn given_config_web_disabled(world: &mut QuectoWorld) {
 fn when_build_native_extensions(world: &mut QuectoWorld) {
     let config = world.config.as_ref().expect("no config");
     let client = reqwest::Client::new();
-    let exts = build_native_extensions(config, &client);
+    let exts = build_native_extensions(&config.tools.web, &client);
     world.native_extensions_built = Some(exts.into_iter().map(DebugExtension).collect());
 }
 
