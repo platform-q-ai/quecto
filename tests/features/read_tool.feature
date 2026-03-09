@@ -49,25 +49,16 @@ Feature: ReadTool — Pi parity
     And the tool result image blocks should be empty
     And the tool result should contain "hello world"
 
-  # --- Image auto-resize ---
+  # --- Images sent as-is without client-side resize (#368) ---
 
   @done
-  Scenario: Large image is auto-resized and dimension note is returned
-    Given a large PNG image file "big.png" of size 3000x3000 exists in the workspace
+  Scenario: Image is sent as-is without client-side resize
+    Given a PNG image file "photo.png" exists in the workspace
     When the agent executes tool "read" with args:
-      | path | big.png |
+      | path | photo.png |
     Then the tool result should not be an error
     And the tool result image blocks should contain a "image/png" block
-    And the tool result should contain "resized"
-
-  @done
-  Scenario: Small image is not resized
-    Given a PNG image file "small.png" exists in the workspace
-    When the agent executes tool "read" with args:
-      | path | small.png |
-    Then the tool result should not be an error
-    And the tool result image blocks should contain a "image/png" block
-    And the tool result should not contain "resized"
+    And the tool result should contain "Read image file"
 
   # --- Truncation notice formatting ---
 
