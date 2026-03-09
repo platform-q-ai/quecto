@@ -336,12 +336,22 @@ fn then_tool_registry_ext_names_exclude(world: &mut QuectoWorld, name: String) {
 
 // ─── Config-driven native extension steps (#351) ─────────────────────────────
 
-fn config_with_web_search(brave_enabled: bool, brave_key: &str, ddg_enabled: bool) -> Config {
+fn config_with_web(
+    brave_enabled: bool,
+    brave_key: &str,
+    ddg_enabled: bool,
+    fetch_enabled: bool,
+) -> Config {
     let mut config = Config::default();
     config.tools.web.brave.enabled = brave_enabled;
     config.tools.web.brave.api_key = brave_key.to_string();
     config.tools.web.duckduckgo.enabled = ddg_enabled;
+    config.tools.web.fetch.enabled = fetch_enabled;
     config
+}
+
+fn config_with_web_search(brave_enabled: bool, brave_key: &str, ddg_enabled: bool) -> Config {
+    config_with_web(brave_enabled, brave_key, ddg_enabled, false)
 }
 
 #[given(expr = "a config with tools.web.brave.enabled = true and api_key = {string}")]
@@ -403,7 +413,12 @@ fn then_web_search_uses_brave(world: &mut QuectoWorld) {
         .native_extensions_built
         .as_ref()
         .expect("no native extensions built");
-    assert!(exts.iter().any(|e| e.name() == "web_search"));
+    assert!(exts.iter().any(|e| e.name() == "web"));
+    assert!(
+        exts.iter()
+            .flat_map(|e| e.0.tools())
+            .any(|t| t.definition().name.as_ref() == "web_search")
+    );
 }
 
 #[then("the web_search native extension should use DuckDuckGo backend")]
@@ -418,5 +433,122 @@ fn then_web_search_uses_ddg(world: &mut QuectoWorld) {
         .native_extensions_built
         .as_ref()
         .expect("no native extensions built");
-    assert!(exts.iter().any(|e| e.name() == "web_search"));
+    assert!(exts.iter().any(|e| e.name() == "web"));
+    assert!(
+        exts.iter()
+            .flat_map(|e| e.0.tools())
+            .any(|t| t.definition().name.as_ref() == "web_search")
+    );
+}
+
+// ─── Multi-tool native extension steps (#364) ────────────────────────────────
+
+#[given(expr = "a native extension named {string} with tools {string} and {string}")]
+fn given_native_ext_multi_tool(
+    world: &mut QuectoWorld,
+    name: String,
+    tool1: String,
+    tool2: String,
+) {
+    let t1: Arc<dyn Tool> = Arc::new(DummyTool {
+        name: tool1,
+        description: "tool one".to_string(),
+    });
+    let t2: Arc<dyn Tool> = Arc::new(DummyTool {
+        name: tool2,
+        description: "tool two".to_string(),
+    });
+    let ext = NativeExtension::with_tools(name, "multi-tool ext", vec![t1, t2]);
+    world.native_extension = Some(DebugExtension(Arc::new(ext)));
+}
+
+#[then(expr = "the native extension should provide {int} tools")]
+fn then_native_ext_tool_count_multi(world: &mut QuectoWorld, expected: i32) {
+    let ext = world
+        .native_extension
+        .as_ref()
+        .expect("no native extension");
+    assert_eq!(ext.0.tools().len(), expected as usize);
+}
+
+// ─── WebFetchTool config-gating steps (#364) ─────────────────────────────────
+
+#[given("a config with tools.web.fetch.enabled = true")]
+fn given_config_fetch_enabled(world: &mut QuectoWorld) {
+    world.config = Some(config_with_web(false, "", false, true));
+}
+
+#[given("a config with tools.web.fetch.enabled = false")]
+fn given_config_fetch_disabled(world: &mut QuectoWorld) {
+    world.config = Some(config_with_web(false, "", false, false));
+}
+
+#[given(
+    expr = "a config with tools.web.brave.enabled = true and api_key = {string} and fetch.enabled = true"
+)]
+fn given_config_brave_and_fetch(world: &mut QuectoWorld, api_key: String) {
+    world.config = Some(config_with_web(true, &api_key, false, true));
+}
+
+#[given(
+    expr = "a config with tools.web.brave.enabled = true and api_key = {string} and fetch.enabled = false"
+)]
+fn given_config_brave_no_fetch(world: &mut QuectoWorld, api_key: String) {
+    world.config = Some(config_with_web(true, &api_key, false, false));
+}
+
+#[given("a config with tools.web.fetch.enabled = true and search disabled")]
+fn given_config_fetch_only(world: &mut QuectoWorld) {
+    world.config = Some(config_with_web(false, "", false, true));
+}
+
+#[given("config with tools.web.fetch.enabled = false")]
+fn given_config_fetch_also_disabled(world: &mut QuectoWorld) {
+    // Modify existing config to also disable fetch
+    let config = world.config.as_mut().expect("no config");
+    config.tools.web.fetch.enabled = false;
+}
+
+#[then(expr = "the built native extension {string} should provide tool {string}")]
+fn then_built_ext_provides_tool(world: &mut QuectoWorld, ext_name: String, tool_name: String) {
+    let exts = world
+        .native_extensions_built
+        .as_ref()
+        .expect("no native extensions built");
+    let ext = exts
+        .iter()
+        .find(|e| e.name() == ext_name)
+        .unwrap_or_else(|| panic!("extension '{}' not found", ext_name));
+    let tools = ext.0.tools();
+    assert!(
+        tools
+            .iter()
+            .any(|t| t.definition().name.as_ref() == tool_name),
+        "extension '{}' does not provide tool '{}', has: {:?}",
+        ext_name,
+        tool_name,
+        tools
+            .iter()
+            .map(|t| t.definition().name.to_string())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[then(expr = "there should be no built native extension providing tool {string}")]
+fn then_no_ext_provides_tool(world: &mut QuectoWorld, tool_name: String) {
+    let exts = world
+        .native_extensions_built
+        .as_ref()
+        .expect("no native extensions built");
+    for ext in exts.iter() {
+        let tools = ext.0.tools();
+        assert!(
+            !tools
+                .iter()
+                .any(|t| t.definition().name.as_ref() == tool_name),
+            "extension '{}' unexpectedly provides tool '{}'",
+            ext.name(),
+            tool_name
+        );
+    }
 }

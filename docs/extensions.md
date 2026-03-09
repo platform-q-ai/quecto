@@ -15,9 +15,12 @@ Native extensions are Rust implementations compiled into the Quecto binary. They
 
 ### Available native extensions
 
-| Extension | Config key | Description |
-|-----------|-----------|-------------|
+| Tool | Config key | Description |
+|------|-----------|-------------|
 | `web_search` | `tools.web.brave` / `tools.web.duckduckgo` | Search the web via Brave Search API or DuckDuckGo |
+| `web_fetch` | `tools.web.fetch` | Fetch a URL and return its content as readable text |
+
+When any web tool is enabled, they are registered together as a single `"web"` extension.
 
 ### Enabling web_search
 
@@ -53,6 +56,49 @@ Or use DuckDuckGo (no API key required):
 When both are enabled with a Brave API key, Brave is preferred. If Brave is enabled but no API key is set, DuckDuckGo is used as a fallback.
 
 The API key can also be provided via the `BRAVE_API_KEY` environment variable.
+
+### Enabling web_fetch
+
+```json
+{
+  "tools": {
+    "web": {
+      "fetch": {
+        "enabled": true,
+        "max_response_kb": 32
+      }
+    }
+  }
+}
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `enabled` | `false` | Enable the `web_fetch` tool |
+| `max_response_kb` | `32` | Maximum output size in KB returned to the LLM |
+
+`web_fetch` strips HTML tags by default to produce clean text and save tokens. Pass `raw: true` in the tool call to get the original body (useful for JSON APIs or markdown files).
+
+Safety limits:
+- Only `http://` and `https://` URLs are allowed
+- 10-second request timeout
+- 5 MB raw download cap before text extraction
+- Output truncated to `max_response_kb`
+
+### Enabling both
+
+```json
+{
+  "tools": {
+    "web": {
+      "brave": { "enabled": true, "api_key": "YOUR_KEY" },
+      "fetch": { "enabled": true }
+    }
+  }
+}
+```
+
+This registers a single `"web"` extension with both `web_search` and `web_fetch` tools. The agent can search for information and then fetch full page content from the results.
 
 ### Behavior
 

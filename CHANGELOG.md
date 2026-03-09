@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **`web_fetch` tool** (#364): Fetch a URL and return content as readable text. Strips HTML by default; `raw: true` for JSON/markdown. Config: `tools.web.fetch.enabled`.
+- **SSRF protection**: `web_fetch` rejects requests to loopback, link-local, private RFC-1918, and cloud metadata addresses.
+- **Multi-tool native extensions**: `NativeExtension::with_tools()` constructor for extensions with multiple tools.
+
+### Changed
+- Web tools (`web_search`, `web_fetch`) consolidated into single `"web"` extension (was `"web_search"`). Each tool independently config-gated.
+
 ## 0.19.0 (2026-03-09)
 
 ### Extension system migration (Phases 1–4)
