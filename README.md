@@ -669,7 +669,7 @@ Tool binary cache (auto-downloaded `rg`, `fd`):
 | [Extensions](docs/extensions.md) | Add custom tools via native extensions (config-gated) or UDS extensions (external processes) |
 
 ## Tech stack
-Rust 2024, Tokio, reqwest+rustls, serde/serde_json/serde_yaml, uuid, chrono, tracing, dirs, thiserror, similar, base64, sha2, image, flate2, tar, rand, urlencoding, unicode-normalization. Dev: cucumber 0.21, futures, tempfile, wiremock 0.6, regex.
+Rust 2024, Tokio, reqwest+rustls, serde/serde_json, uuid, tracing, dirs, thiserror, similar, base64, sha2, flate2, tar, rand, urlencoding, unicode-normalization. Dev: cucumber 0.21, futures, tempfile, wiremock 0.6, regex.
 
 ## License
 

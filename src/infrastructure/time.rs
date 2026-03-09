@@ -17,31 +17,41 @@ pub fn unix_timestamp_secs() -> i64 {
 ///
 /// Output example: `"Saturday, March 1, 2026 at 10:30:15 AM GMT"`
 ///
-/// Uses the system `date` command for portable local-time formatting.
-/// Falls back to a UTC-only format if the command is unavailable.
+/// Uses the system `date` command for local-time formatting (with timezone).
+/// Falls back to a pure-Rust UTC-only format if `date` is unavailable or
+/// produces unexpected output.
+///
+/// **Note:** Spawns a child process (`/usr/bin/date`). Call once per session,
+/// not on a hot path.
 pub fn format_local_datetime() -> String {
-    // GNU date format: "Saturday, March 1, 2026 at 10:30:15 AM GMT"
-    if let Ok(output) = std::process::Command::new("date")
+    // Use absolute path to avoid PATH-based injection.
+    // Format uses GNU %-d (no leading zero); BSD date may not support it.
+    if let Ok(output) = std::process::Command::new("/usr/bin/date")
+        .env_clear()
+        .env("TZ", std::env::var("TZ").unwrap_or_default())
+        .env("LANG", std::env::var("LANG").unwrap_or_default())
         .arg("+%A, %B %-d, %Y at %I:%M:%S %p %Z")
         .output()
     {
         if output.status.success() {
             let s = String::from_utf8_lossy(&output.stdout);
             let trimmed = s.trim();
-            if !trimmed.is_empty() {
+            // Guard: reject output containing literal '%' (BSD didn't expand the format)
+            if !trimmed.is_empty() && !trimmed.contains('%') {
                 return trimmed.to_string();
             }
         }
     }
 
     // Fallback: UTC-only, no local timezone
-    format_utc_fallback()
+    format_utc_datetime(unix_timestamp_secs())
 }
 
-/// Simple UTC fallback when `date` command is unavailable.
-fn format_utc_fallback() -> String {
-    let secs = unix_timestamp_secs();
-
+/// Format a UTC date string from epoch seconds.
+///
+/// Used as fallback when the system `date` command is unavailable,
+/// and exposed for deterministic testing.
+fn format_utc_datetime(secs: i64) -> String {
     // Convert epoch seconds to date components (UTC)
     let days = secs / 86400;
     let time_of_day = secs % 86400;
@@ -210,7 +220,7 @@ mod tests {
 
     #[test]
     fn test_utc_fallback_format() {
-        let formatted = format_utc_fallback();
+        let formatted = format_utc_datetime(unix_timestamp_secs());
         assert!(
             formatted.contains("UTC"),
             "fallback should contain UTC, got: {}",
@@ -219,6 +229,37 @@ mod tests {
         assert!(
             formatted.contains(" at "),
             "fallback should contain ' at ', got: {}",
+            formatted
+        );
+    }
+
+    #[test]
+    fn test_utc_datetime_epoch_zero() {
+        let formatted = format_utc_datetime(0);
+        assert_eq!(
+            formatted, "Thursday, January 1 1970 at 12:00:00 AM UTC",
+            "epoch zero should be midnight Jan 1 1970"
+        );
+    }
+
+    #[test]
+    fn test_utc_datetime_leap_day() {
+        // 2000-02-29 00:00:00 UTC = 951782400
+        let formatted = format_utc_datetime(951_782_400);
+        assert!(
+            formatted.starts_with("Tuesday, February 29 2000"),
+            "leap day 2000-02-29 should be Tuesday, got: {}",
+            formatted
+        );
+    }
+
+    #[test]
+    fn test_utc_datetime_noon() {
+        // 1970-01-01 12:00:00 UTC = 43200
+        let formatted = format_utc_datetime(43200);
+        assert!(
+            formatted.contains("12:00:00 PM"),
+            "noon should be 12:00:00 PM, got: {}",
             formatted
         );
     }
