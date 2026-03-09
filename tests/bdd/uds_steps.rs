@@ -1960,6 +1960,31 @@ fn then_client_received_response_command_success(
     );
 }
 
+#[then(expr = "client {int} should have received a response command {string} with success false")]
+fn then_client_received_response_command_failure(
+    world: &mut QuectoWorld,
+    client_id: u32,
+    command: String,
+) {
+    execute_multi_client_uds(world);
+    let events = world
+        .mc_client_events
+        .get(&client_id)
+        .cloned()
+        .unwrap_or_default();
+    let found = events.iter().any(|l| {
+        let v: serde_json::Value = match serde_json::from_str(l) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        v["type"] == "response" && v["command"] == command && v["success"] == false
+    });
+    assert!(
+        found,
+        "expected client {client_id} to receive response command {command:?} with success=false\nevents: {events:#?}"
+    );
+}
+
 // ─── Real-LLM UDS executor ───────────────────────────────────────────────────
 //
 // Uses real OAuth credentials and a real socket bind.  Sends commands
@@ -2195,4 +2220,123 @@ fn execute_real_llm_uds(world: &mut QuectoWorld) {
         .agent_stderr
         .push_str(&format!("quecto-agent-socket: {}\n", socket_path.display()));
     world._uds_socket_path = Some(socket_path);
+}
+
+// ─── UDS extension protocol steps (#352) ──────────────────────────────────────
+
+#[when(expr = "client {int} sends register_tools with tool {string} described as {string}")]
+fn when_client_sends_register_tools(
+    world: &mut QuectoWorld,
+    client_id: u32,
+    tool_name: String,
+    description: String,
+) {
+    let cmd = serde_json::json!({
+        "type": "register_tools",
+        "id": format!("rt-{client_id}"),
+        "tools": [{"name": tool_name, "description": description}]
+    });
+    world
+        .mc_client_commands
+        .entry(client_id)
+        .or_default()
+        .push(cmd.to_string());
+}
+
+#[when(expr = "client {int} sends unregister_tools with tool {string}")]
+fn when_client_sends_unregister_tools(world: &mut QuectoWorld, client_id: u32, tool_name: String) {
+    let cmd = serde_json::json!({
+        "type": "unregister_tools",
+        "id": format!("ut-{client_id}"),
+        "tools": [tool_name]
+    });
+    world
+        .mc_client_commands
+        .entry(client_id)
+        .or_default()
+        .push(cmd.to_string());
+}
+
+fn find_ge_response(events: &[String], id_prefix: &str) -> Option<serde_json::Value> {
+    events.iter().find_map(|line| {
+        let ev: serde_json::Value = serde_json::from_str(line).ok()?;
+        if ev["type"].as_str() == Some("response")
+            && ev["command"].as_str() == Some("get_extensions")
+            && ev["success"].as_bool() == Some(true)
+            && ev["id"]
+                .as_str()
+                .is_some_and(|id| id.starts_with(id_prefix))
+        {
+            Some(ev)
+        } else {
+            None
+        }
+    })
+}
+
+#[then(expr = "the post-register get_extensions response should list extension {string}")]
+fn then_post_register_lists_ext(world: &mut QuectoWorld, name: String) {
+    execute_multi_client_uds(world);
+    let events = world.mc_client_events.get(&1).expect("no client 1 events");
+    let resp = find_ge_response(events, "ge-reg").expect("no ge-reg response");
+    let exts = resp["data"]["extensions"]
+        .as_array()
+        .expect("no extensions");
+    assert!(
+        exts.iter().any(|e| e["name"].as_str() == Some(&name)),
+        "'{name}' not in {exts:?}"
+    );
+}
+
+#[then(expr = "the post-unregister get_extensions response should have {int} extensions")]
+fn then_post_unregister_empty(world: &mut QuectoWorld, count: u32) {
+    execute_multi_client_uds(world);
+    let events = world.mc_client_events.get(&1).expect("no client 1 events");
+    let resp = find_ge_response(events, "ge-unreg").expect("no ge-unreg response");
+    let exts = resp["data"]["extensions"]
+        .as_array()
+        .expect("no extensions");
+    assert_eq!(exts.len(), count as usize);
+}
+
+#[then(expr = "the post-disconnect get_extensions response should have {int} extensions")]
+fn then_post_disconnect_empty(world: &mut QuectoWorld, count: u32) {
+    execute_multi_client_uds(world);
+    let events = world.mc_client_events.get(&3).expect("no client 3 events");
+    let resp = find_ge_response(events, "ge-disc").expect("no ge-disc response");
+    let exts = resp["data"]["extensions"]
+        .as_array()
+        .expect("no extensions");
+    assert_eq!(exts.len(), count as usize);
+}
+
+#[then(expr = "the post-multi get_extensions response should list extension {string}")]
+fn then_post_multi_lists_ext(world: &mut QuectoWorld, name: String) {
+    execute_multi_client_uds(world);
+    let events = world.mc_client_events.get(&2).expect("no client 2 events");
+    let resp = find_ge_response(events, "ge-multi").expect("no ge-multi response");
+    let exts = resp["data"]["extensions"]
+        .as_array()
+        .expect("no extensions");
+    assert!(
+        exts.iter().any(|e| e["name"].as_str() == Some(&name)),
+        "'{name}' not in {exts:?}"
+    );
+}
+
+#[then(
+    expr = "the post-redef get_extensions response should list extension {string} with description {string}"
+)]
+fn then_post_redef_desc(world: &mut QuectoWorld, name: String, desc: String) {
+    execute_multi_client_uds(world);
+    let events = world.mc_client_events.get(&1).expect("no client 1 events");
+    let resp = find_ge_response(events, "ge-redef").expect("no ge-redef response");
+    let exts = resp["data"]["extensions"]
+        .as_array()
+        .expect("no extensions");
+    let ext = exts
+        .iter()
+        .find(|e| e["name"].as_str() == Some(&name))
+        .unwrap_or_else(|| panic!("'{name}' not in {exts:?}"));
+    assert_eq!(ext["description"].as_str(), Some(desc.as_str()));
 }

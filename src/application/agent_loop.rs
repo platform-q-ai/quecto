@@ -156,6 +156,21 @@ impl AgentLoopImpl {
         self.tool_registry.replace_extensions(tools);
     }
 
+    /// Register a single extension tool (e.g. from a UDS client).
+    pub fn register_extension_tool(&mut self, tool: std::sync::Arc<dyn crate::domain::tool::Tool>) {
+        crate::domain::tool::ToolRegistry::register_extension(&mut *self.tool_registry, tool);
+    }
+
+    /// Unregister a single extension tool by name (e.g. on UDS client disconnect).
+    pub fn unregister_extension_tool(&mut self, name: &str) {
+        crate::domain::tool::ToolRegistry::unregister_extension(&mut *self.tool_registry, name);
+    }
+
+    /// Return all tool definitions (for core name lookups).
+    pub fn tool_definitions(&self) -> &[crate::domain::tool::ToolDefinition] {
+        self.tool_registry.definitions()
+    }
+
     /// Enable or disable incremental streaming for LLM calls.
     pub fn set_streaming(&mut self, enabled: bool) {
         self.streaming = enabled;

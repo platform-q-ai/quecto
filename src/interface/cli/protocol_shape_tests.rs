@@ -275,3 +275,187 @@ fn roundtrip_parse_streaming_behavior_follow_up() {
         _ => panic!("expected FollowUp streaming behavior"),
     }
 }
+
+// ─── Extension commands (moved from protocol.rs inline tests) ─────────────
+
+#[test]
+fn test_parse_get_extensions_command() {
+    let json = r#"{"type":"get_extensions"}"#;
+    let cmd: AgentCommand = serde_json::from_str(json).unwrap();
+    assert_eq!(cmd.type_name(), "get_extensions");
+    assert!(cmd.id().is_none());
+}
+
+#[test]
+fn test_parse_get_extensions_with_id() {
+    let json = r#"{"type":"get_extensions","id":"ge-1"}"#;
+    let cmd: AgentCommand = serde_json::from_str(json).unwrap();
+    assert_eq!(cmd.id(), Some("ge-1"));
+    assert_eq!(cmd.type_name(), "get_extensions");
+}
+
+#[test]
+fn test_parse_reload_extensions_command() {
+    let json = r#"{"type":"reload_extensions"}"#;
+    let cmd: AgentCommand = serde_json::from_str(json).unwrap();
+    assert_eq!(cmd.type_name(), "reload_extensions");
+    assert!(cmd.id().is_none());
+}
+
+#[test]
+fn test_parse_reload_extensions_with_id() {
+    let json = r#"{"type":"reload_extensions","id":"re-1"}"#;
+    let cmd: AgentCommand = serde_json::from_str(json).unwrap();
+    assert_eq!(cmd.id(), Some("re-1"));
+    assert_eq!(cmd.type_name(), "reload_extensions");
+}
+
+#[test]
+fn test_extensions_changed_event_serializes() {
+    let ev = AgentEvent::ExtensionsChanged {
+        extensions: vec![
+            ExtensionInfo {
+                name: "greet".to_string(),
+                description: "Greet the user".to_string(),
+            },
+            ExtensionInfo {
+                name: "weather".to_string(),
+                description: "Get weather".to_string(),
+            },
+        ],
+    };
+    let json = ev.to_json_line();
+    assert!(json.contains("\"type\":\"extensions_changed\""));
+    assert!(json.contains("\"greet\""));
+    assert!(json.contains("\"weather\""));
+}
+
+#[test]
+fn test_extensions_changed_event_empty_list() {
+    let ev = AgentEvent::ExtensionsChanged { extensions: vec![] };
+    let json = ev.to_json_line();
+    assert!(json.contains("\"extensions\":[]"));
+}
+
+// ─── UDS extension protocol commands (#352) ───────────────────────────────
+
+#[test]
+fn register_tools_command_parses() {
+    let json = r#"{"type":"register_tools","id":"rt-1","tools":[{"name":"weather","description":"Get weather"}]}"#;
+    let cmd: AgentCommand = serde_json::from_str(json).unwrap();
+    assert_eq!(cmd.type_name(), "register_tools");
+    assert_eq!(cmd.id(), Some("rt-1"));
+    match cmd {
+        AgentCommand::RegisterTools { tools, .. } => {
+            assert_eq!(tools.len(), 1);
+            assert_eq!(tools[0].name, "weather");
+            assert_eq!(tools[0].description, "Get weather");
+        }
+        _ => panic!("expected RegisterTools"),
+    }
+}
+
+#[test]
+fn register_tools_with_schema_parses() {
+    let json = r#"{"type":"register_tools","tools":[{"name":"weather","description":"Get weather","parametersSchema":"{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"}}}"}]}"#;
+    let cmd: AgentCommand = serde_json::from_str(json).unwrap();
+    match cmd {
+        AgentCommand::RegisterTools { tools, .. } => {
+            assert!(tools[0].parameters_schema.contains("city"));
+        }
+        _ => panic!("expected RegisterTools"),
+    }
+}
+
+#[test]
+fn register_tools_default_schema() {
+    let json = r#"{"type":"register_tools","tools":[{"name":"test","description":"Test"}]}"#;
+    let cmd: AgentCommand = serde_json::from_str(json).unwrap();
+    match cmd {
+        AgentCommand::RegisterTools { tools, .. } => {
+            assert_eq!(tools[0].parameters_schema, r#"{"type":"object"}"#);
+        }
+        _ => panic!("expected RegisterTools"),
+    }
+}
+
+#[test]
+fn unregister_tools_command_parses() {
+    let json = r#"{"type":"unregister_tools","id":"ut-1","tools":["weather"]}"#;
+    let cmd: AgentCommand = serde_json::from_str(json).unwrap();
+    assert_eq!(cmd.type_name(), "unregister_tools");
+    match cmd {
+        AgentCommand::UnregisterTools { tools, .. } => {
+            assert_eq!(tools, vec!["weather"]);
+        }
+        _ => panic!("expected UnregisterTools"),
+    }
+}
+
+#[test]
+fn tool_result_command_parses() {
+    let json = r#"{"type":"tool_result","toolCallId":"call-1","content":"22°C","isError":false}"#;
+    let cmd: AgentCommand = serde_json::from_str(json).unwrap();
+    assert_eq!(cmd.type_name(), "tool_result");
+    assert!(cmd.id().is_none());
+    match cmd {
+        AgentCommand::ToolResult {
+            tool_call_id,
+            content,
+            is_error,
+        } => {
+            assert_eq!(tool_call_id, "call-1");
+            assert_eq!(content, "22°C");
+            assert!(!is_error);
+        }
+        _ => panic!("expected ToolResult"),
+    }
+}
+
+#[test]
+fn tool_result_error_parses() {
+    let json =
+        r#"{"type":"tool_result","toolCallId":"call-2","content":"not found","isError":true}"#;
+    let cmd: AgentCommand = serde_json::from_str(json).unwrap();
+    match cmd {
+        AgentCommand::ToolResult { is_error, .. } => assert!(is_error),
+        _ => panic!("expected ToolResult"),
+    }
+}
+
+#[test]
+fn execute_tool_event_serializes() {
+    let ev = AgentEvent::ExecuteTool {
+        tool_call_id: "call-1".into(),
+        tool_name: "weather".into(),
+        arguments: r#"{"city":"London"}"#.into(),
+    };
+    let j = round_trip(&ev);
+    assert_eq!(j["type"], "execute_tool");
+    assert_eq!(j["toolCallId"], "call-1");
+    assert_eq!(j["toolName"], "weather");
+    assert_eq!(j["arguments"], r#"{"city":"London"}"#);
+}
+
+#[test]
+fn execute_tool_event_roundtrip() {
+    let ev = AgentEvent::ExecuteTool {
+        tool_call_id: "c1".into(),
+        tool_name: "test".into(),
+        arguments: "{}".into(),
+    };
+    let json = ev.to_json_line();
+    let parsed: AgentEvent = serde_json::from_str(&json).unwrap();
+    match parsed {
+        AgentEvent::ExecuteTool {
+            tool_call_id,
+            tool_name,
+            arguments,
+        } => {
+            assert_eq!(tool_call_id, "c1");
+            assert_eq!(tool_name, "test");
+            assert_eq!(arguments, "{}");
+        }
+        _ => panic!("expected ExecuteTool"),
+    }
+}

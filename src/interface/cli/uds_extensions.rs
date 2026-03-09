@@ -7,29 +7,49 @@ use super::uds::{DispatchCtx, emit_event_to_broadcast_or_writer};
 
 /// Build the list of registered extension tools for `get_extensions` responses.
 ///
-/// Returns only extensions that are actually registered in the agent's tool
-/// registry (shadows of core tools are rejected during registration).
+/// Includes tools from both the `ExtensionRegistry` (script/native) and
+/// UDS-registered tools (from `register_tools` protocol commands).
 pub(super) fn build_extension_list(ctx: &DispatchCtx<'_>) -> Vec<serde_json::Value> {
     let ext_names: std::collections::HashSet<String> = ctx
         .agent
         .tool_registry_extension_names()
         .into_iter()
         .collect();
-    let Some(ref ext_reg) = ctx.ext_registry else {
+    if ext_names.is_empty() {
         return vec![];
-    };
-    let reg = ext_reg.lock().unwrap_or_else(|e| e.into_inner());
-    reg.all_tools()
-        .iter()
-        .filter(|t| ext_names.contains(t.definition().name.as_ref()))
-        .map(|t| {
-            let def = t.definition();
-            serde_json::json!({
+    }
+
+    let mut covered: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut result = Vec::new();
+
+    // Include tools from the ExtensionRegistry (script/native extensions).
+    if let Some(ref ext_reg) = ctx.ext_registry {
+        let reg = ext_reg.lock().unwrap_or_else(|e| e.into_inner());
+        for t in reg.all_tools() {
+            let name = t.definition().name.to_string();
+            if ext_names.contains(&name) {
+                let def = t.definition();
+                result.push(serde_json::json!({
+                    "name": def.name.as_ref(),
+                    "description": def.description.as_ref(),
+                }));
+                covered.insert(name);
+            }
+        }
+    }
+
+    // Include UDS-registered tools not already covered.
+    for def in ctx.agent.tool_definitions() {
+        let name = def.name.to_string();
+        if ext_names.contains(&name) && !covered.contains(&name) {
+            result.push(serde_json::json!({
                 "name": def.name.as_ref(),
                 "description": def.description.as_ref(),
-            })
-        })
-        .collect()
+            }));
+        }
+    }
+
+    result
 }
 
 /// Handle `reload_extensions`: re-scan disk, sync tool registry, broadcast event.

@@ -92,6 +92,16 @@ pub trait ToolRegistry: Send + Sync {
     /// ones, rejecting any that shadow core tools. Default: no-op.
     fn replace_extensions(&mut self, _tools: Vec<std::sync::Arc<dyn Tool>>) {}
 
+    /// Register a single extension tool.
+    ///
+    /// Rejects tools that shadow core tool names. Default: no-op.
+    fn register_extension(&mut self, _tool: std::sync::Arc<dyn Tool>) {}
+
+    /// Unregister a single extension tool by name.
+    ///
+    /// No-op if the name is not an extension tool. Default: no-op.
+    fn unregister_extension(&mut self, _name: &str) {}
+
     /// Execute a tool by name with JSON arguments.
     fn execute(
         &self,

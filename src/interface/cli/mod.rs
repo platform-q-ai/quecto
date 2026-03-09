@@ -4,6 +4,7 @@ mod commands;
 pub mod protocol;
 pub mod uds;
 pub mod uds_cancel;
+mod uds_ext_protocol;
 mod uds_extensions;
 mod uds_multi;
 pub mod uds_session;

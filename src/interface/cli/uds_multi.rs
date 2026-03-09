@@ -23,6 +23,9 @@ use super::uds_session::{AgentSession, message_to_json};
 /// Maximum number of concurrent client connections.
 const MAX_CLIENTS: u32 = 64;
 
+/// Atomic counter for assigning unique client IDs (#352).
+static NEXT_CLIENT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 pub(super) struct MultiClientArgs {
@@ -47,10 +50,15 @@ pub(super) struct MultiClientArgs {
 /// A command line from a client.
 struct ClientCommand {
     line: String,
+    /// Unique client identifier for per-client tool routing (#352).
+    client_id: u64,
 }
 
 /// Sentinel: a client disconnected.
-struct ClientDisconnected;
+struct ClientDisconnected {
+    /// Which client disconnected (#352).
+    client_id: u64,
+}
 
 /// Messages from client reader tasks to the dispatch loop.
 enum ClientMessage {
@@ -62,6 +70,8 @@ enum ClientMessage {
 struct ClientGuard {
     live_clients: std::sync::Arc<std::sync::atomic::AtomicU32>,
     cmd_tx: tokio::sync::mpsc::Sender<ClientMessage>,
+    /// Unique client identifier for per-client tool tracking (#352).
+    client_id: u64,
 }
 
 impl Drop for ClientGuard {
@@ -72,7 +82,9 @@ impl Drop for ClientGuard {
         // exited, so the message is not needed.
         if let Err(e) = self
             .cmd_tx
-            .try_send(ClientMessage::Disconnected(ClientDisconnected))
+            .try_send(ClientMessage::Disconnected(ClientDisconnected {
+                client_id: self.client_id,
+            }))
         {
             tracing::debug!("disconnect sentinel not delivered: {e}");
         }
@@ -130,6 +142,7 @@ pub(super) async fn multi_client_loop(
                 std::sync::Arc::new(move |_count| {
                     let cmd = ClientMessage::Command(ClientCommand {
                         line: r#"{"type":"reload_extensions","id":"hot-reload"}"#.to_string(),
+                        client_id: 0, // system-generated command
                     });
                     // Use try_send (not blocking_send) since this runs inside
                     // an async context (tokio::spawn). Channel buffer is large
@@ -149,6 +162,7 @@ pub(super) async fn multi_client_loop(
 
     let mut null_writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin> =
         Box::new(tokio::io::sink());
+    let client_tool_registry = super::uds_ext_protocol::new_client_tool_registry();
     let mut ctx = DispatchCtx {
         agent: &mut agent,
         messages: &mut messages,
@@ -158,6 +172,8 @@ pub(super) async fn multi_client_loop(
         cancel_handle,
         broadcast_tx: Some(broadcast_tx),
         ext_registry,
+        client_tool_registry: client_tool_registry.clone(),
+        current_client_id: 0,
     };
 
     run_dispatch_loop(&mut ctx, cmd_rx, &live_clients, persist).await;
@@ -212,15 +228,19 @@ fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
                         continue;
                     }
                     live_clients.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let client_id =
+                        NEXT_CLIENT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let guard = ClientGuard {
                         live_clients: live_clients.clone(),
                         cmd_tx: cmd_tx.clone(),
+                        client_id,
                     };
                     let args = ClientHandlerArgs {
                         stream,
                         broadcast_rx: broadcast_tx.subscribe(),
                         cmd_tx: cmd_tx.clone(),
                         cancel_handle: cancel_handle.clone(),
+                        client_id,
                         _guard: guard,
                     };
                     tokio::spawn(async move { handle_client(args).await });
@@ -243,37 +263,53 @@ async fn run_dispatch_loop(
 ) {
     while let Some(client_msg) = cmd_rx.recv().await {
         match client_msg {
-            ClientMessage::Command(cmd) => match parse_line(&cmd.line) {
-                LineResult::LineTooLong => {
-                    let ev = AgentEvent::err(None, "parse_error", "line exceeds 1 MiB limit");
-                    emit_event_to_broadcast_or_writer(ctx, &ev).await;
-                }
-                LineResult::ParseError(e) if e.is_empty() => {}
-                LineResult::ParseError(_) => {
-                    // Suppress raw error content — broadcasting the parse error
-                    // from one client would leak its command content to all
-                    // connected clients.
-                    let ev = AgentEvent::Response {
-                        id: None,
-                        command: "parse_error".to_string(),
-                        success: false,
-                        data: None,
-                        error: Some("invalid JSON command".to_string()),
-                    };
-                    emit_event_to_broadcast_or_writer(ctx, &ev).await;
-                }
-                LineResult::Command(cmd) => {
-                    if dispatch_command(cmd, ctx).await {
-                        break;
+            ClientMessage::Command(cmd) => {
+                ctx.current_client_id = cmd.client_id;
+                match parse_line(&cmd.line) {
+                    LineResult::LineTooLong => {
+                        let ev = AgentEvent::err(None, "parse_error", "line exceeds 1 MiB limit");
+                        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+                    }
+                    LineResult::ParseError(e) if e.is_empty() => {}
+                    LineResult::ParseError(_) => {
+                        let ev = AgentEvent::Response {
+                            id: None,
+                            command: "parse_error".to_string(),
+                            success: false,
+                            data: None,
+                            error: Some("invalid JSON command".to_string()),
+                        };
+                        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+                    }
+                    LineResult::Command(parsed) => {
+                        if dispatch_command(parsed, ctx).await {
+                            break;
+                        }
                     }
                 }
-            },
-            ClientMessage::Disconnected(_) => {
+            }
+            ClientMessage::Disconnected(disc) => {
+                handle_disconnect(ctx, disc.client_id).await;
                 if !persist && live_clients.load(std::sync::atomic::Ordering::SeqCst) == 0 {
                     break;
                 }
             }
         }
+    }
+}
+
+/// Unregister tools owned by a disconnecting client (#352).
+async fn handle_disconnect(ctx: &mut DispatchCtx<'_>, client_id: u64) {
+    let removed =
+        super::uds_ext_protocol::handle_client_disconnect(client_id, &ctx.client_tool_registry);
+    if !removed.is_empty() {
+        for name in &removed {
+            ctx.agent.unregister_extension_tool(name);
+        }
+        let ext_names = ctx.agent.tool_registry_extension_names();
+        let changed =
+            super::uds_ext_protocol::build_extensions_changed_event(&ext_names, ctx.agent);
+        emit_event_to_broadcast_or_writer(ctx, &changed).await;
     }
 }
 
@@ -285,6 +321,8 @@ struct ClientHandlerArgs {
     broadcast_rx: tokio::sync::broadcast::Receiver<String>,
     cmd_tx: tokio::sync::mpsc::Sender<ClientMessage>,
     cancel_handle: CancelHandle,
+    /// Unique client identifier (#352).
+    client_id: u64,
     /// RAII guard — decrements `live_clients` and sends `Disconnected` on drop.
     _guard: ClientGuard,
 }
@@ -295,6 +333,7 @@ async fn handle_client(args: ClientHandlerArgs) {
         mut broadcast_rx,
         cmd_tx,
         cancel_handle,
+        client_id,
         _guard,
     } = args;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -342,7 +381,7 @@ async fn handle_client(args: ClientHandlerArgs) {
         if is_cancel_command(line.trim()) {
             fire_cancel(&cancel_handle);
         }
-        let msg = ClientMessage::Command(ClientCommand { line });
+        let msg = ClientMessage::Command(ClientCommand { line, client_id });
         if cmd_tx.send(msg).await.is_err() {
             break;
         }
