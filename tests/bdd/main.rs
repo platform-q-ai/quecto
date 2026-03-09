@@ -526,24 +526,7 @@ pub struct QuectoWorld {
     pub test_extension: Option<DebugExtension>,
     /// Extension registry for extension registry scenarios
     pub ext_registry: Option<quecto::infrastructure::extensions::registry::ExtensionRegistry>,
-    /// Extension manifest parse result
-    pub ext_manifest_result:
-        Option<Result<quecto::infrastructure::extensions::script::ExtensionManifest, String>>,
-    /// Extension manifest TOML source
-    pub ext_manifest_toml: Option<String>,
-    /// Script tool for script execution scenarios
-    pub ext_script_tool:
-        Option<std::sync::Arc<quecto::infrastructure::extensions::script::ScriptTool>>,
-    /// Discovered extensions (Debug-opaque)
-    pub ext_discovered: Option<Vec<DebugExtension>>,
-    /// Extension discover directory (kept alive)
-    pub _ext_discover_dir: Option<TempDir>,
-    /// Watch directory for hot-reload scenarios (kept alive)
-    pub _ext_watch_dir: Option<TempDir>,
-    /// Fingerprint A for comparison
-    pub ext_fingerprint_a: Option<std::collections::HashMap<PathBuf, (std::time::SystemTime, u64)>>,
-    /// Fingerprint B for comparison
-    pub ext_fingerprint_b: Option<std::collections::HashMap<PathBuf, (std::time::SystemTime, u64)>>,
+
     /// Native extension under test (Debug-opaque)
     pub native_extension: Option<DebugExtension>,
     /// Built native extensions from config (Debug-opaque)
@@ -572,9 +555,9 @@ pub struct QuectoWorld {
     /// Multi-client UDS: exit code from multi-client execution
     pub mc_exit_code: Option<i32>,
     /// Multi-client UDS: whether hot-reload watcher should be enabled
-    pub _mc_hot_reload: bool,
+
     /// Multi-client UDS: extensions to create after agent starts (for hot-reload tests)
-    pub _mc_deferred_extensions: Vec<(String, Option<String>)>,
+
     /// Multi-client UDS: when true, start with --persist flag (#348)
     pub _mc_persist: bool,
     /// Multi-client UDS: clients to connect after all others have disconnected (#348)

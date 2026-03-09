@@ -41,8 +41,6 @@ pub(super) struct MultiClientArgs {
             std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
         >,
     >,
-    /// When `Some`, spawn a hot-reload watcher at the given poll interval.
-    pub hot_reload_interval: Option<std::time::Duration>,
     /// When true, keep the agent alive after all clients disconnect (#348).
     pub persist: bool,
 }
@@ -99,7 +97,6 @@ pub(super) async fn multi_client_loop(
     session_store: &dyn SessionStore,
 ) -> i32 {
     let ext_registry = args.ext_registry;
-    let hot_reload_interval = args.hot_reload_interval;
     let persist = args.persist;
     let MultiClientArgs {
         mut agent,
@@ -128,35 +125,8 @@ pub(super) async fn multi_client_loop(
         live_clients: live_clients.clone(),
     });
 
-    // Spawn hot-reload watcher if an extension registry and interval are configured.
-    // The callback sends a `reload_extensions` command through `cmd_tx` so the
-    // dispatch loop (which has `&mut AgentLoopImpl`) can sync the tool registry.
-    let watcher_task = if let (Some(ext_reg), Some(interval)) = (&ext_registry, hot_reload_interval)
-    {
-        let watcher_ext_reg = ext_reg.clone();
-        let watcher_cmd_tx = cmd_tx.clone();
-        Some(
-            crate::infrastructure::extensions::watcher::spawn_watcher_with_callback(
-                watcher_ext_reg,
-                interval,
-                std::sync::Arc::new(move |_count| {
-                    let cmd = ClientMessage::Command(ClientCommand {
-                        line: r#"{"type":"reload_extensions","id":"hot-reload"}"#.to_string(),
-                        client_id: 0, // system-generated command
-                    });
-                    // Use try_send (not blocking_send) since this runs inside
-                    // an async context (tokio::spawn). Channel buffer is large
-                    // enough that this should not fail under normal load.
-                    let _ = watcher_cmd_tx.try_send(cmd);
-                }),
-            ),
-        )
-    } else {
-        None
-    };
-
-    // Drop our clone so cmd_rx closes when all client senders (accept loop,
-    // watcher) are gone.  The accept loop's clone keeps the channel open while
+    // Drop our clone so cmd_rx closes when all client senders (accept loop)
+    // are gone.  The accept loop's clone keeps the channel open while
     // it runs — the `!persist` guard in `run_dispatch_loop` controls shutdown.
     drop(cmd_tx);
 
@@ -179,9 +149,6 @@ pub(super) async fn multi_client_loop(
     run_dispatch_loop(&mut ctx, cmd_rx, &live_clients, persist).await;
 
     accept_task.abort();
-    if let Some(watcher) = watcher_task {
-        watcher.abort();
-    }
 
     if !ephemeral && !session_key.is_empty() {
         remove_injected_system_prompt(&mut messages, &system_prompt);

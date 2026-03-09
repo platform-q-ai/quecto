@@ -64,12 +64,8 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         exec_settings,
     );
 
-    // Discover extensions from <workspace>/extensions/ (matching production behavior).
-    let extensions_dir = workspace.join("extensions");
-    let ext_registry =
-        quecto::infrastructure::extensions::registry::ExtensionRegistry::discover(&[
-            extensions_dir,
-        ]);
+    // Build empty extension registry (script extensions removed in #353).
+    let ext_registry = quecto::infrastructure::extensions::registry::ExtensionRegistry::new();
     quecto::interface::shared::register_extension_tools(&mut registry, &ext_registry);
 
     let ephemeral = world.no_session || world.session_name.as_deref() == Some("-");
@@ -191,7 +187,6 @@ fn execute_uds(world: &mut QuectoWorld) {
             socket_override: Some(server_tokio),
             session_store_override: None,
             ext_registry: Some(ext_registry),
-            hot_reload_interval: None,
             persist: false,
         })
     });
@@ -884,7 +879,6 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
             socket_override: None,
             session_store_override: None,
             ext_registry: Some(ext_registry),
-            hot_reload_interval: None,
             persist: false,
         })
     });
@@ -1138,12 +1132,7 @@ fn execute_multi_client_uds(world: &mut QuectoWorld) {
     let socket_path = base.join("mc-test-agent.sock");
     let _ = std::fs::remove_file(&socket_path);
 
-    let hot_reload = if world._mc_hot_reload {
-        Some(std::time::Duration::from_millis(100))
-    } else {
-        None
-    };
-    let (handle, socket_path) = match mc_spawn_agent(ctx, &base, socket_path, hot_reload) {
+    let (handle, socket_path) = match mc_spawn_agent(ctx, &base, socket_path) {
         Ok(pair) => pair,
         Err(msg) => {
             world.agent_stderr = msg;
@@ -1155,7 +1144,7 @@ fn execute_multi_client_uds(world: &mut QuectoWorld) {
     let connected = world.mc_connected_clients.clone();
     let disconnected = world.mc_disconnected_clients.clone();
     let commands = world.mc_client_commands.clone();
-    let deferred_extensions = world._mc_deferred_extensions.clone();
+
     let reconnect_clients = world._mc_reconnect_clients.clone();
     let persist = world._mc_persist;
 
@@ -1166,7 +1155,6 @@ fn execute_multi_client_uds(world: &mut QuectoWorld) {
             connected: &connected,
             disconnected: &disconnected,
             commands: &commands,
-            deferred_extensions: &deferred_extensions,
             reconnect_clients: &reconnect_clients,
             persist,
         },
@@ -1207,7 +1195,6 @@ fn mc_spawn_agent(
     ctx: UdsAgentContext,
     base: &std::path::Path,
     socket_path: std::path::PathBuf,
-    hot_reload_interval: Option<std::time::Duration>,
 ) -> Result<(std::thread::JoinHandle<i32>, std::path::PathBuf), String> {
     let UdsAgentContext {
         agent,
@@ -1231,7 +1218,6 @@ fn mc_spawn_agent(
             socket_override: None,
             session_store_override: None,
             ext_registry: Some(ext_registry),
-            hot_reload_interval,
             persist,
         })
     });
@@ -1253,7 +1239,6 @@ struct McClientActions<'a> {
     connected: &'a [u32],
     disconnected: &'a [u32],
     commands: &'a HashMap<u32, Vec<String>>,
-    deferred_extensions: &'a [(String, Option<String>)],
     /// Clients to connect after all `disconnected` clients are dropped (#348).
     reconnect_clients: &'a [u32],
     /// Whether the agent was started with --persist (#348).
@@ -1269,7 +1254,6 @@ fn mc_drive_clients(world: &mut QuectoWorld, actions: McClientActions<'_>) {
         connected,
         disconnected,
         commands,
-        deferred_extensions,
         reconnect_clients,
         persist,
     } = actions;
@@ -1289,19 +1273,6 @@ fn mc_drive_clients(world: &mut QuectoWorld, actions: McClientActions<'_>) {
                 return;
             }
         }
-    }
-
-    // Create deferred extensions AFTER clients are connected (for hot-reload tests).
-    // This ensures the watcher's initial fingerprint is taken before the extension
-    // exists, and clients are subscribed to the broadcast channel to receive events.
-    if !deferred_extensions.is_empty() {
-        // Wait for watcher to take initial fingerprint (at least 1 poll interval).
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        for (name, prompt) in deferred_extensions {
-            given_script_extension_with_prompt(world, name.clone(), prompt.clone());
-        }
-        // Wait for watcher to detect the change (3+ poll intervals @ 100ms).
-        std::thread::sleep(std::time::Duration::from_millis(500));
     }
 
     mc_disconnect_early(&mut streams, disconnected);
@@ -1541,101 +1512,6 @@ fn then_agent_output_tool_start_with_id(world: &mut QuectoWorld) {
     );
 }
 
-// ─── Extension wiring steps (#318 Part 2) ─────────────────────────────────────
-
-#[given(expr = "a script extension {string} in the workspace extensions directory")]
-fn given_script_extension(world: &mut QuectoWorld, name: String) {
-    given_script_extension_with_prompt(world, name, None);
-}
-
-#[given(
-    expr = "a script extension {string} with system prompt {string} in the workspace extensions directory"
-)]
-fn given_script_extension_with_system_prompt(
-    world: &mut QuectoWorld,
-    name: String,
-    prompt: String,
-) {
-    given_script_extension_with_prompt(world, name, Some(prompt));
-}
-
-fn given_script_extension_with_prompt(
-    world: &mut QuectoWorld,
-    name: String,
-    system_prompt: Option<String>,
-) {
-    let base = world
-        .cli_context
-        .base_dir
-        .clone()
-        .expect("no base dir — add 'Given a temp base directory'");
-    // Extensions live under <workspace>/extensions/. The workspace is typically
-    // base/workspace (set by rewrite_config_to_uri / config setup steps).
-    let workspace = base.join("workspace");
-    std::fs::create_dir_all(&workspace).ok();
-    let ext_dir = workspace.join("extensions").join(&name);
-    std::fs::create_dir_all(&ext_dir).expect("failed to create extension dir");
-
-    let system_prompt_line = system_prompt
-        .map(|p| format!("system_prompt = \"{p}\""))
-        .unwrap_or_default();
-
-    let manifest = format!(
-        r#"name = "{name}"
-description = "Test extension: {name}"
-parameters_schema = '{{"type":"object","properties":{{"input":{{"type":"string"}}}},"required":["input"]}}'
-command = "./run.sh"
-{system_prompt_line}
-"#,
-    );
-    std::fs::write(ext_dir.join("extension.toml"), manifest)
-        .expect("failed to write extension manifest");
-
-    let script = "#!/bin/sh\necho '{\"content\": \"ok\", \"is_error\": false}'";
-    std::fs::write(ext_dir.join("run.sh"), script).expect("failed to write extension script");
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(
-            ext_dir.join("run.sh"),
-            std::fs::Permissions::from_mode(0o755),
-        )
-        .expect("failed to set script permissions");
-    }
-}
-
-// ─── Extension mid-session steps (add/remove extensions during UDS session) ──
-
-/// Add a script extension to the workspace mid-session (for reload scenarios).
-/// If hot-reload is enabled, defer creation until after the UDS loop starts.
-#[when(expr = "a script extension {string} is added to the workspace extensions directory")]
-fn when_script_extension_added(world: &mut QuectoWorld, name: String) {
-    if world._mc_hot_reload {
-        world._mc_deferred_extensions.push((name, None));
-    } else {
-        given_script_extension_with_prompt(world, name, None);
-    }
-}
-
-/// Add a script extension with system prompt to the workspace mid-session.
-#[when(
-    expr = "a script extension {string} with system prompt {string} is added to the workspace extensions directory"
-)]
-fn when_script_extension_added_with_prompt(world: &mut QuectoWorld, name: String, prompt: String) {
-    given_script_extension_with_prompt(world, name, Some(prompt));
-}
-
-/// Remove a script extension from the workspace mid-session.
-#[when(expr = "extension {string} is removed from the workspace extensions directory")]
-fn when_extension_removed(world: &mut QuectoWorld, name: String) {
-    let base = world.cli_context.base_dir.clone().expect("no base dir");
-    let ext_dir = base.join("workspace").join("extensions").join(&name);
-    if ext_dir.exists() {
-        std::fs::remove_dir_all(&ext_dir).expect("failed to remove extension dir");
-    }
-}
-
 /// Queue a command on a specific multi-client connection.
 #[when(expr = "client {int} sends command {string} with id {string}")]
 fn when_client_sends_command_with_id(
@@ -1650,24 +1526,6 @@ fn when_client_sends_command_with_id(
         .entry(client_id)
         .or_default()
         .push(cmd.to_string());
-}
-
-/// Start the multi-client UDS agent with hot-reload enabled.
-/// Uses a short poll interval so tests don't have to wait long.
-#[when("I start the multi-client UDS agent with hot-reload enabled")]
-fn when_start_multi_client_uds_hot_reload(world: &mut QuectoWorld) {
-    world.mc_mode = true;
-    world.no_session = true;
-    // Mark hot-reload requested — execute_multi_client_uds will check this.
-    world._mc_hot_reload = true;
-}
-
-/// Wait for the hot-reload watcher to detect changes and trigger.
-#[when("I wait for the hot-reload watcher to trigger")]
-fn when_wait_for_hot_reload(_world: &mut QuectoWorld) {
-    // The hot-reload watcher polls every 100ms in test mode.
-    // Wait enough time for at least 2 poll cycles + processing.
-    std::thread::sleep(std::time::Duration::from_millis(500));
 }
 
 /// Mock LLM returns a tool call to a named extension tool, then text.
@@ -1760,14 +1618,6 @@ fn find_get_extensions_response(
     })
 }
 
-/// Find a get_extensions response in multi-client events.
-fn find_mc_get_extensions_response(
-    events: &[String],
-    id_prefix: Option<&str>,
-) -> Option<serde_json::Value> {
-    find_get_extensions_response(events, id_prefix)
-}
-
 #[then(expr = "the get_extensions response should list extension {string}")]
 fn then_get_extensions_lists(world: &mut QuectoWorld, name: String) {
     execute_uds(world);
@@ -1811,56 +1661,6 @@ fn then_get_extensions_not_lists(world: &mut QuectoWorld, name: String) {
     assert!(
         !found,
         "expected get_extensions NOT to list extension {name:?}\nexts: {exts:?}"
-    );
-}
-
-// ─── post-reload / post-remove get_extensions assertions (multi-client) ──────
-
-#[then(expr = "the post-reload get_extensions response should list extension {string}")]
-fn then_post_reload_lists(world: &mut QuectoWorld, name: String) {
-    execute_multi_client_uds(world);
-    let events = world.mc_client_events.get(&1).cloned().unwrap_or_default();
-    let resp = find_mc_get_extensions_response(&events, Some("post-reload"))
-        .expect("no post-reload get_extensions response");
-    let exts = resp["data"]["extensions"]
-        .as_array()
-        .expect("extensions not an array");
-    let found = exts.iter().any(|e| e["name"].as_str() == Some(&name));
-    assert!(
-        found,
-        "expected post-reload get_extensions to list extension {name:?}\nexts: {exts:?}"
-    );
-}
-
-#[then(expr = "the post-remove get_extensions response should list extension {string}")]
-fn then_post_remove_lists(world: &mut QuectoWorld, name: String) {
-    execute_multi_client_uds(world);
-    let events = world.mc_client_events.get(&1).cloned().unwrap_or_default();
-    let resp = find_mc_get_extensions_response(&events, Some("post-remove"))
-        .expect("no post-remove get_extensions response");
-    let exts = resp["data"]["extensions"]
-        .as_array()
-        .expect("extensions not an array");
-    let found = exts.iter().any(|e| e["name"].as_str() == Some(&name));
-    assert!(
-        found,
-        "expected post-remove get_extensions to list extension {name:?}\nexts: {exts:?}"
-    );
-}
-
-#[then(expr = "the post-remove get_extensions response should not list extension {string}")]
-fn then_post_remove_not_lists(world: &mut QuectoWorld, name: String) {
-    execute_multi_client_uds(world);
-    let events = world.mc_client_events.get(&1).cloned().unwrap_or_default();
-    let resp = find_mc_get_extensions_response(&events, Some("post-remove"))
-        .expect("no post-remove get_extensions response");
-    let exts = resp["data"]["extensions"]
-        .as_array()
-        .expect("extensions not an array");
-    let found = exts.iter().any(|e| e["name"].as_str() == Some(&name));
-    assert!(
-        !found,
-        "expected post-remove get_extensions NOT to list extension {name:?}\nexts: {exts:?}"
     );
 }
 
@@ -2158,7 +1958,7 @@ fn execute_real_llm_uds(world: &mut QuectoWorld) {
     let socket_path = base.join("real-llm-uds.sock");
     let _ = std::fs::remove_file(&socket_path);
 
-    let (agent_handle, socket_path) = match mc_spawn_agent(ctx, &base, socket_path, None) {
+    let (agent_handle, socket_path) = match mc_spawn_agent(ctx, &base, socket_path) {
         Ok(pair) => pair,
         Err(msg) => {
             world.agent_stderr = msg;

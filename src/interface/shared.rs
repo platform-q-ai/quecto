@@ -499,22 +499,17 @@ pub fn build_http_client() -> reqwest::Client {
         .unwrap_or_default()
 }
 
-/// Discover script extensions from disk and register native (config-gated) extensions.
+/// Build and register native (config-gated) extensions.
 ///
-/// Returns a unified `ExtensionRegistry` containing both script and native extensions.
-/// Native extensions use `is_script() -> false`, so `reload_scripts()` won't remove them.
-///
+/// Returns an `ExtensionRegistry` containing native extensions.
 /// Native extensions are evaluated once at agent construction and are not
 /// affected by `reload_extensions`. Changes to config require an agent restart.
 pub fn discover_and_register_extensions(
     config: &crate::infrastructure::config::Config,
-    extensions_dir: &std::path::Path,
+    _extensions_dir: &std::path::Path,
     http_client: &reqwest::Client,
 ) -> crate::infrastructure::extensions::registry::ExtensionRegistry {
-    let mut ext_registry =
-        crate::infrastructure::extensions::registry::ExtensionRegistry::discover(&[
-            extensions_dir.to_path_buf()
-        ]);
+    let mut ext_registry = crate::infrastructure::extensions::registry::ExtensionRegistry::new();
     for ext in crate::infrastructure::extensions::native::build_native_extensions(
         &config.tools.web,
         http_client,

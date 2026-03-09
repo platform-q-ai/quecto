@@ -601,7 +601,7 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         socket_override: None,
         session_store_override: None,
         ext_registry: Some(build.ext_registry),
-        hot_reload_interval: None,
+
         persist: flags.persist,
     })
 }

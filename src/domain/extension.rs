@@ -8,16 +8,13 @@ use super::tool::Tool;
 /// An extension contributes tools and optional system prompt context.
 ///
 /// Extensions are the composition unit for adding capabilities to the agent.
-/// Compiled-in tools (bash, read, etc.) and script-based tools from disk
-/// both implement this trait.
+/// Native (compiled-in) extensions and UDS-registered extensions both implement
+/// this trait.
 pub trait Extension: Send + Sync {
     /// Unique name for this extension.
     fn name(&self) -> &str;
 
     /// Human-readable description of this extension.
-    ///
-    /// Defaults to an empty string.  Script extensions populate this
-    /// from the `description` field in `extension.toml`.
     fn description(&self) -> &str {
         ""
     }
@@ -29,12 +26,5 @@ pub trait Extension: Send + Sync {
     /// Called fresh each time so stateful extensions can reflect current state.
     fn system_prompt_snippet(&self) -> Option<String> {
         None
-    }
-
-    /// Whether this extension was loaded from a script on disk.
-    /// Used by the registry to distinguish script extensions (hot-reloadable)
-    /// from compiled-in builtins during reload.
-    fn is_script(&self) -> bool {
-        false
     }
 }
