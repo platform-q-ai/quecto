@@ -156,6 +156,30 @@ pub struct WebToolConfig {
     pub brave: BraveConfig,
     #[serde(default)]
     pub duckduckgo: DuckDuckGoConfig,
+    #[serde(default)]
+    pub fetch: FetchConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FetchConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Maximum response size in KB returned to the LLM. Default: 32.
+    #[serde(default = "default_max_response_kb")]
+    pub max_response_kb: u32,
+}
+
+impl Default for FetchConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_response_kb: default_max_response_kb(),
+        }
+    }
+}
+
+fn default_max_response_kb() -> u32 {
+    32
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]

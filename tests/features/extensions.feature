@@ -79,17 +79,20 @@ Feature: Extension system
   Scenario: WebSearchTool registered when config enables Brave
     Given a config with tools.web.brave.enabled = true and api_key = "test-brave-key"
     When I build native extensions from config
-    Then the native extensions list should contain "web_search"
+    Then the native extensions list should contain "web"
+    And the built native extension "web" should provide tool "web_search"
 
   Scenario: WebSearchTool registered when config enables DuckDuckGo
     Given a config with tools.web.duckduckgo.enabled = true
     When I build native extensions from config
-    Then the native extensions list should contain "web_search"
+    Then the native extensions list should contain "web"
+    And the built native extension "web" should provide tool "web_search"
 
-  Scenario: WebSearchTool not registered when web search is disabled
+  Scenario: No web extension when all web tools are disabled
     Given a config with tools.web.brave.enabled = false and tools.web.duckduckgo.enabled = false
+    And config with tools.web.fetch.enabled = false
     When I build native extensions from config
-    Then the native extensions list should not contain "web_search"
+    Then the native extensions list should not contain "web"
 
   Scenario: WebSearchTool uses Brave when API key is configured
     Given a config with tools.web.brave.enabled = true and api_key = "test-brave-key"
@@ -100,3 +103,52 @@ Feature: Extension system
     Given a config with tools.web.duckduckgo.enabled = true
     When I build native extensions from config
     Then the web_search native extension should use DuckDuckGo backend
+
+  # ─── Multi-tool native extension (#364) ─────────────────────────────────────
+
+  Scenario: NativeExtension with multiple tools
+    Given a native extension named "web" with tools "web_search" and "web_fetch"
+    Then the native extension name should be "web"
+    And the native extension should provide 2 tools
+    And the native extension tool should have name "web_search"
+    And the native extension tool should have name "web_fetch"
+
+  # ─── WebFetchTool config gating (#364) ──────────────────────────────────────
+
+  Scenario: WebFetchTool registered when config enables fetch
+    Given a config with tools.web.fetch.enabled = true
+    When I build native extensions from config
+    Then the native extensions list should contain "web"
+    And the built native extension "web" should provide tool "web_fetch"
+
+  Scenario: WebFetchTool not registered when fetch is disabled
+    Given a config with tools.web.fetch.enabled = false
+    When I build native extensions from config
+    Then there should be no built native extension providing tool "web_fetch"
+
+  Scenario: Both web_search and web_fetch in single extension when both enabled
+    Given a config with tools.web.brave.enabled = true and api_key = "test-key" and fetch.enabled = true
+    When I build native extensions from config
+    Then the native extensions list should contain "web"
+    And the built native extension "web" should provide tool "web_search"
+    And the built native extension "web" should provide tool "web_fetch"
+
+  Scenario: Only web_search when fetch disabled
+    Given a config with tools.web.brave.enabled = true and api_key = "test-key" and fetch.enabled = false
+    When I build native extensions from config
+    Then the native extensions list should contain "web"
+    And the built native extension "web" should provide tool "web_search"
+    And there should be no built native extension providing tool "web_fetch"
+
+  Scenario: Only web_fetch when search disabled
+    Given a config with tools.web.fetch.enabled = true and search disabled
+    When I build native extensions from config
+    Then the native extensions list should contain "web"
+    And the built native extension "web" should provide tool "web_fetch"
+    And there should be no built native extension providing tool "web_search"
+
+  Scenario: No web extension when all web tools disabled
+    Given a config with tools.web.brave.enabled = false and tools.web.duckduckgo.enabled = false
+    And config with tools.web.fetch.enabled = false
+    When I build native extensions from config
+    Then the native extensions list should not contain "web"
