@@ -169,8 +169,8 @@ fn cmd_skills_install(
 
     let (yaml, _) = crate::domain::skill::split_skill_md(&skill_md)
         .ok_or_else(|| "skills install: invalid SKILL.md frontmatter\n".to_string())?;
-    let parsed: crate::domain::skill::SkillFrontmatter = serde_yaml::from_str(yaml)
-        .map_err(|e| format!("skills install: invalid SKILL.md frontmatter: {}\n", e))?;
+    let parsed = crate::domain::skill::SkillFrontmatter::parse(yaml)
+        .ok_or_else(|| "skills install: invalid SKILL.md frontmatter\n".to_string())?;
     if !crate::domain::skill::validate_frontmatter(&parsed) {
         return Err("skills install: invalid SKILL.md frontmatter\n".to_string());
     }

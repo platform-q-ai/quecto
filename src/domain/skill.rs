@@ -26,16 +26,85 @@ pub enum SkillSource {
 /// Required fields: `name`, `description`.
 /// Optional fields are parsed for forward-compatibility with OpenCode
 /// but are not used by quecto's runtime yet.
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SkillFrontmatter {
     pub name: String,
     pub description: String,
-    #[serde(default)]
     pub license: Option<String>,
-    #[serde(default)]
     pub compatibility: Option<String>,
-    #[serde(default)]
     pub metadata: Option<HashMap<String, String>>,
+}
+
+impl SkillFrontmatter {
+    /// Parse simple YAML frontmatter without depending on `serde_yaml`.
+    ///
+    /// Handles flat `key: value` pairs and a single-level `metadata:` map
+    /// with indented `key: value` children. Returns `None` if the required
+    /// `name` or `description` fields are missing.
+    pub fn parse(yaml: &str) -> Option<Self> {
+        let mut name = None;
+        let mut description = None;
+        let mut license = None;
+        let mut compatibility = None;
+        let mut metadata: Option<HashMap<String, String>> = None;
+        let mut in_metadata = false;
+
+        for line in yaml.lines() {
+            // Indented lines belong to the current metadata block
+            if in_metadata && (line.starts_with("  ") || line.starts_with('\t')) {
+                if let Some((k, v)) = split_kv(line.trim()) {
+                    metadata.get_or_insert_with(HashMap::new).insert(k, v);
+                }
+                continue;
+            }
+            // Any non-indented line ends the metadata block
+            in_metadata = false;
+
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+
+            if let Some((key, value)) = split_kv(trimmed) {
+                match key.as_str() {
+                    "name" => name = Some(value),
+                    "description" => description = Some(value),
+                    "license" => license = Some(value),
+                    "compatibility" => compatibility = Some(value),
+                    "metadata" if value.is_empty() => in_metadata = true,
+                    _ => {} // ignore unknown keys
+                }
+            }
+        }
+
+        Some(Self {
+            name: name?,
+            description: description?,
+            license,
+            compatibility,
+            metadata,
+        })
+    }
+}
+
+/// Split a `key: value` line into `(key, value)`.
+/// Strips optional surrounding quotes from the value.
+fn split_kv(line: &str) -> Option<(String, String)> {
+    let colon = line.find(':')?;
+    let key = line[..colon].trim().to_string();
+    if key.is_empty() {
+        return None;
+    }
+    let raw_value = line[colon + 1..].trim();
+    // Strip surrounding quotes (single or double)
+    let value = if (raw_value.starts_with('"') && raw_value.ends_with('"'))
+        || (raw_value.starts_with('\'') && raw_value.ends_with('\''))
+    {
+        raw_value[1..raw_value.len() - 1].to_string()
+    } else {
+        raw_value.to_string()
+    };
+    Some((key, value))
 }
 
 /// Port: loads skills from various sources.
@@ -223,5 +292,65 @@ mod tests {
             metadata: None,
         };
         assert!(!validate_frontmatter(&fm));
+    }
+
+    // --- SkillFrontmatter::parse tests ---
+
+    #[test]
+    fn test_parse_basic_frontmatter() {
+        let yaml = "\nname: weather\ndescription: Fetch weather\n";
+        let fm = SkillFrontmatter::parse(yaml).unwrap();
+        assert_eq!(fm.name, "weather");
+        assert_eq!(fm.description, "Fetch weather");
+        assert!(fm.license.is_none());
+        assert!(fm.compatibility.is_none());
+        assert!(fm.metadata.is_none());
+    }
+
+    #[test]
+    fn test_parse_all_fields() {
+        let yaml = "\nname: git-release\ndescription: Create releases\nlicense: MIT\ncompatibility: opencode\nmetadata:\n  audience: maintainers\n  workflow: github\n";
+        let fm = SkillFrontmatter::parse(yaml).unwrap();
+        assert_eq!(fm.name, "git-release");
+        assert_eq!(fm.description, "Create releases");
+        assert_eq!(fm.license.as_deref(), Some("MIT"));
+        assert_eq!(fm.compatibility.as_deref(), Some("opencode"));
+        let meta = fm.metadata.unwrap();
+        assert_eq!(meta.get("audience").unwrap(), "maintainers");
+        assert_eq!(meta.get("workflow").unwrap(), "github");
+    }
+
+    #[test]
+    fn test_parse_missing_name_returns_none() {
+        let yaml = "\ndescription: Something\n";
+        assert!(SkillFrontmatter::parse(yaml).is_none());
+    }
+
+    #[test]
+    fn test_parse_missing_description_returns_none() {
+        let yaml = "\nname: test\n";
+        assert!(SkillFrontmatter::parse(yaml).is_none());
+    }
+
+    #[test]
+    fn test_parse_quoted_values() {
+        let yaml = "\nname: \"my-skill\"\ndescription: 'A skill'\n";
+        let fm = SkillFrontmatter::parse(yaml).unwrap();
+        assert_eq!(fm.name, "my-skill");
+        assert_eq!(fm.description, "A skill");
+    }
+
+    #[test]
+    fn test_parse_ignores_comments() {
+        let yaml = "\n# This is a comment\nname: test\ndescription: Test\n";
+        let fm = SkillFrontmatter::parse(yaml).unwrap();
+        assert_eq!(fm.name, "test");
+    }
+
+    #[test]
+    fn test_parse_ignores_unknown_keys() {
+        let yaml = "\nname: test\ndescription: Test\nunknown_key: whatever\n";
+        let fm = SkillFrontmatter::parse(yaml).unwrap();
+        assert_eq!(fm.name, "test");
     }
 }

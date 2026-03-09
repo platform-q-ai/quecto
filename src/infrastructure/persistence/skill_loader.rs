@@ -33,7 +33,7 @@ impl FileSkillLoader {
     /// Returns `None` if the YAML is invalid or missing required fields.
     fn parse_frontmatter(raw: &str) -> Option<(SkillFrontmatter, String)> {
         let (yaml_block, body) = split_skill_md(raw)?;
-        let fm: SkillFrontmatter = serde_yaml::from_str(yaml_block).ok()?;
+        let fm = SkillFrontmatter::parse(yaml_block)?;
         if !validate_frontmatter(&fm) {
             return None;
         }
