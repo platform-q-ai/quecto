@@ -8,6 +8,7 @@
 
 use std::borrow::Cow;
 use std::future::Future;
+use std::net::IpAddr;
 use std::pin::Pin;
 use std::time::Duration;
 
@@ -25,6 +26,9 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct WebFetchTool {
     client: reqwest::Client,
     max_response_kb: u32,
+    /// Skip SSRF host checks (for wiremock tests on localhost).
+    #[cfg(test)]
+    allow_restricted_hosts: bool,
 }
 
 impl WebFetchTool {
@@ -33,6 +37,8 @@ impl WebFetchTool {
         Self {
             client,
             max_response_kb,
+            #[cfg(test)]
+            allow_restricted_hosts: false,
         }
     }
 
@@ -40,6 +46,16 @@ impl WebFetchTool {
     #[cfg(test)]
     fn new() -> Self {
         Self::with_client(reqwest::Client::new(), 32)
+    }
+
+    /// Create a tool that allows localhost connections (for wiremock tests).
+    #[cfg(test)]
+    fn new_allow_localhost(max_response_kb: u32) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            max_response_kb,
+            allow_restricted_hosts: true,
+        }
     }
 }
 
@@ -73,8 +89,11 @@ impl Tool for WebFetchTool {
 
             let raw = parsed.get("raw").and_then(|v| v.as_bool()).unwrap_or(false);
 
-            // Scheme validation
-            if !url.starts_with("http://") && !url.starts_with("https://") {
+            // Parse and validate URL
+            let parsed_url = reqwest::Url::parse(url)
+                .map_err(|e| DomainError::Tool(format!("Invalid URL: {e}")))?;
+
+            if parsed_url.scheme() != "http" && parsed_url.scheme() != "https" {
                 return Ok(ToolResult {
                     content: format!(
                         "Invalid URL scheme: only http:// and https:// are allowed. Got: {url}"
@@ -84,12 +103,32 @@ impl Tool for WebFetchTool {
                 });
             }
 
+            // SSRF protection: reject internal/loopback/metadata hosts
+            #[cfg(test)]
+            let skip_ssrf = self.allow_restricted_hosts;
+            #[cfg(not(test))]
+            let skip_ssrf = false;
+
+            if !skip_ssrf {
+                if let Some(host) = parsed_url.host_str() {
+                    if is_restricted_host_or_ip(host) {
+                        return Ok(ToolResult {
+                            content: format!(
+                                "Blocked: URL points to a restricted address ({host})"
+                            ),
+                            is_error: true,
+                            image_blocks: vec![],
+                        });
+                    }
+                }
+            }
+
             // Fetch with timeout
             let resp = self
                 .client
-                .get(url)
+                .get(parsed_url)
                 .timeout(REQUEST_TIMEOUT)
-                .header("User-Agent", "quecto/0.19.0")
+                .header("User-Agent", concat!("quecto/", env!("CARGO_PKG_VERSION")))
                 .send()
                 .await
                 .map_err(|e| {
@@ -110,7 +149,7 @@ impl Tool for WebFetchTool {
                 });
             }
 
-            // Read body with size cap
+            // Read body with streaming size cap
             let bytes = read_body_capped(resp, MAX_RAW_BYTES).await?;
             let body = String::from_utf8_lossy(&bytes);
 
@@ -143,28 +182,78 @@ impl Tool for WebFetchTool {
     }
 }
 
-/// Read response body up to `max_bytes`, returning an error if exceeded.
+/// Read response body up to `max_bytes` using streaming chunks.
+///
+/// Aborts mid-stream if the body exceeds the cap, avoiding OOM from
+/// servers that send large bodies without a Content-Length header.
 async fn read_body_capped(
-    resp: reqwest::Response,
+    mut resp: reqwest::Response,
     max_bytes: usize,
 ) -> Result<Vec<u8>, DomainError> {
-    let content_length = resp.content_length().unwrap_or(0) as usize;
-    if content_length > max_bytes {
-        return Err(DomainError::Tool(format!(
-            "Response too large: {content_length} bytes (max {max_bytes})"
-        )));
+    // Pre-flight: reject if Content-Length is known and too large
+    if let Some(len) = resp.content_length() {
+        if len as usize > max_bytes {
+            return Err(DomainError::Tool(format!(
+                "Response too large: {len} bytes (max {max_bytes})"
+            )));
+        }
     }
-    let bytes = resp
-        .bytes()
+
+    let mut buf = Vec::with_capacity(max_bytes.min(256 * 1024));
+    while let Some(chunk) = resp
+        .chunk()
         .await
-        .map_err(|e| DomainError::Tool(format!("Failed to read response body: {e}")))?;
-    if bytes.len() > max_bytes {
-        return Err(DomainError::Tool(format!(
-            "Response too large: {} bytes (max {max_bytes})",
-            bytes.len()
-        )));
+        .map_err(|e| DomainError::Tool(format!("Failed to read response body: {e}")))?
+    {
+        buf.extend_from_slice(&chunk);
+        if buf.len() > max_bytes {
+            return Err(DomainError::Tool(format!(
+                "Response too large: >{max_bytes} bytes (max {max_bytes})"
+            )));
+        }
     }
-    Ok(bytes.to_vec())
+    Ok(buf)
+}
+
+/// Check if a host string (IP or domain) is restricted.
+///
+/// Blocks loopback, link-local, private RFC-1918, cloud metadata IPs,
+/// and known restricted domain names to prevent SSRF attacks.
+///
+/// `host` comes from `url::Url::host_str()` which wraps IPv6 in brackets
+/// (e.g. `[::1]`), so we strip them before parsing.
+fn is_restricted_host_or_ip(host: &str) -> bool {
+    // Strip IPv6 brackets: host_str() returns "[::1]" for IPv6
+    let bare = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+
+    if let Ok(ip) = bare.parse::<IpAddr>() {
+        return is_restricted_ip(ip);
+    }
+    // Known restricted domain names
+    matches!(
+        bare,
+        "localhost" | "metadata.google.internal" | "metadata.google.internal."
+    )
+}
+
+/// Check if an IP address is in a restricted range.
+fn is_restricted_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()       // 127.0.0.0/8
+            || v4.is_private()     // 10/8, 172.16/12, 192.168/16
+            || v4.is_link_local()  // 169.254.0.0/16 (AWS IMDS)
+            || v4.is_unspecified() // 0.0.0.0
+            || v4.is_broadcast() // 255.255.255.255
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()       // ::1
+            || v6.is_unspecified() // ::
+        }
+    }
 }
 
 /// Truncate a string to at most `max_bytes`, respecting UTF-8 boundaries.
@@ -188,8 +277,13 @@ fn truncate_utf8(s: &str, max_bytes: usize) -> &str {
 /// 3. Strip remaining tags
 /// 4. Decode common HTML entities
 /// 5. Collapse whitespace
+///
+/// Note: `remove_tag_blocks` is called 6 times, each doing a
+/// `to_ascii_lowercase()` of the remaining text. For the 5 MB cap this is
+/// ~60 MB of transient allocations. Acceptable for a cold-path tool call;
+/// a single-pass state machine would be more efficient if profiling shows
+/// this matters.
 pub fn strip_html(html: &str) -> String {
-    // 1. Remove block elements that add noise
     let stripped = remove_tag_blocks(html, "script");
     let stripped = remove_tag_blocks(&stripped, "style");
     let stripped = remove_tag_blocks(&stripped, "nav");
@@ -197,17 +291,16 @@ pub fn strip_html(html: &str) -> String {
     let stripped = remove_tag_blocks(&stripped, "header");
     let stripped = remove_tag_blocks(&stripped, "noscript");
 
-    // 2+3. Walk the remaining HTML, converting tags to text
     let text = tags_to_text(&stripped);
-
-    // 4. Decode HTML entities
     let text = decode_entities(&text);
-
-    // 5. Collapse whitespace
     collapse_whitespace(&text)
 }
 
 /// Remove all occurrences of `<tag ...>...</tag>` (case-insensitive).
+///
+/// Note: nested same-name tags (e.g. `<nav><nav>inner</nav>leak</nav>`)
+/// will leave content after the first closing tag. This is acceptable for
+/// readability stripping (not security sanitisation).
 fn remove_tag_blocks(html: &str, tag: &str) -> String {
     let mut result = String::with_capacity(html.len());
     let lower = html.to_ascii_lowercase();
@@ -218,22 +311,18 @@ fn remove_tag_blocks(html: &str, tag: &str) -> String {
     while pos < html.len() {
         if let Some(start) = lower[pos..].find(&open) {
             let abs_start = pos + start;
-            // Make sure it's actually a tag (followed by space, > or /)
             let after_tag = abs_start + open.len();
             if after_tag < lower.len() {
                 let next = lower.as_bytes()[after_tag];
                 if next == b' ' || next == b'>' || next == b'/' || next == b'\t' || next == b'\n' {
                     result.push_str(&html[pos..abs_start]);
-                    // Find closing tag
                     if let Some(end) = lower[abs_start..].find(&close) {
                         pos = abs_start + end + close.len();
                         continue;
                     }
-                    // No closing tag — skip to end
                     return result;
                 }
             }
-            // Not a real tag match, include up to and past it
             result.push_str(&html[pos..after_tag]);
             pos = after_tag;
         } else {
@@ -245,6 +334,9 @@ fn remove_tag_blocks(html: &str, tag: &str) -> String {
 }
 
 /// Convert HTML tags to text: block tags become newlines, others are stripped.
+///
+/// Uses `eq_ignore_ascii_case` per tag to avoid allocating a lowercase copy
+/// for every tag in the document.
 fn tags_to_text(html: &str) -> String {
     const BLOCK_TAGS: &[&str] = &[
         "p",
@@ -269,15 +361,15 @@ fn tags_to_text(html: &str) -> String {
         if bytes[i] == b'<' {
             if let Some(end_offset) = html[i..].find('>') {
                 let tag_content = &html[i + 1..i + end_offset];
-                let tag_lower = tag_content.trim().to_ascii_lowercase();
-                // Strip leading / to normalise closing tags
-                let tag_name = tag_lower
-                    .trim_start_matches('/')
-                    .split(|c: char| c.is_whitespace() || c == '/')
-                    .next()
-                    .unwrap_or("");
+                let trimmed = tag_content.trim().trim_start_matches('/');
+                let tag_end = trimmed
+                    .find(|c: char| c.is_whitespace() || c == '/')
+                    .unwrap_or(trimmed.len());
+                let tag_name = &trimmed[..tag_end];
 
-                if tag_name == "br" || BLOCK_TAGS.contains(&tag_name) {
+                if tag_name.eq_ignore_ascii_case("br")
+                    || BLOCK_TAGS.iter().any(|t| tag_name.eq_ignore_ascii_case(t))
+                {
                     result.push('\n');
                 }
                 i += end_offset + 1;
@@ -309,7 +401,6 @@ fn decode_entities(text: &str) -> String {
                     continue;
                 }
             }
-            // Not a valid entity, pass through
             result.push('&');
             i += 1;
         } else {
@@ -345,13 +436,29 @@ fn decode_entity(entity: &str) -> Option<char> {
 }
 
 /// Collapse runs of whitespace into single spaces, blank lines into single
-/// blank lines, and trim each line.
+/// blank lines, and trim each line. Single-pass per line.
 fn collapse_whitespace(text: &str) -> String {
     let mut lines: Vec<String> = Vec::new();
     let mut consecutive_blank = 0_u32;
 
     for line in text.lines() {
-        let trimmed: String = line.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut trimmed = String::with_capacity(line.len());
+        let mut prev_space = true; // true = trim leading spaces
+        for ch in line.chars() {
+            if ch.is_whitespace() {
+                if !prev_space {
+                    trimmed.push(' ');
+                    prev_space = true;
+                }
+            } else {
+                trimmed.push(ch);
+                prev_space = false;
+            }
+        }
+        if trimmed.ends_with(' ') {
+            trimmed.pop();
+        }
+
         if trimmed.is_empty() {
             consecutive_blank += 1;
             if consecutive_blank <= 1 {
@@ -363,305 +470,16 @@ fn collapse_whitespace(text: &str) -> String {
         }
     }
 
-    // Trim leading/trailing blank lines
-    while lines.first().is_some_and(|l| l.is_empty()) {
-        lines.remove(0);
-    }
-    while lines.last().is_some_and(|l| l.is_empty()) {
-        lines.pop();
-    }
+    // Trim leading/trailing blank lines via index slicing (avoids O(n²) remove(0))
+    let start = lines.iter().position(|l| !l.is_empty()).unwrap_or(0);
+    let end = lines
+        .iter()
+        .rposition(|l| !l.is_empty())
+        .map_or(start, |e| e + 1);
 
-    lines.join("\n")
+    lines[start..end].join("\n")
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_definition() {
-        let tool = WebFetchTool::new();
-        let def = tool.definition();
-        assert_eq!(def.name.as_ref(), "web_fetch");
-        assert!(def.description.contains("Fetch"));
-    }
-
-    #[test]
-    fn test_strip_html_basic() {
-        let html = "<p>Hello <b>world</b></p>";
-        let text = strip_html(html);
-        assert!(text.contains("Hello world"), "got: {text}");
-    }
-
-    #[test]
-    fn test_strip_html_removes_script() {
-        let html = "<p>Before</p><script>alert('xss')</script><p>After</p>";
-        let text = strip_html(html);
-        assert!(text.contains("Before"));
-        assert!(text.contains("After"));
-        assert!(!text.contains("alert"));
-    }
-
-    #[test]
-    fn test_strip_html_removes_style() {
-        let html = "<style>.foo { color: red; }</style><p>Content</p>";
-        let text = strip_html(html);
-        assert!(!text.contains("color"));
-        assert!(text.contains("Content"));
-    }
-
-    #[test]
-    fn test_strip_html_removes_nav_footer_header() {
-        let html = "<nav>Menu</nav><main>Content</main><footer>Copyright</footer>";
-        let text = strip_html(html);
-        assert!(!text.contains("Menu"));
-        assert!(text.contains("Content"));
-        assert!(!text.contains("Copyright"));
-    }
-
-    #[test]
-    fn test_strip_html_block_newlines() {
-        let html = "<p>First</p><p>Second</p>";
-        let text = strip_html(html);
-        assert!(text.contains("First\n"), "got: {text:?}");
-        assert!(text.contains("Second"));
-    }
-
-    #[test]
-    fn test_strip_html_br() {
-        let html = "Line 1<br>Line 2<br/>Line 3";
-        let text = strip_html(html);
-        assert!(text.contains("Line 1\n"), "got: {text:?}");
-        assert!(text.contains("Line 2\n"), "got: {text:?}");
-    }
-
-    #[test]
-    fn test_decode_entity_named() {
-        assert_eq!(decode_entity("amp"), Some('&'));
-        assert_eq!(decode_entity("lt"), Some('<'));
-        assert_eq!(decode_entity("gt"), Some('>'));
-        assert_eq!(decode_entity("quot"), Some('"'));
-        assert_eq!(decode_entity("apos"), Some('\''));
-        assert_eq!(decode_entity("nbsp"), Some(' '));
-    }
-
-    #[test]
-    fn test_decode_entity_numeric() {
-        assert_eq!(decode_entity("#65"), Some('A'));
-        assert_eq!(decode_entity("#x41"), Some('A'));
-        assert_eq!(decode_entity("#x2603"), Some('☃'));
-    }
-
-    #[test]
-    fn test_decode_entities_in_text() {
-        assert_eq!(decode_entities("&amp; &lt; &gt;"), "& < >");
-        assert_eq!(decode_entities("hello&nbsp;world"), "hello world");
-        assert_eq!(decode_entities("&#65;"), "A");
-    }
-
-    #[test]
-    fn test_truncate_utf8_ascii() {
-        assert_eq!(truncate_utf8("hello world", 5), "hello");
-    }
-
-    #[test]
-    fn test_truncate_utf8_boundary() {
-        let s = "café"; // é is 2 bytes
-        assert_eq!(truncate_utf8(s, 4), "caf");
-        assert_eq!(truncate_utf8(s, 5), "café");
-    }
-
-    #[test]
-    fn test_truncate_utf8_no_truncation() {
-        assert_eq!(truncate_utf8("short", 100), "short");
-    }
-
-    #[test]
-    fn test_strip_html_collapses_whitespace() {
-        let html = "<p>  lots   of    spaces  </p>";
-        let text = strip_html(html);
-        assert_eq!(text, "lots of spaces");
-    }
-
-    #[test]
-    fn test_strip_html_multiline_collapse() {
-        let html = "<p>A</p>\n\n\n\n\n<p>B</p>";
-        let text = strip_html(html);
-        assert!(!text.contains("\n\n\n"), "got: {text:?}");
-    }
-
-    #[test]
-    fn test_strip_html_list_items() {
-        let html = "<ul><li>One</li><li>Two</li><li>Three</li></ul>";
-        let text = strip_html(html);
-        assert!(text.contains("One"));
-        assert!(text.contains("Two"));
-        assert!(text.contains("Three"));
-    }
-
-    #[test]
-    fn test_strip_html_headings() {
-        let html = "<h1>Title</h1><p>Paragraph</p>";
-        let text = strip_html(html);
-        assert!(text.contains("Title"));
-        assert!(text.contains("Paragraph"));
-    }
-
-    #[test]
-    fn test_strip_html_plain_text_passthrough() {
-        let text = strip_html("Just plain text, no HTML.");
-        assert_eq!(text, "Just plain text, no HTML.");
-    }
-
-    #[test]
-    fn test_remove_tag_blocks_case_insensitive() {
-        let html = "<SCRIPT>bad</SCRIPT>good";
-        let result = remove_tag_blocks(html, "script");
-        assert!(!result.contains("bad"));
-        assert!(result.contains("good"));
-    }
-
-    #[test]
-    fn test_remove_tag_blocks_with_attributes() {
-        let html = r#"<script type="text/javascript">bad</script>good"#;
-        let result = remove_tag_blocks(html, "script");
-        assert!(!result.contains("bad"));
-        assert!(result.contains("good"));
-    }
-
-    #[tokio::test]
-    async fn test_missing_url() {
-        let tool = WebFetchTool::new();
-        let result = tool.execute(r#"{"wrong":"field"}"#).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_invalid_json() {
-        let tool = WebFetchTool::new();
-        let result = tool.execute("not json").await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_invalid_scheme() {
-        let tool = WebFetchTool::new();
-        let result = tool
-            .execute(r#"{"url":"ftp://example.com"}"#)
-            .await
-            .unwrap();
-        assert!(result.is_error);
-        assert!(result.content.contains("Invalid URL scheme"));
-    }
-
-    #[tokio::test]
-    async fn test_invalid_scheme_file() {
-        let tool = WebFetchTool::new();
-        let result = tool
-            .execute(r#"{"url":"file:///etc/passwd"}"#)
-            .await
-            .unwrap();
-        assert!(result.is_error);
-        assert!(result.content.contains("Invalid URL scheme"));
-    }
-
-    #[tokio::test]
-    async fn test_fetch_html_strips_tags() {
-        use wiremock::matchers::method;
-        use wiremock::{Mock, MockServer, ResponseTemplate};
-
-        let server = MockServer::start().await;
-        let html = r#"<html><head><title>Test</title><style>body{}</style></head>
-            <body><nav>Menu</nav><h1>Hello</h1><p>World</p><footer>Foot</footer></body></html>"#;
-
-        Mock::given(method("GET"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(html))
-            .mount(&server)
-            .await;
-
-        let tool = WebFetchTool::with_client(reqwest::Client::new(), 32);
-        let result = tool
-            .execute(&format!(r#"{{"url":"{}"}}"#, server.uri()))
-            .await
-            .unwrap();
-        assert!(!result.is_error, "error: {}", result.content);
-        assert!(result.content.contains("Hello"), "got: {}", result.content);
-        assert!(result.content.contains("World"), "got: {}", result.content);
-        assert!(!result.content.contains("Menu"), "nav not stripped");
-        assert!(!result.content.contains("Foot"), "footer not stripped");
-        assert!(!result.content.contains("body{}"), "style not stripped");
-    }
-
-    #[tokio::test]
-    async fn test_fetch_raw_mode() {
-        use wiremock::matchers::method;
-        use wiremock::{Mock, MockServer, ResponseTemplate};
-
-        let server = MockServer::start().await;
-        let json_body = r#"{"key":"value","items":[1,2,3]}"#;
-
-        Mock::given(method("GET"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(json_body))
-            .mount(&server)
-            .await;
-
-        let tool = WebFetchTool::with_client(reqwest::Client::new(), 32);
-        let result = tool
-            .execute(&format!(r#"{{"url":"{}","raw":true}}"#, server.uri()))
-            .await
-            .unwrap();
-        assert!(!result.is_error);
-        assert_eq!(result.content, json_body);
-    }
-
-    #[tokio::test]
-    async fn test_fetch_http_error() {
-        use wiremock::matchers::method;
-        use wiremock::{Mock, MockServer, ResponseTemplate};
-
-        let server = MockServer::start().await;
-
-        Mock::given(method("GET"))
-            .respond_with(ResponseTemplate::new(404))
-            .mount(&server)
-            .await;
-
-        let tool = WebFetchTool::with_client(reqwest::Client::new(), 32);
-        let result = tool
-            .execute(&format!(r#"{{"url":"{}"}}"#, server.uri()))
-            .await
-            .unwrap();
-        assert!(result.is_error);
-        assert!(result.content.contains("404"));
-    }
-
-    #[tokio::test]
-    async fn test_fetch_truncates_large_response() {
-        use wiremock::matchers::method;
-        use wiremock::{Mock, MockServer, ResponseTemplate};
-
-        let server = MockServer::start().await;
-        let big_body = "A".repeat(2048);
-
-        Mock::given(method("GET"))
-            .respond_with(ResponseTemplate::new(200).set_body_string(&big_body))
-            .mount(&server)
-            .await;
-
-        let tool = WebFetchTool::with_client(reqwest::Client::new(), 1); // 1KB cap
-        let result = tool
-            .execute(&format!(r#"{{"url":"{}","raw":true}}"#, server.uri()))
-            .await
-            .unwrap();
-        assert!(!result.is_error);
-        assert!(result.content.len() < 2048);
-        assert!(result.content.contains("[Truncated"));
-    }
-
-    #[tokio::test]
-    async fn test_fetch_accepts_shared_client() {
-        let client = reqwest::Client::new();
-        let tool = WebFetchTool::with_client(client, 32);
-        assert_eq!(tool.definition().name.as_ref(), "web_fetch");
-    }
-}
+#[path = "web_fetch_tests.rs"]
+mod tests;
