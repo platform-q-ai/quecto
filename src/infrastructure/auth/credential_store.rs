@@ -63,7 +63,7 @@ impl Credential {
     /// Check if this credential is expired.
     pub fn is_expired(&self) -> bool {
         if let Some(expires_at) = self.expires_at {
-            let now = chrono::Utc::now().timestamp();
+            let now = crate::infrastructure::time::unix_timestamp_secs();
             now >= expires_at
         } else {
             false
