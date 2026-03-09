@@ -296,24 +296,6 @@ impl ToolRegistry for ToolRegistryImpl {
         self.extension_names()
     }
 
-    fn replace_extensions(&mut self, tools: Vec<Arc<dyn Tool>>) {
-        // Remove all old extension tools
-        for name in std::mem::take(&mut self.extension_tool_names) {
-            self.tools.remove(&name);
-        }
-        // Add new extension tools, rejecting shadows
-        for tool in tools {
-            let name = tool.definition().name.to_string();
-            if self.tools.contains_key(&name) {
-                tracing::warn!(tool = %name, "extension tool rejected: shadows core tool");
-                continue;
-            }
-            self.extension_tool_names.insert(name.clone());
-            self.tools.insert(name, tool);
-        }
-        self.rebuild_definitions();
-    }
-
     fn register_extension(&mut self, tool: Arc<dyn Tool>) {
         self.register_extension(tool);
     }

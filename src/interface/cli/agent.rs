@@ -272,7 +272,7 @@ pub(crate) fn cmd_agent(
 pub(crate) struct AgentBuildResult {
     pub agent: AgentLoopImpl,
     pub workflow_config: crate::domain::workflow::WorkflowConfig,
-    /// Concatenated system prompt snippets from discovered extensions.
+    /// Concatenated system prompt snippets from registered extensions.
     pub extension_prompt_snippets: String,
     /// Resolved model name (after config + flag override).
     pub model: String,
@@ -338,7 +338,6 @@ pub(crate) fn build_agent_from_config(
         tracing::warn!("--network: bash network namespace isolation disabled");
     }
     let effective_network = exec_settings.network_passthrough;
-    let extensions_dir = workspace.join("extensions");
     let mut registry =
         ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
     let session_key = if flags.no_session || flags.session_name.as_deref() == Some("-") {
@@ -358,12 +357,9 @@ pub(crate) fn build_agent_from_config(
     ));
     crate::interface::shared::register_workflow_tool(&mut registry, &config.workflow);
 
-    // Discover script extensions + register native extensions (config-gated).
-    let ext_registry = crate::interface::shared::discover_and_register_extensions(
-        &config,
-        &extensions_dir,
-        &http_client,
-    );
+    // Build and register native extensions (config-gated).
+    let ext_registry =
+        crate::interface::shared::build_and_register_native_extensions(&config, &http_client);
     let extension_prompt_snippets = ext_registry.system_prompt_snippets();
     crate::interface::shared::register_extension_tools(&mut registry, &ext_registry);
 
