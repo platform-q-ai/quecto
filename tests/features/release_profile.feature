@@ -13,3 +13,6 @@ Feature: Release profile and dependency hygiene
 
   Scenario: image crate is not a direct dependency
     Then Cargo.toml should not contain a direct dependency on "image"
+
+  Scenario: serde_yaml is not a direct dependency
+    Then Cargo.toml should not contain a direct dependency on "serde_yaml"
