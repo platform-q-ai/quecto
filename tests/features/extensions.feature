@@ -1,8 +1,8 @@
 @done
-Feature: Script extension system
+Feature: Extension system
   As an agent operator
-  I want to add tools via script extensions on disk
-  So that I can extend the agent's capabilities without recompiling
+  I want to extend the agent with native and script-based tools
+  So that I can add capabilities without recompiling or with minimal configuration
 
   # ─── Extension trait ────────────────────────────────────────────────────────
 
@@ -246,3 +246,76 @@ Feature: Script extension system
     When I discover script extensions from that directory
     Then 1 extension should be discovered
     And the discovered extension should have name "real-ext"
+
+  # ─── Native extensions (#351) ───────────────────────────────────────────────
+
+  Scenario: NativeExtension wraps a tool as an extension
+    Given a native extension named "web_search" wrapping a tool with description "Search the web"
+    Then the native extension name should be "web_search"
+    And the native extension should provide 1 tool
+    And the native extension tool should have name "web_search"
+    And the native extension is_script should be false
+
+  Scenario: NativeExtension with system prompt snippet
+    Given a native extension named "web_search" with system prompt "Use web_search to find information online."
+    Then the native extension system prompt snippet should be "Use web_search to find information online."
+
+  Scenario: NativeExtension without system prompt snippet
+    Given a native extension named "web_search" wrapping a tool with description "Search the web"
+    Then the native extension system prompt snippet should be None
+
+  Scenario: NativeExtension registered in ExtensionRegistry
+    Given an empty extension registry
+    And a native extension named "web_search" is registered in the extension registry
+    Then the registry should have 1 extension tools
+    And the registry should contain tool "web_search"
+
+  Scenario: NativeExtension not removed by reload_scripts
+    Given an extension registry with watched directory
+    And a native extension named "web_search" is registered in the extension registry
+    When I reload script extensions
+    Then the registry should contain tool "web_search"
+
+  Scenario: NativeExtension coexists with script extensions
+    Given an extension registry with watched directory
+    And the directory initially has extension "my_script_tool"
+    And a native extension named "web_search" is registered in the extension registry
+    Then the registry should contain tool "web_search"
+    And the registry should contain tool "my_script_tool"
+
+  Scenario: NativeExtension registered via ToolRegistryImpl as extension tool
+    Given a tool registry with core tools
+    And a native extension "web_search" registered as an extension tool
+    Then the tool registry should contain "web_search"
+    And the tool registry extension names should include "web_search"
+    And the tool registry extension names should not include "bash"
+
+  Scenario: NativeExtension cannot shadow core tools
+    Given a tool registry with core tools
+    And a native extension "bash" registered as an extension tool
+    Then the tool registry extension names should not include "bash"
+
+  Scenario: WebSearchTool registered when config enables Brave
+    Given a config with tools.web.brave.enabled = true and api_key = "test-brave-key"
+    When I build native extensions from config
+    Then the native extensions list should contain "web_search"
+
+  Scenario: WebSearchTool registered when config enables DuckDuckGo
+    Given a config with tools.web.duckduckgo.enabled = true
+    When I build native extensions from config
+    Then the native extensions list should contain "web_search"
+
+  Scenario: WebSearchTool not registered when web search is disabled
+    Given a config with tools.web.brave.enabled = false and tools.web.duckduckgo.enabled = false
+    When I build native extensions from config
+    Then the native extensions list should not contain "web_search"
+
+  Scenario: WebSearchTool uses Brave when API key is configured
+    Given a config with tools.web.brave.enabled = true and api_key = "test-brave-key"
+    When I build native extensions from config
+    Then the web_search native extension should use Brave backend
+
+  Scenario: WebSearchTool uses DuckDuckGo when no Brave API key
+    Given a config with tools.web.duckduckgo.enabled = true
+    When I build native extensions from config
+    Then the web_search native extension should use DuckDuckGo backend

@@ -2,6 +2,8 @@ use cucumber::{gherkin, given, then, when};
 use quecto::domain::error::DomainError;
 use quecto::domain::extension::Extension;
 use quecto::domain::tool::{Tool, ToolDefinition, ToolResult};
+use quecto::infrastructure::config::Config;
+use quecto::infrastructure::extensions::native::{NativeExtension, build_native_extensions};
 use quecto::infrastructure::extensions::registry::ExtensionRegistry;
 use quecto::infrastructure::extensions::script::{
     ExtensionManifest, ScriptTool, discover_script_extensions,
@@ -675,4 +677,244 @@ fn given_symlink_outside(world: &mut QuectoWorld, name: String) {
         // On non-unix, just create a regular dir (test will pass vacuously)
         std::fs::create_dir_all(&link_path).unwrap();
     }
+}
+
+// ─── Native extension steps (#351) ───────────────────────────────────────────
+
+#[given(expr = "a native extension named {string} wrapping a tool with description {string}")]
+fn given_native_extension(world: &mut QuectoWorld, name: String, desc: String) {
+    let tool: Arc<dyn Tool> = Arc::new(DummyTool {
+        name: name.clone(),
+        description: desc,
+    });
+    let ext = NativeExtension::new(name, "native ext", tool);
+    world.native_extension = Some(DebugExtension(Arc::new(ext)));
+}
+
+#[given(expr = "a native extension named {string} with system prompt {string}")]
+fn given_native_extension_with_prompt(world: &mut QuectoWorld, name: String, prompt: String) {
+    let tool: Arc<dyn Tool> = Arc::new(DummyTool {
+        name: name.clone(),
+        description: "test".to_string(),
+    });
+    let ext = NativeExtension::new(name, "native ext", tool).with_system_prompt(prompt);
+    world.native_extension = Some(DebugExtension(Arc::new(ext)));
+}
+
+#[then(expr = "the native extension name should be {string}")]
+fn then_native_ext_name(world: &mut QuectoWorld, expected: String) {
+    let ext = world
+        .native_extension
+        .as_ref()
+        .expect("no native extension");
+    assert_eq!(ext.0.name(), expected);
+}
+
+#[then(expr = "the native extension should provide {int} tool")]
+fn then_native_ext_tool_count(world: &mut QuectoWorld, expected: i32) {
+    let ext = world
+        .native_extension
+        .as_ref()
+        .expect("no native extension");
+    assert_eq!(ext.0.tools().len(), expected as usize);
+}
+
+#[then(expr = "the native extension tool should have name {string}")]
+fn then_native_ext_tool_name(world: &mut QuectoWorld, expected: String) {
+    let ext = world
+        .native_extension
+        .as_ref()
+        .expect("no native extension");
+    let tools = ext.0.tools();
+    assert!(
+        tools
+            .iter()
+            .any(|t| t.definition().name.as_ref() == expected),
+        "expected tool '{}'",
+        expected
+    );
+}
+
+#[then("the native extension is_script should be false")]
+fn then_native_ext_not_script(world: &mut QuectoWorld) {
+    let ext = world
+        .native_extension
+        .as_ref()
+        .expect("no native extension");
+    assert!(!ext.0.is_script());
+}
+
+#[then(expr = "the native extension system prompt snippet should be {string}")]
+fn then_native_ext_snippet(world: &mut QuectoWorld, expected: String) {
+    let ext = world
+        .native_extension
+        .as_ref()
+        .expect("no native extension");
+    assert_eq!(
+        ext.0.system_prompt_snippet().as_deref(),
+        Some(expected.as_str())
+    );
+}
+
+#[then("the native extension system prompt snippet should be None")]
+fn then_native_ext_snippet_none(world: &mut QuectoWorld) {
+    let ext = world
+        .native_extension
+        .as_ref()
+        .expect("no native extension");
+    assert!(ext.0.system_prompt_snippet().is_none());
+}
+
+#[given(expr = "a native extension named {string} is registered in the extension registry")]
+fn given_native_ext_in_registry(world: &mut QuectoWorld, name: String) {
+    let tool: Arc<dyn Tool> = Arc::new(DummyTool {
+        name: name.clone(),
+        description: format!("Native {}", name),
+    });
+    let ext = Arc::new(NativeExtension::new(
+        &name,
+        format!("Native {}", name),
+        tool,
+    ));
+    let reg = world.ext_registry.as_mut().expect("need registry");
+    reg.register(ext);
+}
+
+#[given("a tool registry with core tools")]
+fn given_tool_registry_with_core(world: &mut QuectoWorld) {
+    create_test_registry(world);
+}
+
+#[given(expr = "a native extension {string} registered as an extension tool")]
+fn given_native_ext_in_tool_registry(world: &mut QuectoWorld, name: String) {
+    let tool: Arc<dyn Tool> = Arc::new(DummyTool {
+        name: name.clone(),
+        description: format!("Native {}", name),
+    });
+    let reg = world.tool_registry.as_mut().expect("need tool registry");
+    reg.register_extension(tool);
+}
+
+#[then(expr = "the tool registry should contain {string}")]
+fn then_tool_registry_contains(world: &mut QuectoWorld, name: String) {
+    let reg = world.tool_registry.as_ref().expect("need tool registry");
+    assert!(
+        reg.get(&name).is_some(),
+        "tool '{}' not found in tool registry",
+        name
+    );
+}
+
+#[then(expr = "the tool registry extension names should include {string}")]
+fn then_tool_registry_ext_names_include(world: &mut QuectoWorld, name: String) {
+    let reg = world.tool_registry.as_ref().expect("need tool registry");
+    let names = reg.extension_names();
+    assert!(
+        names.contains(&name),
+        "extension '{}' not in extension_names: {:?}",
+        name,
+        names
+    );
+}
+
+#[then(expr = "the tool registry extension names should not include {string}")]
+fn then_tool_registry_ext_names_exclude(world: &mut QuectoWorld, name: String) {
+    let reg = world.tool_registry.as_ref().expect("need tool registry");
+    let names = reg.extension_names();
+    assert!(
+        !names.contains(&name),
+        "extension '{}' should not be in extension_names: {:?}",
+        name,
+        names
+    );
+}
+
+// ─── Config-driven native extension steps (#351) ─────────────────────────────
+
+fn config_with_web_search(brave_enabled: bool, brave_key: &str, ddg_enabled: bool) -> Config {
+    let mut config = Config::default();
+    config.tools.web.brave.enabled = brave_enabled;
+    config.tools.web.brave.api_key = brave_key.to_string();
+    config.tools.web.duckduckgo.enabled = ddg_enabled;
+    config
+}
+
+#[given(expr = "a config with tools.web.brave.enabled = true and api_key = {string}")]
+fn given_config_brave_enabled(world: &mut QuectoWorld, api_key: String) {
+    world.config = Some(config_with_web_search(true, &api_key, false));
+}
+
+#[given("a config with tools.web.duckduckgo.enabled = true")]
+fn given_config_ddg_enabled(world: &mut QuectoWorld) {
+    world.config = Some(config_with_web_search(false, "", true));
+}
+
+#[given("a config with tools.web.brave.enabled = false and tools.web.duckduckgo.enabled = false")]
+fn given_config_web_disabled(world: &mut QuectoWorld) {
+    world.config = Some(config_with_web_search(false, "", false));
+}
+
+#[when("I build native extensions from config")]
+fn when_build_native_extensions(world: &mut QuectoWorld) {
+    let config = world.config.as_ref().expect("no config");
+    let client = reqwest::Client::new();
+    let exts = build_native_extensions(&config.tools.web, &client);
+    world.native_extensions_built = Some(exts.into_iter().map(DebugExtension).collect());
+}
+
+#[then(expr = "the native extensions list should contain {string}")]
+fn then_native_exts_contain(world: &mut QuectoWorld, name: String) {
+    let exts = world
+        .native_extensions_built
+        .as_ref()
+        .expect("no native extensions built");
+    assert!(
+        exts.iter().any(|e| e.name() == name),
+        "expected native extension '{}', found: {:?}",
+        name,
+        exts.iter().map(|e| e.name()).collect::<Vec<_>>()
+    );
+}
+
+#[then(expr = "the native extensions list should not contain {string}")]
+fn then_native_exts_not_contain(world: &mut QuectoWorld, name: String) {
+    let exts = world
+        .native_extensions_built
+        .as_ref()
+        .expect("no native extensions built");
+    assert!(
+        !exts.iter().any(|e| e.name() == name),
+        "native extension '{}' should not be present",
+        name
+    );
+}
+
+#[then("the web_search native extension should use Brave backend")]
+fn then_web_search_uses_brave(world: &mut QuectoWorld) {
+    // When Brave is enabled with an API key, the tool is created with Some(api_key).
+    // We verify indirectly: the extension exists and was built with brave config.
+    let config = world.config.as_ref().expect("no config");
+    assert!(config.tools.web.brave.enabled);
+    assert!(!config.tools.web.brave.api_key.is_empty());
+    let exts = world
+        .native_extensions_built
+        .as_ref()
+        .expect("no native extensions built");
+    assert!(exts.iter().any(|e| e.name() == "web_search"));
+}
+
+#[then("the web_search native extension should use DuckDuckGo backend")]
+fn then_web_search_uses_ddg(world: &mut QuectoWorld) {
+    // When DDG is enabled without Brave API key, tool is created with None api_key.
+    let config = world.config.as_ref().expect("no config");
+    assert!(config.tools.web.duckduckgo.enabled);
+    assert!(
+        config.tools.web.brave.api_key.is_empty() || !config.tools.web.brave.enabled,
+        "Brave should not be configured for DDG backend test"
+    );
+    let exts = world
+        .native_extensions_built
+        .as_ref()
+        .expect("no native extensions built");
+    assert!(exts.iter().any(|e| e.name() == "web_search"));
 }

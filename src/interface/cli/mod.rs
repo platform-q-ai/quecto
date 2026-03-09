@@ -366,7 +366,9 @@ fn cmd_repl_with_progress<R: std::io::BufRead, W: std::io::Write>(
         }
     };
 
-    let provider = match build_agent_provider(&config, &base_dir) {
+    let http_client = crate::interface::shared::build_http_client();
+
+    let provider = match build_agent_provider(&config, &base_dir, &http_client) {
         Ok(p) => p,
         Err(msg) => {
             let _ = writeln!(io.writer, "Error: {msg}");
