@@ -64,7 +64,7 @@ pub(super) fn import_anthropic(
         .and_then(|v| v.as_i64())
         .unwrap_or(0)
         / 1000;
-    let now = chrono::Utc::now().timestamp();
+    let now = crate::infrastructure::time::unix_timestamp_secs();
 
     let (token, refresh_tok, expires) = if now >= expires_s && !refresh.is_empty() {
         out.stdout
@@ -145,7 +145,7 @@ pub(crate) fn import_openai(
     let access = openai.get("access").and_then(|v| v.as_str()).unwrap_or("");
     let refresh = openai.get("refresh").and_then(|v| v.as_str()).unwrap_or("");
     let expires_s = openai.get("expires").and_then(|v| v.as_i64()).unwrap_or(0) / 1000;
-    let now = chrono::Utc::now().timestamp();
+    let now = crate::infrastructure::time::unix_timestamp_secs();
 
     if access.is_empty() {
         return Some(0);

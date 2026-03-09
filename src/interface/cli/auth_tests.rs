@@ -530,7 +530,7 @@ fn test_import_openai_stores_credential_with_safety_margin() {
     let store = CredentialStore::new(tmp.path());
     let rt = tokio::runtime::Runtime::new().unwrap();
 
-    let now = chrono::Utc::now().timestamp();
+    let now = crate::infrastructure::time::unix_timestamp_secs();
     // expires_s in the JSON is in milliseconds, divide by 1000 gives seconds
     let expires_ms = (now + 7200) * 1000;
     let auth_json: serde_json::Value = serde_json::json!({
@@ -577,7 +577,7 @@ fn test_import_openai_non_expired_stores_directly() {
     let tmp = tempfile::TempDir::new().unwrap();
     let store = CredentialStore::new(tmp.path());
 
-    let now = chrono::Utc::now().timestamp();
+    let now = crate::infrastructure::time::unix_timestamp_secs();
     // Token expires in 7200 seconds (not expired)
     let expires_ms = (now + 7200) * 1000;
     let auth_json: serde_json::Value = serde_json::json!({

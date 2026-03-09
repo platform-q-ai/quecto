@@ -906,7 +906,7 @@ fn then_token_exchange_no_refresh_token(world: &mut QuectoWorld) {
 #[given("an opencode auth.json with expired OpenAI OAuth credential")]
 fn given_opencode_expired_openai(world: &mut QuectoWorld) {
     ensure_temp_dir(world);
-    let now = chrono::Utc::now().timestamp();
+    let now = quecto::infrastructure::time::unix_timestamp_secs();
     // Token expired 100 seconds ago
     let expires_ms = (now - 100) * 1000;
     world.gateway_import_auth_json = Some(serde_json::json!({
@@ -922,7 +922,7 @@ fn given_opencode_expired_openai(world: &mut QuectoWorld) {
 #[given(expr = "an opencode auth.json with valid OpenAI OAuth credential {string}")]
 fn given_opencode_valid_openai(world: &mut QuectoWorld, token: String) {
     ensure_temp_dir(world);
-    let now = chrono::Utc::now().timestamp();
+    let now = quecto::infrastructure::time::unix_timestamp_secs();
     let expires_ms = (now + 7200) * 1000;
     world.gateway_import_auth_json = Some(serde_json::json!({
         "openai": {
@@ -1003,7 +1003,7 @@ fn when_expires_at_with_margin(world: &mut QuectoWorld) {
 
 #[then(expr = "the resulting expires_at should be {int} seconds from now")]
 fn then_expires_at_is_seconds_from_now(world: &mut QuectoWorld, expected_offset: i64) {
-    let now = chrono::Utc::now().timestamp();
+    let now = quecto::infrastructure::time::unix_timestamp_secs();
     let actual = world
         .gateway_computed_expires_at
         .expect("expires_at not computed");
@@ -1033,7 +1033,7 @@ fn then_persisted_credential_has_margin(
         .get(&provider)
         .unwrap_or_else(|| panic!("no credential found for provider '{}'", provider));
 
-    let now = chrono::Utc::now().timestamp();
+    let now = quecto::infrastructure::time::unix_timestamp_secs();
     let expected_with_margin = now + expires_in - 300;
     let actual = cred.expires_at.expect("expires_at not set");
 

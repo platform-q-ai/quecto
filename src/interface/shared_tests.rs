@@ -4,7 +4,7 @@ use super::*;
 
 #[test]
 fn test_expires_at_with_margin_subtracts_300_seconds() {
-    let now = chrono::Utc::now().timestamp();
+    let now = crate::infrastructure::time::unix_timestamp_secs();
     let result = expires_at_with_margin(3600);
     // Should be approximately now + 3600 - 300 = now + 3300
     let expected = now + 3300;
@@ -19,7 +19,7 @@ fn test_expires_at_with_margin_subtracts_300_seconds() {
 
 #[test]
 fn test_expires_at_with_margin_short_expiry() {
-    let now = chrono::Utc::now().timestamp();
+    let now = crate::infrastructure::time::unix_timestamp_secs();
     let result = expires_at_with_margin(600);
     let expected = now + 300;
     assert!(
@@ -32,7 +32,7 @@ fn test_expires_at_with_margin_short_expiry() {
 
 #[test]
 fn test_expires_at_with_margin_zero_expiry() {
-    let now = chrono::Utc::now().timestamp();
+    let now = crate::infrastructure::time::unix_timestamp_secs();
     let result = expires_at_with_margin(0);
     // Should be now - 300 (already expired with margin)
     let expected = now - 300;
@@ -106,7 +106,9 @@ fn test_datetime_preamble_contains_current_date() {
         preamble
     );
     // Should contain a year (4 digits)
-    let year = chrono::Local::now().format("%Y").to_string();
+    // Approximate current year from epoch seconds
+    let ts = crate::infrastructure::time::unix_timestamp_secs();
+    let year = (1970 + ts / 31_557_600).to_string();
     assert!(
         preamble.contains(&year),
         "expected preamble to contain current year {}, got: {}",

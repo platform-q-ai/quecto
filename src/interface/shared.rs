@@ -3,8 +3,6 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use chrono::Local;
-
 use crate::domain::skill::SkillLoader;
 use crate::infrastructure::auth::credential_store::Credential;
 use crate::infrastructure::persistence::skill_loader::FileSkillLoader;
@@ -49,9 +47,7 @@ pub fn merge_prompts(skill_prompt: &str, user_prompt: &Option<String>) -> String
 /// harmless; this preamble is authoritative for time-aware agent operations.
 /// See issue #104 for discussion.
 pub fn datetime_preamble() -> String {
-    let now = Local::now();
-    // Format: "Saturday, March 1, 2026 at 10:30:15 AM GMT+1"
-    let date_str = now.format("%A, %B %-d, %Y at %I:%M:%S %p %Z").to_string();
+    let date_str = crate::infrastructure::time::format_local_datetime();
     format!("Current date and time: {}", date_str)
 }
 
@@ -149,7 +145,8 @@ pub const OAUTH_EXPIRY_MARGIN_SECS: i64 = 300;
 /// credential storage paths (login, import, refresh) to ensure a uniform
 /// 5-minute buffer before server-side token expiration.
 pub fn expires_at_with_margin(expires_in: u64) -> i64 {
-    chrono::Utc::now().timestamp() + expires_in as i64 - OAUTH_EXPIRY_MARGIN_SECS
+    crate::infrastructure::time::unix_timestamp_secs() + expires_in as i64
+        - OAUTH_EXPIRY_MARGIN_SECS
 }
 
 /// Operates on a pre-loaded snapshot to avoid redundant file I/O.
