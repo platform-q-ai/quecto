@@ -1508,7 +1508,7 @@ dependencies = [
 
 [[package]]
 name = "quecto"
-version = "0.15.1"
+version = "0.18.0"
 dependencies = [
  "base64",
  "chrono",
