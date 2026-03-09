@@ -43,7 +43,7 @@ pub struct ChatRequest<'a> {
     pub temperature: f32,
     /// Optional session identifier for providers that support prompt caching
     /// keyed by session (e.g. Codex `prompt_cache_key`).
-    pub session_id: Option<String>,
+    pub session_id: Option<&'a str>,
     /// Optional tool_choice parameter to control how the model selects tools.
     pub tool_choice: Option<ToolChoice>,
     /// Optional metadata (e.g. user_id for multi-tenant rate limiting).

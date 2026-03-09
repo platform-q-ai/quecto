@@ -436,48 +436,61 @@ fn decode_entity(entity: &str) -> Option<char> {
 }
 
 /// Collapse runs of whitespace into single spaces, blank lines into single
-/// blank lines, and trim each line. Single-pass per line.
+/// blank lines, and trim each line. Writes directly into a single output
+/// buffer to avoid per-line heap allocations.
 fn collapse_whitespace(text: &str) -> String {
-    let mut lines: Vec<String> = Vec::new();
+    let mut out = String::with_capacity(text.len());
     let mut consecutive_blank = 0_u32;
+    let mut first_line = true;
 
     for line in text.lines() {
-        let mut trimmed = String::with_capacity(line.len());
+        // Check if the line is blank (all whitespace) without allocating.
+        let is_blank = line.chars().all(|c| c.is_whitespace());
+
+        if is_blank {
+            consecutive_blank += 1;
+            if consecutive_blank <= 1 {
+                if !first_line {
+                    out.push('\n');
+                }
+                // Blank line — push empty (newline only)
+                first_line = false;
+            }
+            continue;
+        }
+
+        consecutive_blank = 0;
+        if !first_line {
+            out.push('\n');
+        }
+        first_line = false;
+
+        // Write collapsed line directly into `out`
         let mut prev_space = true; // true = trim leading spaces
         for ch in line.chars() {
             if ch.is_whitespace() {
                 if !prev_space {
-                    trimmed.push(' ');
+                    out.push(' ');
                     prev_space = true;
                 }
             } else {
-                trimmed.push(ch);
+                out.push(ch);
                 prev_space = false;
             }
         }
-        if trimmed.ends_with(' ') {
-            trimmed.pop();
-        }
-
-        if trimmed.is_empty() {
-            consecutive_blank += 1;
-            if consecutive_blank <= 1 {
-                lines.push(String::new());
-            }
-        } else {
-            consecutive_blank = 0;
-            lines.push(trimmed);
+        // Trim trailing space
+        if out.ends_with(' ') {
+            out.pop();
         }
     }
 
-    // Trim leading/trailing blank lines via index slicing (avoids O(n²) remove(0))
-    let start = lines.iter().position(|l| !l.is_empty()).unwrap_or(0);
-    let end = lines
-        .iter()
-        .rposition(|l| !l.is_empty())
-        .map_or(start, |e| e + 1);
-
-    lines[start..end].join("\n")
+    // Trim leading/trailing blank lines
+    let trimmed = out.trim_matches('\n');
+    if trimmed.len() == out.len() {
+        out
+    } else {
+        trimmed.to_string()
+    }
 }
 
 #[cfg(test)]

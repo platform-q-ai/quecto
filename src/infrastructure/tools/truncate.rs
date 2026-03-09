@@ -252,22 +252,28 @@ pub fn truncate_line(line: &str, max_chars: usize) -> (String, bool) {
 }
 
 /// Human-readable size formatting: "1.2KB", "3.5MB", "512B".
+///
+/// Uses `write!` into a pre-allocated buffer to avoid repeated heap
+/// allocations from `format!()`.
 pub fn format_size(bytes: usize) -> String {
+    use std::fmt::Write;
     const KB: f64 = 1024.0;
     const MB: f64 = 1024.0 * 1024.0;
     const GB: f64 = 1024.0 * 1024.0 * 1024.0;
 
+    let mut buf = String::with_capacity(8);
     let b = bytes as f64;
 
     if b >= GB {
-        format!("{:.1}GB", b / GB)
+        let _ = write!(buf, "{:.1}GB", b / GB);
     } else if b >= MB {
-        format!("{:.1}MB", b / MB)
+        let _ = write!(buf, "{:.1}MB", b / MB);
     } else if b >= KB {
-        format!("{:.1}KB", b / KB)
+        let _ = write!(buf, "{:.1}KB", b / KB);
     } else {
-        format!("{}B", bytes)
+        let _ = write!(buf, "{}B", bytes);
     }
+    buf
 }
 
 #[cfg(test)]

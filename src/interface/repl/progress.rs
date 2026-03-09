@@ -79,7 +79,7 @@ use crate::application::context_pruning::truncate_utf8_safe;
 
 fn sanitize_and_truncate(s: &str, max_chars: usize) -> String {
     let sanitized = sanitize_for_terminal(s);
-    truncate_utf8_safe(&sanitized, max_chars)
+    truncate_utf8_safe(&sanitized, max_chars).into_owned()
 }
 
 fn format_compact_tokens(tokens: usize) -> String {
@@ -121,7 +121,7 @@ fn format_tool_status(name: &str, arguments: &str) -> String {
     } else {
         format!("{} {}", safe_name, safe_args)
     };
-    truncate_utf8_safe(&combined, MAX_TOOL_STATUS_CHARS)
+    truncate_utf8_safe(&combined, MAX_TOOL_STATUS_CHARS).into_owned()
 }
 
 // ---------------------------------------------------------------------------

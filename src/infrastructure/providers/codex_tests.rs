@@ -94,7 +94,7 @@ fn test_build_request_body_includes_prompt_cache_key_when_session_id_set() {
         model: "gpt-5.3-codex",
         max_tokens: 4096,
         temperature: 0.7,
-        session_id: Some("cli:default".to_string()),
+        session_id: Some("cli:default"),
         tool_choice: None,
         metadata: None,
         thinking_level: None,
