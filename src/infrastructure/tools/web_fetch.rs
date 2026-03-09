@@ -435,25 +435,42 @@ fn decode_entity(entity: &str) -> Option<char> {
     }
 }
 
+/// Append `line` to `out` with runs of whitespace collapsed to single spaces,
+/// leading/trailing whitespace trimmed. No per-line allocation.
+fn push_collapsed_line(out: &mut String, line: &str) {
+    let mut prev_space = true; // true = trim leading spaces
+    for ch in line.chars() {
+        if ch.is_whitespace() {
+            if !prev_space {
+                out.push(' ');
+                prev_space = true;
+            }
+        } else {
+            out.push(ch);
+            prev_space = false;
+        }
+    }
+    // Trim trailing space
+    if out.ends_with(' ') {
+        out.pop();
+    }
+}
+
 /// Collapse runs of whitespace into single spaces, blank lines into single
 /// blank lines, and trim each line. Writes directly into a single output
 /// buffer to avoid per-line heap allocations.
 fn collapse_whitespace(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
+    let mut out = String::with_capacity(text.len().min(256 * 1024));
     let mut consecutive_blank = 0_u32;
     let mut first_line = true;
 
     for line in text.lines() {
-        // Check if the line is blank (all whitespace) without allocating.
-        let is_blank = line.chars().all(|c| c.is_whitespace());
-
-        if is_blank {
+        if line.chars().all(|c| c.is_whitespace()) {
             consecutive_blank += 1;
             if consecutive_blank <= 1 {
                 if !first_line {
                     out.push('\n');
                 }
-                // Blank line — push empty (newline only)
                 first_line = false;
             }
             continue;
@@ -464,33 +481,19 @@ fn collapse_whitespace(text: &str) -> String {
             out.push('\n');
         }
         first_line = false;
-
-        // Write collapsed line directly into `out`
-        let mut prev_space = true; // true = trim leading spaces
-        for ch in line.chars() {
-            if ch.is_whitespace() {
-                if !prev_space {
-                    out.push(' ');
-                    prev_space = true;
-                }
-            } else {
-                out.push(ch);
-                prev_space = false;
-            }
-        }
-        // Trim trailing space
-        if out.ends_with(' ') {
-            out.pop();
-        }
+        push_collapsed_line(&mut out, line);
     }
 
-    // Trim leading/trailing blank lines
-    let trimmed = out.trim_matches('\n');
-    if trimmed.len() == out.len() {
-        out
-    } else {
-        trimmed.to_string()
+    // Trim leading/trailing blank lines in-place
+    while out.ends_with('\n') {
+        out.pop();
     }
+    if let Some(start) = out.find(|c: char| c != '\n') {
+        if start > 0 {
+            out.drain(..start);
+        }
+    }
+    out
 }
 
 #[cfg(test)]

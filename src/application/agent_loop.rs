@@ -421,10 +421,9 @@ impl AgentLoopImpl {
 
             // Emit Thinking before every LLM call so the REPL spinner activates
             // immediately, including during multi-turn tool loops.
-            let max_context_tokens = self.max_context_tokens;
             self.notify(|| AgentProgressEvent::Thinking {
                 context_tokens,
-                max_context_tokens,
+                max_context_tokens: self.max_context_tokens,
                 provider: self.provider.name().to_string(),
                 model: self.model.clone(),
             });
