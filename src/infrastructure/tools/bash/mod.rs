@@ -565,7 +565,7 @@ where
         }
     }
 
-    (String::from_utf8_lossy(&collected).to_string(), truncated)
+    (String::from_utf8_lossy(&collected).into_owned(), truncated)
 }
 
 async fn await_stream_output(

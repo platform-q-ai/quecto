@@ -8,7 +8,6 @@
 // Depends on: domain::message, domain::session (ContextSpillStore).
 // Never imports infrastructure.
 
-use std::collections::HashSet;
 use std::fmt::Write;
 
 use crate::domain::message::{Message, Role};
@@ -70,13 +69,15 @@ pub fn estimate_message_tokens(msg: &Message) -> usize {
 
 /// Truncate a string to at most `max_chars` characters, appending "..."
 /// if truncated. Safe for multi-byte UTF-8 — never splits a character.
-pub fn truncate_utf8_safe(s: &str, max_chars: usize) -> String {
+///
+/// Returns `Cow::Borrowed` when the string fits (no allocation).
+pub fn truncate_utf8_safe(s: &str, max_chars: usize) -> std::borrow::Cow<'_, str> {
     let char_count = s.chars().count();
     if char_count <= max_chars {
-        s.to_string()
+        std::borrow::Cow::Borrowed(s)
     } else {
         let truncated: String = s.chars().take(max_chars.saturating_sub(3)).collect();
-        format!("{truncated}...")
+        std::borrow::Cow::Owned(format!("{truncated}..."))
     }
 }
 
@@ -140,7 +141,8 @@ pub fn enforce_context_ceiling(messages: &mut Vec<Message>, max_tokens: usize) -
         return 0;
     }
 
-    // Collect indices of droppable messages (oldest first, already in order)
+    // Collect indices of droppable messages (oldest first, already in order).
+    // Then count how many to drop from the front until under budget.
     let droppable: Vec<usize> = messages
         .iter()
         .enumerate()
@@ -148,24 +150,29 @@ pub fn enforce_context_ceiling(messages: &mut Vec<Message>, max_tokens: usize) -
         .map(|(i, _)| i)
         .collect();
 
-    // Mark messages for removal until under budget
-    let mut to_drop = HashSet::new();
+    let mut drop_count = 0;
     for &idx in &droppable {
         if total <= max_tokens {
             break;
         }
         total = total.saturating_sub(estimate_message_tokens(&messages[idx]));
-        to_drop.insert(idx);
+        drop_count += 1;
     }
 
-    let dropped = to_drop.len();
+    if drop_count == 0 {
+        return 0;
+    }
+
+    // Build a set of indices to drop (only the first `drop_count` droppable entries).
+    // Use a sorted slice + binary_search for O(log n) lookup instead of HashSet.
+    let drop_indices = &droppable[..drop_count];
     let mut idx = 0;
     messages.retain(|_| {
-        let keep = !to_drop.contains(&idx);
+        let keep = drop_indices.binary_search(&idx).is_err();
         idx += 1;
         keep
     });
-    dropped
+    drop_count
 }
 
 /// Build or update the pinned spill manifest message.

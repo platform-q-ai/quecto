@@ -208,7 +208,7 @@ impl CodexProvider {
             body["instructions"] = serde_json::Value::String(inst);
         }
 
-        if let Some(ref session_id) = request.session_id {
+        if let Some(session_id) = request.session_id {
             body["prompt_cache_key"] =
                 serde_json::Value::String(Self::sanitize_cache_key(session_id));
         }

@@ -179,12 +179,16 @@ impl AgentLoopImpl {
         self
     }
 
+    /// Apply context pruning and return the post-pruning token estimate.
+    ///
+    /// Avoids a redundant `estimate_total_tokens` call in the main loop
+    /// by computing it here once.
     async fn apply_context_pruning(
         &self,
         messages: &mut Vec<Message>,
         current_turn: u32,
         spills_dirty: bool,
-    ) {
+    ) -> usize {
         // Collapse is disabled by default (COLLAPSE_DISABLED = u32::MAX).
         // Still available for users who explicitly lower the config value.
         let collapsed = if self.context_collapse_after_turns < context_pruning::COLLAPSE_DISABLED {
@@ -208,16 +212,18 @@ impl AgentLoopImpl {
                 .await;
             }
         }
+        let total_tokens = context_pruning::estimate_total_tokens(messages);
         if collapsed > 0 || dropped > 0 {
             tracing::info!(
                 target: "context_prune",
                 collapsed,
                 dropped,
                 turn = current_turn,
-                total_tokens = context_pruning::estimate_total_tokens(messages),
+                total_tokens,
                 "context pruned"
             );
         }
+        total_tokens
     }
 
     fn build_chat_request<'a>(
@@ -230,7 +236,7 @@ impl AgentLoopImpl {
         let session_id = if self.session_key.is_empty() {
             None
         } else {
-            Some(self.session_key.clone())
+            Some(self.session_key.as_str())
         };
         ChatRequest {
             messages,
@@ -321,7 +327,8 @@ impl AgentLoopImpl {
     fn build_tool_message(&self, args: ToolMessageArgs) -> Message {
         let mut tool_msg = Message::tool(args.tc.id.clone(), args.content);
         tool_msg.tool_name = Some(args.tc.name.clone());
-        tool_msg.input_preview = Some(context_pruning::truncate_utf8_safe(&args.tc.arguments, 100));
+        tool_msg.input_preview =
+            Some(context_pruning::truncate_utf8_safe(&args.tc.arguments, 100).into_owned());
         tool_msg.spill_id = Some(args.spill_id);
         tool_msg.image_blocks = args.image_blocks;
         tool_msg.is_error = args.is_error;
@@ -408,20 +415,17 @@ impl AgentLoopImpl {
         let mut spills_dirty = true;
 
         loop {
-            self.apply_context_pruning(messages, current_turn, spills_dirty)
+            let context_tokens = self
+                .apply_context_pruning(messages, current_turn, spills_dirty)
                 .await;
 
             // Emit Thinking before every LLM call so the REPL spinner activates
             // immediately, including during multi-turn tool loops.
-            let context_tokens = context_pruning::estimate_total_tokens(messages);
-            let provider = self.provider.name().to_string();
-            let model = self.model.clone();
-            let max_context_tokens = self.max_context_tokens;
             self.notify(|| AgentProgressEvent::Thinking {
                 context_tokens,
-                max_context_tokens,
-                provider,
-                model,
+                max_context_tokens: self.max_context_tokens,
+                provider: self.provider.name().to_string(),
+                model: self.model.clone(),
             });
 
             let request = self.build_chat_request(messages, tool_defs);

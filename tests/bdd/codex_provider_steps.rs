@@ -154,7 +154,7 @@ fn given_codex_request_body_with_session_id(
         model: &model,
         max_tokens: 4096,
         temperature: 0.7,
-        session_id: Some(session_id),
+        session_id: Some(&session_id),
         tool_choice: None,
         metadata: None,
         thinking_level: None,
