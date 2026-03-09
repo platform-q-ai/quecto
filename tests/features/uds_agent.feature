@@ -835,3 +835,102 @@ Feature: UDS mode for headless agent operation
     And client 1 connects
     And client 1 disconnects
     Then the UDS agent exits with code 0
+
+  # ─── UDS extension protocol (#352) ──────────────────────────────────────────
+  #
+  # External processes register tools via the UDS socket.
+  # register_tools / unregister_tools commands, execute_tool routing,
+  # tool_result delivery, disconnect cleanup.
+
+  @done @multi-client @uds-ext
+  Scenario: register_tools registers a tool from a connected client
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And client 1 sends register_tools with tool "weather" described as "Get weather"
+    And client 1 sends command "get_extensions" with id "ge-reg"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 1 should have received a response command "register_tools" with success true
+    And the post-register get_extensions response should list extension "weather"
+
+  @done @multi-client @uds-ext
+  Scenario: register_tools rejects tool that shadows a core tool
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And client 1 sends register_tools with tool "bash" described as "Shadow bash"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 1 should have received a response command "register_tools" with success false
+
+  @done @multi-client @uds-ext
+  Scenario: register_tools broadcasts extensions_changed to all clients
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And client 2 connects
+    And client 1 sends register_tools with tool "weather" described as "Get weather"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 2 should have received an event of type "extensions_changed"
+
+  @done @multi-client @uds-ext
+  Scenario: unregister_tools removes a previously registered tool
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And client 1 sends register_tools with tool "weather" described as "Get weather"
+    And client 1 sends unregister_tools with tool "weather"
+    And client 1 sends command "get_extensions" with id "ge-unreg"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 1 should have received a response command "unregister_tools" with success true
+    And the post-unregister get_extensions response should have 0 extensions
+
+  @done @multi-client @uds-ext
+  Scenario: client disconnect auto-unregisters its tools
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the multi-client UDS agent with persist
+    And client 1 connects
+    And client 2 connects
+    And client 1 sends register_tools with tool "weather" described as "Get weather"
+    And client 1 disconnects
+    And a new client 3 connects after all clients disconnected
+    And client 3 sends command "get_extensions" with id "ge-disc"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And the post-disconnect get_extensions response should have 0 extensions
+
+  @done @multi-client @uds-ext
+  Scenario: multiple extension clients register different tools simultaneously
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And client 2 connects
+    And client 1 sends register_tools with tool "weather" described as "Get weather"
+    And client 2 sends register_tools with tool "translate" described as "Translate text"
+    And client 2 sends command "get_extensions" with id "ge-multi"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And the post-multi get_extensions response should list extension "weather"
+    And the post-multi get_extensions response should list extension "translate"
+
+  @done @multi-client @uds-ext
+  Scenario: re-registering a tool updates its definition
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And client 1 sends register_tools with tool "weather" described as "Old description"
+    And client 1 sends register_tools with tool "weather" described as "New description"
+    And client 1 sends command "get_extensions" with id "ge-redef"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And the post-redef get_extensions response should list extension "weather" with description "New description"

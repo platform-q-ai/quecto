@@ -1,11 +1,4 @@
-/// UDS agent loop — headless JSON-lines protocol over a Unix domain socket.
-/// Entry point: `run_uds_loop` — called from `cmd_agent` when `--mode uds` is set.
-/// Multi-client accept loop and broadcast: `uds_multi.rs` (#318).
-use crate::application::agent_loop::AgentLoopImpl;
-use crate::domain::message::{Message, Role};
-use crate::domain::session::{Session, SessionStore};
-use crate::infrastructure::persistence::session_store::FileSessionStore;
-
+// UDS agent loop — headless JSON-lines protocol over a Unix domain socket.
 use super::protocol::{AgentCommand, AgentEvent, StreamingBehavior};
 use super::uds_cancel::{
     CancelHandle, CancelSlot, PromptArgs, PromptOutcome, arm_cancel, disarm_cancel, fire_cancel,
@@ -15,6 +8,10 @@ use super::uds_multi::{MultiClientArgs, PromptArgsBroadcast, run_agent_prompt_br
 use super::uds_session::{
     AgentSession, compute_session_stats, message_to_json, messages_tail_json,
 };
+use crate::application::agent_loop::AgentLoopImpl;
+use crate::domain::message::{Message, Role};
+use crate::domain::session::{Session, SessionStore};
+use crate::infrastructure::persistence::session_store::FileSessionStore;
 
 pub use super::protocol::parse_command_line;
 
@@ -48,8 +45,6 @@ pub struct UdsLoopArgs<'a> {
     /// When true, keep the agent alive after all clients disconnect (#348).
     pub persist: bool,
 }
-
-/// Run the UDS event loop.  Returns exit code.
 pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     let rt = match crate::interface::cli::build_tokio_runtime() {
         Ok(rt) => rt,
@@ -61,7 +56,6 @@ pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     rt.block_on(uds_loop_async(args))
 }
 
-/// Remove stale `quecto-agent-*.sock` files older than `max_age` from `dir`.
 pub(crate) fn reap_stale_sockets(dir: &std::path::Path, max_age: std::time::Duration) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -85,7 +79,6 @@ pub(crate) fn reap_stale_sockets(dir: &std::path::Path, max_age: std::time::Dura
     }
 }
 
-/// Drop guard that removes the socket file on exit.
 struct SocketGuard(std::path::PathBuf);
 
 impl Drop for SocketGuard {
@@ -94,7 +87,6 @@ impl Drop for SocketGuard {
     }
 }
 
-/// Remove stale socket, bind at `path`, apply `chmod 0600`, return listener.
 fn bind_secure_socket(path: &std::path::Path) -> std::io::Result<tokio::net::UnixListener> {
     use std::os::unix::fs::PermissionsExt;
     let _ = std::fs::remove_file(path);
@@ -106,7 +98,6 @@ fn bind_secure_socket(path: &std::path::Path) -> std::io::Result<tokio::net::Uni
     Ok(listener)
 }
 
-/// Async body of the UDS loop.
 async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     let UdsLoopArgs {
         agent,
@@ -185,9 +176,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Single-client path (backward-compatible with existing tests)
-// ═══════════════════════════════════════════════════════════════════════════════
+// ─── Single-client path ──────────────────────────────────────────────────────
 
 struct SingleClientArgs {
     agent: AgentLoopImpl,
@@ -242,6 +231,8 @@ async fn single_client_loop(
             cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
             broadcast_tx: None,
             ext_registry,
+            client_tool_registry: super::uds_ext_protocol::new_client_tool_registry(),
+            current_client_id: 0,
         },
     )
     .await;
@@ -258,11 +249,8 @@ async fn single_client_loop(
     0
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Shared infrastructure
-// ═══════════════════════════════════════════════════════════════════════════════
+// ─── Shared infrastructure ───────────────────────────────────────────────────
 
-/// Prepend a transient system message.
 pub(crate) fn inject_system_prompt(messages: &mut Vec<Message>, prompt: &str) {
     if prompt.is_empty() {
         return;
@@ -273,7 +261,6 @@ pub(crate) fn inject_system_prompt(messages: &mut Vec<Message>, prompt: &str) {
     messages.insert(0, Message::system(prompt.to_string()));
 }
 
-/// Remove the injected system prompt before persisting.
 pub(crate) fn remove_injected_system_prompt(messages: &mut Vec<Message>, prompt: &str) {
     if prompt.is_empty() {
         return;
@@ -286,22 +273,18 @@ pub(crate) fn remove_injected_system_prompt(messages: &mut Vec<Message>, prompt:
     }
 }
 
-/// 1 MiB per line cap.
 pub(super) const MAX_LINE_BYTES: usize = 1024 * 1024;
 
-/// Cheap substring check for cancel commands.
 pub(super) fn is_cancel_command(trimmed: &str) -> bool {
     trimmed.contains("\"type\":\"abort\"") || trimmed.contains("\"type\":\"steer\"")
 }
 
-/// Parsed command line or error.
 pub(super) enum LineResult {
     Command(AgentCommand),
     ParseError(String),
     LineTooLong,
 }
 
-/// Parse a raw text line into a `LineResult`.
 pub(super) fn parse_line(line: &str) -> LineResult {
     if line.len() > MAX_LINE_BYTES {
         return LineResult::LineTooLong;
@@ -316,7 +299,6 @@ pub(super) fn parse_line(line: &str) -> LineResult {
     }
 }
 
-/// Read JSON commands from a single-client socket and dispatch them.
 async fn run_command_loop(
     reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
     ctx: &mut DispatchCtx<'_>,
@@ -380,7 +362,6 @@ async fn run_command_loop(
     reader_task.abort();
 }
 
-/// Load session messages.
 async fn load_session(
     store: &dyn SessionStore,
     session_key: &str,
@@ -396,7 +377,6 @@ async fn load_session(
     }
 }
 
-/// Mutable context threaded through each command dispatch.
 pub(super) struct DispatchCtx<'a> {
     pub agent: &'a mut AgentLoopImpl,
     pub messages: &'a mut Vec<Message>,
@@ -413,9 +393,12 @@ pub(super) struct DispatchCtx<'a> {
             std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
         >,
     >,
+    /// Per-client tool registry for UDS extension protocol (#352).
+    pub client_tool_registry: super::uds_ext_protocol::ClientToolRegistry,
+    /// Current client ID for routing (0 = single-client mode).
+    pub current_client_id: u64,
 }
 
-/// Emit an event: broadcast if available, otherwise write directly.
 pub(super) async fn emit_event_to_broadcast_or_writer(
     ctx: &mut DispatchCtx<'_>,
     event: &AgentEvent,
@@ -509,7 +492,6 @@ fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serd
     }
 }
 
-/// Dispatch a single UDS command.  Returns `true` if the loop should exit.
 pub(super) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool {
     let id = cmd.id().map(str::to_owned);
     let type_name = cmd.type_name().to_owned();
@@ -562,9 +544,11 @@ pub(super) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             )
             .await
         }
-        AgentCommand::ReloadExtensions { .. } => {
-            handle_reload_extensions(ctx, id.as_deref(), &type_name).await;
-            false
+        AgentCommand::ReloadExtensions { .. }
+        | AgentCommand::RegisterTools { .. }
+        | AgentCommand::UnregisterTools { .. }
+        | AgentCommand::ToolResult { .. } => {
+            dispatch_ext_command(cmd, ctx, id.as_deref(), &type_name).await
         }
         AgentCommand::GetExtensions { .. }
         | AgentCommand::GetState { .. }
@@ -620,7 +604,29 @@ async fn handle_abort(ctx: &mut DispatchCtx<'_>, id: Option<&str>, type_name: &s
 }
 
 use super::uds_extensions::{build_extension_list, handle_reload_extensions};
-
+async fn dispatch_ext_command(
+    cmd: AgentCommand,
+    ctx: &mut DispatchCtx<'_>,
+    id: Option<&str>,
+    tn: &str,
+) -> bool {
+    match cmd {
+        AgentCommand::ReloadExtensions { .. } => handle_reload_extensions(ctx, id, tn).await,
+        AgentCommand::RegisterTools { tools, .. } => {
+            super::uds_ext_protocol::dispatch_register_tools(ctx, id, &tools).await
+        }
+        AgentCommand::UnregisterTools { tools, .. } => {
+            super::uds_ext_protocol::dispatch_unregister_tools(ctx, id, &tools).await
+        }
+        AgentCommand::ToolResult {
+            tool_call_id,
+            content,
+            is_error,
+        } => super::uds_ext_protocol::dispatch_tool_result(ctx, &tool_call_id, &content, is_error),
+        _ => {}
+    };
+    false
+}
 struct PromptCommand {
     id: Option<String>,
     type_name: String,
@@ -739,7 +745,6 @@ async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
         }
     }
 }
-
 #[cfg(test)]
 #[path = "uds_tests.rs"]
 mod tests;

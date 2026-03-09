@@ -314,6 +314,14 @@ impl ToolRegistry for ToolRegistryImpl {
         self.rebuild_definitions();
     }
 
+    fn register_extension(&mut self, tool: Arc<dyn Tool>) {
+        self.register_extension(tool);
+    }
+
+    fn unregister_extension(&mut self, name: &str) {
+        self.unregister_extension(name);
+    }
+
     fn execute(
         &self,
         name: &str,
