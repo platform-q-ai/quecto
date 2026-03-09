@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.19.0 (2026-03-09)
+
+### Extension system migration (Phases 1–4)
+
+The extension system has been completely redesigned. The old subprocess-based `ScriptTool` model (TOML manifests, shell/Python/Node scripts, filesystem hot-reload) has been replaced with two complementary mechanisms:
+
+**Native extensions (#351):**
+- Compiled-in Rust tools registered conditionally from `config.json`
+- `web_search` is the first native extension (Brave Search API + DuckDuckGo fallback)
+- Zero overhead when disabled; child agents inherit the same config
+- Config keys: `tools.web.brave.enabled`, `tools.web.brave.api_key`, `tools.web.duckduckgo.enabled`
+
+**UDS extension protocol (#352):**
+- External processes connect to the agent's Unix socket and register tools via JSON-lines
+- New commands: `register_tools`, `unregister_tools`, `tool_result`
+- New event: `execute_tool` (routed to the registering client, not broadcast)
+- Automatic lifecycle: disconnect = auto-unregister + `extensions_changed` broadcast
+- Shadow protection: core tool names cannot be overridden
+- 30-second timeout for tool execution with graceful error handling
+
+**ScriptTool removal (#353):**
+- Deleted `ScriptTool`, `ExtensionManifest`, `ScriptExtension`, `ExtensionWatcher`
+- Removed filesystem-based extension discovery, TOML manifest parser, subprocess execution, process group management, hot-reload watcher
+- Simplified `ExtensionRegistry` to register/all_tools/snippets only
+- Removed `is_script()` from `Extension` trait
+- Removed `hot_reload_interval` from UDS loop args
+- Net: −2,200 lines of code removed
+
+**Documentation rewrite (#354):**
+- `docs/extensions.md` fully rewritten for native + UDS extension model
+- `docs/uds-protocol.md` updated with `register_tools`, `unregister_tools`, `execute_tool`, `tool_result`, disconnect cleanup, sequence diagrams
+- `README.md` architecture section updated
+- `reload_extensions` UDS command documented as deprecated no-op
+
+### Breaking changes
+
+- Script extensions (`extension.toml` + executable scripts) are no longer supported
+- The `<workspace>/extensions/` directory is no longer scanned
+- `reload_extensions` UDS command is now a no-op (returns success immediately)
+- `Extension::is_script()` trait method has been removed
+
 ## 0.18.0 (2026-06-10)
 
 ### Added

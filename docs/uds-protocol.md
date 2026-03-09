@@ -340,7 +340,7 @@ You must provide either `model` OR both `provider` + `modelId`. Providing neithe
 
 ### `get_extensions`
 
-Return the list of registered extensions. Only extensions whose tools were successfully registered (not shadowing core tools) are included.
+Return the list of registered extensions. Includes both native extensions (from config) and UDS-registered extensions (from connected clients). Only extensions whose tools were successfully registered (not shadowing core tools) are included.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -352,33 +352,122 @@ Return the list of registered extensions. Only extensions whose tools were succe
 ```json
 {
   "extensions": [
-    {"name": "greet", "description": "Greet the user"},
-    {"name": "weather", "description": "Get weather forecast"}
+    {"name": "web_search", "description": "Search the web using Brave Search or DuckDuckGo"},
+    {"name": "weather", "description": "Get current weather for a city"}
   ]
 }
 ```
 
-Returns an empty array if no extensions are installed.
+Returns an empty array if no extensions are registered.
 
 ---
 
 ### `reload_extensions`
 
-Re-scan extension directories on disk and reload script extensions. New extensions become available as tools; removed extensions are unregistered. An `extensions_changed` event is broadcast to all connected clients after reloading.
+> **Deprecated.** This command exists for backward compatibility but is a no-op since v0.19.0. It returns `success: true` immediately without doing anything. Native extensions are loaded once at startup; UDS extensions are managed via `register_tools` / `unregister_tools`.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `type` | `"reload_extensions"` | yes | |
 | `id` | string | no | Correlation ID |
 
-**Response:** `success: true` (reload always succeeds; individual extension errors are logged but don't fail the command).
+**Response:** Always `success: true`.
 
-**Side effect:** Broadcasts an `extensions_changed` event to all connected clients with the updated extension list.
+---
+
+### `register_tools`
+
+Register one or more tools from a connected extension client. See [Extensions guide](extensions.md) for full details.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"register_tools"` | yes | |
+| `id` | string | no | Correlation ID |
+| `tools` | array | yes | Array of tool registration objects |
+
+Each tool object:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | yes | Tool name (must not shadow a core tool) |
+| `description` | string | yes | Description shown to the LLM |
+| `parametersSchema` | string | no | JSON Schema for tool parameters. Default: `{"type":"object"}` |
+
+**Response:**
+
+```json
+{"type":"response","id":"rt-1","command":"register_tools","success":true,"data":{"registered":["weather"]}}
+```
+
+**Side effect:** Broadcasts `extensions_changed` to all connected clients.
+
+**Failure:** Returns `success: false` if any tool shadows a core tool name. No tools from the batch are registered.
+
+**Idempotent:** Re-registering an existing tool updates its definition.
 
 **Example:**
 
 ```json
-{"type":"reload_extensions","id":"re-1"}
+{
+  "type": "register_tools",
+  "id": "rt-1",
+  "tools": [
+    {
+      "name": "weather",
+      "description": "Get current weather for a city",
+      "parametersSchema": "{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"]}"
+    }
+  ]
+}
+```
+
+---
+
+### `unregister_tools`
+
+Remove previously registered tools by name.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"unregister_tools"` | yes | |
+| `id` | string | no | Correlation ID |
+| `tools` | array | yes | Array of tool name strings to remove |
+
+**Response:**
+
+```json
+{"type":"response","id":"ut-1","command":"unregister_tools","success":true,"data":{"unregistered":["weather"]}}
+```
+
+**Side effect:** Broadcasts `extensions_changed` to all connected clients.
+
+Unknown tool names are silently ignored (not an error).
+
+**Example:**
+
+```json
+{"type":"unregister_tools","id":"ut-1","tools":["weather"]}
+```
+
+---
+
+### `tool_result`
+
+Return the result of a tool execution request. Sent by an extension client in response to an `execute_tool` event.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"tool_result"` | yes | |
+| `toolCallId` | string | yes | Must match the `toolCallId` from the `execute_tool` event |
+| `content` | string | yes | Result text returned to the LLM |
+| `isError` | boolean | no | `true` if the result represents an error. Default: `false` |
+
+**No response event.** The result is delivered directly to the agent loop.
+
+**Example:**
+
+```json
+{"type":"tool_result","toolCallId":"uds-0000000abc-00000001","content":"22°C, sunny","isError":false}
 ```
 
 ---
@@ -481,16 +570,37 @@ Direct response to a command. Carries the correlation `id` (if one was sent), th
 
 > **Note:** Agent errors from LLM failures are emitted as `response` events with `command: "agent_error"` rather than `command: "prompt"`. This distinguishes infrastructure errors from successful completions.
 
+### `execute_tool`
+
+Sent to the specific extension client that registered a tool when the LLM calls it. This event is **routed**, not broadcast — only the registering client receives it.
+
+```json
+{
+  "type": "execute_tool",
+  "toolCallId": "uds-0000000abc-00000001",
+  "toolName": "weather",
+  "arguments": "{\"city\":\"London\"}"
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `toolCallId` | string | Unique call identifier — must be echoed back in `tool_result` |
+| `toolName` | string | Name of the tool being called |
+| `arguments` | string | JSON string of the tool arguments from the LLM |
+
+The extension must respond with a `tool_result` command containing the matching `toolCallId`. If no response arrives within 30 seconds, the agent returns a timeout error to the LLM.
+
 ### `extensions_changed`
 
-Broadcast when the extension list changes (after `reload_extensions` or automatic hot-reload). Contains the full updated list.
+Broadcast when the extension list changes (after `register_tools`, `unregister_tools`, or client disconnect). Contains the full updated list.
 
 ```json
 {
   "type": "extensions_changed",
   "extensions": [
-    {"name": "greet", "description": "Greet the user"},
-    {"name": "weather", "description": "Get weather forecast"}
+    {"name": "web_search", "description": "Search the web using Brave Search or DuckDuckGo"},
+    {"name": "weather", "description": "Get current weather for a city"}
   ]
 }
 ```
@@ -604,6 +714,35 @@ Client                          Agent
   │<──────────────...─────────────│
   │<──────────────agent_end───────│
   │<──────────────response────────│  command:"prompt", success:true
+```
+
+### Extension registration and tool execution
+
+```
+Extension Client                Agent                    Other Clients
+  │                               │                          │
+  │──register_tools──────────────>│                          │
+  │<──────────────response────────│  success:true            │
+  │                               │──extensions_changed─────>│
+  │                               │                          │
+  │              ... LLM calls the registered tool ...       │
+  │                               │                          │
+  │<──────────execute_tool────────│  (routed, not broadcast) │
+  │                               │                          │
+  │──tool_result─────────────────>│                          │
+  │                               │                          │
+  │  ... tool_execution_start/end broadcast to all ...       │
+  │<────tool_execution_end────────│──tool_execution_end─────>│
+```
+
+### Extension disconnect cleanup
+
+```
+Extension Client                Agent                    Other Clients
+  │                               │                          │
+  │──[disconnect]────────────────>│                          │
+  │                               │  (auto-unregister tools) │
+  │                               │──extensions_changed─────>│
 ```
 
 ---

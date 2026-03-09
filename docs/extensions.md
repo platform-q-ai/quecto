@@ -1,294 +1,281 @@
 # Extensions
 
-Extensions let you add custom tools to Quecto without recompiling. Each extension is a directory containing a TOML manifest and an executable script. The agent discovers extensions at startup and makes them available as tools alongside the built-ins (`bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, etc.).
+Extensions add custom tools to Quecto beyond the built-in set (`bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, `spawn`, `recall`, `workflow`). There are two extension mechanisms:
 
-## Quick start
+| Type | What it is | When to use |
+|------|-----------|-------------|
+| **Native** | Compiled-in Rust tools, enabled via `config.json` | Tools that ship with Quecto (e.g. `web_search`) |
+| **UDS** | External processes that connect to the agent's Unix socket | Third-party tools, tools in other languages, stateful services |
 
-1. Create an extension directory under your workspace:
+Both types appear identically to the LLM — they show up in the tool list and are called the same way as built-in tools.
 
-```bash
-mkdir -p ~/.quecto/workspace/extensions/hello
-```
+## Native extensions
 
-2. Write the manifest (`extension.toml`):
+Native extensions are Rust implementations compiled into the Quecto binary. They are registered conditionally at startup based on configuration and have zero overhead when disabled.
 
-```toml
-name = "hello"
-description = "Greet someone by name."
-parameters_schema = '{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}'
-command = "./hello.sh"
-```
+### Available native extensions
 
-3. Write the script (`hello.sh`):
+| Extension | Config key | Description |
+|-----------|-----------|-------------|
+| `web_search` | `tools.web.brave` / `tools.web.duckduckgo` | Search the web via Brave Search API or DuckDuckGo |
 
-```bash
-#!/bin/bash
-input=$(cat)
-name=$(echo "$input" | jq -r '.name // "World"')
-echo "{\"content\": \"Hello, ${name}!\", \"is_error\": false}"
-```
+### Enabling web_search
 
-4. Make it executable:
-
-```bash
-chmod +x ~/.quecto/workspace/extensions/hello/hello.sh
-```
-
-The `hello` tool is now available. It will appear alongside the built-in tools in the next agent session.
-
-## Directory layout
-
-Extensions live under `<workspace>/extensions/`. The workspace path comes from your `config.json`:
+Add to your `config.json`:
 
 ```json
 {
-  "agents": {
-    "defaults": {
-      "workspace": "/home/you/.quecto/workspace"
+  "tools": {
+    "web": {
+      "brave": {
+        "enabled": true,
+        "api_key": "YOUR_BRAVE_API_KEY"
+      }
     }
   }
 }
 ```
 
-The directory structure is:
-
-```
-<workspace>/extensions/
-  hello/
-    extension.toml     # Required — tool manifest
-    hello.sh           # The executable referenced by `command`
-  weather/
-    extension.toml
-    weather.py
-```
-
-Each subdirectory is treated as one extension. The directory must contain an `extension.toml` file. Directories without a valid manifest are silently skipped.
-
-## Manifest reference
-
-The `extension.toml` file defines how the tool appears to the LLM and how it is executed.
-
-| Field | Required | Default | Description |
-|---|---|---|---|
-| `name` | yes | — | Tool name (used in LLM tool calls). Must be unique and must not shadow a core tool |
-| `description` | yes | — | Description shown to the LLM. Supports multi-line via triple-quoted strings (`"""`) |
-| `parameters_schema` | yes | — | JSON Schema string defining the tool's input parameters |
-| `command` | yes | — | Path to the executable, relative to the extension directory. Must start with `./` |
-| `timeout_secs` | no | `30` | Maximum execution time in seconds before the process is killed |
-| `system_prompt` | no | none | Text injected into the agent's system prompt when this extension is loaded |
-
-### Full example
-
-```toml
-name = "lookup_user"
-description = """
-Look up a user in the company directory.
-Example: {"email": "alice@example.com"}
-Returns the user's full name and department.
-"""
-parameters_schema = '{"type":"object","properties":{"email":{"type":"string","format":"email"}},"required":["email"]}'
-command = "./lookup.sh"
-timeout_secs = 10
-system_prompt = "When looking up users, always verify the email format first."
-```
-
-### Manifest parser limitations
-
-The manifest uses a minimal TOML parser. Supported features:
-
-- Simple key-value pairs: `key = "value"` or `key = 'value'`
-- Unquoted values: `timeout_secs = 30`
-- Multi-line strings: `""" ... """`
-- Comments: `# ...`
-
-**Not supported:** escape sequences (`\n`, `\t`), inline tables, arrays, dotted keys, or other advanced TOML features. If you need newlines in a field, use the `"""` multi-line syntax.
-
-## Script protocol
-
-Extensions communicate via a stdin/stdout JSON protocol.
-
-### Input
-
-The tool arguments (a JSON string matching your `parameters_schema`) are written to the script's **stdin**. Your script reads from stdin, not from command-line arguments.
-
-### Output
-
-The script must print a single JSON object to **stdout**:
+Or use DuckDuckGo (no API key required):
 
 ```json
 {
-  "content": "The result text shown to the LLM",
-  "is_error": false
+  "tools": {
+    "web": {
+      "duckduckgo": {
+        "enabled": true
+      }
+    }
+  }
+}
+```
+
+When both are enabled with a Brave API key, Brave is preferred. If Brave is enabled but no API key is set, DuckDuckGo is used as a fallback.
+
+The API key can also be provided via the `BRAVE_API_KEY` environment variable.
+
+### Behavior
+
+- Native extensions are loaded once at agent startup
+- They share the process's HTTP client and connection pool
+- Child agents (via `spawn`) inherit the same config, so they get the same native extensions
+- Native extensions cannot be added or removed at runtime — changes require restarting the agent
+
+## UDS extensions
+
+UDS extensions are external processes that connect to the agent's Unix domain socket and register tools via the JSON-lines protocol. This is the same socket used by TUIs, IDE plugins, and web UIs.
+
+### How it works
+
+1. Start the agent in UDS mode: `quecto agent --mode uds`
+2. An external process connects to the socket
+3. The process sends `register_tools` to register its tools
+4. When the LLM calls a registered tool, the agent sends `execute_tool` to the process
+5. The process sends `tool_result` back with the result
+6. On disconnect, tools are automatically unregistered
+
+### Protocol
+
+All communication uses JSON-lines (one JSON object per line, `\n`-delimited) over a Unix domain socket.
+
+#### Registering tools
+
+```json
+{
+  "type": "register_tools",
+  "id": "rt-1",
+  "tools": [
+    {
+      "name": "weather",
+      "description": "Get current weather for a city",
+      "parametersSchema": "{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"]}"
+    }
+  ]
+}
+```
+
+**Response:**
+
+```json
+{"type":"response","id":"rt-1","command":"register_tools","success":true,"data":{"registered":["weather"]}}
+```
+
+On failure (e.g. shadowing a core tool):
+
+```json
+{"type":"response","id":"rt-1","command":"register_tools","success":false,"error":"tool 'bash' shadows a core tool"}
+```
+
+**Side effect:** An `extensions_changed` event is broadcast to all connected clients.
+
+#### Receiving execution requests
+
+When the LLM calls a UDS-registered tool, the agent sends an `execute_tool` event **only to the client that registered it** (routed, not broadcast):
+
+```json
+{
+  "type": "execute_tool",
+  "toolCallId": "uds-0000000abc-00000001",
+  "toolName": "weather",
+  "arguments": "{\"city\":\"London\"}"
+}
+```
+
+#### Returning results
+
+The extension process responds with `tool_result`:
+
+```json
+{
+  "type": "tool_result",
+  "toolCallId": "uds-0000000abc-00000001",
+  "content": "London: 18°C, partly cloudy",
+  "isError": false
 }
 ```
 
 | Field | Type | Description |
-|---|---|---|
-| `content` | string | The text result returned to the agent |
-| `is_error` | boolean | `true` if the result represents an error condition |
+|-------|------|-------------|
+| `toolCallId` | string | Must match the `toolCallId` from `execute_tool` |
+| `content` | string | Result text returned to the LLM |
+| `isError` | boolean | `true` if the result represents an error |
 
-### Error handling
+#### Unregistering tools
 
-| Condition | Behavior |
-|---|---|
-| Non-zero exit code | Result is marked as error. If stderr has content, it's returned as the error message. Otherwise: `"extension '<name>' exited with code <N>"` |
-| Invalid JSON on stdout | Result is marked as error: `"invalid output from extension '<name>': <raw stdout>"` |
-| Timeout exceeded | Entire process group is killed with `SIGKILL`. Result: `"extension '<name>' timed out after <N>s"` |
-| stdout or stderr exceeds 1 MiB | Process group is killed. Result: `"output exceeded 1MiB cap"` |
+```json
+{
+  "type": "unregister_tools",
+  "id": "ut-1",
+  "tools": ["weather"]
+}
+```
 
-### Example scripts
+**Response:**
 
-**Bash:**
+```json
+{"type":"response","id":"ut-1","command":"unregister_tools","success":true,"data":{"unregistered":["weather"]}}
+```
+
+### Lifecycle
+
+- **Connect = available:** Tools are available as soon as `register_tools` succeeds
+- **Disconnect = auto-unregister:** When a client disconnects, all its tools are immediately removed and an `extensions_changed` event is broadcast
+- **Disconnect during execution:** If a client disconnects while a tool call is pending, the agent receives an error result: `"Extension disconnected during execution of tool '<name>'"`
+- **Timeout:** If a tool doesn't respond within 30 seconds, the agent returns: `"Extension timed out after 30s executing tool '<name>'"`
+- **Re-registration:** Sending `register_tools` for an already-registered tool updates its definition (idempotent)
+- **Multiple clients:** Multiple extension processes can connect simultaneously, each registering different tools
+
+### Shadow protection
+
+Extension tools (both native and UDS) cannot shadow built-in tools. If an extension tries to register a tool with the same name as a built-in (`bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, `spawn`, `recall`, `workflow`), the registration is rejected.
+
+### Example: Rust UDS extension
+
+A minimal Rust program that registers a `weather` tool:
+
+```rust
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixStream;
+
+fn main() {
+    let socket_path = std::env::args().nth(1).expect("usage: weather <socket>");
+    let stream = UnixStream::connect(&socket_path).expect("connect failed");
+    let mut writer = stream.try_clone().unwrap();
+    let reader = BufReader::new(stream);
+
+    // Register our tool
+    let register = r#"{"type":"register_tools","id":"r1","tools":[{"name":"weather","description":"Get weather for a city","parametersSchema":"{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"]}"}]}"#;
+    writeln!(writer, "{register}").unwrap();
+
+    // Listen for events
+    for line in reader.lines() {
+        let line = line.unwrap();
+        let event: serde_json::Value = serde_json::from_str(&line).unwrap();
+
+        match event["type"].as_str() {
+            Some("execute_tool") => {
+                let call_id = event["toolCallId"].as_str().unwrap();
+                let args = event["arguments"].as_str().unwrap();
+                // Parse args, do work, return result
+                let result = format!(
+                    r#"{{"type":"tool_result","toolCallId":"{call_id}","content":"22°C, sunny","isError":false}}"#
+                );
+                writeln!(writer, "{result}").unwrap();
+            }
+            _ => {} // ignore other events
+        }
+    }
+}
+```
+
+### Example: shell + socat
 
 ```bash
 #!/bin/bash
-input=$(cat)
-name=$(echo "$input" | jq -r '.name')
-echo "{\"content\": \"Hello, ${name}!\", \"is_error\": false}"
+SOCKET="$1"
+
+# Register a tool
+echo '{"type":"register_tools","tools":[{"name":"greet","description":"Greet someone","parametersSchema":"{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"}},\"required\":[\"name\"]}"}]}' \
+  | socat - UNIX-CONNECT:"$SOCKET"
+
+# For a persistent connection that handles execute_tool:
+socat - UNIX-CONNECT:"$SOCKET" | while IFS= read -r line; do
+  type=$(echo "$line" | jq -r '.type')
+  if [ "$type" = "execute_tool" ]; then
+    call_id=$(echo "$line" | jq -r '.toolCallId')
+    args=$(echo "$line" | jq -r '.arguments')
+    name=$(echo "$args" | jq -r '.name // "World"')
+    echo "{\"type\":\"tool_result\",\"toolCallId\":\"$call_id\",\"content\":\"Hello, $name!\",\"isError\":false}"
+  fi
+done
 ```
 
-**Python:**
+> **Note:** The shell example requires `socat` and `jq`. For production extensions, use a proper client library or a compiled binary.
 
-```python
-#!/usr/bin/env python3
-import json, sys
+## Querying extensions
 
-args = json.load(sys.stdin)
-result = {"content": f"Hello, {args['name']}!", "is_error": False}
-json.dump(result, sys.stdout)
-```
-
-**Node.js:**
-
-```javascript
-#!/usr/bin/env node
-let input = '';
-process.stdin.on('data', d => input += d);
-process.stdin.on('end', () => {
-  const args = JSON.parse(input);
-  console.log(JSON.stringify({ content: `Hello, ${args.name}!`, is_error: false }));
-});
-```
-
-## System prompt injection
-
-Extensions can contribute to the agent's system prompt via the `system_prompt` manifest field. All non-empty snippets from loaded extensions are collected and injected into a clearly delimited section:
-
-```
-## Extensions
-When looking up users, always verify the email format first.
-
-Always format dates in ISO 8601.
-## End Extensions
-```
-
-The delimiters prevent extension snippets from being misinterpreted as core system instructions by the LLM. Snippets from multiple extensions are separated by double newlines.
-
-## Discovery and lifecycle
-
-### Startup discovery
-
-Extensions are discovered once when the agent starts. The agent scans `<workspace>/extensions/` and:
-
-1. Lists all subdirectories (skipping symlinks — see [Security](#security))
-2. Reads `extension.toml` from each subdirectory
-3. Validates the manifest (all required fields present, valid `command` path)
-4. Registers each extension tool in the tool registry (rejecting shadows — see [Tool name shadowing](#tool-name-shadowing))
-5. Collects system prompt snippets from loaded extensions
-
-After startup, the tool set is fixed unless explicitly reloaded.
-
-### Manual reload via UDS
-
-In UDS mode (`quecto agent --mode uds`), clients can reload extensions at runtime:
-
-```json
-{"type":"reload_extensions","id":"re-1"}
-```
-
-This re-scans `<workspace>/extensions/` from disk, replaces all script extension tools in the registry, and broadcasts an `extensions_changed` event to all connected clients. See [UDS Protocol Reference](uds-protocol.md) for details.
-
-Clients can also query the current extension list:
+Connected clients can query the current extension list:
 
 ```json
 {"type":"get_extensions","id":"ge-1"}
 ```
 
-### Hot-reload watcher
+Response:
 
-The infrastructure for automatic hot-reload (polling for changes to `extension.toml` files based on mtime and file size) is implemented but **not enabled by default** from the CLI. It is available for programmatic use via `UdsLoopArgs::hot_reload_interval`. When enabled, the watcher polls at the configured interval and triggers `reload_extensions` automatically when changes are detected.
-
-### Tool deduplication
-
-If multiple extensions define tools with the same name, the last one registered wins. Extension registration order follows filesystem directory listing order, which may vary by platform. Use unique tool names to avoid conflicts.
-
-## Security
-
-Extensions run as subprocesses of the Quecto agent. Several security measures are enforced:
-
-### Command path restrictions
-
-The `command` field **must** start with `./` (relative to the extension directory). This ensures extensions can only execute scripts within their own directory:
-
-```toml
-# ✓ Valid
-command = "./run.sh"
-command = "./bin/tool"
-
-# ✗ Rejected at registration time
-command = "/usr/bin/python3"    # absolute path
-command = "../../etc/passwd"    # parent traversal
-command = "curl"                # bare command (PATH lookup)
+```json
+{
+  "type": "response",
+  "id": "ge-1",
+  "command": "get_extensions",
+  "success": true,
+  "data": {
+    "extensions": [
+      {"name": "web_search", "description": "Search the web using Brave Search or DuckDuckGo"},
+      {"name": "weather", "description": "Get current weather for a city"}
+    ]
+  }
+}
 ```
 
-Parent directory traversal (`..`) anywhere in the path is rejected.
+This includes both native and UDS-registered extensions.
 
-### Symlink rejection
+## System prompt injection
 
-Symlinked extension directories are skipped during discovery. This prevents extensions from pointing outside the trusted extensions directory. The check uses `symlink_metadata()` to detect symlinks before following them.
+Native extensions can contribute text to the agent's system prompt. This is configured in the extension implementation (not via config). Currently no native extensions use this feature, but the mechanism exists for future extensions that need to influence LLM behavior.
 
-### Tool name shadowing
+## Choosing between native and UDS extensions
 
-Extension tools cannot shadow core built-in tools. If an extension defines a tool with the same name as a built-in (e.g. `bash`, `read`, `write`, `edit`), it is rejected with a warning logged and **not** registered. The extension will not appear in `get_extensions` responses.
+| Consideration | Native | UDS |
+|--------------|--------|-----|
+| **Language** | Rust only | Any language |
+| **Deployment** | Compiled into binary | Separate process |
+| **Overhead** | Zero when disabled | Process + socket I/O |
+| **Lifecycle** | Config change + restart | Connect/disconnect |
+| **State** | Shared process state | Own process state |
+| **Dependencies** | None (single binary) | May need runtime |
+| **Use case** | First-party tools | Third-party / external |
 
-This applies both at startup and during reload/re-registration.
+## See also
 
-### Output cap
-
-Script stdout **and** stderr are each capped at **1 MiB**. Both streams are read concurrently with size limits. If either stream exceeds this limit, the process and its entire process group are killed with `SIGKILL` and the tool returns an error.
-
-### Timeout enforcement
-
-When a script exceeds `timeout_secs`, the entire process group is killed with `SIGKILL` (via `kill -9 -<pgid>`), not just the lead process. This prevents orphaned child processes from lingering. Each extension runs in its own process group (via `process_group(0)` on spawn).
-
-## Troubleshooting
-
-### Extension not appearing
-
-1. Verify the directory structure: `<workspace>/extensions/<name>/extension.toml`
-2. Check that `extension.toml` has all required fields (`name`, `description`, `parameters_schema`, `command`)
-3. Ensure `command` starts with `./`
-4. Ensure the script is executable (`chmod +x`)
-5. Check that the extension directory is not a symlink
-6. Check that the extension name does not shadow a core tool (look for `"register_extension rejected: shadows core tool"` or `"extension tool rejected: shadows core tool"` in logs)
-
-### Tool returns "invalid output"
-
-The script must output valid JSON with `content` and `is_error` fields to stdout. Common causes:
-- Debug/log output mixed into stdout — redirect logs to stderr instead
-- Missing JSON encoding of special characters
-- Script printing raw text instead of JSON
-
-### Tool times out
-
-Increase `timeout_secs` in the manifest, or optimize the script. The default is 30 seconds. On timeout, the entire process group is killed.
-
-### Extension shadows a core tool
-
-Extension tool names that conflict with built-in tools (`bash`, `read`, `write`, `edit`, `ls`, `grep`, `find`, `spawn`, `recall`, `web_search`, `workflow`) are silently rejected. Rename the `name` field in your `extension.toml` to something unique.
-
-### Changes not taking effect
-
-Extensions are discovered once at startup. To pick up new or modified extensions:
-- **Restart** the agent, or
-- **Send `reload_extensions`** via UDS (see [UDS Protocol Reference](uds-protocol.md))
+- [UDS Protocol Reference](uds-protocol.md) — full protocol specification
+- [Configuration](../README.md) — `config.json` reference
