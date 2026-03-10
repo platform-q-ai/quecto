@@ -802,3 +802,32 @@ rl.on('line', (line) => {
 
 sock.write(JSON.stringify({type: 'prompt', id: 'p1', message: 'Hello!'}) + '\n');
 ```
+
+---
+
+## Startup flags reference
+
+All flags for `quecto agent` that affect UDS mode:
+
+| Flag | Description |
+|------|-------------|
+| `--mode uds` | Required. Run in UDS mode |
+| `--socket <path>` | Explicit socket path (max 104 bytes). Default: auto in `$XDG_RUNTIME_DIR` or `$TMPDIR` |
+| `-s` / `--session <name>` | Named session for persistence. Default: `cli:default` |
+| `--no-session` | Ephemeral mode — no session saved/loaded |
+| `--system <text>` | System prompt (not persisted in session) |
+| `--model <model>` | Override default model from config |
+| `--max-iterations <n>` | Max tool call rounds per prompt |
+| `--max-time <secs>` | Wall-clock timeout for the entire agent |
+| `--no-sandbox` | Disable workspace path restriction (DANGEROUS) |
+| `--network` | Enable outbound network in bash |
+| `--persist` | Keep agent alive after all clients disconnect |
+| `--disable-tool <name>` | Remove a tool from the registry (repeatable) |
+| `--config <path>` | Override config file path |
+
+## See also
+
+- [Extensions](extensions.md) — adding custom tools via native config or UDS registration
+- [Subagents](subagents.md) — spawning child agent processes from within a session
+- [Workflow Automation](workflow.md) — configurable step-by-step development process
+- [Disabling Tools](disable-tools.md) — restricting which tools the agent can access

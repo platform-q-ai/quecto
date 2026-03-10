@@ -489,8 +489,11 @@ pub fn check_provider_readiness(creds: &HashMap<String, Credential>) -> Vec<Stri
 /// Used by providers and native extensions to share a single connection pool
 /// and TLS context. Important on memory-constrained targets (RPi, containers).
 pub fn build_http_client() -> reqwest::Client {
+    // No overall timeout — SSE streams legitimately run for minutes during
+    // long LLM generations. The connect_timeout gates the initial handshake;
+    // per-request timeouts are set at the call site when needed (e.g.
+    // web_fetch uses its own 10s timeout).
     reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
         .connect_timeout(std::time::Duration::from_secs(10))
         .build()
         .unwrap_or_default()
