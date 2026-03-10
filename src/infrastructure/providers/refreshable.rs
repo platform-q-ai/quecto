@@ -4,6 +4,12 @@
 //! detected and the provider has an OAuth credential with a refresh token in the
 //! credential store, it refreshes the token, rebuilds the inner provider with the
 //! new token, and retries the request once.
+//!
+//! On the happy path (no auth error), the borrowed `ChatRequest` is forwarded
+//! directly to the inner provider via a shallow clone (slice pointers and small
+//! `Option` fields only — no deep clone of messages or tools).  The request data
+//! is only deep-cloned into an `OwnedRequest` on the rare retry path (401 +
+//! refreshable credential).
 
 use std::future::Future;
 use std::pin::Pin;
@@ -98,50 +104,50 @@ impl LlmProvider for RefreshableProvider {
         &self.provider_name
     }
 
-    fn chat(
-        &self,
-        request: ChatRequest<'_>,
-    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
-        let owned = OwnedRequest::from(&request);
+    fn chat<'a>(
+        &'a self,
+        request: ChatRequest<'a>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>> {
         Box::pin(async move {
-            self.try_with_refresh(owned, |inner, req| inner.chat(req))
+            self.try_with_refresh(request, |inner, req| inner.chat(req))
                 .await
         })
     }
 
-    fn chat_stream(
-        &self,
-        request: ChatRequest<'_>,
-    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
-        let owned = OwnedRequest::from(&request);
+    fn chat_stream<'a>(
+        &'a self,
+        request: ChatRequest<'a>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>> {
         Box::pin(async move {
-            self.try_with_refresh(owned, |inner, req| inner.chat_stream(req))
+            self.try_with_refresh(request, |inner, req| inner.chat_stream(req))
                 .await
         })
     }
 
-    fn chat_stream_incremental(
-        &self,
-        request: ChatRequest<'_>,
+    fn chat_stream_incremental<'a>(
+        &'a self,
+        request: ChatRequest<'a>,
     ) -> Pin<
         Box<
             dyn Future<Output = tokio::sync::mpsc::Receiver<crate::domain::provider::StreamEvent>>
                 + Send
-                + '_,
+                + 'a,
         >,
     > {
         // Delegate to the inner provider.  Token refresh is not attempted
         // here — auth errors come through the StreamEvent channel.
-        let owned = OwnedRequest::from(&request);
         Box::pin(async move {
             let inner = self.inner.read().await.clone();
-            let req = owned.as_request();
-            inner.chat_stream_incremental(req).await
+            inner.chat_stream_incremental(request).await
         })
     }
 }
 
-/// Owned copies of borrowed ChatRequest fields so the future outlives the borrow.
+/// Owned copies of borrowed `ChatRequest` fields, used only on the retry path.
+///
+/// When the first call returns a 401 and a token refresh succeeds, the rebuilt
+/// provider needs its own copy of the request data because the new provider
+/// `Arc` has a different lifetime than the original borrow.
 struct OwnedRequest {
     messages: Vec<crate::domain::message::Message>,
     tools: Vec<crate::domain::tool::ToolDefinition>,
@@ -189,21 +195,29 @@ impl OwnedRequest {
 
 impl RefreshableProvider {
     /// Try a provider call, refreshing the token on 401 and retrying once.
-    async fn try_with_refresh<F>(
-        &self,
-        owned: OwnedRequest,
+    ///
+    /// On the happy path (no auth error), the borrowed `ChatRequest` is
+    /// forwarded via a shallow clone (slice pointers + small `Option` fields
+    /// only — no deep clone of messages or tools).  Only on the rare retry
+    /// path (401 + OAuth credential) are the request fields deep-cloned
+    /// into an `OwnedRequest` so the rebuilt provider can use them.
+    async fn try_with_refresh<'a, F>(
+        &'a self,
+        request: ChatRequest<'a>,
         call: F,
     ) -> Result<LlmResponse, DomainError>
     where
-        F: for<'a> Fn(
-            &'a Arc<dyn LlmProvider>,
-            ChatRequest<'a>,
+        F: for<'b> Fn(
+            &'b Arc<dyn LlmProvider>,
+            ChatRequest<'b>,
         ) -> Pin<
-            Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>,
+            Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'b>,
         >,
     {
         let inner = self.inner.read().await.clone();
-        let result = call(&inner, owned.as_request()).await;
+        // Happy path: shallow clone (copies slice pointers + small Option fields,
+        // not the underlying message/tool vecs).
+        let result = call(&inner, request.clone()).await;
 
         match result {
             Ok(resp) => Ok(resp),
@@ -214,6 +228,10 @@ impl RefreshableProvider {
                     provider = self.provider_name.as_str(),
                     "401 from OAuth provider — attempting token refresh"
                 );
+
+                // Retry path: clone request data so the rebuilt provider
+                // can use it independently of the original borrow.
+                let owned = OwnedRequest::from(&request);
 
                 match (self.refresh_fn)(self.store.clone(), &self.provider_name).await {
                     Ok(new_token) => {
