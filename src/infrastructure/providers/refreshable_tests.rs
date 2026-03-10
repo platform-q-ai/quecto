@@ -276,3 +276,78 @@ async fn test_refreshable_rebuilds_provider_with_new_token() {
     assert!(result.is_ok());
     assert_eq!(*captured_token.lock().unwrap(), "new-api-token");
 }
+
+// --- Shallow-clone forwarding tests (#372) ---
+
+/// Mock provider that captures the messages slice pointer to verify
+/// that RefreshableProvider forwards without deep-cloning.
+#[derive(Debug)]
+struct MockPtrCaptureProvider {
+    captured_ptr: std::sync::Mutex<Option<usize>>,
+}
+
+impl LlmProvider for MockPtrCaptureProvider {
+    fn name(&self) -> &str {
+        "mock-ptr"
+    }
+
+    fn chat<'a>(
+        &'a self,
+        request: ChatRequest<'a>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>> {
+        *self.captured_ptr.lock().unwrap() = Some(request.messages.as_ptr() as usize);
+        Box::pin(async move {
+            Ok(LlmResponse {
+                content: Some("ok".to_string()),
+                tool_calls: vec![],
+                usage: None,
+                stop_reason: None,
+            })
+        })
+    }
+}
+
+#[tokio::test]
+async fn test_refreshable_forwards_without_cloning_on_happy_path() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = Arc::new(CredentialStore::new(tmp.path()));
+
+    let inner = Arc::new(MockPtrCaptureProvider {
+        captured_ptr: std::sync::Mutex::new(None),
+    });
+    let inner_ref = inner.clone();
+    let refreshable = RefreshableProvider::new(RefreshableConfig {
+        inner: inner.clone() as Arc<dyn LlmProvider>,
+        store,
+        provider_name: "test".to_string(),
+        refresh_fn: make_mock_refresh("unused"),
+        factory: noop_factory(),
+    });
+
+    let messages = vec![crate::domain::message::Message::user("hello")];
+    let original_ptr = messages.as_ptr() as usize;
+
+    let request = ChatRequest {
+        messages: &messages,
+        tools: &[],
+        model: "test-model",
+        max_tokens: 1024,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+    };
+
+    let result = refreshable.chat(request).await;
+    assert!(result.is_ok());
+
+    let captured = inner_ref.captured_ptr.lock().unwrap().unwrap();
+    assert_eq!(
+        captured, original_ptr,
+        "RefreshableProvider should forward the same messages pointer (no deep clone), \
+         but got a different pointer: original={:#x}, captured={:#x}",
+        original_ptr, captured
+    );
+}

@@ -1304,3 +1304,8 @@ fn then_succeed_normally(world: &mut QuectoWorld) {
         "response should be normal success"
     );
 }
+
+// Zero-copy pointer equality for RefreshableProvider (#372) is verified
+// by the unit test test_refreshable_forwards_without_cloning_on_happy_path
+// in refreshable_tests.rs. The BDD scenario reuses the existing success
+// path steps above.

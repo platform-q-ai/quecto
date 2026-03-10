@@ -272,3 +272,11 @@ Feature: Authentication
     Given an OAuth-backed provider that returns success
     When a chat request is sent through the refreshable provider
     Then the request should succeed normally
+
+  @done
+  Scenario: RefreshableProvider forwards requests without deep-cloning on happy path
+    Given an OAuth-backed provider that returns success
+    When a chat request is sent through the refreshable provider
+    Then the request should succeed normally
+    # Zero-copy pointer equality is verified by unit test
+    # test_refreshable_forwards_without_cloning_on_happy_path
