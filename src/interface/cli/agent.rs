@@ -5,16 +5,11 @@ use super::CliContext;
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::agent::AgentLoop;
 use crate::domain::message::Message;
-use crate::domain::provider::LlmProvider;
 use crate::domain::session::{Session, SessionStore};
-use crate::infrastructure::auth::credential_store::CredentialStore;
 use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
 use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
-use crate::infrastructure::providers;
-use crate::infrastructure::providers::refreshable::{RefreshableConfig, RefreshableProvider};
-use crate::infrastructure::providers::router::ProviderRouter;
 use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::recall::RecallTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
@@ -51,6 +46,9 @@ pub(crate) struct AgentFlags {
     /// When true (with `--mode uds`), keep the agent alive after all clients
     /// disconnect.  Shutdown only via SIGTERM/SIGINT.
     pub(crate) persist: bool,
+    /// Tool names to remove from the registry before the agent starts.
+    /// Repeatable: `--disable-tool bash --disable-tool web_fetch`.
+    pub(crate) disabled_tools: Vec<String>,
 }
 
 /// Bundles the stdout/stderr pair passed through the agent pipeline.
@@ -131,6 +129,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut network = false;
     let mut socket_path: Option<std::path::PathBuf> = None;
     let mut persist = false;
+    let mut disabled_tools: Vec<String> = Vec::new();
     let mut i = 0;
 
     while i < args.len() {
@@ -160,14 +159,13 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                 message = Some(val.to_string());
                 i += 2;
             }
-            "--system" => {
-                let val = next_arg(args, i, "--system requires a value", stderr)?;
-                system_prompt = Some(val.to_string());
-                i += 2;
-            }
-            "--model" => {
-                let val = next_arg(args, i, "--model requires a value", stderr)?;
-                model_override = Some(val.to_string());
+            f @ ("--system" | "--model") => {
+                let msg = format!("{f} requires a value");
+                let val = next_arg(args, i, &msg, stderr)?;
+                *(match f {
+                    "--system" => &mut system_prompt,
+                    _ => &mut model_override,
+                }) = Some(val.to_string());
                 i += 2;
             }
             "--max-iterations" => {
@@ -190,6 +188,11 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                 socket_path = Some(std::path::PathBuf::from(val));
                 i += 2;
             }
+            "--disable-tool" => {
+                let val = next_arg(args, i, "--disable-tool requires a tool name", stderr)?;
+                disabled_tools.push(val.to_string());
+                i += 2;
+            }
             "--config" => {
                 // Value consumed globally by extract_config_flag; validate here too.
                 let _val = next_arg(args, i, "--config requires a path", stderr)?;
@@ -201,15 +204,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         }
     }
 
-    if no_session && session_name.is_some() {
-        stderr.push_str("agent: --no-session and -s are mutually exclusive\n");
-        return None;
-    } else if persist && !uds_mode {
-        stderr.push_str("agent: --persist requires --mode uds\n");
-        return None;
-    }
-
-    Some(AgentFlags {
+    let flags = AgentFlags {
         session_name,
         no_session,
         message,
@@ -222,7 +217,22 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         network,
         socket_path,
         persist,
-    })
+        disabled_tools,
+    };
+    validate_agent_flags(flags, stderr)
+}
+
+/// Post-parse validation of mutually exclusive / dependent flags.
+fn validate_agent_flags(flags: AgentFlags, stderr: &mut String) -> Option<AgentFlags> {
+    if flags.no_session && flags.session_name.is_some() {
+        stderr.push_str("agent: --no-session and -s are mutually exclusive\n");
+        return None;
+    }
+    if flags.persist && !flags.uds_mode {
+        stderr.push_str("agent: --persist requires --mode uds\n");
+        return None;
+    }
+    Some(flags)
 }
 
 pub(crate) fn cmd_agent(
@@ -317,51 +327,31 @@ pub(crate) fn build_agent_from_config(
         }
     };
 
-    let workspace = crate::interface::shared::resolve_agent_workspace(
-        &config.workspace_path(),
-        flags.no_sandbox,
-    );
-    let model = flags
-        .model_override
-        .clone()
-        .unwrap_or(config.agents.defaults.model.clone());
-    let restrict_to_workspace = !flags.no_sandbox && config.agents.defaults.restrict_to_workspace;
-    if flags.no_sandbox {
-        stderr.push_str("WARNING: --no-sandbox is active — workspace path restriction disabled\n");
-    }
-    let sandbox = Sandbox::new(Some(workspace.clone()), restrict_to_workspace);
-    let mut exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(&config);
-    if flags.network {
-        exec_settings.network_passthrough = true;
-        stderr
-            .push_str("WARNING: --network is active — bash network namespace isolation disabled\n");
-        tracing::warn!("--network: bash network namespace isolation disabled");
-    }
-    let effective_network = exec_settings.network_passthrough;
-    let mut registry =
-        ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
-    let session_key = if flags.no_session || flags.session_name.as_deref() == Some("-") {
-        String::new()
-    } else {
-        let name = flags.session_name.as_deref().unwrap_or("default");
-        Session::build_key("cli", name)
-    };
-    let spill_store = Arc::new(FileContextSpillStore::new(base_dir.to_path_buf()));
-    registry.register(Arc::new(RecallTool::new(
-        spill_store.clone(),
-        session_key.clone(),
-    )));
-    registry.register(Arc::new(
-        SpawnTool::with_base_dir(vec![], restrict_to_workspace, base_dir.to_path_buf())
-            .with_network(effective_network),
-    ));
-    crate::interface::shared::register_workflow_tool(&mut registry, &config.workflow);
+    let ToolRegistryBuild {
+        registry,
+        spill_store,
+        session_key,
+        model,
+        ext_registry,
+        extension_prompt_snippets,
+    } = build_tool_registry(ToolRegistryArgs {
+        base_dir,
+        config: &config,
+        http_client: &http_client,
+        flags,
+        stderr,
+    });
 
-    // Build and register native extensions (config-gated).
-    let ext_registry =
-        crate::interface::shared::build_and_register_native_extensions(&config, &http_client);
-    let extension_prompt_snippets = ext_registry.system_prompt_snippets();
-    crate::interface::shared::register_extension_tools(&mut registry, &ext_registry);
+    // Remove disabled tools before boxing the registry (#402).
+    // Uses remove_all() for a single rebuild_definitions() call.
+    let mut registry = registry;
+    let warnings = registry.remove_all(&flags.disabled_tools);
+    for name in &warnings {
+        stderr.push_str(&format!(
+            "WARNING: --disable-tool: no tool named '{}' in the registry\n",
+            name
+        ));
+    }
 
     let wf_config = config.workflow.clone();
     let agent = AgentLoopImpl::new(AgentLoopConfig {
@@ -390,6 +380,89 @@ pub(crate) fn build_agent_from_config(
         model,
         ext_registry: std::sync::Arc::new(std::sync::Mutex::new(ext_registry)),
     })
+}
+
+/// Intermediate result from tool registry construction.
+struct ToolRegistryBuild {
+    registry: ToolRegistryImpl,
+    spill_store: Arc<FileContextSpillStore>,
+    session_key: String,
+    model: String,
+    ext_registry: ExtensionRegistry,
+    extension_prompt_snippets: String,
+}
+
+/// Inputs for building the tool registry (avoids >4 arguments).
+struct ToolRegistryArgs<'a> {
+    base_dir: &'a std::path::Path,
+    config: &'a Config,
+    http_client: &'a reqwest::Client,
+    flags: &'a AgentFlags,
+    stderr: &'a mut String,
+}
+
+/// Build the tool registry, spill store, and session key from config + flags.
+fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBuild {
+    let ToolRegistryArgs {
+        base_dir,
+        config,
+        http_client,
+        flags,
+        stderr,
+    } = args;
+    let workspace = crate::interface::shared::resolve_agent_workspace(
+        &config.workspace_path(),
+        flags.no_sandbox,
+    );
+    let model = flags
+        .model_override
+        .clone()
+        .unwrap_or(config.agents.defaults.model.clone());
+    let restrict_to_workspace = !flags.no_sandbox && config.agents.defaults.restrict_to_workspace;
+    if flags.no_sandbox {
+        stderr.push_str("WARNING: --no-sandbox is active — workspace path restriction disabled\n");
+    }
+    let sandbox = Sandbox::new(Some(workspace.clone()), restrict_to_workspace);
+    let mut exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(config);
+    if flags.network {
+        exec_settings.network_passthrough = true;
+        stderr
+            .push_str("WARNING: --network is active — bash network namespace isolation disabled\n");
+        tracing::warn!("--network: bash network namespace isolation disabled");
+    }
+    let effective_network = exec_settings.network_passthrough;
+    let mut registry =
+        ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
+    let session_key = if flags.no_session || flags.session_name.as_deref() == Some("-") {
+        String::new()
+    } else {
+        let name = flags.session_name.as_deref().unwrap_or("default");
+        Session::build_key("cli", name)
+    };
+    let spill_store = Arc::new(FileContextSpillStore::new(base_dir.to_path_buf()));
+    registry.register(Arc::new(RecallTool::new(
+        spill_store.clone(),
+        session_key.clone(),
+    )));
+    registry.register(Arc::new(
+        SpawnTool::with_base_dir(vec![], restrict_to_workspace, base_dir.to_path_buf())
+            .with_network(effective_network),
+    ));
+    crate::interface::shared::register_workflow_tool(&mut registry, &config.workflow);
+
+    let ext_registry =
+        crate::interface::shared::build_and_register_native_extensions(config, http_client);
+    let extension_prompt_snippets = ext_registry.system_prompt_snippets();
+    crate::interface::shared::register_extension_tools(&mut registry, &ext_registry);
+
+    ToolRegistryBuild {
+        registry,
+        spill_store,
+        session_key,
+        model,
+        ext_registry,
+        extension_prompt_snippets,
+    }
 }
 
 /// Run the agent loop with session load/save. Returns the exit code.
@@ -602,128 +675,9 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     })
 }
 
-/// Build a ProviderRouter from config + credential store, suitable for the agent CLI.
-///
-/// OAuth-backed providers are wrapped in [`RefreshableProvider`] so that
-/// expired tokens are automatically refreshed mid-session on 401 (issue #255).
-pub fn build_agent_provider(
-    config: &Config,
-    base_dir: &std::path::Path,
-    http_client: &reqwest::Client,
-) -> Result<Arc<dyn LlmProvider>, String> {
-    let store = CredentialStore::new(base_dir);
-
-    // Build a temporary runtime for token refresh if needed
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| format!("failed to create runtime for token refresh: {}", e))?;
-
-    let mut provider_list: Vec<Arc<dyn crate::domain::provider::LlmProvider>> = Vec::new();
-    let store_arc = Arc::new(CredentialStore::new(base_dir));
-    let refresh_fn = crate::interface::shared::make_oauth_refresh_fn();
-
-    // Try OpenAI (with auto-refresh for expired OAuth tokens)
-    let openai_key = crate::interface::shared::resolve_api_key_with_refresh(
-        &config.providers.openai.api_key,
-        &store,
-        "openai",
-        &rt,
-    );
-    if !openai_key.is_empty() {
-        let is_oauth = store.get("openai").ok().flatten().is_some_and(|c| {
-            c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
-        });
-        let openai_base = if config.providers.openai.api_base.is_empty() {
-            None
-        } else {
-            Some(config.providers.openai.api_base.clone())
-        };
-        let inner = build_single_provider("openai", &openai_key, &openai_base, http_client)?;
-        if is_oauth {
-            let factory = crate::interface::shared::make_provider_factory(
-                "openai",
-                openai_base,
-                http_client.clone(),
-            );
-            provider_list.push(Arc::new(RefreshableProvider::new(RefreshableConfig {
-                inner,
-                store: store_arc.clone(),
-                provider_name: "openai".to_string(),
-                refresh_fn: refresh_fn.clone(),
-                factory,
-            })));
-        } else {
-            provider_list.push(inner);
-        }
-    }
-
-    // Try Anthropic (with auto-refresh for expired OAuth tokens)
-    let anthropic_key = crate::interface::shared::resolve_api_key_with_refresh(
-        &config.providers.anthropic.api_key,
-        &store,
-        "anthropic",
-        &rt,
-    );
-    if !anthropic_key.is_empty() {
-        let is_oauth = store.get("anthropic").ok().flatten().is_some_and(|c| {
-            c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
-        });
-        let anthropic_base = if config.providers.anthropic.api_base.is_empty() {
-            None
-        } else {
-            Some(config.providers.anthropic.api_base.clone())
-        };
-        let inner =
-            build_single_provider("anthropic", &anthropic_key, &anthropic_base, http_client)?;
-        if is_oauth {
-            let factory = crate::interface::shared::make_provider_factory(
-                "anthropic",
-                anthropic_base,
-                http_client.clone(),
-            );
-            provider_list.push(Arc::new(RefreshableProvider::new(RefreshableConfig {
-                inner,
-                store: store_arc.clone(),
-                provider_name: "anthropic".to_string(),
-                refresh_fn: refresh_fn.clone(),
-                factory,
-            })));
-        } else {
-            provider_list.push(inner);
-        }
-    }
-
-    if provider_list.is_empty() {
-        return Err(
-            "no LLM providers configured (set an API key or run 'quecto auth login')".to_string(),
-        );
-    }
-
-    Ok(Arc::new(ProviderRouter::new(provider_list)))
-}
-
-/// Build a single provider from name, key, and base URL.
-fn build_single_provider(
-    name: &str,
-    api_key: &str,
-    api_base: &Option<String>,
-    http_client: &reqwest::Client,
-) -> Result<Arc<dyn LlmProvider>, String> {
-    if name == "openai" {
-        let account_id = crate::infrastructure::auth::oauth::extract_openai_account_id(api_key);
-        if let Some(acct) = account_id {
-            return Ok(providers::create_codex_provider_with_client(
-                api_key.to_string(),
-                acct,
-                http_client.clone(),
-            ));
-        }
-    }
-    let base = api_base.clone();
-    providers::create_provider_with_client(name, api_key.to_string(), base, http_client.clone())
-        .map_err(|e| format!("{} provider configuration error: {}", name, e))
-}
+#[path = "agent_provider.rs"]
+mod agent_provider;
+pub use agent_provider::build_agent_provider;
 
 #[cfg(test)]
 #[path = "agent_tests.rs"]

@@ -47,6 +47,7 @@ fn test_flags(msg: Option<&str>, session: Option<&str>, sys: Option<&str>) -> Ag
         network: false,
         socket_path: None,
         persist: false,
+        disabled_tools: vec![],
     }
 }
 

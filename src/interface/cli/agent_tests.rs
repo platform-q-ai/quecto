@@ -1,7 +1,5 @@
 use super::*;
 use crate::domain::session::Session;
-use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
-use crate::infrastructure::config::Config;
 
 use crate::interface::cli::{CliContext, CliOutput, run_with_output};
 
@@ -15,13 +13,6 @@ fn args(s: &str) -> Vec<String> {
 
 fn default_ctx() -> CliContext {
     CliContext::default()
-}
-
-/// Helper to load a Config from a JSON string via a temp file.
-fn config_from_str(json: &str) -> Config {
-    let tmp = tempfile::NamedTempFile::new().unwrap();
-    std::fs::write(tmp.path(), json).unwrap();
-    Config::load(tmp.path().to_str().unwrap()).unwrap()
 }
 
 /// Helper to check if a message appears in either stdout or stderr.
@@ -292,81 +283,6 @@ fn test_agent_max_iterations_absent_is_none() {
 }
 
 // ===================================================================
-// build_agent_provider() tests
-// ===================================================================
-
-#[test]
-fn test_build_agent_provider_openai_only() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let config = config_from_str(r#"{"providers":{"openai":{"api_key":"sk-test-key"}}}"#);
-    let result = build_agent_provider(&config, tmp.path(), &reqwest::Client::new());
-    assert!(result.is_ok());
-}
-
-#[test]
-fn test_build_agent_provider_anthropic_only() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let config = config_from_str(r#"{"providers":{"anthropic":{"api_key":"sk-ant-test-key"}}}"#);
-    let result = build_agent_provider(&config, tmp.path(), &reqwest::Client::new());
-    assert!(result.is_ok());
-}
-
-#[test]
-fn test_build_agent_provider_both_providers() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let config = config_from_str(
-        r#"{"providers":{"openai":{"api_key":"sk-test"},"anthropic":{"api_key":"sk-ant-test"}}}"#,
-    );
-    let result = build_agent_provider(&config, tmp.path(), &reqwest::Client::new());
-    assert!(result.is_ok());
-}
-
-#[test]
-fn test_build_agent_provider_no_keys() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let config =
-        config_from_str(r#"{"providers":{"openai":{"api_key":""},"anthropic":{"api_key":""}}}"#);
-    let result = build_agent_provider(&config, tmp.path(), &reqwest::Client::new());
-    assert!(result.is_err());
-    assert!(result.unwrap_err().contains("no LLM providers"));
-}
-
-#[test]
-fn test_build_agent_provider_rejects_unapproved_api_base_host() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let config = config_from_str(
-        r#"{"providers":{"openai":{"api_key":"sk-test","api_base":"https://custom.openai.com/v1"}}}"#,
-    );
-    let result = build_agent_provider(&config, tmp.path(), &reqwest::Client::new());
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .contains("openai provider configuration error")
-    );
-}
-
-#[test]
-fn test_build_agent_provider_with_credential_store() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let store = CredentialStore::new(tmp.path());
-    store
-        .store(Credential {
-            provider: "openai".to_string(),
-            token: "sk-stored-cred".to_string(),
-            method: AuthMethod::Token,
-            expires_at: None,
-            refresh_token: None,
-            account_id: None,
-        })
-        .unwrap();
-
-    let config = config_from_str(r#"{"providers":{"openai":{"api_key":""}}}"#);
-    let result = build_agent_provider(&config, tmp.path(), &reqwest::Client::new());
-    assert!(result.is_ok());
-}
-
-// ===================================================================
 // cmd_agent edge cases
 // ===================================================================
 
@@ -482,6 +398,7 @@ fn test_build_agent_from_config_no_config_file() {
         network: false,
         socket_path: None,
         persist: false,
+        disabled_tools: vec![],
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -507,6 +424,7 @@ fn test_build_agent_from_config_invalid_json() {
         network: false,
         socket_path: None,
         persist: false,
+        disabled_tools: vec![],
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -536,6 +454,7 @@ fn test_build_agent_from_config_no_providers() {
         network: false,
         socket_path: None,
         persist: false,
+        disabled_tools: vec![],
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -565,6 +484,7 @@ fn test_build_agent_from_config_with_model_override() {
         network: false,
         socket_path: None,
         persist: false,
+        disabled_tools: vec![],
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -716,6 +636,53 @@ fn test_headless_agent_registry_includes_spawn_tool() {
         "headless agent registry must include 'spawn' tool, got: {:?}",
         names
     );
+}
+
+// --disable-tool flag (#402)
+
+#[test]
+fn test_agent_disable_tool_flag_single() {
+    let mut stderr = String::new();
+    let a: Vec<String> = vec![
+        "--disable-tool".into(),
+        "bash".into(),
+        "-m".into(),
+        "Hi".into(),
+    ];
+    let flags = parse_agent_flags(&a, &mut stderr).unwrap();
+    assert_eq!(flags.disabled_tools, vec!["bash"]);
+}
+
+#[test]
+fn test_agent_disable_tool_flag_multiple() {
+    let mut stderr = String::new();
+    let a: Vec<String> = vec![
+        "--disable-tool".into(),
+        "bash".into(),
+        "--disable-tool".into(),
+        "web_fetch".into(),
+        "-m".into(),
+        "Hi".into(),
+    ];
+    let flags = parse_agent_flags(&a, &mut stderr).unwrap();
+    assert_eq!(flags.disabled_tools, vec!["bash", "web_fetch"]);
+}
+
+#[test]
+fn test_agent_disable_tool_flag_missing_value() {
+    let mut stderr = String::new();
+    let a: Vec<String> = vec!["--disable-tool".into()];
+    let result = parse_agent_flags(&a, &mut stderr);
+    assert!(result.is_none());
+    assert!(stderr.contains("--disable-tool requires a tool name"));
+}
+
+#[test]
+fn test_agent_disable_tool_absent_is_empty() {
+    let mut stderr = String::new();
+    let a: Vec<String> = vec!["-m".into(), "Hi".into()];
+    let flags = parse_agent_flags(&a, &mut stderr).unwrap();
+    assert!(flags.disabled_tools.is_empty());
 }
 
 // --persist flag (#348)

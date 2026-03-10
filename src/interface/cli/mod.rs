@@ -94,6 +94,7 @@ fn extract_config_flag(args: &[String]) -> Option<PathBuf> {
         "--max-time",
         "--mode",
         "--socket",
+        "--disable-tool",
     ];
     let mut i = 0;
     while i < args.len() {
@@ -517,6 +518,9 @@ fn help_text(out: &mut String) {
     );
     out.push_str(
         "                       --socket <path>  Socket path for --mode uds (default: auto in tmpdir)\n",
+    );
+    out.push_str(
+        "                       --disable-tool <name>  Remove a tool from the registry (repeatable)\n",
     );
     out.push_str("  auth        Manage authentication (login, logout, status)\n");
     out.push_str("  status      Show status\n");
