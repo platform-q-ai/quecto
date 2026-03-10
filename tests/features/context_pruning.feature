@@ -94,6 +94,11 @@ Feature: Context pruning via sliding window (no tool-result collapse)
     When the agent processes 3 turns with no tool calls
     Then no manifest message exists in context
 
+  @done
+  Scenario: Spill store caches index in memory after append
+    When 3 spill entries are appended to the store
+    Then list_entries returns 3 entries without re-reading disk
+
   # --- Sliding window enforcement ---
 
   Scenario: Sliding window drops oldest messages when over budget
