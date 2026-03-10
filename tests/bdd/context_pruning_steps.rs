@@ -983,3 +983,63 @@ fn then_estimated_token_count(world: &mut QuectoWorld, expected: usize) {
         actual
     );
 }
+
+// --- Spill store caching (#375) ---
+
+#[when(expr = "{int} spill entries are appended to the store")]
+async fn when_n_spill_entries_appended(world: &mut QuectoWorld, count: usize) {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = quecto::infrastructure::persistence::context_spill::FileContextSpillStore::new(
+        tmp.path().to_path_buf(),
+    );
+    // Append first entry, then seed cache via list_entries (mirrors agent loop)
+    let first = SpillEntry {
+        id: "turn1:bash:0".to_string(),
+        tool: "bash".to_string(),
+        input_preview: "cmd-1".to_string(),
+        tokens: 100,
+        content: "output-1\n".to_string(),
+    };
+    store.append("cache-test", &first).await.unwrap();
+    let _ = store.list_entries("cache-test").await.unwrap();
+    // Append remaining entries (cache updated incrementally)
+    for i in 1..count {
+        let entry = SpillEntry {
+            id: format!("turn{}:bash:0", i + 1),
+            tool: "bash".to_string(),
+            input_preview: format!("cmd-{}", i + 1),
+            tokens: 100,
+            content: format!("output-{}\n", i + 1),
+        };
+        store.append("cache-test", &entry).await.unwrap();
+    }
+    // Delete the spill file to prove cache is used
+    let spill_path = tmp
+        .path()
+        .join("sessions")
+        .join("cache-test")
+        .join("spill.jsonl");
+    tokio::fs::remove_file(&spill_path).await.unwrap();
+    // Verify list_entries still works from cache
+    let entries = store.list_entries("cache-test").await.unwrap();
+    world
+        .env_overrides
+        .insert("_spill_cache_count".into(), count.to_string());
+    world
+        .env_overrides
+        .insert("_spill_cache_result".into(), entries.len().to_string());
+}
+
+#[then(expr = "list_entries returns {int} entries without re-reading disk")]
+fn then_list_entries_from_cache(world: &mut QuectoWorld, expected: usize) {
+    let result: usize = world
+        .env_overrides
+        .get("_spill_cache_result")
+        .expect("cache result not set")
+        .parse()
+        .unwrap();
+    assert_eq!(
+        result, expected,
+        "list_entries should return {expected} cached entries after disk file was deleted"
+    );
+}

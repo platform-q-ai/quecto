@@ -1,18 +1,31 @@
 // FileContextSpillStore: JSONL-based spill file for context pruning.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 
 use crate::domain::error::DomainError;
 use crate::domain::session::{ContextSpillStore, SpillEntry, SpillIndex};
 
 /// JSONL-based spill store for context pruning.
+///
 /// Stores spilled tool outputs as one JSON object per line, append-only.
+/// Maintains an in-memory index cache keyed by session to avoid re-reading
+/// and re-parsing the JSONL file on every `list_entries()` call (#375).
+///
+/// The cache uses `Arc<Vec<SpillIndex>>` so that `list_entries()` returns
+/// a cheap `Arc::clone()` instead of deep-cloning every `SpillIndex`.
 pub struct FileContextSpillStore {
     base_dir: PathBuf,
+    /// In-memory index cache: session_key → cached SpillIndex entries.
+    /// Populated incrementally on `append()` and seeded from disk on
+    /// cold-start `list_entries()`. Invalidated on `clear()`.
+    index_cache: RwLock<HashMap<String, Arc<Vec<SpillIndex>>>>,
 }
 
 impl std::fmt::Debug for FileContextSpillStore {
@@ -70,7 +83,10 @@ impl From<&SpillRecord> for SpillIndex {
 
 impl FileContextSpillStore {
     pub fn new(base_dir: PathBuf) -> Self {
-        Self { base_dir }
+        Self {
+            base_dir,
+            index_cache: RwLock::new(HashMap::new()),
+        }
     }
 
     fn spill_path(&self, session_key: &str) -> PathBuf {
@@ -145,6 +161,7 @@ impl ContextSpillStore for FileContextSpillStore {
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         let path = self.spill_path(session_key);
         let record = SpillRecord::from(entry);
+        let session_key = session_key.to_string();
         Box::pin(async move {
             // Ensure parent directory exists
             if let Some(parent) = path.parent() {
@@ -175,6 +192,23 @@ impl ContextSpillStore for FileContextSpillStore {
                 .await
                 .map_err(|e| DomainError::Session(format!("failed to flush spill file: {}", e)))?;
 
+            // Update in-memory index cache (only if already populated).
+            // If no cache entry exists, we skip — the next list_entries()
+            // call will seed the cache from disk including this new entry.
+            // This avoids creating a partial cache that misses prior entries.
+            let index = SpillIndex {
+                id: record.id,
+                tool: record.tool,
+                input_preview: record.input_preview,
+                tokens: record.tokens,
+            };
+            let mut cache = self.index_cache.write().await;
+            if let Some(existing) = cache.get_mut(&session_key) {
+                let mut entries = (**existing).clone();
+                entries.push(index);
+                *existing = Arc::new(entries);
+            }
+
             Ok(())
         })
     }
@@ -197,9 +231,21 @@ impl ContextSpillStore for FileContextSpillStore {
         session_key: &str,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<SpillIndex>, DomainError>> + Send + '_>> {
         let path = self.spill_path(session_key);
+        let session_key = session_key.to_string();
         Box::pin(async move {
+            // Fast path: return cached index if available (cheap Arc clone)
+            {
+                let cache = self.index_cache.read().await;
+                if let Some(cached) = cache.get(&session_key) {
+                    return Ok((**cached).clone());
+                }
+            }
+
+            // Cold start: read from disk and populate cache.
+            // Hold write lock for the full operation to prevent TOCTOU
+            // races with concurrent cold-start callers or append().
             let records = read_spill_index_records(&path).await?;
-            Ok(records
+            let entries: Vec<SpillIndex> = records
                 .into_iter()
                 .map(|r| SpillIndex {
                     id: r.id,
@@ -207,7 +253,16 @@ impl ContextSpillStore for FileContextSpillStore {
                     input_preview: r.input_preview,
                     tokens: r.tokens,
                 })
-                .collect())
+                .collect();
+
+            let arc = Arc::new(entries);
+            self.index_cache
+                .write()
+                .await
+                .entry(session_key)
+                .or_insert_with(|| arc.clone());
+
+            Ok((*arc).clone())
         })
     }
 
@@ -216,7 +271,11 @@ impl ContextSpillStore for FileContextSpillStore {
         session_key: &str,
     ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
         let path = self.spill_path(session_key);
+        let session_key = session_key.to_string();
         Box::pin(async move {
+            // Invalidate cache regardless of disk state
+            self.index_cache.write().await.remove(&session_key);
+
             // Check if the file exists — if not, nothing to clear.
             match tokio::fs::metadata(&path).await {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -363,5 +422,61 @@ mod tests {
         // Clearing a non-existent session's spill file should not error
         let result = store.clear("ghost-session").await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_list_entries_uses_cache_after_append() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+
+        let entry = test_entry();
+        store.append("cached-session", &entry).await.unwrap();
+
+        // Seed the cache via list_entries (simulates agent loop startup)
+        let initial = store.list_entries("cached-session").await.unwrap();
+        assert_eq!(initial.len(), 1);
+
+        // Append a second entry (updates cache)
+        let entry2 = SpillEntry {
+            id: "turn2:bash:0".to_string(),
+            tool: "bash".to_string(),
+            input_preview: "ls".to_string(),
+            tokens: 50,
+            content: "file.txt\n".to_string(),
+        };
+        store.append("cached-session", &entry2).await.unwrap();
+
+        // Delete the spill file behind the store's back
+        let spill_path = store.spill_path("cached-session");
+        tokio::fs::remove_file(&spill_path).await.unwrap();
+
+        // list_entries should still return both entries from cache
+        let entries = store.list_entries("cached-session").await.unwrap();
+        assert_eq!(
+            entries.len(),
+            2,
+            "list_entries should return cached entries even after disk file is deleted"
+        );
+        assert_eq!(entries[0].id, "turn1:bash:0");
+        assert_eq!(entries[1].id, "turn2:bash:0");
+    }
+
+    #[tokio::test]
+    async fn test_clear_invalidates_cache() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+
+        let entry = test_entry();
+        store.append("clear-test", &entry).await.unwrap();
+
+        // Verify cached
+        let entries = store.list_entries("clear-test").await.unwrap();
+        assert_eq!(entries.len(), 1);
+
+        // Clear should invalidate cache
+        store.clear("clear-test").await.unwrap();
+
+        let entries = store.list_entries("clear-test").await.unwrap();
+        assert!(entries.is_empty(), "cache should be cleared after clear()");
     }
 }
