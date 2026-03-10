@@ -456,3 +456,9 @@ Feature: LLM Providers
     When I normalize the messages
     Then the aborted assistant message should be removed
     And the new user message should remain
+
+  @done
+  Scenario: normalize_messages does not clone messages that need no modification
+    Given a message list with only user and assistant messages and no tool calls
+    When I normalize the messages
+    Then all messages should be returned without deep cloning

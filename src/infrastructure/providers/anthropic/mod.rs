@@ -1,5 +1,7 @@
 // Anthropic adapter: impl LlmProvider for AnthropicProvider.
 
+mod normalize;
+
 use std::future::Future;
 use std::pin::Pin;
 
@@ -151,163 +153,8 @@ impl AnthropicProvider {
         }
     }
 
-    /// Normalize a tool call ID: strip `[^a-zA-Z0-9_-]` → `'_'`, truncate to 64 (#184).
-    fn normalize_tool_call_id(id: &str) -> String {
-        id.chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .take(64)
-            .collect()
-    }
-
-    /// Normalize messages: strip invalid tool call IDs, filter error/aborted
-    /// assistant turns and their orphaned tool_result counterparts (#184, #182).
-    fn normalize_messages(messages: &[Message]) -> Vec<Message> {
-        use crate::domain::message::StopReason;
-        use std::collections::{HashMap, HashSet};
-
-        // Collect IDs from dropped assistant turns (error/aborted) so we can
-        // also drop their orphaned tool_result counterparts.
-        let is_incomplete = |m: &&Message| {
-            m.role == Role::Assistant
-                && matches!(
-                    m.stop_reason,
-                    Some(StopReason::Error) | Some(StopReason::Aborted)
-                )
-        };
-        let dropped_tool_ids: HashSet<String> = messages
-            .iter()
-            .filter(is_incomplete)
-            .flat_map(|m| m.tool_calls.iter().map(|tc| tc.id.clone()))
-            .collect();
-
-        // Build a map from original tool call ID → normalised ID.
-        let id_map: HashMap<String, String> = messages
-            .iter()
-            .flat_map(|m| m.tool_calls.iter())
-            .map(|tc| (tc.id.clone(), Self::normalize_tool_call_id(&tc.id)))
-            .collect();
-
-        messages
-            .iter()
-            .filter(|m| {
-                // Drop incomplete assistant turns (error or aborted).
-                if m.role == Role::Assistant
-                    && matches!(
-                        m.stop_reason,
-                        Some(StopReason::Error) | Some(StopReason::Aborted)
-                    )
-                {
-                    return false;
-                }
-                // Drop tool results whose tool call was dropped above.
-                if m.role == Role::Tool {
-                    if let Some(id) = &m.tool_call_id {
-                        if dropped_tool_ids.contains(id) {
-                            return false;
-                        }
-                    }
-                }
-                true
-            })
-            .map(|m| {
-                let mut out = m.clone();
-                // Normalise IDs in tool_use blocks (assistant messages).
-                for tc in &mut out.tool_calls {
-                    if let Some(norm) = id_map.get(&tc.id) {
-                        tc.id = norm.clone();
-                    }
-                }
-                // Normalise IDs in tool_result blocks (tool messages).
-                if m.role == Role::Tool {
-                    if let Some(orig) = &m.tool_call_id {
-                        if let Some(norm) = id_map.get(orig) {
-                            out.tool_call_id = Some(norm.clone());
-                        }
-                    }
-                }
-                out
-            })
-            .collect()
-    }
-
-    fn collect_tool_use_ids(api_messages: &[serde_json::Value]) -> Vec<String> {
-        api_messages
-            .iter()
-            .filter(|m| m["role"] == "assistant")
-            .flat_map(|m| m["content"].as_array().into_iter().flatten())
-            .filter(|b| b["type"] == "tool_use")
-            .filter_map(|b| b["id"].as_str().map(str::to_string))
-            .collect()
-    }
-
-    fn collect_tool_result_ids(
-        api_messages: &[serde_json::Value],
-    ) -> std::collections::HashSet<String> {
-        api_messages
-            .iter()
-            .flat_map(|m| m["content"].as_array().into_iter().flatten())
-            .filter(|b| b["type"] == "tool_result")
-            .filter_map(|b| b["tool_use_id"].as_str().map(str::to_string))
-            .collect()
-    }
-
-    /// Synthetic `tool_result` for an orphaned tool call (no non-standard fields).
-    fn synthetic_tool_result(tool_use_id: String) -> serde_json::Value {
-        serde_json::json!({
-            "type": "tool_result",
-            "tool_use_id": tool_use_id,
-            "content": "No result provided",
-            "is_error": true,
-        })
-    }
-
-    /// Detect orphaned tool calls in `api_messages` (tool_use blocks without a
-    /// matching tool_result) and inject synthetic error results.
-    ///
-    /// A tool call is orphaned when an interrupted session has an assistant
-    /// message with tool_use blocks but no subsequent tool result messages.
-    /// Sending such a payload to Anthropic causes an API error.
-    fn inject_orphaned_tool_results(api_messages: &mut Vec<serde_json::Value>) {
-        let pending = Self::collect_tool_use_ids(api_messages);
-        let satisfied = Self::collect_tool_result_ids(api_messages);
-
-        let mut synthetic_blocks: Vec<serde_json::Value> = pending
-            .into_iter()
-            .filter(|id| !satisfied.contains(id))
-            .map(Self::synthetic_tool_result)
-            .collect();
-
-        if synthetic_blocks.is_empty() {
-            return;
-        }
-
-        // Append into the last user message only if it already contains
-        // tool_result blocks (not a plain text user message — mixing them
-        // would produce an invalid payload).
-        if let Some(last) = api_messages.last_mut() {
-            if last["role"] == "user" {
-                let has_tool_results = last["content"]
-                    .as_array()
-                    .map(|arr| arr.iter().any(|b| b["type"] == "tool_result"))
-                    .unwrap_or(false);
-                if has_tool_results {
-                    if let Some(arr) = last["content"].as_array_mut() {
-                        arr.append(&mut synthetic_blocks);
-                        return;
-                    }
-                }
-            }
-        }
-        api_messages.push(serde_json::json!({
-            "role": "user",
-            "content": synthetic_blocks,
-        }));
+    fn normalize_messages(messages: &[Message]) -> Vec<std::borrow::Cow<'_, Message>> {
+        normalize::normalize_messages(messages)
     }
 
     /// Convert domain messages to Anthropic API message format.
@@ -327,7 +174,8 @@ impl AnthropicProvider {
         let mut i = 0;
 
         while i < normalized.len() {
-            let m = &normalized[i];
+            // Cow<Message> auto-derefs to &Message via Deref.
+            let m: &Message = &normalized[i];
             match m.role {
                 Role::System => {
                     system_prompt = Some(m.content.clone());
@@ -360,7 +208,7 @@ impl AnthropicProvider {
             }
         }
 
-        Self::inject_orphaned_tool_results(&mut api_messages);
+        normalize::inject_orphaned_tool_results(&mut api_messages);
         (system_prompt, api_messages)
     }
 

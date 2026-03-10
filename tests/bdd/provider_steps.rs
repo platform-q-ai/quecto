@@ -3011,3 +3011,31 @@ fn then_new_user_message_remains(world: &mut QuectoWorld) {
         "new user message should still be in the normalized list"
     );
 }
+
+// --- normalize_messages clone-on-write (#374) ---
+
+#[given("a message list with only user and assistant messages and no tool calls")]
+fn given_simple_message_list(world: &mut QuectoWorld) {
+    let msgs = vec![
+        Message::user("hello"),
+        Message::assistant("hi there", vec![]),
+        Message::user("follow up"),
+    ];
+    let (_, api_msgs) =
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::build_messages_public(
+            &msgs,
+        );
+    world.api_messages = api_msgs;
+}
+
+#[then("all messages should be returned without deep cloning")]
+fn then_no_deep_cloning(world: &mut QuectoWorld) {
+    // The clone-on-write behavior is verified by the unit test
+    // test_normalize_messages_does_not_clone_unmodified_messages.
+    // This BDD step confirms the pipeline produces the expected output.
+    assert_eq!(
+        world.api_messages.len(),
+        3,
+        "all 3 messages should be present"
+    );
+}
