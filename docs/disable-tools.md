@@ -124,3 +124,11 @@ extensions) but before the registry is handed to the agent loop. Disabled
 tools are removed via `ToolRegistryImpl::remove()`, which deletes both the
 tool implementation and its definition entry. The removal is permanent for
 the lifetime of the agent process.
+
+## See also
+
+- [Getting Started](getting-started.md) — quickstart guide for UDS agent integration
+- [UDS Protocol Reference](uds-protocol.md) — full protocol specification
+- [Extensions](extensions.md) — custom tools and how they interact with the denylist
+- [Subagents](subagents.md) — spawning child agent processes
+- [Workflow Automation](workflow.md) — structured development process
