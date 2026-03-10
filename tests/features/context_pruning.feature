@@ -99,6 +99,11 @@ Feature: Context pruning via sliding window (no tool-result collapse)
     When 3 spill entries are appended to the store
     Then list_entries returns 3 entries without re-reading disk
 
+  @done
+  Scenario: recall only deserializes the matching spill entry
+    When recall is called for the 5th entry in a 10-entry spill file
+    Then the correct entry is returned with full content
+
   # --- Sliding window enforcement ---
 
   Scenario: Sliding window drops oldest messages when over budget
