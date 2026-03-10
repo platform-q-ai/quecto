@@ -501,6 +501,47 @@ fn when_run_agent_no_session_with_s(world: &mut QuectoWorld) {
     world.stderr = output.stderr;
 }
 
+// --- #402: --disable-tool flag ---
+
+#[when(expr = "I run quecto agent --disable-tool {word} -m {string}")]
+fn when_run_agent_disable_tool(world: &mut QuectoWorld, tool: String, message: String) {
+    let args = vec![
+        "quecto".to_string(),
+        "agent".to_string(),
+        "--disable-tool".to_string(),
+        tool,
+        "-m".to_string(),
+        message,
+    ];
+    let output = cli::run_with_output(args, &world.cli_context);
+    world.exit_code = output.exit_code;
+    world.stdout = output.stdout;
+    world.stderr = output.stderr;
+}
+
+#[when(expr = "I run quecto agent --disable-tool {word} --disable-tool {word} -m {string}")]
+fn when_run_agent_disable_two_tools(
+    world: &mut QuectoWorld,
+    tool1: String,
+    tool2: String,
+    message: String,
+) {
+    let args = vec![
+        "quecto".to_string(),
+        "agent".to_string(),
+        "--disable-tool".to_string(),
+        tool1,
+        "--disable-tool".to_string(),
+        tool2,
+        "-m".to_string(),
+        message,
+    ];
+    let output = cli::run_with_output(args, &world.cli_context);
+    world.exit_code = output.exit_code;
+    world.stdout = output.stdout;
+    world.stderr = output.stderr;
+}
+
 #[when(expr = "I run quecto agent --no-sandbox -m {string}")]
 fn when_run_agent_no_sandbox(world: &mut QuectoWorld, message: String) {
     let args = vec![
