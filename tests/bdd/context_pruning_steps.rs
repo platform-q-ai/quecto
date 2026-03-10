@@ -1030,6 +1030,46 @@ async fn when_n_spill_entries_appended(world: &mut QuectoWorld, count: usize) {
         .insert("_spill_cache_result".into(), entries.len().to_string());
 }
 
+#[when("recall is called for the 5th entry in a 10-entry spill file")]
+async fn when_recall_5th_in_10_entries(world: &mut QuectoWorld) {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = quecto::infrastructure::persistence::context_spill::FileContextSpillStore::new(
+        tmp.path().to_path_buf(),
+    );
+    for i in 0..10 {
+        let entry = SpillEntry {
+            id: format!("turn{}:bash:0", i + 1),
+            tool: "bash".to_string(),
+            input_preview: format!("cmd-{}", i + 1),
+            tokens: 100,
+            content: format!("output-{}\n", i + 1),
+        };
+        store.append("recall-test", &entry).await.unwrap();
+    }
+    let recalled = store.recall("recall-test", "turn5:bash:0").await.unwrap();
+    let entry = recalled.expect("should find turn5:bash:0");
+    world
+        .env_overrides
+        .insert("_recall_result_id".into(), entry.id);
+    world
+        .env_overrides
+        .insert("_recall_result_content".into(), entry.content);
+}
+
+#[then("the correct entry is returned with full content")]
+fn then_correct_entry_returned(world: &mut QuectoWorld) {
+    let id = world
+        .env_overrides
+        .get("_recall_result_id")
+        .expect("recall result id not set");
+    assert_eq!(id, "turn5:bash:0", "should recall the 5th entry");
+    let content = world
+        .env_overrides
+        .get("_recall_result_content")
+        .expect("recall result content not set");
+    assert_eq!(content, "output-5\n", "content should match the 5th entry");
+}
+
 #[then(expr = "list_entries returns {int} entries without re-reading disk")]
 fn then_list_entries_from_cache(world: &mut QuectoWorld, expected: usize) {
     let result: usize = world

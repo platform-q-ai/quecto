@@ -119,12 +119,6 @@ async fn read_spill_content(path: &Path) -> Result<String, DomainError> {
     }
 }
 
-/// Read and parse all spill records from a JSONL file (full content).
-async fn read_spill_records(path: &Path) -> Result<Vec<SpillRecord>, DomainError> {
-    let content = read_spill_content(path).await?;
-    Ok(parse_jsonl::<SpillRecord>(&content))
-}
-
 /// Read and parse spill index records from a JSONL file (no content field).
 async fn read_spill_index_records(path: &Path) -> Result<Vec<SpillIndexRecord>, DomainError> {
     let content = read_spill_content(path).await?;
@@ -219,10 +213,44 @@ impl ContextSpillStore for FileContextSpillStore {
         id: &str,
     ) -> Pin<Box<dyn Future<Output = Result<Option<SpillEntry>, DomainError>> + Send + '_>> {
         let path = self.spill_path(session_key);
+        let session_key_owned = session_key.to_string();
         let id = id.to_string();
         Box::pin(async move {
-            let records = read_spill_records(&path).await?;
-            Ok(records.into_iter().find(|r| r.id == id).map(Into::into))
+            // Quick check: if index cache is populated and doesn't contain
+            // this ID, skip disk I/O entirely.
+            if let Some(cached) = self.index_cache.read().await.get(&session_key_owned) {
+                if !cached.iter().any(|e| e.id == id) {
+                    return Ok(None);
+                }
+            }
+
+            let content = read_spill_content(&path).await?;
+            // Line-by-line scan with early exit: only deserialize lines
+            // that contain the target ID as a substring (cheap string check
+            // before expensive JSON parse).  Stops at the first match.
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                // Quick substring filter — avoids deserializing lines that
+                // obviously don't contain the target ID.
+                if !trimmed.contains(&id) {
+                    continue;
+                }
+                match serde_json::from_str::<SpillRecord>(trimmed) {
+                    Ok(rec) if rec.id == id => return Ok(Some(rec.into())),
+                    Ok(_) => {} // substring matched in content, not id
+                    Err(e) => {
+                        tracing::warn!(
+                            target: "context_prune",
+                            error = %e,
+                            "skipping corrupt spill entry during recall"
+                        );
+                    }
+                }
+            }
+            Ok(None)
         })
     }
 
@@ -478,5 +506,69 @@ mod tests {
 
         let entries = store.list_entries("clear-test").await.unwrap();
         assert!(entries.is_empty(), "cache should be cleared after clear()");
+    }
+
+    #[tokio::test]
+    async fn test_recall_finds_entry_among_many() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+
+        // Append 10 entries with distinct content
+        for i in 0..10 {
+            let entry = SpillEntry {
+                id: format!("turn{}:bash:0", i + 1),
+                tool: "bash".to_string(),
+                input_preview: format!("cmd-{}", i + 1),
+                tokens: 100,
+                content: format!("output-{}-{}", i + 1, "x".repeat(1000)),
+            };
+            store.append("recall-test", &entry).await.unwrap();
+        }
+
+        // Recall the 5th entry
+        let recalled = store.recall("recall-test", "turn5:bash:0").await.unwrap();
+        assert!(recalled.is_some(), "should find turn5:bash:0");
+        let entry = recalled.unwrap();
+        assert_eq!(entry.id, "turn5:bash:0");
+        assert!(
+            entry.content.starts_with("output-5-"),
+            "content should match the 5th entry"
+        );
+
+        // Recall nonexistent
+        let missing = store.recall("recall-test", "turn99:bash:0").await.unwrap();
+        assert!(missing.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_recall_handles_id_substring_in_content() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileContextSpillStore::new(tmp.path().to_path_buf());
+
+        // Entry whose content contains another entry's ID as a substring
+        let entry1 = SpillEntry {
+            id: "turn1:bash:0".to_string(),
+            tool: "bash".to_string(),
+            input_preview: "echo".to_string(),
+            tokens: 50,
+            content: "Use recall(\"turn2:bash:0\") to see the other output".to_string(),
+        };
+        let entry2 = SpillEntry {
+            id: "turn2:bash:0".to_string(),
+            tool: "bash".to_string(),
+            input_preview: "ls".to_string(),
+            tokens: 50,
+            content: "actual output".to_string(),
+        };
+        store.append("substr-test", &entry1).await.unwrap();
+        store.append("substr-test", &entry2).await.unwrap();
+
+        // Recalling turn2 should return entry2, not entry1 (even though
+        // entry1's content contains "turn2:bash:0" as a substring)
+        let recalled = store.recall("substr-test", "turn2:bash:0").await.unwrap();
+        assert!(recalled.is_some());
+        let entry = recalled.unwrap();
+        assert_eq!(entry.id, "turn2:bash:0");
+        assert_eq!(entry.content, "actual output");
     }
 }
