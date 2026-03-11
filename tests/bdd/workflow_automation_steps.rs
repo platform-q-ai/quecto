@@ -370,6 +370,45 @@ fn given_config_with_auto_and_guards(world: &mut QuectoWorld) {
     world.config_path = Some(config_path.to_string_lossy().to_string());
 }
 
+// --- #405: Guard should ignore patterns inside quoted strings ---
+
+#[given(expr = "a workflow guard blocking {string} before step 7")]
+fn given_guard_blocking(world: &mut QuectoWorld, pattern: String) {
+    world.env_overrides.insert("_guard_pattern".into(), pattern);
+    world.env_overrides.insert("_guard_step".into(), "7".into());
+    let state = Arc::new(Mutex::new(WorkflowState::default_bdd()));
+    world.workflow_state = Some(state);
+}
+
+#[when(expr = "the bash command is {string}")]
+fn when_bash_command(world: &mut QuectoWorld, command: String) {
+    use quecto::infrastructure::tools::workflow_tool::WorkflowGuard;
+    let pattern = world.env_overrides["_guard_pattern"].clone();
+    let step: u32 = world.env_overrides["_guard_step"].parse().unwrap();
+    let state = world.workflow_state.clone().unwrap();
+    let guard = WorkflowGuard::new(
+        state,
+        vec![GuardRule {
+            commands: vec![pattern],
+            before_step: step,
+            message: "Blocked by guard.".into(),
+        }],
+    );
+    let json_args = serde_json::json!({"command": command}).to_string();
+    let result = quecto::domain::tool::ToolGuard::check(&guard, "bash", &json_args);
+    world.guard_result = Some(result);
+}
+
+#[then("the guard should allow the command")]
+fn then_guard_allows(world: &mut QuectoWorld) {
+    let result = world.guard_result.take().expect("guard result");
+    assert!(
+        result.is_ok(),
+        "guard should allow but blocked: {}",
+        result.unwrap_err()
+    );
+}
+
 #[given("a config file with only workflow enabled true")]
 fn given_config_enabled_only(world: &mut QuectoWorld) {
     super::ensure_temp_dir(world);

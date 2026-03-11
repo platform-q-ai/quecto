@@ -510,6 +510,8 @@ pub struct QuectoWorld {
     pub workflow_events: Option<std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>>,
     /// Workflow error from the last operation
     pub workflow_error: Option<String>,
+    /// Guard check result (#405)
+    pub guard_result: Option<Result<(), String>>,
     /// Workflow config for config scenarios
     pub workflow_config: Option<quecto::domain::workflow::WorkflowConfig>,
     /// Workflow system prompt snippet for system prompt scenarios

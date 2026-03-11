@@ -43,10 +43,52 @@ pub(crate) fn parse_patterns(patterns: &[String]) -> Vec<(String, Vec<String>)> 
         .collect()
 }
 
+/// Strip content inside single and double quotes, replacing with spaces.
+///
+/// Handles nested quotes (single inside double and vice versa) by only
+/// tracking the outermost quote character. Escaped quotes (`\"`, `\'`)
+/// inside double-quoted regions are skipped.
+fn strip_quoted_regions(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    let mut in_quote: Option<u8> = None;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+        match in_quote {
+            None => {
+                if b == b'\'' || b == b'"' {
+                    in_quote = Some(b);
+                    out.push(' '); // placeholder so tokens don't merge
+                } else {
+                    out.push(b as char);
+                }
+            }
+            Some(q) => {
+                if b == b'\\' && q == b'"' && i + 1 < bytes.len() {
+                    // Skip escaped char inside double quotes
+                    i += 2;
+                    continue;
+                }
+                if b == q {
+                    in_quote = None;
+                }
+                // Consume quoted content (don't emit it)
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
 /// Inner matching logic against pre-parsed patterns.
 pub(crate) fn command_matches_parsed(command: &str, patterns: &[(String, Vec<String>)]) -> bool {
+    // Strip quoted regions first so data inside strings doesn't trigger
+    // false positives (#405).
+    let unquoted = strip_quoted_regions(command);
     // Lowercase once for case-insensitive matching at all levels
-    let lower = command.to_lowercase();
+    let lower = unquoted.to_lowercase();
 
     for segment in lower.split(&['&', '|', ';', '\n'][..]) {
         let segment = segment.trim();
@@ -521,11 +563,11 @@ mod tests {
     }
 
     #[test]
-    fn test_match_binary_as_argument_is_false_positive() {
-        // Best-effort: "echo git commit" matches because we don't have
-        // a full shell parser to distinguish arguments from commands.
-        // This is a documented limitation — the guard errs on the side
-        // of caution (blocking) rather than allowing.
+    fn test_match_unquoted_args_still_matches() {
+        // Unquoted "echo git commit" still matches — the guard can't
+        // distinguish bare arguments from commands without a full shell
+        // parser. But quoted versions (echo "git commit") are now
+        // correctly ignored (#405).
         let patterns = vec!["git commit".into()];
         assert!(command_matches_patterns("echo git commit", &patterns));
     }
@@ -544,6 +586,62 @@ mod tests {
         let patterns = vec!["git commit".into()];
         assert!(command_matches_patterns(
             "git commit --no-verify -m wip",
+            &patterns
+        ));
+    }
+
+    // --- #405: quoted strings should not trigger guard ---
+
+    #[test]
+    fn test_no_match_pattern_inside_single_quotes() {
+        let patterns = vec!["git commit".into()];
+        assert!(!command_matches_patterns(
+            "curl -d '{\"body\": \"git commit the changes\"}' https://api.example.com",
+            &patterns
+        ));
+    }
+
+    #[test]
+    fn test_no_match_pattern_inside_double_quotes() {
+        let patterns = vec!["git commit".into()];
+        assert!(!command_matches_patterns(
+            r#"echo "run git commit to save""#,
+            &patterns
+        ));
+    }
+
+    #[test]
+    fn test_match_real_command_after_quoted_string() {
+        let patterns = vec!["git commit".into()];
+        assert!(command_matches_patterns(
+            r#"echo "hello world" && git commit -m wip"#,
+            &patterns
+        ));
+    }
+
+    #[test]
+    fn test_no_match_pattern_in_heredoc_style_echo() {
+        let patterns = vec!["git push".into()];
+        assert!(!command_matches_patterns(
+            "echo 'To deploy, run git push origin main'",
+            &patterns
+        ));
+    }
+
+    #[test]
+    fn test_match_unquoted_command_with_quoted_args() {
+        let patterns = vec!["git commit".into()];
+        assert!(command_matches_patterns(
+            r#"git commit -m "fix the bug""#,
+            &patterns
+        ));
+    }
+
+    #[test]
+    fn test_no_match_curl_post_with_json_body() {
+        let patterns = vec!["git commit".into(), "git push".into()];
+        assert!(!command_matches_patterns(
+            r#"curl -X POST -H 'Content-Type: application/json' -d '{"message": "git commit and git push"}' https://api.example.com"#,
             &patterns
         ));
     }
