@@ -92,6 +92,18 @@ Feature: Built-in workflow tool
     Given a workflow config with enabled false
     Then the workflow config should not be enabled
 
+  @done
+  Scenario: Workflow guard ignores command patterns inside quoted strings
+    Given a workflow guard blocking "git commit" before step 7
+    When the bash command is "curl -d '{\"body\": \"git commit the changes\"}' https://api.example.com"
+    Then the guard should allow the command
+
+  @done
+  Scenario: Workflow guard ignores command patterns inside double-quoted strings
+    Given a workflow guard blocking "git commit" before step 7
+    When the bash command is "echo \"run git commit to save\""
+    Then the guard should allow the command
+
   Scenario: Workflow config with guards
     Given a config file with workflow enabled and guards configured
     When I load the config
