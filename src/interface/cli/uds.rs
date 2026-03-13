@@ -251,7 +251,11 @@ pub(crate) fn inject_system_prompt(messages: &mut Vec<Message>, prompt: &str) {
     if prompt.is_empty() {
         return;
     }
-    if messages.first().is_some_and(|m| m.role == Role::System) {
+    // Skip if messages[0] is a real (non-manifest) system prompt.
+    if messages
+        .first()
+        .is_some_and(|m| m.role == Role::System && !m.is_manifest)
+    {
         return;
     }
     messages.insert(0, Message::system(prompt.to_string()));
