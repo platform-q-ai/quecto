@@ -390,6 +390,116 @@ fn test_remove_system_prompt_noop_when_content_differs() {
     assert_eq!(messages[0].content, "Different.");
 }
 
+// ─── Manifest vs system prompt bug ───────────────────────────────────────────
+//
+// Reproduces the bug where a context-pruning manifest (a System message with
+// is_manifest=true) at messages[0] causes inject_system_prompt to silently
+// skip injection.  This simulates the real end-to-end scenario:
+//
+//   1. UDS agent starts with persistent session → system prompt injected.
+//   2. Context pruning inserts a manifest System message after the prompt.
+//   3. Agent shuts down → remove_injected_system_prompt strips the prompt,
+//      but the manifest remains at messages[0].
+//   4. Session is saved with manifest at [0].
+//   5. Agent restarts, loads session → inject_system_prompt sees System at [0]
+//      and bails out.  The actual system prompt (datetime, skills, --system
+//      flag, workflow) is NEVER injected.  The agent runs blind.
+
+#[test]
+fn test_inject_system_prompt_works_when_manifest_at_position_zero() {
+    // Simulate a saved session where context pruning left a manifest at [0].
+    let mut manifest = Message::system("[Session memory: 3 spilled entries]");
+    manifest.is_manifest = true;
+    manifest.is_pinned = true;
+
+    let mut messages: Vec<Message> = vec![
+        manifest,
+        Message::user("previous question"),
+        Message::assistant("previous answer", vec![]),
+    ];
+
+    // This is what cmd_agent_uds builds: datetime + skills + --system flag.
+    let system_prompt = "Current date and time: Friday, March 13, 2026 at 10:34 PM GMT\n\nYou are a helpful assistant.";
+
+    inject_system_prompt(&mut messages, system_prompt);
+
+    // The system prompt MUST be injected — the manifest is not a substitute.
+    assert_eq!(
+        messages.len(),
+        4,
+        "system prompt should be inserted (4 messages total), got {}",
+        messages.len()
+    );
+    assert_eq!(
+        messages[0].role,
+        crate::domain::message::Role::System,
+        "messages[0] should be the injected system prompt"
+    );
+    assert_eq!(
+        messages[0].content, system_prompt,
+        "messages[0] content should be the new system prompt"
+    );
+    assert!(
+        !messages[0].is_manifest,
+        "injected system prompt must not be a manifest"
+    );
+    assert!(
+        messages[1].is_manifest,
+        "manifest should be shifted to messages[1]"
+    );
+}
+
+#[test]
+fn test_full_session_lifecycle_with_manifest_round_trip() {
+    // ── Run 1: fresh session ──────────────────────────────────────────
+    let system_prompt_v1 = "Current date: 2026-03-13 22:00 GMT\n\nBe helpful.";
+    let mut messages: Vec<Message> = vec![];
+
+    inject_system_prompt(&mut messages, system_prompt_v1);
+    assert_eq!(messages[0].content, system_prompt_v1);
+
+    // Simulate conversation.
+    messages.push(Message::user("hello"));
+    messages.push(Message::assistant("hi there", vec![]));
+
+    // Simulate context pruning inserting a manifest.
+    let mut manifest = Message::system("[Session memory: 2 spilled entries]");
+    manifest.is_manifest = true;
+    manifest.is_pinned = true;
+    // Context pruning inserts after all System messages.
+    let pos = messages
+        .iter()
+        .position(|m| m.role != crate::domain::message::Role::System)
+        .unwrap_or(messages.len());
+    messages.insert(pos, manifest);
+    // Now: [System(prompt_v1), System(manifest), User, Assistant]
+
+    // ── Shutdown: remove system prompt, save ──────────────────────────
+    remove_injected_system_prompt(&mut messages, system_prompt_v1);
+    // Manifest slides to [0]: [System(manifest), User, Assistant]
+    assert!(messages[0].is_manifest, "manifest should now be at [0]");
+    assert_eq!(messages.len(), 3);
+
+    // ── Run 2: reload with a new system prompt (time changed) ────────
+    let system_prompt_v2 = "Current date: 2026-03-13 22:30 GMT\n\nBe helpful.";
+    inject_system_prompt(&mut messages, system_prompt_v2);
+
+    // The new system prompt MUST be present.
+    assert_eq!(
+        messages[0].content, system_prompt_v2,
+        "run 2 should have the new system prompt at [0]"
+    );
+    assert!(
+        !messages[0].is_manifest,
+        "new system prompt must not be a manifest"
+    );
+    assert_eq!(
+        messages.len(),
+        4,
+        "should have: system_v2, manifest, user, assistant"
+    );
+}
+
 // ─── Socket permission tests ──────────────────────────────────────────────────
 
 #[test]
