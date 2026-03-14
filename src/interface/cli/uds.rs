@@ -240,23 +240,19 @@ pub(crate) fn inject_system_prompt(messages: &mut Vec<Message>, prompt: &str) {
     if prompt.is_empty() {
         return;
     }
-    // Skip if messages[0] is a real (non-manifest) system prompt.
-    if messages
+    let has_real_system = messages
         .first()
-        .is_some_and(|m| m.role == Role::System && !m.is_manifest)
-    {
-        return;
+        .is_some_and(|m| m.role == Role::System && !m.is_manifest);
+    if !has_real_system {
+        messages.insert(0, Message::system(prompt.to_string()));
     }
-    messages.insert(0, Message::system(prompt.to_string()));
 }
 
 pub(crate) fn remove_injected_system_prompt(messages: &mut Vec<Message>, prompt: &str) {
-    if prompt.is_empty() {
-        return;
-    }
-    if messages
-        .first()
-        .is_some_and(|m| m.role == Role::System && m.content == prompt)
+    if !prompt.is_empty()
+        && messages
+            .first()
+            .is_some_and(|m| m.role == Role::System && m.content == prompt)
     {
         messages.remove(0);
     }
@@ -491,8 +487,7 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
 }
 
 pub(super) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool {
-    // Fast path for commands that need no field extraction (queries + clear_history).
-    // Defers id/type_name clones until after this check.
+    // Fast path: queries + clear_history (defers id/type_name clones).
     if let Some(result) = dispatch_fieldless_command(&cmd, ctx).await {
         return result;
     }
@@ -600,7 +595,6 @@ async fn handle_abort(ctx: &mut DispatchCtx<'_>, id: Option<&str>, type_name: &s
 }
 
 async fn handle_clear_history(ctx: &mut DispatchCtx<'_>, id: Option<&str>, tn: &str) -> bool {
-    // Safety: command loop is single-threaded, no TOCTOU risk.
     if ctx.session.is_streaming() {
         let ev = AgentEvent::err(id, tn, "cannot clear history while agent is running");
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
@@ -608,6 +602,12 @@ async fn handle_clear_history(ctx: &mut DispatchCtx<'_>, id: Option<&str>, tn: &
     }
     clear_conversation(ctx.messages);
     ctx.session.drain_pending();
+    // Also clear spill store so stale context isn't re-injected (#412).
+    if let Some(spill) = ctx.agent.spill_store() {
+        if let Err(e) = spill.clear(ctx.session_key).await {
+            tracing::warn!("clear_history: failed to clear spill store: {e}");
+        }
+    }
     let ev = AgentEvent::ok(id, tn, None);
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false

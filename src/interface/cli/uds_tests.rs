@@ -705,3 +705,28 @@ fn test_clear_history_blocked_while_streaming() {
     // The handler checks is_streaming() and returns error — verify the guard.
     assert!(session.is_streaming());
 }
+
+// ─── clear_history + spill store (#412) ──────────────────────────────────────
+
+#[tokio::test]
+async fn test_spill_store_clear_removes_entries_and_recall() {
+    use crate::domain::session::{ContextSpillStore, SpillEntry};
+    use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
+    let tmp = tempfile::tempdir().unwrap();
+    let store = std::sync::Arc::new(FileContextSpillStore::new(tmp.path().to_path_buf()));
+    let key = "clear-test-412";
+    let entry = SpillEntry {
+        id: "turn1:bash:0".into(),
+        tool: "bash".into(),
+        content: "ls output".into(),
+        input_preview: r#"{"command": "ls"}"#.into(),
+        tokens: 42,
+    };
+    store.append(key, &entry).await.unwrap();
+    assert_eq!(store.list_entries(key).await.unwrap().len(), 1);
+    assert!(store.recall(key, "turn1:bash:0").await.unwrap().is_some());
+    // After clear: both list and recall should return empty/None.
+    store.clear(key).await.unwrap();
+    assert!(store.list_entries(key).await.unwrap().is_empty());
+    assert!(store.recall(key, "turn1:bash:0").await.unwrap().is_none());
+}

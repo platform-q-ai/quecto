@@ -161,7 +161,7 @@ Cancel the current agent run. If the agent is idle, this is a no-op.
 
 ### `clear_history`
 
-Clear the conversation history in-place without restarting the agent. The system prompt is preserved; all user, assistant, and tool messages are removed. Any pending follow-up/steer messages are drained.
+Clear the conversation history in-place without restarting the agent. The system prompt is preserved; all user, assistant, and tool messages are removed. Any pending follow-up/steer messages are drained. The context spill store is also cleared so that stale tool output summaries are not re-injected on the next prompt.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -169,10 +169,10 @@ Clear the conversation history in-place without restarting the agent. The system
 | `id` | string | no | Correlation ID |
 
 **Behavior:**
-- **Agent idle:** Clears all messages except the system prompt. Drains the pending queue. Returns `success: true`
+- **Agent idle:** Clears all messages except the system prompt. Drains the pending queue. Clears the spill store (index + disk file). Returns `success: true`
 - **Agent running:** Returns `success: false` with error `"cannot clear history while agent is running"`
 
-The system prompt (injected via `--system` flag) is preserved at `messages[0]`. Context-pruning manifests (`is_manifest = true`) are **not** preserved.
+The system prompt (injected via `--system` flag) is preserved at `messages[0]`. Context-pruning manifests (`is_manifest = true`) and spill indices are **not** preserved — `recall("list")` returns empty after clear.
 
 **Response:**
 

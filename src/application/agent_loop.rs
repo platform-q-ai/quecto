@@ -179,6 +179,11 @@ impl AgentLoopImpl {
         self
     }
 
+    /// Access the context spill store (if configured).
+    pub fn spill_store(&self) -> Option<&Arc<dyn ContextSpillStore>> {
+        self.spill_store.as_ref()
+    }
+
     /// Apply context pruning and return the post-pruning token estimate.
     ///
     /// Avoids a redundant `estimate_total_tokens` call in the main loop
