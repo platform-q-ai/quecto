@@ -31,8 +31,7 @@ fn given_spawn_tool_with_base_dir(world: &mut QuectoWorld, base_dir: String) {
 
 #[when(expr = "I parse spawn arguments {string}")]
 fn when_parse_spawn_args(world: &mut QuectoWorld, arguments: String) {
-    // parse_args is private, so we test via execute in stub mode.
-    // For parse-specific tests, we use execute and check the result.
+    // execute() in stub mode (empty base_dir) exercises parse_args → config → stub output.
     let tool = world.spawn_tool.as_ref().expect("spawn_tool not set");
     let rt = tokio::runtime::Runtime::new().unwrap();
     let result = rt.block_on(tool.execute(&arguments)).unwrap();
@@ -61,10 +60,8 @@ fn when_parse_65_char_agent_id(world: &mut QuectoWorld) {
 
 #[when(expr = "I execute the SpawnTool with {string}")]
 fn when_execute_spawn_tool(world: &mut QuectoWorld, arguments: String) {
-    let tool = world.spawn_tool.as_ref().expect("spawn_tool not set");
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let result = rt.block_on(tool.execute(&arguments)).unwrap();
-    world.spawn_result = Some(result);
+    // Same as parse — execute() in stub mode covers both paths.
+    when_parse_spawn_args(world, arguments);
 }
 
 #[when("I enable network passthrough on the SpawnTool")]
@@ -103,22 +100,24 @@ fn then_no_agent_id(world: &mut QuectoWorld) {
 }
 
 #[then(expr = "the parsed config should have agent_id {string}")]
-fn then_has_agent_id(world: &mut QuectoWorld, _expected: String) {
+fn then_has_agent_id(world: &mut QuectoWorld, expected: String) {
     let result = world.spawn_result.as_ref().expect("no spawn result");
+    // Stub mode doesn't echo agent_id — successful parse confirms it was accepted.
     assert!(
         !result.is_error,
-        "expected success, got error: {}",
-        result.content
+        "expected agent_id '{}' accepted, got error: {}",
+        expected, result.content
     );
 }
 
 #[then(expr = "the parsed config should have system prompt {string}")]
-fn then_has_system_prompt(world: &mut QuectoWorld, _expected: String) {
+fn then_has_system_prompt(world: &mut QuectoWorld, expected: String) {
     let result = world.spawn_result.as_ref().expect("no spawn result");
+    // System prompt is passed to subprocess, not echoed in stub output.
     assert!(
         !result.is_error,
-        "expected success, got error: {}",
-        result.content
+        "expected system prompt '{}' accepted, got error: {}",
+        expected, result.content
     );
 }
 
@@ -279,11 +278,10 @@ fn then_debug_contains(world: &mut QuectoWorld, expected: String) {
 
 #[then(expr = "the subagent timeout constant should be {int} seconds")]
 fn then_timeout_constant(_world: &mut QuectoWorld, expected: u64) {
-    // Access the constant via the tool's type — it's a const on SpawnTool.
-    // We verify indirectly: SpawnTool::SUBAGENT_TIMEOUT_SECS is private,
-    // so we check the value is 86400 via a known-good test.
-    assert_eq!(expected, 86_400, "test expectation should be 86400");
-    // The actual constant is validated in unit tests; BDD confirms the spec.
+    // SUBAGENT_TIMEOUT_SECS is a private const — its value is verified by
+    // the unit test test_subagent_timeout_is_24_hours in spawn.rs.
+    // This BDD step documents the spec expectation (24h = 86400s).
+    assert_eq!(expected, 86_400, "BDD spec expects 24h timeout (86400s)");
 }
 
 // ===========================================================================
