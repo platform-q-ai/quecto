@@ -46,7 +46,7 @@ Add a `workflow` section to your `config.json`:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enabled` | boolean | `false` | Enable the workflow tool and system prompt injection |
-| `steps` | array | `[]` | Ordered list of workflow steps |
+| `steps` | array | `[]` | Ordered list of workflow steps (max 100) |
 | `auto_continue` | boolean | `true` | After each agent run, nudge the agent to continue with the next incomplete step |
 | `completion_nudge` | boolean | `true` | When all steps are done, prompt the agent to close the issue and start a new cycle |
 | `guards` | array | `[]` | Rules that block commands before specific steps |
@@ -57,7 +57,11 @@ Add a `workflow` section to your `config.json`:
 |-------|------|-------------|
 | `id` | integer | Step number (1-based, must be unique and sequential) |
 | `label` | string | Human-readable description shown in status output |
-| `phase` | string | Phase category: `"red"`, `"green"`, `"refactor"`, `"ci_cd"`, `"review"` |
+| `phase` | string | Phase category: `"red"`, `"green"`, `"refactor"`, `"ci_cd"`, `"review"`, or any custom string |
+
+Custom phase names are displayed as-is in the status output. The built-in
+phase names (`red`, `green`, `refactor`, `ci_cd`, `review`) are uppercased
+in the display (e.g., `"red"` → `[RED]`).
 
 ### Guard rules
 
@@ -68,12 +72,16 @@ tests pass.
 | Field | Type | Description |
 |-------|------|-------------|
 | `commands` | array of strings | Commands to block (e.g., `"git commit"`, `"git push"`) |
-| `before_step` | integer | Block these commands until this step is checked |
+| `before_step` | integer | Block these commands until all steps before this one are checked |
 | `message` | string | Error message returned when a blocked command is attempted |
 
 Guard matching uses binary + subcommand detection. `"git commit"` matches
 `git commit`, `git commit -m "msg"`, `git commit --amend`, etc. It does not
-match `git status` or `git log`.
+match `git status` or `git log`. Commands inside quoted strings are ignored —
+`echo "please git commit"` does **not** trigger the guard.
+
+> **Note:** Guards are a developer convenience, not a security boundary.
+> Any user with config.json access can modify or remove guards.
 
 ## The workflow tool
 
@@ -81,40 +89,51 @@ When enabled, the agent has a `workflow` tool with these actions:
 
 ### `status`
 
-Show all steps and current progress.
+Show all steps and current progress. Read-only — does not modify state.
 
 ```json
 {"action": "status"}
 ```
 
-Returns a formatted checklist:
+Returns a formatted checklist with phase groupings, check marks, progress
+count, and the current step indicator:
 
 ```
-Workflow Progress (3/5 steps complete)
+## Active Development Workflow
+Progress: 3/5 steps complete.
 Active issue: #42 — Add feature X
 
-  [✓] 1. Write failing tests (red)
-  [✓] 2. Implement code (green)
-  [✓] 3. Refactor (refactor)
-  [ ] 4. Verify tests pass (green)
-  [ ] 5. Commit and push (ci_cd)
+[RED]
+  [✓] 1. Write failing tests
+
+[GREEN]
+  [✓] 2. Implement code
+CURRENT STEP → 4. Verify tests pass [GREEN]
+
+[REFACTOR]
+  [✓] 3. Refactor
+
+[CI/CD]
+  [ ] 5. Commit and push
 ```
 
 ### `check`
 
-Mark a step as done.
+Mark a step as done. Enforces ordering — all previous steps must be checked
+first. Returns an error if a preceding step is unchecked.
 
 ```json
 {"action": "check", "step": 4}
 ```
 
-Steps should be completed in order. The tool allows checking any step, but
-the system prompt and auto-continue nudges guide the agent to follow the
-intended order.
+The `step` field accepts both integers and string-encoded numbers (e.g.,
+`"step": "4"` works the same as `"step": 4`).
 
 ### `uncheck`
 
-Unmark a step (set it back to incomplete).
+Unmark a step (set it back to incomplete). Does **not** enforce ordering —
+you can uncheck any step regardless of later steps' state. This can create
+ordering gaps; use `reset` for a clean restart.
 
 ```json
 {"action": "uncheck", "step": 3}
@@ -131,8 +150,9 @@ is not applicable to the current task.
 
 ### `reset`
 
-Reset all steps for a new development cycle. Clears all checkmarks but
-preserves the active issue.
+Reset all steps for a new development cycle. **Clears both all checkmarks
+and the active issue.** Use after completing a full cycle and before starting
+work on a new issue.
 
 ```json
 {"action": "reset"}
@@ -147,14 +167,27 @@ Record the GitHub issue this cycle is working on.
 ```
 
 The issue number and title are shown in `status` output and injected into
-the system prompt for context.
+the system prompt for context. Issue titles longer than 500 characters are
+automatically truncated at a character boundary.
+
+The `issueNumber` field accepts both integers and string-encoded numbers.
 
 ### `clear_issue`
 
-Clear the active issue.
+Clear the active issue without resetting step progress.
 
 ```json
 {"action": "clear_issue"}
+```
+
+### `check_commit`
+
+Check whether all configured guard rules are satisfied. Returns an error if
+any guard rule's required steps are incomplete, or a success message if all
+guards pass. This is a read-only check — it does not modify state.
+
+```json
+{"action": "check_commit"}
 ```
 
 ## System prompt injection
@@ -163,12 +196,28 @@ When workflow is enabled, the agent's system prompt is augmented with:
 
 1. **Current progress**: Which steps are done, which are pending
 2. **Active issue**: The issue number and title being worked on
-3. **Phase context**: The current phase (red/green/refactor/ci_cd/review)
-4. **Auto-continue nudge**: After each agent run, a message reminding the
-   agent to continue with the next step
+3. **Current step**: A clear `CURRENT STEP →` indicator pointing to the next
+   incomplete step
+4. **Phase grouping**: Steps grouped by phase (`[RED]`, `[GREEN]`, etc.)
+5. **Guard reminders**: If guards are configured, a warning listing blocked
+   commands and which steps must be completed first
 
 This gives the LLM full awareness of where it is in the development process
 without needing to call the `status` action explicitly.
+
+### Auto-continue nudge
+
+When `auto_continue` is enabled (the default), after each agent run completes
+with incomplete steps, the system injects a nudge message:
+
+> Continue the workflow — next incomplete step is step 4 (Verify tests pass).
+> Proceed with this step now, then call workflow(action="check", step=4).
+
+### Completion nudge
+
+When `completion_nudge` is enabled (the default) and all steps are checked,
+the system prompts the agent to close the issue, pick a new one, reset the
+checklist, and begin the next cycle.
 
 ## Guard enforcement
 
@@ -178,19 +227,27 @@ agent attempts to run a blocked command:
 1. The guard parses the bash command to extract the binary and subcommands
 2. It checks each guard rule against the parsed command
 3. If a match is found and the required step hasn't been checked, the tool
-   execution is blocked and the guard's error message is returned
+   execution is blocked with a `BLOCKED:` prefixed error message
 4. The LLM sees the error and (typically) works on completing the required
    steps before retrying
+
+Non-bash tools (read, write, edit, workflow, etc.) always pass through
+guards unconditionally.
 
 ### Guard parsing
 
 The guard parser handles:
 
 - Simple commands: `git commit -m "msg"` → binary=`git`, subcmd=`commit`
-- Subshells: `(cd dir && git commit)` → detects `git commit`
+- Subshells: `$(git commit -m x)` and backtick subshells → detects `git commit`
 - Pipes: `echo "msg" | git commit --file=-` → detects `git commit`
 - Command chains: `git add . && git commit` → detects `git commit`
-- Flag skipping: `git -C /path commit` → correctly identifies `commit` as subcmd
+- Multiline commands: `echo hello\ngit commit -m x` → detects `git commit`
+- Flag skipping: `git -C /path commit`, `git --git-dir /tmp/repo commit`,
+  `git --work-tree /path commit` → correctly identifies `commit` as subcmd
+- Case-insensitive: `GIT COMMIT` matches `git commit`
+- Quoted strings ignored: `echo "git commit"` does **not** trigger the guard
+- Comment lines: Lines starting with `#` are ignored
 
 ### Example guard config
 
@@ -221,19 +278,19 @@ A full 14-step BDD/TDD workflow used for quecto's own development:
     "enabled": true,
     "steps": [
       { "id": 1, "label": "Update Scenarios / Add new features", "phase": "red" },
-      { "id": 2, "label": "Write/update unit tests (run a quick smoke check; full suite runs on push)", "phase": "red" },
-      { "id": 3, "label": "Ensure new/modified tests FAIL (RED) — quick targeted run only, not full suite", "phase": "red" },
+      { "id": 2, "label": "Write/update unit tests", "phase": "red" },
+      { "id": 3, "label": "Ensure new/modified tests FAIL (RED)", "phase": "red" },
       { "id": 4, "label": "Implement code (GREEN)", "phase": "green" },
-      { "id": 5, "label": "Commit", "phase": "ci_cd" },
-      { "id": 6, "label": "Push (pre-push hook will run tests and linting)", "phase": "ci_cd" },
-      { "id": 7, "label": "Create PR", "phase": "ci_cd" },
-      { "id": 8, "label": "Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)", "phase": "review" },
-      { "id": 9, "label": "Fix all valid review concerns", "phase": "review" },
-      { "id": 10, "label": "Push changes to remote", "phase": "review" },
-      { "id": 11, "label": "Reply to the reviewers comments on the PR and mark resolved (use graphql)", "phase": "review" },
-      { "id": 12, "label": "Run pre-merge hooks (real-LLM, machete, deny)", "phase": "ci_cd" },
-      { "id": 13, "label": "Merge", "phase": "ci_cd" },
-      { "id": 14, "label": "Move to local master and pull", "phase": "ci_cd" }
+      { "id": 5, "label": "Refactor (perf, security, clean arch)", "phase": "refactor" },
+      { "id": 6, "label": "Ensure tests still pass (GREEN)", "phase": "green" },
+      { "id": 7, "label": "Commit", "phase": "ci_cd" },
+      { "id": 8, "label": "Push", "phase": "ci_cd" },
+      { "id": 9, "label": "Create PR", "phase": "ci_cd" },
+      { "id": 10, "label": "Despatch reviewers (Arch, Security, Perf)", "phase": "review" },
+      { "id": 11, "label": "Fix all valid review concerns", "phase": "review" },
+      { "id": 12, "label": "Push changes to remote", "phase": "review" },
+      { "id": 13, "label": "Reply to comments and mark resolved", "phase": "review" },
+      { "id": 14, "label": "Run pre-merge hooks (real-LLM, machete, deny)", "phase": "ci_cd" }
     ],
     "guards": [
       {
@@ -249,13 +306,14 @@ A full 14-step BDD/TDD workflow used for quecto's own development:
 ## Workflow lifecycle
 
 ```
-1. Agent starts → workflow injected into system prompt
-2. Agent calls workflow(set_issue) → records the issue
+1. Agent starts → workflow state injected into system prompt
+2. Agent calls workflow(set_issue) → records the active issue
 3. Agent works through steps, calling workflow(check) after each
 4. Guards block premature commands (e.g., git commit before tests pass)
 5. auto_continue nudges agent to continue after each run
 6. All steps checked → completion_nudge suggests closing the issue
-7. Agent calls workflow(reset) → starts a new cycle
+7. Agent calls workflow(reset) → clears all steps and active issue
+8. New cycle begins at step 1
 ```
 
 ## Disabling the workflow
@@ -286,6 +344,43 @@ invocation.
 For persistent workflow tracking across agent restarts, use session
 persistence (`-s <name>`) — the workflow state is included in the session
 file.
+
+Only the dynamic state (done flags + active issue) is persisted. Step
+definitions come from config.json and are not stored in the session file.
+If steps are added or removed in config.json between sessions, the done
+flags are padded or truncated to match the new step count.
+
+## UDS events
+
+When the workflow state changes, a `workflow_state` event is emitted over
+the UDS event bus. The event payload contains:
+
+```json
+{
+  "type": "workflow_state",
+  "steps": [
+    { "id": 1, "label": "Write tests", "phase": "red", "done": true },
+    { "id": 2, "label": "Implement", "phase": "green", "done": false }
+  ],
+  "progress": { "done": 1, "total": 2, "percent": 50 },
+  "activeIssue": { "number": 42, "title": "Feature X" }
+}
+```
+
+Events are emitted for all mutating actions (`check`, `uncheck`, `skip`,
+`reset`, `set_issue`, `clear_issue`). Read-only actions (`status`,
+`check_commit`) do not emit events.
+
+## Deprecated configuration
+
+The following fields are deprecated and will be removed in a future version:
+
+- `guard_commit` (boolean) — replaced by `guards` array
+- `enforce_commit_after_step` (integer) — replaced by `guards[].before_step`
+
+If `guard_commit: true` is detected in config.json with no `guards` array,
+the system automatically migrates it to an equivalent guard rule and logs a
+warning.
 
 ## See also
 
