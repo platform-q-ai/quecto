@@ -840,6 +840,7 @@ mod sandbox_steps;
 mod security_steps;
 mod session_steps;
 mod skills_steps;
+mod spawn_tool_steps;
 mod subagent_steps;
 mod tool_empty_args_steps;
 mod tool_guard_steps;
