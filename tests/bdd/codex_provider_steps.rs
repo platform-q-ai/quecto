@@ -132,6 +132,7 @@ fn given_codex_request_body_with_tools(world: &mut QuectoWorld, model: String) {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let body = quecto::infrastructure::providers::codex::CodexProvider::build_request_body_public(
         &request,
@@ -159,6 +160,7 @@ fn given_codex_request_body_with_session_id(
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let body = quecto::infrastructure::providers::codex::CodexProvider::build_request_body_public(
         &request,
@@ -182,6 +184,7 @@ fn given_codex_request_body_without_session_id(world: &mut QuectoWorld, model: S
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let body = quecto::infrastructure::providers::codex::CodexProvider::build_request_body_public(
         &request,

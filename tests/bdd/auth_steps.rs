@@ -1260,6 +1260,7 @@ async fn when_chat_through_refreshable(world: &mut QuectoWorld) {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     world.refreshable_result = Some(provider.chat(request).await);
 }
