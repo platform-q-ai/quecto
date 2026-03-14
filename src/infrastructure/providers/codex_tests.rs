@@ -374,7 +374,7 @@ async fn test_codex_provider_http_error() {
             metadata: None,
             thinking_level: None,
             cancel_flag: None,
-        effort: None,
+            effort: None,
         })
         .await;
     assert!(result.is_err());
@@ -411,7 +411,7 @@ async fn test_codex_provider_success() {
             metadata: None,
             thinking_level: None,
             cancel_flag: None,
-        effort: None,
+            effort: None,
         })
         .await;
     let resp = result.unwrap();
@@ -435,7 +435,7 @@ async fn test_codex_provider_rejects_provider_qualified_model_name() {
             metadata: None,
             thinking_level: None,
             cancel_flag: None,
-        effort: None,
+            effort: None,
         })
         .await;
 
@@ -463,7 +463,7 @@ async fn test_codex_provider_rejects_missing_instructions() {
             metadata: None,
             thinking_level: None,
             cancel_flag: None,
-        effort: None,
+            effort: None,
         })
         .await;
 

@@ -26,7 +26,7 @@ fn test_build_request_body_with_thinking_adds_thinking_param() {
         metadata: None,
         thinking_level: Some(crate::domain::provider::ThinkingLevel::Medium),
         cancel_flag: None,
-    effort: None,
+        effort: None,
     };
     let (_sys, body) = AnthropicProvider::build_request_body(&req);
     assert_eq!(body["thinking"]["type"], "enabled");
@@ -53,7 +53,7 @@ fn test_build_request_body_without_thinking_includes_temperature() {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
-    effort: None,
+        effort: None,
     };
     let (_sys, body) = AnthropicProvider::build_request_body(&req);
     assert!(body.get("thinking").is_none());
@@ -77,7 +77,7 @@ fn test_build_request_body_thinking_bumps_max_tokens() {
         metadata: None,
         thinking_level: Some(crate::domain::provider::ThinkingLevel::High),
         cancel_flag: None,
-    effort: None,
+        effort: None,
     };
     let (_sys, body) = AnthropicProvider::build_request_body(&req);
     // max_tokens must be at least budget_tokens (16384) when thinking is enabled
@@ -383,9 +383,8 @@ fn test_adaptive_thinking_with_effort_combined() {
 
 #[test]
 fn test_opus_4_6_pricing_is_five_dollars_input() {
-    use crate::domain::message::{model_pricing, UsageInfo};
-    let pricing = model_pricing("claude-opus-4-6")
-        .expect("claude-opus-4-6 should have pricing");
+    use crate::domain::message::{UsageInfo, model_pricing};
+    let pricing = model_pricing("claude-opus-4-6").expect("claude-opus-4-6 should have pricing");
     // $5.00 / MTok input
     assert_eq!(
         pricing.input_micro_usd_per_million, 5_000_000,
@@ -423,7 +422,7 @@ fn test_opus_4_6_pricing_is_five_dollars_input() {
 
 #[test]
 fn test_opus_4_6_cache_read_pricing() {
-    use crate::domain::message::{model_pricing, UsageInfo};
+    use crate::domain::message::{UsageInfo, model_pricing};
     let pricing = model_pricing("claude-opus-4-6").unwrap();
     // 1M cache-read tokens = $0.50
     let usage = UsageInfo {
@@ -444,13 +443,24 @@ fn test_opus_4_6_cache_read_pricing() {
 
 #[test]
 fn test_haiku_4_5_pricing_present_and_correct() {
-    use crate::domain::message::{model_pricing, UsageInfo};
-    let pricing = model_pricing("claude-haiku-4-5")
-        .expect("claude-haiku-4-5 should have pricing");
-    assert_eq!(pricing.input_micro_usd_per_million, 1_000_000, "$1/MTok input");
-    assert_eq!(pricing.output_micro_usd_per_million, 5_000_000, "$5/MTok output");
-    assert_eq!(pricing.cache_write_micro_usd_per_million, 1_250_000, "$1.25/MTok cache write");
-    assert_eq!(pricing.cache_read_micro_usd_per_million, 100_000, "$0.10/MTok cache read");
+    use crate::domain::message::{UsageInfo, model_pricing};
+    let pricing = model_pricing("claude-haiku-4-5").expect("claude-haiku-4-5 should have pricing");
+    assert_eq!(
+        pricing.input_micro_usd_per_million, 1_000_000,
+        "$1/MTok input"
+    );
+    assert_eq!(
+        pricing.output_micro_usd_per_million, 5_000_000,
+        "$5/MTok output"
+    );
+    assert_eq!(
+        pricing.cache_write_micro_usd_per_million, 1_250_000,
+        "$1.25/MTok cache write"
+    );
+    assert_eq!(
+        pricing.cache_read_micro_usd_per_million, 100_000,
+        "$0.10/MTok cache read"
+    );
 
     let usage = UsageInfo {
         prompt_tokens: 1_000_000,
