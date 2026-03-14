@@ -161,6 +161,13 @@ send(sock, {"type": "get_session_stats", "id": "st1"})
 # Response includes token usage, message counts, estimated cost
 ```
 
+### Clear conversation history
+
+```python
+send(sock, {"type": "clear_history", "id": "ch1"})
+# Clears all messages except system prompt; fails if agent is streaming
+```
+
 ## Multi-client architecture
 
 Multiple clients can connect to the same socket simultaneously:

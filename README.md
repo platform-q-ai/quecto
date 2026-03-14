@@ -9,7 +9,7 @@ Built in Rust. No runtime dependencies. Runs on a VPS, Raspberry Pi, or containe
 
 ## Release Notes
 
-Current version: **0.19.0** — see [`CHANGELOG.md`](CHANGELOG.md) for full history.
+Current version: **0.20.0** — see [`CHANGELOG.md`](CHANGELOG.md) for full history.
 
 ## Quick Start
 
@@ -120,7 +120,7 @@ The UDS agent is the sole integration point for external consumers (TUIs, IDE pl
 
 | Module | Responsibility |
 |---|---|
-| `protocol.rs` | `AgentCommand` enum (9 variants: `prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_messages`, `get_messages_tail`, `get_session_stats`, `set_model`), `AgentEvent` enum (events: `agent_start`, `agent_end`, `token`, `turn_start`, `turn_end`, `tool_execution_start`, `tool_execution_end`, `response`), `StreamingBehavior`, `SessionState`, `SessionStats`. All commands carry optional `id` for request/response correlation |
+| `protocol.rs` | `AgentCommand` enum (15 variants: `prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_messages`, `get_messages_tail`, `get_session_stats`, `set_model`, `get_extensions`, `reload_extensions`, `register_tools`, `unregister_tools`, `tool_result`, `clear_history`), `AgentEvent` enum (events: `agent_start`, `agent_end`, `token`, `turn_start`, `turn_end`, `tool_execution_start`, `tool_execution_end`, `response`, `execute_tool`, `extensions_changed`), `StreamingBehavior`, `SessionState`, `SessionStats`. All commands carry optional `id` for request/response correlation |
 | `uds.rs` | Entry point (`run_uds_loop`), socket binding (`chmod 0600`), stale socket reaping, single-client backward-compatible path, shared dispatch loop (`dispatch_command`), system prompt injection/removal |
 | `uds_multi.rs` | Multi-client accept loop (Docker-style event bus). `tokio::sync::broadcast` delivers events to all connected clients. `tokio::sync::mpsc` merges commands from all clients into a single dispatch loop (no concurrent session mutation). Max 64 clients. Agent shuts down when all clients disconnect. RAII `ClientGuard` tracks client count. Lagged clients receive a re-sync notification |
 | `uds_session.rs` | `AgentSession` — in-memory state tracker (model, streaming flag, pending message queue with `VecDeque`, max 64 pending). `compute_session_stats()`, `message_to_json()`, `messages_tail_json()` |
@@ -188,6 +188,8 @@ quecto agent -m "Write a Python script that generates primes"
 | `--mode` | No | Operation mode: default one-shot, or `uds` for UDS event bus |
 | `--socket` | No | Explicit socket path for `--mode uds` (default: auto-generated in tmpdir) |
 | `--persist` | No | UDS mode only — keep agent alive when all clients disconnect (default: exit on last disconnect) |
+| `--disable-tool` | No | Remove a tool from the registry (repeatable). See [Disabling Tools](docs/disable-tools.md) |
+| `--config` | No | Override config file path |
 
 **Sessions** persist conversation history so the agent remembers context across runs:
 
@@ -232,6 +234,12 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 | `get_messages_tail` | `count`, optional `id` | Return last N messages |
 | `get_session_stats` | optional `id` | Return token usage and cost statistics |
 | `set_model` | `model` or `provider`+`modelId`, optional `id` | Switch model at runtime |
+| `get_extensions` | optional `id` | Return list of registered extensions |
+| `reload_extensions` | optional `id` | **Deprecated no-op** (returns success immediately) |
+| `register_tools` | `tools` array, optional `id` | Register extension tools from a connected client |
+| `unregister_tools` | `tools` array (names), optional `id` | Remove previously registered extension tools |
+| `tool_result` | `toolCallId`, `content`, optional `isError` | Return result of an `execute_tool` request |
+| `clear_history` | optional `id` | Clear conversation history, preserve system prompt |
 
 **Events** (emitted as JSON lines):
 
@@ -244,6 +252,8 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 | `turn_end` | LLM call completed; includes assistant message |
 | `tool_execution_start` | Tool began executing (with `toolCallId`, `toolName`, `args`) |
 | `tool_execution_end` | Tool finished (with `toolCallId`, `toolName`, `result`, `isError`) |
+| `execute_tool` | Routed to extension client that registered the tool (not broadcast) |
+| `extensions_changed` | Broadcast when extension list changes |
 | `response` | Response to a command (with `id`, `command`, `success`, optional `data`/`error`) |
 
 ### `quecto auth` — Manage API keys
@@ -544,21 +554,20 @@ API key resolution order: credential store (`quecto auth login`) > config file >
 
 ## Development workflow
 
-1 - Update Scenarios/Add new features as necessary
-2 - Write/update unit tests
-3 - ensure new/modified tests fail -RED
-4 - Implement code - GREEN
-5 - Refactor based in performance, security and clean architecture standards - REFACTOR
-6 - Ensure tests still pass - GREEN
-7 - Commit
-8 - Push
-9 - Create PR
-10 - Despatch Architecture, Security, Performance Reviewers
-11 - Fix all valid concerns raised in review comments
-12 - Push changes to remote
-13 - Reply to comments and mark resolved
-14 - Merge
-15 - Move to local master and pull
+1 - Update Scenarios / Add new features
+2 - Write/update unit tests (run a quick smoke check; full suite runs on push)
+3 - Ensure new/modified tests FAIL (RED) — quick targeted run only, not full suite
+4 - Implement code (GREEN)
+5 - Commit
+6 - Push (pre-push hook will run tests and linting)
+7 - Create PR
+8 - Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)
+9 - Fix all valid review concerns
+10 - Push changes to remote
+11 - Reply to the reviewers comments on the PR and mark resolved (use graphql)
+12 - Run pre-merge hooks (real-LLM, machete, deny)
+13 - Merge
+14 - Move to local master and pull
 
 ## Quality gates
 
@@ -666,7 +675,13 @@ Tool binary cache (auto-downloaded `rg`, `fd`):
 
 | Guide | Description |
 |---|---|
+| [Getting Started](docs/getting-started.md) | Quickstart guide for UDS agent integration |
+| [UDS Protocol](docs/uds-protocol.md) | Complete UDS command and event specification |
+| [Sessions](docs/sessions.md) | Conversation persistence, context management, spill/recall |
 | [Extensions](docs/extensions.md) | Add custom tools via native extensions (config-gated) or UDS extensions (external processes) |
+| [Subagents](docs/subagents.md) | Spawning child agent processes with `spawn` tool |
+| [Disabling Tools](docs/disable-tools.md) | Restricting which tools the agent can access via `--disable-tool` |
+| [Workflow](docs/workflow.md) | Configurable BDD/TDD step-by-step development workflow with guards |
 
 ## Tech stack
 Rust 2024, Tokio, reqwest+rustls, serde/serde_json, uuid, tracing, dirs, thiserror, similar, base64, sha2, flate2, tar, rand, urlencoding, unicode-normalization. Dev: cucumber 0.21, futures, tempfile, wiremock 0.6, regex.
