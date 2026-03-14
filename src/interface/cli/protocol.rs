@@ -113,6 +113,11 @@ pub enum AgentCommand {
         #[serde(rename = "isError", default)]
         is_error: bool,
     },
+    /// Clear conversation history in-place without restarting the agent.
+    ClearHistory {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
 }
 
 /// Tool registration payload for `register_tools`.
@@ -146,6 +151,7 @@ impl AgentCommand {
             Self::RegisterTools { id, .. } => id.as_deref(),
             Self::UnregisterTools { id, .. } => id.as_deref(),
             Self::ToolResult { .. } => None,
+            Self::ClearHistory { id } => id.as_deref(),
         }
     }
 
@@ -166,6 +172,7 @@ impl AgentCommand {
             Self::RegisterTools { .. } => "register_tools",
             Self::UnregisterTools { .. } => "unregister_tools",
             Self::ToolResult { .. } => "tool_result",
+            Self::ClearHistory { .. } => "clear_history",
         }
     }
 }
@@ -655,89 +662,6 @@ mod tests {
         assert!(json.contains("\"userMessages\":2"));
         assert!(json.contains("\"totalMessages\":10"));
         assert!(json.contains("\"tokens\""));
-    }
-
-    // ─── AgentCommand::id() / type_name() ─────────────────────────────────────
-
-    #[test]
-    fn test_core_command_type_names() {
-        assert_eq!(AgentCommand::Abort { id: None }.type_name(), "abort");
-        assert_eq!(AgentCommand::GetState { id: None }.type_name(), "get_state");
-        assert_eq!(
-            AgentCommand::GetMessages { id: None }.type_name(),
-            "get_messages"
-        );
-        assert_eq!(
-            AgentCommand::GetMessagesTail { id: None, count: 5 }.type_name(),
-            "get_messages_tail"
-        );
-        assert_eq!(
-            AgentCommand::GetSessionStats { id: None }.type_name(),
-            "get_session_stats"
-        );
-        assert_eq!(
-            AgentCommand::SetModel {
-                id: None,
-                model: Some("m".into()),
-                provider: None,
-                model_id: None
-            }
-            .type_name(),
-            "set_model"
-        );
-        assert_eq!(
-            AgentCommand::FollowUp {
-                id: None,
-                message: "m".into()
-            }
-            .type_name(),
-            "follow_up"
-        );
-        assert_eq!(
-            AgentCommand::Steer {
-                id: None,
-                message: "m".into()
-            }
-            .type_name(),
-            "steer"
-        );
-    }
-
-    #[test]
-    fn test_extension_command_type_names() {
-        assert_eq!(
-            AgentCommand::GetExtensions { id: None }.type_name(),
-            "get_extensions"
-        );
-        assert_eq!(
-            AgentCommand::ReloadExtensions { id: None }.type_name(),
-            "reload_extensions"
-        );
-        assert_eq!(
-            AgentCommand::RegisterTools {
-                id: None,
-                tools: vec![]
-            }
-            .type_name(),
-            "register_tools"
-        );
-        assert_eq!(
-            AgentCommand::UnregisterTools {
-                id: None,
-                tools: vec![]
-            }
-            .type_name(),
-            "unregister_tools"
-        );
-        assert_eq!(
-            AgentCommand::ToolResult {
-                tool_call_id: "c".into(),
-                content: "x".into(),
-                is_error: false
-            }
-            .type_name(),
-            "tool_result"
-        );
     }
 }
 

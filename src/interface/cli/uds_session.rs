@@ -137,3 +137,16 @@ pub fn message_to_json(msg: &Message) -> serde_json::Value {
         "toolName": msg.tool_name,
     })
 }
+
+/// Clear conversation history, preserving only the injected system prompt (non-manifest).
+/// Uses `truncate` instead of `clone+clear` to avoid copying the system message.
+pub fn clear_conversation(messages: &mut Vec<Message>) {
+    let keep = messages
+        .first()
+        .is_some_and(|m| m.role == Role::System && !m.is_manifest);
+    if keep {
+        messages.truncate(1);
+    } else {
+        messages.clear();
+    }
+}

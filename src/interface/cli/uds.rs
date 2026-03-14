@@ -6,7 +6,7 @@ use super::uds_cancel::{
 };
 use super::uds_multi::{MultiClientArgs, PromptArgsBroadcast, run_agent_prompt_broadcast};
 use super::uds_session::{
-    AgentSession, compute_session_stats, message_to_json, messages_tail_json,
+    AgentSession, clear_conversation, compute_session_stats, message_to_json, messages_tail_json,
 };
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::message::{Message, Role};
@@ -14,8 +14,6 @@ use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 
 pub use super::protocol::parse_command_line;
-
-// ─── UDS loop ────────────────────────────────────────────────────────────────
 
 /// Arguments for running the UDS loop (avoids long parameter lists).
 pub struct UdsLoopArgs<'a> {
@@ -53,7 +51,6 @@ pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     };
     rt.block_on(uds_loop_async(args))
 }
-
 pub(crate) fn reap_stale_sockets(dir: &std::path::Path, max_age: std::time::Duration) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -62,17 +59,18 @@ pub(crate) fn reap_stale_sockets(dir: &std::path::Path, max_age: std::time::Dura
         .checked_sub(max_age)
         .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
     for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if !name_str.starts_with("quecto-agent-") || !name_str.ends_with(".sock") {
+        let n = entry.file_name();
+        let s = n.to_string_lossy();
+        if !s.starts_with("quecto-agent-") || !s.ends_with(".sock") {
             continue;
         }
-        if let Ok(meta) = entry.metadata() {
-            if let Ok(modified) = meta.modified() {
-                if modified < cutoff {
-                    let _ = std::fs::remove_file(entry.path());
-                }
-            }
+        let is_stale = entry
+            .metadata()
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .is_some_and(|t| t < cutoff);
+        if is_stale {
+            let _ = std::fs::remove_file(entry.path());
         }
     }
 }
@@ -84,7 +82,6 @@ impl Drop for SocketGuard {
         let _ = std::fs::remove_file(&self.0);
     }
 }
-
 fn bind_secure_socket(path: &std::path::Path) -> std::io::Result<tokio::net::UnixListener> {
     use std::os::unix::fs::PermissionsExt;
     let _ = std::fs::remove_file(path);
@@ -110,15 +107,14 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         ext_registry,
         persist,
     } = args;
-
     let file_store;
-    let session_store: &dyn SessionStore = if let Some(ref s) = session_store_override {
-        s.as_ref()
-    } else {
-        file_store = FileSessionStore::new(base_dir);
-        &file_store
+    let session_store: &dyn SessionStore = match session_store_override {
+        Some(ref s) => s.as_ref(),
+        None => {
+            file_store = FileSessionStore::new(base_dir);
+            &file_store
+        }
     };
-
     let messages = match load_session(session_store, &session_key, ephemeral).await {
         Ok(m) => m,
         Err(err) => {
@@ -172,8 +168,6 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     }
 }
 
-// ─── Single-client path ──────────────────────────────────────────────────────
-
 struct SingleClientArgs {
     agent: AgentLoopImpl,
     messages: Vec<Message>,
@@ -202,12 +196,10 @@ async fn single_client_loop(
         system_prompt,
         ext_registry,
     } = args;
-
     std_stream
         .set_nonblocking(true)
         .expect("set_nonblocking failed for test socket");
-    let tokio_stream = tokio::net::UnixStream::from_std(std_stream)
-        .expect("failed to convert std UnixStream to tokio");
+    let tokio_stream = tokio::net::UnixStream::from_std(std_stream).expect("std→tokio UnixStream");
     let (r, w) = tokio::io::split(tokio_stream);
     let reader: Box<dyn tokio::io::AsyncRead + Send + Unpin> = Box::new(r);
     let mut writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin> = Box::new(w);
@@ -241,11 +233,8 @@ async fn single_client_loop(
         };
         let _ = session_store.save(&session).await;
     }
-
     0
 }
-
-// ─── Shared infrastructure ───────────────────────────────────────────────────
 
 pub(crate) fn inject_system_prompt(messages: &mut Vec<Message>, prompt: &str) {
     if prompt.is_empty() {
@@ -342,13 +331,7 @@ async fn run_command_loop(
             }
             LineResult::ParseError(e) if e.is_empty() => {}
             LineResult::ParseError(e) => {
-                let ev = AgentEvent::Response {
-                    id: None,
-                    command: "parse_error".to_string(),
-                    success: false,
-                    data: None,
-                    error: Some(e),
-                };
+                let ev = AgentEvent::err(None, "parse_error", e);
                 emit_event_to_broadcast_or_writer(ctx, &ev).await;
             }
             LineResult::Command(cmd) => {
@@ -364,17 +347,17 @@ async fn run_command_loop(
 
 async fn load_session(
     store: &dyn SessionStore,
-    session_key: &str,
+    key: &str,
     ephemeral: bool,
 ) -> Result<Vec<Message>, String> {
-    if ephemeral || session_key.is_empty() {
+    if ephemeral || key.is_empty() {
         return Ok(Vec::new());
     }
-    match store.load(session_key).await {
-        Ok(Some(s)) => Ok(s.messages),
-        Ok(None) => Ok(Vec::new()),
-        Err(e) => Err(e.to_string()),
-    }
+    store
+        .load(key)
+        .await
+        .map(|s| s.map_or_else(Vec::new, |s| s.messages))
+        .map_err(|e| e.to_string())
 }
 
 pub(super) struct DispatchCtx<'a> {
@@ -386,8 +369,7 @@ pub(super) struct DispatchCtx<'a> {
     pub cancel_handle: CancelHandle,
     /// `Some` in multi-client mode; `None` in single-client mode.
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
-    /// Shared extension registry for get_extensions / reload_extensions.
-    /// `None` when extensions are not wired (e.g. legacy tests).
+    /// Shared extension registry. `None` when extensions are not wired (legacy tests).
     pub ext_registry: Option<
         std::sync::Arc<
             std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
@@ -492,15 +474,31 @@ fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serd
     }
 }
 
+/// Handle commands that need no field extraction (queries + clear_history).
+/// Returns `Some(bool)` if handled, `None` to fall through to the main match.
+async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_>) -> Option<bool> {
+    let id = cmd.id();
+    let tn = cmd.type_name();
+    if let Some(data) = query_response_data(cmd, ctx) {
+        let ev = AgentEvent::ok(id, tn, Some(data));
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return Some(false);
+    }
+    if matches!(cmd, AgentCommand::ClearHistory { .. }) {
+        return Some(handle_clear_history(ctx, id, tn).await);
+    }
+    None
+}
+
 pub(super) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool {
+    // Fast path for commands that need no field extraction (queries + clear_history).
+    // Defers id/type_name clones until after this check.
+    if let Some(result) = dispatch_fieldless_command(&cmd, ctx).await {
+        return result;
+    }
+
     let id = cmd.id().map(str::to_owned);
     let type_name = cmd.type_name().to_owned();
-
-    if let Some(data) = query_response_data(&cmd, ctx) {
-        let ev = AgentEvent::ok(id.as_deref(), &type_name, Some(data));
-        emit_event_to_broadcast_or_writer(ctx, &ev).await;
-        return false;
-    }
 
     match cmd {
         AgentCommand::Prompt {
@@ -550,17 +548,15 @@ pub(super) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         | AgentCommand::ToolResult { .. } => {
             dispatch_ext_command(cmd, ctx, id.as_deref(), &type_name).await
         }
-        AgentCommand::GetExtensions { .. }
+        // Exhaustive: variants handled by dispatch_fieldless_command above.
+        AgentCommand::ClearHistory { .. }
+        | AgentCommand::GetExtensions { .. }
         | AgentCommand::GetState { .. }
         | AgentCommand::GetMessages { .. }
         | AgentCommand::GetMessagesTail { .. }
         | AgentCommand::GetSessionStats { .. } => {
-            tracing::error!(command = %type_name, "query variant reached dispatch fallback");
-            let ev = AgentEvent::err(
-                id.as_deref(),
-                &type_name,
-                "internal: unhandled query command",
-            );
+            tracing::error!(command = %type_name, "fieldless variant reached dispatch fallback");
+            let ev = AgentEvent::err(id.as_deref(), &type_name, "internal: unhandled command");
             emit_event_to_broadcast_or_writer(ctx, &ev).await;
             false
         }
@@ -599,6 +595,20 @@ async fn handle_follow_up(
 async fn handle_abort(ctx: &mut DispatchCtx<'_>, id: Option<&str>, type_name: &str) -> bool {
     fire_cancel(&ctx.cancel_handle);
     let ev = AgentEvent::ok(id, type_name, None);
+    emit_event_to_broadcast_or_writer(ctx, &ev).await;
+    false
+}
+
+async fn handle_clear_history(ctx: &mut DispatchCtx<'_>, id: Option<&str>, tn: &str) -> bool {
+    // Safety: command loop is single-threaded, no TOCTOU risk.
+    if ctx.session.is_streaming() {
+        let ev = AgentEvent::err(id, tn, "cannot clear history while agent is running");
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
+    clear_conversation(ctx.messages);
+    ctx.session.drain_pending();
+    let ev = AgentEvent::ok(id, tn, None);
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
 }
@@ -667,47 +677,36 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
     };
 
     let outcome = if let Some(ref tx) = ctx.broadcast_tx {
-        run_agent_prompt_broadcast(PromptArgsBroadcast {
+        let args = PromptArgsBroadcast {
             agent: ctx.agent,
             messages: ctx.messages,
             session: ctx.session,
             broadcast_tx: tx.clone(),
             message,
             cancel_rx,
-        })
-        .await
+        };
+        run_agent_prompt_broadcast(args).await
     } else {
-        run_agent_prompt(PromptArgs {
+        let args = PromptArgs {
             agent: ctx.agent,
             messages: ctx.messages,
             session: ctx.session,
             stdout: ctx.stdout,
             message,
             cancel_rx,
-        })
-        .await
+        };
+        run_agent_prompt(args).await
     };
 
     disarm_cancel(&ctx.cancel_handle);
 
-    match outcome {
-        PromptOutcome::Cancelled => {
-            drain_and_run_pending(ctx).await;
-            false
-        }
-        PromptOutcome::Error => {
-            // Error was already emitted.  Drain pending follow-ups so
-            // they don't fire unexpectedly on a later prompt.
-            drain_and_run_pending(ctx).await;
-            false
-        }
-        PromptOutcome::Success => {
-            let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
-            emit_event_to_broadcast_or_writer(ctx, &ev).await;
-            drain_and_run_pending(ctx).await;
-            false
-        }
+    if matches!(outcome, PromptOutcome::Success) {
+        let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
     }
+    // Drain pending follow-ups regardless of outcome (cancelled, error, or success).
+    drain_and_run_pending(ctx).await;
+    false
 }
 
 async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
@@ -716,30 +715,30 @@ async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
         if pending.is_empty() {
             break;
         }
-        for follow_msg in pending {
-            let Some(cancel_rx) = arm_cancel(&ctx.cancel_handle) else {
+        for msg in pending {
+            let Some(rx) = arm_cancel(&ctx.cancel_handle) else {
                 break;
             };
             if let Some(ref tx) = ctx.broadcast_tx {
-                run_agent_prompt_broadcast(PromptArgsBroadcast {
+                let args = PromptArgsBroadcast {
                     agent: ctx.agent,
                     messages: ctx.messages,
                     session: ctx.session,
                     broadcast_tx: tx.clone(),
-                    message: follow_msg,
-                    cancel_rx,
-                })
-                .await;
+                    message: msg,
+                    cancel_rx: rx,
+                };
+                run_agent_prompt_broadcast(args).await;
             } else {
-                run_agent_prompt(PromptArgs {
+                let args = PromptArgs {
                     agent: ctx.agent,
                     messages: ctx.messages,
                     session: ctx.session,
                     stdout: ctx.stdout,
-                    message: follow_msg,
-                    cancel_rx,
-                })
-                .await;
+                    message: msg,
+                    cancel_rx: rx,
+                };
+                run_agent_prompt(args).await;
             }
             disarm_cancel(&ctx.cancel_handle);
         }

@@ -459,3 +459,126 @@ fn execute_tool_event_roundtrip() {
         _ => panic!("expected ExecuteTool"),
     }
 }
+
+// ─── AgentCommand::type_name() ────────────────────────────────────────────────
+
+#[test]
+fn core_command_type_names() {
+    assert_eq!(AgentCommand::Abort { id: None }.type_name(), "abort");
+    assert_eq!(AgentCommand::GetState { id: None }.type_name(), "get_state");
+    assert_eq!(
+        AgentCommand::GetMessages { id: None }.type_name(),
+        "get_messages"
+    );
+    assert_eq!(
+        AgentCommand::GetMessagesTail { id: None, count: 5 }.type_name(),
+        "get_messages_tail"
+    );
+    assert_eq!(
+        AgentCommand::GetSessionStats { id: None }.type_name(),
+        "get_session_stats"
+    );
+    assert_eq!(
+        AgentCommand::SetModel {
+            id: None,
+            model: Some("m".into()),
+            provider: None,
+            model_id: None
+        }
+        .type_name(),
+        "set_model"
+    );
+    assert_eq!(
+        AgentCommand::FollowUp {
+            id: None,
+            message: "m".into()
+        }
+        .type_name(),
+        "follow_up"
+    );
+    assert_eq!(
+        AgentCommand::Steer {
+            id: None,
+            message: "m".into()
+        }
+        .type_name(),
+        "steer"
+    );
+    assert_eq!(
+        AgentCommand::ClearHistory { id: None }.type_name(),
+        "clear_history"
+    );
+}
+
+#[test]
+fn extension_command_type_names() {
+    assert_eq!(
+        AgentCommand::GetExtensions { id: None }.type_name(),
+        "get_extensions"
+    );
+    assert_eq!(
+        AgentCommand::ReloadExtensions { id: None }.type_name(),
+        "reload_extensions"
+    );
+    assert_eq!(
+        AgentCommand::RegisterTools {
+            id: None,
+            tools: vec![]
+        }
+        .type_name(),
+        "register_tools"
+    );
+    assert_eq!(
+        AgentCommand::UnregisterTools {
+            id: None,
+            tools: vec![]
+        }
+        .type_name(),
+        "unregister_tools"
+    );
+    assert_eq!(
+        AgentCommand::ToolResult {
+            tool_call_id: "c".into(),
+            content: "x".into(),
+            is_error: false
+        }
+        .type_name(),
+        "tool_result"
+    );
+}
+
+// ─── clear_history (#408) ────────────────────────────────────────────────────
+
+#[test]
+fn clear_history_command_parses() {
+    let json = r#"{"type":"clear_history","id":"ch-1"}"#;
+    let cmd: AgentCommand = serde_json::from_str(json).unwrap();
+    assert_eq!(cmd.type_name(), "clear_history");
+    assert_eq!(cmd.id(), Some("ch-1"));
+}
+
+#[test]
+fn clear_history_command_parses_without_id() {
+    let json = r#"{"type":"clear_history"}"#;
+    let cmd: AgentCommand = serde_json::from_str(json).unwrap();
+    assert_eq!(cmd.type_name(), "clear_history");
+    assert!(cmd.id().is_none());
+}
+
+#[test]
+fn clear_history_command_serializes() {
+    let cmd = AgentCommand::ClearHistory {
+        id: Some("ch-1".into()),
+    };
+    let j = round_trip(&cmd);
+    assert_eq!(j["type"], "clear_history");
+    assert_eq!(j["id"], "ch-1");
+}
+
+#[test]
+fn clear_history_command_serializes_without_id() {
+    let cmd = AgentCommand::ClearHistory { id: None };
+    let j = round_trip(&cmd);
+    assert_eq!(j["type"], "clear_history");
+    assert!(j.get("id").is_none());
+}

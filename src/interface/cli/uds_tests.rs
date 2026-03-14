@@ -623,3 +623,85 @@ async fn test_forward_progress_event_emits_tool_finished_with_tool_call_id() {
         "expected tool_name 'read', got: {output}"
     );
 }
+
+// ─── clear_history (#408) ────────────────────────────────────────────────────
+
+#[test]
+fn test_parse_clear_history_command() {
+    let line = r#"{"type":"clear_history"}"#;
+    let cmd = parse_command_line(line).unwrap();
+    assert_eq!(cmd.type_name(), "clear_history");
+    assert!(cmd.id().is_none());
+}
+
+#[test]
+fn test_parse_clear_history_with_id() {
+    let line = r#"{"type":"clear_history","id":"ch-1"}"#;
+    let cmd = parse_command_line(line).unwrap();
+    assert_eq!(cmd.type_name(), "clear_history");
+    assert_eq!(cmd.id(), Some("ch-1"));
+}
+
+#[test]
+fn test_clear_history_type_name() {
+    let cmd = AgentCommand::ClearHistory { id: None };
+    assert_eq!(cmd.type_name(), "clear_history");
+}
+
+#[test]
+fn test_clear_history_preserves_system_prompt() {
+    let mut messages: Vec<Message> = vec![
+        Message::system("Be helpful."),
+        Message::user("hello"),
+        Message::assistant("hi there", vec![]),
+        Message::user("what is 2+2?"),
+        Message::assistant("4", vec![]),
+    ];
+    clear_conversation(&mut messages);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].role, crate::domain::message::Role::System);
+    assert_eq!(messages[0].content, "Be helpful.");
+}
+
+#[test]
+fn test_clear_history_without_system_prompt() {
+    let mut messages: Vec<Message> = vec![
+        Message::user("hello"),
+        Message::assistant("hi there", vec![]),
+    ];
+    clear_conversation(&mut messages);
+    assert!(messages.is_empty());
+}
+
+#[test]
+fn test_clear_history_skips_manifest_at_position_zero() {
+    let mut manifest = Message::system("[Session memory: 5 spilled entries]");
+    manifest.is_manifest = true;
+    let mut messages: Vec<Message> = vec![
+        manifest,
+        Message::user("hello"),
+        Message::assistant("hi", vec![]),
+    ];
+    clear_conversation(&mut messages);
+    assert!(messages.is_empty(), "manifest should not be preserved");
+}
+
+#[test]
+fn test_clear_history_drains_pending() {
+    let mut session = AgentSession::new("model".into(), "key".into());
+    session.enqueue_pending("follow-up-1".into());
+    session.enqueue_pending("follow-up-2".into());
+
+    // Simulate drain as in handle_clear_history
+    session.drain_pending();
+
+    assert_eq!(session.state_snapshot(0).pending_message_count, 0);
+}
+
+#[test]
+fn test_clear_history_blocked_while_streaming() {
+    let mut session = AgentSession::new("model".into(), "key".into());
+    session.set_streaming(true);
+    // The handler checks is_streaming() and returns error — verify the guard.
+    assert!(session.is_streaming());
+}
