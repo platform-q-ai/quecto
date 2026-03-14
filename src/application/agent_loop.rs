@@ -254,6 +254,7 @@ impl AgentLoopImpl {
             metadata: None,
             thinking_level: None,
             cancel_flag: None,
+            effort: None,
         }
     }
 

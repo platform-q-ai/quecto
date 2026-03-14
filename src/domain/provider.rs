@@ -50,12 +50,18 @@ pub struct ChatRequest<'a> {
     pub metadata: Option<RequestMetadata>,
     /// Optional thinking level for extended thinking support.
     /// When set, the Anthropic provider adds a `thinking` parameter to the request.
+    /// Use `ThinkingLevel::Adaptive` for Opus 4.6 / Sonnet 4.6 (recommended).
+    /// Use `ThinkingLevel::Low/Medium/High/Max` for older models (manual budget).
     pub thinking_level: Option<ThinkingLevel>,
     /// Optional cancellation flag. When `Some`, the provider checks this flag
     /// before processing and returns `DomainError::Provider("request cancelled")`
     /// immediately if it is set. Set `cancel_flag.cancel()` from any thread to
     /// cancel an in-flight request.
     pub cancel_flag: Option<CancelFlag>,
+    /// Optional effort level for the `output_config.effort` API parameter.
+    /// Controls thinking depth and token spend on Opus 4.6 / Sonnet 4.6.
+    /// When `None`, the field is omitted (API defaults to `high`).
+    pub effort: Option<EffortLevel>,
 }
 
 /// A shared cancellation flag that can be checked by providers.
@@ -84,15 +90,17 @@ impl CancelFlag {
     }
 }
 
-/// Effort levels for extended thinking.
+/// Thinking mode for extended thinking support.
 ///
-/// Maps to Anthropic's thinking budget tokens:
-/// - `Low` → 1024 tokens
-/// - `Medium` → 10000 tokens
-/// - `High` → 16384 tokens
-/// - `Max` → 32768 tokens
+/// - `Adaptive` — Opus 4.6 / Sonnet 4.6 recommended mode. Claude dynamically
+///   decides when and how much to think. Use with `EffortLevel` to guide depth.
+///   Emits `thinking: {type: "adaptive"}` in the API request. No `budget_tokens`.
+/// - `Low` / `Medium` / `High` / `Max` — Manual budget mode for older models
+///   (Opus 4.5, Sonnet 4.5, etc.). Emits `thinking: {type: "enabled", budget_tokens: N}`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThinkingLevel {
+    /// Adaptive thinking (Opus 4.6 / Sonnet 4.6). Claude decides the budget.
+    Adaptive,
     Low,
     Medium,
     High,
@@ -100,13 +108,52 @@ pub enum ThinkingLevel {
 }
 
 impl ThinkingLevel {
-    /// Return the thinking budget in tokens for this level.
-    pub fn budget_tokens(self) -> u32 {
+    /// Return `true` if this level uses adaptive mode (no fixed budget_tokens).
+    pub fn is_adaptive(self) -> bool {
+        matches!(self, Self::Adaptive)
+    }
+
+    /// Return the thinking budget in tokens for manual-mode levels.
+    ///
+    /// Returns `None` for `Adaptive` (which has no fixed budget — use `effort` instead).
+    /// Returns `Some(n)` for all manual levels.
+    pub fn budget_tokens(self) -> Option<u32> {
         match self {
-            Self::Low => 1024,
-            Self::Medium => 10_000,
-            Self::High => 16_384,
-            Self::Max => 32_768,
+            Self::Adaptive => None,
+            Self::Low => Some(1024),
+            Self::Medium => Some(10_000),
+            Self::High => Some(16_384),
+            Self::Max => Some(32_768),
+        }
+    }
+}
+
+/// Effort level for the `output_config.effort` API parameter.
+///
+/// Controls how eagerly Claude spends tokens. Works with adaptive thinking on
+/// Opus 4.6 / Sonnet 4.6, and alongside manual thinking on Opus 4.5.
+/// Emitted as `output_config: {effort: "<level>"}` in the request body.
+///
+/// - `Low` — fastest, fewest tokens, may skip thinking on simple tasks.
+/// - `Medium` — balanced speed/quality.
+/// - `High` — maximum quality (default when omitted).
+/// - `Max` — absolute highest capability; **Opus 4.6 only**.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffortLevel {
+    Low,
+    Medium,
+    High,
+    Max,
+}
+
+impl EffortLevel {
+    /// Return the API string value for this effort level.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Max => "max",
         }
     }
 }

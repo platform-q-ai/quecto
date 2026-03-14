@@ -159,6 +159,7 @@ struct OwnedRequest {
     metadata: Option<crate::domain::provider::RequestMetadata>,
     thinking_level: Option<crate::domain::provider::ThinkingLevel>,
     cancel_flag: Option<crate::domain::provider::CancelFlag>,
+    effort: Option<crate::domain::provider::EffortLevel>,
 }
 
 impl OwnedRequest {
@@ -174,6 +175,7 @@ impl OwnedRequest {
             metadata: r.metadata.clone(),
             thinking_level: r.thinking_level,
             cancel_flag: r.cancel_flag.clone(),
+            effort: r.effort,
         }
     }
 
@@ -189,6 +191,7 @@ impl OwnedRequest {
             metadata: self.metadata.clone(),
             thinking_level: self.thinking_level,
             cancel_flag: self.cancel_flag.clone(),
+            effort: self.effort,
         }
     }
 }

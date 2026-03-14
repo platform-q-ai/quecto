@@ -81,6 +81,7 @@ impl ProviderRouter {
             metadata: request.metadata,
             thinking_level: request.thinking_level,
             cancel_flag: request.cancel_flag,
+            effort: request.effort,
         };
         Ok((provider, req))
     }

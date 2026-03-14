@@ -65,6 +65,7 @@ fn test_request(messages: &[Message]) -> ChatRequest<'_> {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     }
 }
 
@@ -80,6 +81,7 @@ fn make_request<'a>(messages: &'a [Message], model: &'a str) -> ChatRequest<'a> 
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     }
 }
 
@@ -339,6 +341,7 @@ async fn test_chat_forwards_tools_without_cloning() {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let original_ptr = tools.as_ptr() as usize;
 

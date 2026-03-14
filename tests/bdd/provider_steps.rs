@@ -153,6 +153,7 @@ fn when_send_through_router_with_model(world: &mut QuectoWorld, model: String) {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     match tokio::runtime::Runtime::new()
         .unwrap()
@@ -284,6 +285,7 @@ fn when_send_chat_with_tool(world: &mut QuectoWorld, message: String, tool_name:
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     let result = rt.block_on(provider.chat(req));
@@ -442,6 +444,7 @@ fn when_send_streaming_chat(world: &mut QuectoWorld, message: String) {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     let result = rt
@@ -586,6 +589,7 @@ fn when_send_and_track_ptr(world: &mut QuectoWorld) {
             metadata: None,
             thinking_level: None,
             cancel_flag: None,
+            effort: None,
         }))
         .expect("router chat should succeed in zero-copy test");
 }
@@ -618,6 +622,7 @@ fn when_send_chat_with_model(world: &mut QuectoWorld, model: String) {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     match rt.block_on(fp.chat(req)) {
@@ -760,6 +765,7 @@ fn when_send_anthropic_chat(world: &mut QuectoWorld) {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     match rt.block_on(provider.chat(req)) {
@@ -870,6 +876,7 @@ fn when_send_anthropic_streaming(world: &mut QuectoWorld) {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let rt = tokio::runtime::Runtime::new().unwrap();
     match rt.block_on(provider.chat_stream(req)) {
@@ -1035,6 +1042,7 @@ fn when_build_anthropic_request_body(world: &mut QuectoWorld) {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let (_sys, body) =
         quecto::infrastructure::providers::anthropic::AnthropicProvider::build_request_body_public(
@@ -1212,6 +1220,7 @@ fn when_build_with_tool_choice(world: &mut QuectoWorld) {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let (_sys, body) =
         quecto::infrastructure::providers::anthropic::AnthropicProvider::build_request_body_public(
@@ -1278,6 +1287,7 @@ fn when_build_with_metadata(world: &mut QuectoWorld) {
         metadata,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let (_sys, body) =
         quecto::infrastructure::providers::anthropic::AnthropicProvider::build_request_body_public(
@@ -1382,6 +1392,7 @@ fn when_build_request_body_with_thinking(world: &mut QuectoWorld) {
         metadata: None,
         thinking_level,
         cancel_flag: None,
+        effort: None,
     };
     let (_sys, body) =
         quecto::infrastructure::providers::anthropic::AnthropicProvider::build_request_body_public(
@@ -1627,6 +1638,7 @@ fn make_incremental_request(messages: &[Message]) -> quecto::domain::provider::C
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     }
 }
 
@@ -2781,6 +2793,7 @@ fn when_chat_with_cancel_flag(world: &mut QuectoWorld) {
             metadata: None,
             thinking_level: None,
             cancel_flag: cancel,
+            effort: None,
         };
         provider.chat(request).await
     });
@@ -2806,6 +2819,7 @@ fn when_streaming_chat_with_cancel_flag(world: &mut QuectoWorld) {
             metadata: None,
             thinking_level: None,
             cancel_flag: cancel,
+            effort: None,
         };
         provider.chat_stream(request).await
     });
@@ -2831,6 +2845,7 @@ fn when_incremental_chat_with_cancel_flag(world: &mut QuectoWorld) {
             metadata: None,
             thinking_level: None,
             cancel_flag: cancel,
+            effort: None,
         };
         let mut rx = provider.chat_stream_incremental(request).await;
         let mut collected: Vec<StreamEvent> = Vec::new();

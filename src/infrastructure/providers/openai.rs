@@ -457,6 +457,7 @@ mod tests {
             metadata: None,
             thinking_level: None,
             cancel_flag: None,
+            effort: None,
         };
         let result = provider.chat(req).await;
         assert!(result.is_ok(), "chat should succeed: {:?}", result);
@@ -518,6 +519,7 @@ mod tests {
             metadata: None,
             thinking_level: None,
             cancel_flag: None,
+            effort: None,
         };
         let result = provider.chat(req).await;
         assert!(result.is_ok());
@@ -550,6 +552,7 @@ mod tests {
             metadata: None,
             thinking_level: None,
             cancel_flag: None,
+            effort: None,
         };
         let result = provider.chat(req).await;
         assert!(result.is_err());
@@ -621,6 +624,7 @@ data: [DONE]\n\n";
             metadata: None,
             thinking_level: None,
             cancel_flag: None,
+            effort: None,
         };
         let result = provider.chat_stream(req).await;
         assert!(result.is_ok(), "stream should succeed: {:?}", result);
@@ -664,6 +668,7 @@ data: [DONE]\n\n";
             metadata: None,
             thinking_level: None,
             cancel_flag: None,
+            effort: None,
         };
         let result = provider.chat(req).await;
         assert!(result.is_ok());
