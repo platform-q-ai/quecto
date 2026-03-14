@@ -650,8 +650,6 @@ fn test_clear_history_type_name() {
 
 #[test]
 fn test_clear_history_preserves_system_prompt() {
-    // After clear_history, the system prompt should remain but all other
-    // messages should be gone.
     let mut messages: Vec<Message> = vec![
         Message::system("Be helpful."),
         Message::user("hello"),
@@ -659,17 +657,7 @@ fn test_clear_history_preserves_system_prompt() {
         Message::user("what is 2+2?"),
         Message::assistant("4", vec![]),
     ];
-
-    // Simulate what handle_clear_history does:
-    let system_prompt = messages
-        .first()
-        .filter(|m| m.role == crate::domain::message::Role::System && !m.is_manifest)
-        .cloned();
-    messages.clear();
-    if let Some(sys) = system_prompt {
-        messages.push(sys);
-    }
-
+    clear_conversation(&mut messages);
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].role, crate::domain::message::Role::System);
     assert_eq!(messages[0].content, "Be helpful.");
@@ -677,45 +665,24 @@ fn test_clear_history_preserves_system_prompt() {
 
 #[test]
 fn test_clear_history_without_system_prompt() {
-    // When there's no system prompt, clear_history should leave messages empty.
     let mut messages: Vec<Message> = vec![
         Message::user("hello"),
         Message::assistant("hi there", vec![]),
     ];
-
-    let system_prompt = messages
-        .first()
-        .filter(|m| m.role == crate::domain::message::Role::System && !m.is_manifest)
-        .cloned();
-    messages.clear();
-    if let Some(sys) = system_prompt {
-        messages.push(sys);
-    }
-
+    clear_conversation(&mut messages);
     assert!(messages.is_empty());
 }
 
 #[test]
 fn test_clear_history_skips_manifest_at_position_zero() {
-    // A manifest at [0] should NOT be preserved — only real system prompts.
     let mut manifest = Message::system("[Session memory: 5 spilled entries]");
     manifest.is_manifest = true;
-
     let mut messages: Vec<Message> = vec![
         manifest,
         Message::user("hello"),
         Message::assistant("hi", vec![]),
     ];
-
-    let system_prompt = messages
-        .first()
-        .filter(|m| m.role == crate::domain::message::Role::System && !m.is_manifest)
-        .cloned();
-    messages.clear();
-    if let Some(sys) = system_prompt {
-        messages.push(sys);
-    }
-
+    clear_conversation(&mut messages);
     assert!(messages.is_empty(), "manifest should not be preserved");
 }
 

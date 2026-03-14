@@ -6,7 +6,7 @@ use super::uds_cancel::{
 };
 use super::uds_multi::{MultiClientArgs, PromptArgsBroadcast, run_agent_prompt_broadcast};
 use super::uds_session::{
-    AgentSession, compute_session_stats, message_to_json, messages_tail_json,
+    AgentSession, clear_conversation, compute_session_stats, message_to_json, messages_tail_json,
 };
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::message::{Message, Role};
@@ -59,17 +59,18 @@ pub(crate) fn reap_stale_sockets(dir: &std::path::Path, max_age: std::time::Dura
         .checked_sub(max_age)
         .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
     for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if !name_str.starts_with("quecto-agent-") || !name_str.ends_with(".sock") {
+        let n = entry.file_name();
+        let s = n.to_string_lossy();
+        if !s.starts_with("quecto-agent-") || !s.ends_with(".sock") {
             continue;
         }
-        if let Ok(meta) = entry.metadata() {
-            if let Ok(modified) = meta.modified() {
-                if modified < cutoff {
-                    let _ = std::fs::remove_file(entry.path());
-                }
-            }
+        let is_stale = entry
+            .metadata()
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .is_some_and(|t| t < cutoff);
+        if is_stale {
+            let _ = std::fs::remove_file(entry.path());
         }
     }
 }
@@ -346,17 +347,17 @@ async fn run_command_loop(
 
 async fn load_session(
     store: &dyn SessionStore,
-    session_key: &str,
+    key: &str,
     ephemeral: bool,
 ) -> Result<Vec<Message>, String> {
-    if ephemeral || session_key.is_empty() {
+    if ephemeral || key.is_empty() {
         return Ok(Vec::new());
     }
-    match store.load(session_key).await {
-        Ok(Some(s)) => Ok(s.messages),
-        Ok(None) => Ok(Vec::new()),
-        Err(e) => Err(e.to_string()),
-    }
+    store
+        .load(key)
+        .await
+        .map(|s| s.map_or_else(Vec::new, |s| s.messages))
+        .map_err(|e| e.to_string())
 }
 
 pub(super) struct DispatchCtx<'a> {
@@ -368,8 +369,7 @@ pub(super) struct DispatchCtx<'a> {
     pub cancel_handle: CancelHandle,
     /// `Some` in multi-client mode; `None` in single-client mode.
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
-    /// Shared extension registry for get_extensions / reload_extensions.
-    /// `None` when extensions are not wired (e.g. legacy tests).
+    /// Shared extension registry. `None` when extensions are not wired (legacy tests).
     pub ext_registry: Option<
         std::sync::Arc<
             std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
@@ -474,9 +474,9 @@ fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serd
     }
 }
 
-/// Handle commands that don't need field extraction from the enum.
-/// Returns `Some(bool)` if the command was handled, `None` to fall through.
-async fn dispatch_simple_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_>) -> Option<bool> {
+/// Handle commands that need no field extraction (queries + clear_history).
+/// Returns `Some(bool)` if handled, `None` to fall through to the main match.
+async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_>) -> Option<bool> {
     let id = cmd.id();
     let tn = cmd.type_name();
     if let Some(data) = query_response_data(cmd, ctx) {
@@ -491,13 +491,14 @@ async fn dispatch_simple_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_>) 
 }
 
 pub(super) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_>) -> bool {
-    let id = cmd.id().map(str::to_owned);
-    let type_name = cmd.type_name().to_owned();
-
-    // Fast path: read-only queries and clear_history (no field extraction needed).
-    if let Some(result) = dispatch_simple_command(&cmd, ctx).await {
+    // Fast path for commands that need no field extraction (queries + clear_history).
+    // Defers id/type_name clones until after this check.
+    if let Some(result) = dispatch_fieldless_command(&cmd, ctx).await {
         return result;
     }
+
+    let id = cmd.id().map(str::to_owned);
+    let type_name = cmd.type_name().to_owned();
 
     match cmd {
         AgentCommand::Prompt {
@@ -547,8 +548,14 @@ pub(super) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         | AgentCommand::ToolResult { .. } => {
             dispatch_ext_command(cmd, ctx, id.as_deref(), &type_name).await
         }
-        _ => {
-            tracing::error!(command = %type_name, "unhandled command variant");
+        // Exhaustive: variants handled by dispatch_fieldless_command above.
+        AgentCommand::ClearHistory { .. }
+        | AgentCommand::GetExtensions { .. }
+        | AgentCommand::GetState { .. }
+        | AgentCommand::GetMessages { .. }
+        | AgentCommand::GetMessagesTail { .. }
+        | AgentCommand::GetSessionStats { .. } => {
+            tracing::error!(command = %type_name, "fieldless variant reached dispatch fallback");
             let ev = AgentEvent::err(id.as_deref(), &type_name, "internal: unhandled command");
             emit_event_to_broadcast_or_writer(ctx, &ev).await;
             false
@@ -593,21 +600,13 @@ async fn handle_abort(ctx: &mut DispatchCtx<'_>, id: Option<&str>, type_name: &s
 }
 
 async fn handle_clear_history(ctx: &mut DispatchCtx<'_>, id: Option<&str>, tn: &str) -> bool {
+    // Safety: command loop is single-threaded, no TOCTOU risk.
     if ctx.session.is_streaming() {
         let ev = AgentEvent::err(id, tn, "cannot clear history while agent is running");
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
-    // Preserve the injected system prompt (non-manifest) at messages[0].
-    let sys = ctx
-        .messages
-        .first()
-        .filter(|m| m.role == Role::System && !m.is_manifest)
-        .cloned();
-    ctx.messages.clear();
-    if let Some(s) = sys {
-        ctx.messages.push(s);
-    }
+    clear_conversation(ctx.messages);
     ctx.session.drain_pending();
     let ev = AgentEvent::ok(id, tn, None);
     emit_event_to_broadcast_or_writer(ctx, &ev).await;

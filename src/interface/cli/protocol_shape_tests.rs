@@ -504,6 +504,10 @@ fn core_command_type_names() {
         .type_name(),
         "steer"
     );
+    assert_eq!(
+        AgentCommand::ClearHistory { id: None }.type_name(),
+        "clear_history"
+    );
 }
 
 #[test]
@@ -515,10 +519,6 @@ fn extension_command_type_names() {
     assert_eq!(
         AgentCommand::ReloadExtensions { id: None }.type_name(),
         "reload_extensions"
-    );
-    assert_eq!(
-        AgentCommand::ClearHistory { id: None }.type_name(),
-        "clear_history"
     );
     assert_eq!(
         AgentCommand::RegisterTools {
