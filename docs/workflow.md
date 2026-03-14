@@ -213,7 +213,7 @@ The guard parser handles:
 
 ## BDD/TDD workflow example
 
-A full 16-step BDD/TDD workflow used for quecto's own development:
+A full 14-step BDD/TDD workflow used for quecto's own development:
 
 ```json
 {
@@ -221,27 +221,25 @@ A full 16-step BDD/TDD workflow used for quecto's own development:
     "enabled": true,
     "steps": [
       { "id": 1, "label": "Update Scenarios / Add new features", "phase": "red" },
-      { "id": 2, "label": "Write/update unit tests", "phase": "red" },
-      { "id": 3, "label": "Ensure new/modified tests FAIL (RED)", "phase": "red" },
+      { "id": 2, "label": "Write/update unit tests (run a quick smoke check; full suite runs on push)", "phase": "red" },
+      { "id": 3, "label": "Ensure new/modified tests FAIL (RED) — quick targeted run only, not full suite", "phase": "red" },
       { "id": 4, "label": "Implement code (GREEN)", "phase": "green" },
-      { "id": 5, "label": "Refactor (perf, security, clean arch)", "phase": "refactor" },
-      { "id": 6, "label": "Ensure tests still pass (GREEN)", "phase": "green" },
-      { "id": 7, "label": "Commit", "phase": "ci_cd" },
-      { "id": 8, "label": "Push", "phase": "ci_cd" },
-      { "id": 9, "label": "Create PR", "phase": "ci_cd" },
-      { "id": 10, "label": "Despatch reviewers (Arch, Security, Perf)", "phase": "review" },
-      { "id": 11, "label": "Fix all valid review concerns", "phase": "review" },
-      { "id": 12, "label": "Push changes to remote", "phase": "review" },
-      { "id": 13, "label": "Reply to comments and mark resolved", "phase": "review" },
-      { "id": 14, "label": "Run pre-merge hooks (real-LLM, machete, deny)", "phase": "ci_cd" },
-      { "id": 15, "label": "Merge", "phase": "ci_cd" },
-      { "id": 16, "label": "Move to local master and pull", "phase": "ci_cd" }
+      { "id": 5, "label": "Commit", "phase": "ci_cd" },
+      { "id": 6, "label": "Push (pre-push hook will run tests and linting)", "phase": "ci_cd" },
+      { "id": 7, "label": "Create PR", "phase": "ci_cd" },
+      { "id": 8, "label": "Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)", "phase": "review" },
+      { "id": 9, "label": "Fix all valid review concerns", "phase": "review" },
+      { "id": 10, "label": "Push changes to remote", "phase": "review" },
+      { "id": 11, "label": "Reply to the reviewers comments on the PR and mark resolved (use graphql)", "phase": "review" },
+      { "id": 12, "label": "Run pre-merge hooks (real-LLM, machete, deny)", "phase": "ci_cd" },
+      { "id": 13, "label": "Merge", "phase": "ci_cd" },
+      { "id": 14, "label": "Move to local master and pull", "phase": "ci_cd" }
     ],
     "guards": [
       {
         "commands": ["git commit", "git push"],
-        "before_step": 7,
-        "message": "Cannot commit/push until implementation and tests are complete (steps 1-6)"
+        "before_step": 5,
+        "message": "Cannot commit/push until implementation and tests are complete (steps 1-4)"
       }
     ]
   }

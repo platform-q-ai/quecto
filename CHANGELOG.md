@@ -1,14 +1,33 @@
 # Changelog
 
-## Unreleased
+## 0.20.0 (2026-03-13)
 
 ### Added
+- **`clear_history` UDS command** (#408): Reset conversation history in-place without restarting the agent. Preserves system prompt, drains pending queue, errors if agent is streaming.
+- **`--disable-tool` flag** (#402): Remove specific tools from the agent's registry before the session starts. Repeatable (`--disable-tool bash --disable-tool spawn`). Works in both one-shot and UDS modes. Permanently blocks disabled tool names from UDS re-registration.
 - **`web_fetch` tool** (#364): Fetch a URL and return content as readable text. Strips HTML by default; `raw: true` for JSON/markdown. Config: `tools.web.fetch.enabled`.
 - **SSRF protection**: `web_fetch` rejects requests to loopback, link-local, private RFC-1918, and cloud metadata addresses.
 - **Multi-tool native extensions**: `NativeExtension::with_tools()` constructor for extensions with multiple tools.
+- **Comprehensive SpawnTool BDD scenarios** (#401): 31 BDD scenarios (100 steps) covering argument parsing, agent ID validation, workspace restriction inheritance, network passthrough, constructors, tool definition, stub-mode execution, debug trait, and timeout constant.
 
 ### Changed
 - Web tools (`web_search`, `web_fetch`) consolidated into single `"web"` extension (was `"web_search"`). Each tool independently config-gated.
+
+### Fixed
+- **Workflow guard ignores command patterns inside quoted strings** (#405): Guard no longer falsely blocks commands that mention guarded patterns in string arguments.
+- **`inject_system_prompt` skips injection when manifest at `messages[0]`** (#407): System prompt injection correctly handles manifest messages.
+
+### Performance
+- **Line-by-line scan with early exit in `recall()`** (#373): Avoids reading entire spill file for single-entry lookups.
+- **In-memory index cache for spill store** (#375): Eliminates repeated disk reads for spill index.
+- **Clone-on-write in `normalize_messages`** (#374): Avoids cloning messages that don't need normalization.
+- **Zero-copy forwarding in `RefreshableProvider`** (#372): Eliminates unnecessary request cloning.
+- **Batch micro-optimizations** (#377, #383, #385, #386, #387, #389, #376, #379): FNV hashing, pre-allocated buffers, reduced allocations across hot paths.
+- **Replace `chrono` with `std::time`** (#395): Lighter timestamp operations, removes heavy dependency.
+- **Replace `FallbackProvider` with zero-copy `ProviderRouter`** (#394): Eliminates Arc overhead and dynamic dispatch on the fast path.
+- **Remove `serde_yaml`** (#392): Hand-rolled YAML frontmatter parser for skill files, removes heavy dependency.
+- **Remove `image` crate** (#391): Send images as-is without client-side resize, removes heavy dependency.
+- **Release profile optimizations** (#390): LTO, strip, `panic=abort`, `codegen-units=1` for smaller, faster binaries.
 
 ## 0.19.0 (2026-03-09)
 

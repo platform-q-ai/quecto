@@ -39,6 +39,7 @@ The following core tools can be disabled:
 | Web Search | `web_search` | Search the web via Brave API |
 | Recall | `recall` | Retrieve spilled context |
 | Spawn | `spawn` | Launch subagent processes |
+| Workflow | `workflow` | BDD/TDD step tracking and guards |
 
 Extension tools (registered via the extension system) can also be disabled
 by their registered name.

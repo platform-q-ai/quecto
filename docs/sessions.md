@@ -131,6 +131,16 @@ Returns the last 5 messages.
 
 Returns token usage, message counts, and cost estimates.
 
+### Clearing history
+
+```json
+{"type": "clear_history"}
+```
+
+Clears all messages except the system prompt. Drains any pending follow-up
+or steer messages. Fails if the agent is currently streaming. See
+[UDS Protocol Reference](uds-protocol.md#clear_history) for full details.
+
 ## Configuration
 
 Session behavior is configured in `config.json` under `agents.defaults`:
@@ -148,11 +158,11 @@ Session behavior is configured in `config.json` under `agents.defaults`:
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `max_context_tokens` | Model-dependent | Maximum tokens before context pruning |
-| `context_collapse_after_turns` | `3` | Collapse tool outputs older than N turns |
+| `max_context_tokens` | `190000` | Maximum tokens before context pruning |
+| `context_collapse_after_turns` | `u32::MAX` (disabled) | Collapse tool outputs older than N turns. Set to a lower value (e.g. `3`) to enable |
 
 ## See also
 
 - [Getting Started](getting-started.md) — quickstart guide for UDS agent integration
-- [UDS Protocol Reference](uds-protocol.md) — `get_state`, `get_messages`, `get_session_stats`
+- [UDS Protocol Reference](uds-protocol.md) — `get_state`, `get_messages`, `get_session_stats`, `clear_history`
 - [Subagents](subagents.md) — each subagent gets its own session
