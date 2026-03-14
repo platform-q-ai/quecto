@@ -257,7 +257,7 @@ impl ModelPricing {
 
 /// Returns true if `model` starts with `prefix`, case-insensitively, using byte
 /// comparison — no heap allocation.
-fn starts_with_ci(model: &str, prefix: &str) -> bool {
+pub(crate) fn starts_with_ci(model: &str, prefix: &str) -> bool {
     let m = model.as_bytes();
     let p = prefix.as_bytes();
     if m.len() < p.len() {
@@ -283,13 +283,15 @@ fn starts_with_ci(model: &str, prefix: &str) -> bool {
 ///   Sonnet 4.6 / 4.5 / 4: $3 in / $15 out / $3.75 cache-write / $0.30 cache-read per MTok
 ///   Haiku 4.5: $1 in / $5 out / $1.25 cache-write / $0.10 cache-read per MTok
 pub fn model_pricing(model: &str) -> Option<ModelPricing> {
-    if starts_with_ci(model, "claude-haiku-4") {
-        // Haiku 4.5: $1.00 / $5.00 / $1.25 / $0.10 per million tokens → micro-USD
+    // Checked in order of expected call frequency (Opus 4.6 is the primary model).
+    if starts_with_ci(model, "claude-opus-4") {
+        // Opus 4.5 / 4.6: $5.00 / $25.00 / $6.25 / $0.50 per million tokens → micro-USD
+        // (Opus 4.1 and earlier had $15/$75 but those models are retired/deprecated.)
         Some(ModelPricing {
-            input_micro_usd_per_million: 1_000_000,
-            output_micro_usd_per_million: 5_000_000,
-            cache_read_micro_usd_per_million: 100_000,
-            cache_write_micro_usd_per_million: 1_250_000,
+            input_micro_usd_per_million: 5_000_000,
+            output_micro_usd_per_million: 25_000_000,
+            cache_read_micro_usd_per_million: 500_000,
+            cache_write_micro_usd_per_million: 6_250_000,
         })
     } else if starts_with_ci(model, "claude-sonnet-4") {
         // Sonnet 4.x: $3.00 / $15.00 / $3.75 / $0.30 per million tokens → micro-USD
@@ -299,14 +301,13 @@ pub fn model_pricing(model: &str) -> Option<ModelPricing> {
             cache_read_micro_usd_per_million: 300_000,
             cache_write_micro_usd_per_million: 3_750_000,
         })
-    } else if starts_with_ci(model, "claude-opus-4") {
-        // Opus 4.5 / 4.6: $5.00 / $25.00 / $6.25 / $0.50 per million tokens → micro-USD
-        // (Opus 4.1 and earlier had $15/$75 but those models are retired/deprecated.)
+    } else if starts_with_ci(model, "claude-haiku-4") {
+        // Haiku 4.5: $1.00 / $5.00 / $1.25 / $0.10 per million tokens → micro-USD
         Some(ModelPricing {
-            input_micro_usd_per_million: 5_000_000,
-            output_micro_usd_per_million: 25_000_000,
-            cache_read_micro_usd_per_million: 500_000,
-            cache_write_micro_usd_per_million: 6_250_000,
+            input_micro_usd_per_million: 1_000_000,
+            output_micro_usd_per_million: 5_000_000,
+            cache_read_micro_usd_per_million: 100_000,
+            cache_write_micro_usd_per_million: 1_250_000,
         })
     } else {
         None

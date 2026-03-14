@@ -142,10 +142,18 @@ fn test_parse_response_with_thinking_blocks() {
 #[test]
 fn test_thinking_budget_tokens_levels() {
     use crate::domain::provider::ThinkingLevel;
-    assert_eq!(ThinkingLevel::Low.budget_tokens(), 1024);
-    assert_eq!(ThinkingLevel::Medium.budget_tokens(), 10_000);
-    assert_eq!(ThinkingLevel::High.budget_tokens(), 16_384);
-    assert_eq!(ThinkingLevel::Max.budget_tokens(), 32_768);
+    assert_eq!(ThinkingLevel::Low.budget_tokens(), Some(1024));
+    assert_eq!(ThinkingLevel::Medium.budget_tokens(), Some(10_000));
+    assert_eq!(ThinkingLevel::High.budget_tokens(), Some(16_384));
+    assert_eq!(ThinkingLevel::Max.budget_tokens(), Some(32_768));
+    assert_eq!(ThinkingLevel::Adaptive.budget_tokens(), None);
+}
+
+#[test]
+fn test_thinking_budget_tokens_adaptive_returns_none() {
+    use crate::domain::provider::ThinkingLevel;
+    // budget_tokens() must return None for Adaptive — not panic.
+    assert_eq!(ThinkingLevel::Adaptive.budget_tokens(), None);
 }
 
 // ---------------------------------------------------------------------------

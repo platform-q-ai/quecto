@@ -114,14 +114,16 @@ impl ThinkingLevel {
     }
 
     /// Return the thinking budget in tokens for manual-mode levels.
-    /// Panics if called on `Adaptive` (which has no fixed budget).
-    pub fn budget_tokens(self) -> u32 {
+    ///
+    /// Returns `None` for `Adaptive` (which has no fixed budget — use `effort` instead).
+    /// Returns `Some(n)` for all manual levels.
+    pub fn budget_tokens(self) -> Option<u32> {
         match self {
-            Self::Adaptive => panic!("Adaptive thinking has no fixed budget_tokens"),
-            Self::Low => 1024,
-            Self::Medium => 10_000,
-            Self::High => 16_384,
-            Self::Max => 32_768,
+            Self::Adaptive => None,
+            Self::Low => Some(1024),
+            Self::Medium => Some(10_000),
+            Self::High => Some(16_384),
+            Self::Max => Some(32_768),
         }
     }
 }
