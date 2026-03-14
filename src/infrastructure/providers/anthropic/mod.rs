@@ -41,6 +41,10 @@ impl AnthropicProvider {
     }
 
     /// Apply the correct auth headers based on whether this is an OAuth or API key token.
+    ///
+    /// Note: `fine-grained-tool-streaming-2025-05-14` was removed — it is now GA
+    /// and the beta header is explicitly listed in the migration guide as something
+    /// to remove from requests.
     fn apply_auth_headers(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         if self.is_oauth {
             builder
@@ -49,10 +53,17 @@ impl AnthropicProvider {
                 .header("user-agent", "quecto/0.12.0 (external, cli)")
                 .header("x-app", "cli")
         } else {
-            builder
-                .header("x-api-key", &self.api_key)
-                .header("anthropic-beta", "fine-grained-tool-streaming-2025-05-14")
+            builder.header("x-api-key", &self.api_key)
         }
+    }
+
+    /// Returns `true` for models that use adaptive thinking (Opus 4.6, Sonnet 4.6).
+    ///
+    /// These models deprecate `thinking: {type: "enabled", budget_tokens: N}` in
+    /// favour of `thinking: {type: "adaptive"}` with `output_config.effort`.
+    fn model_uses_adaptive_thinking(model: &str) -> bool {
+        let m = model.to_lowercase();
+        m.starts_with("claude-opus-4-6") || m.starts_with("claude-sonnet-4-6")
     }
 
     /// Build the JSON request body for Anthropic Messages API.
@@ -64,18 +75,38 @@ impl AnthropicProvider {
             "messages": [],
         });
 
-        // When thinking is enabled, temperature must be excluded (Anthropic API requirement)
-        // and max_tokens must be at least budget_tokens.
+        let adaptive_model = Self::model_uses_adaptive_thinking(request.model);
+
+        // Thinking configuration:
+        //   - Opus 4.6 / Sonnet 4.6 with Adaptive → {type: "adaptive"}, no budget_tokens
+        //   - Opus 4.6 / Sonnet 4.6 with manual level → treated as adaptive (deprecated path)
+        //   - Older models with any ThinkingLevel → {type: "enabled", budget_tokens: N}
+        // Temperature must always be excluded when thinking is enabled.
         if let Some(level) = request.thinking_level {
-            let budget = level.budget_tokens();
-            body["max_tokens"] = serde_json::json!(request.max_tokens.max(budget));
-            body["thinking"] = serde_json::json!({
-                "type": "enabled",
-                "budget_tokens": budget,
-            });
+            if adaptive_model || level.is_adaptive() {
+                // Adaptive mode: Opus 4.6 / Sonnet 4.6 recommended path.
+                body["max_tokens"] = serde_json::json!(request.max_tokens);
+                body["thinking"] = serde_json::json!({"type": "adaptive"});
+                // temperature excluded (Anthropic API requirement for thinking)
+            } else {
+                // Manual mode: older models (Opus 4.5, Sonnet 4.5, Haiku 4.5, etc.)
+                let budget = level.budget_tokens();
+                body["max_tokens"] = serde_json::json!(request.max_tokens.max(budget));
+                body["thinking"] = serde_json::json!({
+                    "type": "enabled",
+                    "budget_tokens": budget,
+                });
+                // temperature excluded (Anthropic API requirement for thinking)
+            }
         } else {
             body["max_tokens"] = serde_json::json!(request.max_tokens);
             body["temperature"] = serde_json::json!(request.temperature);
+        }
+
+        // effort → output_config.effort (GA, no beta header required).
+        // Supported on Opus 4.6, Sonnet 4.6, Opus 4.5. Omitted when None.
+        if let Some(effort) = request.effort {
+            body["output_config"] = serde_json::json!({"effort": effort.as_str()});
         }
 
         // System prompt as content block array with cache_control for prompt caching (#176).

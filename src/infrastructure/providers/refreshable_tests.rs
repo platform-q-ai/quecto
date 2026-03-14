@@ -108,6 +108,7 @@ fn test_request() -> ChatRequest<'static> {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     }
 }
 
@@ -338,6 +339,7 @@ async fn test_refreshable_forwards_without_cloning_on_happy_path() {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
 
     let result = refreshable.chat(request).await;

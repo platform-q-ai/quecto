@@ -202,6 +202,14 @@ impl CostInfo {
     pub fn output_cost_usd(&self) -> f64 {
         self.output_cost_micro_usd as f64 / 1_000_000.0
     }
+    /// Cache-read cost in USD.
+    pub fn cache_read_cost_usd(&self) -> f64 {
+        self.cache_read_cost_micro_usd as f64 / 1_000_000.0
+    }
+    /// Cache-write cost in USD.
+    pub fn cache_write_cost_usd(&self) -> f64 {
+        self.cache_write_cost_micro_usd as f64 / 1_000_000.0
+    }
     /// Total cost in USD.
     pub fn total_cost_usd(&self) -> f64 {
         self.total_cost_micro_usd as f64 / 1_000_000.0
@@ -263,14 +271,28 @@ fn starts_with_ci(model: &str, prefix: &str) -> bool {
 
 /// Look up pricing for a known model. Returns `None` for unknown models.
 ///
-/// **Allowlist**: only `claude-sonnet-4` and `claude-opus-4` families are recognised.
-/// Any other model string — including older Claude generations — returns `None`,
-/// preventing a spoofed model name from silently matching unintended pricing.
+/// **Allowlist**: only `claude-sonnet-4`, `claude-opus-4`, and `claude-haiku-4`
+/// families are recognised. Any other model string returns `None`, preventing a
+/// spoofed model name from silently matching unintended pricing.
 ///
 /// Rates are expressed as micro-USD per million tokens (integer arithmetic, no f64 drift).
+/// Cache write = 1.25× base input (5-minute TTL). Cache read = 0.1× base input.
+///
+/// Sources (March 2026):
+///   Opus 4.6 / 4.5: $5 in / $25 out / $6.25 cache-write / $0.50 cache-read per MTok
+///   Sonnet 4.6 / 4.5 / 4: $3 in / $15 out / $3.75 cache-write / $0.30 cache-read per MTok
+///   Haiku 4.5: $1 in / $5 out / $1.25 cache-write / $0.10 cache-read per MTok
 pub fn model_pricing(model: &str) -> Option<ModelPricing> {
-    if starts_with_ci(model, "claude-sonnet-4") {
-        // $3.00 / $15.00 / $0.30 / $3.75 per million tokens → micro-USD
+    if starts_with_ci(model, "claude-haiku-4") {
+        // Haiku 4.5: $1.00 / $5.00 / $1.25 / $0.10 per million tokens → micro-USD
+        Some(ModelPricing {
+            input_micro_usd_per_million: 1_000_000,
+            output_micro_usd_per_million: 5_000_000,
+            cache_read_micro_usd_per_million: 100_000,
+            cache_write_micro_usd_per_million: 1_250_000,
+        })
+    } else if starts_with_ci(model, "claude-sonnet-4") {
+        // Sonnet 4.x: $3.00 / $15.00 / $3.75 / $0.30 per million tokens → micro-USD
         Some(ModelPricing {
             input_micro_usd_per_million: 3_000_000,
             output_micro_usd_per_million: 15_000_000,
@@ -278,12 +300,13 @@ pub fn model_pricing(model: &str) -> Option<ModelPricing> {
             cache_write_micro_usd_per_million: 3_750_000,
         })
     } else if starts_with_ci(model, "claude-opus-4") {
-        // $15.00 / $75.00 / $1.50 / $18.75 per million tokens → micro-USD
+        // Opus 4.5 / 4.6: $5.00 / $25.00 / $6.25 / $0.50 per million tokens → micro-USD
+        // (Opus 4.1 and earlier had $15/$75 but those models are retired/deprecated.)
         Some(ModelPricing {
-            input_micro_usd_per_million: 15_000_000,
-            output_micro_usd_per_million: 75_000_000,
-            cache_read_micro_usd_per_million: 1_500_000,
-            cache_write_micro_usd_per_million: 18_750_000,
+            input_micro_usd_per_million: 5_000_000,
+            output_micro_usd_per_million: 25_000_000,
+            cache_read_micro_usd_per_million: 500_000,
+            cache_write_micro_usd_per_million: 6_250_000,
         })
     } else {
         None
@@ -330,12 +353,13 @@ mod tests {
         };
         let pricing = model_pricing("claude-opus-4-6").unwrap();
         let cost = pricing.cost_for(&usage);
-        // Input: 1M/1M * $15.00 = $15.00 = 15_000_000 micro-USD
-        assert_eq!(cost.input_cost_micro_usd, 15_000_000);
-        assert!((cost.input_cost_usd() - 15.0).abs() < 1e-6);
-        // Output: 100K/1M * $75.00 = $7.50 = 7_500_000 micro-USD
-        assert_eq!(cost.output_cost_micro_usd, 7_500_000);
-        assert!((cost.output_cost_usd() - 7.5).abs() < 1e-6);
+        // Opus 4.5/4.6: $5.00/MTok input (not $15 — that was Opus 4.1 and earlier)
+        // Input: 1M/1M * $5.00 = $5.00 = 5_000_000 micro-USD
+        assert_eq!(cost.input_cost_micro_usd, 5_000_000);
+        assert!((cost.input_cost_usd() - 5.0).abs() < 1e-6);
+        // Output: 100K/1M * $25.00 = $2.50 = 2_500_000 micro-USD
+        assert_eq!(cost.output_cost_micro_usd, 2_500_000);
+        assert!((cost.output_cost_usd() - 2.5).abs() < 1e-6);
     }
 
     #[test]
@@ -344,7 +368,6 @@ mod tests {
         assert!(model_pricing("unknown-model").is_none());
         assert!(model_pricing("claude-3-5-sonnet-20241022").is_none());
         assert!(model_pricing("claude-3-5-haiku-20241022").is_none());
-        assert!(model_pricing("claude-haiku-4-20250514").is_none());
         assert!(model_pricing("claude-3-7-sonnet-20250219").is_none());
     }
 
@@ -352,12 +375,16 @@ mod tests {
     fn test_model_pricing_known_models() {
         assert!(model_pricing("claude-sonnet-4-6").is_some());
         assert!(model_pricing("claude-opus-4-6").is_some());
-        // Prefix match covers dated variants of the two supported families
+        assert!(model_pricing("claude-haiku-4-5").is_some());
+        assert!(model_pricing("claude-haiku-4-5-20251001").is_some());
+        // Prefix match covers dated variants of all three supported families
         assert!(model_pricing("claude-sonnet-4-20250514").is_some());
         assert!(model_pricing("claude-opus-4-20250514").is_some());
-        // Case-insensitive, no heap allocation
+        assert!(model_pricing("claude-haiku-4-20250514").is_some());
+        // Case-insensitive
         assert!(model_pricing("Claude-Sonnet-4-6").is_some());
         assert!(model_pricing("CLAUDE-OPUS-4-6").is_some());
+        assert!(model_pricing("Claude-Haiku-4-5").is_some());
     }
 
     #[test]

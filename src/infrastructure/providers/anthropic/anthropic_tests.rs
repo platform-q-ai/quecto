@@ -41,6 +41,7 @@ async fn test_chat_text_response() {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let result = provider.chat(req).await;
     assert!(result.is_ok(), "chat should succeed: {:?}", result);
@@ -92,6 +93,7 @@ async fn test_chat_with_tool_use() {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let result = provider.chat(req).await;
     assert!(result.is_ok());
@@ -124,6 +126,7 @@ async fn test_chat_server_error() {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let result = provider.chat(req).await;
     assert!(result.is_err());
@@ -207,6 +210,7 @@ data: {}\n\n";
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let result = provider.chat_stream(req).await;
     assert!(result.is_ok(), "stream should succeed: {:?}", result);
@@ -245,6 +249,7 @@ async fn test_chat_with_system_prompt() {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let result = provider.chat(req).await;
     assert!(result.is_ok());
@@ -410,6 +415,7 @@ fn test_build_request_body_system_prompt_has_cache_control() {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let (_sys, body) = AnthropicProvider::build_request_body(&req);
     // System prompt should be an array of content blocks with cache_control
@@ -448,6 +454,7 @@ fn test_build_request_body_last_user_message_has_cache_control() {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let (_sys, body) = AnthropicProvider::build_request_body(&req);
     let api_messages = body["messages"].as_array().unwrap();
@@ -561,6 +568,7 @@ fn test_build_request_body_includes_tool_choice_auto() {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let (_sys, body) = AnthropicProvider::build_request_body(&req);
     assert_eq!(body["tool_choice"]["type"], "auto");
@@ -585,6 +593,7 @@ fn test_build_request_body_includes_tool_choice_any() {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let (_sys, body) = AnthropicProvider::build_request_body(&req);
     assert_eq!(body["tool_choice"]["type"], "any");
@@ -609,6 +618,7 @@ fn test_build_request_body_includes_tool_choice_specific() {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let (_sys, body) = AnthropicProvider::build_request_body(&req);
     assert_eq!(body["tool_choice"]["type"], "tool");
@@ -633,6 +643,7 @@ fn test_build_request_body_includes_metadata_user_id() {
         }),
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let (_sys, body) = AnthropicProvider::build_request_body(&req);
     assert_eq!(body["metadata"]["user_id"], "telegram_12345");
@@ -652,56 +663,15 @@ fn test_build_request_body_omits_metadata_when_none() {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let (_sys, body) = AnthropicProvider::build_request_body(&req);
     assert!(body.get("metadata").is_none() || body["metadata"].is_null());
 }
 
 // --- #179: Beta headers for API key auth ---
-
-#[tokio::test]
-async fn test_api_key_auth_sends_beta_header() {
-    let server = MockServer::start().await;
-    let response_body = serde_json::json!({
-        "id": "msg_beta",
-        "type": "message",
-        "role": "assistant",
-        "content": [{"type": "text", "text": "ok"}],
-        "stop_reason": "end_turn",
-        "usage": {"input_tokens": 5, "output_tokens": 2}
-    });
-    Mock::given(method("POST"))
-        .and(path("/v1/messages"))
-        .and(wiremock::matchers::header(
-            "anthropic-beta",
-            "fine-grained-tool-streaming-2025-05-14",
-        ))
-        .respond_with(ResponseTemplate::new(200).set_body_json(&response_body))
-        .expect(1)
-        .mount(&server)
-        .await;
-
-    let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
-    let messages = vec![Message::user("Hi")];
-    let req = ChatRequest {
-        messages: &messages,
-        tools: &[],
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 1024,
-        temperature: 0.7,
-        session_id: None,
-        tool_choice: None,
-        metadata: None,
-        thinking_level: None,
-        cancel_flag: None,
-    };
-    let result = provider.chat(req).await;
-    assert!(
-        result.is_ok(),
-        "chat should succeed (beta header must match): {:?}",
-        result
-    );
-}
+// fine-grained-tool-streaming is now GA — the header must NOT be sent.
+// The dedicated test for this lives in anthropic_thinking_tests.rs.
 
 // --- normalize_messages clone-on-write tests (#374) ---
 

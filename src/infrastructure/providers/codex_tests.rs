@@ -73,6 +73,7 @@ fn test_build_request_body() {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let body = CodexProvider::build_request_body(&request);
     assert_eq!(body["model"], "gpt-5.1-codex");
@@ -99,6 +100,7 @@ fn test_build_request_body_includes_prompt_cache_key_when_session_id_set() {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let body = CodexProvider::build_request_body(&request);
     let key = body["prompt_cache_key"]
@@ -132,6 +134,7 @@ fn test_build_request_body_omits_prompt_cache_key_when_no_session_id() {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let body = CodexProvider::build_request_body(&request);
     assert!(
@@ -206,6 +209,7 @@ fn test_build_request_body_responses_api_fields() {
         metadata: None,
         thinking_level: None,
         cancel_flag: None,
+        effort: None,
     };
     let body = CodexProvider::build_request_body(&request);
     assert_eq!(body["tool_choice"], "auto");
@@ -370,6 +374,7 @@ async fn test_codex_provider_http_error() {
             metadata: None,
             thinking_level: None,
             cancel_flag: None,
+        effort: None,
         })
         .await;
     assert!(result.is_err());
@@ -406,6 +411,7 @@ async fn test_codex_provider_success() {
             metadata: None,
             thinking_level: None,
             cancel_flag: None,
+        effort: None,
         })
         .await;
     let resp = result.unwrap();
@@ -429,6 +435,7 @@ async fn test_codex_provider_rejects_provider_qualified_model_name() {
             metadata: None,
             thinking_level: None,
             cancel_flag: None,
+        effort: None,
         })
         .await;
 
@@ -456,6 +463,7 @@ async fn test_codex_provider_rejects_missing_instructions() {
             metadata: None,
             thinking_level: None,
             cancel_flag: None,
+        effort: None,
         })
         .await;
 
