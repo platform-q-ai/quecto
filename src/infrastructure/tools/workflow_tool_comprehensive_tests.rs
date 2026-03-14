@@ -111,6 +111,21 @@ async fn test_set_issue_with_invalid_string_number() {
 }
 
 #[tokio::test]
+async fn test_check_with_step_exceeding_u32() {
+    let tool = test_tool();
+    let result = tool
+        .execute(r#"{"action":"check","step":4294967297}"#)
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    assert!(
+        result.content.contains("exceeds valid range"),
+        "got: {}",
+        result.content
+    );
+}
+
+#[tokio::test]
 async fn test_check_with_float_step() {
     let tool = test_tool();
     let result = tool

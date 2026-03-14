@@ -44,11 +44,10 @@ fn test_empty_workflow_auto_continue_nudge() {
 #[test]
 fn test_empty_workflow_completion_nudge() {
     let state = WorkflowState::new(vec![]);
-    // All 0 of 0 steps are done, but progress.done < progress.total is false
-    // This is an edge case — should not generate completion nudge for empty workflow
+    // Empty workflow (0 steps) should not generate a completion nudge —
+    // "All 0 workflow steps complete" is nonsensical.
     let nudge = state.completion_nudge();
-    // 0 >= 0 is true, so it will generate a completion nudge — this tests that
-    assert!(nudge.is_some());
+    assert!(nudge.is_none());
 }
 
 #[test]

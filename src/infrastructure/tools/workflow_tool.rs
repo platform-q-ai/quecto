@@ -182,8 +182,9 @@ impl WorkflowTool {
             }
             n as u32
         } else if let Some(s) = val.as_str() {
+            let display = if s.len() > 100 { &s[..100] } else { s };
             s.parse::<u32>()
-                .map_err(|_| format!("invalid issueNumber: {}", s))?
+                .map_err(|_| format!("invalid issueNumber: {}", display))?
         } else {
             return Err(format!("invalid issueNumber: {}", val));
         };
@@ -191,8 +192,14 @@ impl WorkflowTool {
             .get("issueTitle")
             .and_then(|v| v.as_str())
             .ok_or("missing field: issueTitle")?;
+        // set_issue truncates title to MAX_ISSUE_TITLE_LEN; use the stored
+        // (possibly truncated) title in the success message.
         state.set_issue(number, title.to_string());
-        Ok(format!("Active issue set: #{} — {}", number, title))
+        let stored_title = state
+            .active_issue()
+            .map(|(_, t)| t.as_str())
+            .unwrap_or(title);
+        Ok(format!("Active issue set: #{} — {}", number, stored_title))
     }
 
     fn do_clear_issue(&self, state: &mut WorkflowState) -> Result<String, String> {
@@ -205,12 +212,16 @@ impl WorkflowTool {
         // Accept both integer and string-encoded numbers (LLMs sometimes
         // send numbers as strings).
         if let Some(n) = val.as_u64() {
+            if n > u32::MAX as u64 {
+                return Err(format!("step value {} exceeds valid range", n));
+            }
             return Ok(n as u32);
         }
         if let Some(s) = val.as_str() {
+            let display = if s.len() > 100 { &s[..100] } else { s };
             return s
                 .parse::<u32>()
-                .map_err(|_| format!("invalid step value: {}", s));
+                .map_err(|_| format!("invalid step value: {}", display));
         }
         Err(format!("invalid step value: {}", val))
     }

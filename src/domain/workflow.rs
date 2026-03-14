@@ -5,8 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Maximum allowed length for issue titles (chars).
+/// Maximum allowed length for issue titles (bytes, not chars).
 /// Prevents unbounded memory/context-token usage from excessively long titles.
+/// Truncation uses `is_char_boundary` to avoid splitting multi-byte codepoints.
 const MAX_ISSUE_TITLE_LEN: usize = 500;
 
 /// Maximum number of steps allowed in a workflow configuration.
@@ -295,7 +296,7 @@ impl WorkflowState {
     /// Returns `Some(message)` prompting the agent to close the issue and pick the next.
     pub fn completion_nudge(&self) -> Option<String> {
         let progress = self.progress();
-        if progress.done < progress.total {
+        if progress.done < progress.total || progress.total == 0 {
             return None;
         }
         let total = self.steps.len();
