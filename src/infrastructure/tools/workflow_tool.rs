@@ -171,14 +171,22 @@ impl WorkflowTool {
         state: &mut WorkflowState,
         args: &serde_json::Value,
     ) -> Result<String, String> {
-        let raw_number = args
+        let val = args
             .get("issueNumber")
-            .and_then(|v| v.as_u64())
             .ok_or("missing field: issueNumber")?;
-        if raw_number > u32::MAX as u64 {
-            return Err("issueNumber exceeds u32 range".to_string());
-        }
-        let number = raw_number as u32;
+        // Accept both integer and string-encoded numbers (LLMs sometimes
+        // send numbers as strings).
+        let number: u32 = if let Some(n) = val.as_u64() {
+            if n > u32::MAX as u64 {
+                return Err("issueNumber exceeds u32 range".to_string());
+            }
+            n as u32
+        } else if let Some(s) = val.as_str() {
+            s.parse::<u32>()
+                .map_err(|_| format!("invalid issueNumber: {}", s))?
+        } else {
+            return Err(format!("invalid issueNumber: {}", val));
+        };
         let title = args
             .get("issueTitle")
             .and_then(|v| v.as_str())
@@ -193,10 +201,18 @@ impl WorkflowTool {
     }
 
     fn parse_step(&self, args: &serde_json::Value) -> Result<u32, String> {
-        args.get("step")
-            .and_then(|v| v.as_u64())
-            .map(|v| v as u32)
-            .ok_or_else(|| "missing field: step".to_string())
+        let val = args.get("step").ok_or("missing field: step")?;
+        // Accept both integer and string-encoded numbers (LLMs sometimes
+        // send numbers as strings).
+        if let Some(n) = val.as_u64() {
+            return Ok(n as u32);
+        }
+        if let Some(s) = val.as_str() {
+            return s
+                .parse::<u32>()
+                .map_err(|_| format!("invalid step value: {}", s));
+        }
+        Err(format!("invalid step value: {}", val))
     }
 
     fn emit_event(&self, event: serde_json::Value) {
@@ -249,7 +265,7 @@ impl Tool for WorkflowTool {
             name: "workflow".into(),
             description: "Manage the development workflow checklist. Track BDD/TDD Red-Green-Refactor progress.\n\nExample: {\"action\":\"status\"}\nExample: {\"action\":\"check\",\"step\":1}\nExample: {\"action\":\"set_issue\",\"issueNumber\":42,\"issueTitle\":\"Add feature X\"}"
                 .into(),
-            parameters_schema: r#"{"type":"object","properties":{"action":{"type":"string","enum":["status","check","uncheck","reset","skip","set_issue","clear_issue"],"description":"The workflow action to perform"},"step":{"type":"integer","description":"Step number (1-based, for check/uncheck/skip)"},"issueNumber":{"type":"integer","description":"GitHub issue number (for set_issue)"},"issueTitle":{"type":"string","description":"GitHub issue title (for set_issue)"}},"required":["action"]}"#.into(),
+            parameters_schema: r#"{"type":"object","properties":{"action":{"type":"string","enum":["status","check","uncheck","reset","skip","set_issue","clear_issue","check_commit"],"description":"The workflow action to perform"},"step":{"type":"integer","description":"Step number (1-based, for check/uncheck/skip)"},"issueNumber":{"type":"integer","description":"GitHub issue number (for set_issue)"},"issueTitle":{"type":"string","description":"GitHub issue title (for set_issue)"}},"required":["action"]}"#.into(),
         }
     }
 
@@ -646,4 +662,9 @@ mod tests {
     }
 
     // Pattern matching tests are in command_match.rs
+    // Comprehensive additional tests are in workflow_tool_comprehensive_tests.rs
 }
+
+#[cfg(test)]
+#[path = "workflow_tool_comprehensive_tests.rs"]
+mod comprehensive_tests;

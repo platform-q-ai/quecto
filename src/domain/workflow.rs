@@ -298,16 +298,17 @@ impl WorkflowState {
         if progress.done < progress.total {
             return None;
         }
-        Some(
-            "All steps complete! You have completed all 16 workflow steps for this issue. \
+        let total = self.steps.len();
+        Some(format!(
+            "All steps complete! You have completed all {} workflow steps for this issue. \
              Please now:\n\
              1. Close the current issue (if applicable)\n\
              2. Pick the next open issue — if no open issues exist, respond with just the word NONE\n\
              3. Record it: call the workflow tool with action=\"set_issue\", issueNumber=<n>, issueTitle=\"...\"\n\
              4. Reset the checklist: call the workflow tool with action=\"reset\"\n\
-             5. Begin Step 1 immediately for the new issue"
-                .to_string(),
-        )
+             5. Begin Step 1 immediately for the new issue",
+            total
+        ))
     }
 
     /// Check whether `git commit` is allowed given the enforcement threshold.
@@ -625,3 +626,7 @@ pub fn bdd_steps() -> Vec<WorkflowStep> {
 #[cfg(test)]
 #[path = "workflow_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "workflow_comprehensive_tests.rs"]
+mod comprehensive_tests;

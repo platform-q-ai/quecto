@@ -514,3 +514,68 @@ fn test_system_prompt_snippet_all_done_shows_complete() {
     let snippet = state.system_prompt_snippet();
     assert!(snippet.contains("All steps complete"));
 }
+// ─── Concurrent access safety ──────────────────────────────────────────
+
+#[test]
+fn test_workflow_state_is_send() {
+    fn assert_send<T: Send>() {}
+    assert_send::<WorkflowState>();
+}
+
+#[test]
+fn test_workflow_state_is_clone() {
+    let mut state = WorkflowState::default_bdd();
+    state.check(1).unwrap();
+    state.set_issue(42, "test".into());
+    let cloned = state.clone();
+    assert!(cloned.is_done(1).unwrap());
+    assert_eq!(cloned.active_issue(), Some(&(42, "test".into())));
+}
+
+// ─── Auto-continue nudge message content ────────────────────────────────
+
+#[test]
+fn test_auto_continue_nudge_references_step_label() {
+    let steps = vec![
+        WorkflowStep {
+            id: 1,
+            label: "Write tests".into(),
+            phase: "red".into(),
+        },
+        WorkflowStep {
+            id: 2,
+            label: "Implement code".into(),
+            phase: "green".into(),
+        },
+    ];
+    let mut state = WorkflowState::new(steps);
+    state.check(1).unwrap();
+    let nudge = state.auto_continue_nudge().unwrap();
+    assert!(nudge.contains("step 2"));
+    assert!(nudge.contains("Implement code"));
+}
+
+// ─── Custom phase names ────────────────────────────────────────────────
+
+#[test]
+fn test_custom_phase_passthrough() {
+    assert_eq!(phase_display_name("deploy"), "deploy");
+    assert_eq!(phase_display_name("testing"), "testing");
+    assert_eq!(phase_display_name(""), "");
+}
+
+// ─── Guard rule serialization ──────────────────────────────────────────
+
+#[test]
+fn test_guard_rule_roundtrip() {
+    let rule = GuardRule {
+        commands: vec!["git commit".into(), "git push".into()],
+        before_step: 7,
+        message: "Not yet!".into(),
+    };
+    let json = serde_json::to_string(&rule).unwrap();
+    let parsed: GuardRule = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed.commands, rule.commands);
+    assert_eq!(parsed.before_step, rule.before_step);
+    assert_eq!(parsed.message, rule.message);
+}
