@@ -1,3 +1,4 @@
+pub mod agent_cmd;
 pub mod bash;
 pub mod command_match;
 pub mod ensure_tool;
@@ -8,6 +9,7 @@ pub mod path_utils;
 pub mod recall;
 pub mod registry;
 pub mod spawn;
+pub mod subagent_registry;
 pub mod truncate;
 pub mod web_fetch;
 pub mod web_search;

@@ -11,6 +11,7 @@ use crate::infrastructure::extensions::registry::ExtensionRegistry;
 use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::infrastructure::security::sandbox::Sandbox;
+use crate::infrastructure::tools::agent_cmd::AgentCmdTool;
 use crate::infrastructure::tools::recall::RecallTool;
 use crate::infrastructure::tools::registry::ToolRegistryImpl;
 use crate::infrastructure::tools::spawn::SpawnTool;
@@ -485,10 +486,15 @@ fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBuild {
         spill_store.clone(),
         session_key.clone(),
     )));
+    let subagent_registry = AgentCmdTool::new_registry();
+    let socket_dir = crate::interface::shared::xdg_runtime_dir_or_temp();
     registry.register(Arc::new(
         SpawnTool::with_base_dir(vec![], restrict_to_workspace, base_dir.to_path_buf())
-            .with_network(effective_network),
+            .with_network(effective_network)
+            .with_socket_dir(socket_dir)
+            .with_registry(subagent_registry.clone()),
     ));
+    registry.register(Arc::new(AgentCmdTool::new(subagent_registry)));
     crate::interface::shared::register_workflow_tool(&mut registry, &config.workflow);
 
     let ext_registry =

@@ -235,7 +235,7 @@ fn given_subagent_inheriting_sandbox(world: &mut QuectoWorld) {
     let sb = world.sandbox.as_ref().expect("sandbox not configured");
     // Create a subagent config that inherits the sandbox's restrict_to_workspace
     world.subagent_config = Some(SubagentConfig {
-        task: "test task".to_string(),
+        task: Some("test task".to_string()),
         agent_id: None,
         restrict_to_workspace: sb.restrict_to_workspace,
         system: None,
@@ -301,8 +301,8 @@ fn then_spawn_result_ok(world: &mut QuectoWorld) {
         result.content
     );
     assert!(
-        result.content.contains("spawned"),
-        "expected 'spawned' in content: {}",
+        result.content.contains("running") || result.content.contains("spawned"),
+        "expected 'running' or 'spawned' in content: {}",
         result.content
     );
 }

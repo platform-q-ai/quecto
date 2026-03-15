@@ -6,7 +6,7 @@ pub use crate::domain::subagent::{SubagentConfig, validate_agent_id};
 /// The context for a spawned subagent.
 #[derive(Debug)]
 pub struct SubagentContext {
-    /// The task assigned to this subagent.
+    /// The task assigned to this subagent (empty string if none).
     pub task: String,
     /// Conversation history (starts empty — independent from parent).
     pub messages: Vec<Message>,
@@ -18,7 +18,7 @@ impl SubagentContext {
     /// Create a new subagent context from a spawn config.
     pub fn from_config(config: &SubagentConfig) -> Self {
         Self {
-            task: config.task.clone(),
+            task: config.task.clone().unwrap_or_default(),
             messages: vec![], // Independent — no parent history
             restrict_to_workspace: config.restrict_to_workspace,
         }
@@ -32,7 +32,7 @@ mod tests {
     #[test]
     fn test_subagent_context_has_empty_history() {
         let config = SubagentConfig {
-            task: "Do stuff".to_string(),
+            task: Some("Do stuff".to_string()),
             agent_id: None,
             restrict_to_workspace: true,
             system: None,
@@ -45,7 +45,7 @@ mod tests {
     #[test]
     fn test_subagent_inherits_restrict_true() {
         let config = SubagentConfig {
-            task: "task".to_string(),
+            task: Some("task".to_string()),
             agent_id: None,
             restrict_to_workspace: true,
             system: None,
@@ -57,12 +57,25 @@ mod tests {
     #[test]
     fn test_subagent_inherits_restrict_false() {
         let config = SubagentConfig {
-            task: "task".to_string(),
+            task: Some("task".to_string()),
             agent_id: None,
             restrict_to_workspace: false,
             system: None,
         };
         let ctx = SubagentContext::from_config(&config);
         assert!(!ctx.restrict_to_workspace);
+    }
+
+    #[test]
+    fn test_subagent_context_no_task() {
+        let config = SubagentConfig {
+            task: None,
+            agent_id: None,
+            restrict_to_workspace: true,
+            system: None,
+        };
+        let ctx = SubagentContext::from_config(&config);
+        assert_eq!(ctx.task, "");
+        assert!(ctx.messages.is_empty());
     }
 }

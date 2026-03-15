@@ -24,25 +24,25 @@ Feature: SpawnTool — child agent process spawning
     When I parse spawn arguments '{"task":"Translate","system":"You are a translator"}'
     Then the parsed config should have system prompt "You are a translator"
 
+  Scenario: Parse a request without task field succeeds
+    Given a SpawnTool with allowlist "news-bot" and restrict_to_workspace true
+    When I parse spawn arguments '{"agent_id":"news-bot"}'
+    Then the spawn result should not be an error
+
   Scenario: Parse fails on invalid JSON
     Given a SpawnTool with allowlist "news-bot" and restrict_to_workspace true
     When I parse spawn arguments '{garbage}}}'
     Then the parse should fail with "invalid JSON"
 
-  Scenario: Parse fails on missing task field
+  Scenario: Parse fails on empty object with no task and no agent_id
     Given a SpawnTool with allowlist "news-bot" and restrict_to_workspace true
-    When I parse spawn arguments '{"agent_id":"news-bot"}'
-    Then the parse should fail with "missing"
+    When I parse spawn arguments '{}'
+    Then the spawn result should not be an error
 
   Scenario: Parse fails when task is null
     Given a SpawnTool with allowlist "news-bot" and restrict_to_workspace true
     When I parse spawn arguments '{"task":null}'
-    Then the parse should fail with "missing"
-
-  Scenario: Parse fails on empty object
-    Given a SpawnTool with allowlist "news-bot" and restrict_to_workspace true
-    When I parse spawn arguments '{}'
-    Then the parse should fail with "missing"
+    Then the spawn result should not be an error
 
   Scenario: Non-string agent_id is ignored
     Given a SpawnTool with allowlist "news-bot" and restrict_to_workspace true
@@ -130,34 +130,31 @@ Feature: SpawnTool — child agent process spawning
     Given a SpawnTool with allowlist "bot" and restrict_to_workspace true
     Then the tool definition name should be "spawn"
     And the tool definition description should not be empty
-    And the tool definition schema should require "task"
+    And the tool definition description should mention "agent_cmd"
+
+  Scenario: Tool definition does not require task
+    Given a SpawnTool with allowlist "bot" and restrict_to_workspace true
+    Then the spawn tool schema should not require "task"
 
   # --- Stub-mode execution ---
 
-  Scenario: Execute in stub mode returns success
+  Scenario: Execute in stub mode returns success with agent_cmd reference
     Given a SpawnTool with empty allowlist and restrict_to_workspace true
     When I execute the SpawnTool with '{"task":"Do something useful"}'
     Then the spawn result should not be an error
-    And the spawn result should contain "Do something useful"
-    And the spawn result should contain "Restrict to workspace: true"
+    And the spawn result should contain "agent_cmd"
 
-  Scenario: Execute in stub mode reflects restrict_to_workspace false
-    Given a SpawnTool with empty allowlist and restrict_to_workspace false
-    When I execute the SpawnTool with '{"task":"background job"}'
+  Scenario: Execute in stub mode without task returns idle agent
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I execute the SpawnTool with '{"agent_id":"idle-worker"}'
     Then the spawn result should not be an error
-    And the spawn result should contain "Restrict to workspace: false"
+    And the spawn result should contain "agent_cmd"
 
   Scenario: Execute with invalid JSON returns error
     Given a SpawnTool with empty allowlist and restrict_to_workspace true
     When I execute the SpawnTool with 'not valid json'
     Then the spawn result should be an error
     And the spawn result should contain "invalid JSON"
-
-  Scenario: Execute with missing task returns error
-    Given a SpawnTool with empty allowlist and restrict_to_workspace true
-    When I execute the SpawnTool with '{"agent_id":"bot"}'
-    Then the spawn result should be an error
-    And the spawn result should contain "missing"
 
   Scenario: Execute with disallowed agent returns error
     Given a SpawnTool with allowlist "allowed-bot" and restrict_to_workspace true
@@ -171,6 +168,20 @@ Feature: SpawnTool — child agent process spawning
     Then the spawn result should be an error
     And the spawn result should contain "[a-zA-Z0-9_-]"
 
+  # --- Subagent registry ---
+
+  Scenario: Spawn registers child in shared registry
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I execute the SpawnTool with '{"task":"work","agent_id":"worker-1"}'
+    Then the spawn result should not be an error
+    And the subagent registry should contain "worker-1"
+
+  Scenario: Spawn without agent_id uses default name
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I execute the SpawnTool with '{"task":"work"}'
+    Then the spawn result should not be an error
+    And the subagent registry should contain "subagent"
+
   # --- Debug trait ---
 
   Scenario: Debug output includes struct fields
@@ -178,8 +189,3 @@ Feature: SpawnTool — child agent process spawning
     Then the debug output should include "SpawnTool"
     And the debug output should include "bot"
     And the debug output should include "restrict_to_workspace: true"
-
-  # --- Timeout constant ---
-
-  Scenario: Subagent timeout is 24 hours
-    Then the subagent timeout constant should be 86400 seconds

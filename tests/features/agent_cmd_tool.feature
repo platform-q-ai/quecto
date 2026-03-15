@@ -1,0 +1,111 @@
+@done
+Feature: AgentCmdTool — native UDS interaction with spawned subagents
+  As an AI agent
+  I want the agent_cmd tool to interact with spawned subagents via UDS
+  So that I can orchestrate parallel work without external dependencies
+
+  # --- Tool definition ---
+
+  Scenario: Tool definition has correct name
+    Given an AgentCmdTool with an empty registry
+    Then the agent_cmd tool definition name should be "agent_cmd"
+    And the agent_cmd tool definition description should not be empty
+
+  Scenario: Tool definition requires agent_id and command
+    Given an AgentCmdTool with an empty registry
+    Then the agent_cmd tool definition schema should require "agent_id"
+    And the agent_cmd tool definition schema should require "command"
+
+  # --- Argument parsing ---
+
+  Scenario: Parse valid get_state command
+    Given an AgentCmdTool with an empty registry
+    When I execute agent_cmd with '{"agent_id":"worker-1","command":"get_state"}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "not found"
+
+  Scenario: Parse fails on missing agent_id
+    Given an AgentCmdTool with an empty registry
+    When I execute agent_cmd with '{"command":"get_state"}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "agent_id"
+
+  Scenario: Parse fails on missing command
+    Given an AgentCmdTool with an empty registry
+    When I execute agent_cmd with '{"agent_id":"worker-1"}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "command"
+
+  Scenario: Parse fails on invalid JSON
+    Given an AgentCmdTool with an empty registry
+    When I execute agent_cmd with 'not valid json'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "invalid JSON"
+
+  Scenario: Parse fails on unknown command
+    Given an AgentCmdTool with an empty registry
+    When I execute agent_cmd with '{"agent_id":"worker-1","command":"unknown_cmd"}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "unsupported command"
+
+  # --- Registry lookup ---
+
+  Scenario: Unknown agent_id returns error
+    Given an AgentCmdTool with an empty registry
+    When I execute agent_cmd with '{"agent_id":"nonexistent","command":"get_state"}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "not found"
+
+  Scenario: Known agent_id is looked up from registry
+    Given an AgentCmdTool with a mock registry entry "worker-1"
+    When I execute agent_cmd with '{"agent_id":"worker-1","command":"get_state"}'
+    Then the agent_cmd result should not be an error
+
+  # --- Command building ---
+
+  Scenario: get_state command is built correctly
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_state"}'
+    Then the agent_cmd should have sent command type "get_state"
+
+  Scenario: get_messages_tail command uses count parameter
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages_tail","count":5}'
+    Then the agent_cmd should have sent command type "get_messages_tail"
+
+  Scenario: get_messages_tail defaults count to 1
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages_tail"}'
+    Then the agent_cmd should have sent command type "get_messages_tail"
+
+  Scenario: prompt command requires message
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"prompt"}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "message"
+
+  Scenario: prompt command sends message
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"prompt","message":"Do work"}'
+    Then the agent_cmd should have sent command type "prompt"
+
+  Scenario: steer command requires message
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"steer"}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "message"
+
+  Scenario: steer command sends message
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"steer","message":"Change direction"}'
+    Then the agent_cmd should have sent command type "steer"
+
+  Scenario: abort command is built correctly
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"abort"}'
+    Then the agent_cmd should have sent command type "abort"
+
+  Scenario: get_session_stats command is built correctly
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_session_stats"}'
+    Then the agent_cmd should have sent command type "get_session_stats"
