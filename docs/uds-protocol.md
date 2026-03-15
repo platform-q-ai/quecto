@@ -857,6 +857,7 @@ All flags for `quecto agent` that affect UDS mode:
 | `--no-sandbox` | Disable workspace path restriction (DANGEROUS) |
 | `--network` | Enable outbound network in bash |
 | `--persist` | Keep agent alive after all clients disconnect |
+| `--effort <level>` | Effort level for 4.6 models (`low`/`medium`/`high`/`max`). Overrides config and env var |
 | `--disable-tool <name>` | Remove a tool from the registry (repeatable) |
 | `--config <path>` | Override config file path |
 
