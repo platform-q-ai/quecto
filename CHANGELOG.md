@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.21.0 (2026-03-15)
+
+### Fixed
+- **Default `effort=low` for Claude 4.6 models** (#416): Sonnet 4.6 and Opus 4.6 default to `effort: high` on the Anthropic API when `output_config` is omitted, causing excessive token usage and 529 overloaded errors under load. The Anthropic provider now emits `output_config: {effort: "low"}` for these models when no explicit effort is set, matching Sonnet 4.5 behaviour per the migration guide.
+- **`model_context_window_exceeded` stop reason** (#416): Claude 4.5+ models may return `model_context_window_exceeded` when the context window is exhausted. This is now parsed as `StopReason::MaxTokens` so context handling (spill/collapse) fires correctly.
+
+### Added
+- **`--effort` CLI flag** (#416): Override effort level for 4.6 models (`--effort low|medium|high|max`). Takes precedence over config and env var.
+- **`agents.defaults.effort` config field** (#416): Set default effort level in `config.json` (`"low"`, `"medium"`, `"high"`, or `"max"`).
+- **`QUECTO_AGENTS_DEFAULTS_EFFORT` env var** (#416): Override effort level via environment variable. Validated at config load time.
+- **`EffortLevel::parse()`** (#416): Domain-layer parsing for effort level strings, shared across CLI, config, and REPL paths.
+
 ## 0.20.0 (2026-03-13)
 
 ### Added
