@@ -4,26 +4,17 @@
 // no bash intermediary.  Uses the existing JSON-lines protocol from
 // `src/interface/cli/protocol.rs`.
 
-use std::collections::HashMap;
 use std::future::Future;
-use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 
-/// Entry for a spawned subagent in the shared registry.
-#[derive(Debug, Clone)]
-pub struct SubagentEntry {
-    /// Path to the child's UDS socket.
-    pub socket_path: PathBuf,
-    /// Child process PID (0 in stub mode).
-    pub pid: u32,
-}
-
-/// Shared registry of spawned subagents (agent_id → entry).
-pub type SubagentRegistry = Arc<Mutex<HashMap<String, SubagentEntry>>>;
+// Re-export shared types for external consumers.
+pub use super::subagent_registry::{
+    SubagentEntry, SubagentRegistry, new_registry, validate_agent_id_format,
+};
 
 /// Supported commands for interacting with a subagent.
 const SUPPORTED_COMMANDS: &[&str] = &[
@@ -34,6 +25,9 @@ const SUPPORTED_COMMANDS: &[&str] = &[
     "abort",
     "get_session_stats",
 ];
+
+/// Timeout for reading a response from a subagent UDS socket.
+const RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Tool that sends UDS commands to spawned subagents.
 ///
@@ -54,7 +48,7 @@ impl AgentCmdTool {
 
     /// Create a new empty registry (convenience for tests and wiring).
     pub fn new_registry() -> SubagentRegistry {
-        Arc::new(Mutex::new(HashMap::new()))
+        new_registry()
     }
 
     /// Parse arguments and build the JSON command to send.
@@ -67,6 +61,9 @@ impl AgentCmdTool {
             .and_then(|v| v.as_str())
             .ok_or("missing required field: agent_id")?
             .to_string();
+
+        // Validate agent_id format (same rules as spawn).
+        validate_agent_id_format(&agent_id)?;
 
         let command = args
             .get("command")
@@ -112,8 +109,8 @@ impl AgentCmdTool {
     }
 
     /// Look up the socket path for an agent ID.
-    fn lookup_socket(&self, agent_id: &str) -> Result<PathBuf, String> {
-        let entries = self.registry.lock().unwrap();
+    fn lookup_socket(&self, agent_id: &str) -> Result<std::path::PathBuf, String> {
+        let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
         entries
             .get(agent_id)
             .map(|e| e.socket_path.clone())
@@ -122,6 +119,10 @@ impl AgentCmdTool {
 }
 
 /// Send a JSON-lines command to a UDS socket and read the first response line.
+///
+/// Each call opens a new connection, sends the command, and reads one response
+/// line. The connection is closed after each call.
+// TODO: consider connection pooling for frequent polling patterns.
 async fn send_uds_command(
     socket_path: &std::path::Path,
     command: &str,
@@ -153,9 +154,11 @@ async fn send_uds_command(
         .map_err(|e| DomainError::Tool(format!("shutdown write half failed: {e}")))?;
 
     let mut lines = BufReader::new(reader).lines();
-    let response = lines
-        .next_line()
+
+    // Read with timeout to avoid blocking indefinitely if the child hangs.
+    let response = tokio::time::timeout(RESPONSE_TIMEOUT, lines.next_line())
         .await
+        .map_err(|_| DomainError::Tool("subagent response timed out (300s)".into()))?
         .map_err(|e| DomainError::Tool(format!("read from subagent failed: {e}")))?
         .unwrap_or_default();
 
@@ -224,9 +227,10 @@ impl Tool for AgentCmdTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn empty_tool() -> AgentCmdTool {
-        AgentCmdTool::new(AgentCmdTool::new_registry())
+        AgentCmdTool::new(new_registry())
     }
 
     #[test]
@@ -275,6 +279,14 @@ mod tests {
         let result = tool.parse_and_build(r#"{"agent_id":"w1","command":"delete_all"}"#);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("unsupported command"));
+    }
+
+    #[test]
+    fn test_parse_invalid_agent_id_format() {
+        let tool = empty_tool();
+        let result = tool.parse_and_build(r#"{"agent_id":"bad id!","command":"get_state"}"#);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("[a-zA-Z0-9_-]"));
     }
 
     #[test]
@@ -366,7 +378,7 @@ mod tests {
 
     #[test]
     fn test_lookup_known_agent() {
-        let registry = AgentCmdTool::new_registry();
+        let registry = new_registry();
         registry.lock().unwrap().insert(
             "w1".to_string(),
             SubagentEntry {
@@ -404,5 +416,16 @@ mod tests {
         let result = tool.execute(r#"{"agent_id":"w1"}"#).await.unwrap();
         assert!(result.is_error);
         assert!(result.content.contains("command"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_invalid_agent_id_format_returns_error() {
+        let tool = empty_tool();
+        let result = tool
+            .execute(r#"{"agent_id":"bad id!","command":"get_state"}"#)
+            .await
+            .unwrap();
+        assert!(result.is_error);
+        assert!(result.content.contains("[a-zA-Z0-9_-]"));
     }
 }

@@ -4,6 +4,7 @@ use super::*;
 // ===========================================================================
 
 use quecto::infrastructure::tools::agent_cmd::AgentCmdTool;
+use quecto::infrastructure::tools::subagent_registry::SubagentEntry;
 
 // --- Given ---
 
@@ -16,7 +17,7 @@ fn given_agent_cmd_empty_registry(world: &mut QuectoWorld) {
 
 #[given(expr = "an AgentCmdTool with a mock registry entry {string}")]
 fn given_agent_cmd_with_mock_entry(world: &mut QuectoWorld, agent_id: String) {
-    use quecto::infrastructure::tools::agent_cmd::SubagentEntry;
+    // SubagentEntry imported at module top
 
     let registry = AgentCmdTool::new_registry();
 

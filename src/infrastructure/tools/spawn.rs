@@ -14,7 +14,7 @@ use crate::domain::error::DomainError;
 use crate::domain::subagent::{SubagentConfig, validate_agent_id};
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 
-pub use super::agent_cmd::{SubagentEntry, SubagentRegistry};
+pub use super::subagent_registry::{SubagentEntry, SubagentRegistry};
 
 /// Tool that spawns a child `quecto agent` process in UDS mode.
 ///
@@ -107,7 +107,7 @@ impl SpawnTool {
             .map(String::from);
 
         if let Some(ref id) = agent_id {
-            Self::validate_agent_id_format(id)?;
+            super::subagent_registry::validate_agent_id_format(id)?;
             if !self.allowed_agents.is_empty() {
                 validate_agent_id(id, &self.allowed_agents).map_err(|e| e.to_string())?;
             }
@@ -121,27 +121,27 @@ impl SpawnTool {
         })
     }
 
-    fn validate_agent_id_format(agent_id: &str) -> Result<(), String> {
-        let len = agent_id.len();
-        if len == 0 || len > 64 {
-            return Err("agent_id must be 1-64 characters".to_string());
-        }
-        if agent_id
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
-        {
-            Ok(())
-        } else {
-            Err("agent_id must use only [a-zA-Z0-9_-]".to_string())
-        }
-    }
-
     /// Launch a child quecto agent in UDS mode and register it in the registry.
     async fn launch_uds_agent(&self, config: &SubagentConfig) -> Result<ToolResult, DomainError> {
         let binary = std::env::current_exe()
             .map_err(|e| DomainError::Tool(format!("cannot find quecto binary: {e}")))?;
 
         let session_name = config.agent_id.as_deref().unwrap_or("subagent");
+
+        // Reject if this agent_id is already running.
+        {
+            let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+            if entries.contains_key(session_name) {
+                return Ok(ToolResult {
+                    content: format!(
+                        "Failed to spawn subagent: agent '{}' is already running",
+                        session_name
+                    ),
+                    is_error: true,
+                    image_blocks: vec![],
+                });
+            }
+        }
 
         // Deterministic socket path so the parent can address children by name.
         let socket_path = self
@@ -182,25 +182,48 @@ impl SpawnTool {
         cmd.stdout(std::process::Stdio::null());
         cmd.stderr(std::process::Stdio::null());
 
-        let child = cmd
+        let mut child = cmd
             .spawn()
             .map_err(|e| DomainError::Tool(format!("failed to spawn subagent: {e}")))?;
 
         let pid = child.id().unwrap_or(0);
 
-        // Wait for socket readiness (file exists + connectable).
-        self.wait_for_socket(&socket_path).await?;
+        // Wait for socket readiness.
+        if let Err(e) = self.wait_for_socket(&socket_path).await {
+            // Socket never became ready — kill the child and report failure.
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return Err(e);
+        }
+
+        // Spawn a background reaper task so the child process is always
+        // cleaned up (no zombies) even if the parent never calls shutdown_all.
+        let reaper_registry = self.registry.clone();
+        let reaper_name = session_name.to_string();
+        tokio::spawn(async move {
+            let _ = child.wait().await;
+            // Auto-remove from registry when the child exits.
+            reaper_registry
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&reaper_name);
+        });
 
         // Register in shared registry so agent_cmd can find this child.
-        self.registry.lock().unwrap().insert(
-            session_name.to_string(),
-            SubagentEntry {
-                socket_path: socket_path.clone(),
-                pid,
-            },
-        );
+        self.registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                session_name.to_string(),
+                SubagentEntry {
+                    socket_path: socket_path.clone(),
+                    pid,
+                },
+            );
 
         // If the caller provided an initial task, send it as the first prompt.
+        // Fire-and-forget: the child acks the prompt internally, but we don't
+        // read the response here. Use agent_cmd get_messages_tail to check output.
         if let Some(ref task) = config.task {
             self.send_initial_prompt(&socket_path, task).await?;
         }
@@ -217,17 +240,21 @@ impl SpawnTool {
 
     /// Poll until the UDS socket is connectable (up to 10s).
     async fn wait_for_socket(&self, path: &std::path::Path) -> Result<(), DomainError> {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-        let mut interval = tokio::time::interval(Duration::from_millis(100));
+        use tokio::time::Instant;
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        // Delay the first probe slightly — the child needs time to start up.
+        let mut interval = tokio::time::interval_at(
+            Instant::now() + Duration::from_millis(100),
+            Duration::from_millis(100),
+        );
         loop {
             interval.tick().await;
-            if path.exists() {
-                // Verify the socket is connectable (not just a stale file).
-                if tokio::net::UnixStream::connect(path).await.is_ok() {
-                    return Ok(());
-                }
+            // Just try to connect — no need for a separate exists() check.
+            if tokio::net::UnixStream::connect(path).await.is_ok() {
+                return Ok(());
             }
-            if tokio::time::Instant::now() >= deadline {
+            if Instant::now() >= deadline {
                 return Err(DomainError::Tool(format!(
                     "subagent socket {} did not become ready within 10s",
                     path.display()
@@ -237,6 +264,7 @@ impl SpawnTool {
     }
 
     /// Send the initial task as a UDS prompt after the socket is ready.
+    /// Fire-and-forget: writes the prompt and closes the connection.
     async fn send_initial_prompt(
         &self,
         socket_path: &std::path::Path,
@@ -252,6 +280,10 @@ impl SpawnTool {
             .write_all(line.as_bytes())
             .await
             .map_err(|e| DomainError::Tool(format!("failed to send prompt to subagent: {e}")))?;
+        stream
+            .shutdown()
+            .await
+            .map_err(|e| DomainError::Tool(format!("failed to shutdown stream: {e}")))?;
         Ok(())
     }
 }
@@ -282,15 +314,19 @@ impl Tool for SpawnTool {
                         let session_name = config.agent_id.as_deref().unwrap_or("subagent");
 
                         // Register in stub mode too so BDD tests can verify registry.
-                        self.registry.lock().unwrap().insert(
-                            session_name.to_string(),
-                            SubagentEntry {
-                                socket_path: PathBuf::from(format!(
-                                    "/tmp/quecto-agent-{session_name}.sock"
-                                )),
-                                pid: 0,
-                            },
-                        );
+                        self.registry
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(
+                                session_name.to_string(),
+                                SubagentEntry {
+                                    // Stub path — not a real socket.
+                                    socket_path: PathBuf::from(format!(
+                                        "/stub/quecto-agent-{session_name}.sock"
+                                    )),
+                                    pid: 0,
+                                },
+                            );
 
                         let msg = format!(
                             "Subagent '{}' is running. Use agent_cmd to interact.",
@@ -315,9 +351,9 @@ impl Tool for SpawnTool {
     }
 }
 
-/// Send SIGTERM to all tracked subagent processes.
+/// Send SIGTERM to all tracked subagent processes and clear the registry.
 pub fn shutdown_all(registry: &SubagentRegistry) {
-    let entries = registry.lock().unwrap();
+    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     for (name, entry) in entries.iter() {
         if entry.pid != 0 {
             // Use kill(1) rather than libc::kill to avoid adding libc as a dependency.
@@ -330,6 +366,7 @@ pub fn shutdown_all(registry: &SubagentRegistry) {
             tracing::info!(agent = %name, pid = entry.pid, "sent SIGTERM to subagent");
         }
     }
+    entries.clear();
 }
 
 #[cfg(test)]
@@ -468,7 +505,7 @@ mod tests {
 
     #[test]
     fn test_validate_agent_id_format_empty_string() {
-        let result = SpawnTool::validate_agent_id_format("");
+        let result = super::super::subagent_registry::validate_agent_id_format("");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("1-64 characters"));
     }
@@ -476,55 +513,56 @@ mod tests {
     #[test]
     fn test_validate_agent_id_format_max_length_64() {
         let id = "a".repeat(64);
-        let result = SpawnTool::validate_agent_id_format(&id);
+        let result = super::super::subagent_registry::validate_agent_id_format(&id);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_validate_agent_id_format_too_long_65() {
         let id = "a".repeat(65);
-        let result = SpawnTool::validate_agent_id_format(&id);
+        let result = super::super::subagent_registry::validate_agent_id_format(&id);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("1-64 characters"));
     }
 
     #[test]
     fn test_validate_agent_id_format_all_valid_chars() {
-        assert!(SpawnTool::validate_agent_id_format("abcXYZ019_-").is_ok());
+        assert!(super::super::subagent_registry::validate_agent_id_format("abcXYZ019_-").is_ok());
     }
 
     #[test]
     fn test_validate_agent_id_format_single_char() {
-        assert!(SpawnTool::validate_agent_id_format("a").is_ok());
-        assert!(SpawnTool::validate_agent_id_format("Z").is_ok());
-        assert!(SpawnTool::validate_agent_id_format("0").is_ok());
-        assert!(SpawnTool::validate_agent_id_format("_").is_ok());
-        assert!(SpawnTool::validate_agent_id_format("-").is_ok());
+        use super::super::subagent_registry::validate_agent_id_format;
+        assert!(validate_agent_id_format("a").is_ok());
+        assert!(validate_agent_id_format("Z").is_ok());
+        assert!(validate_agent_id_format("0").is_ok());
+        assert!(validate_agent_id_format("_").is_ok());
+        assert!(validate_agent_id_format("-").is_ok());
     }
 
     #[test]
     fn test_validate_agent_id_format_invalid_dot() {
-        let result = SpawnTool::validate_agent_id_format("hello.world");
+        let result = super::super::subagent_registry::validate_agent_id_format("hello.world");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("[a-zA-Z0-9_-]"));
     }
 
     #[test]
     fn test_validate_agent_id_format_invalid_space() {
-        let result = SpawnTool::validate_agent_id_format("hello world");
+        let result = super::super::subagent_registry::validate_agent_id_format("hello world");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("[a-zA-Z0-9_-]"));
     }
 
     #[test]
     fn test_validate_agent_id_format_invalid_slash() {
-        let result = SpawnTool::validate_agent_id_format("a/b");
+        let result = super::super::subagent_registry::validate_agent_id_format("a/b");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_validate_agent_id_format_invalid_unicode() {
-        let result = SpawnTool::validate_agent_id_format("böt");
+        let result = super::super::subagent_registry::validate_agent_id_format("böt");
         assert!(result.is_err());
     }
 
@@ -660,6 +698,23 @@ mod tests {
         let cfg_f = tool_false.parse_args(r#"{"task":"a"}"#).unwrap();
         assert!(cfg_t.restrict_to_workspace);
         assert!(!cfg_f.restrict_to_workspace);
+    }
+
+    // --- shutdown_all ---
+
+    #[test]
+    fn test_shutdown_all_clears_registry() {
+        let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
+        registry.lock().unwrap().insert(
+            "bot".to_string(),
+            SubagentEntry {
+                socket_path: PathBuf::from("/tmp/test.sock"),
+                pid: 0, // pid 0 = stub, won't actually send SIGTERM
+            },
+        );
+        assert!(!registry.lock().unwrap().is_empty());
+        shutdown_all(&registry);
+        assert!(registry.lock().unwrap().is_empty());
     }
 
     // --- Debug trait ---
