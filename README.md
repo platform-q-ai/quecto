@@ -9,7 +9,7 @@ Built in Rust. No runtime dependencies. Runs on a VPS, Raspberry Pi, or containe
 
 ## Release Notes
 
-Current version: **0.20.0** — see [`CHANGELOG.md`](CHANGELOG.md) for full history.
+Current version: **0.21.0** — see [`CHANGELOG.md`](CHANGELOG.md) for full history.
 
 ## Quick Start
 
@@ -45,8 +45,8 @@ Zero deps except `thiserror`, `serde` (derive), `serde_yaml`. Defines system voc
 
 | File | Purpose |
 |---|---|
-| `message.rs` | `Message` (constructors `::system/user/assistant/tool`; pruning fields: `turn`, `is_pinned`, `is_manifest`, `is_collapsed`, `tool_name`, `input_preview`, `spill_id`; `image_blocks` for tool results, `user_image_blocks` for user images, `is_error`, `stop_reason`), `Role`, `ToolCall`, `LlmResponse`, `UsageInfo`, `StopReason`, `UserImageBlock` |
-| `provider.rs` | `LlmProvider` trait (dyn-compatible), `ChatRequest` (with `session_id` for prompt caching, `cancel_flag`, `thinking_level`, `tool_choice`, `metadata`), `chat()` + `chat_stream()` (SSE with non-streaming fallback) + `chat_stream_incremental()` (real-time `StreamEvent` channel), `CancelFlag`, `ThinkingLevel`, `ToolChoice`, `RequestMetadata` |
+| `message.rs` | `Message` (constructors `::system/user/assistant/tool`; pruning fields: `turn`, `is_pinned`, `is_manifest`, `is_collapsed`, `tool_name`, `input_preview`, `spill_id`; `image_blocks` for tool results, `user_image_blocks` for user images, `is_error`, `stop_reason`), `Role`, `ToolCall`, `LlmResponse`, `UsageInfo`, `StopReason` (maps `model_context_window_exceeded` → `MaxTokens`), `UserImageBlock` |
+| `provider.rs` | `LlmProvider` trait (dyn-compatible), `ChatRequest` (with `session_id` for prompt caching, `cancel_flag`, `thinking_level`, `tool_choice`, `metadata`, `effort`), `chat()` + `chat_stream()` (SSE with non-streaming fallback) + `chat_stream_incremental()` (real-time `StreamEvent` channel), `CancelFlag`, `ThinkingLevel`, `ToolChoice`, `RequestMetadata`, `EffortLevel` (with `parse()` / `as_str()`) |
 | `tool.rs` | `Tool` trait, `ToolRegistry` trait, `ToolGuard` trait, `ToolDefinition` (with `Cow<'static, str>` fields), `ToolResult` (with `image_blocks` for base64 images), `ImageBlock` |
 | `agent.rs` | `AgentLoop` trait, `AgentInfo`, `AgentResult`, `AgentProgressEvent` (with `tool_call_id` on `ToolStarted`/`ToolFinished`, `Token` for streaming, `Thinking` with context stats), `ProgressCallback` |
 | `session.rs` | `Session`, `SessionStore` trait, `SpillEntry`, `SpillIndex`, `ContextSpillStore` trait, `strip_tool_history()`, `filter_orphan_tool_pairs()` (with `OrphanDiag`) |
@@ -64,7 +64,7 @@ Depends only on `domain/`. Orchestration logic, no I/O.
 
 | File | Purpose |
 |---|---|
-| `agent_loop.rs` | Core LLM-tool loop: send → execute tools → repeat. Traces `tool_name`, `duration_ms`, `is_error`. Progress callbacks for REPL spinner. Supports incremental streaming via `chat_stream_incremental()` |
+| `agent_loop.rs` | Core LLM-tool loop: send → execute tools → repeat. Traces `tool_name`, `duration_ms`, `is_error`. Progress callbacks for REPL spinner. Supports incremental streaming via `chat_stream_incremental()`. Passes configured `effort` level through to every `ChatRequest` |
 | `context_pruning.rs` | Token estimation, sliding window, pinned manifest. Collapse disabled by default (`context_collapse_after_turns = u32::MAX`); spill-to-disk when enabled |
 | `onboard.rs` | Onboarding orchestration via `OnboardStore` |
 | `reload.rs` | `/reload` use case: strips stale tool history via `strip_tool_history()`, clears spill index, coordinates `SessionStore` + `ContextSpillStore` |
@@ -75,8 +75,8 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 
 | Component | Contents |
 |---|---|
-| `config.rs` | `Config` with serde, env overrides, exec isolation settings (nsjail binary/limits/fallback), `WorkflowConfig` (steps must be explicit in config.json, `guard_commit` controls WorkflowGuard registration). Tolerates unknown fields (forward-compatible) |
-| `providers/` | `OpenAiProvider` (SSE streaming via `openai_sse`), `AnthropicProvider` (SSE streaming via `anthropic_sse`, extended thinking support), `CodexProvider` (Responses API, SSE, `prompt_cache_key`, orphan pair repair), `RefreshableProvider` (OAuth 401 → auto-refresh → retry), `FallbackProvider` (cooldown + error classification + `provider/model` routing syntax). URL validation: https required for non-loopback (override with `QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS=1`) |
+| `config.rs` | `Config` with serde, env overrides (`QUECTO_AGENTS_DEFAULTS_EFFORT` validated at load), exec isolation settings (nsjail binary/limits/fallback), `WorkflowConfig` (steps must be explicit in config.json, `guard_commit` controls WorkflowGuard registration). Tolerates unknown fields (forward-compatible) |
+| `providers/` | `OpenAiProvider` (SSE streaming via `openai_sse`), `AnthropicProvider` (SSE streaming via `anthropic_sse`, extended thinking support, effort default `low` for 4.6 models), `CodexProvider` (Responses API, SSE, `prompt_cache_key`, orphan pair repair), `RefreshableProvider` (OAuth 401 → auto-refresh → retry), `FallbackProvider` (cooldown + error classification + `provider/model` routing syntax). URL validation: https required for non-loopback (override with `QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS=1`) |
 | `tools/` | `bash/` (shell, 1MiB cap, per-invocation timeout, `commandPrefix`, native/nsjail modes), `filesystem/` (`ReadTool` with image base64+auto-resize, `WriteTool`, `EditTool` with fuzzy match+CRLF/BOM+LCS diff, `LsTool` with limit+case-insensitive sort), `grep.rs` (rg JSON output, file-cache context), `find.rs` (fd, nested .gitignore, path-segment globs via `--full-path`), `ensure_tool.rs` (auto-download rg/fd from GitHub), `spawn.rs` (background subagent spawning), `web_search.rs` (Brave+DDG), `web_fetch.rs` (URL fetch with HTML stripping), `recall.rs` (spill retrieval), `workflow_tool.rs` (`WorkflowTool` + `WorkflowGuard` — blocks `git commit`/`git push` when workflow steps incomplete; registration controlled by `guard_commit` config), `path_utils.rs`, `truncate.rs`, `command_match.rs`, `registry.rs` (`ToolRegistryImpl`, `guard_count()`) |
 | `persistence/` | `FileSessionStore` (round-trips all Message fields), `MemoryStore`, `FileSkillLoader`, `FileOnboardStore` (`workspace_store.rs`), `FileContextSpillStore` (JSONL append-only) |
 | `security/` | `Sandbox` — workspace path validation + command filtering |
@@ -188,6 +188,7 @@ quecto agent -m "Write a Python script that generates primes"
 | `--mode` | No | Operation mode: default one-shot, or `uds` for UDS event bus |
 | `--socket` | No | Explicit socket path for `--mode uds` (default: auto-generated in tmpdir) |
 | `--persist` | No | UDS mode only — keep agent alive when all clients disconnect (default: exit on last disconnect) |
+| `--effort` | No | Effort level for 4.6 models (`low`/`medium`/`high`/`max`). Overrides config and env var |
 | `--disable-tool` | No | Remove a tool from the registry (repeatable). See [Disabling Tools](docs/disable-tools.md) |
 | `--config` | No | Override config file path |
 
@@ -395,7 +396,8 @@ Config file: `~/.quecto/config.json`
       "max_tool_iterations": 999999,
       "max_session_messages": 200,
       "max_context_tokens": 190000,
-      "restrict_to_workspace": true
+      "restrict_to_workspace": true,
+      "effort": "low"
     }
   },
   "providers": {
@@ -483,6 +485,7 @@ nsjail mounts `/bin`, `/usr`, `/lib`, `/lib64` read-only inside the jail, plus i
 | `QUECTO_AGENTS_DEFAULTS_WORKSPACE` | `agents.defaults.workspace` |
 | `QUECTO_AGENTS_DEFAULTS_MAX_SESSION_MESSAGES` | `agents.defaults.max_session_messages` |
 | `QUECTO_MAX_CONTEXT_TOKENS` | `agents.defaults.max_context_tokens` |
+| `QUECTO_AGENTS_DEFAULTS_EFFORT` | `agents.defaults.effort` (`low`/`medium`/`high`/`max`; invalid values ignored) |
 | `QUECTO_PROVIDERS_OPENAI_API_KEY` | `providers.openai.api_key` |
 | `QUECTO_PROVIDERS_ANTHROPIC_API_KEY` | `providers.anthropic.api_key` |
 | `QUECTO_OFFLINE` | Set to `1`/`true`/`yes` to disable auto-download of tool binaries (rg, fd) |
