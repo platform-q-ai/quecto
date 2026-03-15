@@ -60,7 +60,8 @@ pub struct ChatRequest<'a> {
     pub cancel_flag: Option<CancelFlag>,
     /// Optional effort level for the `output_config.effort` API parameter.
     /// Controls thinking depth and token spend on Opus 4.6 / Sonnet 4.6.
-    /// When `None`, the field is omitted (API defaults to `high`).
+    /// When `None`, the Anthropic provider defaults to `low` for 4.6 models
+    /// (to avoid the API's implicit `high` default); omitted for other models.
     pub effort: Option<EffortLevel>,
 }
 
@@ -154,6 +155,19 @@ impl EffortLevel {
             Self::Medium => "medium",
             Self::High => "high",
             Self::Max => "max",
+        }
+    }
+
+    /// Parse a string into an `EffortLevel`.
+    ///
+    /// Returns `None` for unrecognised values.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "low" => Some(Self::Low),
+            "medium" => Some(Self::Medium),
+            "high" => Some(Self::High),
+            "max" => Some(Self::Max),
+            _ => None,
         }
     }
 }

@@ -43,6 +43,10 @@ pub struct AgentDefaults {
     pub context_collapse_after_turns: u32,
     #[serde(default = "default_max_context_tokens")]
     pub max_context_tokens: usize,
+    /// Effort level for 4.6 models (`low`/`medium`/`high`/`max`).
+    /// Defaults to `None`; provider applies `low` for 4.6 models when unset.
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 impl Default for AgentDefaults {
@@ -58,6 +62,7 @@ impl Default for AgentDefaults {
             max_session_messages: default_max_session_messages(),
             context_collapse_after_turns: default_context_collapse_after_turns(),
             max_context_tokens: default_max_context_tokens(),
+            effort: None,
         }
     }
 }
@@ -309,6 +314,7 @@ impl Config {
     /// - `QUECTO_AGENTS_DEFAULTS_WORKSPACE` → agents.defaults.workspace
     /// - `QUECTO_AGENTS_DEFAULTS_MAX_SESSION_MESSAGES` → agents.defaults.max_session_messages
     /// - `QUECTO_MAX_CONTEXT_TOKENS` → agents.defaults.max_context_tokens
+    /// - `QUECTO_AGENTS_DEFAULTS_EFFORT` → agents.defaults.effort
     /// - `QUECTO_PROVIDERS_OPENAI_API_KEY` → providers.openai.api_key
     /// - `QUECTO_PROVIDERS_ANTHROPIC_API_KEY` → providers.anthropic.api_key
     fn apply_env_overrides(config: &mut Config, env: &HashMap<String, String>) {
@@ -343,6 +349,12 @@ impl Config {
         }
         if let Some(v) = env.get("QUECTO_PROVIDERS_ANTHROPIC_API_KEY") {
             config.providers.anthropic.api_key = v.clone();
+        }
+        if let Some(v) = env.get("QUECTO_AGENTS_DEFAULTS_EFFORT") {
+            if crate::domain::provider::EffortLevel::parse(v).is_some() {
+                config.agents.defaults.effort = Some(v.clone());
+            }
+            // Invalid values are silently ignored (same as invalid MAX_TOKENS).
         }
         if let Some(v) = env.get("QUECTO_TOOLS_WEB_BRAVE_API_KEY") {
             config.tools.web.brave.api_key = v.clone();

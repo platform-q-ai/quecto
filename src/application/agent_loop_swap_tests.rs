@@ -20,6 +20,7 @@ fn test_swap_registry_replaces_tool_registry() {
         max_context_tokens: 100_000,
         progress_callback: None,
         streaming: false,
+        effort: None,
     });
     assert_eq!(agent.info().tool_count, 1);
     assert_eq!(agent.tool_registry.definitions()[0].name.as_ref(), "tool_a");
@@ -56,6 +57,7 @@ fn test_swap_registry_info_reflects_new_count() {
         max_context_tokens: 100_000,
         progress_callback: None,
         streaming: false,
+        effort: None,
     });
     assert_eq!(agent.info().tool_count, 0);
 

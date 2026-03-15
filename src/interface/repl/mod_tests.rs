@@ -190,6 +190,7 @@ fn make_repl_loop(
         max_context_tokens: 190_000,
         progress_callback: None,
         streaming: false,
+        effort: None,
     });
     let session_store = FileSessionStore::new(base_dir);
     let session = ReplSession {

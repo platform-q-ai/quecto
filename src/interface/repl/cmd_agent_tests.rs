@@ -47,6 +47,7 @@ fn make_repl(base_dir: &std::path::Path) -> ReplLoop<Cursor<Vec<u8>>, Vec<u8>> {
         max_context_tokens: 190_000,
         progress_callback: None,
         streaming: false,
+        effort: None,
     });
     let session_store = FileSessionStore::new(base_dir);
     let session = ReplSession {

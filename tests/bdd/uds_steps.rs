@@ -87,6 +87,7 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         max_context_tokens: config.agents.defaults.max_context_tokens,
         progress_callback: None,
         streaming: false,
+        effort: None,
     });
     // Enable streaming when the scenario has set the flag (e.g. SSE mock).
     if world._uds_streaming_enabled {

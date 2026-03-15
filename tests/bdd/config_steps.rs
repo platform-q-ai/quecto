@@ -189,6 +189,64 @@ fn then_workspace_ends_with(world: &mut QuectoWorld, suffix: String) {
 }
 
 // ===========================================================================
+// #416: Effort level in config
+// ===========================================================================
+
+#[then(expr = "the effort should be {string}")]
+fn then_effort_should_be(world: &mut QuectoWorld, expected: String) {
+    let config = world.config.as_ref().expect("config not loaded");
+    let actual = config
+        .agents
+        .defaults
+        .effort
+        .as_deref()
+        .expect("effort should be set");
+    assert_eq!(
+        actual, expected,
+        "expected effort '{}', got '{}'",
+        expected, actual
+    );
+}
+
+#[then("the effort should be unset")]
+fn then_effort_unset(world: &mut QuectoWorld) {
+    let config = world.config.as_ref().expect("config not loaded");
+    assert!(
+        config.agents.defaults.effort.is_none(),
+        "expected effort to be unset, got {:?}",
+        config.agents.defaults.effort
+    );
+}
+
+#[when("I load the config and validate effort")]
+fn when_load_config_and_validate_effort(world: &mut QuectoWorld) {
+    let path = world.config_path.as_ref().expect("config_path must be set");
+    let config =
+        Config::load_with_env(path, &world.env_overrides).expect("Config::load_with_env failed");
+    // Validate the effort value (domain validation)
+    let valid = ["low", "medium", "high", "max"];
+    if let Some(ref effort) = config.agents.defaults.effort {
+        if !valid.contains(&effort.as_str()) {
+            world.stderr = format!(
+                "invalid effort level '{}'; expected one of: low, medium, high, max",
+                effort
+            );
+        }
+    }
+    world.config = Some(config);
+}
+
+#[then(expr = "the effort validation should fail with {string}")]
+fn then_effort_validation_fails(world: &mut QuectoWorld, expected: String) {
+    assert!(
+        world.stderr.contains(&expected),
+        "expected stderr to contain '{}', got: '{}'",
+        expected,
+        world.stderr
+    );
+}
+
+// ===========================================================================
 // CLI Steps
 // ===========================================================================
 

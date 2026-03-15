@@ -10,7 +10,7 @@ use crate::domain::agent::{
 };
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
-use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
+use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent};
 use crate::domain::session::{ContextSpillStore, SpillEntry};
 use crate::domain::tool::ToolRegistry;
 
@@ -37,6 +37,9 @@ pub struct AgentLoopConfig {
     /// Set by the UDS agent path; `false` for REPL (which uses
     /// non-streaming mock servers in tests).
     pub streaming: bool,
+    /// Optional effort level for 4.6 models. When `Some`, passed through to
+    /// every `ChatRequest`. When `None`, the provider applies its own default.
+    pub effort: Option<EffortLevel>,
 }
 
 /// Concrete implementation of the agent loop.
@@ -56,6 +59,8 @@ pub struct AgentLoopImpl {
     streaming: bool,
     /// Optional live progress callback wired by the REPL progress renderer.
     progress_callback: Option<ProgressCallback>,
+    /// Optional effort level passed through to every ChatRequest.
+    effort: Option<EffortLevel>,
 }
 
 impl std::fmt::Debug for AgentLoopImpl {
@@ -93,6 +98,7 @@ impl AgentLoopImpl {
             max_context_tokens: config.max_context_tokens,
             progress_callback: config.progress_callback,
             streaming: config.streaming,
+            effort: config.effort,
         }
     }
 
@@ -254,7 +260,7 @@ impl AgentLoopImpl {
             metadata: None,
             thinking_level: None,
             cancel_flag: None,
-            effort: None,
+            effort: self.effort,
         }
     }
 

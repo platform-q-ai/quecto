@@ -457,6 +457,33 @@ Feature: LLM Providers
     Then the aborted assistant message should be removed
     And the new user message should remain
 
+  # --- #416: Default effort=low for 4.6 models; model_context_window_exceeded ---
+
+  Scenario: Sonnet 4.6 with no effort emits effort=low in request body
+    Given an Anthropic request for model "claude-sonnet-4-6" with no effort level
+    When I build the Anthropic request body with effort
+    Then the request body should contain output_config effort "low"
+
+  Scenario: Opus 4.6 with no effort emits effort=low in request body
+    Given an Anthropic request for model "claude-opus-4-6" with no effort level
+    When I build the Anthropic request body with effort
+    Then the request body should contain output_config effort "low"
+
+  Scenario: Sonnet 4.6 with explicit effort=medium uses the override
+    Given an Anthropic request for model "claude-sonnet-4-6" with effort level "medium"
+    When I build the Anthropic request body with effort
+    Then the request body should contain output_config effort "medium"
+
+  Scenario: Non-4.6 model with no effort omits output_config
+    Given an Anthropic request for model "claude-opus-4-5" with no effort level
+    When I build the Anthropic request body with effort
+    Then the request body should not contain an output_config field
+
+  Scenario: StopReason model_context_window_exceeded is parsed as MaxTokens
+    Given a stop reason string "model_context_window_exceeded"
+    When I parse the stop reason
+    Then the stop reason should be MaxTokens
+
   @done
   Scenario: normalize_messages does not clone messages that need no modification
     Given a message list with only user and assistant messages and no tool calls

@@ -338,6 +338,7 @@ pub fn run_repl<R: BufRead, W: Write>(
         max_context_tokens: ctx.config.agents.defaults.max_context_tokens,
         progress_callback,
         streaming: false,
+        effort: resolve_effort_from_config(ctx.config),
     });
 
     let session_store = FileSessionStore::new(ctx.base_dir);
@@ -426,6 +427,20 @@ fn resolve_progress_callback(
     }
     // Non-TTY: no progress output.
     (None, None)
+}
+
+/// Resolve effort level from config for the REPL path.
+///
+/// CLI `--effort` flag is not available in REPL mode; effort is set
+/// via `agents.defaults.effort` in config or the `QUECTO_AGENTS_DEFAULTS_EFFORT`
+/// env var.
+fn resolve_effort_from_config(config: &Config) -> Option<crate::domain::provider::EffortLevel> {
+    config.agents.defaults.effort.as_deref().and_then(|s| {
+        crate::domain::provider::EffortLevel::parse(s).or_else(|| {
+            eprintln!("WARNING: invalid effort level '{}' in config; ignoring", s);
+            None
+        })
+    })
 }
 
 /// Build the system prompt by loading skills and merging with user prompt.
