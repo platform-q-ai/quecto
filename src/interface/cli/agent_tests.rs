@@ -399,6 +399,7 @@ fn test_build_agent_from_config_no_config_file() {
         socket_path: None,
         persist: false,
         disabled_tools: vec![],
+        effort: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -425,6 +426,7 @@ fn test_build_agent_from_config_invalid_json() {
         socket_path: None,
         persist: false,
         disabled_tools: vec![],
+        effort: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -455,6 +457,7 @@ fn test_build_agent_from_config_no_providers() {
         socket_path: None,
         persist: false,
         disabled_tools: vec![],
+        effort: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -485,6 +488,7 @@ fn test_build_agent_from_config_with_model_override() {
         socket_path: None,
         persist: false,
         disabled_tools: vec![],
+        effort: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");

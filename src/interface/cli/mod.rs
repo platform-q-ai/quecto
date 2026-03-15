@@ -520,6 +520,9 @@ fn help_text(out: &mut String) {
         "                       --socket <path>  Socket path for --mode uds (default: auto in tmpdir)\n",
     );
     out.push_str(
+        "                       --effort <level>  Effort level for 4.6 models (low/medium/high/max)\n",
+    );
+    out.push_str(
         "                       --disable-tool <name>  Remove a tool from the registry (repeatable)\n",
     );
     out.push_str("  auth        Manage authentication (login, logout, status)\n");

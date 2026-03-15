@@ -183,6 +183,7 @@ pub(super) fn make_agent(
         max_context_tokens: 190_000,
         progress_callback: None,
         streaming: false,
+        effort: None,
     });
     (agent, provider)
 }
@@ -346,6 +347,7 @@ async fn test_tool_error_is_sent_back() {
         max_context_tokens: 190_000,
         progress_callback: None,
         streaming: false,
+        effort: None,
     });
     let mut messages = vec![Message::user("use a tool")];
     let result = agent.run_loop(&mut messages).await.unwrap();
@@ -396,6 +398,7 @@ fn make_agent_with_callback(
         max_context_tokens: 190_000,
         progress_callback: Some(callback),
         streaming: false,
+        effort: None,
     });
     (agent, provider, events)
 }

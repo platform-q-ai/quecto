@@ -336,9 +336,9 @@ fn test_effort_max_emitted_correctly() {
     assert_eq!(body["output_config"]["effort"], "max");
 }
 
-/// When effort is None, output_config should not be emitted.
+/// When effort is None on a 4.6 model, output_config defaults to effort=low (#416).
 #[test]
-fn test_no_effort_omits_output_config() {
+fn test_no_effort_defaults_to_low_for_46_models() {
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
         messages: &messages,
@@ -354,9 +354,34 @@ fn test_no_effort_omits_output_config() {
         effort: None,
     };
     let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    assert_eq!(
+        body["output_config"]["effort"], "low",
+        "4.6 model with effort=None should default to low, got: {}",
+        body
+    );
+}
+
+/// When effort is None on a non-4.6 model, output_config is omitted.
+#[test]
+fn test_no_effort_omits_output_config_for_non_46_models() {
+    let messages = vec![Message::user("Hi")];
+    let req = ChatRequest {
+        messages: &messages,
+        tools: &[],
+        model: "claude-opus-4-5",
+        max_tokens: 4_096,
+        temperature: 1.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    let (_sys, body) = AnthropicProvider::build_request_body(&req);
     assert!(
         body.get("output_config").is_none(),
-        "output_config should be absent when effort is None, got: {}",
+        "non-4.6 model with effort=None should omit output_config, got: {}",
         body
     );
 }

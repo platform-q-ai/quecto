@@ -70,3 +70,56 @@ Feature: Configuration
       """
     When I load the config
     Then the max_session_messages should be 12
+
+  # --- #416: Effort level in config and env var ---
+
+  Scenario: Effort level is loaded from config file
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {
+        "agents": {
+          "defaults": {
+            "effort": "medium"
+          }
+        }
+      }
+      """
+    When I load the config
+    Then the effort should be "medium"
+
+  Scenario: Effort level defaults to None when omitted
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {}
+      """
+    When I load the config
+    Then the effort should be unset
+
+  Scenario: Environment variable overrides effort in config
+    Given an environment variable "QUECTO_AGENTS_DEFAULTS_EFFORT" set to "high"
+    And a config file at "~/.quecto/config.json" with content:
+      """
+      {
+        "agents": {
+          "defaults": {
+            "effort": "low"
+          }
+        }
+      }
+      """
+    When I load the config
+    Then the effort should be "high"
+
+  Scenario: Invalid effort value in config produces error
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {
+        "agents": {
+          "defaults": {
+            "effort": "turbo"
+          }
+        }
+      }
+      """
+    When I load the config and validate effort
+    Then the effort validation should fail with "invalid effort level"

@@ -156,6 +156,19 @@ impl EffortLevel {
             Self::Max => "max",
         }
     }
+
+    /// Parse a string into an `EffortLevel`.
+    ///
+    /// Returns `None` for unrecognised values.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "low" => Some(Self::Low),
+            "medium" => Some(Self::Medium),
+            "high" => Some(Self::High),
+            "max" => Some(Self::Max),
+            _ => None,
+        }
+    }
 }
 
 /// Controls how the model selects which tool to call.

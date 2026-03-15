@@ -48,6 +48,7 @@ fn test_flags(msg: Option<&str>, session: Option<&str>, sys: Option<&str>) -> Ag
         socket_path: None,
         persist: false,
         disabled_tools: vec![],
+        effort: None,
     }
 }
 
@@ -73,6 +74,7 @@ fn make_test_agent(base_dir: &std::path::Path) -> AgentLoopImpl {
         max_context_tokens: 190_000,
         progress_callback: None,
         streaming: false,
+        effort: None,
     })
     .with_max_tool_iterations(1)
 }
@@ -461,6 +463,7 @@ fn test_run_with_deadline_completes_before_timeout() {
         max_context_tokens: 190_000,
         progress_callback: None,
         streaming: false,
+        effort: None,
     })
     .with_max_tool_iterations(1);
 

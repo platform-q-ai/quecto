@@ -49,6 +49,9 @@ pub(crate) struct AgentFlags {
     /// Tool names to remove from the registry before the agent starts.
     /// Repeatable: `--disable-tool bash --disable-tool web_fetch`.
     pub(crate) disabled_tools: Vec<String>,
+    /// Effort level override for 4.6 models (low/medium/high/max).
+    /// Takes precedence over config and env var.
+    pub(crate) effort: Option<crate::domain::provider::EffortLevel>,
 }
 
 /// Bundles the stdout/stderr pair passed through the agent pipeline.
@@ -102,6 +105,30 @@ fn parse_pos_u64(val: &str, flag: &str, stderr: &mut String) -> Option<u64> {
     }
 }
 
+/// Parse an effort level string, writing an error to `stderr` on failure.
+fn parse_effort_level(
+    val: &str,
+    stderr: &mut String,
+) -> Option<crate::domain::provider::EffortLevel> {
+    crate::domain::provider::EffortLevel::parse(val).or_else(|| {
+        stderr.push_str(&format!(
+            "agent: invalid effort level '{}'; expected one of: low, medium, high, max\n",
+            val
+        ));
+        None
+    })
+}
+
+/// Parse and validate a session name from `args[i+1]`.
+fn parse_session_name(args: &[String], i: usize, stderr: &mut String) -> Option<String> {
+    let name = next_arg(args, i, "-s requires a session name", stderr)?;
+    if !super::is_valid_session_name(name) {
+        stderr.push_str("agent: session name must contain only alphanumeric, '-', or '_'\n");
+        return None;
+    }
+    Some(name.to_string())
+}
+
 /// Parse the `--mode` flag value.  Returns `Some(true)` for `"uds"`, `None`
 /// (with an error written to `stderr`) for any unknown value.
 fn parse_agent_mode(val: &str, stderr: &mut String) -> Option<bool> {
@@ -130,6 +157,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut socket_path: Option<std::path::PathBuf> = None;
     let mut persist = false;
     let mut disabled_tools: Vec<String> = Vec::new();
+    let mut effort: Option<crate::domain::provider::EffortLevel> = None;
     let mut i = 0;
 
     while i < args.len() {
@@ -144,14 +172,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                 i += 1;
             }
             "-s" | "--session" => {
-                let name = next_arg(args, i, "-s requires a session name", stderr)?;
-                if !super::is_valid_session_name(name) {
-                    stderr.push_str(
-                        "agent: session name must contain only alphanumeric, '-', or '_'\n",
-                    );
-                    return None;
-                }
-                session_name = Some(name.to_string());
+                session_name = Some(parse_session_name(args, i, stderr)?);
                 i += 2;
             }
             "-m" | "--message" => {
@@ -193,6 +214,11 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                 disabled_tools.push(val.to_string());
                 i += 2;
             }
+            "--effort" => {
+                let val = next_arg(args, i, "--effort requires a value", stderr)?;
+                effort = Some(parse_effort_level(val, stderr)?);
+                i += 2;
+            }
             "--config" => {
                 // Value consumed globally by extract_config_flag; validate here too.
                 let _val = next_arg(args, i, "--config requires a path", stderr)?;
@@ -218,6 +244,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         socket_path,
         persist,
         disabled_tools,
+        effort,
     };
     validate_agent_flags(flags, stderr)
 }
@@ -353,6 +380,19 @@ pub(crate) fn build_agent_from_config(
         ));
     }
 
+    // Resolve effort level: CLI flag > config file (validated here).
+    let effort = flags.effort.or_else(|| {
+        config.agents.defaults.effort.as_deref().and_then(|s| {
+            crate::domain::provider::EffortLevel::parse(s).or_else(|| {
+                stderr.push_str(&format!(
+                    "WARNING: invalid effort level '{}' in config; ignoring\n",
+                    s
+                ));
+                None
+            })
+        })
+    });
+
     let wf_config = config.workflow.clone();
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
@@ -366,6 +406,7 @@ pub(crate) fn build_agent_from_config(
         max_context_tokens: config.agents.defaults.max_context_tokens,
         progress_callback: None,
         streaming: false,
+        effort,
     })
     .with_max_tool_iterations(
         flags

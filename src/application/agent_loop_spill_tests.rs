@@ -89,6 +89,7 @@ async fn test_spill_preserves_message_content_after_spill() {
         max_context_tokens: 190_000,
         progress_callback: None,
         streaming: false,
+        effort: None,
     });
 
     let mut messages = vec![Message::user("run it")];

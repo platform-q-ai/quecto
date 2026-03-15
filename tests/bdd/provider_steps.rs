@@ -3054,3 +3054,80 @@ fn then_no_deep_cloning(world: &mut QuectoWorld) {
         "all 3 messages should be present"
     );
 }
+
+// ===========================================================================
+// #416: Default effort=low for 4.6 models
+// ===========================================================================
+
+#[given(expr = "an Anthropic request for model {string} with no effort level")]
+fn given_anthropic_request_no_effort(world: &mut QuectoWorld, model: String) {
+    world.env_overrides.insert("_effort_model".into(), model);
+    world.env_overrides.remove("_effort_level");
+}
+
+#[given(expr = "an Anthropic request for model {string} with effort level {string}")]
+fn given_anthropic_request_with_effort(world: &mut QuectoWorld, model: String, level: String) {
+    world.env_overrides.insert("_effort_model".into(), model);
+    world.env_overrides.insert("_effort_level".into(), level);
+}
+
+#[when("I build the Anthropic request body with effort")]
+fn when_build_request_body_with_effort(world: &mut QuectoWorld) {
+    let model = world.env_overrides.get("_effort_model").cloned().unwrap();
+    let effort = world
+        .env_overrides
+        .get("_effort_level")
+        .map(|l| match l.as_str() {
+            "low" => quecto::domain::provider::EffortLevel::Low,
+            "medium" => quecto::domain::provider::EffortLevel::Medium,
+            "high" => quecto::domain::provider::EffortLevel::High,
+            "max" => quecto::domain::provider::EffortLevel::Max,
+            _ => panic!("unknown effort level: {}", l),
+        });
+
+    let messages = vec![quecto::domain::message::Message::user("test")];
+    let req = quecto::domain::provider::ChatRequest {
+        messages: &messages,
+        tools: &[],
+        model: &model,
+        max_tokens: 8192,
+        temperature: 0.7,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort,
+    };
+    let (_sys, body) =
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::build_request_body_public(
+            &req,
+        );
+    world
+        .env_overrides
+        .insert("_anthropic_body".into(), body.to_string());
+}
+
+#[then(expr = "the request body should contain output_config effort {string}")]
+fn then_output_config_effort(world: &mut QuectoWorld, expected: String) {
+    let body_str = world.env_overrides.get("_anthropic_body").expect("no body");
+    let body: serde_json::Value = serde_json::from_str(body_str).expect("invalid json");
+    assert_eq!(
+        body["output_config"]["effort"].as_str(),
+        Some(expected.as_str()),
+        "expected output_config.effort='{}', got body: {}",
+        expected,
+        body
+    );
+}
+
+#[then("the request body should not contain an output_config field")]
+fn then_no_output_config(world: &mut QuectoWorld) {
+    let body_str = world.env_overrides.get("_anthropic_body").expect("no body");
+    let body: serde_json::Value = serde_json::from_str(body_str).expect("invalid json");
+    assert!(
+        body.get("output_config").is_none() || body["output_config"].is_null(),
+        "expected no output_config field, got body: {}",
+        body
+    );
+}

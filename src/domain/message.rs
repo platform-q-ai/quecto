@@ -151,7 +151,7 @@ impl StopReason {
     pub fn parse(reason: &str) -> Self {
         match reason {
             "end_turn" => Self::EndTurn,
-            "max_tokens" => Self::MaxTokens,
+            "max_tokens" | "model_context_window_exceeded" => Self::MaxTokens,
             "tool_use" => Self::ToolUse,
             "refusal" => Self::Refusal,
             "pause_turn" | "stop_sequence" => Self::EndTurn,

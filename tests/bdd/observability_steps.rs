@@ -60,6 +60,7 @@ fn when_agent_processes_tool_call(world: &mut QuectoWorld) {
         max_context_tokens: 190_000,
         progress_callback: None,
         streaming: false,
+        effort: None,
     });
 
     // Capture tracing output
