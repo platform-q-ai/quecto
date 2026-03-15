@@ -1,3 +1,4 @@
+pub mod agent_cmd;
 pub mod bash;
 pub mod command_match;
 pub mod ensure_tool;

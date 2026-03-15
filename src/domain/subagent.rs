@@ -5,8 +5,8 @@ use super::error::DomainError;
 /// Configuration for spawning a subagent.
 #[derive(Debug, Clone)]
 pub struct SubagentConfig {
-    /// The task to execute.
-    pub task: String,
+    /// The task to execute (optional — agent starts idle if omitted).
+    pub task: Option<String>,
     /// Optional target agent ID.
     pub agent_id: Option<String>,
     /// Whether the subagent should restrict to workspace.

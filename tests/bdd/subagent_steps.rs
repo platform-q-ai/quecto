@@ -6,7 +6,7 @@ use super::*;
 #[given(expr = "a subagent spawn request with task {string}")]
 fn given_subagent_spawn_request(world: &mut QuectoWorld, task: String) {
     world.subagent_config = Some(SubagentConfig {
-        task,
+        task: Some(task),
         agent_id: None,
         restrict_to_workspace: false,
         system: None,
@@ -17,7 +17,7 @@ fn given_subagent_spawn_request(world: &mut QuectoWorld, task: String) {
 fn given_parent_config_restrict(world: &mut QuectoWorld, value: String) {
     let restrict = value == "true";
     world.subagent_config = Some(SubagentConfig {
-        task: "test task".to_string(),
+        task: Some("test task".to_string()),
         agent_id: None,
         restrict_to_workspace: restrict,
         system: None,

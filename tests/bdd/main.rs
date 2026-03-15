@@ -269,6 +269,16 @@ pub struct QuectoWorld {
     pub spawn_result: Option<ToolResult>,
     /// Spawn tool for BDD
     pub spawn_tool: Option<SpawnTool>,
+    /// AgentCmdTool for BDD (#421)
+    pub agent_cmd_tool: Option<quecto::infrastructure::tools::agent_cmd::AgentCmdTool>,
+    /// AgentCmdTool result for BDD (#421)
+    pub agent_cmd_result: Option<ToolResult>,
+    /// Shared subagent registry for BDD (#421)
+    pub agent_cmd_registry: Option<quecto::infrastructure::tools::agent_cmd::SubagentRegistry>,
+    /// Mock UDS server temp dir for agent_cmd BDD (kept alive)
+    pub _agent_cmd_mock_tmp: Option<TempDir>,
+    /// Last command sent to mock UDS server (#421)
+    pub agent_cmd_last_command: Option<Arc<Mutex<String>>>,
     /// Skill loader workspace directory for skills scenarios
     pub skill_loader_workspace: Option<PathBuf>,
     /// Listed skills from skill loader
@@ -814,6 +824,7 @@ fn table_to_json(table: &gherkin::Table) -> String {
     obj.to_string()
 }
 
+mod agent_cmd_tool_steps;
 mod agent_loop_steps;
 mod agent_tools_steps;
 mod architecture_steps;
