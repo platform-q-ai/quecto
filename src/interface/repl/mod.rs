@@ -435,12 +435,12 @@ fn resolve_progress_callback(
 /// via `agents.defaults.effort` in config or the `QUECTO_AGENTS_DEFAULTS_EFFORT`
 /// env var.
 fn resolve_effort_from_config(config: &Config) -> Option<crate::domain::provider::EffortLevel> {
-    config
-        .agents
-        .defaults
-        .effort
-        .as_deref()
-        .and_then(crate::domain::provider::EffortLevel::parse)
+    config.agents.defaults.effort.as_deref().and_then(|s| {
+        crate::domain::provider::EffortLevel::parse(s).or_else(|| {
+            eprintln!("WARNING: invalid effort level '{}' in config; ignoring", s);
+            None
+        })
+    })
 }
 
 /// Build the system prompt by loading skills and merging with user prompt.

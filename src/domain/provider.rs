@@ -60,7 +60,8 @@ pub struct ChatRequest<'a> {
     pub cancel_flag: Option<CancelFlag>,
     /// Optional effort level for the `output_config.effort` API parameter.
     /// Controls thinking depth and token spend on Opus 4.6 / Sonnet 4.6.
-    /// When `None`, the field is omitted (API defaults to `high`).
+    /// When `None`, the Anthropic provider defaults to `low` for 4.6 models
+    /// (to avoid the API's implicit `high` default); omitted for other models.
     pub effort: Option<EffortLevel>,
 }
 

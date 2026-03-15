@@ -116,11 +116,9 @@ impl AnthropicProvider {
         // Supported on Opus 4.6, Sonnet 4.6, Opus 4.5. Omitted when None
         // for non-adaptive models; defaults to "low" for adaptive (4.6) models
         // to avoid the API's implicit effort=high default (#416).
-        let effective_effort = request.effort.or(if adaptive_model {
-            Some(crate::domain::provider::EffortLevel::Low)
-        } else {
-            None
-        });
+        let effective_effort = request
+            .effort
+            .or_else(|| adaptive_model.then_some(crate::domain::provider::EffortLevel::Low));
         if let Some(effort) = effective_effort {
             body["output_config"] = serde_json::json!({"effort": effort.as_str()});
         }

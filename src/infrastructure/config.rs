@@ -351,7 +351,10 @@ impl Config {
             config.providers.anthropic.api_key = v.clone();
         }
         if let Some(v) = env.get("QUECTO_AGENTS_DEFAULTS_EFFORT") {
-            config.agents.defaults.effort = Some(v.clone());
+            if crate::domain::provider::EffortLevel::parse(v).is_some() {
+                config.agents.defaults.effort = Some(v.clone());
+            }
+            // Invalid values are silently ignored (same as invalid MAX_TOKENS).
         }
         if let Some(v) = env.get("QUECTO_TOOLS_WEB_BRAVE_API_KEY") {
             config.tools.web.brave.api_key = v.clone();
