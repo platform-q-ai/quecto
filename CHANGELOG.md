@@ -3,6 +3,7 @@
 ## 0.22.0 (2026-03-16)
 
 ### Fixed
+- **Full Anthropic provider parity with Pi and OpenCode** (#437): Comprehensive gap analysis identified and fixed 16 differences causing 500 errors. See "Added" and "Changed" sections below for details.
 - **Auto-enable adaptive thinking for Opus 4.6 / Sonnet 4.6** (#432): Quecto was sending `output_config.effort` without `thinking` and including `temperature` alongside effort for 4.6 models, causing 500 errors from the Anthropic API. The provider now always emits `thinking: {type: "adaptive"}` for 4.6 models even when `thinking_level` is `None`, and suppresses temperature. Matches pi-mono's behavior.
 - **User-agent header for OAuth** (#432): Changed from `quecto/0.12.0 (external, cli)` to `claude-cli/2.1.75` to match pi-mono's Claude Code identity headers.
 - **BDD: spill-store steps panic with no Tokio reactor** (#426): Converted two `async fn` BDD step definitions to synchronous functions with inline `tokio::runtime::Runtime`, matching the pattern used by all other async BDD steps.
@@ -11,11 +12,20 @@
 - **BDD: beta headers mock returns 404** (#429): Fixed by #432 — BDD scenario updated to verify the `fine-grained-tool-streaming` beta header is absent (now GA).
 
 ### Added
+- **Claude Code system prompt for OAuth tokens** (#437-1): OAuth requests now prepend "You are Claude Code, Anthropic's official CLI for Claude." to the system prompt, matching pi-mono's behavior. Required by the `claude-code-20250219` beta.
+- **`interleaved-thinking-2025-05-14` beta header** (#437-2): Both API key and OAuth auth now send this header for non-4.6 models (omitted for 4.6 where interleaved thinking is built-in).
+- **`fine-grained-tool-streaming-2025-05-14` beta header restored** (#437-3): Both Pi and OpenCode still send this despite "GA" status. Restored for parity.
+- **Tool name remapping for OAuth** (#437-4): New `claude_code.rs` module maps tool names to Claude Code canonical casing (`read` → `Read`, `bash` → `Bash`, etc.) on outbound requests and reverse-maps on API responses. Uses zero-allocation `eq_ignore_ascii_case`.
+- **Thinking block replay in multi-turn conversations** (#437-5): New `ThinkingBlock` domain type (`Normal` with thinking text + cryptographic signature, `Redacted` with opaque data). Stored on `Message`, propagated through `LlmResponse`, persisted in `FileSessionStore`, and replayed in assistant messages with signatures for API correctness.
+- **`signature_delta` SSE event handling** (#437-6): The SSE accumulator now captures thinking block signatures from `signature_delta` events, enabling complete thinking block capture for multi-turn replay.
+- **`Accept: application/json` header** (#437-10): All Anthropic requests now include this header, matching the `@anthropic-ai/sdk` defaults that Pi uses.
 - **`agent_cmd` tool** (#421): Send commands to spawned UDS subagents — `steer` (interrupt + redirect), `follow_up` (queue message), `abort` (cancel run), `get_state` (check status). Enables orchestration of multiple concurrent agents.
 - **`spawn` now launches UDS-mode agents** (#421): Subagents are spawned as `quecto agent --mode uds` processes with Unix domain sockets, replacing the previous stdin-based approach. Enables async, multi-turn interaction with child agents via `agent_cmd`.
 
 ### Changed
-- **Anthropic provider: `fine-grained-tool-streaming` beta header removed** (#432): The feature graduated to GA on Opus 4.6; the beta header is no longer sent for API key auth.
+- **Anthropic provider: unified header construction** (#437): `apply_auth_headers()` replaced by `apply_headers()` which combines auth, beta, version, and identity headers in one place. `build_beta_header()` is now a standalone function that conditionally includes betas based on model and auth type.
+- **Anthropic provider: `fine-grained-tool-streaming` beta header restored** (#437-3): Reversed the removal from #432 — both Pi and OpenCode still send it, so we do too.
+- **`sanitize_surrogates` is zero-allocation** (#437-14): Returns `Cow::Borrowed` instead of cloning the string. Rust strings cannot contain surrogates, so this is a defence-in-depth no-op.
 - **`web_fetch` SSRF bypass uses per-host allowlist** (#425): The test-support SSRF bypass is now a `Vec<String>` of allowed host:port pairs instead of a blanket boolean, providing more precise test isolation.
 
 ### Documentation
