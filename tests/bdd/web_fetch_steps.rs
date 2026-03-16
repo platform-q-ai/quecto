@@ -175,19 +175,8 @@ fn when_execute_web_fetch_raw_args(world: &mut QuectoWorld, raw: String) {
 
 // ─── Then steps ──────────────────────────────────────────────────────────────
 
-#[then(expr = "the tool result should not contain {string}")]
-fn then_tool_result_not_contains(world: &mut QuectoWorld, unexpected: String) {
-    let result = world.tool_result.as_ref().expect("no tool result");
-    match result {
-        Ok(tr) => assert!(
-            !tr.content.contains(&unexpected),
-            "tool result should NOT contain '{}', but got: {}",
-            unexpected,
-            &tr.content[..tr.content.len().min(500)]
-        ),
-        Err(e) => panic!("tool returned error: {}", e),
-    }
-}
+// NOTE: "the tool result should not contain {string}" step lives in
+// sandbox_steps.rs — do NOT duplicate it here (causes Cucumber ambiguity, #428).
 
 #[then("the tool result should be a domain error")]
 fn then_tool_result_is_domain_error(world: &mut QuectoWorld) {
