@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
 use crate::domain::error::DomainError;
-use crate::domain::message::{Message, Role, StopReason, ToolCall};
+use crate::domain::message::{Message, Role, StopReason, ThinkingBlock, ToolCall};
 use crate::domain::session::{Session, SessionStore};
 
 /// File-based session store. Each session is stored as a JSON file
@@ -53,6 +53,9 @@ struct MessageRecord {
     /// Stop reason for assistant messages (serialised as raw Anthropic string).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     stop_reason: Option<String>,
+    /// Extended thinking blocks from assistant messages (#437-5).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    thinking_blocks: Vec<ThinkingBlockRecord>,
 }
 
 fn skip_if_false(v: &bool) -> bool {
@@ -80,6 +83,18 @@ struct ToolCallRecord {
     id: String,
     name: String,
     arguments: String,
+}
+
+/// Serializable representation of a thinking block (#437-5).
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type")]
+enum ThinkingBlockRecord {
+    /// Normal thinking block with visible reasoning text and signature.
+    #[serde(rename = "normal")]
+    Normal { thinking: String, signature: String },
+    /// Redacted thinking block (reasoning hidden by safety filters).
+    #[serde(rename = "redacted")]
+    Redacted { data: String },
 }
 
 impl FileSessionStore {
@@ -208,6 +223,22 @@ fn message_to_record(msg: &Message) -> MessageRecord {
         spill_id: msg.spill_id.clone(),
         is_error: msg.is_error,
         stop_reason: msg.stop_reason.as_ref().map(stop_reason_to_str),
+        thinking_blocks: msg
+            .thinking_blocks
+            .iter()
+            .map(|tb| match tb {
+                ThinkingBlock::Normal {
+                    thinking,
+                    signature,
+                } => ThinkingBlockRecord::Normal {
+                    thinking: thinking.clone(),
+                    signature: signature.clone(),
+                },
+                ThinkingBlock::Redacted { data } => {
+                    ThinkingBlockRecord::Redacted { data: data.clone() }
+                }
+            })
+            .collect(),
     }
 }
 
@@ -242,6 +273,20 @@ fn record_to_message(rec: MessageRecord) -> Message {
     if let Some(pinned) = rec.is_pinned {
         msg.is_pinned = pinned;
     }
+    msg.thinking_blocks = rec
+        .thinking_blocks
+        .into_iter()
+        .map(|tb| match tb {
+            ThinkingBlockRecord::Normal {
+                thinking,
+                signature,
+            } => ThinkingBlock::Normal {
+                thinking,
+                signature,
+            },
+            ThinkingBlockRecord::Redacted { data } => ThinkingBlock::Redacted { data },
+        })
+        .collect();
     msg
 }
 

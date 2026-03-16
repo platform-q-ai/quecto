@@ -92,6 +92,7 @@ impl BddTestProvider {
                 tool_calls: vec![],
                 usage: None,
                 stop_reason: None,
+                thinking_blocks: vec![],
             })),
         })
     }
@@ -490,6 +491,7 @@ impl RoutingTracker {
                 tool_calls: vec![],
                 usage: None,
                 stop_reason: None,
+                thinking_blocks: vec![],
             })),
         })
     }
@@ -548,6 +550,7 @@ impl LlmProvider for SlicePtrBddProvider {
                 tool_calls: vec![],
                 usage: None,
                 stop_reason: None,
+                thinking_blocks: vec![],
             })
         })
     }

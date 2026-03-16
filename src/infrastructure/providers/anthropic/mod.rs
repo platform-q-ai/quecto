@@ -1,5 +1,9 @@
 // Anthropic adapter: impl LlmProvider for AnthropicProvider.
+//
+// Parity targets: pi-mono (github.com/badlogic/pi-mono) and
+// OpenCode (github.com/anomalyco/opencode). See gap analysis #437.
 
+mod claude_code;
 mod normalize;
 
 use std::future::Future;
@@ -8,6 +12,7 @@ use std::pin::Pin;
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, Role, StopReason, ToolCall, UsageInfo};
 use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
+use claude_code::{CLAUDE_CODE_VERSION, sanitize_surrogates, to_claude_code_name};
 
 mod anthropic_sse;
 mod anthropic_user_msg;
@@ -40,68 +45,101 @@ impl AnthropicProvider {
         }
     }
 
-    /// Apply the correct auth headers based on whether this is an OAuth or API key token.
+    /// Whether this provider instance uses OAuth authentication.
+    pub fn is_oauth(&self) -> bool {
+        self.is_oauth
+    }
+
+    // -----------------------------------------------------------------------
+    // Headers (#437-1,2,3,7,9,10,11,12)
+    // -----------------------------------------------------------------------
+
+    /// Build the `anthropic-beta` header value.
     ///
-    /// Note: `fine-grained-tool-streaming-2025-05-14` was removed — it is now GA
-    /// and the beta header is explicitly listed in the migration guide as something
-    /// to remove from requests.
-    fn apply_auth_headers(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    /// Both Pi and OpenCode always send `fine-grained-tool-streaming-2025-05-14`
+    /// and `interleaved-thinking-2025-05-14` (except for 4.6 models where
+    /// interleaved thinking is built-in and the beta is redundant).
+    fn build_beta_header(model: &str, is_oauth: bool) -> String {
+        let adaptive = Self::model_uses_adaptive_thinking(model);
+        let mut betas: Vec<&str> = Vec::new();
+
+        if is_oauth {
+            betas.push("claude-code-20250219");
+            betas.push("oauth-2025-04-20");
+        }
+
+        // Both Pi and OpenCode still send this despite "GA" status.
+        betas.push("fine-grained-tool-streaming-2025-05-14");
+
+        // Omit for 4.6 models where interleaved thinking is built-in (#437-9).
+        if !adaptive {
+            betas.push("interleaved-thinking-2025-05-14");
+        }
+
+        betas.join(",")
+    }
+
+    /// Apply all HTTP headers to a request builder.
+    ///
+    /// Combines auth, beta, version, and identity headers in one place.
+    fn apply_headers(
+        &self,
+        builder: reqwest::RequestBuilder,
+        model: &str,
+    ) -> reqwest::RequestBuilder {
+        let beta = Self::build_beta_header(model, self.is_oauth);
+        let builder = builder
+            .header("anthropic-version", "2023-06-01")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json") // #437-10
+            .header("anthropic-beta", beta);
+
         if self.is_oauth {
             builder
                 .header("Authorization", format!("Bearer {}", self.api_key))
-                .header("anthropic-beta", "claude-code-20250219,oauth-2025-04-20")
-                .header("user-agent", "claude-cli/2.1.75")
+                .header("user-agent", format!("claude-cli/{}", CLAUDE_CODE_VERSION))
                 .header("x-app", "cli")
         } else {
             builder.header("x-api-key", &self.api_key)
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Model detection
+    // -----------------------------------------------------------------------
+
     /// Returns `true` for models that use adaptive thinking (Opus 4.6, Sonnet 4.6).
     ///
     /// These models deprecate `thinking: {type: "enabled", budget_tokens: N}` in
     /// favour of `thinking: {type: "adaptive"}` with `output_config.effort`.
-    ///
-    /// Uses the same zero-allocation case-insensitive prefix check as `model_pricing`.
     fn model_uses_adaptive_thinking(model: &str) -> bool {
         use crate::domain::message::starts_with_ci;
         starts_with_ci(model, "claude-opus-4-6") || starts_with_ci(model, "claude-sonnet-4-6")
     }
 
+    // -----------------------------------------------------------------------
+    // Request body building
+    // -----------------------------------------------------------------------
+
     /// Build the JSON request body for Anthropic Messages API.
-    fn build_request_body(request: &ChatRequest<'_>) -> (Option<String>, serde_json::Value) {
-        let (system_prompt, mut api_messages) =
-            Self::build_messages(request.messages, request.model);
-        let mut body = serde_json::json!({
-            "model": request.model,
-            "messages": [],
-        });
-
-        let adaptive_model = Self::model_uses_adaptive_thinking(request.model);
-
-        // Thinking configuration:
-        //   - 4.6 models (Opus 4.6, Sonnet 4.6) → ALWAYS use adaptive thinking,
-        //     even when thinking_level is None (#432). This matches pi-mono behaviour
-        //     and avoids 500 errors from sending output_config.effort without thinking.
-        //   - ThinkingLevel::Adaptive (any model) → {type: "adaptive"}, no budget_tokens
-        //   - Manual level on Opus 4.6 / Sonnet 4.6 → also adaptive (budget_tokens is
-        //     deprecated on these models; manual levels map to effort instead)
-        //   - Manual level on older models → {type: "enabled", budget_tokens: N}
-        // Temperature must always be excluded when thinking is enabled.
+    ///
+    /// `is_oauth` controls Claude Code identity injection (system prompt prefix
+    /// and tool name remapping). Passed from `self.is_oauth` in the `LlmProvider`
+    /// impl methods.
+    /// Apply thinking/temperature/effort configuration to the request body.
+    fn apply_thinking_config(
+        body: &mut serde_json::Value,
+        request: &ChatRequest<'_>,
+        adaptive_model: bool,
+    ) {
         if adaptive_model {
-            // 4.6 models: always use adaptive thinking regardless of thinking_level.
             body["max_tokens"] = serde_json::json!(request.max_tokens);
             body["thinking"] = serde_json::json!({"type": "adaptive"});
-            // temperature excluded (Anthropic API requirement for thinking)
         } else if let Some(level) = request.thinking_level {
             if level.is_adaptive() {
-                // Explicit adaptive mode on non-4.6 model (future-proofing).
                 body["max_tokens"] = serde_json::json!(request.max_tokens);
                 body["thinking"] = serde_json::json!({"type": "adaptive"});
-                // temperature excluded
             } else {
-                // Manual mode: older models (Opus 4.5, Sonnet 4.5, Haiku 4.5, etc.)
-                // budget_tokens() is safe here: level is not Adaptive (checked above).
                 let budget = level
                     .budget_tokens()
                     .expect("non-Adaptive level has a budget");
@@ -110,43 +148,72 @@ impl AnthropicProvider {
                     "type": "enabled",
                     "budget_tokens": budget,
                 });
-                // temperature excluded (Anthropic API requirement for thinking)
             }
         } else {
-            // Non-4.6 model with no thinking level: include temperature.
             body["max_tokens"] = serde_json::json!(request.max_tokens);
             body["temperature"] = serde_json::json!(request.temperature);
         }
-
-        // effort → output_config.effort (GA, no beta header required).
-        // Supported on Opus 4.6, Sonnet 4.6, Opus 4.5. Omitted when None
-        // for non-adaptive models; defaults to "low" for adaptive (4.6) models
-        // to avoid the API's implicit effort=high default (#416).
         let effective_effort = request
             .effort
             .or_else(|| adaptive_model.then_some(crate::domain::provider::EffortLevel::Low));
         if let Some(effort) = effective_effort {
             body["output_config"] = serde_json::json!({"effort": effort.as_str()});
         }
+    }
 
-        // System prompt as content block array with cache_control for prompt caching (#176).
-        if let Some(ref sys) = system_prompt {
+    /// Apply system prompt to the request body (#437-1).
+    fn apply_system_prompt(
+        body: &mut serde_json::Value,
+        system_prompt: &Option<String>,
+        is_oauth: bool,
+    ) {
+        if is_oauth {
+            let mut blocks = vec![serde_json::json!({
+                "type": "text",
+                "text": "You are Claude Code, Anthropic's official CLI for Claude.",
+                "cache_control": { "type": "ephemeral" }
+            })];
+            if let Some(sys) = system_prompt {
+                blocks.push(serde_json::json!({
+                    "type": "text",
+                    "text": sanitize_surrogates(sys),
+                    "cache_control": { "type": "ephemeral" }
+                }));
+            }
+            body["system"] = serde_json::Value::Array(blocks);
+        } else if let Some(sys) = system_prompt {
             body["system"] = serde_json::json!([{
                 "type": "text",
-                "text": sys,
+                "text": sanitize_surrogates(sys),
                 "cache_control": { "type": "ephemeral" }
             }]);
         }
+    }
 
-        Self::apply_cache_control_to_last_user_message(&mut api_messages); // #176
+    fn build_request_body(
+        request: &ChatRequest<'_>,
+        is_oauth: bool,
+    ) -> (Option<String>, serde_json::Value) {
+        let (system_prompt, mut api_messages) =
+            Self::build_messages(request.messages, request.model, is_oauth);
+        let mut body = serde_json::json!({
+            "model": request.model,
+            "messages": [],
+        });
+
+        let adaptive_model = Self::model_uses_adaptive_thinking(request.model);
+        Self::apply_thinking_config(&mut body, request, adaptive_model);
+        Self::apply_system_prompt(&mut body, &system_prompt, is_oauth);
+        Self::apply_cache_control_to_last_user_message(&mut api_messages);
 
         body["messages"] = serde_json::Value::Array(api_messages);
 
         if !request.tools.is_empty() {
-            body["tools"] = serde_json::Value::Array(Self::build_tool_defs(request.tools));
+            body["tools"] =
+                serde_json::Value::Array(Self::build_tool_defs(request.tools, is_oauth));
         }
 
-        // tool_choice (#183)
+        // tool_choice
         if let Some(ref tc) = request.tool_choice {
             body["tool_choice"] = match tc {
                 crate::domain::provider::ToolChoice::Auto => {
@@ -156,12 +223,17 @@ impl AnthropicProvider {
                     serde_json::json!({"type": "any"})
                 }
                 crate::domain::provider::ToolChoice::Specific(name) => {
-                    serde_json::json!({"type": "tool", "name": name})
+                    let tool_name = if is_oauth {
+                        to_claude_code_name(name).to_string()
+                    } else {
+                        name.clone()
+                    };
+                    serde_json::json!({"type": "tool", "name": tool_name})
                 }
             };
         }
 
-        // metadata (#186)
+        // metadata
         if let Some(ref meta) = request.metadata {
             if let Some(ref user_id) = meta.user_id {
                 body["metadata"] = serde_json::json!({"user_id": user_id});
@@ -172,11 +244,7 @@ impl AnthropicProvider {
     }
 
     /// Apply `cache_control: { type: "ephemeral" }` to the last user message.
-    ///
-    /// If the last user message content is a plain string, converts it to a
-    /// content block array so cache_control can be attached.
     fn apply_cache_control_to_last_user_message(api_messages: &mut [serde_json::Value]) {
-        // Find the last user message by scanning backwards.
         let last_user_idx = api_messages
             .iter()
             .rposition(|m| m["role"].as_str() == Some("user"));
@@ -188,7 +256,6 @@ impl AnthropicProvider {
                 .expect("user message must have content");
 
             if content.is_string() {
-                // Convert string to content block array.
                 let text = content.as_str().unwrap_or("").to_string();
                 *content = serde_json::json!([{
                     "type": "text",
@@ -196,7 +263,6 @@ impl AnthropicProvider {
                     "cache_control": { "type": "ephemeral" }
                 }]);
             } else if let Some(blocks) = content.as_array_mut() {
-                // Add cache_control to the last block.
                 if let Some(last_block) = blocks.last_mut() {
                     last_block["cache_control"] = serde_json::json!({"type": "ephemeral"});
                 }
@@ -210,13 +276,12 @@ impl AnthropicProvider {
 
     /// Convert domain messages to Anthropic API message format.
     ///
-    /// Applies the #184 normalization pipeline (ID normalization, orphaned tool
-    /// call injection, errored message filtering) then batches consecutive tool
-    /// result messages into a single user message (#187).
-    /// Applies #188 user message content block support (images + capability filtering).
+    /// Applies normalization, batches consecutive tool results, and handles
+    /// thinking block replay (#437-5) and tool name remapping (#437-4).
     fn build_messages(
         messages: &[Message],
         model: &str,
+        is_oauth: bool,
     ) -> (Option<String>, Vec<serde_json::Value>) {
         let supports_vision = anthropic_user_msg::model_supports_vision(model);
         let normalized = Self::normalize_messages(messages);
@@ -225,7 +290,6 @@ impl AnthropicProvider {
         let mut i = 0;
 
         while i < normalized.len() {
-            // Cow<Message> auto-derefs to &Message via Deref.
             let m: &Message = &normalized[i];
             match m.role {
                 Role::System => {
@@ -241,11 +305,10 @@ impl AnthropicProvider {
                     i += 1;
                 }
                 Role::Assistant => {
-                    api_messages.push(Self::build_assistant_message(m));
+                    api_messages.push(Self::build_assistant_message(m, is_oauth));
                     i += 1;
                 }
                 Role::Tool => {
-                    // Batch consecutive tool results into a single user message (#187).
                     let mut tool_results: Vec<serde_json::Value> = Vec::new();
                     while i < normalized.len() && normalized[i].role == Role::Tool {
                         tool_results.push(Self::build_tool_result_block(&normalized[i]));
@@ -263,15 +326,13 @@ impl AnthropicProvider {
         (system_prompt, api_messages)
     }
 
-    /// Build a single `tool_result` content block (without the outer role wrapper).
-    ///
-    /// Used by `build_messages` to batch consecutive tool results.
+    /// Build a single `tool_result` content block.
     fn build_tool_result_block(m: &Message) -> serde_json::Value {
         let content_value = if m.image_blocks.is_empty() {
-            serde_json::Value::String(m.content.clone())
+            serde_json::Value::String(sanitize_surrogates(&m.content).into_owned())
         } else {
             let mut result_content: Vec<serde_json::Value> =
-                vec![serde_json::json!({"type": "text", "text": m.content})];
+                vec![serde_json::json!({"type": "text", "text": sanitize_surrogates(&m.content)})];
             for img in &m.image_blocks {
                 result_content.push(serde_json::json!({
                     "type": "image",
@@ -292,35 +353,13 @@ impl AnthropicProvider {
         })
     }
 
-    /// Build an Anthropic assistant message (with or without tool_use blocks).
-    fn build_assistant_message(m: &Message) -> serde_json::Value {
-        if m.tool_calls.is_empty() {
-            return serde_json::json!({"role": "assistant", "content": m.content});
-        }
-        let mut content_blocks: Vec<serde_json::Value> = Vec::new();
-        if !m.content.is_empty() {
-            content_blocks.push(serde_json::json!({"type": "text", "text": m.content}));
-        }
-        for tc in &m.tool_calls {
-            let input: serde_json::Value = serde_json::from_str(&tc.arguments)
-                .ok()
-                .filter(|v: &serde_json::Value| v.is_object())
-                .unwrap_or_else(|| serde_json::json!({}));
-            content_blocks.push(serde_json::json!({
-                "type": "tool_use",
-                "id": tc.id,
-                "name": tc.name,
-                "input": input,
-            }));
-        }
-        serde_json::json!({"role": "assistant", "content": content_blocks})
+    /// Build an Anthropic assistant message with thinking blocks and tool name
+    /// remapping. Delegated to `claude_code::build_assistant_message` (#437-4,5).
+    fn build_assistant_message(m: &Message, is_oauth: bool) -> serde_json::Value {
+        claude_code::build_assistant_message(m, is_oauth)
     }
 
     /// Build an Anthropic tool_result as a complete user message (single tool result).
-    ///
-    /// Delegates to `build_tool_result_block` and wraps in `{ role: "user" }`.
-    /// Note: for batched tool results, `build_messages` uses `build_tool_result_block`
-    /// directly to group consecutive results into one user message.
     #[cfg(test)]
     fn build_tool_result_message(m: &Message) -> serde_json::Value {
         serde_json::json!({
@@ -329,15 +368,23 @@ impl AnthropicProvider {
         })
     }
 
-    /// Build Anthropic tool definitions from domain ToolDefinitions.
-    fn build_tool_defs(tools: &[crate::domain::tool::ToolDefinition]) -> Vec<serde_json::Value> {
+    /// Build Anthropic tool definitions with optional name remapping (#437-4).
+    fn build_tool_defs(
+        tools: &[crate::domain::tool::ToolDefinition],
+        is_oauth: bool,
+    ) -> Vec<serde_json::Value> {
         tools
             .iter()
             .map(|t| {
                 let input_schema: serde_json::Value =
                     serde_json::from_str(&t.parameters_schema).unwrap_or_default();
+                let name = if is_oauth {
+                    to_claude_code_name(&t.name).to_string()
+                } else {
+                    t.name.to_string()
+                };
                 serde_json::json!({
-                    "name": t.name,
+                    "name": name,
                     "description": t.description,
                     "input_schema": input_schema,
                 })
@@ -355,7 +402,11 @@ impl AnthropicProvider {
     }
 
     /// Parse the Anthropic response JSON into our domain LlmResponse.
-    fn parse_response(body: &serde_json::Value) -> Result<LlmResponse, DomainError> {
+    fn parse_response(
+        body: &serde_json::Value,
+        is_oauth: bool,
+        tools: &[crate::domain::tool::ToolDefinition],
+    ) -> Result<LlmResponse, DomainError> {
         let content_blocks = body["content"]
             .as_array()
             .ok_or_else(|| DomainError::Provider("missing content in response".to_string()))?;
@@ -372,7 +423,13 @@ impl AnthropicProvider {
                 }
                 Some("tool_use") => {
                     let id = block["id"].as_str().unwrap_or_default().to_string();
-                    let name = block["name"].as_str().unwrap_or_default().to_string();
+                    let raw_name = block["name"].as_str().unwrap_or_default().to_string();
+                    // Reverse-map Claude Code tool names for OAuth (#437-4)
+                    let name = if is_oauth {
+                        claude_code::from_claude_code_name(&raw_name, tools)
+                    } else {
+                        raw_name
+                    };
                     let input = &block["input"];
                     let arguments = serde_json::to_string(input).unwrap_or_default();
                     tool_calls.push(ToolCall {
@@ -412,9 +469,14 @@ impl AnthropicProvider {
             tool_calls,
             usage,
             stop_reason,
+            thinking_blocks: vec![],
         })
     }
 }
+
+// ---------------------------------------------------------------------------
+// LlmProvider trait impl
+// ---------------------------------------------------------------------------
 
 impl LlmProvider for AnthropicProvider {
     fn name(&self) -> &str {
@@ -426,7 +488,9 @@ impl LlmProvider for AnthropicProvider {
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         let model = request.model.to_string();
-        let (_system, body) = Self::build_request_body(&request);
+        let is_oauth = self.is_oauth;
+        let tools_snapshot: Vec<crate::domain::tool::ToolDefinition> = request.tools.to_vec();
+        let (_system, body) = Self::build_request_body(&request, is_oauth);
         let url = format!("{}/v1/messages", self.api_base);
         let cancel = request.cancel_flag.clone();
 
@@ -434,13 +498,8 @@ impl LlmProvider for AnthropicProvider {
             if cancel.as_ref().is_some_and(|f| f.is_cancelled()) {
                 return Err(DomainError::Provider("request cancelled".into()));
             }
-            let request_builder = self
-                .client
-                .post(&url)
-                .header("anthropic-version", "2023-06-01")
-                .header("Content-Type", "application/json")
-                .json(&body);
-            let request_builder = self.apply_auth_headers(request_builder);
+            let request_builder = self.client.post(&url).json(&body);
+            let request_builder = self.apply_headers(request_builder, &model);
 
             let response = request_builder
                 .send()
@@ -465,7 +524,7 @@ impl LlmProvider for AnthropicProvider {
                     DomainError::Provider(format!("failed to parse response JSON: {}", e))
                 })?;
 
-            let mut resp = Self::parse_response(&response_json)?;
+            let mut resp = Self::parse_response(&response_json, is_oauth, &tools_snapshot)?;
             Self::attach_cost(&mut resp, &model);
             Ok(resp)
         })
@@ -476,7 +535,7 @@ impl LlmProvider for AnthropicProvider {
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         let model = request.model.to_string();
-        let (_system, mut body) = Self::build_request_body(&request);
+        let (_system, mut body) = Self::build_request_body(&request, self.is_oauth);
         body["stream"] = serde_json::Value::Bool(true);
         let url = format!("{}/v1/messages", self.api_base);
         let cancel = request.cancel_flag.clone();
@@ -485,7 +544,7 @@ impl LlmProvider for AnthropicProvider {
             if cancel.as_ref().is_some_and(|f| f.is_cancelled()) {
                 return Err(DomainError::Provider("request cancelled".into()));
             }
-            let mut resp = self.stream_chat_with_body(body, &url).await?;
+            let mut resp = self.stream_chat_with_body(body, &url, &model).await?;
             Self::attach_cost(&mut resp, &model);
             Ok(resp)
         })
@@ -495,12 +554,12 @@ impl LlmProvider for AnthropicProvider {
         &self,
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + '_>> {
-        let (_system, mut body) = Self::build_request_body(&request);
+        let model = request.model.to_string();
+        let (_system, mut body) = Self::build_request_body(&request, self.is_oauth);
         body["stream"] = serde_json::Value::Bool(true);
         let url = format!("{}/v1/messages", self.api_base);
         let cancel = request.cancel_flag.clone();
 
-        // Clone all fields needed so the background task can be 'static.
         let api_key = self.api_key.clone();
         let api_base = self.api_base.clone();
         let is_oauth = self.is_oauth;
@@ -514,7 +573,6 @@ impl LlmProvider for AnthropicProvider {
                     .await;
                 return rx;
             }
-            // Spawn the pump as a detached task so rx is returned immediately.
             tokio::spawn(async move {
                 let provider = AnthropicProvider {
                     api_key,
@@ -523,7 +581,12 @@ impl LlmProvider for AnthropicProvider {
                     is_oauth,
                 };
                 provider
-                    .stream_chat_incremental_with_body(body, &url, tx)
+                    .stream_chat_incremental_with_body(anthropic_sse::IncrementalStreamParams {
+                        body,
+                        url: &url,
+                        model: &model,
+                        tx,
+                    })
                     .await;
             });
 
@@ -532,24 +595,35 @@ impl LlmProvider for AnthropicProvider {
     }
 }
 
-/// Public test-support methods (BDD steps need access to internal builders).
+// ---------------------------------------------------------------------------
+// Public test-support methods
+// ---------------------------------------------------------------------------
+
 #[cfg(any(test, feature = "test-support"))]
 impl AnthropicProvider {
     pub fn build_request_body_public(
         request: &ChatRequest<'_>,
     ) -> (Option<String>, serde_json::Value) {
-        Self::build_request_body(request)
+        Self::build_request_body(request, false)
+    }
+
+    /// Build request body with explicit `is_oauth` flag (for OAuth-specific tests).
+    pub fn build_request_body_with_oauth(
+        request: &ChatRequest<'_>,
+        is_oauth: bool,
+    ) -> (Option<String>, serde_json::Value) {
+        Self::build_request_body(request, is_oauth)
     }
 
     pub fn build_messages_public(messages: &[Message]) -> (Option<String>, Vec<serde_json::Value>) {
-        Self::build_messages(messages, "claude-opus-4-5")
+        Self::build_messages(messages, "claude-opus-4-5", false)
     }
 
     pub fn build_messages_for_model_public(
         messages: &[Message],
         model: &str,
     ) -> (Option<String>, Vec<serde_json::Value>) {
-        Self::build_messages(messages, model)
+        Self::build_messages(messages, model, false)
     }
 
     /// Public wrapper for `parse_sse_response` (for BDD tests).
@@ -558,11 +632,6 @@ impl AnthropicProvider {
     }
 
     /// Parse Anthropic SSE text into a sequence of [`StreamEvent`]s.
-    ///
-    /// Emits granular events (TextDelta, ToolCallStart, etc.) for each SSE
-    /// packet, enabling incremental delivery to callers.  Exposed publicly
-    /// only under test builds so the incremental protocol can be unit-tested
-    /// without an HTTP server.
     fn parse_sse_events(raw: &str) -> Vec<StreamEvent> {
         let mut events: Vec<StreamEvent> = Vec::new();
         let mut acc = SseAccumulator::default();
@@ -586,9 +655,6 @@ impl AnthropicProvider {
         events
     }
 
-    /// Dispatch one SSE event into the accumulator and event list.
-    ///
-    /// Returns `true` when `message_stop` is received (caller should stop).
     fn collect_sse_event(
         event_type: &str,
         chunk: &serde_json::Value,
@@ -630,20 +696,40 @@ impl AnthropicProvider {
         false
     }
 
-    /// Public wrapper for `parse_sse_events` (for BDD tests — #181).
     pub fn parse_sse_events_public(raw: &str) -> Vec<StreamEvent> {
         Self::parse_sse_events(raw)
     }
 
-    /// Public wrapper for `build_tool_result_message` (for BDD tests).
     pub fn build_tool_result_message_public(m: &Message) -> serde_json::Value {
         serde_json::json!({
             "role": "user",
             "content": [Self::build_tool_result_block(m)],
         })
     }
+
+    /// Public helper: build beta header for testing.
+    pub fn build_beta_header_public(model: &str, is_oauth: bool) -> String {
+        Self::build_beta_header(model, is_oauth)
+    }
+
+    /// Public helper: convert tool name to Claude Code canonical casing.
+    pub fn to_claude_code_name_public(name: &str) -> &str {
+        to_claude_code_name(name)
+    }
+
+    /// Public helper: reverse tool name mapping.
+    pub fn from_claude_code_name_public(
+        name: &str,
+        tool_defs: &[crate::domain::tool::ToolDefinition],
+    ) -> String {
+        claude_code::from_claude_code_name(name, tool_defs)
+    }
 }
 
 #[cfg(test)]
 #[path = "anthropic_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "anthropic_parity_tests.rs"]
+mod parity_tests;

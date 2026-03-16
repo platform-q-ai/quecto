@@ -1,14 +1,12 @@
 // Anthropic SSE accumulator and parser — extracted from anthropic.rs to keep
 // individual files under the 750-line quality gate.
+//
+// #437: Added `signature_delta` handling for thinking block signature capture.
 
-use crate::domain::message::{LlmResponse, StopReason, ToolCall, UsageInfo};
+use crate::domain::message::{LlmResponse, StopReason, ThinkingBlock, ToolCall, UsageInfo};
 use crate::domain::provider::StreamEvent;
 
 /// Accumulates Anthropic SSE events into a final [`LlmResponse`].
-///
-/// Both the buffered (`parse_sse_response`) and the true incremental
-/// (`stream_chat_incremental_with_body`) code paths use this type to build
-/// the assembled response from event fragments.
 #[derive(Default)]
 pub(super) struct SseAccumulator {
     content: String,
@@ -22,6 +20,13 @@ pub(super) struct SseAccumulator {
     cache_read_tokens: Option<u32>,
     cache_write_tokens: Option<u32>,
     stop_reason: Option<StopReason>,
+    // Thinking block accumulation (#437-5,6)
+    thinking_blocks: Vec<ThinkingBlock>,
+    current_thinking: String,
+    current_thinking_signature: String,
+    in_thinking: bool,
+    in_redacted_thinking: bool,
+    current_redacted_data: String,
 }
 
 impl SseAccumulator {
@@ -32,17 +37,28 @@ impl SseAccumulator {
     }
 
     pub(super) fn handle_block_start(&mut self, chunk: &serde_json::Value) {
-        if chunk["content_block"]["type"].as_str() == Some("tool_use") {
-            self.current_tool_id = chunk["content_block"]["id"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string();
-            self.current_tool_name = chunk["content_block"]["name"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string();
-            self.current_tool_input.clear();
-            self.in_tool_input = true;
+        let block = &chunk["content_block"];
+        match block["type"].as_str() {
+            Some("tool_use") => {
+                self.current_tool_id = block["id"].as_str().unwrap_or_default().to_string();
+                self.current_tool_name = block["name"].as_str().unwrap_or_default().to_string();
+                self.current_tool_input.clear();
+                self.in_tool_input = true;
+            }
+            Some("thinking") => {
+                self.current_thinking.clear();
+                self.current_thinking_signature.clear();
+                self.in_thinking = true;
+                self.in_redacted_thinking = false;
+            }
+            Some("redacted_thinking") => {
+                // Redacted thinking blocks carry the opaque `data` payload
+                // in the content_block_start event itself.
+                self.in_redacted_thinking = true;
+                self.in_thinking = false;
+                self.current_redacted_data = block["data"].as_str().unwrap_or_default().to_string();
+            }
+            _ => {}
         }
     }
 
@@ -59,6 +75,17 @@ impl SseAccumulator {
                     self.current_tool_input.push_str(json);
                 }
             }
+            Some("thinking_delta") => {
+                if let Some(thinking) = delta["thinking"].as_str() {
+                    self.current_thinking.push_str(thinking);
+                }
+            }
+            Some("signature_delta") => {
+                // #437-6: Capture thinking block signature for multi-turn replay.
+                if let Some(sig) = delta["signature"].as_str() {
+                    self.current_thinking_signature.push_str(sig);
+                }
+            }
             _ => {}
         }
     }
@@ -71,6 +98,24 @@ impl SseAccumulator {
                 arguments: std::mem::take(&mut self.current_tool_input),
             });
             self.in_tool_input = false;
+        }
+        if self.in_thinking {
+            let thinking = std::mem::take(&mut self.current_thinking);
+            let signature = std::mem::take(&mut self.current_thinking_signature);
+            if !thinking.trim().is_empty() || !signature.is_empty() {
+                self.thinking_blocks.push(ThinkingBlock::Normal {
+                    thinking,
+                    signature,
+                });
+            }
+            self.in_thinking = false;
+        }
+        if self.in_redacted_thinking {
+            let data = std::mem::take(&mut self.current_redacted_data);
+            if !data.is_empty() {
+                self.thinking_blocks.push(ThinkingBlock::Redacted { data });
+            }
+            self.in_redacted_thinking = false;
         }
     }
 
@@ -88,7 +133,6 @@ impl SseAccumulator {
         }
     }
 
-    /// Extract usage fields from an Anthropic usage object.
     fn update_usage_fields(&mut self, usage: &serde_json::Map<String, serde_json::Value>) {
         if let Some(v) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
             self.prompt_tokens = Some(v as u32);
@@ -133,14 +177,21 @@ impl SseAccumulator {
             tool_calls: self.tool_calls,
             usage,
             stop_reason: self.stop_reason,
+            thinking_blocks: self.thinking_blocks,
         }
+    }
+
+    /// Extract accumulated thinking blocks for test assertions.
+    ///
+    /// Used by `test_sse_signature_delta_accumulates_signature` to verify
+    /// that `signature_delta` events are correctly accumulated.
+    #[cfg(test)]
+    pub(super) fn thinking_blocks(&self) -> &[ThinkingBlock] {
+        &self.thinking_blocks
     }
 }
 
 /// Emit a [`StreamEvent`] for a single `content_block_delta` SSE event.
-///
-/// Returns `Some(event)` when the delta type is known and the payload is
-/// non-empty; returns `None` for unknown delta types or empty payloads.
 pub(super) fn stream_event_from_delta(delta: &serde_json::Value) -> Option<StreamEvent> {
     match delta["type"].as_str() {
         Some("text_delta") => {
@@ -155,36 +206,38 @@ pub(super) fn stream_event_from_delta(delta: &serde_json::Value) -> Option<Strea
             let partial = delta["partial_json"].as_str().filter(|s| !s.is_empty())?;
             Some(StreamEvent::ToolCallDelta(partial.to_string()))
         }
+        // signature_delta is handled by the accumulator, no StreamEvent emitted.
         _ => None,
     }
 }
 
 // ---------------------------------------------------------------------------
 // Streaming impl block for AnthropicProvider
-// Placed here to keep anthropic/mod.rs within the 750-line quality gate.
 // ---------------------------------------------------------------------------
 
 use super::AnthropicProvider;
 use crate::domain::error::DomainError;
 
+/// Parameters for incremental streaming (avoids 5-arg method).
+pub(super) struct IncrementalStreamParams<'a> {
+    pub body: serde_json::Value,
+    pub url: &'a str,
+    pub model: &'a str,
+    pub tx: tokio::sync::mpsc::Sender<StreamEvent>,
+}
+
 impl AnthropicProvider {
     /// Send a streaming chat request with a pre-built JSON body.
     ///
-    /// Reads the **entire** SSE response as text, then parses events
-    /// post-hoc.  Used by `chat_stream()`; for true incremental delivery
-    /// use `stream_chat_incremental_with_body()`.
+    /// `model` is passed for header construction (beta header depends on model).
     pub(super) async fn stream_chat_with_body(
         &self,
         body: serde_json::Value,
         url: &str,
+        model: &str,
     ) -> Result<LlmResponse, DomainError> {
-        let request_builder = self
-            .client
-            .post(url)
-            .header("anthropic-version", "2023-06-01")
-            .header("Content-Type", "application/json")
-            .json(&body);
-        let request_builder = self.apply_auth_headers(request_builder);
+        let request_builder = self.client.post(url).json(&body);
+        let request_builder = self.apply_headers(request_builder, model);
 
         let response = request_builder
             .send()
@@ -239,25 +292,16 @@ impl AnthropicProvider {
         Ok(acc.into_response())
     }
 
-    /// Perform an HTTP streaming request and pipe SSE bytes into a channel
-    /// of [`StreamEvent`]s.
+    /// Perform an HTTP streaming request and pipe SSE bytes into a channel.
     ///
-    /// Uses `reqwest::Response::chunk()` so the body is consumed incrementally
-    /// — callers receive events as they arrive, not after the full response is
-    /// buffered.
+    /// `model` is passed for header construction.
     pub(super) async fn stream_chat_incremental_with_body(
         &self,
-        body: serde_json::Value,
-        url: &str,
-        tx: tokio::sync::mpsc::Sender<StreamEvent>,
+        params: IncrementalStreamParams<'_>,
     ) {
-        let request_builder = self
-            .client
-            .post(url)
-            .header("anthropic-version", "2023-06-01")
-            .header("Content-Type", "application/json")
-            .json(&body);
-        let request_builder = self.apply_auth_headers(request_builder);
+        let request_builder = self.client.post(params.url).json(&params.body);
+        let request_builder = self.apply_headers(request_builder, params.model);
+        let tx = params.tx;
 
         let mut response = match request_builder.send().await {
             Ok(r) => r,
@@ -283,7 +327,6 @@ impl AnthropicProvider {
             return;
         }
 
-        // Delegate byte-stream consumption to the shared SSE pump.
         let mut handler = AnthropicSseHandler::new();
         crate::infrastructure::providers::sse_common::pump_sse(&mut response, &tx, &mut handler)
             .await;
@@ -293,10 +336,6 @@ impl AnthropicProvider {
 use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
 
 /// SSE line handler for the Anthropic Messages API.
-///
-/// Unlike OpenAI/Codex, Anthropic's SSE protocol uses `event:` lines to
-/// name the event type before the corresponding `data:` line. This handler
-/// tracks the current event type across lines.
 struct AnthropicSseHandler {
     current_event: String,
     acc: SseAccumulator,

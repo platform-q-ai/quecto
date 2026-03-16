@@ -34,6 +34,7 @@ impl OpenAiSseHandler {
             tool_calls: std::mem::take(&mut self.tool_calls),
             usage: None,
             stop_reason: None,
+            thinking_blocks: vec![],
         }
     }
 }

@@ -45,6 +45,7 @@ impl LlmProvider for MockRetryProvider {
                     tool_calls: vec![],
                     usage: None,
                     stop_reason: None,
+                    thinking_blocks: vec![],
                 })
             }
         })
@@ -91,6 +92,7 @@ impl LlmProvider for MockSuccessProvider {
                 tool_calls: vec![],
                 usage: None,
                 stop_reason: None,
+                thinking_blocks: vec![],
             })
         })
     }
@@ -303,6 +305,7 @@ impl LlmProvider for MockPtrCaptureProvider {
                 tool_calls: vec![],
                 usage: None,
                 stop_reason: None,
+                thinking_blocks: vec![],
             })
         })
     }

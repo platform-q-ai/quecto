@@ -294,7 +294,7 @@ fn test_parse_response_extracts_stop_reason_end_turn() {
         "stop_reason": "end_turn",
         "usage": {"input_tokens": 10, "output_tokens": 5}
     });
-    let response = AnthropicProvider::parse_response(&body).unwrap();
+    let response = AnthropicProvider::parse_response(&body, false, &[]).unwrap();
     assert_eq!(
         response.stop_reason,
         Some(crate::domain::message::StopReason::EndTurn)
@@ -308,7 +308,7 @@ fn test_parse_response_extracts_stop_reason_max_tokens() {
         "stop_reason": "max_tokens",
         "usage": {"input_tokens": 10, "output_tokens": 100}
     });
-    let response = AnthropicProvider::parse_response(&body).unwrap();
+    let response = AnthropicProvider::parse_response(&body, false, &[]).unwrap();
     assert_eq!(
         response.stop_reason,
         Some(crate::domain::message::StopReason::MaxTokens)
@@ -322,7 +322,7 @@ fn test_parse_response_extracts_stop_reason_tool_use() {
         "stop_reason": "tool_use",
         "usage": {"input_tokens": 10, "output_tokens": 5}
     });
-    let response = AnthropicProvider::parse_response(&body).unwrap();
+    let response = AnthropicProvider::parse_response(&body, false, &[]).unwrap();
     assert_eq!(
         response.stop_reason,
         Some(crate::domain::message::StopReason::ToolUse)
@@ -393,7 +393,7 @@ fn test_parse_response_extracts_cache_usage() {
             "cache_creation_input_tokens": 20
         }
     });
-    let response = AnthropicProvider::parse_response(&body).unwrap();
+    let response = AnthropicProvider::parse_response(&body, false, &[]).unwrap();
     let usage = response.usage.expect("should have usage");
     assert_eq!(usage.cache_read_tokens, Some(80));
     assert_eq!(usage.cache_write_tokens, Some(20));
@@ -417,7 +417,7 @@ fn test_build_request_body_system_prompt_has_cache_control() {
         cancel_flag: None,
         effort: None,
     };
-    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    let (_sys, body) = AnthropicProvider::build_request_body_public(&req);
     // System prompt should be an array of content blocks with cache_control
     let system = &body["system"];
     assert!(
@@ -456,7 +456,7 @@ fn test_build_request_body_last_user_message_has_cache_control() {
         cancel_flag: None,
         effort: None,
     };
-    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    let (_sys, body) = AnthropicProvider::build_request_body_public(&req);
     let api_messages = body["messages"].as_array().unwrap();
     // Last user message should have cache_control on its content block
     let last_msg = api_messages.last().unwrap();
@@ -505,7 +505,8 @@ fn test_build_messages_batches_consecutive_tool_results() {
         Message::tool("tc_2", "output 2"),
         Message::tool("tc_3", "output 3"),
     ];
-    let (_sys, api_messages) = AnthropicProvider::build_messages(&messages, "claude-opus-4-5");
+    let (_sys, api_messages) =
+        AnthropicProvider::build_messages(&messages, "claude-opus-4-5", false);
     // user, assistant, then ONE user message with 3 tool_result blocks
     assert_eq!(
         api_messages.len(),
@@ -537,7 +538,8 @@ fn test_build_messages_single_tool_result_in_single_message() {
         ),
         Message::tool("tc_1", "output"),
     ];
-    let (_sys, api_messages) = AnthropicProvider::build_messages(&messages, "claude-opus-4-5");
+    let (_sys, api_messages) =
+        AnthropicProvider::build_messages(&messages, "claude-opus-4-5", false);
     assert_eq!(api_messages.len(), 3);
     let tool_msg = &api_messages[2];
     let content = tool_msg["content"]
@@ -570,7 +572,7 @@ fn test_build_request_body_includes_tool_choice_auto() {
         cancel_flag: None,
         effort: None,
     };
-    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    let (_sys, body) = AnthropicProvider::build_request_body_public(&req);
     assert_eq!(body["tool_choice"]["type"], "auto");
 }
 
@@ -595,7 +597,7 @@ fn test_build_request_body_includes_tool_choice_any() {
         cancel_flag: None,
         effort: None,
     };
-    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    let (_sys, body) = AnthropicProvider::build_request_body_public(&req);
     assert_eq!(body["tool_choice"]["type"], "any");
 }
 
@@ -620,7 +622,7 @@ fn test_build_request_body_includes_tool_choice_specific() {
         cancel_flag: None,
         effort: None,
     };
-    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    let (_sys, body) = AnthropicProvider::build_request_body_public(&req);
     assert_eq!(body["tool_choice"]["type"], "tool");
     assert_eq!(body["tool_choice"]["name"], "bash");
 }
@@ -645,7 +647,7 @@ fn test_build_request_body_includes_metadata_user_id() {
         cancel_flag: None,
         effort: None,
     };
-    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    let (_sys, body) = AnthropicProvider::build_request_body_public(&req);
     assert_eq!(body["metadata"]["user_id"], "telegram_12345");
 }
 
@@ -665,7 +667,7 @@ fn test_build_request_body_omits_metadata_when_none() {
         cancel_flag: None,
         effort: None,
     };
-    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    let (_sys, body) = AnthropicProvider::build_request_body_public(&req);
     assert!(body.get("metadata").is_none() || body["metadata"].is_null());
 }
 

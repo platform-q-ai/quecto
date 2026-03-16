@@ -40,6 +40,40 @@ pub struct Message {
     /// is reloaded the image content will not be replayed. This matches the
     /// expected usage pattern (images are sent once in the active session).
     pub user_image_blocks: Vec<UserImageBlock>,
+    /// Extended thinking blocks from assistant messages.
+    ///
+    /// Anthropic's thinking-capable models (Sonnet 4.5+, Opus 4.5+) emit
+    /// `thinking` and `redacted_thinking` content blocks alongside text and
+    /// tool_use blocks. These must be replayed verbatim (with their cryptographic
+    /// signatures) in multi-turn conversations.
+    ///
+    /// Stored as a `Vec` because a single assistant turn can interleave multiple
+    /// thinking blocks with text/tool_use blocks.
+    pub thinking_blocks: Vec<ThinkingBlock>,
+}
+
+/// A thinking content block from an assistant message.
+///
+/// Anthropic's extended thinking produces two block types:
+/// - **Normal**: Contains the reasoning text and a cryptographic signature.
+///   The signature is required for replaying the block in subsequent turns.
+/// - **Redacted**: Contains only an opaque `data` payload (reasoning hidden).
+///   Must be passed back verbatim as `redacted_thinking` in subsequent turns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ThinkingBlock {
+    /// Normal thinking block with visible reasoning text and signature.
+    Normal {
+        /// The model's chain-of-thought reasoning text.
+        thinking: String,
+        /// Cryptographic signature for the thinking block.
+        /// Required by Anthropic's API for replaying thinking in multi-turn.
+        signature: String,
+    },
+    /// Redacted thinking block (reasoning hidden by safety filters).
+    Redacted {
+        /// Opaque encrypted payload — must be passed back verbatim.
+        data: String,
+    },
 }
 
 /// An image block attached directly to a user message.
@@ -119,6 +153,9 @@ pub struct LlmResponse {
     pub usage: Option<UsageInfo>,
     /// The reason the model stopped generating (e.g. end_turn, max_tokens, tool_use).
     pub stop_reason: Option<StopReason>,
+    /// Thinking blocks from the response (for multi-turn replay).
+    /// Populated by the Anthropic provider when extended thinking is enabled.
+    pub thinking_blocks: Vec<ThinkingBlock>,
 }
 
 /// Why the model stopped generating output.

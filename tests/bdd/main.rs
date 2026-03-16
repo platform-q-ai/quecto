@@ -84,6 +84,7 @@ impl LlmProvider for MockLlmProvider {
                     tool_calls: vec![],
                     usage: None,
                     stop_reason: None,
+                    thinking_blocks: vec![],
                 }
             } else {
                 responses.remove(0)

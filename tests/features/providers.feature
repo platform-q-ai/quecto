@@ -106,13 +106,13 @@ Feature: LLM Providers
     Then the tool result JSON should contain "is_error" set to false
 
   # --- #179: Beta headers for API key auth ---
-  # NOTE: fine-grained-tool-streaming is now GA and the beta header has been removed.
-  # The scenario below verifies that API key auth does NOT send the old beta header.
+  # NOTE: fine-grained-tool-streaming was previously removed as "GA", but Pi and OpenCode
+  # both still send it (#437-3). Updated to verify it IS sent for parity.
 
-  Scenario: Anthropic provider does not send fine-grained-tool-streaming beta header (now GA)
+  Scenario: Anthropic provider sends fine-grained-tool-streaming beta header for Pi/OC parity
     Given an Anthropic provider with API key auth and a mock server
     When I send an Anthropic chat request
-    Then the request should not include the "anthropic-beta" header with "fine-grained-tool-streaming-2025-05-14"
+    Then the request should include the "anthropic-beta" header with "fine-grained-tool-streaming-2025-05-14"
 
   # --- #177: Stop reason extraction ---
 
@@ -512,3 +512,114 @@ Feature: LLM Providers
     Given a message list with only user and assistant messages and no tool calls
     When I normalize the messages
     Then all messages should be returned without deep cloning
+
+  # --- #437: Anthropic provider parity with Pi and OpenCode ---
+
+  # #437-1: Claude Code system prompt for OAuth
+  Scenario: OAuth token prepends Claude Code system prompt identity
+    Given an Anthropic request with system prompt "Be helpful" and is_oauth true
+    When I build the Anthropic request body with OAuth
+    Then the system prompt array should have 2 blocks
+    And the first system block text should be "You are Claude Code, Anthropic's official CLI for Claude."
+    And the second system block text should be "Be helpful"
+    And both system blocks should have cache_control ephemeral
+
+  Scenario: OAuth token without system prompt still includes Claude Code identity
+    Given an Anthropic request with no system prompt and is_oauth true
+    When I build the Anthropic request body with OAuth
+    Then the system prompt array should have 1 block
+    And the first system block text should be "You are Claude Code, Anthropic's official CLI for Claude."
+
+  Scenario: API key auth does not prepend Claude Code system prompt
+    Given an Anthropic request with system prompt "Be helpful" and is_oauth false
+    When I build the Anthropic request body without OAuth
+    Then the system prompt array should have 1 block
+    And the first system block text should be "Be helpful"
+
+  # #437-2,3,7,9: Beta headers
+  Scenario: API key auth for non-4.6 model sends interleaved-thinking and fine-grained-tool-streaming betas
+    Given an Anthropic beta header for model "claude-sonnet-4-20250514" with is_oauth false
+    When I build the beta header
+    Then the beta header should contain "fine-grained-tool-streaming-2025-05-14"
+    And the beta header should contain "interleaved-thinking-2025-05-14"
+    And the beta header should not contain "claude-code-20250219"
+
+  Scenario: API key auth for 4.6 model omits interleaved-thinking but keeps fine-grained-tool-streaming
+    Given an Anthropic beta header for model "claude-opus-4-6" with is_oauth false
+    When I build the beta header
+    Then the beta header should contain "fine-grained-tool-streaming-2025-05-14"
+    And the beta header should not contain "interleaved-thinking-2025-05-14"
+
+  Scenario: OAuth auth includes claude-code and oauth betas plus streaming betas
+    Given an Anthropic beta header for model "claude-sonnet-4-20250514" with is_oauth true
+    When I build the beta header
+    Then the beta header should contain "claude-code-20250219"
+    And the beta header should contain "oauth-2025-04-20"
+    And the beta header should contain "fine-grained-tool-streaming-2025-05-14"
+    And the beta header should contain "interleaved-thinking-2025-05-14"
+
+  # #437-4: Tool name remapping for OAuth
+  Scenario: OAuth mode remaps tool names to Claude Code canonical casing
+    Given a tool named "read"
+    When I convert it to Claude Code name
+    Then the result should be "Read"
+
+  Scenario: OAuth mode remaps "bash" to "Bash"
+    Given a tool named "bash"
+    When I convert it to Claude Code name
+    Then the result should be "Bash"
+
+  Scenario: Unknown tool names pass through unchanged
+    Given a tool named "my_custom_tool"
+    When I convert it to Claude Code name
+    Then the result should be "my_custom_tool"
+
+  Scenario: Tool definitions are remapped in OAuth mode
+    Given an Anthropic request with tool "read" and is_oauth true
+    When I build the Anthropic request body with OAuth
+    Then the tool definition name should be "Read"
+
+  Scenario: Tool definitions are NOT remapped in API key mode
+    Given an Anthropic request with tool "read" and is_oauth false
+    When I build the Anthropic request body without OAuth
+    Then the tool definition name should be "read"
+
+  # #437-5: Thinking block replay in multi-turn conversations
+  Scenario: Assistant message with normal thinking block includes thinking in API payload
+    Given an assistant message with a normal thinking block "Let me reason" and signature "sig123"
+    When I build the Anthropic assistant message
+    Then the content blocks should include a thinking block with text "Let me reason" and signature "sig123"
+
+  Scenario: Assistant message with redacted thinking block includes redacted_thinking in API payload
+    Given an assistant message with a redacted thinking block with data "opaque_data_abc"
+    When I build the Anthropic assistant message
+    Then the content blocks should include a redacted_thinking block with data "opaque_data_abc"
+
+  Scenario: Thinking block with empty signature falls back to plain text
+    Given an assistant message with a normal thinking block "some reasoning" and signature ""
+    When I build the Anthropic assistant message
+    Then the content blocks should include a text block with "some reasoning" instead of thinking
+
+  # #437-6: signature_delta SSE handling
+  Scenario: SSE signature_delta events accumulate the thinking block signature
+    Given an Anthropic SSE stream with thinking_delta "reasoning" and signature_delta "sig_abc"
+    When I parse the SSE events
+    Then the accumulated thinking block should have signature "sig_abc"
+
+  # #437-10: Accept header
+  Scenario: Anthropic requests include Accept application/json header
+    Given an Anthropic provider with a mock server expecting Accept header
+    When I send an Anthropic chat request
+    Then the request should include header "Accept" with value "application/json"
+
+  # #437-15: pause_turn stop reason
+  Scenario: StopReason pause_turn is parsed as EndTurn
+    Given a stop reason string "pause_turn"
+    When I parse the stop reason
+    Then the stop reason should be EndTurn
+
+  # #437-16: sensitive stop reason
+  Scenario: StopReason sensitive is parsed as Error
+    Given a stop reason string "sensitive"
+    When I parse the stop reason
+    Then the stop reason should be Error

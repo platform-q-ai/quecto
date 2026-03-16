@@ -20,6 +20,7 @@ fn given_agent_with_mock_for_logging(world: &mut QuectoWorld) {
         }],
         usage: None,
         stop_reason: None,
+        thinking_blocks: vec![],
     });
     // Second response: text
     mock_llm.push_response(LlmResponse {
@@ -27,6 +28,7 @@ fn given_agent_with_mock_for_logging(world: &mut QuectoWorld) {
         tool_calls: vec![],
         usage: None,
         stop_reason: None,
+        thinking_blocks: vec![],
     });
     world.mock_llm = Some(mock_llm);
 

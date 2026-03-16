@@ -28,7 +28,7 @@ fn test_build_request_body_with_thinking_adds_thinking_param() {
         cancel_flag: None,
         effort: None,
     };
-    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    let (_sys, body) = AnthropicProvider::build_request_body_public(&req);
     assert_eq!(body["thinking"]["type"], "enabled");
     assert_eq!(body["thinking"]["budget_tokens"], 10000);
     // Temperature must be excluded when thinking is enabled
@@ -55,7 +55,7 @@ fn test_build_request_body_without_thinking_includes_temperature_for_older_model
         cancel_flag: None,
         effort: None,
     };
-    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    let (_sys, body) = AnthropicProvider::build_request_body_public(&req);
     assert!(body.get("thinking").is_none());
     assert!(
         body.get("temperature").is_some(),
@@ -80,7 +80,7 @@ fn test_46_model_auto_enables_adaptive_thinking_when_level_is_none() {
         cancel_flag: None,
         effort: None,
     };
-    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    let (_sys, body) = AnthropicProvider::build_request_body_public(&req);
     assert_eq!(
         body["thinking"]["type"], "adaptive",
         "4.6 models should auto-enable adaptive thinking, got body: {}",
@@ -117,7 +117,7 @@ fn test_sonnet_46_auto_enables_adaptive_thinking_when_level_is_none() {
         cancel_flag: None,
         effort: None,
     };
-    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    let (_sys, body) = AnthropicProvider::build_request_body_public(&req);
     assert_eq!(body["thinking"]["type"], "adaptive");
     assert!(body.get("temperature").is_none());
     assert_eq!(body["output_config"]["effort"], "low");
@@ -139,7 +139,7 @@ fn test_build_request_body_thinking_bumps_max_tokens() {
         cancel_flag: None,
         effort: None,
     };
-    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    let (_sys, body) = AnthropicProvider::build_request_body_public(&req);
     // max_tokens must be at least budget_tokens (16384) when thinking is enabled
     assert!(
         body["max_tokens"].as_u64().unwrap() >= 16384,
@@ -195,7 +195,7 @@ fn test_parse_response_with_thinking_blocks() {
         "usage": {"input_tokens": 10, "output_tokens": 5},
         "stop_reason": "end_turn"
     });
-    let result = AnthropicProvider::parse_response(&body).unwrap();
+    let result = AnthropicProvider::parse_response(&body, false, &[]).unwrap();
     assert_eq!(result.content.as_deref(), Some("The answer is 42"));
 }
 
@@ -238,7 +238,7 @@ fn test_opus_4_6_adaptive_thinking_emits_correct_json() {
         cancel_flag: None,
         effort: None,
     };
-    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    let (_sys, body) = AnthropicProvider::build_request_body_public(&req);
     assert_eq!(
         body["thinking"]["type"], "adaptive",
         "Opus 4.6 should use adaptive thinking, got: {}",
@@ -271,7 +271,7 @@ fn test_sonnet_4_6_adaptive_thinking_emits_correct_json() {
         cancel_flag: None,
         effort: None,
     };
-    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    let (_sys, body) = AnthropicProvider::build_request_body_public(&req);
     assert_eq!(body["thinking"]["type"], "adaptive");
     assert!(body["thinking"].get("budget_tokens").is_none());
 }
@@ -293,7 +293,7 @@ fn test_older_model_manual_thinking_still_uses_budget_tokens() {
         cancel_flag: None,
         effort: None,
     };
-    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    let (_sys, body) = AnthropicProvider::build_request_body_public(&req);
     assert_eq!(body["thinking"]["type"], "enabled");
     assert!(
         body["thinking"].get("budget_tokens").is_some(),
@@ -324,7 +324,7 @@ fn test_effort_emitted_in_output_config() {
         cancel_flag: None,
         effort: Some(EffortLevel::Medium),
     };
-    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    let (_sys, body) = AnthropicProvider::build_request_body_public(&req);
     assert_eq!(
         body["output_config"]["effort"], "medium",
         "effort should be at output_config.effort, got body: {}",
@@ -359,7 +359,7 @@ fn test_effort_low_emitted_correctly() {
         cancel_flag: None,
         effort: Some(EffortLevel::Low),
     };
-    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    let (_sys, body) = AnthropicProvider::build_request_body_public(&req);
     assert_eq!(body["output_config"]["effort"], "low");
 }
 
@@ -379,7 +379,7 @@ fn test_effort_high_emitted_correctly() {
         cancel_flag: None,
         effort: Some(EffortLevel::High),
     };
-    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    let (_sys, body) = AnthropicProvider::build_request_body_public(&req);
     assert_eq!(body["output_config"]["effort"], "high");
 }
 
@@ -399,7 +399,7 @@ fn test_effort_max_emitted_correctly() {
         cancel_flag: None,
         effort: Some(EffortLevel::Max),
     };
-    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    let (_sys, body) = AnthropicProvider::build_request_body_public(&req);
     assert_eq!(body["output_config"]["effort"], "max");
 }
 
@@ -421,7 +421,7 @@ fn test_no_effort_defaults_to_low_for_46_models() {
         cancel_flag: None,
         effort: None,
     };
-    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    let (_sys, body) = AnthropicProvider::build_request_body_public(&req);
     assert_eq!(
         body["output_config"]["effort"], "low",
         "4.6 model with effort=None should default to low, got: {}",
@@ -457,7 +457,7 @@ fn test_no_effort_omits_output_config_for_non_46_models() {
         cancel_flag: None,
         effort: None,
     };
-    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    let (_sys, body) = AnthropicProvider::build_request_body_public(&req);
     assert!(
         body.get("output_config").is_none(),
         "non-4.6 model with effort=None should omit output_config, got: {}",
@@ -482,7 +482,7 @@ fn test_adaptive_thinking_with_effort_combined() {
         cancel_flag: None,
         effort: Some(EffortLevel::High),
     };
-    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    let (_sys, body) = AnthropicProvider::build_request_body_public(&req);
     assert_eq!(body["thinking"]["type"], "adaptive");
     assert!(body["thinking"].get("budget_tokens").is_none());
     assert_eq!(body["output_config"]["effort"], "high");
@@ -593,13 +593,14 @@ fn test_haiku_4_5_dated_variant_matches() {
 }
 
 // ---------------------------------------------------------------------------
-// Beta header: fine-grained-tool-streaming removed (now GA)
+// Beta header parity with Pi + OpenCode (#437-2,3)
 // ---------------------------------------------------------------------------
 
-/// API-key auth must NOT send the fine-grained-tool-streaming beta header
-/// since it graduated to GA and should be removed per migration guide.
+/// API-key auth sends the correct beta headers for parity with Pi and OpenCode.
+/// Both Pi and OpenCode always send fine-grained-tool-streaming and
+/// interleaved-thinking (except interleaved is omitted for 4.6 models).
 #[tokio::test]
-async fn test_api_key_auth_does_not_send_fine_grained_streaming_beta_header() {
+async fn test_api_key_auth_sends_correct_beta_headers() {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -612,8 +613,6 @@ async fn test_api_key_auth_does_not_send_fine_grained_streaming_beta_header() {
         "stop_reason": "end_turn",
         "usage": {"input_tokens": 5, "output_tokens": 2}
     });
-    // This mock only matches if the beta header is ABSENT — if the header is
-    // present wiremock won't match and the test will get a 404, failing it.
     Mock::given(method("POST"))
         .and(path("/v1/messages"))
         .respond_with(ResponseTemplate::new(200).set_body_json(&response_body))
@@ -626,6 +625,7 @@ async fn test_api_key_auth_does_not_send_fine_grained_streaming_beta_header() {
     let req = ChatRequest {
         messages: &messages,
         tools: &[],
+        // 4.6 model: interleaved-thinking should be OMITTED (built-in)
         model: "claude-opus-4-6",
         max_tokens: 1024,
         temperature: 1.0,
@@ -636,15 +636,9 @@ async fn test_api_key_auth_does_not_send_fine_grained_streaming_beta_header() {
         cancel_flag: None,
         effort: None,
     };
-    // The call must succeed; if the beta header were sent we'd need a matcher
-    // for it but the mock above has no header matcher, so it always matches.
-    // The real assertion is that `apply_auth_headers` no longer sets
-    // "fine-grained-tool-streaming-2025-05-14" at all — checked by
-    // inspecting the captured request below.
     let result = provider.chat(req).await;
     assert!(result.is_ok(), "chat should succeed: {:?}", result);
 
-    // Inspect the single captured request for the absence of the old header.
     let requests = server.received_requests().await.unwrap();
     assert_eq!(requests.len(), 1);
     let req = &requests[0];
@@ -653,9 +647,86 @@ async fn test_api_key_auth_does_not_send_fine_grained_streaming_beta_header() {
         .get("anthropic-beta")
         .map(|v| v.to_str().unwrap_or(""))
         .unwrap_or("");
+
+    // For 4.6 models: fine-grained-tool-streaming present, interleaved-thinking absent
     assert!(
-        !beta.contains("fine-grained-tool-streaming"),
-        "fine-grained-tool-streaming beta header should have been removed (now GA), got: {:?}",
+        beta.contains("fine-grained-tool-streaming-2025-05-14"),
+        "fine-grained-tool-streaming should be sent for Pi/OC parity, got: {:?}",
+        beta
+    );
+    assert!(
+        !beta.contains("interleaved-thinking"),
+        "interleaved-thinking should be omitted for 4.6 models (built-in), got: {:?}",
         beta
     );
 }
+
+/// API-key auth for non-4.6 models sends both beta headers.
+#[tokio::test]
+async fn test_api_key_auth_sends_interleaved_thinking_for_non_46_models() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let response_body = serde_json::json!({
+        "id": "msg_ga2",
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "text", "text": "ok"}],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 5, "output_tokens": 2}
+    });
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response_body))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let provider = AnthropicProvider::new("sk-ant-test".to_string(), Some(server.uri()));
+    let messages = vec![Message::user("Hi")];
+    let req = ChatRequest {
+        messages: &messages,
+        tools: &[],
+        // Non-4.6 model: interleaved-thinking should be present
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1024,
+        temperature: 0.7,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    let result = provider.chat(req).await;
+    assert!(result.is_ok(), "chat should succeed: {:?}", result);
+
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    let req = &requests[0];
+    let beta = req
+        .headers
+        .get("anthropic-beta")
+        .map(|v| v.to_str().unwrap_or(""))
+        .unwrap_or("");
+
+    assert!(
+        beta.contains("fine-grained-tool-streaming-2025-05-14"),
+        "fine-grained-tool-streaming should be present, got: {:?}",
+        beta
+    );
+    assert!(
+        beta.contains("interleaved-thinking-2025-05-14"),
+        "interleaved-thinking should be present for non-4.6 models, got: {:?}",
+        beta
+    );
+    // Should NOT have claude-code or oauth betas (API key auth)
+    assert!(
+        !beta.contains("claude-code"),
+        "claude-code beta should only appear for OAuth, got: {:?}",
+        beta
+    );
+}
+
+// ===========================================================================
