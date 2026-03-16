@@ -14,7 +14,9 @@ Each session is identified by a key in the format `<interface>:<name>`:
 
 Sessions are stored as files in `<base_dir>/sessions/`. The file contains
 the full conversation history (system prompt, user messages, assistant
-responses, tool calls and results).
+responses, tool calls and results). For thinking-capable models (Claude
+Sonnet 4.5+, Opus 4.5+), extended thinking blocks and their cryptographic
+signatures are also persisted, enabling correct multi-turn replay.
 
 ## Session modes
 
