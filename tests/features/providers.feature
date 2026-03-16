@@ -623,3 +623,28 @@ Feature: LLM Providers
     Given a stop reason string "sensitive"
     When I parse the stop reason
     Then the stop reason should be Error
+
+  # #438: SSE streaming reverse-maps OAuth tool names back to registry names
+  Scenario: SSE batch parse reverse-maps PascalCase tool names in OAuth mode
+    Given an Anthropic SSE response with tool "Read" and tool definitions for "read"
+    When I parse the SSE response with OAuth tool remapping
+    Then the tool call name in the response should be "read"
+
+  Scenario: SSE batch parse passes through tool names when no remapping is configured
+    Given an Anthropic SSE response with tool "read" and no tool remapping
+    When I parse the SSE response without OAuth tool remapping
+    Then the tool call name in the response should be "read"
+
+  Scenario: SSE incremental stream reverse-maps PascalCase tool names in OAuth mode
+    Given an Anthropic SSE response with tool "Bash" and tool definitions for "bash"
+    When I parse the SSE events with OAuth tool remapping
+    Then the ToolCallStart event name should be "bash"
+    And the ToolCallEnd event name should be "bash"
+    And the Done response tool call name should be "bash"
+
+  Scenario: SSE incremental stream passes through names when no remapping is configured
+    Given an Anthropic SSE response with tool "bash" and no tool remapping
+    When I parse the SSE events without OAuth tool remapping
+    Then the ToolCallStart event name should be "bash"
+    And the ToolCallEnd event name should be "bash"
+    And the Done response tool call name should be "bash"

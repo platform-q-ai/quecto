@@ -3162,3 +3162,186 @@ fn then_no_output_config(world: &mut QuectoWorld) {
         body
     );
 }
+
+// ===========================================================================
+// #438: SSE streaming reverse-maps OAuth tool names
+// ===========================================================================
+
+/// Build a minimal SSE payload with a single tool call.
+fn build_sse_tool_payload(tool_name: &str) -> String {
+    format!(
+        "event: content_block_start\n\
+         data: {{\"content_block\":{{\"type\":\"tool_use\",\"id\":\"toolu_001\",\"name\":\"{}\"}}}}\n\n\
+         event: content_block_delta\n\
+         data: {{\"delta\":{{\"type\":\"input_json_delta\",\"partial_json\":\"{{\\\"command\\\":\\\"ls\\\"}}\"}}}}\n\n\
+         event: content_block_stop\n\
+         data: {{}}\n\n\
+         event: message_delta\n\
+         data: {{\"delta\":{{\"stop_reason\":\"tool_use\"}}}}\n\n\
+         event: message_stop\n\
+         data: {{}}\n\n",
+        tool_name
+    )
+}
+
+#[given(expr = "an Anthropic SSE response with tool {string} and tool definitions for {string}")]
+fn given_sse_with_tool_and_defs(world: &mut QuectoWorld, wire_name: String, registry_name: String) {
+    world
+        .env_overrides
+        .insert("_sse438_payload".into(), build_sse_tool_payload(&wire_name));
+    world
+        .env_overrides
+        .insert("_sse438_registry_name".into(), registry_name);
+}
+
+#[given(expr = "an Anthropic SSE response with tool {string} and no tool remapping")]
+fn given_sse_with_tool_no_remap(world: &mut QuectoWorld, tool_name: String) {
+    world
+        .env_overrides
+        .insert("_sse438_payload".into(), build_sse_tool_payload(&tool_name));
+    world.env_overrides.remove("_sse438_registry_name");
+}
+
+#[when("I parse the SSE response with OAuth tool remapping")]
+fn when_parse_sse_with_oauth_remap(world: &mut QuectoWorld) {
+    let sse = world
+        .env_overrides
+        .get("_sse438_payload")
+        .expect("no SSE payload")
+        .clone();
+    let registry_name = world
+        .env_overrides
+        .get("_sse438_registry_name")
+        .expect("no registry name")
+        .clone();
+    let tool_defs = vec![quecto::domain::tool::ToolDefinition {
+        name: registry_name.into(),
+        description: "test tool".into(),
+        parameters_schema: "{}".into(),
+    }];
+    let response =
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::parse_sse_response_with_tools_public(&sse, &tool_defs)
+            .expect("SSE parse should succeed");
+    world.streaming_response = Some(response);
+}
+
+#[when("I parse the SSE response without OAuth tool remapping")]
+fn when_parse_sse_without_oauth_remap(world: &mut QuectoWorld) {
+    let sse = world
+        .env_overrides
+        .get("_sse438_payload")
+        .expect("no SSE payload")
+        .clone();
+    let response =
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::parse_sse_response_public(
+            &sse,
+        )
+        .expect("SSE parse should succeed");
+    world.streaming_response = Some(response);
+}
+
+#[then(expr = "the tool call name in the response should be {string}")]
+fn then_tool_call_name_in_response(world: &mut QuectoWorld, expected: String) {
+    let response = world.streaming_response.as_ref().expect("no response");
+    assert!(
+        !response.tool_calls.is_empty(),
+        "expected tool calls in response, got none"
+    );
+    assert_eq!(
+        response.tool_calls[0].name, expected,
+        "expected tool call name '{}', got '{}'",
+        expected, response.tool_calls[0].name
+    );
+}
+
+#[when("I parse the SSE events with OAuth tool remapping")]
+fn when_parse_sse_events_with_oauth_remap(world: &mut QuectoWorld) {
+    let sse = world
+        .env_overrides
+        .get("_sse438_payload")
+        .expect("no SSE payload")
+        .clone();
+    let registry_name = world
+        .env_overrides
+        .get("_sse438_registry_name")
+        .expect("no registry name")
+        .clone();
+    let tool_defs = vec![quecto::domain::tool::ToolDefinition {
+        name: registry_name.into(),
+        description: "test tool".into(),
+        parameters_schema: "{}".into(),
+    }];
+    world.stream_events =
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::parse_sse_events_with_tools_public(&sse, &tool_defs);
+}
+
+#[when("I parse the SSE events without OAuth tool remapping")]
+fn when_parse_sse_events_without_oauth_remap(world: &mut QuectoWorld) {
+    let sse = world
+        .env_overrides
+        .get("_sse438_payload")
+        .expect("no SSE payload")
+        .clone();
+    world.stream_events =
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::parse_sse_events_public(
+            &sse,
+        );
+}
+
+#[then(expr = "the ToolCallStart event name should be {string}")]
+fn then_tool_call_start_name(world: &mut QuectoWorld, expected: String) {
+    use quecto::domain::provider::StreamEvent;
+    let found = world
+        .stream_events
+        .iter()
+        .find_map(|ev| match ev {
+            StreamEvent::ToolCallStart { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .expect("no ToolCallStart event found");
+    assert_eq!(
+        found, expected,
+        "expected ToolCallStart name '{}', got '{}'",
+        expected, found
+    );
+}
+
+#[then(expr = "the ToolCallEnd event name should be {string}")]
+fn then_tool_call_end_name(world: &mut QuectoWorld, expected: String) {
+    use quecto::domain::provider::StreamEvent;
+    let found = world
+        .stream_events
+        .iter()
+        .find_map(|ev| match ev {
+            StreamEvent::ToolCallEnd { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .expect("no ToolCallEnd event found");
+    assert_eq!(
+        found, expected,
+        "expected ToolCallEnd name '{}', got '{}'",
+        expected, found
+    );
+}
+
+#[then(expr = "the Done response tool call name should be {string}")]
+fn then_done_response_tool_call_name(world: &mut QuectoWorld, expected: String) {
+    use quecto::domain::provider::StreamEvent;
+    let response = world
+        .stream_events
+        .iter()
+        .find_map(|ev| match ev {
+            StreamEvent::Done(resp) => Some(resp),
+            _ => None,
+        })
+        .expect("no Done event found");
+    assert!(
+        !response.tool_calls.is_empty(),
+        "expected tool calls in Done response"
+    );
+    assert_eq!(
+        response.tool_calls[0].name, expected,
+        "expected Done response tool call name '{}', got '{}'",
+        expected, response.tool_calls[0].name
+    );
+}

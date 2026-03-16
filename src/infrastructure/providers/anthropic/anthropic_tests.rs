@@ -143,7 +143,7 @@ event: content_block_delta\n\
 data: {\"delta\":{\"type\":\"text_delta\",\"text\":\" from Claude\"}}\n\n\
 event: message_stop\n\
 data: {}\n";
-    let result = AnthropicProvider::parse_sse_response(sse).unwrap();
+    let result = AnthropicProvider::parse_sse_response(sse, None).unwrap();
     assert_eq!(result.content.as_deref(), Some("Hello from Claude"));
     assert!(result.tool_calls.is_empty());
 }
@@ -161,7 +161,7 @@ event: content_block_stop\n\
 data: {}\n\n\
 event: message_stop\n\
 data: {}\n";
-    let result = AnthropicProvider::parse_sse_response(sse).unwrap();
+    let result = AnthropicProvider::parse_sse_response(sse, None).unwrap();
     assert!(result.content.is_none());
     assert_eq!(result.tool_calls.len(), 1);
     assert_eq!(result.tool_calls[0].id, "tu_1");
@@ -172,7 +172,7 @@ data: {}\n";
 #[test]
 fn test_parse_sse_empty_stops() {
     let sse = "event: message_stop\ndata: {}\n";
-    let result = AnthropicProvider::parse_sse_response(sse).unwrap();
+    let result = AnthropicProvider::parse_sse_response(sse, None).unwrap();
     assert!(result.content.is_none());
     assert!(result.tool_calls.is_empty());
 }
@@ -338,7 +338,7 @@ event: message_delta\n\
 data: {\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":10}}\n\n\
 event: message_stop\n\
 data: {}\n";
-    let result = AnthropicProvider::parse_sse_response(sse).unwrap();
+    let result = AnthropicProvider::parse_sse_response(sse, None).unwrap();
     assert_eq!(
         result.stop_reason,
         Some(crate::domain::message::StopReason::EndTurn)
@@ -358,7 +358,7 @@ event: message_delta\n\
 data: {\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":50}}\n\n\
 event: message_stop\n\
 data: {}\n";
-    let result = AnthropicProvider::parse_sse_response(sse).unwrap();
+    let result = AnthropicProvider::parse_sse_response(sse, None).unwrap();
     let usage = result.usage.expect("should have usage");
     assert_eq!(usage.prompt_tokens, 100);
     assert_eq!(usage.completion_tokens, 50);
@@ -375,7 +375,7 @@ event: message_delta\n\
 data: {\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":50}}\n\n\
 event: message_stop\n\
 data: {}\n";
-    let result = AnthropicProvider::parse_sse_response(sse).unwrap();
+    let result = AnthropicProvider::parse_sse_response(sse, None).unwrap();
     let usage = result.usage.expect("should have usage");
     assert_eq!(usage.cache_read_tokens, Some(80));
     assert_eq!(usage.cache_write_tokens, Some(20));

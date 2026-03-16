@@ -5,10 +5,15 @@
 
 use crate::domain::message::{LlmResponse, StopReason, ThinkingBlock, ToolCall, UsageInfo};
 use crate::domain::provider::StreamEvent;
+use crate::domain::tool::ToolDefinition;
 
 /// Accumulates Anthropic SSE events into a final [`LlmResponse`].
 #[derive(Default)]
 pub(super) struct SseAccumulator {
+    /// When `Some`, reverse-maps PascalCase Claude Code tool names (e.g. `"Read"`)
+    /// back to registry names (e.g. `"read"`) using case-insensitive matching.
+    /// Set for OAuth mode; `None` for API key mode (no remapping).
+    tool_defs: Option<Vec<ToolDefinition>>,
     content: String,
     tool_calls: Vec<ToolCall>,
     pub(super) current_tool_id: String,
@@ -30,6 +35,32 @@ pub(super) struct SseAccumulator {
 }
 
 impl SseAccumulator {
+    /// Create an accumulator that reverse-maps tool names via `tool_defs`.
+    pub(super) fn with_tool_defs(tool_defs: Vec<ToolDefinition>) -> Self {
+        Self {
+            tool_defs: Some(tool_defs),
+            ..Default::default()
+        }
+    }
+
+    /// Reverse-map a wire tool name to the registry name.
+    /// Returns the original name unchanged when no tool_defs are configured.
+    pub(super) fn remap_tool_name(&self, raw: &str) -> String {
+        match &self.tool_defs {
+            Some(defs) => {
+                let remapped = super::claude_code::from_claude_code_name(raw, defs);
+                if remapped == raw {
+                    tracing::debug!(
+                        raw_name = raw,
+                        "SSE tool name not in tool_defs, passing through"
+                    );
+                }
+                remapped
+            }
+            None => raw.to_string(),
+        }
+    }
+
     pub(super) fn handle_message_start(&mut self, chunk: &serde_json::Value) {
         if let Some(usage) = chunk["message"]["usage"].as_object() {
             self.update_usage_fields(usage);
@@ -41,7 +72,8 @@ impl SseAccumulator {
         match block["type"].as_str() {
             Some("tool_use") => {
                 self.current_tool_id = block["id"].as_str().unwrap_or_default().to_string();
-                self.current_tool_name = block["name"].as_str().unwrap_or_default().to_string();
+                let raw_name = block["name"].as_str().unwrap_or_default();
+                self.current_tool_name = self.remap_tool_name(raw_name);
                 self.current_tool_input.clear();
                 self.in_tool_input = true;
             }
@@ -218,26 +250,29 @@ pub(super) fn stream_event_from_delta(delta: &serde_json::Value) -> Option<Strea
 use super::AnthropicProvider;
 use crate::domain::error::DomainError;
 
-/// Parameters for incremental streaming (avoids 5-arg method).
-pub(super) struct IncrementalStreamParams<'a> {
+/// Parameters for streaming requests (avoids 5+ arg methods).
+pub(super) struct StreamParams<'a> {
     pub body: serde_json::Value,
     pub url: &'a str,
     pub model: &'a str,
+    /// Tool definitions for reverse-mapping OAuth tool names (#438).
+    pub tool_defs: Option<Vec<ToolDefinition>>,
+}
+
+/// Parameters for incremental streaming (extends [`StreamParams`] with a channel).
+pub(super) struct IncrementalStreamParams<'a> {
+    pub base: StreamParams<'a>,
     pub tx: tokio::sync::mpsc::Sender<StreamEvent>,
 }
 
 impl AnthropicProvider {
     /// Send a streaming chat request with a pre-built JSON body.
-    ///
-    /// `model` is passed for header construction (beta header depends on model).
     pub(super) async fn stream_chat_with_body(
         &self,
-        body: serde_json::Value,
-        url: &str,
-        model: &str,
+        params: StreamParams<'_>,
     ) -> Result<LlmResponse, DomainError> {
-        let request_builder = self.client.post(url).json(&body);
-        let request_builder = self.apply_headers(request_builder, model);
+        let request_builder = self.client.post(params.url).json(&params.body);
+        let request_builder = self.apply_headers(request_builder, params.model);
 
         let response = request_builder
             .send()
@@ -258,12 +293,21 @@ impl AnthropicProvider {
             .await
             .map_err(|e| DomainError::Provider(format!("failed to read stream: {}", e)))?;
 
-        Self::parse_sse_response(&full)
+        Self::parse_sse_response(&full, params.tool_defs)
     }
 
     /// Parse Anthropic SSE events into an assembled [`LlmResponse`].
-    pub(super) fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> {
-        let mut acc = SseAccumulator::default();
+    ///
+    /// When `tool_defs` is `Some`, PascalCase tool names from the API are
+    /// reverse-mapped to registry names (OAuth mode, #438).
+    pub(super) fn parse_sse_response(
+        raw: &str,
+        tool_defs: Option<Vec<ToolDefinition>>,
+    ) -> Result<LlmResponse, DomainError> {
+        let mut acc = match tool_defs {
+            Some(defs) => SseAccumulator::with_tool_defs(defs),
+            None => SseAccumulator::default(),
+        };
         let mut current_event = String::new();
 
         for line in raw.lines() {
@@ -299,8 +343,8 @@ impl AnthropicProvider {
         &self,
         params: IncrementalStreamParams<'_>,
     ) {
-        let request_builder = self.client.post(params.url).json(&params.body);
-        let request_builder = self.apply_headers(request_builder, params.model);
+        let request_builder = self.client.post(params.base.url).json(&params.base.body);
+        let request_builder = self.apply_headers(request_builder, params.base.model);
         let tx = params.tx;
 
         let mut response = match request_builder.send().await {
@@ -327,7 +371,7 @@ impl AnthropicProvider {
             return;
         }
 
-        let mut handler = AnthropicSseHandler::new();
+        let mut handler = AnthropicSseHandler::new(params.base.tool_defs);
         crate::infrastructure::providers::sse_common::pump_sse(&mut response, &tx, &mut handler)
             .await;
     }
@@ -342,10 +386,13 @@ struct AnthropicSseHandler {
 }
 
 impl AnthropicSseHandler {
-    fn new() -> Self {
+    fn new(tool_defs: Option<Vec<ToolDefinition>>) -> Self {
         Self {
             current_event: String::new(),
-            acc: SseAccumulator::default(),
+            acc: match tool_defs {
+                Some(defs) => SseAccumulator::with_tool_defs(defs),
+                None => SseAccumulator::default(),
+            },
         }
     }
 }
@@ -388,8 +435,8 @@ async fn dispatch_sse_event(
     match event_type {
         "message_start" => acc.handle_message_start(chunk),
         "content_block_start" => {
-            emit_tool_call_start(chunk, tx).await;
             acc.handle_block_start(chunk);
+            emit_tool_call_start(acc, tx).await;
         }
         "content_block_delta" => {
             if let Some(ev) = stream_event_from_delta(&chunk["delta"]) {
@@ -413,16 +460,18 @@ async fn dispatch_sse_event(
     false
 }
 
-/// Emit a [`StreamEvent::ToolCallStart`] if the block is a `tool_use` block.
-async fn emit_tool_call_start(
-    chunk: &serde_json::Value,
-    tx: &tokio::sync::mpsc::Sender<StreamEvent>,
-) {
-    let block = &chunk["content_block"];
-    if block["type"].as_str() == Some("tool_use") {
-        let id = block["id"].as_str().unwrap_or_default().to_string();
-        let name = block["name"].as_str().unwrap_or_default().to_string();
-        let _ = tx.send(StreamEvent::ToolCallStart { id, name }).await;
+/// Emit a [`StreamEvent::ToolCallStart`] if the accumulator just started a tool call.
+///
+/// Called *after* `handle_block_start` so the remapped name is already stored
+/// in `acc.current_tool_name` — avoids a redundant second remap (#438, #440).
+async fn emit_tool_call_start(acc: &SseAccumulator, tx: &tokio::sync::mpsc::Sender<StreamEvent>) {
+    if acc.in_tool_input {
+        let _ = tx
+            .send(StreamEvent::ToolCallStart {
+                id: acc.current_tool_id.clone(),
+                name: acc.current_tool_name.clone(),
+            })
+            .await;
     }
 }
 

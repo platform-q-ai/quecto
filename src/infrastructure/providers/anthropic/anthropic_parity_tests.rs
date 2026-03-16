@@ -388,3 +388,118 @@ fn test_pause_turn_maps_to_end_turn() {
 fn test_sensitive_maps_to_error() {
     assert_eq!(StopReason::parse("sensitive"), StopReason::Error);
 }
+
+// --- #438: SSE streaming reverse-maps OAuth tool names ---
+
+#[test]
+fn test_sse_batch_reverse_maps_tool_name_with_tool_defs() {
+    use std::borrow::Cow;
+    let sse = "\
+        event: content_block_start\n\
+        data: {\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_01\",\"name\":\"Read\"}}\n\n\
+        event: content_block_delta\n\
+        data: {\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\\\"foo\\\"}\"}}\n\n\
+        event: content_block_stop\n\
+        data: {}\n\n\
+        event: message_stop\n\
+        data: {}\n\n";
+    let tool_defs = vec![crate::domain::tool::ToolDefinition {
+        name: Cow::Borrowed("read"),
+        description: Cow::Borrowed("Read a file"),
+        parameters_schema: Cow::Borrowed("{}"),
+    }];
+    let resp = AnthropicProvider::parse_sse_response_with_tools_public(sse, &tool_defs).unwrap();
+    assert_eq!(resp.tool_calls.len(), 1);
+    assert_eq!(resp.tool_calls[0].name, "read");
+}
+
+#[test]
+fn test_sse_batch_no_remap_without_tool_defs() {
+    let sse = "\
+        event: content_block_start\n\
+        data: {\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_01\",\"name\":\"bash\"}}\n\n\
+        event: content_block_delta\n\
+        data: {\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{}\"}}\n\n\
+        event: content_block_stop\n\
+        data: {}\n\n\
+        event: message_stop\n\
+        data: {}\n\n";
+    let resp = AnthropicProvider::parse_sse_response_public(sse).unwrap();
+    assert_eq!(resp.tool_calls[0].name, "bash");
+}
+
+#[test]
+fn test_sse_events_reverse_maps_tool_name_in_start_and_end() {
+    use std::borrow::Cow;
+    let sse = "\
+        event: content_block_start\n\
+        data: {\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_01\",\"name\":\"Bash\"}}\n\n\
+        event: content_block_delta\n\
+        data: {\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"command\\\":\\\"ls\\\"}\"}}\n\n\
+        event: content_block_stop\n\
+        data: {}\n\n\
+        event: message_stop\n\
+        data: {}\n\n";
+    let tool_defs = vec![crate::domain::tool::ToolDefinition {
+        name: Cow::Borrowed("bash"),
+        description: Cow::Borrowed("Run command"),
+        parameters_schema: Cow::Borrowed("{}"),
+    }];
+    let events = AnthropicProvider::parse_sse_events_with_tools_public(sse, &tool_defs);
+    use crate::domain::provider::StreamEvent;
+
+    // ToolCallStart should have remapped name
+    let start = events
+        .iter()
+        .find_map(|ev| match ev {
+            StreamEvent::ToolCallStart { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .expect("no ToolCallStart");
+    assert_eq!(start, "bash");
+
+    // ToolCallEnd should have remapped name
+    let end = events
+        .iter()
+        .find_map(|ev| match ev {
+            StreamEvent::ToolCallEnd { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .expect("no ToolCallEnd");
+    assert_eq!(end, "bash");
+
+    // Done response should have remapped name
+    let done_name = events
+        .iter()
+        .find_map(|ev| match ev {
+            StreamEvent::Done(resp) if !resp.tool_calls.is_empty() => {
+                Some(resp.tool_calls[0].name.clone())
+            }
+            _ => None,
+        })
+        .expect("no Done with tool call");
+    assert_eq!(done_name, "bash");
+}
+
+#[test]
+fn test_sse_events_no_remap_without_tool_defs() {
+    let sse = "\
+        event: content_block_start\n\
+        data: {\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_01\",\"name\":\"bash\"}}\n\n\
+        event: content_block_delta\n\
+        data: {\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{}\"}}\n\n\
+        event: content_block_stop\n\
+        data: {}\n\n\
+        event: message_stop\n\
+        data: {}\n\n";
+    let events = AnthropicProvider::parse_sse_events_public(sse);
+    use crate::domain::provider::StreamEvent;
+    let start = events
+        .iter()
+        .find_map(|ev| match ev {
+            StreamEvent::ToolCallStart { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .expect("no ToolCallStart");
+    assert_eq!(start, "bash");
+}

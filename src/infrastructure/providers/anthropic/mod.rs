@@ -45,7 +45,6 @@ impl AnthropicProvider {
         }
     }
 
-    /// Whether this provider instance uses OAuth authentication.
     pub fn is_oauth(&self) -> bool {
         self.is_oauth
     }
@@ -121,11 +120,6 @@ impl AnthropicProvider {
     // Request body building
     // -----------------------------------------------------------------------
 
-    /// Build the JSON request body for Anthropic Messages API.
-    ///
-    /// `is_oauth` controls Claude Code identity injection (system prompt prefix
-    /// and tool name remapping). Passed from `self.is_oauth` in the `LlmProvider`
-    /// impl methods.
     /// Apply thinking/temperature/effort configuration to the request body.
     fn apply_thinking_config(
         body: &mut serde_json::Value,
@@ -161,7 +155,6 @@ impl AnthropicProvider {
         }
     }
 
-    /// Apply system prompt to the request body (#437-1).
     fn apply_system_prompt(
         body: &mut serde_json::Value,
         system_prompt: &Option<String>,
@@ -243,7 +236,6 @@ impl AnthropicProvider {
         (system_prompt, body)
     }
 
-    /// Apply `cache_control: { type: "ephemeral" }` to the last user message.
     fn apply_cache_control_to_last_user_message(api_messages: &mut [serde_json::Value]) {
         let last_user_idx = api_messages
             .iter()
@@ -274,10 +266,6 @@ impl AnthropicProvider {
         normalize::normalize_messages(messages)
     }
 
-    /// Convert domain messages to Anthropic API message format.
-    ///
-    /// Applies normalization, batches consecutive tool results, and handles
-    /// thinking block replay (#437-5) and tool name remapping (#437-4).
     fn build_messages(
         messages: &[Message],
         model: &str,
@@ -326,7 +314,6 @@ impl AnthropicProvider {
         (system_prompt, api_messages)
     }
 
-    /// Build a single `tool_result` content block.
     fn build_tool_result_block(m: &Message) -> serde_json::Value {
         let content_value = if m.image_blocks.is_empty() {
             serde_json::Value::String(sanitize_surrogates(&m.content).into_owned())
@@ -353,13 +340,10 @@ impl AnthropicProvider {
         })
     }
 
-    /// Build an Anthropic assistant message with thinking blocks and tool name
-    /// remapping. Delegated to `claude_code::build_assistant_message` (#437-4,5).
     fn build_assistant_message(m: &Message, is_oauth: bool) -> serde_json::Value {
         claude_code::build_assistant_message(m, is_oauth)
     }
 
-    /// Build an Anthropic tool_result as a complete user message (single tool result).
     #[cfg(test)]
     fn build_tool_result_message(m: &Message) -> serde_json::Value {
         serde_json::json!({
@@ -368,7 +352,6 @@ impl AnthropicProvider {
         })
     }
 
-    /// Build Anthropic tool definitions with optional name remapping (#437-4).
     fn build_tool_defs(
         tools: &[crate::domain::tool::ToolDefinition],
         is_oauth: bool,
@@ -392,7 +375,6 @@ impl AnthropicProvider {
             .collect()
     }
 
-    /// Attach cost info to the response's usage data based on model pricing.
     fn attach_cost(response: &mut LlmResponse, model: &str) {
         if let Some(ref mut usage) = response.usage {
             if let Some(pricing) = crate::domain::message::model_pricing(model) {
@@ -401,7 +383,6 @@ impl AnthropicProvider {
         }
     }
 
-    /// Parse the Anthropic response JSON into our domain LlmResponse.
     fn parse_response(
         body: &serde_json::Value,
         is_oauth: bool,
@@ -535,7 +516,13 @@ impl LlmProvider for AnthropicProvider {
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         let model = request.model.to_string();
-        let (_system, mut body) = Self::build_request_body(&request, self.is_oauth);
+        let is_oauth = self.is_oauth;
+        let tools_snapshot: Option<Vec<crate::domain::tool::ToolDefinition>> = if is_oauth {
+            Some(request.tools.to_vec())
+        } else {
+            None
+        };
+        let (_system, mut body) = Self::build_request_body(&request, is_oauth);
         body["stream"] = serde_json::Value::Bool(true);
         let url = format!("{}/v1/messages", self.api_base);
         let cancel = request.cancel_flag.clone();
@@ -544,7 +531,14 @@ impl LlmProvider for AnthropicProvider {
             if cancel.as_ref().is_some_and(|f| f.is_cancelled()) {
                 return Err(DomainError::Provider("request cancelled".into()));
             }
-            let mut resp = self.stream_chat_with_body(body, &url, &model).await?;
+            let mut resp = self
+                .stream_chat_with_body(anthropic_sse::StreamParams {
+                    body,
+                    url: &url,
+                    model: &model,
+                    tool_defs: tools_snapshot,
+                })
+                .await?;
             Self::attach_cost(&mut resp, &model);
             Ok(resp)
         })
@@ -555,14 +549,19 @@ impl LlmProvider for AnthropicProvider {
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + '_>> {
         let model = request.model.to_string();
-        let (_system, mut body) = Self::build_request_body(&request, self.is_oauth);
+        let is_oauth = self.is_oauth;
+        let tools_snapshot: Option<Vec<crate::domain::tool::ToolDefinition>> = if is_oauth {
+            Some(request.tools.to_vec())
+        } else {
+            None
+        };
+        let (_system, mut body) = Self::build_request_body(&request, is_oauth);
         body["stream"] = serde_json::Value::Bool(true);
         let url = format!("{}/v1/messages", self.api_base);
         let cancel = request.cancel_flag.clone();
 
         let api_key = self.api_key.clone();
         let api_base = self.api_base.clone();
-        let is_oauth = self.is_oauth;
         let client = self.client.clone();
 
         Box::pin(async move {
@@ -582,9 +581,12 @@ impl LlmProvider for AnthropicProvider {
                 };
                 provider
                     .stream_chat_incremental_with_body(anthropic_sse::IncrementalStreamParams {
-                        body,
-                        url: &url,
-                        model: &model,
+                        base: anthropic_sse::StreamParams {
+                            body,
+                            url: &url,
+                            model: &model,
+                            tool_defs: tools_snapshot,
+                        },
                         tx,
                     })
                     .await;
@@ -607,7 +609,6 @@ impl AnthropicProvider {
         Self::build_request_body(request, false)
     }
 
-    /// Build request body with explicit `is_oauth` flag (for OAuth-specific tests).
     pub fn build_request_body_with_oauth(
         request: &ChatRequest<'_>,
         is_oauth: bool,
@@ -626,17 +627,27 @@ impl AnthropicProvider {
         Self::build_messages(messages, model, false)
     }
 
-    /// Public wrapper for `parse_sse_response` (for BDD tests).
     pub fn parse_sse_response_public(raw: &str) -> Result<LlmResponse, DomainError> {
-        Self::parse_sse_response(raw)
+        Self::parse_sse_response(raw, None)
     }
 
-    /// Parse Anthropic SSE text into a sequence of [`StreamEvent`]s.
-    fn parse_sse_events(raw: &str) -> Vec<StreamEvent> {
-        let mut events: Vec<StreamEvent> = Vec::new();
-        let mut acc = SseAccumulator::default();
-        let mut current_event = String::new();
+    pub fn parse_sse_response_with_tools_public(
+        raw: &str,
+        tool_defs: &[crate::domain::tool::ToolDefinition],
+    ) -> Result<LlmResponse, DomainError> {
+        Self::parse_sse_response(raw, Some(tool_defs.to_vec()))
+    }
 
+    fn parse_sse_events(
+        raw: &str,
+        tool_defs: Option<Vec<crate::domain::tool::ToolDefinition>>,
+    ) -> Vec<StreamEvent> {
+        let mut events: Vec<StreamEvent> = Vec::new();
+        let mut acc = match tool_defs {
+            Some(defs) => SseAccumulator::with_tool_defs(defs),
+            None => SseAccumulator::default(),
+        };
+        let mut current_event = String::new();
         for line in raw.lines() {
             let line = line.trim();
             if let Some(event_type) = line.strip_prefix("event: ") {
@@ -650,7 +661,6 @@ impl AnthropicProvider {
                 }
             }
         }
-
         events.push(StreamEvent::Done(acc.into_response()));
         events
     }
@@ -665,13 +675,13 @@ impl AnthropicProvider {
         match event_type {
             "message_start" => acc.handle_message_start(chunk),
             "content_block_start" => {
-                let block = &chunk["content_block"];
-                if block["type"].as_str() == Some("tool_use") {
-                    let id = block["id"].as_str().unwrap_or_default().to_string();
-                    let name = block["name"].as_str().unwrap_or_default().to_string();
-                    events.push(StreamEvent::ToolCallStart { id, name });
-                }
                 acc.handle_block_start(chunk);
+                if acc.in_tool_input {
+                    events.push(StreamEvent::ToolCallStart {
+                        id: acc.current_tool_id.clone(),
+                        name: acc.current_tool_name.clone(),
+                    });
+                }
             }
             "content_block_delta" => {
                 if let Some(ev) = stream_event_from_delta(&chunk["delta"]) {
@@ -697,7 +707,14 @@ impl AnthropicProvider {
     }
 
     pub fn parse_sse_events_public(raw: &str) -> Vec<StreamEvent> {
-        Self::parse_sse_events(raw)
+        Self::parse_sse_events(raw, None)
+    }
+
+    pub fn parse_sse_events_with_tools_public(
+        raw: &str,
+        tool_defs: &[crate::domain::tool::ToolDefinition],
+    ) -> Vec<StreamEvent> {
+        Self::parse_sse_events(raw, Some(tool_defs.to_vec()))
     }
 
     pub fn build_tool_result_message_public(m: &Message) -> serde_json::Value {
@@ -707,17 +724,14 @@ impl AnthropicProvider {
         })
     }
 
-    /// Public helper: build beta header for testing.
     pub fn build_beta_header_public(model: &str, is_oauth: bool) -> String {
         Self::build_beta_header(model, is_oauth)
     }
 
-    /// Public helper: convert tool name to Claude Code canonical casing.
     pub fn to_claude_code_name_public(name: &str) -> &str {
         to_claude_code_name(name)
     }
 
-    /// Public helper: reverse tool name mapping.
     pub fn from_claude_code_name_public(
         name: &str,
         tool_defs: &[crate::domain::tool::ToolDefinition],
