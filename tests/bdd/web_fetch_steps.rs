@@ -32,9 +32,16 @@ fn given_web_fetch_workspace(world: &mut QuectoWorld) {
     let mut registry = ToolRegistryImpl::with_core_tools(ws.clone(), sandbox);
 
     let (server, uri) = start_web_fetch_mock();
-    // Create tool with allow_restricted_hosts=false (SSRF tests use real URLs,
-    // not the mock server, so SSRF blocking is exercised directly).
-    let tool = WebFetchTool::with_client(reqwest::Client::new(), 32);
+    // Allowlist only the mock server's host:port so SSRF protection still
+    // blocks other restricted URLs (localhost:other, 127.0.0.1, etc.).
+    let host_port = reqwest::Url::parse(&uri)
+        .ok()
+        .and_then(|u| {
+            let host = u.host_str()?.to_string();
+            Some(format!("{}:{}", host, u.port()?))
+        })
+        .unwrap_or_else(|| uri.clone());
+    let tool = WebFetchTool::with_allowed_host(32, &host_port);
     registry.register(Arc::new(tool));
 
     world.tool_workspace = Some(ws);
@@ -52,7 +59,14 @@ fn given_web_fetch_workspace_1kb(world: &mut QuectoWorld) {
     let mut registry = ToolRegistryImpl::with_core_tools(ws.clone(), sandbox);
 
     let (server, uri) = start_web_fetch_mock();
-    let tool = WebFetchTool::with_client(reqwest::Client::new(), 1);
+    let host_port = reqwest::Url::parse(&uri)
+        .ok()
+        .and_then(|u| {
+            let host = u.host_str()?.to_string();
+            Some(format!("{}:{}", host, u.port()?))
+        })
+        .unwrap_or_else(|| uri.clone());
+    let tool = WebFetchTool::with_allowed_host(1, &host_port);
     registry.register(Arc::new(tool));
 
     world.tool_workspace = Some(ws);
