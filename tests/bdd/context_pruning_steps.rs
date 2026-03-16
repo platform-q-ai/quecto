@@ -987,73 +987,81 @@ fn then_estimated_token_count(world: &mut QuectoWorld, expected: usize) {
 // --- Spill store caching (#375) ---
 
 #[when(expr = "{int} spill entries are appended to the store")]
-async fn when_n_spill_entries_appended(world: &mut QuectoWorld, count: usize) {
+fn when_n_spill_entries_appended(world: &mut QuectoWorld, count: usize) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
     let tmp = tempfile::TempDir::new().unwrap();
     let store = quecto::infrastructure::persistence::context_spill::FileContextSpillStore::new(
         tmp.path().to_path_buf(),
     );
-    // Append first entry, then seed cache via list_entries (mirrors agent loop)
-    let first = SpillEntry {
-        id: "turn1:bash:0".to_string(),
-        tool: "bash".to_string(),
-        input_preview: "cmd-1".to_string(),
-        tokens: 100,
-        content: "output-1\n".to_string(),
-    };
-    store.append("cache-test", &first).await.unwrap();
-    let _ = store.list_entries("cache-test").await.unwrap();
-    // Append remaining entries (cache updated incrementally)
-    for i in 1..count {
-        let entry = SpillEntry {
-            id: format!("turn{}:bash:0", i + 1),
+    let (cache_count, cache_result) = rt.block_on(async {
+        // Append first entry, then seed cache via list_entries (mirrors agent loop)
+        let first = SpillEntry {
+            id: "turn1:bash:0".to_string(),
             tool: "bash".to_string(),
-            input_preview: format!("cmd-{}", i + 1),
+            input_preview: "cmd-1".to_string(),
             tokens: 100,
-            content: format!("output-{}\n", i + 1),
+            content: "output-1\n".to_string(),
         };
-        store.append("cache-test", &entry).await.unwrap();
-    }
-    // Delete the spill file to prove cache is used
-    let spill_path = tmp
-        .path()
-        .join("sessions")
-        .join("cache-test")
-        .join("spill.jsonl");
-    tokio::fs::remove_file(&spill_path).await.unwrap();
-    // Verify list_entries still works from cache
-    let entries = store.list_entries("cache-test").await.unwrap();
+        store.append("cache-test", &first).await.unwrap();
+        let _ = store.list_entries("cache-test").await.unwrap();
+        // Append remaining entries (cache updated incrementally)
+        for i in 1..count {
+            let entry = SpillEntry {
+                id: format!("turn{}:bash:0", i + 1),
+                tool: "bash".to_string(),
+                input_preview: format!("cmd-{}", i + 1),
+                tokens: 100,
+                content: format!("output-{}\n", i + 1),
+            };
+            store.append("cache-test", &entry).await.unwrap();
+        }
+        // Delete the spill file to prove cache is used
+        let spill_path = tmp
+            .path()
+            .join("sessions")
+            .join("cache-test")
+            .join("spill.jsonl");
+        tokio::fs::remove_file(&spill_path).await.unwrap();
+        // Verify list_entries still works from cache
+        let entries = store.list_entries("cache-test").await.unwrap();
+        (count.to_string(), entries.len().to_string())
+    });
     world
         .env_overrides
-        .insert("_spill_cache_count".into(), count.to_string());
+        .insert("_spill_cache_count".into(), cache_count);
     world
         .env_overrides
-        .insert("_spill_cache_result".into(), entries.len().to_string());
+        .insert("_spill_cache_result".into(), cache_result);
 }
 
 #[when("recall is called for the 5th entry in a 10-entry spill file")]
-async fn when_recall_5th_in_10_entries(world: &mut QuectoWorld) {
+fn when_recall_5th_in_10_entries(world: &mut QuectoWorld) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
     let tmp = tempfile::TempDir::new().unwrap();
     let store = quecto::infrastructure::persistence::context_spill::FileContextSpillStore::new(
         tmp.path().to_path_buf(),
     );
-    for i in 0..10 {
-        let entry = SpillEntry {
-            id: format!("turn{}:bash:0", i + 1),
-            tool: "bash".to_string(),
-            input_preview: format!("cmd-{}", i + 1),
-            tokens: 100,
-            content: format!("output-{}\n", i + 1),
-        };
-        store.append("recall-test", &entry).await.unwrap();
-    }
-    let recalled = store.recall("recall-test", "turn5:bash:0").await.unwrap();
-    let entry = recalled.expect("should find turn5:bash:0");
+    let (result_id, result_content) = rt.block_on(async {
+        for i in 0..10 {
+            let entry = SpillEntry {
+                id: format!("turn{}:bash:0", i + 1),
+                tool: "bash".to_string(),
+                input_preview: format!("cmd-{}", i + 1),
+                tokens: 100,
+                content: format!("output-{}\n", i + 1),
+            };
+            store.append("recall-test", &entry).await.unwrap();
+        }
+        let recalled = store.recall("recall-test", "turn5:bash:0").await.unwrap();
+        let entry = recalled.expect("should find turn5:bash:0");
+        (entry.id, entry.content)
+    });
     world
         .env_overrides
-        .insert("_recall_result_id".into(), entry.id);
+        .insert("_recall_result_id".into(), result_id);
     world
         .env_overrides
-        .insert("_recall_result_content".into(), entry.content);
+        .insert("_recall_result_content".into(), result_content);
 }
 
 #[then("the correct entry is returned with full content")]
