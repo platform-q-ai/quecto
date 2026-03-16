@@ -26,9 +26,9 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct WebFetchTool {
     client: reqwest::Client,
     max_response_kb: u32,
-    /// Skip SSRF host checks (for wiremock tests on localhost).
-    #[cfg(test)]
-    allow_restricted_hosts: bool,
+    /// Allowlisted host:port pairs that bypass SSRF checks (for tests).
+    #[cfg(any(test, feature = "test-support"))]
+    allowed_hosts: Vec<String>,
 }
 
 impl WebFetchTool {
@@ -37,24 +37,36 @@ impl WebFetchTool {
         Self {
             client,
             max_response_kb,
-            #[cfg(test)]
-            allow_restricted_hosts: false,
+            #[cfg(any(test, feature = "test-support"))]
+            allowed_hosts: Vec::new(),
         }
     }
 
-    /// Create with default settings (for tests).
+    /// Create with default settings (for unit tests only).
     #[cfg(test)]
     fn new() -> Self {
         Self::with_client(reqwest::Client::new(), 32)
     }
 
-    /// Create a tool that allows localhost connections (for wiremock tests).
+    /// Create a tool that allowlists a specific host:port for SSRF bypass
+    /// (for wiremock BDD tests on localhost). Other restricted hosts are
+    /// still blocked, so SSRF protection scenarios continue to work.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_allowed_host(max_response_kb: u32, host_port: &str) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            max_response_kb,
+            allowed_hosts: vec![host_port.to_string()],
+        }
+    }
+
+    /// Create with localhost SSRF bypass for all loopback ports (for unit tests).
     #[cfg(test)]
     fn new_allow_localhost(max_response_kb: u32) -> Self {
         Self {
             client: reqwest::Client::new(),
             max_response_kb,
-            allow_restricted_hosts: true,
+            allowed_hosts: vec!["*".to_string()], // wildcard = skip all SSRF checks
         }
     }
 }
@@ -104,9 +116,23 @@ impl Tool for WebFetchTool {
             }
 
             // SSRF protection: reject internal/loopback/metadata hosts
-            #[cfg(test)]
-            let skip_ssrf = self.allow_restricted_hosts;
-            #[cfg(not(test))]
+            #[cfg(any(test, feature = "test-support"))]
+            let skip_ssrf = {
+                let host_port = parsed_url
+                    .host_str()
+                    .map(|h| {
+                        if let Some(port) = parsed_url.port() {
+                            format!("{}:{}", h, port)
+                        } else {
+                            h.to_string()
+                        }
+                    })
+                    .unwrap_or_default();
+                self.allowed_hosts
+                    .iter()
+                    .any(|h| h == "*" || h == &host_port)
+            };
+            #[cfg(not(any(test, feature = "test-support")))]
             let skip_ssrf = false;
 
             if !skip_ssrf {
