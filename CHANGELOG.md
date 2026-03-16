@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.22.0 (2026-03-16)
+
+### Fixed
+- **Auto-enable adaptive thinking for Opus 4.6 / Sonnet 4.6** (#432): Quecto was sending `output_config.effort` without `thinking` and including `temperature` alongside effort for 4.6 models, causing 500 errors from the Anthropic API. The provider now always emits `thinking: {type: "adaptive"}` for 4.6 models even when `thinking_level` is `None`, and suppresses temperature. Matches pi-mono's behavior.
+- **User-agent header for OAuth** (#432): Changed from `quecto/0.12.0 (external, cli)` to `claude-cli/2.1.75` to match pi-mono's Claude Code identity headers.
+- **BDD: spill-store steps panic with no Tokio reactor** (#426): Converted two `async fn` BDD step definitions to synchronous functions with inline `tokio::runtime::Runtime`, matching the pattern used by all other async BDD steps.
+- **BDD: web_fetch tests blocked by SSRF on localhost** (#425): Changed `#[cfg(test)]` to `#[cfg(any(test, feature = "test-support"))]` for the SSRF bypass logic and replaced the blanket `allow_restricted_hosts` boolean with a per-host allowlist, so only the wiremock mock server's host:port is exempted while SSRF protection scenarios continue to pass.
+- **BDD: duplicate step definition causing cucumber ambiguity** (#428): Removed duplicate `the tool result should not contain` step.
+- **BDD: beta headers mock returns 404** (#429): Fixed by #432 — BDD scenario updated to verify the `fine-grained-tool-streaming` beta header is absent (now GA).
+
+### Added
+- **`agent_cmd` tool** (#421): Send commands to spawned UDS subagents — `steer` (interrupt + redirect), `follow_up` (queue message), `abort` (cancel run), `get_state` (check status). Enables orchestration of multiple concurrent agents.
+- **`spawn` now launches UDS-mode agents** (#421): Subagents are spawned as `quecto agent --mode uds` processes with Unix domain sockets, replacing the previous stdin-based approach. Enables async, multi-turn interaction with child agents via `agent_cmd`.
+
+### Changed
+- **Anthropic provider: `fine-grained-tool-streaming` beta header removed** (#432): The feature graduated to GA on Opus 4.6; the beta header is no longer sent for API key auth.
+- **`web_fetch` SSRF bypass uses per-host allowlist** (#425): The test-support SSRF bypass is now a `Vec<String>` of allowed host:port pairs instead of a blanket boolean, providing more precise test isolation.
+
+### Documentation
+- Rewrote `docs/subagents.md` for UDS-mode spawn and `agent_cmd` tool (#423).
+- Added `--effort` flag to UDS protocol startup flags reference (#419).
+
 ## 0.21.0 (2026-03-15)
 
 ### Fixed
