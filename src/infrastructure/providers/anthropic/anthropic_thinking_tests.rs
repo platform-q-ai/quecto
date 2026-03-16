@@ -40,7 +40,7 @@ fn test_build_request_body_with_thinking_adds_thinking_param() {
 }
 
 #[test]
-fn test_build_request_body_without_thinking_includes_temperature() {
+fn test_build_request_body_without_thinking_includes_temperature_for_older_models() {
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
         messages: &messages,
@@ -59,8 +59,68 @@ fn test_build_request_body_without_thinking_includes_temperature() {
     assert!(body.get("thinking").is_none());
     assert!(
         body.get("temperature").is_some(),
-        "temperature should be present when thinking is disabled"
+        "temperature should be present when thinking is disabled on older models"
     );
+}
+
+/// 4.6 models always auto-enable adaptive thinking even with thinking_level=None.
+#[test]
+fn test_46_model_auto_enables_adaptive_thinking_when_level_is_none() {
+    let messages = vec![Message::user("Hi")];
+    let req = ChatRequest {
+        messages: &messages,
+        tools: &[],
+        model: "claude-opus-4-6",
+        max_tokens: 4_096,
+        temperature: 0.7,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    assert_eq!(
+        body["thinking"]["type"], "adaptive",
+        "4.6 models should auto-enable adaptive thinking, got body: {}",
+        body
+    );
+    assert!(
+        body["thinking"].get("budget_tokens").is_none(),
+        "adaptive thinking must not include budget_tokens"
+    );
+    assert!(
+        body.get("temperature").is_none(),
+        "temperature must be excluded when adaptive thinking is active"
+    );
+    assert_eq!(
+        body["output_config"]["effort"], "low",
+        "default effort should be low for 4.6 models"
+    );
+}
+
+/// Sonnet 4.6 also auto-enables adaptive thinking.
+#[test]
+fn test_sonnet_46_auto_enables_adaptive_thinking_when_level_is_none() {
+    let messages = vec![Message::user("Hi")];
+    let req = ChatRequest {
+        messages: &messages,
+        tools: &[],
+        model: "claude-sonnet-4-6",
+        max_tokens: 4_096,
+        temperature: 0.5,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    let (_sys, body) = AnthropicProvider::build_request_body(&req);
+    assert_eq!(body["thinking"]["type"], "adaptive");
+    assert!(body.get("temperature").is_none());
+    assert_eq!(body["output_config"]["effort"], "low");
 }
 
 #[test]
@@ -247,6 +307,7 @@ fn test_older_model_manual_thinking_still_uses_budget_tokens() {
 // ---------------------------------------------------------------------------
 
 /// effort is emitted as output_config.effort (not top-level or inside thinking).
+/// For 4.6 models, adaptive thinking is also auto-enabled (#432).
 #[test]
 fn test_effort_emitted_in_output_config() {
     let messages = vec![Message::user("Hi")];
@@ -273,6 +334,12 @@ fn test_effort_emitted_in_output_config() {
     assert!(
         body.get("effort").is_none(),
         "effort must not be a top-level field"
+    );
+    // #432: adaptive thinking must be present for 4.6 models
+    assert_eq!(
+        body["thinking"]["type"], "adaptive",
+        "4.6 model should have adaptive thinking, got body: {}",
+        body
     );
 }
 
@@ -337,6 +404,7 @@ fn test_effort_max_emitted_correctly() {
 }
 
 /// When effort is None on a 4.6 model, output_config defaults to effort=low (#416).
+/// Also verifies adaptive thinking is auto-enabled (#432).
 #[test]
 fn test_no_effort_defaults_to_low_for_46_models() {
     let messages = vec![Message::user("Hi")];
@@ -357,6 +425,17 @@ fn test_no_effort_defaults_to_low_for_46_models() {
     assert_eq!(
         body["output_config"]["effort"], "low",
         "4.6 model with effort=None should default to low, got: {}",
+        body
+    );
+    // #432: adaptive thinking must also be auto-enabled
+    assert_eq!(
+        body["thinking"]["type"], "adaptive",
+        "4.6 model should auto-enable adaptive thinking, got: {}",
+        body
+    );
+    assert!(
+        body.get("temperature").is_none(),
+        "temperature must be excluded on 4.6 models (adaptive thinking), got: {}",
         body
     );
 }
