@@ -59,7 +59,7 @@ pub struct Message {
 ///   The signature is required for replaying the block in subsequent turns.
 /// - **Redacted**: Contains only an opaque `data` payload (reasoning hidden).
 ///   Must be passed back verbatim as `redacted_thinking` in subsequent turns.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThinkingBlock {
     /// Normal thinking block with visible reasoning text and signature.
     Normal {
@@ -153,6 +153,9 @@ pub struct LlmResponse {
     pub usage: Option<UsageInfo>,
     /// The reason the model stopped generating (e.g. end_turn, max_tokens, tool_use).
     pub stop_reason: Option<StopReason>,
+    /// Thinking blocks from the response (for multi-turn replay).
+    /// Populated by the Anthropic provider when extended thinking is enabled.
+    pub thinking_blocks: Vec<ThinkingBlock>,
 }
 
 /// Why the model stopped generating output.

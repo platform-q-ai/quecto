@@ -163,6 +163,7 @@ impl OpenAiProvider {
             tool_calls,
             usage,
             stop_reason: None,
+            thinking_blocks: vec![],
         })
     }
 }
@@ -236,6 +237,7 @@ impl OpenAiProvider {
             tool_calls,
             usage: None,
             stop_reason: None,
+            thinking_blocks: vec![],
         })
     }
 

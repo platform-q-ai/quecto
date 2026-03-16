@@ -275,6 +275,7 @@ impl CodexProvider {
             tool_calls,
             usage,
             stop_reason: None,
+            thinking_blocks: vec![],
         })
     }
 
@@ -459,6 +460,7 @@ impl SseAccumulator {
             tool_calls: self.tool_calls,
             usage: self.usage,
             stop_reason: None,
+            thinking_blocks: vec![],
         }
     }
 }

@@ -195,7 +195,7 @@ fn test_parse_response_with_thinking_blocks() {
         "usage": {"input_tokens": 10, "output_tokens": 5},
         "stop_reason": "end_turn"
     });
-    let result = AnthropicProvider::parse_response(&body).unwrap();
+    let result = AnthropicProvider::parse_response(&body, false, &[]).unwrap();
     assert_eq!(result.content.as_deref(), Some("The answer is 42"));
 }
 

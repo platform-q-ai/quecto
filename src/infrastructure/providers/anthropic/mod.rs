@@ -329,7 +329,7 @@ impl AnthropicProvider {
     /// Build a single `tool_result` content block.
     fn build_tool_result_block(m: &Message) -> serde_json::Value {
         let content_value = if m.image_blocks.is_empty() {
-            serde_json::Value::String(sanitize_surrogates(&m.content))
+            serde_json::Value::String(sanitize_surrogates(&m.content).into_owned())
         } else {
             let mut result_content: Vec<serde_json::Value> =
                 vec![serde_json::json!({"type": "text", "text": sanitize_surrogates(&m.content)})];
@@ -402,7 +402,11 @@ impl AnthropicProvider {
     }
 
     /// Parse the Anthropic response JSON into our domain LlmResponse.
-    fn parse_response(body: &serde_json::Value) -> Result<LlmResponse, DomainError> {
+    fn parse_response(
+        body: &serde_json::Value,
+        is_oauth: bool,
+        tools: &[crate::domain::tool::ToolDefinition],
+    ) -> Result<LlmResponse, DomainError> {
         let content_blocks = body["content"]
             .as_array()
             .ok_or_else(|| DomainError::Provider("missing content in response".to_string()))?;
@@ -419,7 +423,13 @@ impl AnthropicProvider {
                 }
                 Some("tool_use") => {
                     let id = block["id"].as_str().unwrap_or_default().to_string();
-                    let name = block["name"].as_str().unwrap_or_default().to_string();
+                    let raw_name = block["name"].as_str().unwrap_or_default().to_string();
+                    // Reverse-map Claude Code tool names for OAuth (#437-4)
+                    let name = if is_oauth {
+                        claude_code::from_claude_code_name(&raw_name, tools)
+                    } else {
+                        raw_name
+                    };
                     let input = &block["input"];
                     let arguments = serde_json::to_string(input).unwrap_or_default();
                     tool_calls.push(ToolCall {
@@ -459,6 +469,7 @@ impl AnthropicProvider {
             tool_calls,
             usage,
             stop_reason,
+            thinking_blocks: vec![],
         })
     }
 }
@@ -477,7 +488,9 @@ impl LlmProvider for AnthropicProvider {
         request: ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         let model = request.model.to_string();
-        let (_system, body) = Self::build_request_body(&request, self.is_oauth);
+        let is_oauth = self.is_oauth;
+        let tools_snapshot: Vec<crate::domain::tool::ToolDefinition> = request.tools.to_vec();
+        let (_system, body) = Self::build_request_body(&request, is_oauth);
         let url = format!("{}/v1/messages", self.api_base);
         let cancel = request.cancel_flag.clone();
 
@@ -511,7 +524,7 @@ impl LlmProvider for AnthropicProvider {
                     DomainError::Provider(format!("failed to parse response JSON: {}", e))
                 })?;
 
-            let mut resp = Self::parse_response(&response_json)?;
+            let mut resp = Self::parse_response(&response_json, is_oauth, &tools_snapshot)?;
             Self::attach_cost(&mut resp, &model);
             Ok(resp)
         })

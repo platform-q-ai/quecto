@@ -30,10 +30,11 @@ pub(super) const CLAUDE_CODE_VERSION: &str = "2.1.75";
 
 /// Convert a tool name to Claude Code canonical casing (case-insensitive match).
 /// Returns the original name if no match is found.
+///
+/// Uses `eq_ignore_ascii_case` to avoid String allocations (#437 perf review).
 pub(super) fn to_claude_code_name(name: &str) -> &str {
-    let lower = name.to_ascii_lowercase();
     for cc_name in CLAUDE_CODE_TOOLS {
-        if cc_name.to_ascii_lowercase() == lower {
+        if cc_name.eq_ignore_ascii_case(name) {
             return cc_name;
         }
     }
@@ -42,14 +43,15 @@ pub(super) fn to_claude_code_name(name: &str) -> &str {
 
 /// Convert a tool name received from the API back to the original tool name
 /// used in the tool registry (reverse of `to_claude_code_name`).
-#[cfg(any(test, feature = "test-support"))]
+///
+/// Used in production to reverse-map API-returned Claude Code tool names
+/// (e.g. `"Read"`) back to the registered tool names (e.g. `"read"`).
 pub(super) fn from_claude_code_name(
     name: &str,
     tool_defs: &[crate::domain::tool::ToolDefinition],
 ) -> String {
-    let lower = name.to_ascii_lowercase();
     for def in tool_defs {
-        if def.name.to_ascii_lowercase() == lower {
+        if def.name.eq_ignore_ascii_case(name) {
             return def.name.to_string();
         }
     }
@@ -134,12 +136,13 @@ pub(super) fn build_assistant_message(
     serde_json::json!({"role": "assistant", "content": content_blocks})
 }
 
-/// Remove unpaired Unicode surrogates that are invalid in JSON strings.
+/// Defence-in-depth parity stub with pi-mono's `sanitizeSurrogates`.
 ///
-/// Valid Rust `String`s cannot contain surrogates, but content pasted from
-/// external sources may have WTF-8 artefacts after lossy conversion.
-/// This function exists for defence-in-depth parity with pi-mono's
-/// `sanitizeSurrogates`.
-pub(super) fn sanitize_surrogates(s: &str) -> String {
-    s.to_string()
+/// Rust `String` is guaranteed valid UTF-8 and cannot contain unpaired
+/// surrogates, so this is a no-op that avoids allocation by returning
+/// `Cow::Borrowed`. Kept as a named function so call sites document
+/// their intent and the function can be made non-trivial if Quecto
+/// ever processes WTF-8 or lossy-converted input.
+pub(super) fn sanitize_surrogates(s: &str) -> std::borrow::Cow<'_, str> {
+    std::borrow::Cow::Borrowed(s)
 }

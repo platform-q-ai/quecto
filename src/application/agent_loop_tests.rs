@@ -49,6 +49,7 @@ impl LlmProvider for MockProvider {
                         tool_calls: vec![],
                         usage: None,
                         stop_reason: None,
+                        thinking_blocks: vec![],
                     })
                 });
             }
@@ -200,6 +201,7 @@ pub(super) fn text_response(content: &str) -> LlmResponse {
             cost: None,
         }),
         stop_reason: None,
+        thinking_blocks: vec![],
     }
 }
 
@@ -213,6 +215,7 @@ pub(super) fn tool_call_response(name: &str, args: &str) -> LlmResponse {
         }],
         usage: None,
         stop_reason: None,
+        thinking_blocks: vec![],
     }
 }
 
@@ -330,6 +333,7 @@ async fn test_tool_error_is_sent_back() {
             }],
             usage: None,
             stop_reason: None,
+            thinking_blocks: vec![],
         },
         text_response("I got an error"),
     ];

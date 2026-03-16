@@ -18,6 +18,7 @@ impl TestProvider {
                 tool_calls: vec![],
                 usage: None,
                 stop_reason: None,
+                thinking_blocks: vec![],
             })),
         })
     }
@@ -144,6 +145,7 @@ impl TrackingProvider {
                 tool_calls: vec![],
                 usage: None,
                 stop_reason: None,
+                thinking_blocks: vec![],
             })),
             received_model: Mutex::new(None),
         })
@@ -291,6 +293,7 @@ impl LlmProvider for SlicePtrProvider {
                 tool_calls: vec![],
                 usage: None,
                 stop_reason: None,
+                thinking_blocks: vec![],
             })
         })
     }

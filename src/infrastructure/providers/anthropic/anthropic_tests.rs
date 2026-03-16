@@ -294,7 +294,7 @@ fn test_parse_response_extracts_stop_reason_end_turn() {
         "stop_reason": "end_turn",
         "usage": {"input_tokens": 10, "output_tokens": 5}
     });
-    let response = AnthropicProvider::parse_response(&body).unwrap();
+    let response = AnthropicProvider::parse_response(&body, false, &[]).unwrap();
     assert_eq!(
         response.stop_reason,
         Some(crate::domain::message::StopReason::EndTurn)
@@ -308,7 +308,7 @@ fn test_parse_response_extracts_stop_reason_max_tokens() {
         "stop_reason": "max_tokens",
         "usage": {"input_tokens": 10, "output_tokens": 100}
     });
-    let response = AnthropicProvider::parse_response(&body).unwrap();
+    let response = AnthropicProvider::parse_response(&body, false, &[]).unwrap();
     assert_eq!(
         response.stop_reason,
         Some(crate::domain::message::StopReason::MaxTokens)
@@ -322,7 +322,7 @@ fn test_parse_response_extracts_stop_reason_tool_use() {
         "stop_reason": "tool_use",
         "usage": {"input_tokens": 10, "output_tokens": 5}
     });
-    let response = AnthropicProvider::parse_response(&body).unwrap();
+    let response = AnthropicProvider::parse_response(&body, false, &[]).unwrap();
     assert_eq!(
         response.stop_reason,
         Some(crate::domain::message::StopReason::ToolUse)
@@ -393,7 +393,7 @@ fn test_parse_response_extracts_cache_usage() {
             "cache_creation_input_tokens": 20
         }
     });
-    let response = AnthropicProvider::parse_response(&body).unwrap();
+    let response = AnthropicProvider::parse_response(&body, false, &[]).unwrap();
     let usage = response.usage.expect("should have usage");
     assert_eq!(usage.cache_read_tokens, Some(80));
     assert_eq!(usage.cache_write_tokens, Some(20));

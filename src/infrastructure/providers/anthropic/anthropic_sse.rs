@@ -155,12 +155,6 @@ impl SseAccumulator {
     }
 
     /// Consume `self` and return the assembled [`LlmResponse`].
-    ///
-    /// Note: thinking blocks are accumulated but not currently stored in
-    /// `LlmResponse` (which only has `content: Option<String>`). They are
-    /// emitted as `StreamEvent::ThinkingDelta` events during streaming.
-    /// The agent loop is responsible for attaching thinking blocks to the
-    /// `Message` struct for multi-turn replay.
     pub(super) fn into_response(self) -> LlmResponse {
         let content = if self.content.is_empty() {
             None
@@ -183,6 +177,7 @@ impl SseAccumulator {
             tool_calls: self.tool_calls,
             usage,
             stop_reason: self.stop_reason,
+            thinking_blocks: self.thinking_blocks,
         }
     }
 
