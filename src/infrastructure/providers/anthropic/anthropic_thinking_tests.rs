@@ -178,7 +178,7 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usa
 event: message_stop\n\
 data: {\"type\":\"message_stop\"}\n";
 
-    let result = AnthropicProvider::parse_sse_response(raw).unwrap();
+    let result = AnthropicProvider::parse_sse_response(raw, None).unwrap();
     // Thinking content should NOT appear in the text content
     assert_eq!(result.content.as_deref(), Some("Here is my answer"));
     // Thinking content is not included in tool_calls
