@@ -9,7 +9,7 @@ Built in Rust. No runtime dependencies. Runs on a VPS, Raspberry Pi, or containe
 
 ## Release Notes
 
-Current version: **0.21.0** — see [`CHANGELOG.md`](CHANGELOG.md) for full history.
+Current version: **0.22.0** — see [`CHANGELOG.md`](CHANGELOG.md) for full history.
 
 ## Quick Start
 
@@ -76,8 +76,8 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 | Component | Contents |
 |---|---|
 | `config.rs` | `Config` with serde, env overrides (`QUECTO_AGENTS_DEFAULTS_EFFORT` validated at load), exec isolation settings (nsjail binary/limits/fallback), `WorkflowConfig` (steps must be explicit in config.json, `guard_commit` controls WorkflowGuard registration). Tolerates unknown fields (forward-compatible) |
-| `providers/` | `OpenAiProvider` (SSE streaming via `openai_sse`), `AnthropicProvider` (SSE streaming via `anthropic_sse`, extended thinking support, effort default `low` for 4.6 models), `CodexProvider` (Responses API, SSE, `prompt_cache_key`, orphan pair repair), `RefreshableProvider` (OAuth 401 → auto-refresh → retry), `FallbackProvider` (cooldown + error classification + `provider/model` routing syntax). URL validation: https required for non-loopback (override with `QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS=1`) |
-| `tools/` | `bash/` (shell, 1MiB cap, per-invocation timeout, `commandPrefix`, native/nsjail modes), `filesystem/` (`ReadTool` with image base64+auto-resize, `WriteTool`, `EditTool` with fuzzy match+CRLF/BOM+LCS diff, `LsTool` with limit+case-insensitive sort), `grep.rs` (rg JSON output, file-cache context), `find.rs` (fd, nested .gitignore, path-segment globs via `--full-path`), `ensure_tool.rs` (auto-download rg/fd from GitHub), `spawn.rs` (background subagent spawning), `web_search.rs` (Brave+DDG), `web_fetch.rs` (URL fetch with HTML stripping), `recall.rs` (spill retrieval), `workflow_tool.rs` (`WorkflowTool` + `WorkflowGuard` — blocks `git commit`/`git push` when workflow steps incomplete; registration controlled by `guard_commit` config), `path_utils.rs`, `truncate.rs`, `command_match.rs`, `registry.rs` (`ToolRegistryImpl`, `guard_count()`) |
+| `providers/` | `OpenAiProvider` (SSE streaming via `openai_sse`), `AnthropicProvider` (SSE streaming via `anthropic_sse`, extended thinking support, auto-enables adaptive thinking for 4.6 models, effort default `low` for 4.6 models), `CodexProvider` (Responses API, SSE, `prompt_cache_key`, orphan pair repair), `RefreshableProvider` (OAuth 401 → auto-refresh → retry), `FallbackProvider` (cooldown + error classification + `provider/model` routing syntax). URL validation: https required for non-loopback (override with `QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS=1`) |
+| `tools/` | `bash/` (shell, 1MiB cap, per-invocation timeout, `commandPrefix`, native/nsjail modes), `filesystem/` (`ReadTool` with image base64+auto-resize, `WriteTool`, `EditTool` with fuzzy match+CRLF/BOM+LCS diff, `LsTool` with limit+case-insensitive sort), `grep.rs` (rg JSON output, file-cache context), `find.rs` (fd, nested .gitignore, path-segment globs via `--full-path`), `ensure_tool.rs` (auto-download rg/fd from GitHub), `spawn.rs` (background UDS-mode subagent spawning), `agent_cmd.rs` (send commands to spawned UDS agents — `steer`, `follow_up`, `abort`, `get_state`), `web_search.rs` (Brave+DDG), `web_fetch.rs` (URL fetch with HTML stripping, per-host SSRF allowlist for tests), `recall.rs` (spill retrieval), `workflow_tool.rs` (`WorkflowTool` + `WorkflowGuard` — blocks `git commit`/`git push` when workflow steps incomplete; registration controlled by `guard_commit` config), `path_utils.rs`, `truncate.rs`, `command_match.rs`, `registry.rs` (`ToolRegistryImpl`, `guard_count()`) |
 | `persistence/` | `FileSessionStore` (round-trips all Message fields), `MemoryStore`, `FileSkillLoader`, `FileOnboardStore` (`workspace_store.rs`), `FileContextSpillStore` (JSONL append-only) |
 | `security/` | `Sandbox` — workspace path validation + command filtering |
 | `extensions/` | `ExtensionRegistry` (register extensions, aggregate tools + system prompt snippets), `NativeExtension` (compiled-in config-gated tools, e.g. `web_search`, `web_fetch`), `UdsExtensionTool` (routes tool execution to connected UDS clients via mpsc/oneshot channels). See [Extensions guide](docs/extensions.md) |
@@ -112,7 +112,7 @@ REPL progress: `ProgressRenderer` drives a braille spinner at ~12fps on stderr (
 
 All entry points (REPL, CLI agent) prepend a datetime preamble to the system prompt via `build_system_prompt()` so the agent always knows the current date/time/timezone — critical for time-aware tasks.
 
-Headless CLI agent includes `SpawnTool` for background subagent spawning. Subagent timeout: 24 hours.
+Headless CLI agent includes `SpawnTool` (launches UDS-mode subagents) and `AgentCmdTool` (sends commands to spawned agents). Subagent timeout: 24 hours.
 
 ### UDS event bus (`quecto agent --mode uds`)
 
@@ -509,7 +509,8 @@ External tool binaries (`rg`, `fd`) are resolved via `ensure_tool`: system PATH 
 | `grep` | Search file contents with ripgrep (`rg --json`). Regex or literal, case-insensitive option, context lines from file cache, 100-match / 50KB limit, 500-char line truncation |
 | `find` | Find files by glob pattern with fd. Respects nested `.gitignore` files, path-segment patterns via `--full-path`, configurable limit (default 1000), 50KB output cap |
 | `recall` | Retrieve a previously collapsed tool output by its spill ID (e.g. `turn20:bash:0`). Use `recall("list")` for the full index |
-| `spawn` | Spawn a background subagent for long-running tasks |
+| `spawn` | Spawn a background UDS-mode subagent for long-running tasks |
+| `agent_cmd` | Send commands (`steer`, `follow_up`, `abort`, `get_state`) to spawned UDS subagents |
 | `web_search` | Search the web via Brave Search or DuckDuckGo |
 | `web_fetch` | Fetch a URL and return its content as readable text (HTML stripped by default) |
 | `workflow` | Manage the BDD/TDD development workflow (status, check, uncheck, reset, skip, set_issue, clear_issue). `WorkflowGuard` blocks `git commit`/`git push` when steps are incomplete |
@@ -682,7 +683,7 @@ Tool binary cache (auto-downloaded `rg`, `fd`):
 | [UDS Protocol](docs/uds-protocol.md) | Complete UDS command and event specification |
 | [Sessions](docs/sessions.md) | Conversation persistence, context management, spill/recall |
 | [Extensions](docs/extensions.md) | Add custom tools via native extensions (config-gated) or UDS extensions (external processes) |
-| [Subagents](docs/subagents.md) | Spawning child agent processes with `spawn` tool |
+| [Subagents](docs/subagents.md) | Spawning and controlling UDS-mode subagents with `spawn` and `agent_cmd` tools |
 | [Disabling Tools](docs/disable-tools.md) | Restricting which tools the agent can access via `--disable-tool` |
 | [Workflow](docs/workflow.md) | Configurable BDD/TDD step-by-step development workflow with guards |
 
