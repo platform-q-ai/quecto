@@ -50,7 +50,7 @@ impl AnthropicProvider {
             builder
                 .header("Authorization", format!("Bearer {}", self.api_key))
                 .header("anthropic-beta", "claude-code-20250219,oauth-2025-04-20")
-                .header("user-agent", "quecto/0.12.0 (external, cli)")
+                .header("user-agent", "claude-cli/2.1.75")
                 .header("x-app", "cli")
         } else {
             builder.header("x-api-key", &self.api_key)
@@ -80,20 +80,25 @@ impl AnthropicProvider {
         let adaptive_model = Self::model_uses_adaptive_thinking(request.model);
 
         // Thinking configuration:
+        //   - 4.6 models (Opus 4.6, Sonnet 4.6) → ALWAYS use adaptive thinking,
+        //     even when thinking_level is None (#432). This matches pi-mono behaviour
+        //     and avoids 500 errors from sending output_config.effort without thinking.
         //   - ThinkingLevel::Adaptive (any model) → {type: "adaptive"}, no budget_tokens
         //   - Manual level on Opus 4.6 / Sonnet 4.6 → also adaptive (budget_tokens is
         //     deprecated on these models; manual levels map to effort instead)
         //   - Manual level on older models → {type: "enabled", budget_tokens: N}
         // Temperature must always be excluded when thinking is enabled.
-        if let Some(level) = request.thinking_level {
-            let use_adaptive = level.is_adaptive() || adaptive_model;
-            if use_adaptive {
-                // Adaptive mode: Opus 4.6 / Sonnet 4.6 recommended path.
-                // If a manual ThinkingLevel was passed for an adaptive model, the
-                // budget_tokens value is intentionally ignored — set effort instead.
+        if adaptive_model {
+            // 4.6 models: always use adaptive thinking regardless of thinking_level.
+            body["max_tokens"] = serde_json::json!(request.max_tokens);
+            body["thinking"] = serde_json::json!({"type": "adaptive"});
+            // temperature excluded (Anthropic API requirement for thinking)
+        } else if let Some(level) = request.thinking_level {
+            if level.is_adaptive() {
+                // Explicit adaptive mode on non-4.6 model (future-proofing).
                 body["max_tokens"] = serde_json::json!(request.max_tokens);
                 body["thinking"] = serde_json::json!({"type": "adaptive"});
-                // temperature excluded (Anthropic API requirement for thinking)
+                // temperature excluded
             } else {
                 // Manual mode: older models (Opus 4.5, Sonnet 4.5, Haiku 4.5, etc.)
                 // budget_tokens() is safe here: level is not Adaptive (checked above).
@@ -108,6 +113,7 @@ impl AnthropicProvider {
                 // temperature excluded (Anthropic API requirement for thinking)
             }
         } else {
+            // Non-4.6 model with no thinking level: include temperature.
             body["max_tokens"] = serde_json::json!(request.max_tokens);
             body["temperature"] = serde_json::json!(request.temperature);
         }

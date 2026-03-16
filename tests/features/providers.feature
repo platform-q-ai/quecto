@@ -106,11 +106,13 @@ Feature: LLM Providers
     Then the tool result JSON should contain "is_error" set to false
 
   # --- #179: Beta headers for API key auth ---
+  # NOTE: fine-grained-tool-streaming is now GA and the beta header has been removed.
+  # The scenario below verifies that API key auth does NOT send the old beta header.
 
-  Scenario: Anthropic provider sends beta headers for API key auth
+  Scenario: Anthropic provider does not send fine-grained-tool-streaming beta header (now GA)
     Given an Anthropic provider with API key auth and a mock server
     When I send an Anthropic chat request
-    Then the request should include the "anthropic-beta" header with "fine-grained-tool-streaming-2025-05-14"
+    Then the request should not include the "anthropic-beta" header with "fine-grained-tool-streaming-2025-05-14"
 
   # --- #177: Stop reason extraction ---
 
@@ -212,11 +214,27 @@ Feature: LLM Providers
     When I build the Anthropic request body with thinking
     Then the request body should contain thinking type "enabled" with budget_tokens 16384
 
-  Scenario: Anthropic provider skips thinking when level is none
+  Scenario: Anthropic provider skips thinking when level is none for older models
     Given an Anthropic request with model "claude-sonnet-4-20250514" and no thinking level
     When I build the Anthropic request body with thinking
     Then the request body should not contain a thinking field
     And the request body should contain a temperature field
+
+  # --- #432: Auto-enable adaptive thinking for 4.6 models ---
+
+  Scenario: Anthropic provider auto-enables adaptive thinking for Opus 4.6 even with no thinking level
+    Given an Anthropic request with model "claude-opus-4-6" and no thinking level
+    When I build the Anthropic request body with thinking
+    Then the request body should contain thinking type "adaptive"
+    And the request body should not contain a temperature field
+    And the request body should contain output_config effort "low"
+
+  Scenario: Anthropic provider auto-enables adaptive thinking for Sonnet 4.6 even with no thinking level
+    Given an Anthropic request with model "claude-sonnet-4-6" and no thinking level
+    When I build the Anthropic request body with thinking
+    Then the request body should contain thinking type "adaptive"
+    And the request body should not contain a temperature field
+    And the request body should contain output_config effort "low"
 
   Scenario: Anthropic provider handles thinking content blocks in SSE
     Given an Anthropic SSE response with thinking content blocks
@@ -459,20 +477,25 @@ Feature: LLM Providers
 
   # --- #416: Default effort=low for 4.6 models; model_context_window_exceeded ---
 
-  Scenario: Sonnet 4.6 with no effort emits effort=low in request body
+  Scenario: Sonnet 4.6 with no effort emits effort=low and adaptive thinking in request body
     Given an Anthropic request for model "claude-sonnet-4-6" with no effort level
     When I build the Anthropic request body with effort
     Then the request body should contain output_config effort "low"
+    And the request body should contain thinking type "adaptive"
+    And the request body should not contain a temperature field
 
-  Scenario: Opus 4.6 with no effort emits effort=low in request body
+  Scenario: Opus 4.6 with no effort emits effort=low and adaptive thinking in request body
     Given an Anthropic request for model "claude-opus-4-6" with no effort level
     When I build the Anthropic request body with effort
     Then the request body should contain output_config effort "low"
+    And the request body should contain thinking type "adaptive"
+    And the request body should not contain a temperature field
 
-  Scenario: Sonnet 4.6 with explicit effort=medium uses the override
+  Scenario: Sonnet 4.6 with explicit effort=medium uses the override with adaptive thinking
     Given an Anthropic request for model "claude-sonnet-4-6" with effort level "medium"
     When I build the Anthropic request body with effort
     Then the request body should contain output_config effort "medium"
+    And the request body should contain thinking type "adaptive"
 
   Scenario: Non-4.6 model with no effort omits output_config
     Given an Anthropic request for model "claude-opus-4-5" with no effort level
