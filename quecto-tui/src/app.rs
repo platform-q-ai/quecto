@@ -446,17 +446,11 @@ impl App {
                     return;
                 }
                 "/clear" => {
-                    self.send_clear_history();
-                    self.chat.clear();
-                    self.footer.set_context(None, 0);
-                    self.notify("Conversation cleared", NotifyLevel::Success);
+                    self.reset_session("Conversation cleared");
                     return;
                 }
                 "/new" => {
-                    self.send_clear_history();
-                    self.chat.clear();
-                    self.footer.set_context(None, 0);
-                    self.notify("New session started", NotifyLevel::Success);
+                    self.reset_session("New session started");
                     return;
                 }
                 "/help" | "/hotkeys" => {
@@ -836,6 +830,14 @@ impl App {
     fn render_full(&mut self) {
         self.terminal.clear_screen();
         self.render();
+    }
+
+    /// Reset the conversation — clears agent history, chat UI, and context display.
+    fn reset_session(&mut self, message: &str) {
+        self.send_clear_history();
+        self.chat.clear();
+        self.footer.set_context(None, 0);
+        self.notify(message, NotifyLevel::Success);
     }
 
     fn send_clear_history(&mut self) {
