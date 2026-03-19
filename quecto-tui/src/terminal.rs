@@ -82,6 +82,7 @@ impl Terminal {
                     "\x1b[?25h",   // Show cursor
                     "\x1b[0m",     // Reset all SGR attributes
                     "\x1b[>4;0m",  // Reset modifyOtherKeys (xterm/tmux)
+                    "\x1b[<u",     // Pop Kitty keyboard protocol flags
                 )
                 .as_bytes(),
             );
