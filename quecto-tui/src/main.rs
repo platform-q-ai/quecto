@@ -102,7 +102,11 @@ async fn run(flags: CliFlags) -> i32 {
         Err(e) => {
             eprintln!("Failed to connect to agent: {e}");
             if let Some(ref mut child) = _child {
-                let _ = child.kill().await;
+                quecto_tui::process::terminate_child(
+                    child,
+                    quecto_tui::process::TERMINATE_GRACE_MS,
+                )
+                .await;
             }
             return 1;
         }
@@ -116,7 +120,7 @@ async fn run(flags: CliFlags) -> i32 {
     // Kill the child agent process group on TUI exit (catches subagents too).
     // Uses checked PID conversion to prevent u32→i32 wrapping (see #464).
     if let Some(ref mut child) = _child {
-        quecto_tui::process::terminate_child(child, 200).await;
+        quecto_tui::process::terminate_child(child, quecto_tui::process::TERMINATE_GRACE_MS).await;
     }
 
     exit_code

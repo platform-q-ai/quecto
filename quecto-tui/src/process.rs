@@ -2,6 +2,11 @@
 //!
 //! Provides checked PID conversion (u32 → i32) and process-group signal
 //! helpers so that wrapping casts cannot accidentally target PID 1 (init).
+//!
+//! For incoming signal handling (SIGTSTP, SIGWINCH), see the [`crate::signals`] module.
+
+/// Grace period between SIGTERM and SIGKILL (milliseconds).
+pub const TERMINATE_GRACE_MS: u64 = 200;
 
 /// Error returned when a PID cannot be safely used for signalling.
 #[derive(Debug, PartialEq)]
@@ -23,6 +28,8 @@ impl std::fmt::Display for PidError {
     }
 }
 
+impl std::error::Error for PidError {}
+
 /// Convert a `u32` PID (from `child.id()`) to a safe `i32` for use with `libc::kill`.
 ///
 /// Returns `Err` if the PID is 0 or exceeds `i32::MAX`.
@@ -38,18 +45,20 @@ pub fn checked_pid(pid: u32) -> Result<i32, PidError> {
 /// Uses `libc::kill(-pid, sig)` — the negative PID targets the group.
 /// Returns the raw libc result (0 on success, -1 on error).
 ///
-/// # Safety
-/// `pid` must be a valid, positive process-group leader PID.
-pub fn kill_process_group(pid: i32, signal: libc::c_int) -> libc::c_int {
-    debug_assert!(pid > 0, "kill_process_group requires a positive PID");
+/// Requires `pid > 0`. Returns `-1` without signalling if `pid <= 0`
+/// (pid 0 would signal the caller's group, negative would flip sign).
+pub(crate) fn kill_process_group(pid: i32, signal: libc::c_int) -> libc::c_int {
+    if pid <= 0 {
+        return -1;
+    }
     unsafe { libc::kill(-pid, signal) }
 }
 
 /// Terminate a child agent and its entire process group.
 ///
 /// 1. SIGTERM the process group (graceful shutdown).
-/// 2. Wait `grace_ms` milliseconds.
-/// 3. SIGKILL the process group (force kill survivors).
+/// 2. Poll `child.try_wait()` in 10ms ticks up to `grace_ms`.
+/// 3. If still alive after the grace period, SIGKILL the process group.
 ///
 /// If the PID cannot be safely converted, falls back to killing only the
 /// direct child via `child.kill()`.
@@ -57,8 +66,29 @@ pub async fn terminate_child(child: &mut tokio::process::Child, grace_ms: u64) {
     if let Some(raw_pid) = child.id() {
         match checked_pid(raw_pid) {
             Ok(pid) => {
-                kill_process_group(pid, libc::SIGTERM);
-                tokio::time::sleep(std::time::Duration::from_millis(grace_ms)).await;
+                let rc = kill_process_group(pid, libc::SIGTERM);
+                if rc == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+                    // Process group already gone, skip grace period.
+                    let _ = child.wait().await;
+                    return;
+                }
+
+                // Poll for exit with short ticks to avoid unnecessary delay.
+                let deadline =
+                    tokio::time::Instant::now() + std::time::Duration::from_millis(grace_ms);
+                loop {
+                    match child.try_wait() {
+                        Ok(Some(_)) => return, // Already exited after SIGTERM.
+                        Ok(None) => {}
+                        Err(_) => break,
+                    }
+                    if tokio::time::Instant::now() >= deadline {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+
+                // Still alive — force kill the group.
                 kill_process_group(pid, libc::SIGKILL);
             }
             Err(e) => {
@@ -135,6 +165,12 @@ mod tests {
         assert!(msg.contains("PID 0"), "should mention PID 0");
     }
 
+    #[test]
+    fn pid_error_implements_std_error() {
+        let e: Box<dyn std::error::Error> = Box::new(PidError::Zero);
+        assert!(e.to_string().contains("PID 0"));
+    }
+
     // --- kill_process_group tests ---
 
     #[test]
@@ -146,14 +182,31 @@ mod tests {
     }
 
     #[test]
-    fn kill_process_group_negates_pid() {
-        // We can't directly observe the negation without mocking libc,
-        // but we verify the function doesn't panic with a valid PID.
-        // Using signal 0 (null signal) — checks permissions without sending.
-        let result = kill_process_group(1, 0);
-        // On most systems, signal 0 to PID -1 (all processes) requires root,
-        // so this should return -1 (EPERM) for non-root users.
-        // The important thing is it doesn't panic.
-        let _ = result;
+    fn kill_process_group_rejects_zero_pid() {
+        // PID 0 would signal the caller's own process group.
+        let result = kill_process_group(0, libc::SIGTERM);
+        assert_eq!(result, -1);
+    }
+
+    #[test]
+    fn kill_process_group_rejects_negative_pid() {
+        // Negative PID would flip sign and target an unrelated process.
+        let result = kill_process_group(-1, libc::SIGTERM);
+        assert_eq!(result, -1);
+    }
+
+    #[test]
+    fn kill_process_group_with_nonexistent_pid_returns_error() {
+        // Use a PID that almost certainly doesn't exist as a process group.
+        // Signal 0 is a null signal — only checks permissions.
+        let result = kill_process_group(999_999_998, 0);
+        // Should fail with ESRCH (no such process group).
+        assert_eq!(result, -1);
+    }
+
+    #[test]
+    fn terminate_grace_ms_constant_is_reasonable() {
+        assert!(TERMINATE_GRACE_MS >= 100, "grace period too short");
+        assert!(TERMINATE_GRACE_MS <= 5000, "grace period too long");
     }
 }
