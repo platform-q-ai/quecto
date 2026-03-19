@@ -8,7 +8,7 @@
 
 /// Maximum buffer size (64 KB). Prevents unbounded memory growth from
 /// broken bracketed paste (start marker without end marker) or malicious input.
-pub const MAX_BUFFER_SIZE: usize = 64 * 1024;
+pub(crate) const MAX_BUFFER_SIZE: usize = 64 * 1024;
 
 /// Check if a byte sequence starting with ESC is complete.
 fn is_complete_escape(data: &[u8]) -> Completeness {
@@ -42,12 +42,11 @@ fn is_complete_csi(after_bracket: &[u8]) -> Completeness {
 
     // Bracketed paste start: \x1b[200~
     if after_bracket.starts_with(b"200~") {
-        // Look for end marker: \x1b[201~ using windows() for O(n) scan.
+        // Look for end marker: \x1b[201~
         const END_MARKER: &[u8] = b"\x1b[201~";
-        if after_bracket.len() >= END_MARKER.len()
-            && after_bracket
-                .windows(END_MARKER.len())
-                .any(|w| w == END_MARKER)
+        if after_bracket
+            .windows(END_MARKER.len())
+            .any(|w| w == END_MARKER)
         {
             return Completeness::Complete;
         }
@@ -84,15 +83,17 @@ impl StdinBuffer {
 
     /// Feed new bytes into the buffer.
     ///
-    /// Data beyond [`MAX_BUFFER_SIZE`] is silently dropped to prevent
-    /// unbounded memory growth (e.g. broken bracketed paste).
-    pub fn feed(&mut self, data: &[u8]) {
+    /// Data beyond [`MAX_BUFFER_SIZE`] is truncated to prevent unbounded
+    /// memory growth (e.g. broken bracketed paste). Returns `true` if all
+    /// data was accepted, `false` if some was dropped due to the cap.
+    pub fn feed(&mut self, data: &[u8]) -> bool {
         let remaining_capacity = MAX_BUFFER_SIZE.saturating_sub(self.buf.len());
         if remaining_capacity == 0 {
-            return;
+            return data.is_empty();
         }
         let accept = data.len().min(remaining_capacity);
         self.buf.extend_from_slice(&data[..accept]);
+        accept == data.len()
     }
 
     /// Extract all complete sequences from the buffer.
@@ -196,7 +197,7 @@ fn escape_sequence_len(data: &[u8]) -> usize {
             // CSI: find the terminal byte (0x40-0x7E).
             // Special case: bracketed paste.
             if data.len() > 5 && data[2..6] == *b"200~" {
-                // Find \x1b[201~ using windows() for O(n) scan.
+                // Find \x1b[201~ end marker.
                 const END_MARKER: &[u8] = b"\x1b[201~";
                 if let Some(pos) = data[6..]
                     .windows(END_MARKER.len())
@@ -538,6 +539,29 @@ mod tests {
             buf.buf.len(),
             MAX_BUFFER_SIZE
         );
+    }
+
+    #[test]
+    fn feed_returns_false_when_truncated() {
+        let mut buf = StdinBuffer::new();
+        let data = vec![b'a'; MAX_BUFFER_SIZE];
+        assert!(buf.feed(&data), "should accept all within cap");
+        assert!(!buf.feed(b"x"), "should reject when at cap");
+    }
+
+    #[test]
+    fn drain_all_works_after_cap_reached() {
+        let mut buf = StdinBuffer::new();
+        // Fill buffer with a broken paste (no end marker).
+        buf.feed(b"\x1b[200~");
+        let filler = vec![b'x'; MAX_BUFFER_SIZE];
+        buf.feed(&filler);
+        // drain_complete should return nothing (paste never completed).
+        assert!(buf.drain_complete().is_empty());
+        // drain_all should force everything out.
+        let forced = buf.drain_all();
+        assert!(!forced.is_empty(), "drain_all should emit buffered data");
+        assert!(!buf.has_pending(), "buffer should be empty after drain_all");
     }
 
     #[test]
