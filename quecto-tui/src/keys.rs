@@ -25,6 +25,8 @@ pub enum Key {
     Ctrl(char),
     /// Alt + a character.
     Alt(char),
+    /// Insert key.
+    Insert,
     /// A paste event (bracketed paste content).
     Paste(String),
     /// Unrecognised sequence.
@@ -108,7 +110,8 @@ fn parse_csi(rest: &[u8]) -> Option<(Key, usize)> {
         b'F' => Key::End,
         b'Z' => Key::BackTab,
         b'~' => match params {
-            b"2" => Key::Home, // some terminals
+            b"1" => Key::Home, // CSI 1 ~
+            b"2" => Key::Insert,
             b"3" => Key::Delete,
             b"5" => Key::PageUp,
             b"6" => Key::PageDown,

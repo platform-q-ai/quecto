@@ -45,11 +45,14 @@ impl<W: Write> DiffRenderer<W> {
 
         if first_render || width_changed {
             self.full_render(new_lines, width_changed);
+            self.previous_lines = new_lines.to_vec();
         } else {
-            self.diff_render(new_lines);
+            let changed = self.diff_render(new_lines);
+            if changed {
+                self.previous_lines = new_lines.to_vec();
+            }
         }
 
-        self.previous_lines = new_lines.to_vec();
         self.previous_width = width;
     }
 
@@ -84,7 +87,8 @@ impl<W: Write> DiffRenderer<W> {
     }
 
     /// Differential render — only write changed lines.
-    fn diff_render(&mut self, new_lines: &[String]) {
+    /// Returns `true` if any lines were changed and written.
+    fn diff_render(&mut self, new_lines: &[String]) -> bool {
         // Find first and last changed line
         let max_len = new_lines.len().max(self.previous_lines.len());
         let mut first_changed: Option<usize> = None;
@@ -103,7 +107,7 @@ impl<W: Write> DiffRenderer<W> {
 
         let Some(first) = first_changed else {
             // No changes
-            return;
+            return false;
         };
 
         let mut buf = String::new();
@@ -147,6 +151,8 @@ impl<W: Write> DiffRenderer<W> {
         let _ = self.writer.write_all(buf.as_bytes());
         let _ = self.writer.flush();
         self.cursor_row = render_end;
+
+        true
     }
 }
 

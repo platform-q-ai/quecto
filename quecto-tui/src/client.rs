@@ -10,6 +10,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 
+/// Maximum line size from the agent (1 MiB, matching quecto's protocol limit).
+const MAX_LINE_BYTES: usize = 1_048_576;
+
 // ─── Protocol types (subset matching quecto's wire format) ────────────────────
 
 /// A command sent from the TUI to the agent.
@@ -20,6 +23,9 @@ pub enum Command {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         message: String,
+        /// How to handle this prompt if the agent is already running.
+        #[serde(rename = "streamingBehavior", skip_serializing_if = "Option::is_none")]
+        streaming_behavior: Option<String>,
     },
     Steer {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -55,7 +61,12 @@ pub enum Command {
     SetModel {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
-        model: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        provider: Option<String>,
+        #[serde(rename = "modelId", skip_serializing_if = "Option::is_none")]
+        model_id: Option<String>,
     },
     ClearHistory {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -106,10 +117,20 @@ pub enum Event {
         #[serde(default)]
         error: Option<String>,
     },
+    /// Request to execute a tool (routed to extension clients, not broadcast).
+    ExecuteTool {
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        #[serde(rename = "toolName")]
+        tool_name: String,
+        arguments: String,
+    },
     ExtensionsChanged {
         extensions: Vec<serde_json::Value>,
     },
-    /// Catch-all for unknown event types (forward-compatible).
+    /// Catch-all for unknown/future event types (forward-compatible).
+    /// Known omissions that will deserialize here: none currently — all
+    /// documented event types are covered above.
     #[serde(other)]
     Unknown,
 }
@@ -176,6 +197,15 @@ impl Client {
                 match reader.read_line(&mut line).await {
                     Ok(0) => break, // EOF — agent closed the connection
                     Ok(_) => {
+                        // Enforce max line size to prevent OOM from malicious/buggy agents.
+                        if line.len() > MAX_LINE_BYTES {
+                            eprintln!(
+                                "quecto-tui: dropping oversized line ({} bytes, max {})",
+                                line.len(),
+                                MAX_LINE_BYTES
+                            );
+                            continue;
+                        }
                         let trimmed = line.trim();
                         if trimmed.is_empty() {
                             continue;
@@ -187,8 +217,12 @@ impl Client {
                                 }
                             }
                             Err(e) => {
+                                // Truncate logged content to avoid leaking sensitive data.
+                                let preview_len = trimmed.len().min(200);
                                 eprintln!(
-                                    "quecto-tui: failed to parse agent event: {e}: {trimmed}"
+                                    "quecto-tui: failed to parse agent event: {e} (line len: {}, preview: {}...)",
+                                    trimmed.len(),
+                                    &trimmed[..preview_len]
                                 );
                             }
                         }
@@ -197,6 +231,10 @@ impl Client {
                         eprintln!("quecto-tui: error reading from agent socket: {e}");
                         break;
                     }
+                }
+                // Reclaim memory if a large line inflated the buffer.
+                if line.capacity() > 64 * 1024 {
+                    line.shrink_to(8 * 1024);
                 }
             }
         });
@@ -238,11 +276,25 @@ mod tests {
         let cmd = Command::Prompt {
             id: Some("p-1".into()),
             message: "hello".into(),
+            streaming_behavior: None,
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("\"type\":\"prompt\""));
         assert!(json.contains("\"message\":\"hello\""));
         assert!(json.contains("\"id\":\"p-1\""));
+        // streaming_behavior should be omitted when None
+        assert!(!json.contains("streamingBehavior"));
+    }
+
+    #[test]
+    fn command_prompt_with_streaming_behavior() {
+        let cmd = Command::Prompt {
+            id: None,
+            message: "hi".into(),
+            streaming_behavior: Some("steer".into()),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"streamingBehavior\":\"steer\""));
     }
 
     #[test]

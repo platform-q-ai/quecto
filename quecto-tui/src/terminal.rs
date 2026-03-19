@@ -39,8 +39,10 @@ impl Terminal {
 
         let fd = std::io::stdin().as_raw_fd();
         let mut termios = unsafe { std::mem::zeroed::<libc::termios>() };
-        unsafe {
-            libc::tcgetattr(fd, &mut termios);
+        let rc = unsafe { libc::tcgetattr(fd, &mut termios) };
+        if rc != 0 {
+            // Not a TTY or error — don't enter raw mode.
+            return;
         }
 
         let saved = SavedTermios { original: termios };

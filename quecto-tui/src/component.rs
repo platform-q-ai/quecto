@@ -8,9 +8,12 @@
 /// All components must implement this trait. The TUI calls `render()` each
 /// frame with the current terminal width; the component returns one string
 /// per line. Each line must not exceed `width` visible characters.
+///
+/// `render(&mut self)` takes a mutable reference so components can update
+/// their render cache inline, avoiding interior mutability.
 pub trait Component: Send {
     /// Render the component to lines for the given viewport width.
-    fn render(&self, width: usize) -> Vec<String>;
+    fn render(&mut self, width: usize) -> Vec<String>;
 
     /// Handle a keyboard input event. Return `true` if the input was consumed.
     fn handle_input(&mut self, _key: &crate::keys::Key) -> bool {
@@ -61,9 +64,9 @@ impl Default for Container {
 }
 
 impl Component for Container {
-    fn render(&self, width: usize) -> Vec<String> {
+    fn render(&mut self, width: usize) -> Vec<String> {
         let mut lines = Vec::new();
-        for child in &self.children {
+        for child in &mut self.children {
             lines.extend(child.render(width));
         }
         lines
@@ -104,7 +107,7 @@ mod tests {
 
     #[test]
     fn container_empty_renders_empty() {
-        let c = Container::new();
+        let mut c = Container::new();
         assert!(c.render(80).is_empty());
     }
 

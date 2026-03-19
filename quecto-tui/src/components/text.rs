@@ -30,7 +30,7 @@ impl Text {
 }
 
 impl Component for Text {
-    fn render(&self, width: usize) -> Vec<String> {
+    fn render(&mut self, width: usize) -> Vec<String> {
         // Check cache
         if let (Some(cached_w), Some(cached)) = (self.cached_width, &self.cached_lines) {
             if cached_w == width {
@@ -38,18 +38,18 @@ impl Component for Text {
             }
         }
 
-        if self.content.is_empty() {
-            return vec![String::new()];
-        }
-
-        let lines = if visible_width(&self.content) <= width {
+        let lines = if self.content.is_empty() {
+            vec![String::new()]
+        } else if visible_width(&self.content) <= width {
             vec![self.content.clone()]
         } else {
             utils::wrap_text(&self.content, width)
         };
 
-        // We can't mutate &self in render, so caching requires interior mutability
-        // or the caller to call invalidate + re-render. For now, compute fresh.
+        // Update cache
+        self.cached_width = Some(width);
+        self.cached_lines = Some(lines.clone());
+
         lines
     }
 
@@ -65,14 +65,14 @@ mod tests {
 
     #[test]
     fn short_text_single_line() {
-        let t = Text::new("hello");
+        let mut t = Text::new("hello");
         let lines = t.render(80);
         assert_eq!(lines, vec!["hello"]);
     }
 
     #[test]
     fn long_text_wraps() {
-        let t = Text::new("The quick brown fox jumps over the lazy dog and keeps running");
+        let mut t = Text::new("The quick brown fox jumps over the lazy dog and keeps running");
         let lines = t.render(30);
         assert!(lines.len() > 1);
         for line in &lines {
@@ -87,7 +87,7 @@ mod tests {
 
     #[test]
     fn empty_text_renders_empty_line() {
-        let t = Text::new("");
+        let mut t = Text::new("");
         let lines = t.render(80);
         assert_eq!(lines, vec![""]);
     }
@@ -102,10 +102,30 @@ mod tests {
 
     #[test]
     fn render_respects_width() {
-        let t = Text::new("Hello, world!");
+        let mut t = Text::new("Hello, world!");
         let lines = t.render(80);
         for line in &lines {
             assert!(visible_width(line) <= 80);
         }
+    }
+
+    #[test]
+    fn cache_is_used_on_same_width() {
+        let mut t = Text::new("hello");
+        let lines1 = t.render(80);
+        let lines2 = t.render(80);
+        assert_eq!(lines1, lines2);
+        // The cache should be populated
+        assert!(t.cached_width.is_some());
+        assert!(t.cached_lines.is_some());
+    }
+
+    #[test]
+    fn cache_invalidated_on_width_change() {
+        let mut t = Text::new("hello world test");
+        let lines1 = t.render(80);
+        let lines2 = t.render(10);
+        // Different widths should produce different results
+        assert_ne!(lines1.len(), lines2.len());
     }
 }
