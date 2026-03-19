@@ -244,12 +244,19 @@ impl Component for Chat {
         }
 
         // Apply scroll offset (scroll_offset lines from bottom are hidden).
-        // Clamp to actual rendered line count to prevent over-scrolling.
+        // Clamp to actual rendered line count and write back to prevent
+        // unbounded growth (#500).
         if self.scroll_offset > 0 && !all_lines.is_empty() {
-            let max_scroll = all_lines.len().saturating_sub(1);
+            let max_scroll = all_lines.len();
             let effective = self.scroll_offset.min(max_scroll);
-            let end = all_lines.len() - effective;
-            all_lines.truncate(end);
+            self.scroll_offset = effective; // Write back to prevent unbounded growth.
+            let end = all_lines.len().saturating_sub(effective);
+            if end > 0 {
+                all_lines.truncate(end);
+            } else {
+                // Scrolled to the very top — show just the first line.
+                all_lines.truncate(1);
+            }
         }
 
         all_lines
