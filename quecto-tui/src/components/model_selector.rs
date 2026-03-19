@@ -10,7 +10,8 @@ use crate::keys::Key;
 use crate::theme;
 use crate::utils::{truncate_to_width, visible_width};
 
-/// Well-known model identifiers shown in the selector.
+/// Well-known model identifiers, used as fallback when the caller
+/// doesn't supply a model list.
 const KNOWN_MODELS: &[(&str, &str)] = &[
     ("claude-sonnet-4-20250514", "Anthropic"),
     ("claude-opus-4-20250514", "Anthropic"),
@@ -24,6 +25,16 @@ const KNOWN_MODELS: &[(&str, &str)] = &[
     ("o4-mini", "OpenAI"),
     ("codex-mini-latest", "OpenAI"),
 ];
+
+/// Maximum query length to prevent unbounded growth.
+const MAX_QUERY_LEN: usize = 64;
+
+/// Sanitize a model name by stripping control characters.
+///
+/// Prevents terminal escape injection via agent-sourced model names.
+fn sanitize_model_name(name: &str) -> String {
+    name.chars().filter(|c| !c.is_control()).collect()
+}
 
 /// A model entry in the selector.
 #[derive(Debug, Clone)]
@@ -58,27 +69,48 @@ pub struct ModelSelector {
     max_visible: usize,
     /// Interaction result.
     result: ModelSelectorResult,
+    /// Cached max label width (recalculated only when filter changes).
+    cached_max_label_width: usize,
 }
 
 impl ModelSelector {
-    /// Create a new model selector with the given current model.
+    /// Create a new model selector with default known models.
+    ///
+    /// `current_model` is sanitized and marked with ● in the list.
+    /// If it's not in the known list, it's added at the top.
     pub fn new(current_model: Option<&str>) -> Self {
-        let mut all_models: Vec<ModelEntry> = KNOWN_MODELS
+        let models: Vec<ModelEntry> = KNOWN_MODELS
             .iter()
             .map(|(id, provider)| ModelEntry {
                 id: id.to_string(),
                 provider: provider.to_string(),
-                is_current: current_model == Some(*id),
+                is_current: false,
             })
             .collect();
+        Self::with_models(models, current_model)
+    }
 
-        // If the current model isn't in the known list, add it at the top.
+    /// Create a model selector with a caller-supplied model list.
+    ///
+    /// This decouples the component from the hardcoded known models,
+    /// allowing future integration with dynamic model lists from the agent.
+    pub fn with_models(mut models: Vec<ModelEntry>, current_model: Option<&str>) -> Self {
+        // Sanitize and mark the current model.
         if let Some(current) = current_model {
-            if !all_models.iter().any(|m| m.id == current) {
-                all_models.insert(
+            let safe_current = sanitize_model_name(current);
+            let mut found = false;
+            for m in &mut models {
+                if m.id == safe_current {
+                    m.is_current = true;
+                    found = true;
+                }
+            }
+            // If the current model isn't in the list, add it at the top.
+            if !found && !safe_current.is_empty() {
+                models.insert(
                     0,
                     ModelEntry {
-                        id: current.to_string(),
+                        id: safe_current,
                         provider: "Custom".to_string(),
                         is_current: true,
                     },
@@ -86,15 +118,17 @@ impl ModelSelector {
             }
         }
 
-        let filtered: Vec<usize> = (0..all_models.len()).collect();
+        let filtered: Vec<usize> = (0..models.len()).collect();
+        let cached_width = compute_max_label_width(&models, &filtered);
 
         Self {
-            all_models,
+            all_models: models,
             filtered,
             selected: 0,
             query: String::new(),
             max_visible: 12,
             result: ModelSelectorResult::Pending,
+            cached_max_label_width: cached_width,
         }
     }
 
@@ -108,12 +142,13 @@ impl ModelSelector {
         if self.query.is_empty() {
             self.filtered = (0..self.all_models.len()).collect();
         } else {
-            // Collect model IDs for fuzzy matching (avoids borrow conflicts).
-            let ids: Vec<String> = self.all_models.iter().map(|m| m.id.clone()).collect();
-            let indexed: Vec<(usize, &str)> = ids
+            // Build indexed pairs without cloning model IDs.
+            // `all_models` and `query` are separate fields, so no borrow conflict.
+            let indexed: Vec<(usize, &str)> = self
+                .all_models
                 .iter()
                 .enumerate()
-                .map(|(i, s)| (i, s.as_str()))
+                .map(|(i, m)| (i, m.id.as_str()))
                 .collect();
             let matching = fuzzy_filter(&indexed, &self.query, |item| item.1);
             self.filtered = matching.into_iter().map(|item| item.0).collect();
@@ -124,6 +159,8 @@ impl ModelSelector {
         } else if self.selected >= self.filtered.len() {
             self.selected = self.filtered.len() - 1;
         }
+        // Recache label width.
+        self.cached_max_label_width = compute_max_label_width(&self.all_models, &self.filtered);
     }
 
     /// Get the currently selected model entry, if any.
@@ -137,6 +174,16 @@ impl ModelSelector {
     pub fn visible_count(&self) -> usize {
         self.filtered.len()
     }
+}
+
+/// Compute the max label width across filtered entries.
+fn compute_max_label_width(models: &[ModelEntry], filtered: &[usize]) -> usize {
+    filtered
+        .iter()
+        .map(|&idx| visible_width(&models[idx].id))
+        .max()
+        .unwrap_or(10)
+        .min(40)
 }
 
 impl Component for ModelSelector {
@@ -183,14 +230,8 @@ impl Component for ModelSelector {
         };
         let end = (start + visible).min(total);
 
-        // Calculate label width for alignment.
-        let max_label_width = self
-            .filtered
-            .iter()
-            .map(|&idx| visible_width(&self.all_models[idx].id))
-            .max()
-            .unwrap_or(10)
-            .min(40);
+        // Use cached label width for alignment.
+        let max_label_width = self.cached_max_label_width;
 
         for i in start..end {
             let idx = self.filtered[i];
@@ -260,6 +301,9 @@ impl Component for ModelSelector {
             Key::Enter => {
                 if let Some(model) = self.selected_model() {
                     self.result = ModelSelectorResult::Selected(model.id.clone());
+                } else {
+                    // No matches — treat Enter as cancel.
+                    self.result = ModelSelectorResult::Cancelled;
                 }
                 true
             }
@@ -273,8 +317,10 @@ impl Component for ModelSelector {
                 true
             }
             Key::Char(c) => {
-                self.query.push(*c);
-                self.update_filter();
+                if self.query.len() < MAX_QUERY_LEN {
+                    self.query.push(*c);
+                    self.update_filter();
+                }
                 true
             }
             _ => false,
@@ -314,7 +360,6 @@ mod tests {
             .map(|l| strip_ansi(l))
             .collect::<Vec<_>>()
             .join("\n");
-        // Should contain at least one known model.
         assert!(
             plain.contains("claude-sonnet-4"),
             "should contain a model: {}",
@@ -390,7 +435,6 @@ mod tests {
     #[test]
     fn fuzzy_filter_narrows_list() {
         let mut sel = ModelSelector::new(None);
-        // Type "son" to match "sonnet"
         sel.handle_input(&Key::Char('s'));
         sel.handle_input(&Key::Char('o'));
         sel.handle_input(&Key::Char('n'));
@@ -400,7 +444,6 @@ mod tests {
             sel.visible_count(),
             KNOWN_MODELS.len()
         );
-        // The sonnet model should still be visible.
         let visible_ids: Vec<&str> = sel
             .filtered
             .iter()
@@ -416,7 +459,6 @@ mod tests {
     #[test]
     fn empty_query_shows_all() {
         let mut sel = ModelSelector::new(None);
-        // Type and then delete.
         sel.handle_input(&Key::Char('x'));
         sel.handle_input(&Key::Backspace);
         assert_eq!(sel.visible_count(), KNOWN_MODELS.len());
@@ -491,5 +533,95 @@ mod tests {
                 visible_width(line)
             );
         }
+    }
+
+    // ── Review fix tests ──────────────────────────────────────────────
+
+    #[test]
+    fn sanitize_strips_control_chars() {
+        let dirty = "model\x1b[31m-evil\x07name";
+        let clean = sanitize_model_name(dirty);
+        assert!(!clean.contains('\x1b'));
+        assert!(!clean.contains('\x07'));
+        assert!(clean.contains("model"));
+        assert!(clean.contains("name"));
+    }
+
+    #[test]
+    fn query_capped_at_max_length() {
+        let mut sel = ModelSelector::new(None);
+        for _ in 0..100 {
+            sel.handle_input(&Key::Char('x'));
+        }
+        assert_eq!(sel.query.len(), MAX_QUERY_LEN);
+    }
+
+    #[test]
+    fn enter_on_empty_filtered_cancels() {
+        let mut sel = ModelSelector::new(None);
+        for c in "zzzznonexistent".chars() {
+            sel.handle_input(&Key::Char(c));
+        }
+        assert_eq!(sel.visible_count(), 0);
+        sel.handle_input(&Key::Enter);
+        assert_eq!(sel.take_result(), ModelSelectorResult::Cancelled);
+    }
+
+    #[test]
+    fn with_models_accepts_custom_list() {
+        let models = vec![
+            ModelEntry {
+                id: "model-a".to_string(),
+                provider: "ProviderA".to_string(),
+                is_current: false,
+            },
+            ModelEntry {
+                id: "model-b".to_string(),
+                provider: "ProviderB".to_string(),
+                is_current: false,
+            },
+        ];
+        let mut sel = ModelSelector::with_models(models, Some("model-a"));
+        let lines = sel.render(60);
+        let plain: String = lines
+            .iter()
+            .map(|l| strip_ansi(l))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(plain.contains("model-a"));
+        assert!(plain.contains("model-b"));
+        assert!(plain.contains('●')); // model-a is current
+    }
+
+    #[test]
+    fn custom_model_with_control_chars_sanitized() {
+        // \x1b is a control character — sanitize_model_name strips it.
+        // The remaining "[31m" is harmless text (not a valid escape sequence).
+        let mut sel = ModelSelector::new(Some("evil\x1b[31mmodel"));
+        let lines = sel.render(60);
+        let raw = lines.join("");
+        // The injected \x1b should be stripped by sanitize_model_name.
+        // Count \x1b occurrences that are NOT from theme styling.
+        // Verify the model ID stored is sanitized.
+        let custom_entry = sel
+            .all_models
+            .iter()
+            .find(|m| m.is_current)
+            .expect("should have current model");
+        assert!(
+            !custom_entry.id.contains('\x1b'),
+            "model id should not contain escape: {:?}",
+            custom_entry.id
+        );
+        assert!(
+            custom_entry.id.contains("evil"),
+            "should preserve text: {}",
+            custom_entry.id
+        );
+        assert!(
+            custom_entry.id.contains("model"),
+            "should preserve text: {}",
+            custom_entry.id
+        );
     }
 }

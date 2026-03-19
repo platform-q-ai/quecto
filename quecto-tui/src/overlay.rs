@@ -231,7 +231,9 @@ fn resolve_position(
 }
 
 /// Splice overlay content into a base line at the given column.
-fn splice_line(
+///
+/// ANSI-aware: properly resets attributes at splice boundaries.
+pub fn splice_line(
     base: &str,
     overlay: &str,
     start_col: usize,

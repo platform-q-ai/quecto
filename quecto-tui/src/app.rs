@@ -91,11 +91,9 @@ pub struct App {
     stdin_buffer: crate::stdin_buffer::StdinBuffer,
     /// Whether the agent connection is still alive.
     agent_connected: bool,
-    /// Current model name (from get_state).
+    /// Current model name (from get_state), sanitized.
     current_model: Option<String>,
-    /// Whether the model selector overlay is active.
-    model_selector_active: bool,
-    /// The model selector component (created on demand).
+    /// The model selector component (created on demand, pushed onto overlay stack).
     model_selector: Option<ModelSelector>,
 }
 
@@ -125,7 +123,6 @@ impl App {
             stdin_buffer: crate::stdin_buffer::StdinBuffer::new(),
             agent_connected: true,
             current_model: None,
-            model_selector_active: false,
             model_selector: None,
         }
     }
@@ -326,8 +323,8 @@ impl App {
             return;
         }
 
-        // If a model selector overlay is active, handle it specially.
-        if self.model_selector_active {
+        // If the model selector is active, route input to it.
+        if self.model_selector.is_some() {
             self.handle_model_selector_key(&key);
             return;
         }
@@ -624,8 +621,11 @@ impl App {
                 "get_state" if success => {
                     if let Some(data) = data {
                         if let Some(model) = data.get("model").and_then(|m| m.as_str()) {
-                            self.footer.set_model(model);
-                            self.current_model = Some(model.to_string());
+                            // Sanitize model name to prevent terminal escape injection.
+                            let sanitized: String =
+                                model.chars().filter(|c| !c.is_control()).collect();
+                            self.footer.set_model(&sanitized);
+                            self.current_model = Some(sanitized);
                         }
                     }
                 }
@@ -730,6 +730,7 @@ impl App {
             model_id: None,
         });
         self.footer.set_model(model);
+        self.current_model = Some(model.to_string());
     }
 
     // ── Model selector ──────────────────────────────────────────────
@@ -737,7 +738,6 @@ impl App {
     fn open_model_selector(&mut self) {
         let selector = ModelSelector::new(self.current_model.as_deref());
         self.model_selector = Some(selector);
-        self.model_selector_active = true;
     }
 
     fn handle_model_selector_key(&mut self, key: &Key) {
@@ -746,12 +746,10 @@ impl App {
 
             match selector.take_result() {
                 ModelSelectorResult::Selected(model) => {
-                    self.model_selector_active = false;
                     self.model_selector = None;
                     self.send_set_model(&model);
                 }
                 ModelSelectorResult::Cancelled => {
-                    self.model_selector_active = false;
                     self.model_selector = None;
                 }
                 ModelSelectorResult::Pending => {}
@@ -847,35 +845,26 @@ impl App {
         }
 
         // Composite model selector overlay if active.
-        if self.model_selector_active {
-            if let Some(selector) = &mut self.model_selector {
-                let overlay_width = width.saturating_sub(4).min(60);
-                let selector_lines = selector.render(overlay_width);
-                let overlay_height = selector_lines.len().min(height.saturating_sub(4));
+        // Uses ANSI-aware splice_line to avoid escape code bleeding.
+        if let Some(selector) = &mut self.model_selector {
+            let overlay_width = width.saturating_sub(4).min(60);
+            let selector_lines = selector.render(overlay_width);
+            let overlay_height = selector_lines.len().min(height.saturating_sub(4));
 
-                // Center the overlay.
-                let start_row = height.saturating_sub(overlay_height) / 2;
-                let start_col = width.saturating_sub(overlay_width) / 2;
+            // Center the overlay.
+            let start_row = height.saturating_sub(overlay_height) / 2;
+            let start_col = width.saturating_sub(overlay_width) / 2;
 
-                // Clear background area.
-                for i in 0..overlay_height {
-                    let row = start_row + i;
-                    if row < lines.len() {
-                        let line = if i < selector_lines.len() {
-                            let bg = format!(
-                                "{}{}{}",
-                                " ".repeat(start_col),
-                                &selector_lines[i],
-                                " ".repeat(overlay_width.saturating_sub(
-                                    crate::utils::visible_width(&selector_lines[i])
-                                ))
-                            );
-                            crate::utils::truncate_to_width(&bg, width, None)
-                        } else {
-                            " ".repeat(width)
-                        };
-                        lines[row] = line;
-                    }
+            for i in 0..overlay_height {
+                let row = start_row + i;
+                if row < lines.len() && i < selector_lines.len() {
+                    lines[row] = crate::overlay::splice_line(
+                        &lines[row],
+                        &selector_lines[i],
+                        start_col,
+                        overlay_width,
+                        width,
+                    );
                 }
             }
         }
