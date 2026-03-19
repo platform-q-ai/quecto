@@ -9,7 +9,7 @@ use std::sync::Arc;
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::agent::{AgentLoop, AgentProgressEvent};
 use crate::domain::message::Message;
-use crate::interface::cli::protocol::{AgentEvent, ToolResultContent, TurnMessage};
+use crate::interface::cli::protocol::{AgentEvent, ToolResultContent, TurnMessage, TurnUsage};
 use crate::interface::cli::uds_session::{AgentSession, message_to_json};
 
 /// State of the cancellation slot for the current (or next) agent run.
@@ -167,11 +167,23 @@ pub async fn run_agent_prompt(args: PromptArgs<'_>) -> PromptOutcome {
         Some(Ok(agent_result)) => {
             // Tool events are now forwarded in real-time via
             // forward_progress_event — no post-hoc emit needed.
+            let total = agent_result
+                .input_tokens
+                .saturating_add(agent_result.output_tokens);
+            let usage = if total > 0 {
+                Some(TurnUsage {
+                    input: agent_result.input_tokens,
+                    output: agent_result.output_tokens,
+                    total,
+                })
+            } else {
+                None
+            };
             let turn_end = AgentEvent::TurnEnd {
                 message: TurnMessage {
                     role: "assistant".to_string(),
                     content: agent_result.response.clone(),
-                    usage: None,
+                    usage,
                     stop_reason: None,
                 },
                 tool_results: vec![],
