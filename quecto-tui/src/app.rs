@@ -763,7 +763,9 @@ impl App {
         lines.push(String::new());
 
         // Chat — render into available space above the bottom section.
-        let chat_height = height.saturating_sub(bottom_height + 2); // 2 = header lines
+        // Reserve MIN_CHAT_GAP lines for spacing between chat and editor (#480).
+        const MIN_CHAT_GAP: usize = 3;
+        let chat_height = height.saturating_sub(bottom_height + 2 + MIN_CHAT_GAP);
         let mut chat_lines = self.chat.render(width);
 
         // If chat is taller than available space, show only the tail (auto-scroll).
@@ -774,12 +776,9 @@ impl App {
         lines.extend(chat_lines);
 
         // Pad between chat and bottom to push bottom to the screen bottom.
-        let content_height = lines.len();
         let available = height.saturating_sub(bottom_height);
-        if content_height < available {
-            for _ in 0..(available - content_height) {
-                lines.push(String::new());
-            }
+        while lines.len() < available {
+            lines.push(String::new());
         }
 
         // ── Append bottom section ───────────────────────────────────
