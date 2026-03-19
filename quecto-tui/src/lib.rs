@@ -7,6 +7,7 @@ pub mod fuzzy;
 pub mod keys;
 pub mod kitty;
 pub mod overlay;
+pub mod process;
 pub mod render;
 pub mod signals;
 pub mod stdin_buffer;

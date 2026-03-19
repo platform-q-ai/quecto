@@ -2,6 +2,9 @@
 //!
 //! SIGTSTP requires special handling: the terminal must be restored to
 //! cooked mode before suspending, and re-entered into raw mode on resume.
+//!
+//! For outgoing signal management (SIGTERM/SIGKILL to child process groups),
+//! see the [`crate::process`] module.
 
 /// Suspend the process (Ctrl+Z behavior).
 ///
