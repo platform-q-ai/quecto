@@ -75,6 +75,12 @@ impl Component for ToolOutput {
 
         let mut lines = Vec::new();
 
+        // Box indent and top border.
+        let box_indent = "  ";
+        let border_width = width.saturating_sub(2);
+        let top_border = format!("{}{}", box_indent, theme::dim(&"─".repeat(border_width)));
+        lines.push(truncate_to_width(&top_border, width, None));
+
         // Header: icon + tool name + args
         let (icon, icon_style): (&str, fn(&str) -> String) = if self.is_running {
             ("⠋", theme::spinner)
@@ -157,6 +163,12 @@ impl Component for ToolOutput {
                     None,
                 ));
             }
+        }
+
+        // Bottom border (only when tool is completed).
+        if !self.is_running {
+            let bottom_border = format!("{}{}", box_indent, theme::dim(&"─".repeat(border_width)));
+            lines.push(truncate_to_width(&bottom_border, width, None));
         }
 
         self.cached_width = Some(width);
@@ -407,6 +419,62 @@ mod tests {
                 visible_width(line) <= 40,
                 "line exceeds width: {} (width={})",
                 line,
+                visible_width(line)
+            );
+        }
+    }
+
+    // ── Box rendering tests (issue #473) ──────────────────────────────
+
+    #[test]
+    fn running_tool_has_top_border() {
+        let mut t = ToolOutput::new("bash", r#"{"command": "ls"}"#);
+        let lines = t.render(80);
+        let joined: String = lines
+            .iter()
+            .map(|l| strip_ansi(l))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains('─'),
+            "should contain box border: {}",
+            joined
+        );
+    }
+
+    #[test]
+    fn completed_tool_has_bottom_border() {
+        let mut t = ToolOutput::new("bash", r#"{"command": "ls"}"#);
+        t.set_result(ToolResult {
+            content: "file.txt".to_string(),
+            is_error: false,
+            duration_ms: Some(10),
+        });
+        let lines = t.render(80);
+        let last = lines
+            .iter()
+            .rev()
+            .find(|l| !strip_ansi(l).trim().is_empty())
+            .map(|l| strip_ansi(l))
+            .unwrap_or_default();
+        assert!(last.contains('─'), "last line should be border: {}", last);
+    }
+
+    #[test]
+    fn box_respects_width() {
+        let mut t = ToolOutput::new("bash", r#"{"command": "very long command"}"#);
+        t.set_result(ToolResult {
+            content: "long result text here".to_string(),
+            is_error: false,
+            duration_ms: Some(999),
+        });
+        t.set_expanded(true);
+        let lines = t.render(40);
+        for line in &lines {
+            assert!(
+                visible_width(line) <= 40,
+                "line exceeds width: '{}' (width={})",
+                strip_ansi(line),
                 visible_width(line)
             );
         }

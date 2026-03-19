@@ -183,6 +183,14 @@ impl Component for Chat {
                 ChatEntry::ToolStart {
                     tool_name, args, ..
                 } => {
+                    // Top border for tool box.
+                    let border_w = width.saturating_sub(2);
+                    all_lines.push(truncate_to_width(
+                        &format!("  {}", theme::dim(&"─".repeat(border_w))),
+                        width,
+                        None,
+                    ));
+
                     if is_subagent_tool(tool_name) {
                         // Subagent-style: ◈ spawn agent_label — task
                         let args_summary = summarize_subagent_args(tool_name, args);
@@ -212,6 +220,15 @@ impl Component for Chat {
                     duration_ms,
                     ..
                 } => {
+                    let border_w = width.saturating_sub(2);
+
+                    // Top border for completed tool box.
+                    all_lines.push(truncate_to_width(
+                        &format!("  {}", theme::dim(&"─".repeat(border_w))),
+                        width,
+                        None,
+                    ));
+
                     let is_sub = is_subagent_tool(tool_name);
                     let dur = duration_ms
                         .map(|ms| theme::dim(&format!("  {}ms", ms)))
@@ -260,6 +277,13 @@ impl Component for Chat {
                         };
                         all_lines.push(truncate_to_width(&result_color(&preview), width, None));
                     }
+
+                    // Bottom border for completed tool box.
+                    all_lines.push(truncate_to_width(
+                        &format!("  {}", theme::dim(&"─".repeat(border_w))),
+                        width,
+                        None,
+                    ));
                 }
                 ChatEntry::Status { text } => {
                     all_lines.push(String::new()); // spacer
