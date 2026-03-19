@@ -365,4 +365,107 @@ mod tests {
         let seqs = buf.drain_complete();
         assert_eq!(seqs, vec![b"\x1b[13;2u".to_vec()]);
     }
+
+    // --- 3-fragment CSI split regression tests (#466) ---
+
+    /// Simulate the retry loop from app.rs (synchronous approximation).
+    ///
+    /// `fragments` is a list of byte slices arriving in sequence.
+    /// `max_retries` is the maximum number of retry iterations.
+    /// Returns all emitted sequences.
+    ///
+    /// Note: This does not model timing/timeouts — each fragment is assumed
+    /// to arrive within the retry window. For timeout-sensitive behavior,
+    /// an async integration test with tokio channels would be needed.
+    fn simulate_retry_loop(fragments: &[&[u8]], max_retries: usize) -> Vec<Vec<u8>> {
+        let mut buf = StdinBuffer::new();
+        let mut all_sequences = Vec::new();
+        let mut frag_idx = 0;
+
+        // Feed first fragment.
+        if frag_idx < fragments.len() {
+            buf.feed(fragments[frag_idx]);
+            frag_idx += 1;
+        }
+
+        // Drain complete sequences immediately.
+        all_sequences.extend(buf.drain_complete());
+
+        // Retry loop while pending.
+        let mut retries = 0;
+        while buf.has_pending() && retries < max_retries {
+            retries += 1;
+            if frag_idx < fragments.len() {
+                // More data arrives within timeout.
+                buf.feed(fragments[frag_idx]);
+                frag_idx += 1;
+                all_sequences.extend(buf.drain_complete());
+            } else {
+                // Timeout — no more data.
+                break;
+            }
+        }
+
+        // Force drain anything still pending after retries exhausted.
+        all_sequences.extend(buf.drain_all());
+
+        all_sequences
+    }
+
+    #[test]
+    fn three_fragment_csi_with_multi_retry() {
+        // 3-fragment split: ESC → [ → A
+        // With max_retries=5, all 3 fragments arrive within the retry window.
+        let seqs = simulate_retry_loop(&[b"\x1b", b"[", b"A"], 5);
+        assert_eq!(
+            seqs,
+            vec![b"\x1b[A".to_vec()],
+            "3-fragment CSI should be reassembled with multi-retry"
+        );
+    }
+
+    #[test]
+    fn three_fragment_csi_with_single_retry_fails() {
+        // 3-fragment split: ESC → [ → A
+        // With max_retries=1 (the old bug), only ESC + [ arrive before drain_all.
+        let seqs = simulate_retry_loop(&[b"\x1b", b"[", b"A"], 1);
+        // With only 1 retry: ESC is pending, retry gets "[", ESC[ is still incomplete,
+        // drain_all breaks it into ESC + "[", then "A" is fed but the loop is done.
+        // This should NOT produce a clean ESC[A — this test documents the bug.
+        assert_ne!(
+            seqs,
+            vec![b"\x1b[A".to_vec()],
+            "single retry should NOT reassemble 3-fragment CSI (documents the bug)"
+        );
+    }
+
+    #[test]
+    fn two_fragment_csi_with_multi_retry() {
+        let seqs = simulate_retry_loop(&[b"\x1b", b"[A"], 5);
+        assert_eq!(seqs, vec![b"\x1b[A".to_vec()]);
+    }
+
+    #[test]
+    fn bare_escape_after_retry_exhaustion() {
+        // Only ESC arrives, no more fragments.
+        let seqs = simulate_retry_loop(&[b"\x1b"], 5);
+        assert_eq!(
+            seqs,
+            vec![vec![0x1b]],
+            "bare ESC should be emitted after retries"
+        );
+    }
+
+    #[test]
+    fn complete_sequence_no_retry() {
+        let seqs = simulate_retry_loop(&[b"\x1b[A"], 5);
+        assert_eq!(seqs, vec![b"\x1b[A".to_vec()]);
+    }
+
+    #[test]
+    fn four_fragment_csi_with_params() {
+        // ESC → [ → 1;5 → C (Ctrl+Right)
+        let seqs = simulate_retry_loop(&[b"\x1b", b"[", b"1;5", b"C"], 5);
+        assert_eq!(seqs, vec![b"\x1b[1;5C".to_vec()]);
+    }
 }

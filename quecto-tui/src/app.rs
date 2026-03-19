@@ -27,6 +27,11 @@ use crate::theme;
 /// Tick interval for spinner animation (~12fps).
 const SPINNER_TICK: Duration = Duration::from_millis(80);
 
+/// Maximum retry iterations for reassembling multi-fragment escape sequences.
+/// Handles up to 5-fragment CSI splits on slow SSH/serial connections.
+/// Total max wait = MAX_ESCAPE_RETRIES × escape_timeout (10ms) = 50ms.
+const MAX_ESCAPE_RETRIES: usize = 5;
+
 /// Built-in slash commands.
 fn builtin_commands() -> Vec<SlashCommand> {
     vec![
@@ -199,24 +204,36 @@ impl App {
                     }
 
                     // If there are still pending bytes (incomplete escape),
-                    // wait briefly for more data, then force-drain.
-                    if self.stdin_buffer.has_pending() {
-                        match tokio::time::timeout(escape_timeout, stdin_rx.recv()).await {
-                            Ok(Some(more)) => {
-                                self.stdin_buffer.feed(&more);
-                                let seqs = self.stdin_buffer.drain_complete();
-                                for seq in &seqs {
-                                    self.process_key_sequence(seq);
-                                    if self.should_exit { break; }
+                    // retry up to MAX_ESCAPE_RETRIES times waiting for more data.
+                    // This handles 3+ fragment CSI splits on slow SSH/serial (#466).
+                    if self.stdin_buffer.has_pending() && !self.should_exit {
+                        let mut retries = 0;
+                        while self.stdin_buffer.has_pending()
+                            && retries < MAX_ESCAPE_RETRIES
+                            && !self.should_exit
+                        {
+                            retries += 1;
+                            match tokio::time::timeout(escape_timeout, stdin_rx.recv()).await {
+                                Ok(Some(more)) => {
+                                    self.stdin_buffer.feed(&more);
+                                    let seqs = self.stdin_buffer.drain_complete();
+                                    for seq in &seqs {
+                                        self.process_key_sequence(seq);
+                                        if self.should_exit { break; }
+                                    }
                                 }
+                                Ok(None) => break, // Channel closed (stdin EOF).
+                                Err(_) => break,   // Timeout — no more data coming.
                             }
-                            _ => {} // Timeout — force drain below.
                         }
-                        // Force drain anything still pending (bare Escape, etc.).
-                        let forced = self.stdin_buffer.drain_all();
-                        for seq in &forced {
-                            self.process_key_sequence(seq);
-                            if self.should_exit { break; }
+                        // Force drain anything still pending after retries
+                        // exhausted (bare Escape, etc.).
+                        if !self.should_exit {
+                            let forced = self.stdin_buffer.drain_all();
+                            for seq in &forced {
+                                self.process_key_sequence(seq);
+                                if self.should_exit { break; }
+                            }
                         }
                     }
 
