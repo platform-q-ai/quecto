@@ -116,6 +116,40 @@ pub fn tool_name(text: &str) -> String {
     blue(text)
 }
 
+// ── Background colors for tool boxes ─────────────────────────────────────────
+
+/// 256-color background: `\x1b[48;5;<n>m`.
+fn bg256(color: u8, text: &str) -> String {
+    format!("\x1b[48;5;{}m{}\x1b[0m", color, text)
+}
+
+/// Apply background color to a line, padding to full width.
+pub fn apply_bg(text: &str, width: usize, bg_fn: fn(&str) -> String) -> String {
+    let vis = crate::utils::visible_width(text);
+    let pad = width.saturating_sub(vis);
+    bg_fn(&format!("{}{}", text, " ".repeat(pad)))
+}
+
+/// Tool pending background (dark gray).
+pub fn tool_pending_bg(text: &str) -> String {
+    bg256(236, text)
+}
+
+/// Tool success background (dark green).
+pub fn tool_success_bg(text: &str) -> String {
+    bg256(22, text)
+}
+
+/// Tool error background (dark red).
+pub fn tool_error_bg(text: &str) -> String {
+    bg256(52, text)
+}
+
+/// Tool title (bold, used inside tool boxes).
+pub fn tool_title(text: &str) -> String {
+    bold(text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
