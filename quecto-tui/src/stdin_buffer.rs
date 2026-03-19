@@ -6,6 +6,10 @@
 //! The buffer accumulates bytes and only emits complete key sequences.
 //! Incomplete sequences are held until more data arrives or a timeout expires.
 
+/// Maximum buffer size (64 KB). Prevents unbounded memory growth from
+/// broken bracketed paste (start marker without end marker) or malicious input.
+pub const MAX_BUFFER_SIZE: usize = 64 * 1024;
+
 /// Check if a byte sequence starting with ESC is complete.
 fn is_complete_escape(data: &[u8]) -> Completeness {
     if data.is_empty() || data[0] != 0x1b {
@@ -38,12 +42,14 @@ fn is_complete_csi(after_bracket: &[u8]) -> Completeness {
 
     // Bracketed paste start: \x1b[200~
     if after_bracket.starts_with(b"200~") {
-        // Look for end marker: \x1b[201~
-        let full = after_bracket;
-        for i in 0..full.len() {
-            if full[i..].starts_with(b"\x1b[201~") {
-                return Completeness::Complete;
-            }
+        // Look for end marker: \x1b[201~ using windows() for O(n) scan.
+        const END_MARKER: &[u8] = b"\x1b[201~";
+        if after_bracket.len() >= END_MARKER.len()
+            && after_bracket
+                .windows(END_MARKER.len())
+                .any(|w| w == END_MARKER)
+        {
+            return Completeness::Complete;
         }
         return Completeness::Incomplete;
     }
@@ -77,8 +83,16 @@ impl StdinBuffer {
     }
 
     /// Feed new bytes into the buffer.
+    ///
+    /// Data beyond [`MAX_BUFFER_SIZE`] is silently dropped to prevent
+    /// unbounded memory growth (e.g. broken bracketed paste).
     pub fn feed(&mut self, data: &[u8]) {
-        self.buf.extend_from_slice(data);
+        let remaining_capacity = MAX_BUFFER_SIZE.saturating_sub(self.buf.len());
+        if remaining_capacity == 0 {
+            return;
+        }
+        let accept = data.len().min(remaining_capacity);
+        self.buf.extend_from_slice(&data[..accept]);
     }
 
     /// Extract all complete sequences from the buffer.
@@ -182,11 +196,13 @@ fn escape_sequence_len(data: &[u8]) -> usize {
             // CSI: find the terminal byte (0x40-0x7E).
             // Special case: bracketed paste.
             if data.len() > 5 && data[2..6] == *b"200~" {
-                // Find \x1b[201~
-                for i in 6..data.len() {
-                    if data[i..].starts_with(b"\x1b[201~") {
-                        return i + 6;
-                    }
+                // Find \x1b[201~ using windows() for O(n) scan.
+                const END_MARKER: &[u8] = b"\x1b[201~";
+                if let Some(pos) = data[6..]
+                    .windows(END_MARKER.len())
+                    .position(|w| w == END_MARKER)
+                {
+                    return 6 + pos + END_MARKER.len();
                 }
                 return data.len(); // Should not happen if complete.
             }
@@ -467,5 +483,74 @@ mod tests {
         // ESC → [ → 1;5 → C (Ctrl+Right)
         let seqs = simulate_retry_loop(&[b"\x1b", b"[", b"1;5", b"C"], 5);
         assert_eq!(seqs, vec![b"\x1b[1;5C".to_vec()]);
+    }
+
+    // --- Buffer size cap tests (#467) ---
+
+    #[test]
+    fn feed_accepts_data_within_cap() {
+        let mut buf = StdinBuffer::new();
+        let data = vec![b'a'; 1000];
+        buf.feed(&data);
+        assert_eq!(buf.buf.len(), 1000);
+    }
+
+    #[test]
+    fn feed_caps_at_max_size() {
+        let mut buf = StdinBuffer::new();
+        // Feed exactly MAX_BUFFER_SIZE bytes.
+        let data = vec![b'a'; MAX_BUFFER_SIZE];
+        buf.feed(&data);
+        assert_eq!(buf.buf.len(), MAX_BUFFER_SIZE);
+        // Feed more — should be silently dropped.
+        buf.feed(b"extra");
+        assert_eq!(
+            buf.buf.len(),
+            MAX_BUFFER_SIZE,
+            "buffer should not grow beyond MAX_BUFFER_SIZE"
+        );
+    }
+
+    #[test]
+    fn feed_partial_accept_at_cap() {
+        let mut buf = StdinBuffer::new();
+        // Feed MAX_BUFFER_SIZE - 3 bytes.
+        let data = vec![b'a'; MAX_BUFFER_SIZE - 3];
+        buf.feed(&data);
+        // Feed 10 more — only 3 should be accepted.
+        buf.feed(&[b'b'; 10]);
+        assert_eq!(buf.buf.len(), MAX_BUFFER_SIZE);
+    }
+
+    #[test]
+    fn broken_bracketed_paste_bounded() {
+        let mut buf = StdinBuffer::new();
+        // Start marker without end marker.
+        buf.feed(b"\x1b[200~");
+        // Feed 100KB of "paste content".
+        for _ in 0..200 {
+            buf.feed(&[b'x'; 512]);
+        }
+        // Buffer should be capped.
+        assert!(
+            buf.buf.len() <= MAX_BUFFER_SIZE,
+            "buffer should be capped: {} > {}",
+            buf.buf.len(),
+            MAX_BUFFER_SIZE
+        );
+    }
+
+    #[test]
+    fn paste_end_marker_found_with_windows() {
+        let mut buf = StdinBuffer::new();
+        // Build a proper bracketed paste: start + content + end.
+        let mut paste = Vec::new();
+        paste.extend_from_slice(b"\x1b[200~");
+        paste.extend_from_slice(b"hello world");
+        paste.extend_from_slice(b"\x1b[201~");
+        buf.feed(&paste);
+        let seqs = buf.drain_complete();
+        assert_eq!(seqs.len(), 1, "paste should be one sequence");
+        assert!(seqs[0].starts_with(b"\x1b[200~"));
     }
 }
