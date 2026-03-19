@@ -77,8 +77,11 @@ async fn run(flags: CliFlags) -> i32 {
     // accessible from the panic hook.
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        // Disable bracketed paste, show cursor.
-        let _ = std::io::Write::write_all(&mut std::io::stdout(), b"\x1b[?2004l\x1b[?25h");
+        // Disable bracketed paste, show cursor, reset modifyOtherKeys.
+        let _ = std::io::Write::write_all(
+            &mut std::io::stdout(),
+            b"\x1b[?2004l\x1b[?25h\x1b[0m\x1b[>4;0m",
+        );
         let _ = std::io::Write::flush(&mut std::io::stdout());
         // Restore termios to cooked mode (best-effort).
         unsafe {
