@@ -63,8 +63,10 @@ impl Terminal {
 
         self.saved = Some(saved);
 
-        // Enable bracketed paste mode
-        let _ = std::io::stdout().write_all(b"\x1b[?2004h");
+        // Enter alternate screen buffer and enable bracketed paste.
+        // The alternate buffer prevents scrollback interference which
+        // causes border duplication during streaming (#479).
+        let _ = std::io::stdout().write_all(b"\x1b[?1049h\x1b[?2004h");
         let _ = std::io::stdout().flush();
     }
 
@@ -83,6 +85,7 @@ impl Terminal {
                     "\x1b[0m",     // Reset all SGR attributes
                     "\x1b[>4;0m",  // Reset modifyOtherKeys (xterm/tmux)
                     "\x1b[<u",     // Pop Kitty keyboard protocol flags
+                    "\x1b[?1049l", // Leave alternate screen buffer
                 )
                 .as_bytes(),
             );
