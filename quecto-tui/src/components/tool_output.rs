@@ -75,6 +75,9 @@ impl Component for ToolOutput {
 
         let mut lines = Vec::new();
 
+        // Box indent (2 spaces from left margin).
+        let box_indent = "  ";
+
         // Header: icon + tool name + args
         let (icon, icon_style): (&str, fn(&str) -> String) = if self.is_running {
             ("⠋", theme::spinner)
@@ -96,8 +99,15 @@ impl Component for ToolOutput {
             "  "
         };
 
+        // Top border.
+        let border_width = width.saturating_sub(2); // 2 for indent
+        let top_border = format!("{}{}", box_indent, theme::dim(&"─".repeat(border_width)));
+        lines.push(truncate_to_width(&top_border, width, None));
+
+        // Header line.
         let header = format!(
-            "  {}{} {} {}{}",
+            "{}{}{} {} {}{}",
+            box_indent,
             theme::dim(expand_indicator),
             icon_style(icon),
             theme::tool_name(&self.tool_name),
@@ -157,6 +167,12 @@ impl Component for ToolOutput {
                     None,
                 ));
             }
+        }
+
+        // Bottom border (only when tool is completed).
+        if !self.is_running {
+            let bottom_border = format!("{}{}", box_indent, theme::dim(&"─".repeat(border_width)));
+            lines.push(truncate_to_width(&bottom_border, width, None));
         }
 
         self.cached_width = Some(width);
@@ -410,5 +426,138 @@ mod tests {
                 visible_width(line)
             );
         }
+    }
+
+    // ── Box rendering tests (issue #473) ──────────────────────────────
+
+    #[test]
+    fn running_tool_has_top_border() {
+        let mut t = ToolOutput::new("bash", r#"{"command": "ls"}"#);
+        let lines = t.render(80);
+        let joined: String = lines
+            .iter()
+            .map(|l| strip_ansi(l))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains('─'),
+            "should contain box border character: {}",
+            joined
+        );
+    }
+
+    #[test]
+    fn completed_tool_has_bottom_border() {
+        let mut t = ToolOutput::new("bash", r#"{"command": "ls"}"#);
+        t.set_result(ToolResult {
+            content: "file.txt".to_string(),
+            is_error: false,
+            duration_ms: Some(10),
+        });
+        let lines = t.render(80);
+        // Should have border at bottom.
+        let last_nonempty = lines
+            .iter()
+            .rev()
+            .find(|l| !strip_ansi(l).trim().is_empty())
+            .map(|l| strip_ansi(l))
+            .unwrap_or_default();
+        assert!(
+            last_nonempty.contains('─'),
+            "last line should contain border: {}",
+            last_nonempty
+        );
+    }
+
+    #[test]
+    fn collapsed_shows_preview_only() {
+        let mut t = ToolOutput::new("bash", r#"{"command": "ls"}"#);
+        t.set_result(ToolResult {
+            content: "line1\nline2\nline3\nline4\nline5\nline6".to_string(),
+            is_error: false,
+            duration_ms: None,
+        });
+        // Default is collapsed.
+        assert!(!t.is_expanded());
+        let lines = t.render(80);
+        let joined: String = lines
+            .iter()
+            .map(|l| strip_ansi(l))
+            .collect::<Vec<_>>()
+            .join("\n");
+        // Should show first line but not all 6 content lines.
+        assert!(
+            joined.contains("line1"),
+            "should show first line: {}",
+            joined
+        );
+        // Should not show all content lines in collapsed mode.
+        assert!(
+            !joined.contains("line6"),
+            "should not show last line in collapsed mode: {}",
+            joined
+        );
+    }
+
+    #[test]
+    fn expanded_shows_all_content() {
+        let mut t = ToolOutput::new("bash", r#"{"command": "ls"}"#);
+        t.set_result(ToolResult {
+            content: "line1\nline2\nline3\nline4\nline5\nline6".to_string(),
+            is_error: false,
+            duration_ms: None,
+        });
+        t.set_expanded(true);
+        let lines = t.render(80);
+        let joined: String = lines
+            .iter()
+            .map(|l| strip_ansi(l))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(joined.contains("line1"));
+        assert!(joined.contains("line6"));
+    }
+
+    #[test]
+    fn box_respects_width() {
+        let mut t = ToolOutput::new("bash", r#"{"command": "very long command string"}"#);
+        t.set_result(ToolResult {
+            content:
+                "a very long line that should be truncated to fit within width constraints properly"
+                    .to_string(),
+            is_error: false,
+            duration_ms: Some(999),
+        });
+        t.set_expanded(true);
+        let lines = t.render(40);
+        for line in &lines {
+            assert!(
+                visible_width(line) <= 40,
+                "line exceeds width: '{}' (width={})",
+                strip_ansi(line),
+                visible_width(line)
+            );
+        }
+    }
+
+    #[test]
+    fn duration_in_header() {
+        let mut t = ToolOutput::new("bash", r#"{"command": "ls"}"#);
+        t.set_result(ToolResult {
+            content: "ok".to_string(),
+            is_error: false,
+            duration_ms: Some(42),
+        });
+        let lines = t.render(80);
+        let joined: String = lines
+            .iter()
+            .map(|l| strip_ansi(l))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains("42ms"),
+            "should contain duration: {}",
+            joined
+        );
     }
 }

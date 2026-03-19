@@ -182,8 +182,15 @@ impl Component for Chat {
                 ChatEntry::ToolStart {
                     tool_name, args, ..
                 } => {
-                    // Pi-style: ⠋ tool_name args_summary
                     let args_summary = summarize_tool_args(args);
+                    // Top border for running tool box.
+                    let border_w = width.saturating_sub(2);
+                    all_lines.push(truncate_to_width(
+                        &format!("  {}", theme::dim(&"─".repeat(border_w))),
+                        width,
+                        None,
+                    ));
+                    // Pi-style: ⠋ tool_name args_summary
                     let line = format!(
                         "  {} {} {}",
                         theme::spinner("⠋"),
@@ -199,7 +206,16 @@ impl Component for Chat {
                     duration_ms,
                     ..
                 } => {
-                    // Pi-style: ✓/✗ tool_name args_summary  duration
+                    let border_w = width.saturating_sub(2);
+
+                    // Top border for completed tool box.
+                    all_lines.push(truncate_to_width(
+                        &format!("  {}", theme::dim(&"─".repeat(border_w))),
+                        width,
+                        None,
+                    ));
+
+                    // Pi-style: ✓/✗ tool_name  duration
                     let icon = if *is_error {
                         theme::error("✗")
                     } else {
@@ -210,7 +226,6 @@ impl Component for Chat {
                         .unwrap_or_default();
                     let name = theme::tool_name(tool_name);
 
-                    // Collapsed: just header line with first-line preview.
                     all_lines.push(truncate_to_width(
                         &format!("  {} {}{}", icon, name, dur),
                         width,
@@ -232,6 +247,13 @@ impl Component for Chat {
                         };
                         all_lines.push(truncate_to_width(&result_color(&preview), width, None));
                     }
+
+                    // Bottom border for completed tool box.
+                    all_lines.push(truncate_to_width(
+                        &format!("  {}", theme::dim(&"─".repeat(border_w))),
+                        width,
+                        None,
+                    ));
                 }
                 ChatEntry::Status { text } => {
                     all_lines.push(String::new()); // spacer
