@@ -5,6 +5,7 @@ pub mod confirm;
 pub mod editor;
 pub mod footer;
 pub mod markdown;
+pub mod model_selector;
 pub mod notification;
 pub mod retry;
 pub mod select_list;
