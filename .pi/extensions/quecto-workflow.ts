@@ -460,6 +460,10 @@ export default function (pi: ExtensionAPI) {
 				injection += `\n### Step 8: Dispatch Reviewer Subagents\n`;
 				injection += `Use the \`subagent\` tool in parallel mode to dispatch all three reviewers simultaneously.\n`;
 				injection += `Each reviewer will submit a formal GitHub PR review with inline comments.\n`;
+				injection += `\n**IMPORTANT: The exact agent names are (with hyphens, not underscores):**\n`;
+				injection += `- \`architecture-reviewer\`\n`;
+				injection += `- \`security-reviewer\`\n`;
+				injection += `- \`performance-reviewer\`\n`;
 				injection += `\nExample:\n`;
 				injection += "```json\n";
 				injection += `{\n`;
@@ -471,6 +475,68 @@ export default function (pi: ExtensionAPI) {
 				injection += `}\n`;
 				injection += "```\n";
 				injection += `Get the PR number from \`gh pr view --json number -q .number\` or from the PR URL created in step 7.\n`;
+				injection += `\nDo NOT use names like \`reviewer-architecture\` or \`reviewer_security\` — those do not exist.\n`;
+			}
+
+			if (current.id === 11) {
+				injection += `\n### Step 11: Reply to Reviewer Comments and Resolve Threads\n`;
+				injection += `Reply to every review comment on the PR, then resolve the threads.\n`;
+				injection += `Use GraphQL exclusively — do NOT use REST API endpoints.\n`;
+				injection += `\n**Step 1: Get the repo owner and name**\n`;
+				injection += "```bash\n";
+				injection += `gh repo view --json owner,name --jq '(.owner.login) + "/" + .name'\n`;
+				injection += "```\n";
+				injection += `\n**Step 2: List all review threads**\n`;
+				injection += "```bash\n";
+				injection += `gh api graphql -f query='\n`;
+				injection += `query {\n`;
+				injection += `  repository(owner: "OWNER", name: "REPO") {\n`;
+				injection += `    pullRequest(number: PR_NUMBER) {\n`;
+				injection += `      reviewThreads(first: 50) {\n`;
+				injection += `        nodes {\n`;
+				injection += `          id\n`;
+				injection += `          isResolved\n`;
+				injection += `          comments(first: 1) {\n`;
+				injection += `            nodes { id body }\n`;
+				injection += `          }\n`;
+				injection += `        }\n`;
+				injection += `      }\n`;
+				injection += `    }\n`;
+				injection += `  }\n`;
+				injection += `}'\n`;
+				injection += "```\n";
+				injection += `\n**Step 3: Reply to each thread**\n`;
+				injection += `The mutation is \`addPullRequestReviewThreadReply\`. The thread ID comes from step 2.\n`;
+				injection += "```bash\n";
+				injection += `gh api graphql -f query='\n`;
+				injection += `mutation {\n`;
+				injection += `  addPullRequestReviewThreadReply(input: {\n`;
+				injection += `    pullRequestReviewThreadId: "PRRT_kwDO..."\n`;
+				injection += `    body: "Fixed in <commit>. <explanation>"\n`;
+				injection += `  }) {\n`;
+				injection += `    comment { id }\n`;
+				injection += `  }\n`;
+				injection += `}'\n`;
+				injection += "```\n";
+				injection += `\n**Step 4: Resolve each thread**\n`;
+				injection += "```bash\n";
+				injection += `gh api graphql -f query='\n`;
+				injection += `mutation {\n`;
+				injection += `  resolveReviewThread(input: {\n`;
+				injection += `    threadId: "PRRT_kwDO..."\n`;
+				injection += `  }) {\n`;
+				injection += `    thread { id isResolved }\n`;
+				injection += `  }\n`;
+				injection += `}'\n`;
+				injection += "```\n";
+				injection += `\n**CRITICAL RULES:**\n`;
+				injection += `- Thread IDs look like \`PRRT_kwDO...\` — they come from the \`reviewThreads.nodes[].id\` field.\n`;
+				injection += `- The reply mutation is \`addPullRequestReviewThreadReply\` — NOT \`addPullRequestReviewComment\`.\n`;
+				injection += `  (\`addPullRequestReviewComment\` does NOT accept \`pullRequestReviewThreadId\` — it will error.)\n`;
+				injection += `- Do NOT use REST API endpoints (\`/pulls/comments/\`, \`/replies\`, \`/reviews\`). Use GraphQL only.\n`;
+				injection += `- Escape special characters in the body: backticks, quotes, dollar signs.\n`;
+				injection += `  Use double-escaping in bash: \\\\\`backtick\\\\\`, or avoid problematic chars.\n`;
+				injection += `- For bulk replies, iterate over thread IDs in a bash loop.\n`;
 			}
 
 			if (current.id === 12) {
