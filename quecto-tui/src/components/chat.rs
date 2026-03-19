@@ -396,7 +396,11 @@ fn render_bash(
         let output_lines: Vec<&str> = output.lines().collect();
         let total = output_lines.len();
 
-        let color_fn: fn(&str) -> String = if is_error { theme::error } else { theme::dim };
+        let color_fn: fn(&str) -> String = if is_error {
+            theme::error
+        } else {
+            theme::tool_output
+        };
 
         if expanded || total <= BASH_PREVIEW_LINES {
             // Show all lines.
@@ -483,7 +487,7 @@ fn render_write(
     } else if let Some(r) = result {
         // Show result (e.g. error message).
         if !r.is_empty() {
-            lines.push(truncate_to_width(&theme::dim(r), width, None));
+            lines.push(truncate_to_width(&theme::tool_output(r), width, None));
         }
     }
 }
@@ -585,7 +589,11 @@ fn render_subagent(
 
     if let Some(output) = result {
         if !output.is_empty() {
-            let color_fn: fn(&str) -> String = if is_error { theme::error } else { theme::dim };
+            let color_fn: fn(&str) -> String = if is_error {
+                theme::error
+            } else {
+                theme::tool_output
+            };
             let first_line = output.lines().next().unwrap_or("");
             lines.push(truncate_to_width(&color_fn(first_line), width, None));
         }
@@ -643,7 +651,11 @@ fn render_file_preview(
 ) {
     let content_lines: Vec<&str> = content.lines().collect();
     let total = content_lines.len();
-    let color_fn: fn(&str) -> String = if is_error { theme::error } else { theme::dim };
+    let color_fn: fn(&str) -> String = if is_error {
+        theme::error
+    } else {
+        theme::tool_output
+    };
 
     if expanded || total <= FILE_PREVIEW_LINES {
         for line in &content_lines {
@@ -1048,9 +1060,9 @@ mod tests {
         let lines = chat.render(80);
         let tool_lines: Vec<_> = lines.iter().filter(|l| !l.is_empty()).collect();
         assert!(!tool_lines.is_empty());
-        // Check for bg256(236) = "\x1b[48;5;236m"
+        // Truecolor pending bg: #282832 = rgb(40,40,50)
         assert!(
-            tool_lines.iter().any(|l| l.contains("\x1b[48;5;236m")),
+            tool_lines.iter().any(|l| l.contains(theme::BG_PENDING)),
             "should have pending bg: {:?}",
             tool_lines
         );
@@ -1063,9 +1075,9 @@ mod tests {
         chat.complete_tool("c-1", "ok", false, None);
         let lines = chat.render(80);
         let tool_lines: Vec<_> = lines.iter().filter(|l| !l.is_empty()).collect();
-        // Check for bg256(22) = "\x1b[48;5;22m"
+        // Truecolor success bg: #283228 = rgb(40,50,40)
         assert!(
-            tool_lines.iter().any(|l| l.contains("\x1b[48;5;22m")),
+            tool_lines.iter().any(|l| l.contains(theme::BG_SUCCESS)),
             "should have success bg: {:?}",
             tool_lines
         );
@@ -1078,9 +1090,9 @@ mod tests {
         chat.complete_tool("c-1", "command not found", true, None);
         let lines = chat.render(80);
         let tool_lines: Vec<_> = lines.iter().filter(|l| !l.is_empty()).collect();
-        // Check for bg256(52) = "\x1b[48;5;52m"
+        // Truecolor error bg: #3c2828 = rgb(60,40,40)
         assert!(
-            tool_lines.iter().any(|l| l.contains("\x1b[48;5;52m")),
+            tool_lines.iter().any(|l| l.contains(theme::BG_ERROR)),
             "should have error bg: {:?}",
             tool_lines
         );

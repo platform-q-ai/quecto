@@ -116,11 +116,23 @@ pub fn tool_name(text: &str) -> String {
     blue(text)
 }
 
-// ── Background colors for tool boxes ─────────────────────────────────────────
+// ── Tool output foreground color ──────────────────────────────────────────────
 
-/// 256-color background: `\x1b[48;5;<n>m`.
-fn bg256(color: u8, text: &str) -> String {
-    format!("\x1b[48;5;{}m{}\x1b[0m", color, text)
+/// Tool output text color — matches Pi's `toolOutput` (#808080).
+pub fn tool_output(text: &str) -> String {
+    format!("\x1b[38;2;128;128;128m{}\x1b[0m", text)
+}
+
+// ── Background colors for tool boxes ─────────────────────────────────────────
+//
+// Colors match Pi's dark theme exactly (from dark.json):
+//   toolPendingBg: #282832 — very dark blue-gray
+//   toolSuccessBg: #283228 — very dark muted green
+//   toolErrorBg:   #3c2828 — very dark muted red
+
+/// Truecolor background: `\x1b[48;2;R;G;Bm`.
+fn bg_rgb(r: u8, g: u8, b: u8, text: &str) -> String {
+    format!("\x1b[48;2;{};{};{}m{}\x1b[0m", r, g, b, text)
 }
 
 /// Apply background color to a line, padding to full width.
@@ -136,17 +148,13 @@ pub fn apply_bg(text: &str, width: usize, bg_fn: fn(&str) -> String) -> String {
     apply_bg_code(text, width, bg_code_from_fn(bg_fn))
 }
 
-/// Background ANSI codes for the three tool states.
-pub const BG_PENDING: &str = "\x1b[48;5;236m";
-pub const BG_SUCCESS: &str = "\x1b[48;5;22m";
-pub const BG_ERROR: &str = "\x1b[48;5;52m";
+/// Background ANSI codes for the three tool states (truecolor, matching Pi).
+pub const BG_PENDING: &str = "\x1b[48;2;40;40;50m"; // #282832
+pub const BG_SUCCESS: &str = "\x1b[48;2;40;50;40m"; // #283228
+pub const BG_ERROR: &str = "\x1b[48;2;60;40;40m"; // #3c2828
 
-/// Extract the background ANSI escape code from a bg function.
-///
-/// Probes by calling `bg_fn("")` which produces `"\x1b[48;5;Nm\x1b[0m"`,
-/// then extracts everything up to and including the first `m`.
+/// Map a bg function pointer to its known ANSI background code constant.
 fn bg_code_from_fn(bg_fn: fn(&str) -> String) -> &'static str {
-    // Use function pointer identity to map to known constants.
     // Cast through *const () to avoid "function pointer comparison" warnings.
     let ptr = bg_fn as *const ();
     if ptr == tool_pending_bg as *const () {
@@ -156,7 +164,6 @@ fn bg_code_from_fn(bg_fn: fn(&str) -> String) -> &'static str {
     } else if ptr == tool_error_bg as *const () {
         BG_ERROR
     } else {
-        // Unknown bg function — fall back to pending.
         BG_PENDING
     }
 }
@@ -177,22 +184,22 @@ fn apply_bg_code(text: &str, width: usize, bg_code: &str) -> String {
     format!("{}{}{}\x1b[0m", bg_code, patched, " ".repeat(pad))
 }
 
-/// Tool pending background (dark gray).
+/// Tool pending background — #282832 (very dark blue-gray, matches Pi).
 pub fn tool_pending_bg(text: &str) -> String {
-    bg256(236, text)
+    bg_rgb(40, 40, 50, text)
 }
 
-/// Tool success background (dark green).
+/// Tool success background — #283228 (very dark muted green, matches Pi).
 pub fn tool_success_bg(text: &str) -> String {
-    bg256(22, text)
+    bg_rgb(40, 50, 40, text)
 }
 
-/// Tool error background (dark red).
+/// Tool error background — #3c2828 (very dark muted red, matches Pi).
 pub fn tool_error_bg(text: &str) -> String {
-    bg256(52, text)
+    bg_rgb(60, 40, 40, text)
 }
 
-/// Tool title (bold, used inside tool boxes).
+/// Tool title (bold, default foreground — matches Pi's toolTitle: "").
 pub fn tool_title(text: &str) -> String {
     bold(text)
 }
@@ -224,11 +231,23 @@ mod tests {
 
     // ── apply_bg tests ───────────────────────────────────────────────
 
+    // ── Tool output color ──────────────────────────────────────────
+
+    #[test]
+    fn tool_output_uses_gray() {
+        let s = tool_output("test");
+        // #808080 = rgb(128,128,128) truecolor
+        assert!(s.contains("\x1b[38;2;128;128;128m"));
+        assert!(s.contains("test"));
+    }
+
+    // ── apply_bg tests ───────────────────────────────────────────────
+
     #[test]
     fn apply_bg_plain_text_pads_to_width() {
         let result = apply_bg("hello", 20, tool_success_bg);
-        // Should contain the bg code for success (22).
-        assert!(result.contains("\x1b[48;5;22m"));
+        // Should contain the truecolor bg code for success (#283228).
+        assert!(result.contains(BG_SUCCESS));
         // Visible width should be 20 (5 chars + 15 padding).
         let vis = crate::utils::visible_width(&result);
         assert_eq!(vis, 20, "visible width should be 20, got {}", vis);
@@ -236,24 +255,20 @@ mod tests {
 
     #[test]
     fn apply_bg_preserves_background_through_sgr_resets() {
-        // Styled text with embedded \x1b[0m resets — this is the key bug.
+        // Styled text with embedded \x1b[0m resets.
         // bold("$ ls") produces "\x1b[1m$ ls\x1b[0m"
         let styled = format!(" {} ", bold("$ ls"));
         let result = apply_bg(&styled, 40, tool_success_bg);
 
         // The background code should appear at the start.
         assert!(
-            result.starts_with("\x1b[48;5;22m"),
+            result.starts_with(BG_SUCCESS),
             "should start with success bg: {:?}",
-            &result[..30.min(result.len())]
+            &result[..40.min(result.len())]
         );
 
-        // After the embedded \x1b[0m from bold(), the bg should be re-applied
-        // so that padding spaces after the text still have the background.
-        // Count how many times the bg code appears — should be more than once
-        // if there are embedded resets.
-        let bg_code = "\x1b[48;5;22m";
-        let occurrences = result.matches(bg_code).count();
+        // After the embedded \x1b[0m from bold(), the bg should be re-applied.
+        let occurrences = result.matches(BG_SUCCESS).count();
         assert!(
             occurrences >= 2,
             "bg should be re-applied after embedded resets, found {} occurrences in {:?}",
@@ -270,9 +285,7 @@ mod tests {
         let vis = crate::utils::visible_width(&result);
         assert_eq!(vis, 60, "visible width should be 60, got {}", vis);
 
-        // The bg code should be present at the start and re-applied after resets.
-        let bg_code = "\x1b[48;5;22m";
-        let occurrences = result.matches(bg_code).count();
+        let occurrences = result.matches(BG_SUCCESS).count();
         assert!(
             occurrences >= 2,
             "bg should persist through styled elements, found {} occurrences",
@@ -282,10 +295,8 @@ mod tests {
 
     #[test]
     fn apply_bg_no_resets_in_plain_text() {
-        // Plain text without any ANSI codes — bg should wrap normally.
         let result = apply_bg("plain text", 30, tool_pending_bg);
-        let bg_code = "\x1b[48;5;236m";
-        assert!(result.starts_with(bg_code));
+        assert!(result.starts_with(BG_PENDING));
         let vis = crate::utils::visible_width(&result);
         assert_eq!(vis, 30);
     }
@@ -293,7 +304,7 @@ mod tests {
     #[test]
     fn apply_bg_error_bg_works() {
         let result = apply_bg("error!", 20, tool_error_bg);
-        assert!(result.contains("\x1b[48;5;52m"));
+        assert!(result.contains(BG_ERROR));
         let vis = crate::utils::visible_width(&result);
         assert_eq!(vis, 20);
     }
@@ -303,5 +314,25 @@ mod tests {
         let result = apply_bg("", 10, tool_success_bg);
         let vis = crate::utils::visible_width(&result);
         assert_eq!(vis, 10, "empty text should pad to full width");
+    }
+
+    // ── Background color values match Pi's dark.json ─────────────────
+
+    #[test]
+    fn bg_pending_matches_pi() {
+        // Pi dark.json: toolPendingBg = #282832 = rgb(40,40,50)
+        assert_eq!(BG_PENDING, "\x1b[48;2;40;40;50m");
+    }
+
+    #[test]
+    fn bg_success_matches_pi() {
+        // Pi dark.json: toolSuccessBg = #283228 = rgb(40,50,40)
+        assert_eq!(BG_SUCCESS, "\x1b[48;2;40;50;40m");
+    }
+
+    #[test]
+    fn bg_error_matches_pi() {
+        // Pi dark.json: toolErrorBg = #3c2828 = rgb(60,40,40)
+        assert_eq!(BG_ERROR, "\x1b[48;2;60;40;40m");
     }
 }
