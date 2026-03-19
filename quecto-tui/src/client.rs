@@ -442,4 +442,79 @@ mod tests {
             _ => panic!("expected AgentEnd"),
         }
     }
+
+    // ── Integration: result text extraction (mirrors app.rs logic) ────
+
+    /// Extract result text from a ToolExecutionEnd event the same way app.rs does.
+    fn extract_result_text(result: &serde_json::Value) -> String {
+        result
+            .get("content")
+            .and_then(|c| c.as_array())
+            .and_then(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.get("text").and_then(|t| t.as_str()))
+                    .next()
+            })
+            .unwrap_or("")
+            .to_string()
+    }
+
+    #[test]
+    fn tool_end_read_result_extraction() {
+        // Simulate the exact JSON the quecto server sends for a read tool result.
+        let json = r#"{"type":"tool_execution_end","toolCallId":"c-1","toolName":"read","result":{"content":[{"type":"text","text":"fn main() {\n    println!(\"hello\");\n}"}]},"isError":false}"#;
+        let event: Event = serde_json::from_str(json).unwrap();
+        match event {
+            Event::ToolExecutionEnd { result, .. } => {
+                let text = extract_result_text(&result);
+                assert!(
+                    text.contains("fn main()"),
+                    "should extract read content: {:?}",
+                    text
+                );
+            }
+            _ => panic!("expected ToolExecutionEnd"),
+        }
+    }
+
+    #[test]
+    fn tool_end_bash_result_extraction() {
+        let json = r#"{"type":"tool_execution_end","toolCallId":"c-1","toolName":"bash","result":{"content":[{"type":"text","text":"file1.txt\nfile2.txt\nfile3.txt"}]},"isError":false}"#;
+        let event: Event = serde_json::from_str(json).unwrap();
+        match event {
+            Event::ToolExecutionEnd { result, .. } => {
+                let text = extract_result_text(&result);
+                assert!(text.contains("file1.txt"), "should extract bash output");
+                assert!(text.contains("file3.txt"), "should have all lines");
+            }
+            _ => panic!("expected ToolExecutionEnd"),
+        }
+    }
+
+    #[test]
+    fn tool_end_empty_content_array() {
+        let json = r#"{"type":"tool_execution_end","toolCallId":"c-1","toolName":"bash","result":{"content":[]},"isError":false}"#;
+        let event: Event = serde_json::from_str(json).unwrap();
+        match event {
+            Event::ToolExecutionEnd { result, .. } => {
+                let text = extract_result_text(&result);
+                assert_eq!(text, "", "empty content array → empty string");
+            }
+            _ => panic!("expected ToolExecutionEnd"),
+        }
+    }
+
+    #[test]
+    fn tool_end_edit_result_extraction() {
+        let json = r#"{"type":"tool_execution_end","toolCallId":"c-1","toolName":"edit","result":{"content":[{"type":"text","text":"Applied edit to src/main.rs\n+added\n-removed"}]},"isError":false}"#;
+        let event: Event = serde_json::from_str(json).unwrap();
+        match event {
+            Event::ToolExecutionEnd { result, .. } => {
+                let text = extract_result_text(&result);
+                assert!(text.contains("+added"), "should extract diff content");
+                assert!(text.contains("-removed"), "should have diff lines");
+            }
+            _ => panic!("expected ToolExecutionEnd"),
+        }
+    }
 }

@@ -322,6 +322,7 @@ impl AgentLoopImpl {
             tool_call_id: tc.id.clone(),
             name: tc.name.clone(),
             arguments: tc.arguments.clone(),
+            result_content: content.clone(),
             duration_ms,
             is_error: is_err,
         });
