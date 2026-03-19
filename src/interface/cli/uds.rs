@@ -610,7 +610,6 @@ async fn handle_clear_history(ctx: &mut DispatchCtx<'_>, id: Option<&str>, tn: &
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
 }
-
 use super::uds_extensions::{build_extension_list, handle_reload_extensions};
 async fn dispatch_ext_command(
     cmd: AgentCommand,
@@ -655,60 +654,61 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
                 ctx.session.enqueue_pending(message);
                 let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
                 emit_event_to_broadcast_or_writer(ctx, &ev).await;
-                return false;
             }
             None => {
-                let ev = AgentEvent::err(
-                    id.as_deref(),
-                    &type_name,
-                    "agent is running; provide streamingBehavior",
-                );
+                let msg = "agent is running; provide streamingBehavior";
+                let ev = AgentEvent::err(id.as_deref(), &type_name, msg);
                 emit_event_to_broadcast_or_writer(ctx, &ev).await;
-                return false;
             }
         }
+        return false;
     }
     let Some(cancel_rx) = arm_cancel(&ctx.cancel_handle) else {
-        emit_pre_cancelled(ctx).await; // Stale abort — emit lifecycle events (#483).
+        emit_pre_cancelled(ctx).await; // Stale abort (#483).
+        drain_and_run_pending(ctx).await;
         return false;
     };
-
-    let outcome = if let Some(ref tx) = ctx.broadcast_tx {
-        let args = PromptArgsBroadcast {
+    let outcome = run_prompt_dispatch(ctx, message, cancel_rx).await;
+    disarm_cancel(&ctx.cancel_handle);
+    if matches!(outcome, PromptOutcome::Success) {
+        let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+    }
+    drain_and_run_pending(ctx).await;
+    false
+}
+async fn run_prompt_dispatch(
+    ctx: &mut DispatchCtx<'_>,
+    message: String,
+    cancel_rx: tokio::sync::oneshot::Receiver<()>,
+) -> PromptOutcome {
+    if let Some(ref tx) = ctx.broadcast_tx {
+        run_agent_prompt_broadcast(PromptArgsBroadcast {
             agent: ctx.agent,
             messages: ctx.messages,
             session: ctx.session,
             broadcast_tx: tx.clone(),
             message,
             cancel_rx,
-        };
-        run_agent_prompt_broadcast(args).await
+        })
+        .await
     } else {
-        let args = PromptArgs {
+        run_agent_prompt(PromptArgs {
             agent: ctx.agent,
             messages: ctx.messages,
             session: ctx.session,
             stdout: ctx.stdout,
             message,
             cancel_rx,
-        };
-        run_agent_prompt(args).await
-    };
-    disarm_cancel(&ctx.cancel_handle);
-    if matches!(outcome, PromptOutcome::Success) {
-        let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
-        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        })
+        .await
     }
-    drain_and_run_pending(ctx).await; // Drain pending follow-ups.
-    false
 }
-
 /// Emit AgentStart + AgentEnd for a pre-cancelled prompt so TUI doesn't hang (#483).
 async fn emit_pre_cancelled(ctx: &mut DispatchCtx<'_>) {
     emit_event_to_broadcast_or_writer(ctx, &AgentEvent::AgentStart).await;
     emit_event_to_broadcast_or_writer(ctx, &AgentEvent::AgentEnd { messages: vec![] }).await;
 }
-
 async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
     loop {
         let pending = ctx.session.drain_pending();
@@ -718,7 +718,7 @@ async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
         for msg in pending {
             let Some(rx) = arm_cancel(&ctx.cancel_handle) else {
                 emit_pre_cancelled(ctx).await; // Stale abort (#483).
-                break;
+                continue; // Don't drop remaining messages — Fired consumed, next arm succeeds.
             };
             if let Some(ref tx) = ctx.broadcast_tx {
                 let args = PromptArgsBroadcast {
