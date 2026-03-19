@@ -76,16 +76,16 @@ impl Terminal {
     /// so they're written while we still have raw output mode.
     pub fn exit_raw_mode(&mut self) {
         if let Some(saved) = self.saved.take() {
-            // Reset terminal modes before restoring termios.
-            // These must be sent while we still control the terminal.
+            // Leave alt screen FIRST — it restores the main buffer's saved
+            // cursor/attributes. Then reset everything on the main buffer.
             let _ = std::io::stdout().write_all(
                 concat!(
+                    "\x1b[?1049l", // Leave alternate screen buffer (restores main)
                     "\x1b[?2004l", // Disable bracketed paste
                     "\x1b[?25h",   // Show cursor
                     "\x1b[0m",     // Reset all SGR attributes
                     "\x1b[>4;0m",  // Reset modifyOtherKeys (xterm/tmux)
                     "\x1b[<u",     // Pop Kitty keyboard protocol flags
-                    "\x1b[?1049l", // Leave alternate screen buffer
                 )
                 .as_bytes(),
             );
