@@ -78,6 +78,9 @@ pub struct AgentResult {
     pub tool_iterations: u32,
     /// Whether the iteration limit was reached.
     pub iteration_limit_reached: bool,
+    /// Cumulative token usage from all LLM calls in this run.
+    pub input_tokens: u32,
+    pub output_tokens: u32,
 }
 
 impl AgentResult {
@@ -86,6 +89,8 @@ impl AgentResult {
             response: response.into(),
             tool_iterations: 0,
             iteration_limit_reached: false,
+            input_tokens: 0,
+            output_tokens: 0,
         }
     }
 }
