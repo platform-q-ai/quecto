@@ -1370,6 +1370,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "quecto-tui"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "unicode-width",
+]
+
+[[package]]
 name = "quinn"
 version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"

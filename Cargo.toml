@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "quecto-tui"]
+
 [package]
 name = "quecto"
 version = "0.22.0"
