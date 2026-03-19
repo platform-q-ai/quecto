@@ -83,6 +83,8 @@ pub struct App {
     tool_expanded: bool,
     /// Stdin input buffer — accumulates bytes for escape sequence parsing.
     stdin_buf: Vec<u8>,
+    /// Whether the agent connection is still alive.
+    agent_connected: bool,
 }
 
 impl App {
@@ -109,6 +111,7 @@ impl App {
             should_exit: false,
             tool_expanded: false,
             stdin_buf: Vec::new(),
+            agent_connected: true,
         }
     }
 
@@ -189,17 +192,15 @@ impl App {
                     // Buffer incoming bytes.
                     self.stdin_buf.extend_from_slice(&bytes);
 
-                    // If buffer ends with a bare \x1b, wait briefly for more bytes
-                    // (the rest of an escape sequence might arrive in the next read).
-                    if self.stdin_buf.last() == Some(&0x1b) && self.stdin_buf.len() == 1
-                        || (self.stdin_buf.len() >= 2 && self.stdin_buf[self.stdin_buf.len() - 1] == 0x1b)
-                    {
-                        // Wait a bit for more data.
+                    // If buffer contains an incomplete escape sequence, wait briefly
+                    // for more bytes. This handles split reads where \x1b arrives
+                    // separately from [A, or \x1b[ arrives without the terminator.
+                    while self.looks_incomplete() {
                         match tokio::time::timeout(escape_timeout, stdin_rx.recv()).await {
                             Ok(Some(more)) => {
                                 self.stdin_buf.extend_from_slice(&more);
                             }
-                            _ => {} // Timeout or closed — process what we have.
+                            _ => break, // Timeout or closed — process what we have.
                         }
                     }
 
@@ -208,17 +209,19 @@ impl App {
                     self.render();
                 }
                 // Agent events.
-                event = self.client.recv() => {
+                event = self.client.recv(), if self.agent_connected => {
                     match event {
                         Some(ev) => {
                             self.handle_event(ev);
                             self.render();
                         }
                         None => {
-                            // Agent disconnected.
-                            self.notify("Agent disconnected", NotifyLevel::Error);
+                            // Agent disconnected — stop polling.
+                            self.agent_connected = false;
                             self.agent_running = false;
                             self.spinner = None;
+                            self.chat.finalize_assistant();
+                            self.notify("Agent disconnected", NotifyLevel::Error);
                             self.render();
                         }
                     }
@@ -263,6 +266,36 @@ impl App {
     }
 
     // ── Input handling ────────────────────────────────────────────────
+
+    /// Check if the stdin buffer ends with an incomplete escape sequence.
+    fn looks_incomplete(&self) -> bool {
+        let buf = &self.stdin_buf;
+        if buf.is_empty() {
+            return false;
+        }
+        // Bare \x1b at end — might be start of escape sequence.
+        if *buf.last().unwrap() == 0x1b {
+            return true;
+        }
+        // \x1b[ without a terminating letter — incomplete CSI.
+        if buf.len() >= 2 {
+            let tail_start = buf.iter().rposition(|&b| b == 0x1b);
+            if let Some(esc_pos) = tail_start {
+                let after_esc = &buf[esc_pos + 1..];
+                if after_esc.first() == Some(&b'[') {
+                    // CSI started — check if it has a terminator (letter or ~).
+                    let rest = &after_esc[1..];
+                    let has_terminator = rest.iter().any(|&b| b.is_ascii_alphabetic() || b == b'~');
+                    return !has_terminator;
+                }
+                if after_esc.first() == Some(&b'O') && after_esc.len() < 2 {
+                    // SS3 started but no character yet.
+                    return true;
+                }
+            }
+        }
+        false
+    }
 
     fn handle_stdin_buf(&mut self) {
         let mut offset = 0;
@@ -693,6 +726,35 @@ impl App {
 
         let mut lines = Vec::new();
 
+        // ── Render bottom section first to know its height ──────────
+        let mut bottom = Vec::new();
+
+        // Spinner sits above editor (visible during agent work).
+        if let Some(spinner) = &mut self.spinner {
+            bottom.extend(spinner.render(width));
+        }
+
+        // Widgets above editor.
+        bottom.extend(self.widgets_above.render(width));
+
+        // Autocomplete dropdown.
+        bottom.extend(self.autocomplete.render(width));
+
+        // Editor.
+        bottom.extend(self.editor.render(width));
+
+        // Widgets below editor.
+        bottom.extend(self.widgets_below.render(width));
+
+        // Notifications.
+        bottom.extend(self.notifications.render(width));
+
+        // Footer.
+        bottom.extend(self.footer.render(width));
+
+        let bottom_height = bottom.len();
+
+        // ── Render top section (header + chat) ──────────────────────
         // Header.
         let version = env!("CARGO_PKG_VERSION");
         lines.push(theme::dim(&format!(
@@ -701,31 +763,18 @@ impl App {
         )));
         lines.push(String::new());
 
-        // Chat.
-        let chat_lines = self.chat.render(width);
+        // Chat — render into available space above the bottom section.
+        let chat_height = height.saturating_sub(bottom_height + 2); // 2 = header lines
+        let mut chat_lines = self.chat.render(width);
+
+        // If chat is taller than available space, show only the tail (auto-scroll).
+        if chat_lines.len() > chat_height {
+            let start = chat_lines.len() - chat_height;
+            chat_lines = chat_lines[start..].to_vec();
+        }
         lines.extend(chat_lines);
 
-        // Spinner.
-        if let Some(spinner) = &mut self.spinner {
-            lines.extend(spinner.render(width));
-        }
-
-        // Calculate bottom section height.
-        let editor_lines = self.editor.render(width);
-        let autocomplete_lines = self.autocomplete.render(width);
-        let notification_lines = self.notifications.render(width);
-        let widget_above_lines = self.widgets_above.render(width);
-        let widget_below_lines = self.widgets_below.render(width);
-        let footer_lines = self.footer.render(width);
-
-        let bottom_height = widget_above_lines.len()
-            + autocomplete_lines.len()
-            + editor_lines.len()
-            + widget_below_lines.len()
-            + notification_lines.len()
-            + footer_lines.len();
-
-        // Pad to push bottom section to the bottom.
+        // Pad between chat and bottom to push bottom to the screen bottom.
         let content_height = lines.len();
         let available = height.saturating_sub(bottom_height);
         if content_height < available {
@@ -734,28 +783,16 @@ impl App {
             }
         }
 
-        // Widgets above editor.
-        lines.extend(widget_above_lines);
+        // ── Append bottom section ───────────────────────────────────
+        lines.extend(bottom);
 
-        // Autocomplete dropdown (between chat and editor).
-        lines.extend(autocomplete_lines);
-
-        // Editor.
-        lines.extend(editor_lines);
-
-        // Widgets below editor.
-        lines.extend(widget_below_lines);
-
-        // Notifications.
-        lines.extend(notification_lines);
-
-        // Footer.
-        lines.extend(footer_lines);
-
-        // Truncate to terminal height (show bottom).
+        // Final safety: ensure exactly `height` lines.
         if lines.len() > height {
             let start = lines.len() - height;
             lines = lines[start..].to_vec();
+        }
+        while lines.len() < height {
+            lines.push(String::new());
         }
 
         // Composite overlays on top.
