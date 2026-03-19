@@ -42,6 +42,8 @@ pub struct Autocomplete {
     max_visible: usize,
     active: bool,
     result: AutocompleteResult,
+    /// Last text passed to update(), for skip-if-unchanged optimization.
+    last_update_text: String,
 }
 
 impl Autocomplete {
@@ -53,6 +55,7 @@ impl Autocomplete {
             max_visible,
             active: false,
             result: AutocompleteResult::Pending,
+            last_update_text: String::new(),
         }
     }
 
@@ -61,6 +64,12 @@ impl Autocomplete {
     /// Activates autocomplete when text starts with `/` and has at least one
     /// character after it. Deactivates when text doesn't match.
     pub fn update(&mut self, text: &str) {
+        // Skip if text hasn't changed — avoids unnecessary allocation.
+        if text == self.last_update_text {
+            return;
+        }
+        self.last_update_text = text.to_string();
+
         let trimmed = text.trim();
 
         if !trimmed.starts_with('/') || trimmed.len() < 2 {
@@ -135,7 +144,7 @@ impl Autocomplete {
     }
 }
 
-/// Check if two suggestion lists have the same values (by label).
+/// Check if two suggestion lists have the same entries (compared by value).
 fn suggestions_match(a: &[Suggestion], b: &[Suggestion]) -> bool {
     a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.value == y.value)
 }

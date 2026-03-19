@@ -9,7 +9,6 @@ Feature: TUI slash command menu arrow navigation
     And the autocomplete shows all commands
     When the user presses Down 3 times
     Then the selected index should be 3
-    And not reset to 0 between presses
 
   Scenario: Up arrow navigates backwards
     Given the editor text is "/"
@@ -23,4 +22,3 @@ Feature: TUI slash command menu arrow navigation
     And the selected index is 2
     When update is called again with "/"
     Then the selected index should remain 2
-    And not reset to 0
