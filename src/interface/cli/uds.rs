@@ -565,7 +565,7 @@ async fn handle_steer(
     message: String,
 ) -> bool {
     if ctx.session.is_streaming() {
-        fire_cancel(&ctx.cancel_handle);
+        // Reader task already fires cancel eagerly — do NOT fire again here (#512).
         ctx.session.prepend_pending(message);
     } else {
         ctx.session.enqueue_pending(message);
