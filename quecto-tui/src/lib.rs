@@ -2,6 +2,7 @@ pub mod app;
 pub mod client;
 pub mod component;
 pub mod components;
+pub mod extension;
 pub mod fuzzy;
 pub mod keys;
 pub mod kitty;
