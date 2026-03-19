@@ -368,10 +368,15 @@ mod tests {
 
     // --- 3-fragment CSI split regression tests (#466) ---
 
-    /// Simulate the retry loop from app.rs.
+    /// Simulate the retry loop from app.rs (synchronous approximation).
+    ///
     /// `fragments` is a list of byte slices arriving in sequence.
     /// `max_retries` is the maximum number of retry iterations.
     /// Returns all emitted sequences.
+    ///
+    /// Note: This does not model timing/timeouts — each fragment is assumed
+    /// to arrive within the retry window. For timeout-sensitive behavior,
+    /// an async integration test with tokio channels would be needed.
     fn simulate_retry_loop(fragments: &[&[u8]], max_retries: usize) -> Vec<Vec<u8>> {
         let mut buf = StdinBuffer::new();
         let mut all_sequences = Vec::new();
