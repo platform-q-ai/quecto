@@ -125,29 +125,49 @@ fn bg256(color: u8, text: &str) -> String {
 
 /// Apply background color to a line, padding to full width.
 ///
-/// Handles embedded SGR resets (`\x1b[0m`) by re-applying the background
-/// color after each reset. Without this, styled text (bold, colors) that
-/// contains `\x1b[0m` would kill the background mid-line, creating an
-/// ugly partial-highlight effect instead of a full-width box.
+/// Handles embedded SGR resets (`\x1b[0m`) from our `styled()` / `bold()` /
+/// `dim()` etc. functions by re-applying the background color after each
+/// reset. Without this, styled text kills the background mid-line, creating
+/// an ugly partial-highlight effect instead of a full-width box.
+///
+/// Only handles `\x1b[0m` (full SGR reset, which all our styling helpers
+/// emit) — not selective resets like `\x1b[49m`.
 pub fn apply_bg(text: &str, width: usize, bg_fn: fn(&str) -> String) -> String {
-    // Extract the 256-color code from the bg_fn by calling it on empty string.
-    // bg_fn("") produces "\x1b[48;5;Nm\x1b[0m" — we extract "\x1b[48;5;Nm".
-    let probe = bg_fn("");
-    let bg_code = if let Some(end) = probe.find('m') {
-        &probe[..=end]
-    } else {
-        // Fallback — shouldn't happen with our bg256 functions.
-        return bg_fn(&format!(
-            "{}{}",
-            text,
-            " ".repeat(width.saturating_sub(crate::utils::visible_width(text)))
-        ));
-    }
-    .to_string();
+    apply_bg_code(text, width, bg_code_from_fn(bg_fn))
+}
 
-    // Replace all \x1b[0m resets in the text with \x1b[0m + bg re-apply.
+/// Background ANSI codes for the three tool states.
+pub const BG_PENDING: &str = "\x1b[48;5;236m";
+pub const BG_SUCCESS: &str = "\x1b[48;5;22m";
+pub const BG_ERROR: &str = "\x1b[48;5;52m";
+
+/// Extract the background ANSI escape code from a bg function.
+///
+/// Probes by calling `bg_fn("")` which produces `"\x1b[48;5;Nm\x1b[0m"`,
+/// then extracts everything up to and including the first `m`.
+fn bg_code_from_fn(bg_fn: fn(&str) -> String) -> &'static str {
+    // Use function pointer identity to map to known constants.
+    let ptr = bg_fn as usize;
+    if ptr == tool_pending_bg as usize {
+        BG_PENDING
+    } else if ptr == tool_success_bg as usize {
+        BG_SUCCESS
+    } else if ptr == tool_error_bg as usize {
+        BG_ERROR
+    } else {
+        // Unknown bg function — fall back to pending.
+        BG_PENDING
+    }
+}
+
+/// Core implementation: apply a background ANSI code to text, padding to width.
+fn apply_bg_code(text: &str, width: usize, bg_code: &str) -> String {
+    // Build the reset-and-reapply sequence once.
+    let reset_and_reapply = format!("\x1b[0m{}", bg_code);
+
+    // Replace all \x1b[0m resets in the text with reset + bg re-apply.
     // This ensures the background persists through styled content.
-    let patched = text.replace("\x1b[0m", &format!("\x1b[0m{}", bg_code));
+    let patched = text.replace("\x1b[0m", &reset_and_reapply);
 
     // Pad to full width.
     let vis = crate::utils::visible_width(text);
