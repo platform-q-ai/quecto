@@ -81,6 +81,8 @@ pub struct App {
     should_exit: bool,
     /// Track tool output expansion state.
     tool_expanded: bool,
+    /// Stdin input buffer — accumulates bytes for escape sequence parsing.
+    stdin_buf: Vec<u8>,
 }
 
 impl App {
@@ -106,6 +108,7 @@ impl App {
             agent_running: false,
             should_exit: false,
             tool_expanded: false,
+            stdin_buf: Vec::new(),
         }
     }
 
@@ -158,6 +161,10 @@ impl App {
         let mut spinner_interval = tokio::time::interval(SPINNER_TICK);
         spinner_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+        // Escape sequence timeout — if we get a bare \x1b, wait this long
+        // for more bytes before treating it as a standalone Escape key.
+        let escape_timeout = Duration::from_millis(20);
+
         // Main event loop.
         loop {
             if self.should_exit {
@@ -179,13 +186,42 @@ impl App {
                     if self.kitty.active && crate::kitty::is_key_release(&bytes) {
                         continue;
                     }
-                    self.handle_stdin(&bytes);
+                    // Buffer incoming bytes.
+                    self.stdin_buf.extend_from_slice(&bytes);
+
+                    // If buffer ends with a bare \x1b, wait briefly for more bytes
+                    // (the rest of an escape sequence might arrive in the next read).
+                    if self.stdin_buf.last() == Some(&0x1b) && self.stdin_buf.len() == 1
+                        || (self.stdin_buf.len() >= 2 && self.stdin_buf[self.stdin_buf.len() - 1] == 0x1b)
+                    {
+                        // Wait a bit for more data.
+                        match tokio::time::timeout(escape_timeout, stdin_rx.recv()).await {
+                            Ok(Some(more)) => {
+                                self.stdin_buf.extend_from_slice(&more);
+                            }
+                            _ => {} // Timeout or closed — process what we have.
+                        }
+                    }
+
+                    // Parse all buffered keys.
+                    self.handle_stdin_buf();
                     self.render();
                 }
                 // Agent events.
-                Some(event) = self.client.recv() => {
-                    self.handle_event(event);
-                    self.render();
+                event = self.client.recv() => {
+                    match event {
+                        Some(ev) => {
+                            self.handle_event(ev);
+                            self.render();
+                        }
+                        None => {
+                            // Agent disconnected.
+                            self.notify("Agent disconnected", NotifyLevel::Error);
+                            self.agent_running = false;
+                            self.spinner = None;
+                            self.render();
+                        }
+                    }
                 }
                 // Terminal resize.
                 Some(()) = resize_rx.recv() => {
@@ -228,15 +264,20 @@ impl App {
 
     // ── Input handling ────────────────────────────────────────────────
 
-    fn handle_stdin(&mut self, bytes: &[u8]) {
+    fn handle_stdin_buf(&mut self) {
         let mut offset = 0;
-        while offset < bytes.len() {
-            match keys::parse_key(&bytes[offset..]) {
+        let buf = std::mem::take(&mut self.stdin_buf);
+        while offset < buf.len() {
+            match keys::parse_key(&buf[offset..]) {
                 Some((key, consumed)) => {
                     offset += consumed;
                     self.handle_key(key);
                 }
-                None => break,
+                None => {
+                    // Incomplete sequence — put remainder back in buffer.
+                    self.stdin_buf = buf[offset..].to_vec();
+                    return;
+                }
             }
         }
     }
@@ -460,8 +501,20 @@ impl App {
                 self.chat.append_token(&token);
             }
             Event::TurnStart => {}
-            Event::TurnEnd { .. } => {
+            Event::TurnEnd { message, .. } => {
                 self.chat.finalize_assistant();
+                // Extract token usage from turn message.
+                if let Some(usage) = message.get("usage") {
+                    let input = usage.get("input").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let _output = usage.get("output").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let total = usage.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+                    if total > 0 {
+                        // Rough context estimate: input tokens as percentage of a 200k window.
+                        let window = 200_000usize;
+                        let pct = (input as f64 / window as f64) * 100.0;
+                        self.footer.set_context(Some(pct), window);
+                    }
+                }
             }
             Event::ToolExecutionStart {
                 tool_call_id,
