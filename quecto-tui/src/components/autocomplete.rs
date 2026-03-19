@@ -66,7 +66,7 @@ impl Autocomplete {
         if !trimmed.starts_with('/') || trimmed.len() < 2 {
             if trimmed == "/" {
                 // Show all commands.
-                self.suggestions = self
+                let new: Vec<Suggestion> = self
                     .commands
                     .iter()
                     .map(|c| Suggestion {
@@ -75,8 +75,7 @@ impl Autocomplete {
                         description: c.description.clone(),
                     })
                     .collect();
-                self.selected = 0;
-                self.active = !self.suggestions.is_empty();
+                self.set_suggestions(new);
             } else {
                 self.active = false;
                 self.suggestions.clear();
@@ -95,7 +94,7 @@ impl Autocomplete {
 
         // Fuzzy filter commands.
         let filtered = fuzzy_filter(&self.commands, prefix, |c| &c.name);
-        self.suggestions = filtered
+        let new: Vec<Suggestion> = filtered
             .into_iter()
             .map(|c| Suggestion {
                 value: format!("/{}", c.name),
@@ -103,9 +102,20 @@ impl Autocomplete {
                 description: c.description.clone(),
             })
             .collect();
+        self.set_suggestions(new);
+    }
 
-        self.selected = 0;
+    /// Replace suggestions, preserving selection if the list hasn't changed.
+    fn set_suggestions(&mut self, new: Vec<Suggestion>) {
+        if !suggestions_match(&self.suggestions, &new) {
+            self.selected = 0;
+        }
+        self.suggestions = new;
         self.active = !self.suggestions.is_empty();
+        // Clamp if list shrunk.
+        if self.selected >= self.suggestions.len() && !self.suggestions.is_empty() {
+            self.selected = self.suggestions.len() - 1;
+        }
     }
 
     /// Whether the autocomplete dropdown is currently visible.
@@ -123,6 +133,11 @@ impl Autocomplete {
     pub fn take_result(&mut self) -> AutocompleteResult {
         std::mem::replace(&mut self.result, AutocompleteResult::Pending)
     }
+}
+
+/// Check if two suggestion lists have the same values (by label).
+fn suggestions_match(a: &[Suggestion], b: &[Suggestion]) -> bool {
+    a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.value == y.value)
 }
 
 impl Component for Autocomplete {
@@ -311,6 +326,62 @@ mod tests {
     }
 
     // --- Autocomplete Enter contract tests (#471) ---
+
+    // --- Arrow navigation tests (#477) ---
+
+    #[test]
+    fn down_arrow_advances_sequentially() {
+        let mut ac = Autocomplete::new(test_commands(), 5);
+        ac.update("/");
+        assert_eq!(ac.selected, 0);
+        ac.handle_input(&Key::Down);
+        assert_eq!(ac.selected, 1);
+        ac.handle_input(&Key::Down);
+        assert_eq!(ac.selected, 2);
+        ac.handle_input(&Key::Down);
+        assert_eq!(ac.selected, 3);
+    }
+
+    #[test]
+    fn up_arrow_goes_backwards() {
+        let mut ac = Autocomplete::new(test_commands(), 5);
+        ac.update("/");
+        ac.handle_input(&Key::Down);
+        ac.handle_input(&Key::Down);
+        assert_eq!(ac.selected, 2);
+        ac.handle_input(&Key::Up);
+        assert_eq!(ac.selected, 1);
+    }
+
+    #[test]
+    fn update_same_text_preserves_selection() {
+        let mut ac = Autocomplete::new(test_commands(), 5);
+        ac.update("/");
+        ac.handle_input(&Key::Down);
+        ac.handle_input(&Key::Down);
+        assert_eq!(ac.selected, 2);
+        // Calling update with same text should NOT reset selection.
+        ac.update("/");
+        assert_eq!(
+            ac.selected, 2,
+            "update with same text should preserve selection"
+        );
+    }
+
+    #[test]
+    fn update_different_text_resets_selection() {
+        let mut ac = Autocomplete::new(test_commands(), 5);
+        ac.update("/");
+        ac.handle_input(&Key::Down);
+        ac.handle_input(&Key::Down);
+        assert_eq!(ac.selected, 2);
+        // Changing text should reset selection.
+        ac.update("/mo");
+        assert_eq!(
+            ac.selected, 0,
+            "update with new text should reset selection"
+        );
+    }
 
     #[test]
     fn tab_select_returns_full_command() {
