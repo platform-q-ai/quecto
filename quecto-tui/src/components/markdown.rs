@@ -1,4 +1,4 @@
-//! Markdown renderer — converts markdown to styled ANSI terminal output.
+//! Markdown renderer - converts markdown to styled ANSI terminal output.
 //!
 //! Uses `pulldown-cmark` for parsing and custom ANSI styling for output.
 //! Handles: headings, bold, italic, code spans, code blocks, lists,
@@ -57,6 +57,10 @@ impl Markdown {
         let mut in_blockquote = false;
         let mut blockquote_lines: Vec<String> = Vec::new();
         let mut heading_level: u8 = 0;
+        let mut in_table = false;
+        let mut table_rows: Vec<Vec<String>> = Vec::new();
+        let mut current_row: Vec<String> = Vec::new();
+        let mut current_cell = String::new();
 
         // Style stack for nested inline styles.
         let mut style_stack: Vec<InlineStyle> = Vec::new();
@@ -79,6 +83,17 @@ impl Markdown {
                             _ => String::new(),
                         };
                         code_block_content.clear();
+                    }
+                    Tag::Table(_alignments) => {
+                        flush_line(&mut current_line, &mut lines);
+                        in_table = true;
+                        table_rows.clear();
+                    }
+                    Tag::TableHead | Tag::TableRow => {
+                        current_row = Vec::new();
+                    }
+                    Tag::TableCell => {
+                        current_cell = String::new();
                     }
                     Tag::List(start) => {
                         flush_line(&mut current_line, &mut lines);
@@ -121,6 +136,24 @@ impl Markdown {
                 },
 
                 Event::End(tag_end) => match tag_end {
+                    TagEnd::Table => {
+                        // Render the collected table.
+                        if !table_rows.is_empty() {
+                            let rendered = render_table(&table_rows, content_width);
+                            lines.extend(rendered);
+                            lines.push(String::new());
+                        }
+                        in_table = false;
+                        table_rows.clear();
+                    }
+                    TagEnd::TableHead | TagEnd::TableRow => {
+                        if !current_row.is_empty() {
+                            table_rows.push(std::mem::take(&mut current_row));
+                        }
+                    }
+                    TagEnd::TableCell => {
+                        current_row.push(std::mem::take(&mut current_cell));
+                    }
                     TagEnd::Heading(_) => {
                         let text = std::mem::take(&mut current_line);
                         let styled = match heading_level {
@@ -195,7 +228,9 @@ impl Markdown {
                 },
 
                 Event::Text(text) => {
-                    if in_code_block {
+                    if in_table {
+                        current_cell.push_str(&text);
+                    } else if in_code_block {
                         code_block_content.push_str(&text);
                     } else if in_blockquote {
                         blockquote_lines.push(text.to_string());
@@ -310,6 +345,60 @@ fn apply_inline_styles(text: &str, stack: &[InlineStyle]) -> String {
         };
     }
     result
+}
+
+/// Render a table as aligned text columns.
+fn render_table(rows: &[Vec<String>], max_width: usize) -> Vec<String> {
+    if rows.is_empty() {
+        return vec![];
+    }
+
+    // Calculate column widths.
+    let num_cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+    let mut col_widths = vec![0usize; num_cols];
+    for row in rows {
+        for (i, cell) in row.iter().enumerate() {
+            if i < num_cols {
+                col_widths[i] = col_widths[i].max(cell.len());
+            }
+        }
+    }
+
+    // Cap total width.
+    let gap = 2; // spaces between columns
+    let total: usize = col_widths.iter().sum::<usize>() + (num_cols.saturating_sub(1)) * gap;
+    if total > max_width && num_cols > 0 {
+        // Shrink proportionally.
+        let avail = max_width.saturating_sub((num_cols.saturating_sub(1)) * gap);
+        let scale = avail as f64 / col_widths.iter().sum::<usize>() as f64;
+        for w in &mut col_widths {
+            *w = ((*w as f64 * scale) as usize).max(3);
+        }
+    }
+
+    let mut lines = Vec::new();
+
+    for (row_idx, row) in rows.iter().enumerate() {
+        let mut parts = Vec::new();
+        for (i, cell) in row.iter().enumerate() {
+            let w = col_widths.get(i).copied().unwrap_or(10);
+            let truncated: String = cell.chars().take(w).collect();
+            let padded = format!("{:<width$}", truncated, width = w);
+            parts.push(padded);
+        }
+        let line = parts.join(&" ".repeat(gap));
+        if row_idx == 0 {
+            // Header row — bold.
+            lines.push(theme::bold(&line));
+            // Separator.
+            let sep_parts: Vec<String> = col_widths.iter().map(|&w| "─".repeat(w)).collect();
+            lines.push(theme::dim(&sep_parts.join(&" ".repeat(gap))));
+        } else {
+            lines.push(line);
+        }
+    }
+
+    lines
 }
 
 /// Strip ANSI escape sequences and control characters from text for safe display.

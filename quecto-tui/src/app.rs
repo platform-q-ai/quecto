@@ -81,8 +81,8 @@ pub struct App {
     should_exit: bool,
     /// Track tool output expansion state.
     tool_expanded: bool,
-    /// Stdin input buffer — accumulates bytes for escape sequence parsing.
-    stdin_buf: Vec<u8>,
+    /// Proper stdin buffer for escape sequence parsing.
+    stdin_buffer: crate::stdin_buffer::StdinBuffer,
     /// Whether the agent connection is still alive.
     agent_connected: bool,
 }
@@ -110,7 +110,7 @@ impl App {
             agent_running: false,
             should_exit: false,
             tool_expanded: false,
-            stdin_buf: Vec::new(),
+            stdin_buffer: crate::stdin_buffer::StdinBuffer::new(),
             agent_connected: true,
         }
     }
@@ -164,9 +164,8 @@ impl App {
         let mut spinner_interval = tokio::time::interval(SPINNER_TICK);
         spinner_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-        // Escape sequence timeout — if we get a bare \x1b, wait this long
-        // for more bytes before treating it as a standalone Escape key.
-        let escape_timeout = Duration::from_millis(20);
+        // Timeout for incomplete escape sequences (matches Pi TUI's 10ms).
+        let escape_timeout = Duration::from_millis(10);
 
         // Main event loop.
         loop {
@@ -177,7 +176,7 @@ impl App {
             tokio::select! {
                 // Stdin input.
                 Some(bytes) = stdin_rx.recv() => {
-                    // Check for Kitty protocol response before key parsing.
+                    // Check for Kitty protocol response before buffering.
                     if !self.kitty.active && !kitty_fallback_done {
                         if let Some(_flags) = KittyProtocol::parse_response(&bytes) {
                             self.kitty.enable();
@@ -189,23 +188,38 @@ impl App {
                     if self.kitty.active && crate::kitty::is_key_release(&bytes) {
                         continue;
                     }
-                    // Buffer incoming bytes.
-                    self.stdin_buf.extend_from_slice(&bytes);
+                    // Feed bytes into the proper StdinBuffer.
+                    self.stdin_buffer.feed(&bytes);
 
-                    // If buffer contains an incomplete escape sequence, wait briefly
-                    // for more bytes. This handles split reads where \x1b arrives
-                    // separately from [A, or \x1b[ arrives without the terminator.
-                    while self.looks_incomplete() {
+                    // Drain complete sequences immediately.
+                    let complete = self.stdin_buffer.drain_complete();
+                    for seq in &complete {
+                        self.process_key_sequence(seq);
+                        if self.should_exit { break; }
+                    }
+
+                    // If there are still pending bytes (incomplete escape),
+                    // wait briefly for more data, then force-drain.
+                    if self.stdin_buffer.has_pending() {
                         match tokio::time::timeout(escape_timeout, stdin_rx.recv()).await {
                             Ok(Some(more)) => {
-                                self.stdin_buf.extend_from_slice(&more);
+                                self.stdin_buffer.feed(&more);
+                                let seqs = self.stdin_buffer.drain_complete();
+                                for seq in &seqs {
+                                    self.process_key_sequence(seq);
+                                    if self.should_exit { break; }
+                                }
                             }
-                            _ => break, // Timeout or closed — process what we have.
+                            _ => {} // Timeout — force drain below.
+                        }
+                        // Force drain anything still pending (bare Escape, etc.).
+                        let forced = self.stdin_buffer.drain_all();
+                        for seq in &forced {
+                            self.process_key_sequence(seq);
+                            if self.should_exit { break; }
                         }
                     }
 
-                    // Parse all buffered keys.
-                    self.handle_stdin_buf();
                     self.render();
                 }
                 // Agent events.
@@ -267,51 +281,10 @@ impl App {
 
     // ── Input handling ────────────────────────────────────────────────
 
-    /// Check if the stdin buffer ends with an incomplete escape sequence.
-    fn looks_incomplete(&self) -> bool {
-        let buf = &self.stdin_buf;
-        if buf.is_empty() {
-            return false;
-        }
-        // Bare \x1b at end — might be start of escape sequence.
-        if *buf.last().unwrap() == 0x1b {
-            return true;
-        }
-        // \x1b[ without a terminating letter — incomplete CSI.
-        if buf.len() >= 2 {
-            let tail_start = buf.iter().rposition(|&b| b == 0x1b);
-            if let Some(esc_pos) = tail_start {
-                let after_esc = &buf[esc_pos + 1..];
-                if after_esc.first() == Some(&b'[') {
-                    // CSI started — check if it has a terminator (letter or ~).
-                    let rest = &after_esc[1..];
-                    let has_terminator = rest.iter().any(|&b| b.is_ascii_alphabetic() || b == b'~');
-                    return !has_terminator;
-                }
-                if after_esc.first() == Some(&b'O') && after_esc.len() < 2 {
-                    // SS3 started but no character yet.
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    fn handle_stdin_buf(&mut self) {
-        let mut offset = 0;
-        let buf = std::mem::take(&mut self.stdin_buf);
-        while offset < buf.len() {
-            match keys::parse_key(&buf[offset..]) {
-                Some((key, consumed)) => {
-                    offset += consumed;
-                    self.handle_key(key);
-                }
-                None => {
-                    // Incomplete sequence — put remainder back in buffer.
-                    self.stdin_buf = buf[offset..].to_vec();
-                    return;
-                }
-            }
+    /// Process a single complete key sequence from the StdinBuffer.
+    fn process_key_sequence(&mut self, seq: &[u8]) {
+        if let Some((key, _)) = keys::parse_key(seq) {
+            self.handle_key(key);
         }
     }
 
@@ -344,13 +317,12 @@ impl App {
                     return;
                 }
                 Key::Enter => {
-                    // If autocomplete is active and user presses Enter,
-                    // accept the highlighted suggestion first.
+                    // Accept the highlighted suggestion AND submit it.
                     self.autocomplete.handle_input(&Key::Tab);
                     if let AutocompleteResult::Selected(value) = self.autocomplete.take_result() {
-                        self.editor.set_text(&value);
+                        self.autocomplete.dismiss();
+                        self.handle_submit(&value);
                     }
-                    // Don't submit yet — let user review the selected command.
                     return;
                 }
                 _ => {
