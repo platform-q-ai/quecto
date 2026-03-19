@@ -111,8 +111,10 @@ impl Component for ToolOutput {
             if self.expanded {
                 let content = &result.content;
                 let is_diff = is_diff_content(content);
+                let max_display_lines = 200;
+                let total_lines = content.lines().count();
 
-                for line in content.lines() {
+                for line in content.lines().take(max_display_lines) {
                     let styled = if is_diff {
                         style_diff_line(line)
                     } else if result.is_error {
@@ -121,6 +123,19 @@ impl Component for ToolOutput {
                         theme::dim(line)
                     };
                     lines.push(truncate_to_width(&format!("    {}", styled), width, None));
+                }
+                if total_lines > max_display_lines {
+                    lines.push(truncate_to_width(
+                        &format!(
+                            "    {}",
+                            theme::dim(&format!(
+                                "... ({} more lines)",
+                                total_lines - max_display_lines
+                            ))
+                        ),
+                        width,
+                        None,
+                    ));
                 }
             } else if !result.content.is_empty() {
                 // Collapsed: show first line preview.
@@ -155,7 +170,7 @@ impl Component for ToolOutput {
     }
 }
 
-/// Summarize tool arguments for display (truncated, single-line).
+/// Summarize tool arguments for display (truncated, single-line, sanitized).
 fn summarize_args(args: &str) -> String {
     let trimmed = args.trim();
     if trimmed.is_empty() {
@@ -167,21 +182,29 @@ fn summarize_args(args: &str) -> String {
         // Common patterns: {"command": "..."}, {"path": "..."}, {"query": "..."}
         for key in &["command", "path", "query", "url", "content"] {
             if let Some(val) = v.get(key).and_then(|v| v.as_str()) {
-                let s: String = val.chars().take(80).collect();
-                if val.chars().count() > 80 {
-                    return format!("{}...", s);
-                }
-                return s;
+                return sanitize_and_truncate(val, 80);
             }
         }
     }
 
     // Fallback: truncate raw args.
-    let s: String = trimmed.chars().take(80).collect();
-    if trimmed.chars().count() > 80 {
-        format!("{}...", s)
+    sanitize_and_truncate(trimmed, 80)
+}
+
+/// Sanitize text for safe terminal display and truncate.
+///
+/// Strips ANSI escape sequences and control characters to prevent
+/// terminal injection via LLM-controlled tool arguments.
+fn sanitize_and_truncate(s: &str, max_chars: usize) -> String {
+    let clean: String = s
+        .chars()
+        .filter(|&c| c >= '\u{0020}' && c != '\u{007F}')
+        .collect();
+    let truncated: String = clean.chars().take(max_chars).collect();
+    if clean.chars().count() > max_chars {
+        format!("{}...", truncated)
     } else {
-        s
+        truncated
     }
 }
 

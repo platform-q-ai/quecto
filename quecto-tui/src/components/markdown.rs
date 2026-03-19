@@ -57,7 +57,6 @@ impl Markdown {
         let mut in_blockquote = false;
         let mut blockquote_lines: Vec<String> = Vec::new();
         let mut heading_level: u8 = 0;
-        let mut _in_heading = false;
 
         // Style stack for nested inline styles.
         let mut style_stack: Vec<InlineStyle> = Vec::new();
@@ -68,7 +67,6 @@ impl Markdown {
                     Tag::Heading { level, .. } => {
                         flush_line(&mut current_line, &mut lines);
                         heading_level = level as u8;
-                        _in_heading = true;
                     }
                     Tag::Paragraph => {
                         flush_line(&mut current_line, &mut lines);
@@ -115,7 +113,9 @@ impl Markdown {
                         style_stack.push(InlineStyle::Strikethrough);
                     }
                     Tag::Link { dest_url, .. } => {
-                        style_stack.push(InlineStyle::Link(dest_url.to_string()));
+                        // Sanitize URL to prevent ANSI escape injection.
+                        let safe_url = sanitize_for_display(&dest_url);
+                        style_stack.push(InlineStyle::Link(safe_url));
                     }
                     _ => {}
                 },
@@ -134,7 +134,6 @@ impl Markdown {
                         };
                         lines.push(styled);
                         lines.push(String::new()); // spacing after heading
-                        _in_heading = false;
                         heading_level = 0;
                     }
                     TagEnd::Paragraph => {
@@ -311,6 +310,13 @@ fn apply_inline_styles(text: &str, stack: &[InlineStyle]) -> String {
         };
     }
     result
+}
+
+/// Strip ANSI escape sequences and control characters from text for safe display.
+fn sanitize_for_display(s: &str) -> String {
+    s.chars()
+        .filter(|&c| c >= '\u{0020}' && c != '\u{007F}')
+        .collect()
 }
 
 fn flush_line(current: &mut String, lines: &mut Vec<String>) {
