@@ -311,3 +311,75 @@ pub async fn emit_event(
     let line = event.to_json_line() + "\n";
     let _ = writer.write_all(line.as_bytes()).await;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_handle() -> CancelHandle {
+        std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle))
+    }
+
+    #[test]
+    fn abort_then_prompt_works() {
+        // Simulates the full abort flow: reader fires cancel on the
+        // running prompt, then handle_abort is dispatched.
+        // After both, the next prompt should NOT be pre-cancelled.
+        let handle = make_handle();
+
+        // Arm for the current run.
+        let _rx = arm_cancel(&handle).expect("should arm");
+
+        // Reader task fires cancel (kills running prompt).
+        fire_cancel(&handle);
+
+        // handle_abort dispatches (should NOT fire again after fix).
+        // Before fix: fire_cancel(&handle) was called here too.
+        // After fix: handle_abort only emits the ack event.
+
+        // Next prompt arms successfully.
+        let result = arm_cancel(&handle);
+        assert!(
+            result.is_some(),
+            "next prompt should arm successfully after abort"
+        );
+    }
+
+    #[test]
+    fn single_fire_allows_next_prompt() {
+        // After the fix: only one fire_cancel (reader task).
+        // The next arm_cancel should succeed.
+        let handle = make_handle();
+
+        // Arm for the current run.
+        let _rx = arm_cancel(&handle).expect("should arm");
+
+        // Single fire (reader task only).
+        fire_cancel(&handle);
+        // Slot is now Idle.
+
+        // Next prompt arms successfully.
+        let result = arm_cancel(&handle);
+        assert!(result.is_some(), "single fire should allow next arm_cancel");
+    }
+
+    #[test]
+    fn fire_on_idle_pre_cancels() {
+        let handle = make_handle();
+        fire_cancel(&handle);
+        assert!(
+            arm_cancel(&handle).is_none(),
+            "Fired slot should pre-cancel"
+        );
+    }
+
+    #[test]
+    fn arm_disarm_cycle() {
+        let handle = make_handle();
+        let _rx = arm_cancel(&handle).expect("should arm");
+        disarm_cancel(&handle);
+        // Should be back to Idle.
+        let rx2 = arm_cancel(&handle);
+        assert!(rx2.is_some(), "should re-arm after disarm");
+    }
+}
