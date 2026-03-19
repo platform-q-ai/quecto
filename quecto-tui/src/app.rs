@@ -87,7 +87,6 @@ pub struct App {
     agent_state: AgentRunState,
     /// Whether the app should exit.
     should_exit: bool,
-    /// (tool_expanded moved to Chat component)
     /// Proper stdin buffer for escape sequence parsing.
     stdin_buffer: crate::stdin_buffer::StdinBuffer,
     /// Whether the agent connection is still alive.

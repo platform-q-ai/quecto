@@ -35,10 +35,11 @@ pub enum ChatEntry {
         tool_call_id: String,
         tool_name: String,
         args: String,
+        /// Cached parsed args (avoids re-parsing JSON on every render).
+        parsed_args: Option<serde_json::Value>,
         result: Option<String>,
         is_error: bool,
         duration_ms: Option<u64>,
-        expanded: bool,
     },
     Status {
         text: String,
@@ -92,14 +93,15 @@ impl Chat {
 
     /// Start a tool execution — creates a ToolExecution entry.
     pub fn start_tool(&mut self, tool_call_id: String, tool_name: String, args: String) {
+        let parsed_args = serde_json::from_str(&args).ok();
         self.entries.push(ChatEntry::ToolExecution {
             tool_call_id,
             tool_name,
             args,
+            parsed_args,
             result: None,
             is_error: false,
             duration_ms: None,
-            expanded: false,
         });
         self.scroll_offset = 0;
     }
@@ -200,21 +202,19 @@ impl Component for Chat {
                 }
                 ChatEntry::ToolExecution {
                     tool_name,
-                    args,
+                    parsed_args,
                     result,
                     is_error,
                     duration_ms,
-                    expanded,
                     ..
                 } => {
-                    let is_expanded = *expanded || tool_expanded;
                     let tool_lines = render_tool_execution(
                         tool_name,
-                        args,
+                        parsed_args,
                         result.as_deref(),
                         *is_error,
                         *duration_ms,
-                        is_expanded,
+                        tool_expanded,
                         width,
                     );
                     all_lines.push(String::new()); // spacer
@@ -253,7 +253,7 @@ impl Component for Chat {
 /// Render a complete tool execution block with background color.
 fn render_tool_execution(
     tool_name: &str,
-    args: &str,
+    args_json: &Option<serde_json::Value>,
     result: Option<&str>,
     is_error: bool,
     duration_ms: Option<u64>,
@@ -272,9 +272,6 @@ fn render_tool_execution(
     // Build content lines (without background — applied after).
     let mut content: Vec<String> = Vec::new();
     let inner_width = width.saturating_sub(2); // 1 char padding each side
-
-    // Parse args JSON once.
-    let args_json: Option<serde_json::Value> = serde_json::from_str(args).ok();
 
     // Duration string.
     let dur = duration_ms
@@ -296,7 +293,7 @@ fn render_tool_execution(
             &mut content,
             &icon,
             &dur,
-            &args_json,
+            args_json,
             result,
             is_error,
             expanded,
@@ -306,7 +303,7 @@ fn render_tool_execution(
             &mut content,
             &icon,
             &dur,
-            &args_json,
+            args_json,
             result,
             expanded,
             inner_width,
@@ -315,7 +312,7 @@ fn render_tool_execution(
             &mut content,
             &icon,
             &dur,
-            &args_json,
+            args_json,
             result,
             expanded,
             inner_width,
@@ -324,7 +321,7 @@ fn render_tool_execution(
             &mut content,
             &icon,
             &dur,
-            &args_json,
+            args_json,
             result,
             is_error,
             expanded,
@@ -335,7 +332,7 @@ fn render_tool_execution(
             tool_name,
             &icon,
             &dur,
-            &args_json,
+            args_json,
             result,
             is_error,
             inner_width,
@@ -345,7 +342,7 @@ fn render_tool_execution(
             tool_name,
             &icon,
             &dur,
-            &args_json,
+            args_json,
             result,
             is_error,
             expanded,
