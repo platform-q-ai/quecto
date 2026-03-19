@@ -309,4 +309,38 @@ mod tests {
         let lines = ac.render(60);
         assert!(lines.is_empty());
     }
+
+    // --- Autocomplete Enter contract tests (#471) ---
+
+    #[test]
+    fn tab_select_returns_full_command() {
+        // Tab on a partial match should return the full command text.
+        let mut ac = Autocomplete::new(test_commands(), 5);
+        ac.update("/mo");
+        assert!(ac.is_active());
+        ac.handle_input(&Key::Tab);
+        match ac.take_result() {
+            AutocompleteResult::Selected(value) => {
+                assert_eq!(value, "/model", "Tab should return the full command");
+            }
+            other => panic!("expected Selected, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn tab_select_returns_value_for_enter_submit_path() {
+        // The Enter path in app.rs simulates Tab-to-accept then submits.
+        // This test verifies the autocomplete returns the right value.
+        let mut ac = Autocomplete::new(test_commands(), 5);
+        ac.update("/qu");
+        assert!(ac.is_active());
+        ac.handle_input(&Key::Tab);
+        let result = ac.take_result();
+        match result {
+            AutocompleteResult::Selected(value) => {
+                assert_eq!(value, "/quit");
+            }
+            other => panic!("expected Selected, got {:?}", other),
+        }
+    }
 }
