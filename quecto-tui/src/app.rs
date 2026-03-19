@@ -15,6 +15,7 @@ use crate::components::autocomplete::{Autocomplete, AutocompleteResult, SlashCom
 use crate::components::chat::{Chat, ChatEntry};
 use crate::components::editor::Editor;
 use crate::components::footer::Footer;
+use crate::components::model_selector::{ModelSelector, ModelSelectorResult};
 use crate::components::notification::{Notification, NotificationStack, NotifyLevel};
 use crate::components::spinner::Spinner;
 use crate::components::widget::WidgetContainer;
@@ -90,6 +91,10 @@ pub struct App {
     stdin_buffer: crate::stdin_buffer::StdinBuffer,
     /// Whether the agent connection is still alive.
     agent_connected: bool,
+    /// Current model name (from get_state), sanitized.
+    current_model: Option<String>,
+    /// The model selector component (created on demand, pushed onto overlay stack).
+    model_selector: Option<ModelSelector>,
 }
 
 impl App {
@@ -117,6 +122,8 @@ impl App {
             tool_expanded: false,
             stdin_buffer: crate::stdin_buffer::StdinBuffer::new(),
             agent_connected: true,
+            current_model: None,
+            model_selector: None,
         }
     }
 
@@ -316,6 +323,12 @@ impl App {
             return;
         }
 
+        // If the model selector is active, route input to it.
+        if self.model_selector.is_some() {
+            self.handle_model_selector_key(&key);
+            return;
+        }
+
         // If an overlay is active, route input there.
         if self.overlay_stack.has_visible() {
             if let Some(entry) = self.overlay_stack.topmost_entry_mut() {
@@ -397,6 +410,11 @@ impl App {
                 self.render_full();
                 return;
             }
+            Key::Ctrl('l') => {
+                // Open model selector overlay.
+                self.open_model_selector();
+                return;
+            }
             Key::Ctrl('o') => {
                 // Toggle tool output expansion.
                 self.tool_expanded = !self.tool_expanded;
@@ -466,7 +484,8 @@ impl App {
                     if !model_name.is_empty() {
                         self.send_set_model(model_name);
                     } else {
-                        self.notify("Usage: /model <name>", NotifyLevel::Info);
+                        // No model name — open the model selector overlay.
+                        self.open_model_selector();
                     }
                     return;
                 }
@@ -602,7 +621,11 @@ impl App {
                 "get_state" if success => {
                     if let Some(data) = data {
                         if let Some(model) = data.get("model").and_then(|m| m.as_str()) {
-                            self.footer.set_model(model);
+                            // Sanitize model name to prevent terminal escape injection.
+                            let sanitized: String =
+                                model.chars().filter(|c| !c.is_control()).collect();
+                            self.footer.set_model(&sanitized);
+                            self.current_model = Some(sanitized);
                         }
                     }
                 }
@@ -645,13 +668,15 @@ impl App {
                 "  Escape         Abort agent / clear editor",
                 "  Ctrl+C         Clear editor / abort agent",
                 "  Ctrl+D         Exit",
-                "  Ctrl+Z         Suspend (resume with fg)",
+                "  Ctrl+L         Open model selector",
                 "  Ctrl+O         Toggle tool output expansion",
+                "  Ctrl+Z         Suspend (resume with fg)",
                 "  PageUp/Down    Scroll chat",
                 "  Up/Down        Input history",
                 "",
                 "Slash commands:",
-                "  /model <name>  Switch model",
+                "  /model         Open model selector",
+                "  /model <name>  Switch to model directly",
                 "  /clear         Clear conversation",
                 "  /new           New session",
                 "  /session       Show session info",
@@ -705,6 +730,31 @@ impl App {
             model_id: None,
         });
         self.footer.set_model(model);
+        self.current_model = Some(model.to_string());
+    }
+
+    // ── Model selector ──────────────────────────────────────────────
+
+    fn open_model_selector(&mut self) {
+        let selector = ModelSelector::new(self.current_model.as_deref());
+        self.model_selector = Some(selector);
+    }
+
+    fn handle_model_selector_key(&mut self, key: &Key) {
+        if let Some(selector) = &mut self.model_selector {
+            selector.handle_input(key);
+
+            match selector.take_result() {
+                ModelSelectorResult::Selected(model) => {
+                    self.model_selector = None;
+                    self.send_set_model(&model);
+                }
+                ModelSelectorResult::Cancelled => {
+                    self.model_selector = None;
+                }
+                ModelSelectorResult::Pending => {}
+            }
+        }
     }
 
     // ── Notifications ─────────────────────────────────────────────────
@@ -792,6 +842,31 @@ impl App {
         // Composite overlays on top.
         if self.overlay_stack.has_visible() {
             self.overlay_stack.composite(&mut lines, width, height);
+        }
+
+        // Composite model selector overlay if active.
+        // Uses ANSI-aware splice_line to avoid escape code bleeding.
+        if let Some(selector) = &mut self.model_selector {
+            let overlay_width = width.saturating_sub(4).min(60);
+            let selector_lines = selector.render(overlay_width);
+            let overlay_height = selector_lines.len().min(height.saturating_sub(4));
+
+            // Center the overlay.
+            let start_row = height.saturating_sub(overlay_height) / 2;
+            let start_col = width.saturating_sub(overlay_width) / 2;
+
+            for i in 0..overlay_height {
+                let row = start_row + i;
+                if row < lines.len() && i < selector_lines.len() {
+                    lines[row] = crate::overlay::splice_line(
+                        &lines[row],
+                        &selector_lines[i],
+                        start_col,
+                        overlay_width,
+                        width,
+                    );
+                }
+            }
         }
 
         // Enforce width on every line.
