@@ -182,15 +182,14 @@ impl Component for Chat {
                 ChatEntry::ToolStart {
                     tool_name, args, ..
                 } => {
-                    let icon = theme::spinner("⠋");
-                    let name = theme::tool_name(tool_name);
-                    let args_display = if args.chars().count() > 60 {
-                        let truncated: String = args.chars().take(57).collect();
-                        format!("{}...", truncated)
-                    } else {
-                        args.clone()
-                    };
-                    let line = format!("  {} {} {}", icon, name, theme::dim(&args_display));
+                    // Pi-style: ⠋ tool_name args_summary
+                    let args_summary = summarize_tool_args(args);
+                    let line = format!(
+                        "  {} {} {}",
+                        theme::spinner("⠋"),
+                        theme::tool_name(tool_name),
+                        theme::dim(&args_summary)
+                    );
                     all_lines.push(truncate_to_width(&line, width, None));
                 }
                 ChatEntry::ToolEnd {
@@ -200,50 +199,45 @@ impl Component for Chat {
                     duration_ms,
                     ..
                 } => {
+                    // Pi-style: ✓/✗ tool_name args_summary  duration
                     let icon = if *is_error {
                         theme::error("✗")
                     } else {
                         theme::success("✓")
                     };
                     let dur = duration_ms
-                        .map(|ms| format!("  {}ms", ms))
+                        .map(|ms| theme::dim(&format!("  {}ms", ms)))
                         .unwrap_or_default();
                     let name = theme::tool_name(tool_name);
+
+                    // Collapsed: just header line with first-line preview.
                     all_lines.push(truncate_to_width(
-                        &format!("  {} {}{}", icon, name, theme::dim(&dur)),
+                        &format!("  {} {}{}", icon, name, dur),
                         width,
                         None,
                     ));
-                    // Show first few lines of result.
+
+                    // Show truncated result preview (collapsed view).
                     if !result.is_empty() {
                         let result_color: fn(&str) -> String =
                             if *is_error { theme::error } else { theme::dim };
-                        let all_result_lines: Vec<&str> = result.lines().collect();
-                        let show_count = all_result_lines.len().min(5);
-                        for rl in &all_result_lines[..show_count] {
-                            all_lines.push(truncate_to_width(
-                                &format!("    {}", result_color(rl)),
-                                width,
-                                None,
-                            ));
-                        }
-                        if all_result_lines.len() > 5 {
-                            all_lines.push(truncate_to_width(
-                                &format!(
-                                    "    {}",
-                                    theme::dim(&format!(
-                                        "... ({} more lines)",
-                                        all_result_lines.len() - 5
-                                    ))
-                                ),
-                                width,
-                                None,
-                            ));
-                        }
+                        let first_line = result.lines().next().unwrap_or("");
+                        let total = result.lines().count();
+                        let preview = if total > 1 {
+                            let trunc: String = first_line.chars().take(60).collect();
+                            format!("    {}  (+{} lines)", trunc, total - 1)
+                        } else {
+                            let trunc: String = first_line.chars().take(80).collect();
+                            format!("    {}", trunc)
+                        };
+                        all_lines.push(truncate_to_width(&result_color(&preview), width, None));
                     }
                 }
                 ChatEntry::Status { text } => {
-                    all_lines.push(truncate_to_width(&theme::dim(text), width, None));
+                    all_lines.push(String::new()); // spacer
+                    for status_line in text.lines() {
+                        all_lines.push(truncate_to_width(&theme::dim(status_line), width, None));
+                    }
                 }
             }
         }
@@ -258,6 +252,39 @@ impl Component for Chat {
     }
 
     fn invalidate(&mut self) {}
+}
+
+/// Extract the most useful field from tool args JSON for display.
+fn summarize_tool_args(args: &str) -> String {
+    let trimmed = args.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        for key in &["command", "path", "query", "url", "content", "oldText"] {
+            if let Some(val) = v.get(key).and_then(|v| v.as_str()) {
+                let clean: String = val
+                    .chars()
+                    .filter(|&c| c >= ' ' && c != '\u{007F}')
+                    .take(60)
+                    .collect();
+                if val.chars().count() > 60 {
+                    return format!("{}...", clean);
+                }
+                return clean;
+            }
+        }
+    }
+    let clean: String = trimmed
+        .chars()
+        .filter(|&c| c >= ' ' && c != '\u{007F}')
+        .take(60)
+        .collect();
+    if trimmed.chars().count() > 60 {
+        format!("{}...", clean)
+    } else {
+        clean
+    }
 }
 
 #[cfg(test)]
