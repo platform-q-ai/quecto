@@ -565,7 +565,7 @@ async fn handle_steer(
     message: String,
 ) -> bool {
     if ctx.session.is_streaming() {
-        fire_cancel(&ctx.cancel_handle);
+        // Reader task already fires cancel eagerly — do NOT fire again here (#512).
         ctx.session.prepend_pending(message);
     } else {
         ctx.session.enqueue_pending(message);
@@ -587,7 +587,7 @@ async fn handle_follow_up(
     false
 }
 async fn handle_abort(ctx: &mut DispatchCtx<'_>, id: Option<&str>, type_name: &str) -> bool {
-    fire_cancel(&ctx.cancel_handle);
+    // Reader task already fires cancel eagerly — do NOT fire again here (#512).
     let ev = AgentEvent::ok(id, type_name, None);
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false

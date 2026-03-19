@@ -432,6 +432,11 @@ export default function (pi: ExtensionAPI) {
 			injection += `Use the \`workflow\` tool to check off steps as you complete them.\n`;
 			injection += `Do NOT skip ahead — complete steps in order.\n`;
 
+			// Emphasize full implementation on all RED→GREEN steps (1-4)
+			if (current.id >= 1 && current.id <= 4) {
+				injection += `\n**DO NOT WORRY ABOUT THE SIZE OF A CHANGE, IMPLEMENT IT IN FULL, DO NOT DEFER.**\n`;
+			}
+
 			// Step-specific instructions
 			if (current.id === 2) {
 				injection += `\n### Step 2: Write/update unit tests\n`;
