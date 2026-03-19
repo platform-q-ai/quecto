@@ -374,7 +374,7 @@ pub(super) struct PromptArgsBroadcast<'a> {
 /// Run an agent prompt, emitting events to the broadcast channel.
 pub(super) async fn run_agent_prompt_broadcast(args: PromptArgsBroadcast<'_>) -> PromptOutcome {
     use crate::domain::agent::AgentProgressEvent;
-    use crate::interface::cli::protocol::TurnMessage;
+    use crate::interface::cli::protocol::{TurnMessage, TurnUsage};
 
     let PromptArgsBroadcast {
         agent,
@@ -419,11 +419,23 @@ pub(super) async fn run_agent_prompt_broadcast(args: PromptArgsBroadcast<'_>) ->
             // Post-hoc tool events are NOT emitted here — ToolStarted/Finished
             // are already forwarded in real-time via forward_progress_event_broadcast.
             // Emitting them again would cause duplicate events with conflicting IDs.
+            let total = agent_result
+                .input_tokens
+                .saturating_add(agent_result.output_tokens);
+            let usage = if total > 0 {
+                Some(TurnUsage {
+                    input: agent_result.input_tokens,
+                    output: agent_result.output_tokens,
+                    total,
+                })
+            } else {
+                None
+            };
             let turn_end = AgentEvent::TurnEnd {
                 message: TurnMessage {
                     role: "assistant".to_string(),
                     content: agent_result.response.clone(),
-                    usage: None,
+                    usage,
                     stop_reason: None,
                 },
                 tool_results: vec![],

@@ -374,10 +374,10 @@ impl AgentLoopImpl {
     }
 
     fn finalize_text_response(
-        &self,
         messages: &mut Vec<Message>,
         response: LlmResponse,
         iterations: u32,
+        tokens: (u32, u32),
     ) -> AgentResult {
         let text = response.content.unwrap_or_default();
         messages.push(Message::assistant(text.clone(), vec![]));
@@ -385,8 +385,8 @@ impl AgentLoopImpl {
             response: text,
             tool_iterations: iterations,
             iteration_limit_reached: false,
-            input_tokens: 0,
-            output_tokens: 0,
+            input_tokens: tokens.0,
+            output_tokens: tokens.1,
         }
     }
 
@@ -427,8 +427,9 @@ impl AgentLoopImpl {
         // Track whether spills happened so we only rebuild manifest when needed.
         // Start true to build initial manifest from any prior session spills.
         let mut spills_dirty = true;
-        // Accumulate token usage across all LLM calls in this run.
-        let mut total_input_tokens: u32 = 0;
+        // Track token usage — use the LAST call's values since each call
+        // re-sends the full context (summing would overcount).
+        let mut last_input_tokens: u32 = 0;
         let mut total_output_tokens: u32 = 0;
 
         loop {
@@ -462,9 +463,10 @@ impl AgentLoopImpl {
                 }
             };
 
-            // Accumulate usage from this LLM call.
+            // Track usage: input = last call's prompt tokens (context size),
+            // output = sum of all calls' completion tokens.
             if let Some(ref usage) = response.usage {
-                total_input_tokens = total_input_tokens.saturating_add(usage.prompt_tokens);
+                last_input_tokens = usage.prompt_tokens; // Last call = current context size.
                 total_output_tokens = total_output_tokens.saturating_add(usage.completion_tokens);
             }
 
@@ -472,10 +474,12 @@ impl AgentLoopImpl {
                 // Emit Done before finalising so the REPL can clear the spinner
                 // line before the final response is printed to stdout.
                 self.notify(|| AgentProgressEvent::Done);
-                let mut result = self.finalize_text_response(messages, response, iterations);
-                result.input_tokens = total_input_tokens;
-                result.output_tokens = total_output_tokens;
-                return Ok(result);
+                return Ok(Self::finalize_text_response(
+                    messages,
+                    response,
+                    iterations,
+                    (last_input_tokens, total_output_tokens),
+                ));
             }
 
             self.execute_tool_calls_for_response(messages, current_turn, response)
@@ -495,7 +499,7 @@ impl AgentLoopImpl {
                     ),
                     tool_iterations: iterations,
                     iteration_limit_reached: true,
-                    input_tokens: total_input_tokens,
+                    input_tokens: last_input_tokens,
                     output_tokens: total_output_tokens,
                 });
             }
