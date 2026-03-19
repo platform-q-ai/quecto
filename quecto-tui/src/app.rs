@@ -983,8 +983,9 @@ pub(crate) struct AgentRunState {
     generation: u64,
 }
 
-/// Maximum pending aborts before we stop tracking. Prevents unbounded
-/// growth if the agent fails to send AgentEnd for aborted runs.
+/// Safety cap on pending aborts. In practice, `start()` clears
+/// `pending_aborts` so this is only hit if `abort()` is called
+/// repeatedly without intervening `start()` (shouldn't happen).
 const MAX_PENDING_ABORTS: u32 = 8;
 
 impl AgentRunState {
@@ -1073,7 +1074,6 @@ mod tests {
         assert!(!state.is_running());
     }
 
-    #[test]
     #[test]
     fn stale_agent_end_before_new_start_consumed() {
         // Scenario: stale AgentEnd arrives BEFORE new AgentStart.
@@ -1221,6 +1221,29 @@ mod tests {
             "AgentEnd for new run should be processed, not consumed by stale pending_aborts"
         );
         assert!(!state.is_running());
+    }
+
+    #[test]
+    fn stale_agent_end_after_new_start_kills_run() {
+        // Critical race: abort → new start → stale AgentEnd arrives.
+        // Since start() cleared pending_aborts, the stale end is
+        // indistinguishable from the real end. This is a known
+        // limitation — the protocol has no generation IDs.
+        // The result: the new run appears to end prematurely.
+        // This is better than the alternative (#506: new run hangs forever).
+        let mut state = AgentRunState::new();
+        state.start(); // run 1
+        state.abort(); // pending = 1
+        state.start(); // run 2 — clears pending to 0
+
+        // Stale AgentEnd from run 1 arrives after run 2 started.
+        // It's processed as run 2's end (no way to distinguish).
+        let processed = state.end();
+        assert!(processed, "stale end processed as current run's end");
+        assert!(!state.is_running());
+
+        // The real AgentEnd from run 2 will arrive later — but since
+        // running is already false, it's harmless (end() on !running is a no-op).
     }
 
     #[test]
