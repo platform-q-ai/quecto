@@ -8,7 +8,7 @@ use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
 use crate::component::Component;
 use crate::theme;
-use crate::utils::{visible_width, wrap_text};
+use crate::utils::{truncate_to_width, visible_width, wrap_text};
 
 /// Markdown rendering component.
 pub struct Markdown {
@@ -379,9 +379,14 @@ fn render_table(rows: &[Vec<String>], max_width: usize) -> Vec<String> {
                 *w = ((*w as f64 * scale) as usize).max(3);
             }
         } else {
-            // All cells empty — assign minimum width.
+            // All cells empty — assign minimum width, capped to available space.
+            let min_per_col = if num_cols > 0 {
+                (avail / num_cols).max(1)
+            } else {
+                3
+            };
             for w in &mut col_widths {
-                *w = 3;
+                *w = min_per_col;
             }
         }
     }
@@ -392,7 +397,7 @@ fn render_table(rows: &[Vec<String>], max_width: usize) -> Vec<String> {
         let mut parts = Vec::new();
         for (i, cell) in row.iter().enumerate() {
             let w = col_widths.get(i).copied().unwrap_or(10);
-            let truncated = truncate_to_display_width(cell, w);
+            let truncated = truncate_to_width(cell, w, None);
             let cell_width = visible_width(&truncated);
             let padding = w.saturating_sub(cell_width);
             let padded = format!("{}{}", truncated, " ".repeat(padding));
@@ -414,39 +419,55 @@ fn render_table(rows: &[Vec<String>], max_width: usize) -> Vec<String> {
 }
 
 /// Strip ANSI escape sequences and control characters from text for safe display.
-fn sanitize_for_display(s: &str) -> String {
-    s.chars()
-        .filter(|&c| c >= '\u{0020}' && c != '\u{007F}')
-        .collect()
-}
-
-/// Truncate a string to fit within `max_width` display columns.
 ///
-/// Accounts for double-width characters (CJK, emoji). Returns a substring
-/// that fits within the given display width.
-fn truncate_to_display_width(s: &str, max_width: usize) -> String {
-    let mut width = 0;
+/// Removes complete CSI sequences (ESC[...letter), OSC sequences
+/// (ESC]...BEL/ST), bare ESC, and all C0/C1 control characters.
+fn sanitize_for_display(s: &str) -> String {
     let mut result = String::new();
-    for ch in s.chars() {
-        let ch_width = if ('\u{1100}'..='\u{115F}').contains(&ch)
-            || ('\u{2E80}'..='\u{9FFF}').contains(&ch)
-            || ('\u{F900}'..='\u{FAFF}').contains(&ch)
-            || ('\u{FE10}'..='\u{FE6F}').contains(&ch)
-            || ('\u{FF01}'..='\u{FF60}').contains(&ch)
-            || ('\u{FFE0}'..='\u{FFE6}').contains(&ch)
-            || ('\u{1F000}'..='\u{1FAFF}').contains(&ch)
-            || ('\u{20000}'..='\u{2FA1F}').contains(&ch)
-        {
-            2
-        } else {
-            1
-        };
-        if width + ch_width > max_width {
-            break;
+    let mut chars = s.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            // Start of escape sequence — consume the entire sequence.
+            match chars.peek() {
+                Some(&'[') => {
+                    // CSI sequence: ESC [ ... (letter or ~)
+                    chars.next(); // consume '['
+                    loop {
+                        match chars.next() {
+                            Some(c) if c.is_ascii_alphabetic() || c == '~' => break,
+                            None => break,
+                            _ => {} // consume parameter bytes
+                        }
+                    }
+                }
+                Some(&']') => {
+                    // OSC sequence: ESC ] ... (BEL or ST)
+                    chars.next(); // consume ']'
+                    loop {
+                        match chars.next() {
+                            Some('\x07') => break,
+                            Some('\x1b') if chars.peek() == Some(&'\\') => {
+                                chars.next();
+                                break;
+                            }
+                            None => break,
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {
+                    // Bare ESC or unknown — skip ESC and continue.
+                }
+            }
+            continue;
         }
-        width += ch_width;
-        result.push(ch);
+        // Filter out control characters (C0: 0x00-0x1F, DEL: 0x7F).
+        if ch >= '\u{0020}' && ch != '\u{007F}' {
+            result.push(ch);
+        }
     }
+
     result
 }
 
@@ -746,10 +767,31 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_for_display_strips_escapes() {
-        assert_eq!(sanitize_for_display("\x1b[31mhello\x1b[0m"), "[31mhello[0m");
+    fn sanitize_for_display_strips_full_ansi_sequences() {
+        // Full CSI sequences must be completely removed, not just the ESC byte.
+        assert_eq!(sanitize_for_display("\x1b[31mhello\x1b[0m"), "hello");
+        assert_eq!(sanitize_for_display("\x1b[1;31;42mtext\x1b[0m"), "text");
+    }
+
+    #[test]
+    fn sanitize_for_display_strips_osc_sequences() {
+        // OSC hyperlink: ESC]8;;url BEL text ESC]8;; BEL
+        let osc = "\x1b]8;;http://evil.com\x07click\x1b]8;;\x07";
+        assert_eq!(sanitize_for_display(osc), "click");
+    }
+
+    #[test]
+    fn sanitize_for_display_strips_control_chars() {
         assert_eq!(sanitize_for_display("normal"), "normal");
         assert_eq!(sanitize_for_display("\x07\x08\x0B"), "");
         assert_eq!(sanitize_for_display("a\x00b"), "ab");
+        assert_eq!(sanitize_for_display("a\x7Fb"), "ab"); // DEL
+    }
+
+    #[test]
+    fn sanitize_for_display_preserves_normal_text() {
+        assert_eq!(sanitize_for_display("hello world"), "hello world");
+        assert_eq!(sanitize_for_display("café"), "café");
+        assert_eq!(sanitize_for_display("你好"), "你好");
     }
 }
