@@ -577,7 +577,39 @@ impl App {
                     args.to_string()
                 };
                 if let Some(spinner) = &mut self.spinner {
-                    spinner.set_message(&format!("{} {}...", tool_name, truncate_args(&args_str)));
+                    // Subagent tools get a more descriptive spinner message.
+                    // Sanitize LLM-controlled values to prevent terminal escape injection.
+                    let msg = match tool_name.as_str() {
+                        "spawn" => {
+                            let agent: String = args
+                                .get("agent")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("agent")
+                                .chars()
+                                .filter(|c| !c.is_control())
+                                .collect();
+                            format!("Spawning {}...", agent)
+                        }
+                        "agent_cmd" => {
+                            let action: String = args
+                                .get("action")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?")
+                                .chars()
+                                .filter(|c| !c.is_control())
+                                .collect();
+                            let agent_id: String = args
+                                .get("agentId")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?")
+                                .chars()
+                                .filter(|c| !c.is_control())
+                                .collect();
+                            format!("{} → {}...", action, agent_id)
+                        }
+                        _ => format!("{} {}...", tool_name, truncate_args(&args_str)),
+                    };
+                    spinner.set_message(&msg);
                 }
                 self.chat.add_entry(ChatEntry::ToolStart {
                     tool_call_id,
