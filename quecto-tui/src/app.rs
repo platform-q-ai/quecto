@@ -199,20 +199,28 @@ impl App {
                     }
 
                     // If there are still pending bytes (incomplete escape),
-                    // wait briefly for more data, then force-drain.
-                    if self.stdin_buffer.has_pending() {
-                        match tokio::time::timeout(escape_timeout, stdin_rx.recv()).await {
-                            Ok(Some(more)) => {
-                                self.stdin_buffer.feed(&more);
-                                let seqs = self.stdin_buffer.drain_complete();
-                                for seq in &seqs {
-                                    self.process_key_sequence(seq);
-                                    if self.should_exit { break; }
+                    // retry up to MAX_ESCAPE_RETRIES times waiting for more data.
+                    // This handles 3+ fragment CSI splits on slow SSH/serial (#466).
+                    {
+                        let mut retries = 0;
+                        const MAX_ESCAPE_RETRIES: usize = 5;
+                        while self.stdin_buffer.has_pending() && retries < MAX_ESCAPE_RETRIES {
+                            retries += 1;
+                            match tokio::time::timeout(escape_timeout, stdin_rx.recv()).await {
+                                Ok(Some(more)) => {
+                                    self.stdin_buffer.feed(&more);
+                                    let seqs = self.stdin_buffer.drain_complete();
+                                    for seq in &seqs {
+                                        self.process_key_sequence(seq);
+                                        if self.should_exit { break; }
+                                    }
                                 }
+                                _ => break, // Timeout — no more data coming.
                             }
-                            _ => {} // Timeout — force drain below.
+                            if self.should_exit { break; }
                         }
-                        // Force drain anything still pending (bare Escape, etc.).
+                        // Force drain anything still pending after retries
+                        // exhausted (bare Escape, etc.).
                         let forced = self.stdin_buffer.drain_all();
                         for seq in &forced {
                             self.process_key_sequence(seq);
