@@ -4,6 +4,7 @@ pub mod component;
 pub mod components;
 pub mod fuzzy;
 pub mod keys;
+pub mod overlay;
 pub mod render;
 pub mod terminal;
 pub mod theme;
