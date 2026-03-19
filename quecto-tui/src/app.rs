@@ -338,8 +338,10 @@ impl App {
                     self.autocomplete.handle_input(&Key::Tab);
                     if let AutocompleteResult::Selected(value) = self.autocomplete.take_result() {
                         self.editor.set_text(&value);
+                        self.editor.add_to_history(value.trim());
                         self.autocomplete.dismiss();
                         self.handle_submit(&value);
+                        self.editor.set_text("");
                     }
                     return;
                 }
