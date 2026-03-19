@@ -448,12 +448,14 @@ impl App {
                 "/clear" => {
                     self.send_clear_history();
                     self.chat.clear();
+                    self.footer.set_context(None, 0);
                     self.notify("Conversation cleared", NotifyLevel::Success);
                     return;
                 }
                 "/new" => {
                     self.send_clear_history();
                     self.chat.clear();
+                    self.footer.set_context(None, 0);
                     self.notify("New session started", NotifyLevel::Success);
                     return;
                 }
