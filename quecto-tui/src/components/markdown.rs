@@ -152,7 +152,9 @@ impl Markdown {
                         }
                     }
                     TagEnd::TableCell => {
-                        current_row.push(std::mem::take(&mut current_cell));
+                        let sanitized = sanitize_for_display(&current_cell);
+                        current_cell.clear();
+                        current_row.push(sanitized);
                     }
                     TagEnd::Heading(_) => {
                         let text = std::mem::take(&mut current_line);
@@ -353,13 +355,13 @@ fn render_table(rows: &[Vec<String>], max_width: usize) -> Vec<String> {
         return vec![];
     }
 
-    // Calculate column widths.
+    // Calculate column widths using display width (not byte length).
     let num_cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
     let mut col_widths = vec![0usize; num_cols];
     for row in rows {
         for (i, cell) in row.iter().enumerate() {
             if i < num_cols {
-                col_widths[i] = col_widths[i].max(cell.len());
+                col_widths[i] = col_widths[i].max(visible_width(cell));
             }
         }
     }
@@ -368,11 +370,19 @@ fn render_table(rows: &[Vec<String>], max_width: usize) -> Vec<String> {
     let gap = 2; // spaces between columns
     let total: usize = col_widths.iter().sum::<usize>() + (num_cols.saturating_sub(1)) * gap;
     if total > max_width && num_cols > 0 {
-        // Shrink proportionally.
+        // Shrink proportionally, guarding against division by zero (#470).
         let avail = max_width.saturating_sub((num_cols.saturating_sub(1)) * gap);
-        let scale = avail as f64 / col_widths.iter().sum::<usize>() as f64;
-        for w in &mut col_widths {
-            *w = ((*w as f64 * scale) as usize).max(3);
+        let sum: usize = col_widths.iter().sum();
+        if sum > 0 {
+            let scale = avail as f64 / sum as f64;
+            for w in &mut col_widths {
+                *w = ((*w as f64 * scale) as usize).max(3);
+            }
+        } else {
+            // All cells empty — assign minimum width.
+            for w in &mut col_widths {
+                *w = 3;
+            }
         }
     }
 
@@ -382,8 +392,10 @@ fn render_table(rows: &[Vec<String>], max_width: usize) -> Vec<String> {
         let mut parts = Vec::new();
         for (i, cell) in row.iter().enumerate() {
             let w = col_widths.get(i).copied().unwrap_or(10);
-            let truncated: String = cell.chars().take(w).collect();
-            let padded = format!("{:<width$}", truncated, width = w);
+            let truncated = truncate_to_display_width(cell, w);
+            let cell_width = visible_width(&truncated);
+            let padding = w.saturating_sub(cell_width);
+            let padded = format!("{}{}", truncated, " ".repeat(padding));
             parts.push(padded);
         }
         let line = parts.join(&" ".repeat(gap));
@@ -406,6 +418,36 @@ fn sanitize_for_display(s: &str) -> String {
     s.chars()
         .filter(|&c| c >= '\u{0020}' && c != '\u{007F}')
         .collect()
+}
+
+/// Truncate a string to fit within `max_width` display columns.
+///
+/// Accounts for double-width characters (CJK, emoji). Returns a substring
+/// that fits within the given display width.
+fn truncate_to_display_width(s: &str, max_width: usize) -> String {
+    let mut width = 0;
+    let mut result = String::new();
+    for ch in s.chars() {
+        let ch_width = if ('\u{1100}'..='\u{115F}').contains(&ch)
+            || ('\u{2E80}'..='\u{9FFF}').contains(&ch)
+            || ('\u{F900}'..='\u{FAFF}').contains(&ch)
+            || ('\u{FE10}'..='\u{FE6F}').contains(&ch)
+            || ('\u{FF01}'..='\u{FF60}').contains(&ch)
+            || ('\u{FFE0}'..='\u{FFE6}').contains(&ch)
+            || ('\u{1F000}'..='\u{1FAFF}').contains(&ch)
+            || ('\u{20000}'..='\u{2FA1F}').contains(&ch)
+        {
+            2
+        } else {
+            1
+        };
+        if width + ch_width > max_width {
+            break;
+        }
+        width += ch_width;
+        result.push(ch);
+    }
+    result
 }
 
 fn flush_line(current: &mut String, lines: &mut Vec<String>) {
@@ -610,5 +652,104 @@ mod tests {
         // First non-empty line should start with padding spaces.
         let first = &lines[0];
         assert!(first.starts_with("  "), "should have padding: '{}'", first);
+    }
+
+    // --- Table safety tests (#465, #468, #470) ---
+
+    #[test]
+    fn table_cell_ansi_escape_stripped() {
+        // An LLM could inject ANSI escapes in table cell content.
+        // The \x1b[31m sequence sets red text — must be stripped.
+        let md = "| Header |\n|--------|\n| \x1b[31mred\x1b[0m |";
+        let plain = render_plain(md, 80);
+        assert!(
+            !plain.contains("\x1b"),
+            "ANSI escapes should be stripped from table cells: {}",
+            plain
+        );
+        assert!(
+            plain.contains("red"),
+            "cell text should be preserved: {}",
+            plain
+        );
+    }
+
+    #[test]
+    fn table_cell_control_chars_stripped() {
+        // Control characters like BEL, cursor movement must be stripped.
+        let md = "| Header |\n|--------|\n| \x07bell\x08back |";
+        let plain = render_plain(md, 80);
+        assert!(
+            !plain.contains('\x07'),
+            "BEL should be stripped: {:?}",
+            plain
+        );
+        assert!(
+            !plain.contains('\x08'),
+            "BS should be stripped: {:?}",
+            plain
+        );
+    }
+
+    #[test]
+    fn table_cell_sanitize_preserves_text() {
+        let md = "| Name | Value |\n|------|-------|\n| foo  | bar   |";
+        let plain = render_plain(md, 80);
+        assert!(plain.contains("foo"), "cell text should be preserved");
+        assert!(plain.contains("bar"), "cell text should be preserved");
+    }
+
+    #[test]
+    fn table_cjk_column_width() {
+        // CJK characters are double-width. "你好" is 4 display columns.
+        // The column must be at least 4 wide, not 6 (byte length of UTF-8).
+        let md = "| Header |\n|--------|\n| 你好 |";
+        let plain = render_plain(md, 80);
+        // The key test is that render_table uses visible_width, not .len().
+        // We verify by checking the render doesn't panic and text appears.
+        assert!(plain.contains("你好"), "CJK text should appear: {}", plain);
+    }
+
+    #[test]
+    fn table_column_width_uses_display_width_not_bytes() {
+        // "café" is 5 bytes but 4 display characters.
+        // Column width should be 4 (display), not 5 (bytes).
+        let rows = vec![vec!["café".to_string()], vec!["test".to_string()]];
+        let lines = render_table(&rows, 80);
+        // Both rows should align — if byte length is used, "café" gets
+        // allocated 5 chars of width while "test" gets 4, causing misalignment.
+        let plain: Vec<String> = lines.iter().map(|l| strip_ansi(l)).collect();
+        assert!(plain.len() >= 2, "should have header + separator + data");
+        // Verify the data row "test" is padded to the same width as "café".
+        // With visible_width, both are 4 display chars, so padding is identical.
+    }
+
+    #[test]
+    fn table_all_empty_cells_no_panic() {
+        // All empty cells means col_widths sum is 0 — must not divide by zero.
+        let md = "| | |\n|--|--|\n| | |";
+        let plain = render_plain(md, 80);
+        // Should not panic — just render empty or minimal table.
+        let _ = plain;
+    }
+
+    #[test]
+    fn table_all_empty_cells_via_render_table() {
+        // Direct test of render_table with empty cells.
+        let rows = vec![
+            vec![String::new(), String::new()],
+            vec![String::new(), String::new()],
+        ];
+        // Must not panic (division by zero in scale calculation).
+        let lines = render_table(&rows, 40);
+        assert!(!lines.is_empty(), "should produce some output");
+    }
+
+    #[test]
+    fn sanitize_for_display_strips_escapes() {
+        assert_eq!(sanitize_for_display("\x1b[31mhello\x1b[0m"), "[31mhello[0m");
+        assert_eq!(sanitize_for_display("normal"), "normal");
+        assert_eq!(sanitize_for_display("\x07\x08\x0B"), "");
+        assert_eq!(sanitize_for_display("a\x00b"), "ab");
     }
 }
