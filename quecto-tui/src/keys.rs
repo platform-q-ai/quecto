@@ -170,9 +170,13 @@ fn parse_kitty_key(params: &[u8]) -> Key {
         })
         .unwrap_or(1); // 1 = no modifier in Kitty protocol
 
-    let shift = (modifiers - 1) & 1 != 0;
-    let alt = (modifiers - 1) & 2 != 0;
-    let ctrl = (modifiers - 1) & 4 != 0;
+    // Kitty protocol: modifier value 1 = no modifier. Bits are (value - 1):
+    //   bit 0 = Shift, bit 1 = Alt, bit 2 = Ctrl.
+    // Guard against modifiers == 0 (malformed input) with saturating_sub.
+    let mod_bits = modifiers.saturating_sub(1);
+    let shift = mod_bits & 1 != 0;
+    let alt = mod_bits & 2 != 0;
+    let ctrl = mod_bits & 4 != 0;
 
     match keycode {
         13 if shift => Key::ShiftEnter,
@@ -182,8 +186,10 @@ fn parse_kitty_key(params: &[u8]) -> Key {
         127 => Key::Backspace,
         27 => Key::Escape,
         // Ctrl+letter: keycode 97..=122 (a-z) with ctrl modifier.
+        // Ctrl+Alt is deliberately treated as Ctrl-only to avoid
+        // triggering unintended actions (Alt is dropped).
         97..=122 if ctrl => Key::Ctrl((keycode as u8) as char),
-        // Alt+letter: keycode 97..=122 (a-z) with alt modifier.
+        // Alt+letter: keycode 97..=122 (a-z) with alt modifier (no ctrl).
         97..=122 if alt => Key::Alt((keycode as u8) as char),
         // Plain printable ASCII (keycode 32..=126) with no modifier.
         32..=126 if !ctrl && !alt && !shift => Key::Char(char::from(keycode as u8)),
@@ -466,5 +472,21 @@ mod tests {
     fn kitty_shift_enter_still_works() {
         let (key, _) = parse_key(b"\x1b[13;2u").unwrap();
         assert_eq!(key, Key::ShiftEnter);
+    }
+
+    #[test]
+    fn kitty_modifier_zero_no_panic() {
+        // Modifier 0 is malformed but should not panic (saturating_sub).
+        let (key, _) = parse_key(b"\x1b[100;0u").unwrap();
+        // Should parse as plain 'd' (no modifiers after saturating_sub).
+        assert_eq!(key, Key::Char('d'));
+    }
+
+    #[test]
+    fn kitty_ctrl_alt_d_treated_as_ctrl() {
+        // Modifier 7 = Ctrl+Alt+1 → (7-1)=6, ctrl=true, alt=true.
+        // Ctrl arm matches first (Alt dropped deliberately).
+        let (key, _) = parse_key(b"\x1b[100;7u").unwrap();
+        assert_eq!(key, Key::Ctrl('d'));
     }
 }
