@@ -9,6 +9,7 @@ pub mod kitty;
 pub mod overlay;
 pub mod render;
 pub mod signals;
+pub mod stdin_buffer;
 pub mod terminal;
 pub mod theme;
 pub mod themes;

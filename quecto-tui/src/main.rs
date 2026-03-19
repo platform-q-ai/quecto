@@ -113,9 +113,19 @@ async fn run(flags: CliFlags) -> i32 {
     let mut app = quecto_tui::app::App::new(terminal, client);
     let exit_code = app.run().await;
 
-    // Kill the child agent process on TUI exit to prevent orphans.
+    // Kill the child agent process group on TUI exit (catches subagents too).
     if let Some(ref mut child) = _child {
-        let _ = child.kill().await;
+        if let Some(pid) = child.id() {
+            // Kill the entire process group (negative PID = group).
+            unsafe {
+                libc::kill(-(pid as i32), libc::SIGTERM);
+            }
+            // Give processes a moment to exit, then force kill.
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            let _ = child.kill().await;
+        } else {
+            let _ = child.kill().await;
+        }
         let _ = child.wait().await;
     }
 
@@ -147,6 +157,8 @@ async fn spawn_agent(
         .stderr(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stdin(std::process::Stdio::null())
+        // Create a new process group so we can kill the agent + all its subagents.
+        .process_group(0)
         .spawn()
         .map_err(|e| format!("failed to spawn quecto: {e}"))?;
 
