@@ -171,8 +171,8 @@ fn parse_kitty_key(params: &[u8]) -> Key {
         .unwrap_or(1); // 1 = no modifier in Kitty protocol
 
     let shift = (modifiers - 1) & 1 != 0;
-    let _alt = (modifiers - 1) & 2 != 0;
-    let _ctrl = (modifiers - 1) & 4 != 0;
+    let alt = (modifiers - 1) & 2 != 0;
+    let ctrl = (modifiers - 1) & 4 != 0;
 
     match keycode {
         13 if shift => Key::ShiftEnter,
@@ -181,6 +181,12 @@ fn parse_kitty_key(params: &[u8]) -> Key {
         9 => Key::Tab,
         127 => Key::Backspace,
         27 => Key::Escape,
+        // Ctrl+letter: keycode 97..=122 (a-z) with ctrl modifier.
+        97..=122 if ctrl => Key::Ctrl((keycode as u8) as char),
+        // Alt+letter: keycode 97..=122 (a-z) with alt modifier.
+        97..=122 if alt => Key::Alt((keycode as u8) as char),
+        // Plain printable ASCII (keycode 32..=126) with no modifier.
+        32..=126 if !ctrl && !alt && !shift => Key::Char(char::from(keycode as u8)),
         _ => Key::Unknown(params.to_vec()),
     }
 }
@@ -400,5 +406,65 @@ mod tests {
     fn parse_incomplete_csi_returns_none() {
         // \x1b[ without a terminator — should return None (wait for more input)
         assert!(parse_key(b"\x1b[").is_none());
+    }
+
+    // ── Kitty protocol Ctrl+letter tests (issue #496) ─────────────────
+
+    #[test]
+    fn kitty_ctrl_d() {
+        // CSI 100;5u — keycode 100='d', modifier 5=Ctrl+1
+        let (key, _) = parse_key(b"\x1b[100;5u").unwrap();
+        assert_eq!(key, Key::Ctrl('d'));
+    }
+
+    #[test]
+    fn kitty_ctrl_c() {
+        // CSI 99;5u — keycode 99='c', modifier 5=Ctrl+1
+        let (key, _) = parse_key(b"\x1b[99;5u").unwrap();
+        assert_eq!(key, Key::Ctrl('c'));
+    }
+
+    #[test]
+    fn kitty_ctrl_a() {
+        let (key, _) = parse_key(b"\x1b[97;5u").unwrap();
+        assert_eq!(key, Key::Ctrl('a'));
+    }
+
+    #[test]
+    fn kitty_ctrl_z() {
+        let (key, _) = parse_key(b"\x1b[122;5u").unwrap();
+        assert_eq!(key, Key::Ctrl('z'));
+    }
+
+    #[test]
+    fn kitty_ctrl_l() {
+        let (key, _) = parse_key(b"\x1b[108;5u").unwrap();
+        assert_eq!(key, Key::Ctrl('l'));
+    }
+
+    #[test]
+    fn kitty_ctrl_o() {
+        let (key, _) = parse_key(b"\x1b[111;5u").unwrap();
+        assert_eq!(key, Key::Ctrl('o'));
+    }
+
+    #[test]
+    fn kitty_plain_d_no_modifier() {
+        // CSI 100;1u — keycode 100='d', modifier 1=none
+        let (key, _) = parse_key(b"\x1b[100;1u").unwrap();
+        assert_eq!(key, Key::Char('d'));
+    }
+
+    #[test]
+    fn kitty_alt_d() {
+        // CSI 100;3u — keycode 100='d', modifier 3=Alt+1
+        let (key, _) = parse_key(b"\x1b[100;3u").unwrap();
+        assert_eq!(key, Key::Alt('d'));
+    }
+
+    #[test]
+    fn kitty_shift_enter_still_works() {
+        let (key, _) = parse_key(b"\x1b[13;2u").unwrap();
+        assert_eq!(key, Key::ShiftEnter);
     }
 }
