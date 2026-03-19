@@ -12,7 +12,8 @@ use tokio::sync::mpsc;
 use crate::client::{Client, Command, Event};
 use crate::component::Component;
 use crate::components::autocomplete::{Autocomplete, AutocompleteResult, SlashCommand};
-use crate::components::chat::{Chat, ChatEntry};
+use crate::components::chat::Chat;
+use crate::components::chat::ChatEntry;
 use crate::components::editor::Editor;
 use crate::components::footer::Footer;
 use crate::components::model_selector::{ModelSelector, ModelSelectorResult};
@@ -86,8 +87,6 @@ pub struct App {
     agent_state: AgentRunState,
     /// Whether the app should exit.
     should_exit: bool,
-    /// Track tool output expansion state.
-    tool_expanded: bool,
     /// Proper stdin buffer for escape sequence parsing.
     stdin_buffer: crate::stdin_buffer::StdinBuffer,
     /// Whether the agent connection is still alive.
@@ -120,7 +119,6 @@ impl App {
             kitty: KittyProtocol::new(),
             agent_state: AgentRunState::new(),
             should_exit: false,
-            tool_expanded: false,
             stdin_buffer: crate::stdin_buffer::StdinBuffer::new(),
             agent_connected: true,
             current_model: None,
@@ -418,8 +416,8 @@ impl App {
             }
             Key::Ctrl('o') => {
                 // Toggle tool output expansion.
-                self.tool_expanded = !self.tool_expanded;
-                let state = if self.tool_expanded {
+                self.chat.toggle_tool_expand();
+                let state = if self.chat.tool_expanded {
                     "expanded"
                 } else {
                     "collapsed"
@@ -611,11 +609,7 @@ impl App {
                     };
                     spinner.set_message(&msg);
                 }
-                self.chat.add_entry(ChatEntry::ToolStart {
-                    tool_call_id,
-                    tool_name,
-                    args: args_str,
-                });
+                self.chat.start_tool(tool_call_id, tool_name, args_str);
             }
             Event::ToolExecutionEnd {
                 tool_call_id,
