@@ -586,14 +586,12 @@ async fn handle_follow_up(
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
 }
-
 async fn handle_abort(ctx: &mut DispatchCtx<'_>, id: Option<&str>, type_name: &str) -> bool {
     fire_cancel(&ctx.cancel_handle);
     let ev = AgentEvent::ok(id, type_name, None);
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
 }
-
 async fn handle_clear_history(ctx: &mut DispatchCtx<'_>, id: Option<&str>, tn: &str) -> bool {
     if ctx.session.is_streaming() {
         let ev = AgentEvent::err(id, tn, "cannot clear history while agent is running");
@@ -651,7 +649,6 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
         message,
         streaming_behavior,
     } = cmd;
-
     if ctx.session.is_streaming() {
         match streaming_behavior {
             Some(StreamingBehavior::FollowUp) | Some(StreamingBehavior::Steer) => {
@@ -671,8 +668,8 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
             }
         }
     }
-
     let Some(cancel_rx) = arm_cancel(&ctx.cancel_handle) else {
+        emit_pre_cancelled(ctx).await; // Stale abort — emit lifecycle events (#483).
         return false;
     };
 
@@ -697,16 +694,19 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
         };
         run_agent_prompt(args).await
     };
-
     disarm_cancel(&ctx.cancel_handle);
-
     if matches!(outcome, PromptOutcome::Success) {
         let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
     }
-    // Drain pending follow-ups regardless of outcome (cancelled, error, or success).
-    drain_and_run_pending(ctx).await;
+    drain_and_run_pending(ctx).await; // Drain pending follow-ups.
     false
+}
+
+/// Emit AgentStart + AgentEnd for a pre-cancelled prompt so TUI doesn't hang (#483).
+async fn emit_pre_cancelled(ctx: &mut DispatchCtx<'_>) {
+    emit_event_to_broadcast_or_writer(ctx, &AgentEvent::AgentStart).await;
+    emit_event_to_broadcast_or_writer(ctx, &AgentEvent::AgentEnd { messages: vec![] }).await;
 }
 
 async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
@@ -717,6 +717,7 @@ async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
         }
         for msg in pending {
             let Some(rx) = arm_cancel(&ctx.cancel_handle) else {
+                emit_pre_cancelled(ctx).await; // Stale abort (#483).
                 break;
             };
             if let Some(ref tx) = ctx.broadcast_tx {
