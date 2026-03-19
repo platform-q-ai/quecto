@@ -167,15 +167,37 @@ impl From<serde_json::Error> for ClientError {
     }
 }
 
+/// A cloneable sender for commands to the agent.
+///
+/// Multiple tasks can hold a `CommandSender` to send commands concurrently.
+#[derive(Clone)]
+pub struct CommandSender {
+    tx: mpsc::Sender<String>,
+}
+
+impl CommandSender {
+    /// Send a command to the agent.
+    pub async fn send(&mut self, cmd: &Command) -> Result<(), ClientError> {
+        let mut json = serde_json::to_string(cmd)?;
+        json.push('\n');
+        self.tx
+            .send(json)
+            .await
+            .map_err(|_| ClientError::Disconnected)
+    }
+}
+
 /// A UDS client connection to a quecto agent.
 ///
 /// The client provides:
 /// - `send()` to send commands to the agent
-/// - `events()` to receive a stream of events via an mpsc channel
+/// - `recv()` to receive events via an mpsc channel
+/// - `clone_sender()` to get a cloneable command sender for use in spawned tasks
 ///
-/// The event reader runs in a background tokio task.
+/// The event reader and command writer run in background tokio tasks.
 pub struct Client {
-    writer: tokio::io::WriteHalf<UnixStream>,
+    /// Channel to send serialized command lines to the writer task.
+    cmd_tx: mpsc::Sender<String>,
     /// Channel for receiving events from the background reader.
     event_rx: mpsc::Receiver<Event>,
 }
@@ -184,7 +206,20 @@ impl Client {
     /// Connect to a quecto agent at the given socket path.
     pub async fn connect(socket_path: &Path) -> Result<Self, ClientError> {
         let stream = UnixStream::connect(socket_path).await?;
-        let (read_half, write_half) = tokio::io::split(stream);
+        let (read_half, mut write_half) = tokio::io::split(stream);
+
+        // Command writer task: receives serialized JSON lines and writes them to the socket.
+        let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(64);
+        tokio::spawn(async move {
+            while let Some(line) = cmd_rx.recv().await {
+                if write_half.write_all(line.as_bytes()).await.is_err() {
+                    break;
+                }
+                if write_half.flush().await.is_err() {
+                    break;
+                }
+            }
+        });
 
         let (tx, rx) = mpsc::channel(256);
 
@@ -240,7 +275,7 @@ impl Client {
         });
 
         Ok(Self {
-            writer: write_half,
+            cmd_tx,
             event_rx: rx,
         })
     }
@@ -249,9 +284,17 @@ impl Client {
     pub async fn send(&mut self, cmd: &Command) -> Result<(), ClientError> {
         let mut json = serde_json::to_string(cmd)?;
         json.push('\n');
-        self.writer.write_all(json.as_bytes()).await?;
-        self.writer.flush().await?;
-        Ok(())
+        self.cmd_tx
+            .send(json)
+            .await
+            .map_err(|_| ClientError::Disconnected)
+    }
+
+    /// Get a cloneable command sender for use in spawned tasks.
+    pub fn clone_sender(&self) -> CommandSender {
+        CommandSender {
+            tx: self.cmd_tx.clone(),
+        }
     }
 
     /// Receive the next event from the agent.
