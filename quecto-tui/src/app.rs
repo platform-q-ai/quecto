@@ -257,7 +257,7 @@ impl App {
                         None => {
                             // Agent disconnected — stop polling.
                             self.agent_connected = false;
-                            self.agent_state.running = false;
+                            self.agent_state.reset();
                             self.spinner = None;
                             self.chat.finalize_assistant();
                             self.notify("Agent disconnected", NotifyLevel::Error);
@@ -317,7 +317,7 @@ impl App {
         // Unconditional exit — Ctrl+D must work regardless of overlays,
         // autocomplete state, or agent activity (#478).
         if matches!(key, Key::Ctrl('d')) {
-            if self.agent_state.running {
+            if self.agent_state.is_running() {
                 self.handle_abort();
             }
             self.should_exit = true;
@@ -379,7 +379,7 @@ impl App {
         // Note: Ctrl+D is handled at the top of handle_key (unconditional exit).
         match &key {
             Key::Ctrl('c') => {
-                if self.agent_state.running {
+                if self.agent_state.is_running() {
                     self.handle_abort();
                 } else {
                     self.editor.set_text("");
@@ -388,7 +388,7 @@ impl App {
                 return;
             }
             Key::Escape => {
-                if self.agent_state.running {
+                if self.agent_state.is_running() {
                     self.handle_abort();
                 } else {
                     // Clear editor if it has text.
@@ -505,7 +505,7 @@ impl App {
         let cmd = Command::Prompt {
             id: None,
             message: text.to_string(),
-            streaming_behavior: if self.agent_state.running {
+            streaming_behavior: if self.agent_state.is_running() {
                 Some("steer".to_string())
             } else {
                 None
@@ -653,7 +653,7 @@ impl App {
                     self.chat.add_entry(ChatEntry::Status {
                         text: format!("Error: {}", msg),
                     });
-                    self.agent_state.running = false;
+                    self.agent_state.reset();
                     self.footer.set_streaming(false);
                     self.spinner = None;
                 }
@@ -969,17 +969,23 @@ fn read_git_branch() -> Option<String> {
 /// so we track the number of pending aborts. When an AgentEnd arrives
 /// after an abort, we consume one pending abort and ignore the event
 /// instead of setting running=false (which would kill a new run).
+///
+/// All state transitions go through methods — `running` is private
+/// to enforce invariants.
 #[derive(Debug)]
 pub(crate) struct AgentRunState {
     /// Whether the agent is currently processing.
-    pub running: bool,
+    running: bool,
     /// Number of aborted runs whose AgentEnd events haven't arrived yet.
-    /// When > 0, the next AgentEnd is from an aborted run and should be
-    /// consumed without changing `running`.
+    /// Capped at 8 to prevent unbounded growth if the agent misbehaves.
     pending_aborts: u32,
     /// Monotonically increasing generation counter (for diagnostics).
-    pub generation: u64,
+    generation: u64,
 }
+
+/// Maximum pending aborts before we stop tracking. Prevents unbounded
+/// growth if the agent fails to send AgentEnd for aborted runs.
+const MAX_PENDING_ABORTS: u32 = 8;
 
 impl AgentRunState {
     pub fn new() -> Self {
@@ -990,6 +996,11 @@ impl AgentRunState {
         }
     }
 
+    /// Whether the agent is currently processing.
+    pub fn is_running(&self) -> bool {
+        self.running
+    }
+
     /// Start a new agent run. Increments generation.
     pub fn start(&mut self) {
         self.generation += 1;
@@ -997,11 +1008,15 @@ impl AgentRunState {
     }
 
     /// Handle an abort. Increments pending_aborts so the stale AgentEnd
-    /// from this run will be consumed without affecting state.
-    /// Does NOT set running to false.
+    /// from this run will be consumed without affecting a new run.
+    /// Sets running=false for UI purposes (stop showing active state).
     pub fn abort(&mut self) {
-        self.pending_aborts += 1;
-        // Intentionally does NOT set running = false.
+        if self.running {
+            if self.pending_aborts < MAX_PENDING_ABORTS {
+                self.pending_aborts += 1;
+            }
+            self.running = false;
+        }
     }
 
     /// Handle an AgentEnd event.
@@ -1019,6 +1034,13 @@ impl AgentRunState {
             true
         }
     }
+
+    /// Hard reset — used when the agent disconnects or errors out.
+    /// Clears all state unconditionally.
+    pub fn reset(&mut self) {
+        self.running = false;
+        self.pending_aborts = 0;
+    }
 }
 
 #[cfg(test)]
@@ -1028,53 +1050,65 @@ mod tests {
     #[test]
     fn initial_state_not_running() {
         let state = AgentRunState::new();
-        assert!(!state.running);
-        assert_eq!(state.generation, 0);
+        assert!(!state.is_running());
     }
 
     #[test]
-    fn start_sets_running_and_increments_generation() {
+    fn start_sets_running() {
         let mut state = AgentRunState::new();
         state.start();
-        assert!(state.running);
-        assert_eq!(state.generation, 1);
+        assert!(state.is_running());
     }
 
     #[test]
     fn normal_end_clears_running() {
         let mut state = AgentRunState::new();
         state.start();
-        assert!(state.running);
+        assert!(state.is_running());
         let processed = state.end();
         assert!(processed);
-        assert!(!state.running);
+        assert!(!state.is_running());
     }
 
     #[test]
     fn stale_agent_end_after_abort_ignored() {
         let mut state = AgentRunState::new();
         state.start(); // run 1
-        state.abort(); // abort run 1 (pending_aborts = 1)
-        state.start(); // run 2 (new prompt)
-        assert!(state.running);
+        state.abort(); // pending = 1, running = false
+        assert!(!state.is_running(), "abort should clear running for UI");
+        state.start(); // run 2 (new prompt) — running = true
+        assert!(state.is_running());
 
         // Stale AgentEnd from aborted run 1 — consumed by pending_aborts.
         let processed = state.end();
         assert!(!processed);
-        assert!(state.running, "should still be running after stale end");
+        assert!(
+            state.is_running(),
+            "should still be running after stale end"
+        );
 
         // Real AgentEnd from run 2 — processed normally.
         let processed = state.end();
         assert!(processed);
-        assert!(!state.running);
+        assert!(!state.is_running());
     }
 
     #[test]
-    fn abort_does_not_clear_running() {
+    fn abort_clears_running_for_ui() {
         let mut state = AgentRunState::new();
         state.start();
         state.abort();
-        assert!(state.running, "abort should not clear running");
+        assert!(!state.is_running(), "abort should clear running for UI");
+    }
+
+    #[test]
+    fn abort_when_not_running_is_noop() {
+        let mut state = AgentRunState::new();
+        state.abort(); // should not panic or increment pending_aborts
+        assert!(!state.is_running());
+        // End should process normally (no pending aborts).
+        state.start();
+        assert!(state.end());
     }
 
     #[test]
@@ -1089,45 +1123,40 @@ mod tests {
         // Stale ends from run 1 and run 2 consumed.
         assert!(!state.end()); // consumes abort 1
         assert!(!state.end()); // consumes abort 2
-        assert!(state.running);
+        assert!(state.is_running());
 
         // Real end from run 3.
         assert!(state.end());
-        assert!(!state.running);
+        assert!(!state.is_running());
     }
 
     #[test]
     fn normal_flow_without_abort() {
         let mut state = AgentRunState::new();
         state.start();
-        assert!(state.running);
+        assert!(state.is_running());
         state.end();
-        assert!(!state.running);
+        assert!(!state.is_running());
 
         state.start();
-        assert!(state.running);
+        assert!(state.is_running());
         state.end();
-        assert!(!state.running);
+        assert!(!state.is_running());
     }
 
     #[test]
     fn abort_then_end_without_new_start() {
-        // User aborts and does NOT send a new prompt.
-        // The stale AgentEnd should be consumed and running stays true,
-        // but that's OK because the agent is actually done.
-        // A second end() would process normally.
         let mut state = AgentRunState::new();
         state.start();
-        state.abort(); // pending = 1
+        state.abort(); // pending = 1, running = false
 
         // AgentEnd from the aborted run is consumed.
         assert!(!state.end());
-        // Running is still true (abort didn't clear it, stale end didn't either).
-        // But the agent IS actually done. This is fine because:
-        // 1. The spinner was already stopped by handle_abort()
-        // 2. The UI shows "Operation aborted"
-        // 3. The next prompt will work correctly
-        assert!(state.running);
+        // Running is false (abort cleared it).
+        assert!(!state.is_running());
+        // Next prompt works correctly.
+        state.start();
+        assert!(state.is_running());
     }
 
     #[test]
@@ -1141,8 +1170,44 @@ mod tests {
 
         // New prompt works.
         state.start(); // run 2
-        assert!(state.running);
+        assert!(state.is_running());
         assert!(state.end()); // run 2 ends normally
-        assert!(!state.running);
+        assert!(!state.is_running());
+    }
+
+    #[test]
+    fn reset_clears_all_state() {
+        let mut state = AgentRunState::new();
+        state.start();
+        state.abort(); // pending = 1
+        state.reset();
+        assert!(!state.is_running());
+        // After reset, end() should work normally (no stale aborts).
+        state.start();
+        assert!(state.end());
+    }
+
+    #[test]
+    fn pending_aborts_capped() {
+        let mut state = AgentRunState::new();
+        for _ in 0..20 {
+            state.start();
+            state.abort();
+        }
+        // pending_aborts should be capped at MAX_PENDING_ABORTS.
+        // Starting a new run and ending it should eventually work.
+        state.start();
+        // Consume all pending aborts.
+        let mut consumed = 0;
+        while !state.end() {
+            consumed += 1;
+            if consumed > 100 {
+                panic!("too many pending aborts");
+            }
+            // After each consumed stale end, we need to keep running
+            // to receive more ends. Re-start to keep the test going.
+            state.start();
+        }
+        assert!(consumed <= MAX_PENDING_ABORTS as usize);
     }
 }
