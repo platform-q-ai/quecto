@@ -302,6 +302,22 @@ fn is_subagent_tool(name: &str) -> bool {
 ///
 /// For `spawn`: shows "agent_label — task_summary"
 /// For `agent_cmd`: shows "action → agentId: message_preview"
+/// Sanitize a string by stripping control characters (terminal escape injection prevention).
+fn sanitize(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).collect()
+}
+
+/// Truncate a string to max_chars, appending "..." if truncated.
+fn truncate_with_ellipsis(s: &str, max_chars: usize) -> String {
+    let char_count = s.chars().count();
+    if char_count > max_chars {
+        let truncated: String = s.chars().take(max_chars).collect();
+        format!("{}...", truncated)
+    } else {
+        s.to_string()
+    }
+}
+
 fn summarize_subagent_args(tool_name: &str, args: &str) -> String {
     let trimmed = args.trim();
     if trimmed.is_empty() {
@@ -314,30 +330,27 @@ fn summarize_subagent_args(tool_name: &str, args: &str) -> String {
 
     match tool_name {
         "spawn" => {
-            let agent = v.get("agent").and_then(|v| v.as_str()).unwrap_or("?");
-            let task = v.get("task").and_then(|v| v.as_str()).unwrap_or("");
-            let task_preview: String = task.chars().take(50).collect();
-            if task.chars().count() > 50 {
-                format!("{} — {}...", agent, task_preview)
-            } else if task.is_empty() {
-                agent.to_string()
+            let agent = sanitize(v.get("agent").and_then(|v| v.as_str()).unwrap_or("?"));
+            let task = sanitize(v.get("task").and_then(|v| v.as_str()).unwrap_or(""));
+            if task.is_empty() {
+                agent
             } else {
-                format!("{} — {}", agent, task_preview)
+                format!("{} — {}", agent, truncate_with_ellipsis(&task, 50))
             }
         }
         "agent_cmd" => {
-            let action = v.get("action").and_then(|v| v.as_str()).unwrap_or("?");
-            let agent_id = v.get("agentId").and_then(|v| v.as_str()).unwrap_or("?");
-            let message = v.get("message").and_then(|v| v.as_str()).unwrap_or("");
+            let action = sanitize(v.get("action").and_then(|v| v.as_str()).unwrap_or("?"));
+            let agent_id = sanitize(v.get("agentId").and_then(|v| v.as_str()).unwrap_or("?"));
+            let message = sanitize(v.get("message").and_then(|v| v.as_str()).unwrap_or(""));
             if message.is_empty() {
                 format!("{} → {}", action, agent_id)
             } else {
-                let msg_preview: String = message.chars().take(40).collect();
-                if message.chars().count() > 40 {
-                    format!("{} → {}: {}...", action, agent_id, msg_preview)
-                } else {
-                    format!("{} → {}: {}", action, agent_id, msg_preview)
-                }
+                format!(
+                    "{} → {}: {}",
+                    action,
+                    agent_id,
+                    truncate_with_ellipsis(&message, 40)
+                )
             }
         }
         _ => summarize_tool_args(args),

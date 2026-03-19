@@ -578,18 +578,33 @@ impl App {
                 };
                 if let Some(spinner) = &mut self.spinner {
                     // Subagent tools get a more descriptive spinner message.
+                    // Sanitize LLM-controlled values to prevent terminal escape injection.
                     let msg = match tool_name.as_str() {
                         "spawn" => {
-                            let agent = args
+                            let agent: String = args
                                 .get("agent")
                                 .and_then(|v| v.as_str())
-                                .unwrap_or("agent");
+                                .unwrap_or("agent")
+                                .chars()
+                                .filter(|c| !c.is_control())
+                                .collect();
                             format!("Spawning {}...", agent)
                         }
                         "agent_cmd" => {
-                            let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("?");
-                            let agent_id =
-                                args.get("agentId").and_then(|v| v.as_str()).unwrap_or("?");
+                            let action: String = args
+                                .get("action")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?")
+                                .chars()
+                                .filter(|c| !c.is_control())
+                                .collect();
+                            let agent_id: String = args
+                                .get("agentId")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?")
+                                .chars()
+                                .filter(|c| !c.is_control())
+                                .collect();
                             format!("{} → {}...", action, agent_id)
                         }
                         _ => format!("{} {}...", tool_name, truncate_args(&args_str)),
