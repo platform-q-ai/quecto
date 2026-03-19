@@ -1,7 +1,9 @@
+pub mod autocomplete;
 pub mod chat;
 pub mod editor;
 pub mod footer;
 pub mod markdown;
+pub mod select_list;
 pub mod spinner;
 pub mod text;
 pub mod tool_output;
