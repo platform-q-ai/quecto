@@ -147,12 +147,13 @@ pub const BG_ERROR: &str = "\x1b[48;5;52m";
 /// then extracts everything up to and including the first `m`.
 fn bg_code_from_fn(bg_fn: fn(&str) -> String) -> &'static str {
     // Use function pointer identity to map to known constants.
-    let ptr = bg_fn as usize;
-    if ptr == tool_pending_bg as usize {
+    // Cast through *const () to avoid "function pointer comparison" warnings.
+    let ptr = bg_fn as *const ();
+    if ptr == tool_pending_bg as *const () {
         BG_PENDING
-    } else if ptr == tool_success_bg as usize {
+    } else if ptr == tool_success_bg as *const () {
         BG_SUCCESS
-    } else if ptr == tool_error_bg as usize {
+    } else if ptr == tool_error_bg as *const () {
         BG_ERROR
     } else {
         // Unknown bg function — fall back to pending.
