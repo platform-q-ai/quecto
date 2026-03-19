@@ -1001,10 +1001,13 @@ impl AgentRunState {
         self.running
     }
 
-    /// Start a new agent run. Increments generation.
+    /// Start a new agent run. Increments generation and clears any
+    /// pending aborts — once a new AgentStart arrives, stale AbortEnd
+    /// events from previous runs are irrelevant (#506).
     pub fn start(&mut self) {
         self.generation += 1;
         self.running = true;
+        self.pending_aborts = 0;
     }
 
     /// Handle an abort. Increments pending_aborts so the stale AgentEnd
@@ -1071,25 +1074,41 @@ mod tests {
     }
 
     #[test]
-    fn stale_agent_end_after_abort_ignored() {
+    #[test]
+    fn stale_agent_end_before_new_start_consumed() {
+        // Scenario: stale AgentEnd arrives BEFORE new AgentStart.
         let mut state = AgentRunState::new();
         state.start(); // run 1
         state.abort(); // pending = 1, running = false
-        assert!(!state.is_running(), "abort should clear running for UI");
-        state.start(); // run 2 (new prompt) — running = true
+
+        // Stale AgentEnd arrives before user sends new prompt.
+        let processed = state.end();
+        assert!(!processed, "stale end should be consumed by pending_aborts");
+
+        // Now new prompt → AgentStart.
+        state.start(); // run 2
         assert!(state.is_running());
 
-        // Stale AgentEnd from aborted run 1 — consumed by pending_aborts.
-        let processed = state.end();
-        assert!(!processed);
-        assert!(
-            state.is_running(),
-            "should still be running after stale end"
-        );
-
         // Real AgentEnd from run 2 — processed normally.
-        let processed = state.end();
-        assert!(processed);
+        assert!(state.end());
+        assert!(!state.is_running());
+    }
+
+    #[test]
+    fn stale_agent_end_never_arrives_new_run_works() {
+        // Scenario (#506): agent backend does NOT send AgentEnd for
+        // aborted run. New AgentStart clears pending_aborts so the
+        // real AgentEnd is not eaten.
+        let mut state = AgentRunState::new();
+        state.start(); // run 1
+        state.abort(); // pending = 1
+
+        // No stale AgentEnd arrives. User sends new prompt.
+        state.start(); // run 2 — clears pending_aborts to 0
+        assert!(state.is_running());
+
+        // Real AgentEnd from run 2 — must be processed, not eaten.
+        assert!(state.end());
         assert!(!state.is_running());
     }
 
@@ -1112,21 +1131,16 @@ mod tests {
     }
 
     #[test]
-    fn multiple_aborts_dont_corrupt_state() {
+    fn multiple_aborts_with_starts_clears_pending() {
         let mut state = AgentRunState::new();
         state.start(); // run 1
         state.abort(); // pending = 1
-        state.start(); // run 2
-        state.abort(); // pending = 2
-        state.start(); // run 3
+        state.start(); // run 2 — clears pending to 0
+        state.abort(); // pending = 1
+        state.start(); // run 3 — clears pending to 0
 
-        // Stale ends from run 1 and run 2 consumed.
-        assert!(!state.end()); // consumes abort 1
-        assert!(!state.end()); // consumes abort 2
-        assert!(state.is_running());
-
-        // Real end from run 3.
-        assert!(state.end());
+        // Only the current run's end matters. No stale ends to consume.
+        assert!(state.end()); // run 3 ends normally
         assert!(!state.is_running());
     }
 
@@ -1188,26 +1202,46 @@ mod tests {
     }
 
     #[test]
-    fn pending_aborts_capped() {
+    fn start_clears_pending_aborts() {
+        // Issue #506: If the agent backend doesn't send AgentEnd for
+        // an aborted run, pending_aborts stays stale and eats the
+        // next real AgentEnd.
         let mut state = AgentRunState::new();
-        for _ in 0..20 {
-            state.start();
-            state.abort();
-        }
-        // pending_aborts should be capped at MAX_PENDING_ABORTS.
-        // Starting a new run and ending it should eventually work.
+        state.start(); // run 1
+        state.abort(); // pending_aborts = 1
+
+        // Agent backend does NOT send AgentEnd for the aborted run.
+        // User sends a new prompt → AgentStart arrives.
+        state.start(); // run 2
+
+        // The real AgentEnd from run 2 should be processed normally,
+        // NOT eaten by the stale pending_aborts.
+        assert!(
+            state.end(),
+            "AgentEnd for new run should be processed, not consumed by stale pending_aborts"
+        );
+        assert!(!state.is_running());
+    }
+
+    #[test]
+    fn start_always_clears_pending_aborts() {
+        // Regardless of how many aborts happened before, start()
+        // always resets pending_aborts so the new run works cleanly.
+        let mut state = AgentRunState::new();
         state.start();
-        // Consume all pending aborts.
-        let mut consumed = 0;
-        while !state.end() {
-            consumed += 1;
-            if consumed > 100 {
-                panic!("too many pending aborts");
-            }
-            // After each consumed stale end, we need to keep running
-            // to receive more ends. Re-start to keep the test going.
-            state.start();
-        }
-        assert!(consumed <= MAX_PENDING_ABORTS as usize);
+        state.abort();
+        // Stale end arrives before new start.
+        state.end();
+        state.start();
+        state.abort();
+        state.end();
+        state.start();
+        state.abort();
+        // No stale end arrives this time.
+        state.start(); // clears pending_aborts
+
+        // The new run's end should work.
+        assert!(state.end());
+        assert!(!state.is_running());
     }
 }
