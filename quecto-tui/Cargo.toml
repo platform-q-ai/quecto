@@ -1,0 +1,23 @@
+[package]
+name = "quecto-tui"
+version = "0.1.0"
+edition = "2024"
+description = "Lightweight terminal UI client for quecto"
+license = "MIT"
+
+[dependencies]
+# Async runtime — UDS client + stdin reader
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "fs", "process", "io-util", "sync", "net"] }
+
+# Serialization — UDS JSON-lines protocol
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Unicode width calculation (no other terminal crate)
+unicode-width = "0.2"
+
+# Low-level terminal control (termios, ioctl) — no higher-level crate needed
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
