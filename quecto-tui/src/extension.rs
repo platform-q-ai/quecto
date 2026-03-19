@@ -3,8 +3,6 @@
 //! The TUI can register tools with the quecto agent via `register_tools`,
 //! and handle `execute_tool` events by returning `tool_result` responses.
 
-use crate::client::{Command, CommandSender};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// A tool that the TUI provides to the agent.

@@ -1,8 +1,8 @@
 //! Application — the main TUI event loop.
 //!
-//! Wires together: terminal (raw mode), UDS client (agent communication),
-//! editor (user input), chat (message display), spinner (activity indicator),
-//! footer (status bar), and the differential renderer.
+//! Wires all components together: terminal, UDS client, editor, chat,
+//! spinner, footer, autocomplete, overlays, notifications, Kitty protocol,
+//! signal handling, and extension management.
 
 use std::io::Write;
 use std::time::Duration;
@@ -11,16 +11,55 @@ use tokio::sync::mpsc;
 
 use crate::client::{Client, Command, Event};
 use crate::component::Component;
+use crate::components::autocomplete::{Autocomplete, AutocompleteResult, SlashCommand};
 use crate::components::chat::{Chat, ChatEntry};
 use crate::components::editor::Editor;
 use crate::components::footer::Footer;
+use crate::components::notification::{Notification, NotificationStack, NotifyLevel};
 use crate::components::spinner::Spinner;
+use crate::components::widget::WidgetContainer;
 use crate::keys::{self, Key};
+use crate::kitty::KittyProtocol;
+use crate::overlay::OverlayStack;
 use crate::terminal::Terminal;
 use crate::theme;
 
 /// Tick interval for spinner animation (~12fps).
 const SPINNER_TICK: Duration = Duration::from_millis(80);
+
+/// Built-in slash commands.
+fn builtin_commands() -> Vec<SlashCommand> {
+    vec![
+        SlashCommand {
+            name: "clear".into(),
+            description: "Clear conversation history".into(),
+        },
+        SlashCommand {
+            name: "quit".into(),
+            description: "Exit TUI".into(),
+        },
+        SlashCommand {
+            name: "exit".into(),
+            description: "Exit TUI".into(),
+        },
+        SlashCommand {
+            name: "help".into(),
+            description: "Show keyboard shortcuts".into(),
+        },
+        SlashCommand {
+            name: "new".into(),
+            description: "Start a new session".into(),
+        },
+        SlashCommand {
+            name: "session".into(),
+            description: "Show session info".into(),
+        },
+        SlashCommand {
+            name: "model".into(),
+            description: "Switch model".into(),
+        },
+    ]
+}
 
 /// Application state.
 pub struct App {
@@ -30,16 +69,23 @@ pub struct App {
     chat: Chat,
     spinner: Option<Spinner>,
     footer: Footer,
+    autocomplete: Autocomplete,
+    notifications: NotificationStack,
+    overlay_stack: OverlayStack,
+    widgets_above: WidgetContainer,
+    widgets_below: WidgetContainer,
+    kitty: KittyProtocol,
     /// Whether the agent is currently processing.
     agent_running: bool,
     /// Whether the app should exit.
     should_exit: bool,
+    /// Track tool output expansion state.
+    tool_expanded: bool,
 }
 
 impl App {
     pub fn new(terminal: Terminal, client: Client) -> Self {
         let mut footer = Footer::new();
-        // Read git branch from .git/HEAD
         if let Some(branch) = read_git_branch() {
             footer.set_git_branch(Some(branch));
         }
@@ -51,8 +97,15 @@ impl App {
             chat: Chat::new(),
             spinner: None,
             footer,
+            autocomplete: Autocomplete::new(builtin_commands(), 8),
+            notifications: NotificationStack::new(),
+            overlay_stack: OverlayStack::new(),
+            widgets_above: WidgetContainer::new(),
+            widgets_below: WidgetContainer::new(),
+            kitty: KittyProtocol::new(),
             agent_running: false,
             should_exit: false,
+            tool_expanded: false,
         }
     }
 
@@ -60,6 +113,9 @@ impl App {
     pub async fn run(&mut self) -> i32 {
         self.terminal.enter_raw_mode();
         self.terminal.hide_cursor();
+
+        // Query Kitty keyboard protocol support.
+        self.kitty.query();
 
         // Query initial state from agent.
         let _ = self
@@ -70,20 +126,7 @@ impl App {
             .await;
 
         // Set up SIGWINCH handler.
-        let (resize_tx, mut resize_rx) = mpsc::channel::<()>(1);
-        #[cfg(unix)]
-        {
-            let tx = resize_tx.clone();
-            tokio::spawn(async move {
-                let mut sig =
-                    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())
-                        .expect("failed to register SIGWINCH");
-                loop {
-                    sig.recv().await;
-                    let _ = tx.send(()).await;
-                }
-            });
-        }
+        let mut resize_rx = crate::signals::sigwinch_stream().await;
 
         // Set up stdin reader (async, byte-level).
         let (stdin_tx, mut stdin_rx) = mpsc::channel::<Vec<u8>>(64);
@@ -104,6 +147,10 @@ impl App {
             }
         });
 
+        // Kitty protocol fallback timer.
+        let kitty_deadline = tokio::time::Instant::now() + Duration::from_millis(150);
+        let mut kitty_fallback_done = false;
+
         // Initial render.
         self.render();
 
@@ -120,6 +167,18 @@ impl App {
             tokio::select! {
                 // Stdin input.
                 Some(bytes) = stdin_rx.recv() => {
+                    // Check for Kitty protocol response before key parsing.
+                    if !self.kitty.active && !kitty_fallback_done {
+                        if let Some(_flags) = KittyProtocol::parse_response(&bytes) {
+                            self.kitty.enable();
+                            kitty_fallback_done = true;
+                            continue;
+                        }
+                    }
+                    // Filter Kitty key release events.
+                    if self.kitty.active && crate::kitty::is_key_release(&bytes) {
+                        continue;
+                    }
                     self.handle_stdin(&bytes);
                     self.render();
                 }
@@ -135,19 +194,34 @@ impl App {
                 }
                 // Spinner tick.
                 _ = spinner_interval.tick() => {
+                    let mut needs_render = false;
                     if let Some(spinner) = &mut self.spinner {
                         if spinner.tick() {
-                            self.render();
+                            needs_render = true;
                         }
+                    }
+                    // GC expired notifications.
+                    if self.notifications.gc() {
+                        needs_render = true;
+                    }
+                    // Kitty fallback — enable modifyOtherKeys if no response.
+                    if !kitty_fallback_done && tokio::time::Instant::now() >= kitty_deadline {
+                        if !self.kitty.active {
+                            self.kitty.enable_modify_other_keys();
+                        }
+                        kitty_fallback_done = true;
+                    }
+                    if needs_render {
+                        self.render();
                     }
                 }
             }
         }
 
         // Cleanup.
+        self.kitty.cleanup();
         self.terminal.show_cursor();
         self.terminal.exit_raw_mode();
-        // Move cursor below content.
         self.terminal.write_str("\r\n");
         0
     }
@@ -168,33 +242,99 @@ impl App {
     }
 
     fn handle_key(&mut self, key: Key) {
+        // If an overlay is active, route input there.
+        if self.overlay_stack.has_visible() {
+            if let Some(entry) = self.overlay_stack.topmost_entry_mut() {
+                entry.component.handle_input(&key);
+            }
+            // Check if overlay wants to close (Escape).
+            if matches!(key, Key::Escape) {
+                self.overlay_stack.pop();
+            }
+            return;
+        }
+
+        // If autocomplete is active, route navigation keys there.
+        if self.autocomplete.is_active() {
+            match &key {
+                Key::Up | Key::Down | Key::Tab | Key::Escape => {
+                    self.autocomplete.handle_input(&key);
+                    // Check if a suggestion was selected.
+                    match self.autocomplete.take_result() {
+                        AutocompleteResult::Selected(value) => {
+                            self.editor.set_text(&value);
+                        }
+                        AutocompleteResult::Dismissed => {}
+                        AutocompleteResult::Pending => {}
+                    }
+                    return;
+                }
+                Key::Enter => {
+                    // If autocomplete is active and user presses Enter,
+                    // accept the highlighted suggestion first.
+                    self.autocomplete.handle_input(&Key::Tab);
+                    if let AutocompleteResult::Selected(value) = self.autocomplete.take_result() {
+                        self.editor.set_text(&value);
+                    }
+                    // Don't submit yet — let user review the selected command.
+                    return;
+                }
+                _ => {
+                    // Other keys go to editor, then update autocomplete.
+                }
+            }
+        }
+
+        // Global key handlers.
         match &key {
-            // Ctrl+D — exit.
             Key::Ctrl('d') => {
                 self.should_exit = true;
                 return;
             }
-            // Ctrl+C — clear editor or abort.
             Key::Ctrl('c') => {
                 if self.agent_running {
-                    self.send_abort();
+                    self.handle_abort();
                 } else {
                     self.editor.set_text("");
+                    self.autocomplete.dismiss();
                 }
                 return;
             }
-            // Escape — abort running agent.
             Key::Escape => {
                 if self.agent_running {
-                    self.send_abort();
+                    self.handle_abort();
+                } else {
+                    // Clear editor if it has text.
+                    if !self.editor.text().is_empty() {
+                        self.editor.set_text("");
+                        self.autocomplete.dismiss();
+                    }
                 }
                 return;
             }
-            // Alt+Enter — submit.
-            Key::Alt('\r') | Key::Alt('\n') => {
-                // Handled by editor, but check for submit after.
+            Key::Ctrl('z') => {
+                // Suspend (Ctrl+Z).
+                self.kitty.cleanup();
+                self.terminal.show_cursor();
+                crate::signals::suspend();
+                // Resumed — re-enter raw mode.
+                self.terminal.enter_raw_mode();
+                self.terminal.hide_cursor();
+                self.kitty.query();
+                self.render_full();
+                return;
             }
-            // Page Up/Down — scroll chat.
+            Key::Ctrl('o') => {
+                // Toggle tool output expansion.
+                self.tool_expanded = !self.tool_expanded;
+                let state = if self.tool_expanded {
+                    "expanded"
+                } else {
+                    "collapsed"
+                };
+                self.notify(&format!("Tool output {}", state), NotifyLevel::Info);
+                return;
+            }
             Key::PageUp => {
                 self.chat.scroll_up(10);
                 return;
@@ -209,8 +349,12 @@ impl App {
         // Forward to editor.
         self.editor.handle_input(&key);
 
+        // Update autocomplete after every editor change.
+        self.autocomplete.update(&self.editor.text());
+
         // Check if editor submitted.
         if let Some(text) = self.editor.take_submit() {
+            self.autocomplete.dismiss();
             self.handle_submit(&text);
         }
     }
@@ -221,18 +365,46 @@ impl App {
             return;
         }
 
-        // Slash commands handled locally.
-        match trimmed {
-            "/quit" | "/exit" => {
-                self.should_exit = true;
-                return;
+        // Slash commands.
+        if trimmed.starts_with('/') {
+            match trimmed {
+                "/quit" | "/exit" => {
+                    self.should_exit = true;
+                    return;
+                }
+                "/clear" => {
+                    self.send_clear_history();
+                    self.chat.clear();
+                    self.notify("Conversation cleared", NotifyLevel::Success);
+                    return;
+                }
+                "/new" => {
+                    self.send_clear_history();
+                    self.chat.clear();
+                    self.notify("New session started", NotifyLevel::Success);
+                    return;
+                }
+                "/help" | "/hotkeys" => {
+                    self.show_help();
+                    return;
+                }
+                "/session" => {
+                    self.send_session_stats();
+                    return;
+                }
+                _ if trimmed.starts_with("/model") => {
+                    let model_name = trimmed.strip_prefix("/model").unwrap().trim();
+                    if !model_name.is_empty() {
+                        self.send_set_model(model_name);
+                    } else {
+                        self.notify("Usage: /model <name>", NotifyLevel::Info);
+                    }
+                    return;
+                }
+                _ => {
+                    // Unknown slash command — send as regular prompt.
+                }
             }
-            "/clear" => {
-                self.send_clear_history();
-                self.chat.clear();
-                return;
-            }
-            _ => {}
         }
 
         // Add user message to chat.
@@ -250,7 +422,29 @@ impl App {
                 None
             },
         };
-        let _ = self.send_command(cmd);
+        self.send_command(cmd);
+    }
+
+    // ── Abort handling (bug fix) ──────────────────────────────────────
+
+    fn handle_abort(&mut self) {
+        // Send abort to agent.
+        self.send_command(Command::Abort { id: None });
+
+        // Immediately update local UI state — don't wait for agent_end event.
+        self.agent_running = false;
+        self.footer.set_streaming(false);
+
+        // Stop spinner.
+        self.spinner = None;
+
+        // Finalize any streaming assistant message.
+        self.chat.finalize_assistant();
+
+        // Show abort status.
+        self.chat.add_entry(ChatEntry::Status {
+            text: "Operation aborted".to_string(),
+        });
     }
 
     // ── Agent event handling ──────────────────────────────────────────
@@ -279,6 +473,9 @@ impl App {
                 } else {
                     args.to_string()
                 };
+                if let Some(spinner) = &mut self.spinner {
+                    spinner.set_message(&format!("{} {}...", tool_name, truncate_args(&args_str)));
+                }
                 self.chat.add_entry(ChatEntry::ToolStart {
                     tool_call_id,
                     tool_name,
@@ -303,6 +500,10 @@ impl App {
                     .to_string();
                 self.chat
                     .complete_tool(&tool_call_id, &result_text, is_error, None);
+                // Restore spinner message after tool completes.
+                if let Some(spinner) = &mut self.spinner {
+                    spinner.set_message("Working... (Esc to interrupt)");
+                }
             }
             Event::AgentEnd { .. } => {
                 self.agent_running = false;
@@ -314,18 +515,121 @@ impl App {
                 command,
                 success,
                 data,
+                error,
                 ..
-            } => {
-                if command == "get_state" && success {
+            } => match command.as_str() {
+                "get_state" if success => {
                     if let Some(data) = data {
                         if let Some(model) = data.get("model").and_then(|m| m.as_str()) {
                             self.footer.set_model(model);
                         }
                     }
                 }
-            }
+                "set_model" if success => {
+                    self.notify("Model switched", NotifyLevel::Success);
+                }
+                "set_model" if !success => {
+                    let msg = error.unwrap_or_else(|| "unknown error".into());
+                    self.notify(&format!("Model switch failed: {}", msg), NotifyLevel::Error);
+                }
+                "get_session_stats" if success => {
+                    if let Some(data) = data {
+                        self.show_session_stats(&data);
+                    }
+                }
+                "clear_history" if success => {}
+                "agent_error" => {
+                    let msg = error.unwrap_or_else(|| "unknown error".into());
+                    self.chat.add_entry(ChatEntry::Status {
+                        text: format!("Error: {}", msg),
+                    });
+                    self.agent_running = false;
+                    self.footer.set_streaming(false);
+                    self.spinner = None;
+                }
+                _ => {}
+            },
             _ => {}
         }
+    }
+
+    // ── Slash command handlers ─────────────────────────────────────────
+
+    fn show_help(&mut self) {
+        self.chat.add_entry(ChatEntry::Status {
+            text: [
+                "Keyboard shortcuts:",
+                "  Enter          Send message",
+                "  Shift+Enter    Insert newline",
+                "  Escape         Abort agent / clear editor",
+                "  Ctrl+C         Clear editor / abort agent",
+                "  Ctrl+D         Exit",
+                "  Ctrl+Z         Suspend (resume with fg)",
+                "  Ctrl+O         Toggle tool output expansion",
+                "  PageUp/Down    Scroll chat",
+                "  Up/Down        Input history",
+                "",
+                "Slash commands:",
+                "  /model <name>  Switch model",
+                "  /clear         Clear conversation",
+                "  /new           New session",
+                "  /session       Show session info",
+                "  /help          This help",
+                "  /quit          Exit",
+            ]
+            .join("\n"),
+        });
+    }
+
+    fn send_session_stats(&mut self) {
+        self.send_command(Command::GetSessionStats {
+            id: Some("stats".into()),
+        });
+    }
+
+    fn show_session_stats(&mut self, data: &serde_json::Value) {
+        let key = data
+            .get("sessionKey")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
+        let msgs = data
+            .get("totalMessages")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let input = data
+            .get("tokens")
+            .and_then(|t| t.get("input"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let output = data
+            .get("tokens")
+            .and_then(|t| t.get("output"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let cost = data.get("cost").and_then(|v| v.as_f64()).unwrap_or(0.0);
+
+        self.chat.add_entry(ChatEntry::Status {
+            text: format!(
+                "Session: {} | Messages: {} | Tokens: ↑{} ↓{} | Cost: ${:.4}",
+                key, msgs, input, output, cost
+            ),
+        });
+    }
+
+    fn send_set_model(&mut self, model: &str) {
+        self.send_command(Command::SetModel {
+            id: Some("sm".into()),
+            model: Some(model.to_string()),
+            provider: None,
+            model_id: None,
+        });
+        self.footer.set_model(model);
+    }
+
+    // ── Notifications ─────────────────────────────────────────────────
+
+    fn notify(&mut self, message: &str, level: NotifyLevel) {
+        self.notifications.push(Notification::new(message, level));
     }
 
     // ── Rendering ─────────────────────────────────────────────────────
@@ -334,13 +638,12 @@ impl App {
         let width = self.terminal.width;
         let height = self.terminal.height;
 
-        // Compose the full screen from components.
         let mut lines = Vec::new();
 
         // Header.
         let version = env!("CARGO_PKG_VERSION");
         lines.push(theme::dim(&format!(
-            "quecto-tui v{} — Alt+Enter to send, Ctrl+D to exit",
+            "quecto-tui v{} — Enter send, Shift+Enter newline, /help for commands",
             version
         )));
         lines.push(String::new());
@@ -349,18 +652,27 @@ impl App {
         let chat_lines = self.chat.render(width);
         lines.extend(chat_lines);
 
-        // Spinner (if active).
+        // Spinner.
         if let Some(spinner) = &mut self.spinner {
-            let spinner_lines = spinner.render(width);
-            lines.extend(spinner_lines);
+            lines.extend(spinner.render(width));
         }
 
-        // Calculate how much space editor + footer need.
+        // Calculate bottom section height.
         let editor_lines = self.editor.render(width);
+        let autocomplete_lines = self.autocomplete.render(width);
+        let notification_lines = self.notifications.render(width);
+        let widget_above_lines = self.widgets_above.render(width);
+        let widget_below_lines = self.widgets_below.render(width);
         let footer_lines = self.footer.render(width);
-        let bottom_height = editor_lines.len() + footer_lines.len();
 
-        // Pad chat area to push editor + footer to the bottom.
+        let bottom_height = widget_above_lines.len()
+            + autocomplete_lines.len()
+            + editor_lines.len()
+            + widget_below_lines.len()
+            + notification_lines.len()
+            + footer_lines.len();
+
+        // Pad to push bottom section to the bottom.
         let content_height = lines.len();
         let available = height.saturating_sub(bottom_height);
         if content_height < available {
@@ -369,33 +681,55 @@ impl App {
             }
         }
 
+        // Widgets above editor.
+        lines.extend(widget_above_lines);
+
+        // Autocomplete dropdown (between chat and editor).
+        lines.extend(autocomplete_lines);
+
         // Editor.
         lines.extend(editor_lines);
+
+        // Widgets below editor.
+        lines.extend(widget_below_lines);
+
+        // Notifications.
+        lines.extend(notification_lines);
 
         // Footer.
         lines.extend(footer_lines);
 
-        // Truncate to terminal height.
+        // Truncate to terminal height (show bottom).
         if lines.len() > height {
             let start = lines.len() - height;
             lines = lines[start..].to_vec();
         }
 
-        // Write via differential renderer (use a static renderer stored in terminal).
-        // For simplicity, we write directly with sync output markers.
+        // Composite overlays on top.
+        if self.overlay_stack.has_visible() {
+            self.overlay_stack.composite(&mut lines, width, height);
+        }
+
+        // Enforce width on every line.
+        for line in &mut lines {
+            if crate::utils::visible_width(line) > width {
+                *line = crate::utils::truncate_to_width(line, width, None);
+            }
+        }
+
+        // Write to terminal.
         let mut buf = String::new();
-        buf.push_str("\x1b[?2026h"); // sync start
-        buf.push_str("\x1b[H"); // home cursor
+        buf.push_str("\x1b[?2026h");
+        buf.push_str("\x1b[H");
 
         for (i, line) in lines.iter().enumerate() {
             if i > 0 {
                 buf.push_str("\r\n");
             }
-            buf.push_str("\x1b[2K"); // clear line
+            buf.push_str("\x1b[2K");
             buf.push_str(line);
         }
 
-        // Clear remaining lines below content.
         let rendered = lines.len();
         if rendered < height {
             for _ in rendered..height {
@@ -403,7 +737,7 @@ impl App {
             }
         }
 
-        buf.push_str("\x1b[?2026l"); // sync end
+        buf.push_str("\x1b[?2026l");
 
         let _ = std::io::stdout().write_all(buf.as_bytes());
         let _ = std::io::stdout().flush();
@@ -414,21 +748,31 @@ impl App {
         self.render();
     }
 
-    // ── Command sending helpers ───────────────────────────────────────
-
-    fn send_command(&mut self, cmd: Command) {
-        let mut client_send = self.client.clone_sender();
-        tokio::spawn(async move {
-            let _ = client_send.send(&cmd).await;
-        });
-    }
-
-    fn send_abort(&mut self) {
-        self.send_command(Command::Abort { id: None });
-    }
-
     fn send_clear_history(&mut self) {
         self.send_command(Command::ClearHistory { id: None });
+    }
+
+    // ── Command sending ───────────────────────────────────────────────
+
+    fn send_command(&mut self, cmd: Command) {
+        let mut sender = self.client.clone_sender();
+        tokio::spawn(async move {
+            let _ = sender.send(&cmd).await;
+        });
+    }
+}
+
+/// Truncate tool arguments for spinner display.
+fn truncate_args(args: &str) -> String {
+    let clean: String = args
+        .chars()
+        .filter(|&c| c >= ' ' && c != '\u{007F}')
+        .collect();
+    if clean.chars().count() > 40 {
+        let s: String = clean.chars().take(37).collect();
+        format!("{}...", s)
+    } else {
+        clean
     }
 }
 
