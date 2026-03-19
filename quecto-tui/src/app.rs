@@ -337,6 +337,7 @@ impl App {
                     // Accept the highlighted suggestion AND submit it.
                     self.autocomplete.handle_input(&Key::Tab);
                     if let AutocompleteResult::Selected(value) = self.autocomplete.take_result() {
+                        self.editor.set_text(&value);
                         self.autocomplete.dismiss();
                         self.handle_submit(&value);
                     }

@@ -309,4 +309,42 @@ mod tests {
         let lines = ac.render(60);
         assert!(lines.is_empty());
     }
+
+    // --- Autocomplete Enter contract tests (#471) ---
+
+    #[test]
+    fn tab_returns_selected_value_for_editor_sync() {
+        // When Tab selects a suggestion, the caller MUST set editor.text
+        // to the returned value before any further processing.
+        let mut ac = Autocomplete::new(test_commands(), 5);
+        ac.update("/mo");
+        assert!(ac.is_active());
+        ac.handle_input(&Key::Tab);
+        match ac.take_result() {
+            AutocompleteResult::Selected(value) => {
+                assert_eq!(value, "/model", "Tab should return the full command");
+            }
+            other => panic!("expected Selected, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn enter_via_tab_returns_value_for_submit() {
+        // Simulates the Enter path in app.rs: Tab to accept, then submit.
+        // The caller MUST call editor.set_text(&value) before handle_submit.
+        let mut ac = Autocomplete::new(test_commands(), 5);
+        ac.update("/qu");
+        assert!(ac.is_active());
+        // Simulate Enter: first Tab to accept...
+        ac.handle_input(&Key::Tab);
+        let result = ac.take_result();
+        match result {
+            AutocompleteResult::Selected(value) => {
+                assert_eq!(value, "/quit");
+                // In app.rs, this is where editor.set_text(&value) MUST be called
+                // before handle_submit(&value). Bug #471 was missing this call.
+            }
+            other => panic!("expected Selected, got {:?}", other),
+        }
+    }
 }
