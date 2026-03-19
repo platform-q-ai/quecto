@@ -3,8 +3,6 @@
 use crate::component::Component;
 use crate::components::spinner::Spinner;
 use crate::keys::Key;
-use crate::theme;
-use crate::utils::truncate_to_width;
 
 /// Result of a retry interaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,9 +15,9 @@ pub enum RetryResult {
 
 /// Auto-retry indicator with countdown and cancel support.
 pub struct RetryIndicator {
-    attempt: u32,
-    max_attempts: u32,
-    delay_secs: u32,
+    _attempt: u32,
+    _max_attempts: u32,
+    _delay_secs: u32,
     spinner: Spinner,
     result: RetryResult,
 }
@@ -31,9 +29,9 @@ impl RetryIndicator {
             attempt, max_attempts, delay_secs
         );
         Self {
-            attempt,
-            max_attempts,
-            delay_secs,
+            _attempt: attempt,
+            _max_attempts: max_attempts,
+            _delay_secs: delay_secs,
             spinner: Spinner::new(&msg),
             result: RetryResult::Pending,
         }

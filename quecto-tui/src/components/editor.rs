@@ -379,7 +379,7 @@ impl Component for Editor {
                 true
             }
             Key::Enter => {
-                self.insert_newline();
+                self.submit();
                 true
             }
             Key::Backspace => {
@@ -438,10 +438,9 @@ impl Component for Editor {
                 self.move_end();
                 true
             }
-            // Ctrl+Enter to submit (raw mode sends this as Ctrl+J sometimes,
-            // but we use Alt+Enter as the submit key to avoid ambiguity).
-            Key::Alt('\r') | Key::Alt('\n') => {
-                self.submit();
+            // Shift+Enter or Alt+Enter inserts a newline (multi-line editing).
+            Key::ShiftEnter | Key::Alt('\r') | Key::Alt('\n') => {
+                self.insert_newline();
                 true
             }
             // Ctrl+Left / Ctrl+Right for word movement.
@@ -603,7 +602,7 @@ mod tests {
     fn multiline_input() {
         let mut e = Editor::new();
         e.handle_input(&Key::Char('a'));
-        e.handle_input(&Key::Enter);
+        e.handle_input(&Key::ShiftEnter); // Shift+Enter for newline
         e.handle_input(&Key::Char('b'));
         assert_eq!(e.text(), "a\nb");
         assert_eq!(e.lines.len(), 2);
@@ -614,7 +613,7 @@ mod tests {
         let mut e = Editor::new();
         e.handle_input(&Key::Char('h'));
         e.handle_input(&Key::Char('i'));
-        e.submit();
+        e.handle_input(&Key::Enter); // Enter submits
         assert_eq!(e.take_submit(), Some("hi".to_string()));
         assert_eq!(e.text(), "");
     }
@@ -623,9 +622,11 @@ mod tests {
     fn history_navigation() {
         let mut e = Editor::new();
         e.set_text("first");
-        e.submit();
+        e.handle_input(&Key::Enter); // submit
+        let _ = e.take_submit();
         e.set_text("second");
-        e.submit();
+        e.handle_input(&Key::Enter); // submit
+        let _ = e.take_submit();
         // Up goes to most recent
         e.navigate_history_up();
         assert_eq!(e.text(), "second");

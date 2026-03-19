@@ -27,6 +27,8 @@ pub enum Key {
     Alt(char),
     /// Insert key.
     Insert,
+    /// Shift + Enter (for newline in editor).
+    ShiftEnter,
     /// A paste event (bracketed paste content).
     Paste(String),
     /// Unrecognised sequence.
@@ -70,6 +72,8 @@ fn parse_escape(rest: &[u8]) -> Option<(Key, usize)> {
     match rest[0] {
         b'[' => parse_csi(&rest[1..]),
         b'O' => parse_ss3(&rest[1..]),
+        // Alt + Enter (CR or LF)
+        0x0D | 0x0A => Some((Key::Alt('\n'), 2)),
         // Alt + printable character
         0x20..=0x7E => Some((Key::Alt(rest[0] as char), 2)),
         _ => Some((Key::Escape, 1)),
@@ -109,6 +113,11 @@ fn parse_csi(rest: &[u8]) -> Option<(Key, usize)> {
         b'H' => Key::Home,
         b'F' => Key::End,
         b'Z' => Key::BackTab,
+        b'u' => {
+            // Kitty keyboard protocol: CSI <keycode> ; <modifiers> u
+            // Parse keycode and modifiers from params.
+            parse_kitty_key(params)
+        }
         b'~' => match params {
             b"1" => Key::Home, // CSI 1 ~
             b"2" => Key::Insert,
@@ -141,6 +150,39 @@ fn parse_ss3(rest: &[u8]) -> Option<(Key, usize)> {
     };
 
     Some((key, total_consumed))
+}
+
+/// Parse a Kitty keyboard protocol key: `CSI <keycode> ; <modifiers> u`.
+///
+/// Common cases:
+/// - `CSI 13 ; 2 u` = Shift+Enter (keycode 13, modifier 2=Shift)
+/// - `CSI 9 ; 2 u` = Shift+Tab
+fn parse_kitty_key(params: &[u8]) -> Key {
+    // Parse "keycode;modifiers" from params bytes.
+    let s = std::str::from_utf8(params).unwrap_or("");
+    let parts: Vec<&str> = s.split(';').collect();
+    let keycode: u32 = parts.first().and_then(|p| p.parse().ok()).unwrap_or(0);
+    let modifiers: u32 = parts
+        .get(1)
+        .and_then(|p| {
+            // Modifiers may contain event type after colon (e.g. "2:1" for press).
+            p.split(':').next().and_then(|m| m.parse().ok())
+        })
+        .unwrap_or(1); // 1 = no modifier in Kitty protocol
+
+    let shift = (modifiers - 1) & 1 != 0;
+    let _alt = (modifiers - 1) & 2 != 0;
+    let _ctrl = (modifiers - 1) & 4 != 0;
+
+    match keycode {
+        13 if shift => Key::ShiftEnter,
+        13 => Key::Enter,
+        9 if shift => Key::BackTab,
+        9 => Key::Tab,
+        127 => Key::Backspace,
+        27 => Key::Escape,
+        _ => Key::Unknown(params.to_vec()),
+    }
 }
 
 /// Parse bracketed paste content. Input starts after `\x1b[200~`.

@@ -4,6 +4,7 @@
 //! tool execution results in a scrollable vertical layout.
 
 use crate::component::Component;
+use crate::components::markdown::Markdown;
 use crate::theme;
 #[cfg(test)]
 use crate::utils::visible_width;
@@ -161,9 +162,17 @@ impl Component for Chat {
                         continue; // Don't render empty streaming placeholder.
                     }
                     all_lines.push(String::new()); // spacer
-                    let wrapped = wrap_text(text, width);
-                    for line in &wrapped {
-                        all_lines.push(truncate_to_width(line, width, None));
+                    // Render assistant content as markdown.
+                    let mut md = Markdown::new(text, 0);
+                    let md_lines = md.render(width);
+                    if md_lines.is_empty() {
+                        // Fallback: wrap raw text if markdown produced nothing.
+                        let wrapped = wrap_text(text, width);
+                        for line in &wrapped {
+                            all_lines.push(truncate_to_width(line, width, None));
+                        }
+                    } else {
+                        all_lines.extend(md_lines);
                     }
                     if *streaming {
                         // Show cursor indicator for streaming.
