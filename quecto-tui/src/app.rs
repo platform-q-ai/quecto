@@ -309,6 +309,9 @@ impl App {
         // Unconditional exit — Ctrl+D must work regardless of overlays,
         // autocomplete state, or agent activity (#478).
         if matches!(key, Key::Ctrl('d')) {
+            if self.agent_running {
+                self.handle_abort();
+            }
             self.should_exit = true;
             return;
         }

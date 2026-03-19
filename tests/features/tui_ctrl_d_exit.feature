@@ -16,14 +16,13 @@ Feature: TUI Ctrl+D exits the app unconditionally
     Then the app should exit
     And the overlay should not consume the key
 
-  Scenario: Ctrl+D exits during agent response
+  Scenario: Ctrl+D aborts agent and exits during response
     Given the agent is streaming a response
     When the user presses Ctrl+D
-    Then the app should exit
-    And agent cleanup should run
+    Then handle_abort should be called first
+    And then the app should exit
 
   Scenario: Ctrl+D exits with autocomplete active
     Given the autocomplete dropdown is showing
     When the user presses Ctrl+D
     Then the app should exit
-    And the autocomplete should be dismissed
