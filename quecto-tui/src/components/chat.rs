@@ -120,7 +120,9 @@ impl Chat {
     }
 
     pub fn scroll_up(&mut self, amount: usize) {
-        self.scroll_offset += amount;
+        self.scroll_offset = self.scroll_offset.saturating_add(amount);
+        // Clamp to entry count to prevent unbounded growth.
+        self.scroll_offset = self.scroll_offset.min(self.entries.len().saturating_mul(5));
     }
 
     pub fn scroll_down(&mut self, amount: usize) {
@@ -173,8 +175,9 @@ impl Component for Chat {
                 } => {
                     let icon = theme::spinner("⠋");
                     let name = theme::tool_name(tool_name);
-                    let args_display = if args.len() > 60 {
-                        format!("{}...", &args[..57])
+                    let args_display = if args.chars().count() > 60 {
+                        let truncated: String = args.chars().take(57).collect();
+                        format!("{}...", truncated)
                     } else {
                         args.clone()
                     };
@@ -206,21 +209,22 @@ impl Component for Chat {
                     if !result.is_empty() {
                         let result_color: fn(&str) -> String =
                             if *is_error { theme::error } else { theme::dim };
-                        let result_lines: Vec<&str> = result.lines().take(5).collect();
-                        for rl in &result_lines {
+                        let all_result_lines: Vec<&str> = result.lines().collect();
+                        let show_count = all_result_lines.len().min(5);
+                        for rl in &all_result_lines[..show_count] {
                             all_lines.push(truncate_to_width(
                                 &format!("    {}", result_color(rl)),
                                 width,
                                 None,
                             ));
                         }
-                        if result.lines().count() > 5 {
+                        if all_result_lines.len() > 5 {
                             all_lines.push(truncate_to_width(
                                 &format!(
                                     "    {}",
                                     theme::dim(&format!(
                                         "... ({} more lines)",
-                                        result.lines().count() - 5
+                                        all_result_lines.len() - 5
                                     ))
                                 ),
                                 width,

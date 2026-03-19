@@ -73,12 +73,24 @@ async fn run(flags: CliFlags) -> i32 {
     };
 
     // Install panic handler to restore terminal before printing panic.
+    // We restore termios via libc directly — the Terminal struct may not be
+    // accessible from the panic hook.
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        // Restore terminal state.
+        // Disable bracketed paste, show cursor.
         let _ = std::io::Write::write_all(&mut std::io::stdout(), b"\x1b[?2004l\x1b[?25h");
         let _ = std::io::Write::flush(&mut std::io::stdout());
-        // Restore termios (best-effort via raw escape).
+        // Restore termios to cooked mode (best-effort).
+        unsafe {
+            let fd = 0; // stdin
+            let mut termios: libc::termios = std::mem::zeroed();
+            if libc::tcgetattr(fd, &mut termios) == 0 {
+                termios.c_lflag |= libc::ICANON | libc::ECHO | libc::ISIG;
+                termios.c_iflag |= libc::ICRNL;
+                termios.c_oflag |= libc::OPOST;
+                libc::tcsetattr(fd, libc::TCSANOW, &termios);
+            }
+        }
         let _ = std::io::Write::write_all(&mut std::io::stdout(), b"\r\n");
         let _ = std::io::Write::flush(&mut std::io::stdout());
         default_hook(info);

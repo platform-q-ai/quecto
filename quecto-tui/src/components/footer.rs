@@ -12,10 +12,20 @@ pub struct Footer {
     context_percent: Option<f64>,
     context_window: usize,
     is_streaming: bool,
+    /// Cached working directory (read once at construction).
+    pwd: String,
 }
 
 impl Footer {
     pub fn new() -> Self {
+        let mut pwd = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "?".to_string());
+        if let Ok(home) = std::env::var("HOME") {
+            if pwd.starts_with(&home) {
+                pwd = format!("~{}", &pwd[home.len()..]);
+            }
+        }
         Self {
             model: "unknown".to_string(),
             git_branch: None,
@@ -23,6 +33,7 @@ impl Footer {
             context_percent: None,
             context_window: 0,
             is_streaming: false,
+            pwd,
         }
     }
 
@@ -51,16 +62,7 @@ impl Footer {
 impl Component for Footer {
     fn render(&mut self, width: usize) -> Vec<String> {
         // Line 1: pwd + git branch + session name
-        let mut pwd = std::env::current_dir()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| "?".to_string());
-
-        // Replace $HOME with ~
-        if let Ok(home) = std::env::var("HOME") {
-            if pwd.starts_with(&home) {
-                pwd = format!("~{}", &pwd[home.len()..]);
-            }
-        }
+        let mut pwd = self.pwd.clone();
 
         if let Some(branch) = &self.git_branch {
             pwd = format!("{} ({})", pwd, branch);

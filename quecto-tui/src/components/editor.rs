@@ -70,12 +70,19 @@ impl Editor {
         self.submit_text.take()
     }
 
+    /// Maximum history entries to retain.
+    const MAX_HISTORY: usize = 500;
+
     /// Add text to the input history.
     pub fn add_to_history(&mut self, text: &str) {
         if !text.is_empty() {
             // Don't duplicate the last entry.
             if self.history.last().map(|s| s.as_str()) != Some(text) {
                 self.history.push(text.to_string());
+                // Cap history size.
+                if self.history.len() > Self::MAX_HISTORY {
+                    self.history.remove(0);
+                }
             }
         }
         self.history_index = -1;
@@ -94,7 +101,14 @@ impl Editor {
     // ── Input handling ────────────────────────────────────────────────
 
     fn insert_char(&mut self, ch: char) {
-        let col = self.cursor_col;
+        let col = self.cursor_col.min(self.lines[self.cursor_row].len());
+        // Ensure we're at a char boundary.
+        let col = if self.lines[self.cursor_row].is_char_boundary(col) {
+            col
+        } else {
+            prev_char_boundary(&self.lines[self.cursor_row], col)
+        };
+        self.cursor_col = col;
         self.lines[self.cursor_row].insert(col, ch);
         self.cursor_col += ch.len_utf8();
         self.update_bash_mode();
