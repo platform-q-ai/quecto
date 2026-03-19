@@ -16,6 +16,9 @@ serde_json = "1"
 # Unicode width calculation (no other terminal crate)
 unicode-width = "0.2"
 
+# Markdown parsing (lightweight, event-based, pure Rust)
+pulldown-cmark = { version = "0.13", default-features = false }
+
 # Low-level terminal control (termios, ioctl) — no higher-level crate needed
 libc = "0.2"
 
