@@ -69,15 +69,30 @@ impl Terminal {
     }
 
     /// Exit raw mode and restore the original terminal state.
+    ///
+    /// Sends terminal reset escape sequences BEFORE restoring termios
+    /// so they're written while we still have raw output mode.
     pub fn exit_raw_mode(&mut self) {
         if let Some(saved) = self.saved.take() {
+            // Reset terminal modes before restoring termios.
+            // These must be sent while we still control the terminal.
+            let _ = std::io::stdout().write_all(
+                concat!(
+                    "\x1b[?2004l", // Disable bracketed paste
+                    "\x1b[?25h",   // Show cursor
+                    "\x1b[0m",     // Reset all SGR attributes
+                    "\x1b[>4;0m",  // Reset modifyOtherKeys (xterm/tmux)
+                    "\x1b[<u",     // Pop Kitty keyboard protocol flags
+                )
+                .as_bytes(),
+            );
+            let _ = std::io::stdout().flush();
+
+            // Restore original termios settings (cooked mode, echo, etc.).
             let fd = std::io::stdin().as_raw_fd();
             unsafe {
-                libc::tcsetattr(fd, libc::TCSAFLUSH, &saved.original);
+                libc::tcsetattr(fd, libc::TCSANOW, &saved.original);
             }
-            // Disable bracketed paste mode
-            let _ = std::io::stdout().write_all(b"\x1b[?2004l");
-            let _ = std::io::stdout().flush();
         }
     }
 
