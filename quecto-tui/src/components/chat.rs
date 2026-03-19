@@ -122,8 +122,9 @@ impl Chat {
 
     pub fn scroll_up(&mut self, amount: usize) {
         self.scroll_offset = self.scroll_offset.saturating_add(amount);
-        // Clamp to entry count to prevent unbounded growth.
-        self.scroll_offset = self.scroll_offset.min(self.entries.len().saturating_mul(5));
+        // No artificial clamp here — render() handles the actual clamping
+        // against the rendered line count. The old heuristic of entries*5
+        // was far too low for long responses (#500).
     }
 
     pub fn scroll_down(&mut self, amount: usize) {
@@ -243,9 +244,19 @@ impl Component for Chat {
         }
 
         // Apply scroll offset (scroll_offset lines from bottom are hidden).
-        if self.scroll_offset > 0 && all_lines.len() > self.scroll_offset {
-            let end = all_lines.len() - self.scroll_offset;
-            all_lines.truncate(end);
+        // Clamp to actual rendered line count and write back to prevent
+        // unbounded growth (#500).
+        if self.scroll_offset > 0 && !all_lines.is_empty() {
+            let max_scroll = all_lines.len();
+            let effective = self.scroll_offset.min(max_scroll);
+            self.scroll_offset = effective; // Write back to prevent unbounded growth.
+            let end = all_lines.len().saturating_sub(effective);
+            if end > 0 {
+                all_lines.truncate(end);
+            } else {
+                // Scrolled to the very top — show just the first line.
+                all_lines.truncate(1);
+            }
         }
 
         all_lines
@@ -394,5 +405,107 @@ mod tests {
                 visible_width(line)
             );
         }
+    }
+
+    // ── Scroll clamp tests (issue #500) ───────────────────────────────
+
+    #[test]
+    fn scroll_up_reaches_top_of_long_output() {
+        let mut chat = Chat::new();
+        // Add a very long assistant message (200+ lines when rendered).
+        let long_text = (0..200)
+            .map(|i| format!("Line {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        chat.add_entry(ChatEntry::Assistant {
+            text: long_text,
+            streaming: false,
+        });
+
+        let full_lines = chat.render(80);
+        let total_rendered = full_lines.len();
+        assert!(total_rendered > 10, "should render many lines");
+
+        // Scroll up partway (half the content).
+        chat.scroll_up(total_rendered / 2);
+        let scrolled = chat.render(80);
+
+        // Scrolled view should show fewer lines (bottom half hidden).
+        assert!(
+            scrolled.len() < total_rendered,
+            "scrolled view should be shorter: {} vs {}",
+            scrolled.len(),
+            total_rendered
+        );
+        // And should still show content from the top half.
+        assert!(
+            scrolled.len() > 1,
+            "should have more than 1 line visible after half-scroll"
+        );
+    }
+
+    #[test]
+    fn scroll_offset_not_artificially_clamped() {
+        let mut chat = Chat::new();
+        // Add content that renders to many lines (1 entry, 100 lines).
+        let long_text = (0..100)
+            .map(|i| format!("Line {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        chat.add_entry(ChatEntry::Assistant {
+            text: long_text,
+            streaming: false,
+        });
+
+        // With the old bug: entries.len()=1, clamp = 1*5 = 5.
+        // Scrolling up 50 should NOT be clamped to 5.
+        chat.scroll_up(50);
+
+        // The scroll_offset should actually be 50, not clamped to 5.
+        assert!(
+            chat.scroll_offset >= 50,
+            "scroll_offset should be at least 50, got {}",
+            chat.scroll_offset
+        );
+    }
+
+    #[test]
+    fn scroll_down_from_scrolled_position() {
+        let mut chat = Chat::new();
+        // Use many separate user messages to guarantee many rendered lines.
+        for i in 0..30 {
+            chat.add_entry(ChatEntry::User {
+                text: format!("Message number {}", i),
+            });
+        }
+
+        let full = chat.render(80);
+        assert!(
+            full.len() > 30,
+            "should have many rendered lines: {}",
+            full.len()
+        );
+
+        // Scroll up partway.
+        chat.scroll_up(15);
+        let scrolled_up = chat.render(80);
+        assert!(
+            scrolled_up.len() < full.len(),
+            "scrolled up should be shorter: {} vs {}",
+            scrolled_up.len(),
+            full.len()
+        );
+
+        // Scroll back down 10.
+        chat.scroll_down(10);
+        let after_down = chat.render(80);
+
+        // After scrolling down, we should see more lines.
+        assert!(
+            after_down.len() > scrolled_up.len(),
+            "scrolling down should show more lines: up={} down={}",
+            scrolled_up.len(),
+            after_down.len()
+        );
     }
 }
