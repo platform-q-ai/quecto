@@ -1,11 +1,14 @@
 pub mod autocomplete;
 pub mod chat;
+pub mod compaction;
 pub mod confirm;
 pub mod editor;
 pub mod footer;
 pub mod markdown;
 pub mod notification;
+pub mod retry;
 pub mod select_list;
+pub mod session_info;
 pub mod spinner;
 pub mod text;
 pub mod tool_output;
