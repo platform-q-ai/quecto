@@ -17,9 +17,8 @@
 /// `terminal.hide_cursor()` after this function returns (which happens
 /// when the process resumes from suspend).
 pub fn suspend() {
-    // Restore terminal to cooked mode.
-    let _ = std::io::Write::write_all(&mut std::io::stdout(), b"\x1b[?2004l"); // disable bracketed paste
-    let _ = std::io::Write::write_all(&mut std::io::stdout(), b"\x1b[?25h"); // show cursor
+    // Leave alternate screen and restore terminal for suspend.
+    let _ = std::io::Write::write_all(&mut std::io::stdout(), b"\x1b[?1049l\x1b[?2004l\x1b[?25h");
     let _ = std::io::Write::flush(&mut std::io::stdout());
 
     // Restore termios.
