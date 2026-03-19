@@ -306,6 +306,13 @@ impl App {
     }
 
     fn handle_key(&mut self, key: Key) {
+        // Unconditional exit — Ctrl+D must work regardless of overlays,
+        // autocomplete state, or agent activity (#478).
+        if matches!(key, Key::Ctrl('d')) {
+            self.should_exit = true;
+            return;
+        }
+
         // If an overlay is active, route input there.
         if self.overlay_stack.has_visible() {
             if let Some(entry) = self.overlay_stack.topmost_entry_mut() {
@@ -352,11 +359,8 @@ impl App {
         }
 
         // Global key handlers.
+        // Note: Ctrl+D is handled at the top of handle_key (unconditional exit).
         match &key {
-            Key::Ctrl('d') => {
-                self.should_exit = true;
-                return;
-            }
             Key::Ctrl('c') => {
                 if self.agent_running {
                     self.handle_abort();
