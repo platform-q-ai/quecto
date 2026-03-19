@@ -555,7 +555,24 @@ impl App {
                     args.to_string()
                 };
                 if let Some(spinner) = &mut self.spinner {
-                    spinner.set_message(&format!("{} {}...", tool_name, truncate_args(&args_str)));
+                    // Subagent tools get a more descriptive spinner message.
+                    let msg = match tool_name.as_str() {
+                        "spawn" => {
+                            let agent = args
+                                .get("agent")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("agent");
+                            format!("Spawning {}...", agent)
+                        }
+                        "agent_cmd" => {
+                            let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("?");
+                            let agent_id =
+                                args.get("agentId").and_then(|v| v.as_str()).unwrap_or("?");
+                            format!("{} → {}...", action, agent_id)
+                        }
+                        _ => format!("{} {}...", tool_name, truncate_args(&args_str)),
+                    };
+                    spinner.set_message(&msg);
                 }
                 self.chat.add_entry(ChatEntry::ToolStart {
                     tool_call_id,
