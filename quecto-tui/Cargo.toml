@@ -7,7 +7,7 @@ license = "MIT"
 
 [dependencies]
 # Async runtime — UDS client + stdin reader
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "fs", "process", "io-util", "sync", "net"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "fs", "process", "io-util", "io-std", "sync", "net"] }
 
 # Serialization — UDS JSON-lines protocol
 serde = { version = "1", features = ["derive"] }

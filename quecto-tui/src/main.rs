@@ -72,46 +72,34 @@ async fn run(flags: CliFlags) -> i32 {
         }
     };
 
-    eprintln!("Connecting to: {}", socket.display());
+    // Install panic handler to restore terminal before printing panic.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        // Restore terminal state.
+        let _ = std::io::Write::write_all(&mut std::io::stdout(), b"\x1b[?2004l\x1b[?25h");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        // Restore termios (best-effort via raw escape).
+        let _ = std::io::Write::write_all(&mut std::io::stdout(), b"\r\n");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        default_hook(info);
+    }));
 
-    // Connect to the agent
-    let mut client = match quecto_tui::client::Client::connect(&socket).await {
+    // Connect to the agent.
+    let client = match quecto_tui::client::Client::connect(&socket).await {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Failed to connect to agent: {e}");
+            if let Some(ref mut child) = _child {
+                let _ = child.kill().await;
+            }
             return 1;
         }
     };
 
-    // Send a get_state to verify connectivity
-    let cmd = quecto_tui::client::Command::GetState {
-        id: Some("init".into()),
-    };
-    if let Err(e) = client.send(&cmd).await {
-        eprintln!("Failed to send command: {e}");
-        return 1;
-    }
-
-    // Read events until connection closes
-    while let Some(event) = client.recv().await {
-        match event {
-            quecto_tui::client::Event::Response {
-                command, success, ..
-            } => {
-                eprintln!("Response: command={command}, success={success}");
-            }
-            quecto_tui::client::Event::Token { token } => {
-                eprint!("{token}");
-            }
-            quecto_tui::client::Event::AgentStart => {
-                eprintln!("[agent started]");
-            }
-            quecto_tui::client::Event::AgentEnd { .. } => {
-                eprintln!("\n[agent done]");
-            }
-            _ => {}
-        }
-    }
+    // Run the TUI.
+    let terminal = quecto_tui::terminal::Terminal::new();
+    let mut app = quecto_tui::app::App::new(terminal, client);
+    let exit_code = app.run().await;
 
     // Kill the child agent process on TUI exit to prevent orphans.
     if let Some(ref mut child) = _child {
@@ -119,7 +107,7 @@ async fn run(flags: CliFlags) -> i32 {
         let _ = child.wait().await;
     }
 
-    0
+    exit_code
 }
 
 /// Spawn a quecto agent in UDS mode and return the socket path and child handle.
