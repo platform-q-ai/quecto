@@ -183,6 +183,8 @@ impl Component for Chat {
                 ChatEntry::ToolStart {
                     tool_name, args, ..
                 } => {
+                    // No top border on ToolStart — ToolEnd renders the full box.
+                    // This avoids a double border when ToolStart is followed by ToolEnd.
                     if is_subagent_tool(tool_name) {
                         // Subagent-style: ◈ spawn agent_label — task
                         let args_summary = summarize_subagent_args(tool_name, args);
@@ -212,6 +214,9 @@ impl Component for Chat {
                     duration_ms,
                     ..
                 } => {
+                    // Top border for completed tool box.
+                    all_lines.push(tool_border_line(width));
+
                     let is_sub = is_subagent_tool(tool_name);
                     let dur = duration_ms
                         .map(|ms| theme::dim(&format!("  {}ms", ms)))
@@ -260,6 +265,9 @@ impl Component for Chat {
                         };
                         all_lines.push(truncate_to_width(&result_color(&preview), width, None));
                     }
+
+                    // Bottom border for completed tool box.
+                    all_lines.push(tool_border_line(width));
                 }
                 ChatEntry::Status { text } => {
                     all_lines.push(String::new()); // spacer
@@ -302,6 +310,16 @@ fn is_subagent_tool(name: &str) -> bool {
 ///
 /// For `spawn`: shows "agent_label — task_summary"
 /// For `agent_cmd`: shows "action → agentId: message_preview"
+/// Render a horizontal border line for tool boxes.
+fn tool_border_line(width: usize) -> String {
+    let border_w = width.saturating_sub(2);
+    truncate_to_width(
+        &format!("  {}", theme::dim(&"─".repeat(border_w))),
+        width,
+        None,
+    )
+}
+
 /// Sanitize a string by stripping control characters (terminal escape injection prevention).
 fn sanitize(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).collect()
