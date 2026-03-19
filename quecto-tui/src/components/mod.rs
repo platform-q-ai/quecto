@@ -12,3 +12,4 @@ pub mod session_info;
 pub mod spinner;
 pub mod text;
 pub mod tool_output;
+pub mod widget;
