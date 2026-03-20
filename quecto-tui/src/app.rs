@@ -19,6 +19,7 @@ use crate::components::footer::Footer;
 use crate::components::model_selector::{ModelSelector, ModelSelectorResult};
 use crate::components::notification::{Notification, NotificationStack, NotifyLevel};
 use crate::components::spinner::Spinner;
+use crate::components::subagent_bar::{SubagentBar, SubagentInfoWire};
 use crate::components::widget::WidgetContainer;
 use crate::keys::{self, Key};
 use crate::kitty::KittyProtocol;
@@ -142,6 +143,13 @@ impl App {
             .client
             .send(&Command::GetState {
                 id: Some("init".into()),
+            })
+            .await;
+        // Query initial subagent state (#525).
+        let _ = self
+            .client
+            .send(&Command::GetSubagents {
+                id: Some("init-subagents".into()),
             })
             .await;
 
@@ -676,6 +684,17 @@ impl App {
                     }
                 }
                 "clear_history" if success => {}
+                "get_subagents" if success => {
+                    if let Some(data) = data {
+                        if let Some(arr) = data.get("subagents").and_then(|v| v.as_array()) {
+                            let infos: Vec<crate::client::SubagentInfoEvent> = arr
+                                .iter()
+                                .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                                .collect();
+                            self.update_subagent_bar(infos);
+                        }
+                    }
+                }
                 "agent_error" => {
                     let msg = error.unwrap_or_else(|| "unknown error".into());
                     self.chat.add_entry(ChatEntry::Status {
@@ -687,7 +706,30 @@ impl App {
                 }
                 _ => {}
             },
+            Event::SubagentStateChanged { subagents } => {
+                self.update_subagent_bar(subagents);
+            }
             _ => {}
+        }
+    }
+
+    /// Update the subagent bar widget from state-changed events or responses.
+    fn update_subagent_bar(&mut self, subagents: Vec<crate::client::SubagentInfoEvent>) {
+        let infos: Vec<SubagentInfoWire> = subagents
+            .into_iter()
+            .map(|s| SubagentInfoWire {
+                agent_id: s.agent_id,
+                status: s.status,
+                last_tool: s.last_tool,
+                last_error: s.last_error,
+            })
+            .collect();
+        if infos.is_empty() {
+            self.widgets_below.clear("subagents");
+        } else {
+            let mut bar = SubagentBar::new();
+            bar.update(infos);
+            self.widgets_below.set("subagents", Box::new(bar));
         }
     }
 

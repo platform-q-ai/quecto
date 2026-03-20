@@ -601,6 +601,11 @@ pub struct QuectoWorld {
     /// Registry for protocol BDD scenarios
     pub subagent_protocol_registry:
         Option<quecto::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    // --- Subagent widget (#525) ---
+    /// Simulated subagent infos for widget BDD tests
+    pub widget_subagent_infos: Vec<quecto::interface::cli::protocol::SubagentInfo>,
+    /// Rendered widget lines
+    pub widget_bar_lines: Vec<String>,
     // --- Multi-client UDS (#318) ---
     /// Multi-client UDS: per-client command queues (client_id -> commands)
     pub mc_client_commands: HashMap<u32, Vec<String>>,
@@ -900,6 +905,7 @@ mod subagent_monitor_steps;
 mod subagent_notify_steps;
 mod subagent_protocol_steps;
 mod subagent_steps;
+mod subagent_widget_steps;
 mod tool_empty_args_steps;
 mod tool_guard_steps;
 mod truncate_steps;

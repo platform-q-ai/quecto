@@ -72,6 +72,10 @@ pub enum Command {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    GetSubagents {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
 }
 
 /// An event received from the agent.
@@ -128,11 +132,26 @@ pub enum Event {
     ExtensionsChanged {
         extensions: Vec<serde_json::Value>,
     },
+    /// Subagent state changed — full list replacement (#525).
+    SubagentStateChanged {
+        subagents: Vec<SubagentInfoEvent>,
+    },
     /// Catch-all for unknown/future event types (forward-compatible).
     /// Known omissions that will deserialize here: none currently — all
     /// documented event types are covered above.
     #[serde(other)]
     Unknown,
+}
+
+/// Wire-format subagent info from `subagent_state_changed` event (#524/#525).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentInfoEvent {
+    pub agent_id: String,
+    pub status: String,
+    pub last_tool: Option<String>,
+    pub last_error: Option<String>,
+    pub pid: u32,
 }
 
 // ─── Result text extraction ───────────────────────────────────────────────────
@@ -445,6 +464,58 @@ mod tests {
             }
             _ => panic!("expected ToolExecutionEnd"),
         }
+    }
+
+    #[test]
+    fn event_deserializes_subagent_state_changed() {
+        let json = r#"{"type":"subagent_state_changed","subagents":[{"agentId":"reviewer","status":"running","lastTool":"bash","pid":123}]}"#;
+        let event: Event = serde_json::from_str(json).unwrap();
+        match event {
+            Event::SubagentStateChanged { subagents } => {
+                assert_eq!(subagents.len(), 1);
+                assert_eq!(subagents[0].agent_id, "reviewer");
+                assert_eq!(subagents[0].status, "running");
+                assert_eq!(subagents[0].last_tool.as_deref(), Some("bash"));
+                assert_eq!(subagents[0].pid, 123);
+            }
+            _ => panic!("expected SubagentStateChanged"),
+        }
+    }
+
+    #[test]
+    fn event_subagent_state_changed_empty() {
+        let json = r#"{"type":"subagent_state_changed","subagents":[]}"#;
+        let event: Event = serde_json::from_str(json).unwrap();
+        match event {
+            Event::SubagentStateChanged { subagents } => assert!(subagents.is_empty()),
+            _ => panic!("expected SubagentStateChanged"),
+        }
+    }
+
+    #[test]
+    fn event_subagent_info_with_error() {
+        let json = r#"{"type":"subagent_state_changed","subagents":[{"agentId":"lint","status":"error","lastError":"tool 'bash' returned error","pid":0}]}"#;
+        let event: Event = serde_json::from_str(json).unwrap();
+        match event {
+            Event::SubagentStateChanged { subagents } => {
+                assert_eq!(
+                    subagents[0].last_error.as_deref(),
+                    Some("tool 'bash' returned error")
+                );
+                assert!(subagents[0].last_tool.is_none());
+            }
+            _ => panic!("expected SubagentStateChanged"),
+        }
+    }
+
+    #[test]
+    fn command_get_subagents_serializes() {
+        let cmd = Command::GetSubagents {
+            id: Some("gs-1".into()),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"type\":\"get_subagents\""));
+        assert!(json.contains("\"id\":\"gs-1\""));
     }
 
     #[test]

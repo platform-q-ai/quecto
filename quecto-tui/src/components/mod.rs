@@ -11,6 +11,7 @@ pub mod retry;
 pub mod select_list;
 pub mod session_info;
 pub mod spinner;
+pub mod subagent_bar;
 pub mod text;
 pub mod tool_output;
 pub mod widget;
