@@ -109,3 +109,52 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     Given an AgentCmdTool with a mock registry entry "w1"
     When I execute agent_cmd with '{"agent_id":"w1","command":"get_session_stats"}'
     Then the agent_cmd should have sent command type "get_session_stats"
+
+  # --- New commands (#547) ---
+
+  Scenario: follow_up command requires message
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"follow_up"}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "message"
+
+  Scenario: follow_up command sends message
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"follow_up","message":"After you finish"}'
+    Then the agent_cmd should have sent command type "follow_up"
+
+  Scenario: get_messages command is built correctly
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_messages"}'
+    Then the agent_cmd should have sent command type "get_messages"
+
+  Scenario: set_model command requires model parameter
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"set_model"}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "model"
+
+  Scenario: set_model command sends model
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"set_model","model":"anthropic/claude-sonnet-4-20250514"}'
+    Then the agent_cmd should have sent command type "set_model"
+
+  Scenario: clear_history command is built correctly
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"clear_history"}'
+    Then the agent_cmd should have sent command type "clear_history"
+
+  Scenario: get_subagents command is built correctly
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_subagents"}'
+    Then the agent_cmd should have sent command type "get_subagents"
+
+  Scenario: get_extensions command is built correctly
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"get_extensions"}'
+    Then the agent_cmd should have sent command type "get_extensions"
+
+  Scenario: reload_extensions command is built correctly
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"reload_extensions"}'
+    Then the agent_cmd should have sent command type "reload_extensions"

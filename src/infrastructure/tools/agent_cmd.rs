@@ -19,11 +19,18 @@ pub use super::subagent_registry::{
 /// Supported commands for interacting with a subagent.
 const SUPPORTED_COMMANDS: &[&str] = &[
     "prompt",
-    "get_state",
-    "get_messages_tail",
     "steer",
+    "follow_up",
     "abort",
+    "get_state",
+    "get_messages",
+    "get_messages_tail",
     "get_session_stats",
+    "get_subagents",
+    "get_extensions",
+    "set_model",
+    "clear_history",
+    "reload_extensions",
 ];
 
 /// Timeout for reading a response from a subagent UDS socket.
@@ -95,13 +102,37 @@ impl AgentCmdTool {
                     .ok_or("steer command requires a message field")?;
                 serde_json::json!({"type": "steer", "message": message})
             }
+            "follow_up" => {
+                let message = args
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .ok_or("follow_up command requires a message field")?;
+                serde_json::json!({"type": "follow_up", "message": message})
+            }
             "get_state" => serde_json::json!({"type": "get_state"}),
+            "get_messages" => serde_json::json!({"type": "get_messages"}),
             "abort" => serde_json::json!({"type": "abort"}),
             "get_session_stats" => serde_json::json!({"type": "get_session_stats"}),
             "get_messages_tail" => {
                 let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(1);
                 serde_json::json!({"type": "get_messages_tail", "count": count})
             }
+            "set_model" => {
+                let model = args.get("model").and_then(|v| v.as_str());
+                let provider = args.get("provider").and_then(|v| v.as_str());
+                let model_id = args.get("model_id").and_then(|v| v.as_str());
+                match (model, provider, model_id) {
+                    (Some(m), _, _) => serde_json::json!({"type": "set_model", "model": m}),
+                    (_, Some(p), Some(mid)) => {
+                        serde_json::json!({"type": "set_model", "provider": p, "modelId": mid})
+                    }
+                    _ => return Err("set_model requires model, or provider + model_id".to_string()),
+                }
+            }
+            "clear_history" => serde_json::json!({"type": "clear_history"}),
+            "get_subagents" => serde_json::json!({"type": "get_subagents"}),
+            "get_extensions" => serde_json::json!({"type": "get_extensions"}),
+            "reload_extensions" => serde_json::json!({"type": "reload_extensions"}),
             _ => unreachable!(), // Covered by SUPPORTED_COMMANDS check above.
         };
 
@@ -170,10 +201,12 @@ impl Tool for AgentCmdTool {
         ToolDefinition {
             name: "agent_cmd".into(),
             description: "Send a command to a spawned subagent. \
-                Supported commands: prompt, get_state, get_messages_tail, \
-                steer, abort, get_session_stats."
+                Supported commands: prompt, steer, follow_up, abort, \
+                get_state, get_messages, get_messages_tail, get_session_stats, \
+                get_subagents, get_extensions, set_model, clear_history, \
+                reload_extensions."
                 .into(),
-            parameters_schema: r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent"},"command":{"type":"string","enum":["prompt","get_state","get_messages_tail","steer","abort","get_session_stats"],"description":"Command to send"},"message":{"type":"string","description":"Message for prompt/steer commands"},"count":{"type":"integer","description":"Number of messages for get_messages_tail (default: 1)"}},"required":["agent_id","command"]}"#.into(),
+            parameters_schema: r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","get_state","get_messages","get_messages_tail","get_session_stats","get_subagents","get_extensions","set_model","clear_history","reload_extensions"],"description":"Command to send"},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Number of messages for get_messages_tail (default: 1)"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"}},"required":["agent_id","command"]}"#.into(),
         }
     }
 
@@ -424,5 +457,118 @@ mod tests {
             .unwrap();
         assert!(result.is_error);
         assert!(result.content.contains("[a-zA-Z0-9_-]"));
+    }
+
+    // ── New commands (#547) ──────────────────────────────────────────
+
+    #[test]
+    fn test_parse_follow_up_requires_message() {
+        let tool = empty_tool();
+        let result = tool.parse_and_build(r#"{"agent_id":"w1","command":"follow_up"}"#);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("message"));
+    }
+
+    #[test]
+    fn test_parse_follow_up_with_message() {
+        let tool = empty_tool();
+        let (_, cmd) = tool
+            .parse_and_build(r#"{"agent_id":"w1","command":"follow_up","message":"After done"}"#)
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
+        assert_eq!(parsed["type"], "follow_up");
+        assert_eq!(parsed["message"], "After done");
+    }
+
+    #[test]
+    fn test_parse_get_messages() {
+        let tool = empty_tool();
+        let (_, cmd) = tool
+            .parse_and_build(r#"{"agent_id":"w1","command":"get_messages"}"#)
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
+        assert_eq!(parsed["type"], "get_messages");
+    }
+
+    #[test]
+    fn test_parse_set_model_requires_model() {
+        let tool = empty_tool();
+        let result = tool.parse_and_build(r#"{"agent_id":"w1","command":"set_model"}"#);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("model"));
+    }
+
+    #[test]
+    fn test_parse_set_model_with_model() {
+        let tool = empty_tool();
+        let (_, cmd) = tool
+            .parse_and_build(r#"{"agent_id":"w1","command":"set_model","model":"anthropic/claude-sonnet-4-20250514"}"#)
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
+        assert_eq!(parsed["type"], "set_model");
+        assert_eq!(parsed["model"], "anthropic/claude-sonnet-4-20250514");
+    }
+
+    #[test]
+    fn test_parse_set_model_with_provider_and_model_id() {
+        let tool = empty_tool();
+        let (_, cmd) = tool
+            .parse_and_build(r#"{"agent_id":"w1","command":"set_model","provider":"anthropic","model_id":"claude-sonnet-4-20250514"}"#)
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
+        assert_eq!(parsed["type"], "set_model");
+        assert_eq!(parsed["provider"], "anthropic");
+        assert_eq!(parsed["modelId"], "claude-sonnet-4-20250514");
+    }
+
+    #[test]
+    fn test_parse_clear_history() {
+        let tool = empty_tool();
+        let (_, cmd) = tool
+            .parse_and_build(r#"{"agent_id":"w1","command":"clear_history"}"#)
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
+        assert_eq!(parsed["type"], "clear_history");
+    }
+
+    #[test]
+    fn test_parse_get_subagents() {
+        let tool = empty_tool();
+        let (_, cmd) = tool
+            .parse_and_build(r#"{"agent_id":"w1","command":"get_subagents"}"#)
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
+        assert_eq!(parsed["type"], "get_subagents");
+    }
+
+    #[test]
+    fn test_parse_get_extensions() {
+        let tool = empty_tool();
+        let (_, cmd) = tool
+            .parse_and_build(r#"{"agent_id":"w1","command":"get_extensions"}"#)
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
+        assert_eq!(parsed["type"], "get_extensions");
+    }
+
+    #[test]
+    fn test_parse_reload_extensions() {
+        let tool = empty_tool();
+        let (_, cmd) = tool
+            .parse_and_build(r#"{"agent_id":"w1","command":"reload_extensions"}"#)
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
+        assert_eq!(parsed["type"], "reload_extensions");
+    }
+
+    #[test]
+    fn test_definition_lists_new_commands() {
+        let tool = empty_tool();
+        let def = tool.definition();
+        assert!(def.description.contains("follow_up"));
+        assert!(def.description.contains("set_model"));
+        assert!(def.description.contains("clear_history"));
+        assert!(def.description.contains("get_messages"));
+        assert!(def.description.contains("get_subagents"));
     }
 }
