@@ -1119,7 +1119,13 @@ impl App {
             }
         }
 
+        // Store rendered lines for text selection extraction (#528).
+        // Must happen BEFORE highlight injection to avoid leaking
+        // reverse-video escapes into the extraction buffer (#546 review).
+        self.last_rendered_lines = lines.clone();
+
         // Apply mouse selection highlight (#546).
+        // Applied to a separate copy so extraction buffer stays clean.
         apply_selection_highlight(&self.selection, &mut lines);
 
         // Write to terminal.
@@ -1146,10 +1152,6 @@ impl App {
 
         let _ = std::io::stdout().write_all(buf.as_bytes());
         let _ = std::io::stdout().flush();
-
-        // Store rendered lines for text selection extraction (#528).
-        // Move instead of clone to avoid allocation churn on every frame.
-        self.last_rendered_lines = lines;
     }
 
     fn render_full(&mut self) {
