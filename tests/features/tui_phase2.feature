@@ -66,6 +66,11 @@ Feature: TUI Phase 2 — Event Loop, Editor, and Chat Display
     When the user presses Down
     Then the editor text should be "second message"
 
+  Scenario: Pasting CRLF text preserves lines without stray carriage returns
+    Given an editor component
+    When the user pastes "first line\r\nsecond line\r\nthird line"
+    Then the editor text should be "first line\nsecond line\nthird line"
+
   # ---------------------------------------------------------------------------
   # Chat Display
   # ---------------------------------------------------------------------------

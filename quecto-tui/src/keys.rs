@@ -272,7 +272,7 @@ fn parse_bracketed_paste(rest: &[u8]) -> Option<(Key, usize)> {
     // Search for the end marker: \x1b[201~
     let end_marker = b"\x1b[201~";
     if let Some(pos) = find_subsequence(rest, end_marker) {
-        let content = String::from_utf8_lossy(&rest[..pos]).into_owned();
+        let content = String::from_utf8_lossy(&rest[..pos]).replace("\r\n", "\n");
         // total: \x1b[ (2) + 200~ (4) + content + \x1b[201~ (6)
         let consumed = 2 + 4 + pos + end_marker.len();
         Some((Key::Paste(content), consumed))
@@ -470,6 +470,14 @@ mod tests {
         let input = b"\x1b[200~hello world\x1b[201~";
         let (key, n) = parse_key(input).unwrap();
         assert_eq!(key, Key::Paste("hello world".to_string()));
+        assert_eq!(n, input.len());
+    }
+
+    #[test]
+    fn parse_bracketed_paste_normalizes_crlf() {
+        let input = b"\x1b[200~alpha\r\nbeta\r\ngamma\x1b[201~";
+        let (key, n) = parse_key(input).unwrap();
+        assert_eq!(key, Key::Paste("alpha\nbeta\ngamma".to_string()));
         assert_eq!(n, input.len());
     }
 
