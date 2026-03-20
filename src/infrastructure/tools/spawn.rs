@@ -196,21 +196,15 @@ impl SpawnTool {
             return Err(e);
         }
 
-        // Spawn a background reaper task so the child process is always
-        // cleaned up (no zombies) even if the parent never calls shutdown_all.
-        let reaper_registry = self.registry.clone();
-        let reaper_name = session_name.to_string();
-        tokio::spawn(async move {
-            let _ = child.wait().await;
-            // Auto-remove from registry when the child exits.
-            reaper_registry
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&reaper_name);
-        });
-
-        // Register in shared registry so agent_cmd can find this child.
-        let mut entry = SubagentEntry::new(socket_path.clone(), pid);
+        // Register in shared registry BEFORE starting the monitor task,
+        // so the monitor's update_entry calls find the entry (#522).
+        self.registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                session_name.to_string(),
+                SubagentEntry::new(socket_path.clone(), pid),
+            );
 
         // Start a persistent monitor task to track child events in real-time (#522).
         let monitor_handle = super::subagent_monitor::spawn_monitor_task(
@@ -218,12 +212,31 @@ impl SpawnTool {
             socket_path.clone(),
             self.registry.clone(),
         );
-        entry.monitor_handle = Some(std::sync::Arc::new(monitor_handle));
 
-        self.registry
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(session_name.to_string(), entry);
+        // Store the monitor handle so it can be aborted on shutdown.
+        {
+            let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(entry) = entries.get_mut(session_name) {
+                entry.monitor_handle = Some(std::sync::Arc::new(monitor_handle));
+            }
+        }
+
+        // Spawn a background reaper task so the child process is always
+        // cleaned up (no zombies) even if the parent never calls shutdown_all.
+        // The reaper also aborts the monitor task to prevent leaks (#522).
+        let reaper_registry = self.registry.clone();
+        let reaper_name = session_name.to_string();
+        tokio::spawn(async move {
+            let _ = child.wait().await;
+            // Abort the monitor task and remove from registry when the child exits.
+            let mut entries = reaper_registry.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(entry) = entries.get(&reaper_name) {
+                if let Some(ref handle) = entry.monitor_handle {
+                    handle.abort();
+                }
+            }
+            entries.remove(&reaper_name);
+        });
 
         // If the caller provided an initial task, send it as the first prompt.
         // Fire-and-forget: the child acks the prompt internally, but we don't
@@ -477,8 +490,6 @@ mod tests {
         assert!(result.unwrap_err().contains("[a-zA-Z0-9_-]"));
     }
 
-    // --- with_base_dir constructor ---
-
     #[test]
     fn test_with_base_dir_sets_fields() {
         let base = PathBuf::from("/tmp/quecto-test");
@@ -493,8 +504,6 @@ mod tests {
         let tool = SpawnTool::new(vec![], false);
         assert!(tool.base_dir.as_os_str().is_empty());
     }
-
-    // --- with_registry ---
 
     #[test]
     fn test_with_registry_shares_state() {
