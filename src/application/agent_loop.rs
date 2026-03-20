@@ -318,10 +318,19 @@ impl AgentLoopImpl {
         };
 
         // Emit ToolFinished so the REPL can replace the spinner line.
+        // Cap result_content for the progress event to avoid cloning huge strings.
+        // The TUI only previews the first ~10 lines anyway.
+        const MAX_RESULT_EVENT_BYTES: usize = 50 * 1024;
+        let result_preview = if content.len() > MAX_RESULT_EVENT_BYTES {
+            content[..MAX_RESULT_EVENT_BYTES].to_string()
+        } else {
+            content.clone()
+        };
         self.notify(|| AgentProgressEvent::ToolFinished {
             tool_call_id: tc.id.clone(),
             name: tc.name.clone(),
             arguments: tc.arguments.clone(),
+            result_content: result_preview.clone(),
             duration_ms,
             is_error: is_err,
         });

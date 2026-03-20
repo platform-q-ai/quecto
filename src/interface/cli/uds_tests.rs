@@ -604,6 +604,7 @@ async fn test_forward_progress_event_emits_tool_finished_with_tool_call_id() {
         tool_call_id: "call_xyz".to_string(),
         name: "read".to_string(),
         arguments: r#"{"path":"a.txt"}"#.to_string(),
+        result_content: "file content here".to_string(),
         duration_ms: 42,
         is_error: false,
     };
@@ -621,6 +622,11 @@ async fn test_forward_progress_event_emits_tool_finished_with_tool_call_id() {
     assert!(
         output.contains("read"),
         "expected tool_name 'read', got: {output}"
+    );
+    // Verify result content is propagated (not empty string).
+    assert!(
+        output.contains("file content here"),
+        "expected result_content in tool_execution_end event, got: {output}"
     );
 }
 

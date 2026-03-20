@@ -531,6 +531,7 @@ fn forward_progress_event_broadcast(
         AgentProgressEvent::ToolFinished {
             tool_call_id,
             name,
+            result_content,
             is_error,
             ..
         } => {
@@ -540,7 +541,7 @@ fn forward_progress_event_broadcast(
                     tool_call_id,
                     tool_name: name,
                     result: crate::interface::cli::protocol::ToolResultContent {
-                        content: vec![serde_json::json!({"type":"text","text":""})],
+                        content: vec![serde_json::json!({"type":"text","text": result_content})],
                     },
                     is_error,
                 },

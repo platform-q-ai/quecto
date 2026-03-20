@@ -39,6 +39,7 @@ fn test_progress_renderer_non_tty_produces_no_output() {
         tool_call_id: String::new(),
         name: "bash".to_string(),
         arguments: "{\"command\": \"echo hi\"}".to_string(),
+        result_content: String::new(),
         duration_ms: 42,
         is_error: false,
     });
@@ -132,6 +133,7 @@ fn test_progress_renderer_tty_tool_finished_shows_tool_name_and_duration() {
         tool_call_id: String::new(),
         name: "bash".to_string(),
         arguments: "{\"command\": \"echo hi\"}".to_string(),
+        result_content: String::new(),
         duration_ms: 1234,
         is_error: false,
     });
@@ -164,6 +166,7 @@ fn test_progress_renderer_tty_tool_finished_error_indicates_failure() {
         tool_call_id: String::new(),
         name: "bash".to_string(),
         arguments: "{\"command\": \"echo fail\"}".to_string(),
+        result_content: String::new(),
         duration_ms: 50,
         is_error: true,
     });
@@ -398,6 +401,7 @@ fn test_agent_progress_event_debug_and_clone() {
             tool_call_id: String::new(),
             name: "bash".to_string(),
             arguments: "{\"command\": \"echo hi\"}".to_string(),
+            result_content: String::new(),
             duration_ms: 100,
             is_error: false,
         },

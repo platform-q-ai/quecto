@@ -282,6 +282,7 @@ pub(crate) async fn forward_progress_event(
         AgentProgressEvent::ToolFinished {
             tool_call_id,
             name,
+            result_content,
             is_error,
             ..
         } => {
@@ -291,7 +292,7 @@ pub(crate) async fn forward_progress_event(
                     tool_call_id,
                     tool_name: name,
                     result: ToolResultContent {
-                        content: vec![serde_json::json!({"type":"text","text":""})],
+                        content: vec![serde_json::json!({"type":"text","text": result_content})],
                     },
                     is_error,
                 },

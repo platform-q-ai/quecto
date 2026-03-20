@@ -43,6 +43,8 @@ pub enum AgentProgressEvent {
         name: String,
         /// Raw tool arguments JSON (not pre-truncated).
         arguments: String,
+        /// The tool's result content (text output).
+        result_content: String,
         /// How long the tool took to execute in milliseconds.
         duration_ms: u64,
         /// Whether the tool returned an error.
