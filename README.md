@@ -9,7 +9,7 @@ Built in Rust. No runtime dependencies. Runs on a VPS, Raspberry Pi, or containe
 
 ## Release Notes
 
-Current version: **0.22.0** — see [`CHANGELOG.md`](CHANGELOG.md) for full history.
+Current version: **0.23.0** — see [`CHANGELOG.md`](CHANGELOG.md) for full history.
 
 ## Quick Start
 
@@ -510,7 +510,7 @@ External tool binaries (`rg`, `fd`) are resolved via `ensure_tool`: system PATH 
 | `find` | Find files by glob pattern with fd. Respects nested `.gitignore` files, path-segment patterns via `--full-path`, configurable limit (default 1000), 50KB output cap |
 | `recall` | Retrieve a previously collapsed tool output by its spill ID (e.g. `turn20:bash:0`). Use `recall("list")` for the full index |
 | `spawn` | Spawn a background UDS-mode subagent for long-running tasks |
-| `agent_cmd` | Send commands (`steer`, `follow_up`, `abort`, `get_state`) to spawned UDS subagents |
+| `agent_cmd` | Send commands to spawned UDS subagents: `prompt`, `steer`, `follow_up`, `abort`, `kill`, `get_state`, `get_messages`, `get_messages_tail`, `get_session_stats`, `get_subagents`, `get_extensions`, `set_model`, `clear_history`, `reload_extensions` |
 | `web_search` | Search the web via Brave Search or DuckDuckGo |
 | `web_fetch` | Fetch a URL and return its content as readable text (HTML stripped by default) |
 | `workflow` | Manage the BDD/TDD development workflow (status, check, uncheck, reset, skip, set_issue, clear_issue). `WorkflowGuard` blocks `git commit`/`git push` when steps are incomplete |

@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.23.0 (2026-03-20)
+
+### Added
+- **`agent_cmd` expanded to 13 commands** (#547): New commands: `follow_up`, `get_messages`, `set_model`, `clear_history`, `get_subagents`, `get_extensions`, `reload_extensions`. `set_model` supports both `model` and `provider`+`model_id` forms with empty-string rejection and partial-parameter errors.
+- **`agent_cmd kill` command** (#559): Terminate a specific subagent by ID — sends SIGTERM, aborts monitor task, removes from registry. Handled locally (not via UDS).
+- **Server-side workflow auto-nudge** (#562): Wires existing `auto_continue_nudge()` and `completion_nudge()` domain methods into the UDS dispatch loop. Agents are now self-driving — they auto-continue through workflow steps and prompt to pick the next issue on completion. No TUI or external nudger required. Enables meta-agents managing hundreds of self-driving subagents.
+- **Workflow event emitter support** (#562): `register_workflow_tool()` now accepts an optional `WorkflowEventEmitter` callback and returns the shared `WorkflowStateHandle`. `workflow_state` events can be broadcast to all UDS clients.
+- **TUI: Sci-fi workflow header bar** (#563): Persistent header bar showing workflow progress with phase-aware true-colour backgrounds (RED/GREEN/CI/REVIEW), box-drawing separators, block-element progress bar, and angle-bracket phase tags. Alacritty-safe (no Nerd Font required). Hidden when no workflow issue is active.
+- **TUI: `Ctrl+Shift+A` / `Ctrl+Shift+N` keybindings** (#563): Toggle auto-continue and completion nudge notifications. New `CtrlShift(char)` key variant in Kitty protocol parser.
+- **TUI: Mouse selection visual highlight** (#546): Selected text shows reverse-video during click-and-drag. `apply_line_highlight()` handles ANSI-escaped text correctly. Highlight stored separately from extraction buffer to prevent escape leakage.
+- **TUI: Clipboard notification** (#546): "Copied N chars to clipboard" toast on successful OSC 52 copy.
+- **TUI: Auto-remove exited subagent bars** (#540): Exited subagent status bars disappear after a 5-second grace period. `TrackedSubagent` wrapper records `exited_at` timestamp. GC runs on each spinner tick.
+
+### Fixed
+- **`agent_cmd` UDS response filtering** (#555): `send_uds_command` now parses JSON to find `"type":"response"` events, skipping broadcast noise (tokens, agent_start, etc.) that arrives first in multi-client mode.
+- **`agent_cmd` write-half shutdown** (#557): Removed `writer.shutdown()` which caused the server's reader loop to exit and abort the broadcast writer before the response was delivered. Connections now stay open until the response is read.
+- **`agent_cmd` query responses visible** (#538): `agent_cmd` query results (get_state, get_messages_tail, get_session_stats) are now shown in the TUI chat. Mutations (prompt/steer/abort) remain suppressed. Extracted `suppress_tool_box(tool_name, args)` and `is_subagent_tool()` functions.
+- **Table column truncation** (#550, #555): Replaced proportional column scaling (`.max(3)`) with iterative shrink algorithm that freezes narrow columns at natural width. Tool names like `spawn`/`agent_cmd` no longer truncated to 3-4 chars.
+- **Inline code in table cells** (#550): `Event::Code`, `Event::SoftBreak`, and `Event::HardBreak` now check `in_table` and append to `current_cell` instead of `current_line`.
+- **Ctrl+C clears editor first** (#536): Ctrl+C now checks editor content before deciding — clears text if non-empty, only aborts if editor is already empty. Extracted `ctrl_c_action()` pure function.
+
+### Changed
+- **License**: Changed from MIT to proprietary (`LicenseRef-Proprietary`).
+- **Socket utilities extracted**: `reap_stale_sockets`, `SocketGuard`, `bind_secure_socket` moved from `uds.rs` to `uds_socket.rs`.
+- **`agent_cmd` tests extracted**: Tests moved to `agent_cmd_tests.rs` for 750-line limit compliance.
+- **quecto-tui bumped to 0.2.0**: Reflects significant feature additions (workflow bar, mouse highlight, subagent bar expiry, table fixes).
+
 ## 0.22.0 (2026-03-16)
 
 ### Fixed
