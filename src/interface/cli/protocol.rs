@@ -328,17 +328,19 @@ pub fn build_subagent_info_list(
     let Some(reg) = registry else {
         return Vec::new();
     };
-    let guard = reg.lock().unwrap_or_else(|e| e.into_inner());
-    let mut list: Vec<SubagentInfo> = guard
-        .iter()
-        .map(|(id, entry)| SubagentInfo {
-            agent_id: id.clone(),
-            status: entry.status.to_string().to_lowercase(),
-            last_tool: entry.last_tool.clone(),
-            last_error: entry.last_error.clone(),
-            pid: entry.pid,
-        })
-        .collect();
+    let mut list: Vec<SubagentInfo> = {
+        let guard = reg.lock().unwrap_or_else(|e| e.into_inner());
+        guard
+            .iter()
+            .map(|(id, entry)| SubagentInfo {
+                agent_id: id.clone(),
+                status: entry.status.to_wire_str().to_string(),
+                last_tool: entry.last_tool.clone(),
+                last_error: entry.last_error.clone(),
+                pid: entry.pid,
+            })
+            .collect()
+    }; // guard dropped here — sort happens outside critical section
     list.sort_by(|a, b| a.agent_id.cmp(&b.agent_id));
     list
 }
