@@ -58,13 +58,10 @@ fn given_agent_cmd_with_mock_entry(world: &mut QuectoWorld, agent_id: String) {
         }
     });
 
-    registry.lock().unwrap().insert(
-        agent_id,
-        SubagentEntry {
-            socket_path: sock_path,
-            pid: 0,
-        },
-    );
+    registry
+        .lock()
+        .unwrap()
+        .insert(agent_id, SubagentEntry::new(sock_path, 0));
 
     world.agent_cmd_tool = Some(AgentCmdTool::new(registry.clone()));
     world.agent_cmd_registry = Some(registry);

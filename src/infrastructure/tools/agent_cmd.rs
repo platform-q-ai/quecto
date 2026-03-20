@@ -381,10 +381,7 @@ mod tests {
         let registry = new_registry();
         registry.lock().unwrap().insert(
             "w1".to_string(),
-            SubagentEntry {
-                socket_path: PathBuf::from("/tmp/test.sock"),
-                pid: 0,
-            },
+            SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0),
         );
         let tool = AgentCmdTool::new(registry);
         let path = tool.lookup_socket("w1").unwrap();

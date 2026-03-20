@@ -196,30 +196,47 @@ impl SpawnTool {
             return Err(e);
         }
 
-        // Spawn a background reaper task so the child process is always
-        // cleaned up (no zombies) even if the parent never calls shutdown_all.
-        let reaper_registry = self.registry.clone();
-        let reaper_name = session_name.to_string();
-        tokio::spawn(async move {
-            let _ = child.wait().await;
-            // Auto-remove from registry when the child exits.
-            reaper_registry
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&reaper_name);
-        });
-
-        // Register in shared registry so agent_cmd can find this child.
+        // Register in shared registry BEFORE starting the monitor task,
+        // so the monitor's update_entry calls find the entry (#522).
         self.registry
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(
                 session_name.to_string(),
-                SubagentEntry {
-                    socket_path: socket_path.clone(),
-                    pid,
-                },
+                SubagentEntry::new(socket_path.clone(), pid),
             );
+
+        // Start a persistent monitor task to track child events in real-time (#522).
+        let monitor_handle = super::subagent_monitor::spawn_monitor_task(
+            session_name.to_string(),
+            socket_path.clone(),
+            self.registry.clone(),
+        );
+
+        // Store the monitor handle so it can be aborted on shutdown.
+        {
+            let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(entry) = entries.get_mut(session_name) {
+                entry.monitor_handle = Some(std::sync::Arc::new(monitor_handle));
+            }
+        }
+
+        // Spawn a background reaper task so the child process is always
+        // cleaned up (no zombies) even if the parent never calls shutdown_all.
+        // The reaper also aborts the monitor task to prevent leaks (#522).
+        let reaper_registry = self.registry.clone();
+        let reaper_name = session_name.to_string();
+        tokio::spawn(async move {
+            let _ = child.wait().await;
+            // Abort the monitor task and remove from registry when the child exits.
+            let mut entries = reaper_registry.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(entry) = entries.get(&reaper_name) {
+                if let Some(ref handle) = entry.monitor_handle {
+                    handle.abort();
+                }
+            }
+            entries.remove(&reaper_name);
+        });
 
         // If the caller provided an initial task, send it as the first prompt.
         // Fire-and-forget: the child acks the prompt internally, but we don't
@@ -319,13 +336,12 @@ impl Tool for SpawnTool {
                             .unwrap_or_else(|e| e.into_inner())
                             .insert(
                                 session_name.to_string(),
-                                SubagentEntry {
-                                    // Stub path — not a real socket.
-                                    socket_path: PathBuf::from(format!(
+                                SubagentEntry::new(
+                                    PathBuf::from(format!(
                                         "/stub/quecto-agent-{session_name}.sock"
                                     )),
-                                    pid: 0,
-                                },
+                                    0,
+                                ),
                             );
 
                         let msg = format!(
@@ -352,9 +368,15 @@ impl Tool for SpawnTool {
 }
 
 /// Send SIGTERM to all tracked subagent processes and clear the registry.
+/// Also aborts all monitor tasks (#522).
 pub fn shutdown_all(registry: &SubagentRegistry) {
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     for (name, entry) in entries.iter() {
+        // Abort monitor task if running (#522).
+        if let Some(ref handle) = entry.monitor_handle {
+            handle.abort();
+            tracing::info!(agent = %name, "aborted monitor task");
+        }
         if entry.pid != 0 {
             // Use kill(1) rather than libc::kill to avoid adding libc as a dependency.
             let _ = std::process::Command::new("kill")
@@ -468,8 +490,6 @@ mod tests {
         assert!(result.unwrap_err().contains("[a-zA-Z0-9_-]"));
     }
 
-    // --- with_base_dir constructor ---
-
     #[test]
     fn test_with_base_dir_sets_fields() {
         let base = PathBuf::from("/tmp/quecto-test");
@@ -485,18 +505,13 @@ mod tests {
         assert!(tool.base_dir.as_os_str().is_empty());
     }
 
-    // --- with_registry ---
-
     #[test]
     fn test_with_registry_shares_state() {
         let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
         let tool = SpawnTool::new(vec![], true).with_registry(registry.clone());
         registry.lock().unwrap().insert(
             "test".to_string(),
-            SubagentEntry {
-                socket_path: PathBuf::from("/tmp/test.sock"),
-                pid: 123,
-            },
+            SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 123),
         );
         assert!(tool.registry.lock().unwrap().contains_key("test"));
     }
@@ -707,10 +722,7 @@ mod tests {
         let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
         registry.lock().unwrap().insert(
             "bot".to_string(),
-            SubagentEntry {
-                socket_path: PathBuf::from("/tmp/test.sock"),
-                pid: 0, // pid 0 = stub, won't actually send SIGTERM
-            },
+            SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0),
         );
         assert!(!registry.lock().unwrap().is_empty());
         shutdown_all(&registry);
