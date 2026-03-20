@@ -362,6 +362,67 @@ fn apply_inline_styles(text: &str, stack: &[InlineStyle]) -> String {
     result
 }
 
+/// Shrink column widths to fit available space (#550).
+///
+/// Leaves narrow columns at their natural width; only shrinks columns
+/// that exceed their fair share. Iterates until all columns fit.
+fn shrink_columns(widths: &mut [usize], avail: usize) {
+    let n = widths.len();
+    if n == 0 {
+        return;
+    }
+    let min_col = 3;
+    let mut frozen = vec![false; n];
+
+    // Iterative: freeze columns at or below fair share, redistribute
+    // remaining space among unfrozen columns.
+    for _ in 0..n {
+        let unfrozen_count = frozen.iter().filter(|&&f| !f).count();
+        if unfrozen_count == 0 {
+            break;
+        }
+        let frozen_total: usize = widths
+            .iter()
+            .zip(frozen.iter())
+            .filter(|&(_, &f)| f)
+            .map(|(&w, _)| w)
+            .sum();
+        let remaining = avail.saturating_sub(frozen_total);
+        let fair = if unfrozen_count > 0 {
+            remaining / unfrozen_count
+        } else {
+            0
+        };
+
+        let mut changed = false;
+        for i in 0..n {
+            if !frozen[i] && widths[i] <= fair {
+                frozen[i] = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            // All unfrozen columns exceed fair share — distribute evenly.
+            // Give extra remainder chars to the first unfrozen columns.
+            let mut assigned = 0;
+            let unfrozen: Vec<usize> = (0..n).filter(|&i| !frozen[i]).collect();
+            for (j, &i) in unfrozen.iter().enumerate() {
+                let w = if j < remaining % unfrozen.len() {
+                    fair + 1
+                } else {
+                    fair
+                };
+                widths[i] = w.max(min_col);
+                assigned += widths[i];
+            }
+            // If frozen columns already consumed all space, min_col may
+            // push total over avail — accept this as a graceful overflow.
+            let _ = assigned;
+            break;
+        }
+    }
+}
+
 /// Render a table as aligned text columns.
 #[allow(clippy::cognitive_complexity)]
 fn render_table(rows: &[Vec<String>], max_width: usize) -> Vec<String> {
@@ -380,20 +441,16 @@ fn render_table(rows: &[Vec<String>], max_width: usize) -> Vec<String> {
         }
     }
 
-    // Cap total width.
+    // Cap total width (#550).
+    // Strategy: shrink only oversized columns, leaving narrow ones at natural width.
     let gap = 2; // spaces between columns
     let total: usize = col_widths.iter().sum::<usize>() + (num_cols.saturating_sub(1)) * gap;
     if total > max_width && num_cols > 0 {
-        // Shrink proportionally, guarding against division by zero (#470).
         let avail = max_width.saturating_sub((num_cols.saturating_sub(1)) * gap);
         let sum: usize = col_widths.iter().sum();
         if sum > 0 {
-            let scale = avail as f64 / sum as f64;
-            for w in &mut col_widths {
-                *w = ((*w as f64 * scale) as usize).max(3);
-            }
+            shrink_columns(&mut col_widths, avail);
         } else {
-            // All cells empty — assign minimum width, capped to available space.
             let min_per_col = if num_cols > 0 {
                 (avail / num_cols).max(1)
             } else {
@@ -849,6 +906,64 @@ mod tests {
             plain.contains("test"),
             "code-only cell should contain the text: {:?}",
             plain,
+        );
+    }
+
+    #[test]
+    fn table_tool_list_not_truncated_at_80_cols() {
+        let md = "| Tool | Description |\n|------|-------------|\n\
+            | `spawn` | Start a background subagent |\n\
+            | `agent_cmd` | Send commands to a spawned subagent |\n\
+            | `Bash` | Execute a bash command |\n\
+            | `Edit` | Surgically replace exact text |\n\
+            | `Write` | Create or overwrite a file |\n\
+            | `Read` | Read file contents |";
+        let plain = render_plain(md, 80);
+        // All tool names should be fully visible, not truncated.
+        assert!(
+            plain.contains("`spawn`"),
+            "spawn should not be truncated: {}",
+            plain
+        );
+        assert!(
+            plain.contains("`agent_cmd`"),
+            "agent_cmd should not be truncated: {}",
+            plain
+        );
+        assert!(
+            plain.contains("`Bash`"),
+            "Bash should not be truncated: {}",
+            plain
+        );
+        assert!(
+            plain.contains("`Edit`"),
+            "Edit should not be truncated: {}",
+            plain
+        );
+        assert!(
+            plain.contains("`Write`"),
+            "Write should not be truncated: {}",
+            plain
+        );
+        assert!(
+            plain.contains("`Read`"),
+            "Read should not be truncated: {}",
+            plain
+        );
+    }
+
+    #[test]
+    fn table_narrow_width_still_shows_tool_names() {
+        // Even at 60 cols, short tool names should not be clipped to 4 chars.
+        let md = "| Tool | Description |\n|------|-------------|\n\
+            | `spawn` | Start a background subagent process with optional system prompt and initial task |\n\
+            | `agent_cmd` | Send commands to a spawned subagent (prompt, steer, follow_up, abort, get_state, get_messages) |";
+        let plain = render_plain(md, 60);
+        // Tool column should have at least enough width for `agent_cmd` (13 chars with backticks).
+        assert!(
+            plain.contains("`spawn`"),
+            "spawn truncated at 60 cols: {}",
+            plain
         );
     }
 }

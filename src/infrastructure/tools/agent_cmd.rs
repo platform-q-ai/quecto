@@ -201,14 +201,39 @@ async fn send_uds_command(
 
     let mut lines = BufReader::new(reader).lines();
 
-    // Read with timeout to avoid blocking indefinitely if the child hangs.
-    let response = tokio::time::timeout(RESPONSE_TIMEOUT, lines.next_line())
-        .await
-        .map_err(|_| DomainError::Tool("subagent response timed out (300s)".into()))?
-        .map_err(|e| DomainError::Tool(format!("read from subagent failed: {e}")))?
-        .unwrap_or_default();
+    // Read lines until we find a "response" event (#555).
+    // In multi-client mode, the broadcast delivers all events to all clients.
+    // Skip non-response events (tokens, agent_start, etc.).
+    let deadline = tokio::time::Instant::now() + RESPONSE_TIMEOUT;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(DomainError::Tool(
+                "subagent response timed out (300s)".into(),
+            ));
+        }
+        let line = tokio::time::timeout(remaining, lines.next_line())
+            .await
+            .map_err(|_| DomainError::Tool("subagent response timed out (300s)".into()))?
+            .map_err(|e| DomainError::Tool(format!("read from subagent failed: {e}")))?;
 
-    Ok(response)
+        match line {
+            Some(l) => {
+                // Parse to check event type — avoids false positives from substring matching.
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&l) {
+                    if json.get("type").and_then(|v| v.as_str()) == Some("response") {
+                        return Ok(l);
+                    }
+                }
+                // Not a response event — skip.
+            }
+            None => {
+                return Err(DomainError::Tool(
+                    "subagent closed connection without sending a response".into(),
+                ));
+            }
+        }
+    }
 }
 
 impl Tool for AgentCmdTool {
