@@ -158,3 +158,16 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     Given an AgentCmdTool with a mock registry entry "w1"
     When I execute agent_cmd with '{"agent_id":"w1","command":"reload_extensions"}'
     Then the agent_cmd should have sent command type "reload_extensions"
+
+  # --- UDS transport (#557) ---
+
+  Scenario: UDS connection keeps write half open until response received
+    Given a live UDS subagent
+    When I send get_state via agent_cmd
+    Then the response should contain "isStreaming"
+    And the response should be valid JSON with type "response"
+
+  Scenario: get_messages_tail returns conversation history
+    Given a live UDS subagent with conversation history
+    When I send get_messages_tail with count 2 via agent_cmd
+    Then the response should contain message data

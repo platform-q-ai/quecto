@@ -194,10 +194,10 @@ async fn send_uds_command(
         .write_all(b"\n")
         .await
         .map_err(|e| DomainError::Tool(format!("write to subagent failed: {e}")))?;
-    writer
-        .shutdown()
-        .await
-        .map_err(|e| DomainError::Tool(format!("shutdown write half failed: {e}")))?;
+    // Do NOT shutdown the write half (#557). In multi-client mode, the
+    // server's reader loop exits on EOF → aborts the broadcast writer
+    // task → response is never delivered. Keep the connection open until
+    // we've read the response, then drop the stream.
 
     let mut lines = BufReader::new(reader).lines();
 
@@ -637,5 +637,101 @@ mod tests {
         assert!(def.description.contains("clear_history"));
         assert!(def.description.contains("get_messages"));
         assert!(def.description.contains("get_subagents"));
+    }
+
+    // ── UDS transport tests (#557) ───────────────────────────────────
+
+    /// Mock UDS server that replicates the multi-client broadcast pattern:
+    /// - Reader task: reads commands until EOF, then aborts writer task
+    /// - Writer task: sends noise then response via a channel
+    ///
+    /// This reproduces the real bug: if the client shuts down the write
+    /// half, the reader sees EOF immediately → aborts writer → response
+    /// is never delivered.
+    async fn mock_uds_server(listener: tokio::net::UnixListener) {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        let (stream, _) = listener.accept().await.unwrap();
+        let (reader, mut writer) = tokio::io::split(stream);
+        let mut lines = BufReader::new(reader).lines();
+
+        // Channel simulates the broadcast: dispatch sends events here,
+        // writer task drains them to the client.
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(16);
+
+        // Writer task: drain channel → client socket.
+        let writer_task = tokio::spawn(async move {
+            while let Some(line) = rx.recv().await {
+                if writer.write_all(line.as_bytes()).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        // Reader loop: read commands until EOF, then abort writer.
+        // This matches uds_multi.rs handle_client_task behaviour.
+        let cmd_line = lines.next_line().await.unwrap();
+        if cmd_line.is_some() {
+            // Dispatch: send noise + response via channel.
+            let _ = tx
+                .send("{\"type\":\"token\",\"token\":\"hello\"}\n".into())
+                .await;
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            let _ = tx
+                .send("{\"type\":\"response\",\"command\":\"get_state\",\"success\":true,\"data\":{\"isStreaming\":false}}\n".into())
+                .await;
+        }
+
+        // Wait for reader EOF (client closed write half → next_line returns None).
+        while lines.next_line().await.unwrap_or(None).is_some() {}
+
+        // Real server aborts writer when reader exits.
+        writer_task.abort();
+    }
+
+    #[tokio::test]
+    async fn test_send_uds_command_skips_noise_finds_response() {
+        let dir = tempfile::tempdir().unwrap();
+        let sock_path = dir.path().join("test.sock");
+        let listener = tokio::net::UnixListener::bind(&sock_path).unwrap();
+
+        let server = tokio::spawn(mock_uds_server(listener));
+
+        let result = send_uds_command(&sock_path, r#"{"type":"get_state"}"#)
+            .await
+            .unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["type"], "response");
+        assert_eq!(parsed["command"], "get_state");
+        assert_eq!(parsed["success"], true);
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_send_uds_command_eof_without_response_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let sock_path = dir.path().join("test.sock");
+        let listener = tokio::net::UnixListener::bind(&sock_path).unwrap();
+
+        // Server that closes immediately without sending response.
+        let server = tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut lines = tokio::io::BufReader::new(stream).lines();
+            let _ = lines.next_line().await; // read command
+            // Close without sending response.
+        });
+
+        let result = send_uds_command(&sock_path, r#"{"type":"get_state"}"#).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("closed connection")
+        );
+
+        server.await.unwrap();
     }
 }
