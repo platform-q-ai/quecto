@@ -413,3 +413,152 @@ async fn test_resolve_api_key_with_refresh_async_updates_refresh_token_when_prov
         "refresh token should be updated when server provides a new one"
     );
 }
+
+// --- append_extension_prompt tests ---
+
+#[test]
+fn test_append_extension_prompt_adds_section() {
+    let mut system = "base prompt".to_string();
+    append_extension_prompt(&mut system, "ext content");
+    assert!(system.contains("## Extensions"));
+    assert!(system.contains("ext content"));
+    assert!(system.contains("## End Extensions"));
+}
+
+#[test]
+fn test_append_extension_prompt_empty_is_noop() {
+    let mut system = "base prompt".to_string();
+    append_extension_prompt(&mut system, "");
+    assert_eq!(system, "base prompt");
+}
+
+// --- resolve_api_key tests ---
+
+#[test]
+fn test_resolve_api_key_uses_cred_when_valid() {
+    use crate::infrastructure::auth::credential_store::{AuthMethod, Credential};
+    let mut creds = std::collections::HashMap::new();
+    creds.insert(
+        "anthropic".to_string(),
+        Credential {
+            provider: "anthropic".to_string(),
+            token: "sk-from-cred".to_string(),
+            method: AuthMethod::Token,
+            expires_at: None,
+            refresh_token: None,
+            account_id: None,
+        },
+    );
+    let key = resolve_api_key("sk-from-config", &creds, "anthropic");
+    assert_eq!(key, "sk-from-cred");
+}
+
+#[test]
+fn test_resolve_api_key_falls_back_when_expired() {
+    use crate::infrastructure::auth::credential_store::{AuthMethod, Credential};
+    let mut creds = std::collections::HashMap::new();
+    creds.insert(
+        "anthropic".to_string(),
+        Credential {
+            provider: "anthropic".to_string(),
+            token: "sk-expired".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(0), // expired
+            refresh_token: None,
+            account_id: None,
+        },
+    );
+    let key = resolve_api_key("sk-from-config", &creds, "anthropic");
+    assert_eq!(key, "sk-from-config");
+}
+
+#[test]
+fn test_resolve_api_key_falls_back_when_no_cred() {
+    let creds = std::collections::HashMap::new();
+    let key = resolve_api_key("sk-from-config", &creds, "anthropic");
+    assert_eq!(key, "sk-from-config");
+}
+
+// --- resolve_agent_workspace tests ---
+
+#[test]
+fn test_resolve_agent_workspace_sandbox() {
+    let result = resolve_agent_workspace("/home/user/workspace", false);
+    assert_eq!(result, std::path::PathBuf::from("/home/user/workspace"));
+}
+
+#[test]
+fn test_resolve_agent_workspace_no_sandbox_uses_cwd() {
+    let result = resolve_agent_workspace("/home/user/workspace", true);
+    let cwd = std::env::current_dir().unwrap();
+    assert_eq!(result, cwd);
+}
+
+// --- check_provider_readiness tests ---
+
+#[test]
+fn test_check_provider_readiness_empty() {
+    let creds = std::collections::HashMap::new();
+    let expired = check_provider_readiness(&creds);
+    assert!(expired.is_empty());
+}
+
+#[test]
+fn test_check_provider_readiness_with_expired() {
+    use crate::infrastructure::auth::credential_store::{AuthMethod, Credential};
+    let mut creds = std::collections::HashMap::new();
+    creds.insert(
+        "anthropic".to_string(),
+        Credential {
+            provider: "anthropic".to_string(),
+            token: "expired".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(0),
+            refresh_token: None,
+            account_id: None,
+        },
+    );
+    let expired = check_provider_readiness(&creds);
+    assert_eq!(expired, vec!["anthropic"]);
+}
+
+#[test]
+fn test_check_provider_readiness_valid_not_flagged() {
+    use crate::infrastructure::auth::credential_store::{AuthMethod, Credential};
+    let mut creds = std::collections::HashMap::new();
+    creds.insert(
+        "anthropic".to_string(),
+        Credential {
+            provider: "anthropic".to_string(),
+            token: "valid".to_string(),
+            method: AuthMethod::Token,
+            expires_at: None,
+            refresh_token: None,
+            account_id: None,
+        },
+    );
+    let expired = check_provider_readiness(&creds);
+    assert!(expired.is_empty());
+}
+
+// --- xdg_runtime_dir_or_temp tests ---
+
+#[test]
+fn test_xdg_runtime_dir_or_temp_returns_path() {
+    let path = xdg_runtime_dir_or_temp();
+    assert!(path.is_dir());
+}
+
+// --- build_http_client tests ---
+
+#[test]
+fn test_build_http_client_does_not_panic() {
+    let _client = build_http_client();
+}
+
+// --- OAUTH_EXPIRY_MARGIN_SECS constant ---
+
+#[test]
+fn test_oauth_expiry_margin_is_five_minutes() {
+    assert_eq!(OAUTH_EXPIRY_MARGIN_SECS, 300);
+}

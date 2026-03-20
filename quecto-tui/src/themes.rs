@@ -166,4 +166,60 @@ mod tests {
     fn light_theme_has_different_colors() {
         assert_ne!(DARK.accent, LIGHT.accent);
     }
+
+    #[test]
+    fn all_color_methods_produce_ansi() {
+        let t = &DARK;
+        let methods: Vec<(fn(&NamedTheme, &str) -> String, u8)> = vec![
+            (NamedTheme::accent, t.accent),
+            (NamedTheme::muted, t.muted),
+            (NamedTheme::dim, t.dim),
+            (NamedTheme::success, t.success),
+            (NamedTheme::error, t.error),
+            (NamedTheme::warning, t.warning),
+            (NamedTheme::tool, t.tool),
+            (NamedTheme::heading, t.heading),
+            (NamedTheme::code, t.code),
+            (NamedTheme::link, t.link),
+        ];
+        for (method, expected_code) in methods {
+            let s = method(t, "x");
+            assert!(
+                s.contains(&format!("\x1b[38;5;{}m", expected_code)),
+                "missing ANSI for color {}",
+                expected_code
+            );
+            assert!(s.ends_with("\x1b[0m"), "missing reset");
+        }
+    }
+
+    #[test]
+    fn fg_with_arbitrary_color() {
+        let t = &DARK;
+        let s = t.fg(199, "pink");
+        assert!(s.contains("\x1b[38;5;199m"));
+        assert!(s.contains("pink"));
+    }
+
+    #[test]
+    fn light_theme_all_methods() {
+        let t = &LIGHT;
+        assert!(t.accent("a").contains("a"));
+        assert!(t.muted("m").contains("m"));
+        assert!(t.dim("d").contains("d"));
+        assert!(t.success("s").contains("s"));
+        assert!(t.error("e").contains("e"));
+        assert!(t.warning("w").contains("w"));
+        assert!(t.tool("t").contains("t"));
+        assert!(t.heading("h").contains("h"));
+        assert!(t.code("c").contains("c"));
+        assert!(t.link("l").contains("l"));
+    }
+
+    #[test]
+    fn all_themes_have_unique_names() {
+        let names = theme_names();
+        let unique: std::collections::HashSet<_> = names.iter().collect();
+        assert_eq!(names.len(), unique.len());
+    }
 }

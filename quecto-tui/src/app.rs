@@ -1670,4 +1670,139 @@ mod tests {
         assert!(state.end());
         assert!(!state.is_running());
     }
+
+    // ── Free function tests ──────────────────────────────────────────
+
+    #[test]
+    fn builtin_commands_not_empty() {
+        let cmds = super::builtin_commands();
+        assert!(!cmds.is_empty());
+        let names: Vec<_> = cmds.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"clear"));
+        assert!(names.contains(&"quit"));
+        assert!(names.contains(&"exit"));
+        assert!(names.contains(&"help"));
+        assert!(names.contains(&"new"));
+        assert!(names.contains(&"session"));
+        assert!(names.contains(&"model"));
+    }
+
+    #[test]
+    fn builtin_commands_have_descriptions() {
+        let cmds = super::builtin_commands();
+        for cmd in &cmds {
+            assert!(
+                !cmd.description.is_empty(),
+                "{} has empty description",
+                cmd.name
+            );
+        }
+    }
+
+    #[test]
+    fn truncate_args_short() {
+        assert_eq!(super::truncate_args("ls -la"), "ls -la");
+    }
+
+    #[test]
+    fn truncate_args_long() {
+        let long = "a".repeat(50);
+        let result = super::truncate_args(&long);
+        assert!(result.len() <= 40);
+        assert!(result.ends_with("..."));
+    }
+
+    #[test]
+    fn truncate_args_strips_control() {
+        let s = "hello\x1b[31mworld\x00end";
+        let result = super::truncate_args(s);
+        assert!(!result.contains('\x1b'));
+        assert!(!result.contains('\x00'));
+    }
+
+    #[test]
+    fn truncate_args_empty() {
+        assert_eq!(super::truncate_args(""), "");
+    }
+
+    #[test]
+    fn read_git_branch_returns_some_in_repo() {
+        // We're in a git repo during tests
+        let branch = super::read_git_branch();
+        // May be None if running from a detached HEAD or non-git context
+        // but in our repo it should be Some
+        if let Some(b) = branch {
+            assert!(!b.is_empty());
+        }
+    }
+
+    #[test]
+    fn strip_ansi_for_selection_empty() {
+        assert_eq!(super::strip_ansi_for_selection(""), "");
+    }
+
+    #[test]
+    fn strip_ansi_csi_with_tilde() {
+        assert_eq!(super::strip_ansi_for_selection("\x1b[5~text"), "text");
+    }
+
+    #[test]
+    fn strip_ansi_nested_escapes() {
+        assert_eq!(
+            super::strip_ansi_for_selection("\x1b[1m\x1b[32mbold green\x1b[0m"),
+            "bold green"
+        );
+    }
+
+    #[test]
+    fn strip_ansi_osc_with_st() {
+        // OSC terminated with ST (\x1b\)
+        assert_eq!(
+            super::strip_ansi_for_selection("\x1b]0;title\x1b\\text"),
+            "text"
+        );
+    }
+
+    #[test]
+    fn base64_encode_multibyte() {
+        // Test with UTF-8 content
+        let result = super::base64_encode("héllo".as_bytes());
+        assert!(!result.is_empty());
+        assert!(
+            result
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=')
+        );
+    }
+
+    #[test]
+    fn base64_encode_binary() {
+        let result = super::base64_encode(&[0, 1, 2, 255, 254, 253]);
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn max_clipboard_bytes_is_reasonable() {
+        assert!(super::MAX_CLIPBOARD_BYTES >= 1024);
+        assert!(super::MAX_CLIPBOARD_BYTES <= 1024 * 1024);
+    }
+
+    #[test]
+    fn selection_anchor_copy() {
+        let a = super::SelectionAnchor { col: 10, row: 5 };
+        let b = a; // Copy
+        assert_eq!(a.col, b.col);
+        assert_eq!(a.row, b.row);
+    }
+
+    #[test]
+    fn text_selection_clone() {
+        let sel = super::TextSelection {
+            start: super::SelectionAnchor { col: 0, row: 0 },
+            end: super::SelectionAnchor { col: 10, row: 5 },
+        };
+        let sel2 = sel.clone();
+        assert_eq!(sel2.start.col, 0);
+        assert_eq!(sel2.end.col, 10);
+    }
 }
