@@ -640,28 +640,35 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
         let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
     }
-    drain_and_run_pending(ctx).await;
-    inject_workflow_nudge(ctx); // (#562) auto-continue / completion nudge
-    drain_and_run_pending(ctx).await;
+    drain_pending_and_nudge(ctx).await;
     false
 }
 
-/// Inject a workflow auto-continue or completion nudge as a pending message (#562).
-fn inject_workflow_nudge(ctx: &mut DispatchCtx<'_>) {
-    let (Some(ws), Some(wc)) = (&ctx.workflow_state, &ctx.workflow_config) else {
-        return;
-    };
-    let Ok(s) = ws.lock() else { return };
-    let msg = (wc.auto_continue)
-        .then(|| s.auto_continue_nudge())
-        .flatten()
-        .or_else(|| {
-            (wc.completion_nudge)
-                .then(|| s.completion_nudge())
+/// Drain pending messages, then inject a workflow nudge if applicable (#562).
+async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
+    drain_and_run_pending(ctx).await;
+    let nudged = match (&ctx.workflow_state, &ctx.workflow_config) {
+        (Some(ws), Some(wc)) if wc.auto_continue || wc.completion_nudge => {
+            let Ok(s) = ws.lock() else { return };
+            let n = (wc.auto_continue)
+                .then(|| s.auto_continue_nudge())
                 .flatten()
-        });
-    if let Some(m) = msg {
-        ctx.session.enqueue_pending(m);
+                .or_else(|| {
+                    (wc.completion_nudge)
+                        .then(|| s.completion_nudge())
+                        .flatten()
+                });
+            if let Some(m) = n {
+                ctx.session.enqueue_pending(m);
+                true
+            } else {
+                false
+            }
+        }
+        _ => false,
+    };
+    if nudged {
+        drain_and_run_pending(ctx).await;
     }
 }
 

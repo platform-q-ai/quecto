@@ -347,7 +347,6 @@ pub(crate) fn build_agent_from_config(
         notification_rx,
         subagent_registry,
         workflow_state,
-        workflow_config: _workflow_config,
     } = build_tool_registry(ToolRegistryArgs {
         base_dir,
         config: &config,
@@ -421,7 +420,6 @@ struct ToolRegistryBuild {
     notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
     subagent_registry: Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
-    workflow_config: crate::domain::workflow::WorkflowConfig,              // #562
 }
 
 struct ToolRegistryArgs<'a> {
@@ -492,7 +490,6 @@ fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBuild {
         &config.workflow,
         None, // Emitter wired separately in UDS mode (#562)
     );
-    let wf_config = config.workflow.clone();
 
     let ext_registry =
         crate::interface::shared::build_and_register_native_extensions(config, http_client);
@@ -514,7 +511,6 @@ fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBuild {
             None
         },
         workflow_state: wf_state,
-        workflow_config: wf_config,
     }
 }
 
