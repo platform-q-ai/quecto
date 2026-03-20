@@ -77,6 +77,98 @@ pub fn new_registry() -> SubagentRegistry {
     Arc::new(Mutex::new(HashMap::new()))
 }
 
+// ─── Subagent notifications (#523) ───────────────────────────────────────────
+
+/// Maximum summary length for notification messages (chars).
+const MAX_SUMMARY_LEN: usize = 200;
+
+/// A notification from a child agent to the parent dispatch loop (#523).
+///
+/// Sent by the monitor task when a child reaches a terminal or notable state.
+/// The parent dispatch loop injects these as follow-up messages to the LLM.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubagentNotification {
+    /// Child agent finished processing a prompt successfully.
+    Completed { agent_id: String, summary: String },
+    /// Child agent's last tool execution returned an error.
+    Errored { agent_id: String, error: String },
+    /// Child agent process exited (connection closed or process reaped).
+    Exited { agent_id: String },
+}
+
+impl SubagentNotification {
+    /// Format this notification as a human-readable message suitable for
+    /// injection into the parent LLM's conversation.
+    pub fn to_message(&self) -> String {
+        match self {
+            Self::Completed { agent_id, summary } => {
+                format!(
+                    "[subagent] Agent '{}' completed. Last output: {}",
+                    agent_id, summary
+                )
+            }
+            Self::Errored { agent_id, error } => {
+                format!("[subagent] Agent '{}' errored: {}", agent_id, error)
+            }
+            Self::Exited { agent_id } => {
+                format!(
+                    "[subagent] Agent '{}' exited unexpectedly (process terminated)",
+                    agent_id
+                )
+            }
+        }
+    }
+}
+
+/// Sender half of the notification channel.
+pub type NotificationTx = tokio::sync::mpsc::Sender<SubagentNotification>;
+
+/// Receiver half of the notification channel.
+pub type NotificationRx = tokio::sync::mpsc::Receiver<SubagentNotification>;
+
+/// Default capacity for the bounded notification channel.
+pub const NOTIFICATION_CHANNEL_CAPACITY: usize = 64;
+
+/// Create a new bounded notification channel.
+pub fn new_notification_channel() -> (NotificationTx, NotificationRx) {
+    tokio::sync::mpsc::channel(NOTIFICATION_CHANNEL_CAPACITY)
+}
+
+/// Extract a summary string from the `messages` array of an `agent_end` event.
+///
+/// Looks for the last assistant message's content text and truncates to
+/// [`MAX_SUMMARY_LEN`] characters. Returns `"(no output)"` if no assistant
+/// text is found.
+pub fn extract_summary(messages: &serde_json::Value) -> String {
+    let default = "(no output)".to_string();
+    let Some(arr) = messages.as_array() else {
+        return default;
+    };
+    // Walk backwards to find the last assistant message with content.
+    for msg in arr.iter().rev() {
+        let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
+        if role == "assistant" {
+            if let Some(content) = msg.get("content").and_then(|v| v.as_str()) {
+                if !content.is_empty() {
+                    return truncate_summary(content);
+                }
+            }
+        }
+    }
+    default
+}
+
+/// Truncate a string to [`MAX_SUMMARY_LEN`] characters, appending "…" if truncated.
+fn truncate_summary(s: &str) -> String {
+    if s.len() <= MAX_SUMMARY_LEN {
+        s.to_string()
+    } else {
+        let mut truncated = s[..MAX_SUMMARY_LEN].to_string();
+        truncated.push_str("...");
+        truncated
+    }
+}
+
 /// Validate an agent_id string for format (shared between spawn and agent_cmd).
 pub fn validate_agent_id_format(agent_id: &str) -> Result<(), String> {
     let len = agent_id.len();
@@ -193,5 +285,128 @@ mod tests {
     fn test_entry_socket_path() {
         let entry = SubagentEntry::new(PathBuf::from("/run/quecto.sock"), 0);
         assert_eq!(entry.socket_path, PathBuf::from("/run/quecto.sock"));
+    }
+
+    // --- SubagentNotification (#523) ---
+
+    #[test]
+    fn test_completed_message_format() {
+        let n = SubagentNotification::Completed {
+            agent_id: "researcher".into(),
+            summary: "All tests pass".into(),
+        };
+        let msg = n.to_message();
+        assert!(msg.starts_with("[subagent]"));
+        assert!(msg.contains("researcher"));
+        assert!(msg.contains("completed"));
+        assert!(msg.contains("All tests pass"));
+    }
+
+    #[test]
+    fn test_errored_message_format() {
+        let n = SubagentNotification::Errored {
+            agent_id: "linter".into(),
+            error: "rate limit exceeded".into(),
+        };
+        let msg = n.to_message();
+        assert!(msg.starts_with("[subagent]"));
+        assert!(msg.contains("linter"));
+        assert!(msg.contains("errored"));
+        assert!(msg.contains("rate limit exceeded"));
+    }
+
+    #[test]
+    fn test_exited_message_format() {
+        let n = SubagentNotification::Exited {
+            agent_id: "formatter".into(),
+        };
+        let msg = n.to_message();
+        assert!(msg.starts_with("[subagent]"));
+        assert!(msg.contains("formatter"));
+        assert!(msg.contains("exited"));
+    }
+
+    // --- extract_summary ---
+
+    #[test]
+    fn test_extract_summary_from_assistant_message() {
+        let messages = serde_json::json!([
+            {"role": "user", "content": "Do something"},
+            {"role": "assistant", "content": "The analysis is complete"}
+        ]);
+        assert_eq!(extract_summary(&messages), "The analysis is complete");
+    }
+
+    #[test]
+    fn test_extract_summary_truncates_long_text() {
+        let long = "x".repeat(300);
+        let messages = serde_json::json!([
+            {"role": "assistant", "content": long}
+        ]);
+        let summary = extract_summary(&messages);
+        assert!(summary.len() <= 203); // 200 + "..."
+        assert!(summary.ends_with("..."));
+    }
+
+    #[test]
+    fn test_extract_summary_empty_messages() {
+        let messages = serde_json::json!([]);
+        assert_eq!(extract_summary(&messages), "(no output)");
+    }
+
+    #[test]
+    fn test_extract_summary_no_assistant() {
+        let messages = serde_json::json!([
+            {"role": "tool", "content": "tool output"}
+        ]);
+        assert_eq!(extract_summary(&messages), "(no output)");
+    }
+
+    #[test]
+    fn test_extract_summary_non_array() {
+        let messages = serde_json::json!("not an array");
+        assert_eq!(extract_summary(&messages), "(no output)");
+    }
+
+    #[test]
+    fn test_extract_summary_last_assistant() {
+        let messages = serde_json::json!([
+            {"role": "assistant", "content": "First response"},
+            {"role": "user", "content": "Another question"},
+            {"role": "assistant", "content": "Second response"}
+        ]);
+        assert_eq!(extract_summary(&messages), "Second response");
+    }
+
+    // --- notification channel ---
+
+    #[tokio::test]
+    async fn test_notification_channel_bounded() {
+        let (tx, _rx) = new_notification_channel();
+        for i in 0..NOTIFICATION_CHANNEL_CAPACITY {
+            let n = SubagentNotification::Completed {
+                agent_id: format!("bot-{}", i),
+                summary: "done".into(),
+            };
+            assert!(tx.try_send(n).is_ok());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_notification_drain() {
+        let (tx, mut rx) = new_notification_channel();
+        for i in 0..3 {
+            let _ = tx
+                .send(SubagentNotification::Exited {
+                    agent_id: format!("bot-{}", i),
+                })
+                .await;
+        }
+        drop(tx);
+        let mut count = 0;
+        while rx.recv().await.is_some() {
+            count += 1;
+        }
+        assert_eq!(count, 3);
     }
 }

@@ -306,7 +306,6 @@ pub(crate) fn cmd_agent(
     run_agent_session(&base_dir, build.agent, &flags, &mut out)
 }
 
-/// Result of building an agent from config.
 pub(crate) struct AgentBuildResult {
     pub agent: AgentLoopImpl,
     pub workflow_config: crate::domain::workflow::WorkflowConfig,
@@ -316,9 +315,10 @@ pub(crate) struct AgentBuildResult {
     pub model: String,
     /// Shared extension registry for UDS get_extensions / reload_extensions.
     pub ext_registry: std::sync::Arc<std::sync::Mutex<ExtensionRegistry>>,
+    /// Receiver for subagent notifications (#523).
+    pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
 }
 
-/// Load config, build provider, and construct the agent loop. Returns None on error.
 pub(crate) fn build_agent_from_config(
     base_dir: &std::path::Path,
     config_path: &std::path::Path,
@@ -362,6 +362,7 @@ pub(crate) fn build_agent_from_config(
         model,
         ext_registry,
         extension_prompt_snippets,
+        notification_rx,
     } = build_tool_registry(ToolRegistryArgs {
         base_dir,
         config: &config,
@@ -371,7 +372,6 @@ pub(crate) fn build_agent_from_config(
     });
 
     // Remove disabled tools before boxing the registry (#402).
-    // Uses remove_all() for a single rebuild_definitions() call.
     let mut registry = registry;
     let warnings = registry.remove_all(&flags.disabled_tools);
     for name in &warnings {
@@ -381,7 +381,6 @@ pub(crate) fn build_agent_from_config(
         ));
     }
 
-    // Resolve effort level: CLI flag > config file (validated here).
     let effort = flags.effort.or_else(|| {
         config.agents.defaults.effort.as_deref().and_then(|s| {
             crate::domain::provider::EffortLevel::parse(s).or_else(|| {
@@ -421,10 +420,10 @@ pub(crate) fn build_agent_from_config(
         extension_prompt_snippets,
         model,
         ext_registry: std::sync::Arc::new(std::sync::Mutex::new(ext_registry)),
+        notification_rx,
     })
 }
 
-/// Intermediate result from tool registry construction.
 struct ToolRegistryBuild {
     registry: ToolRegistryImpl,
     spill_store: Arc<FileContextSpillStore>,
@@ -432,9 +431,10 @@ struct ToolRegistryBuild {
     model: String,
     ext_registry: ExtensionRegistry,
     extension_prompt_snippets: String,
+    /// Receiver for subagent notifications (#523). None in stub mode.
+    notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
 }
 
-/// Inputs for building the tool registry (avoids >4 arguments).
 struct ToolRegistryArgs<'a> {
     base_dir: &'a std::path::Path,
     config: &'a Config,
@@ -443,7 +443,6 @@ struct ToolRegistryArgs<'a> {
     stderr: &'a mut String,
 }
 
-/// Build the tool registry, spill store, and session key from config + flags.
 fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBuild {
     let ToolRegistryArgs {
         base_dir,
@@ -488,11 +487,14 @@ fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBuild {
     )));
     let subagent_registry = AgentCmdTool::new_registry();
     let socket_dir = crate::interface::shared::xdg_runtime_dir_or_temp();
+    let (notify_tx, notify_rx) =
+        crate::infrastructure::tools::subagent_registry::new_notification_channel();
     registry.register(Arc::new(
         SpawnTool::with_base_dir(vec![], restrict_to_workspace, base_dir.to_path_buf())
             .with_network(effective_network)
             .with_socket_dir(socket_dir)
-            .with_registry(subagent_registry.clone()),
+            .with_registry(subagent_registry.clone())
+            .with_notify_tx(notify_tx),
     ));
     registry.register(Arc::new(AgentCmdTool::new(subagent_registry)));
     crate::interface::shared::register_workflow_tool(&mut registry, &config.workflow);
@@ -502,6 +504,7 @@ fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBuild {
     let extension_prompt_snippets = ext_registry.system_prompt_snippets();
     crate::interface::shared::register_extension_tools(&mut registry, &ext_registry);
 
+    let has_base_dir = !base_dir.as_os_str().is_empty();
     ToolRegistryBuild {
         registry,
         spill_store,
@@ -509,10 +512,10 @@ fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBuild {
         model,
         ext_registry,
         extension_prompt_snippets,
+        notification_rx: if has_base_dir { Some(notify_rx) } else { None },
     }
 }
 
-/// Run the agent loop with session load/save. Returns the exit code.
 pub(crate) fn run_agent_session(
     base_dir: &std::path::Path,
     agent: AgentLoopImpl,
@@ -717,8 +720,8 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         socket_override: None,
         session_store_override: None,
         ext_registry: Some(build.ext_registry),
-
         persist: flags.persist,
+        notification_rx: build.notification_rx,
     })
 }
 

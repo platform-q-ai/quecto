@@ -558,6 +558,19 @@ pub struct QuectoWorld {
     pub guard_captured_name: Option<String>,
     /// Captured guard arguments
     pub guard_captured_args: Option<String>,
+    // --- Subagent notify (#523) ---
+    /// Formatted notification message for BDD assertions
+    pub notify_message: Option<String>,
+    /// JSON messages array for summary extraction scenarios
+    pub notify_messages_json: Option<serde_json::Value>,
+    /// Extracted summary from agent_end messages
+    pub notify_extracted_summary: Option<String>,
+    /// Notification channel sender for BDD
+    pub notify_tx: Option<quecto::infrastructure::tools::subagent_registry::NotificationTx>,
+    /// Notification channel receiver for BDD
+    pub notify_rx: Option<quecto::infrastructure::tools::subagent_registry::NotificationRx>,
+    /// Count from drain operation
+    pub notify_drain_count: Option<usize>,
     // --- Subagent monitor (#522) ---
     /// SubagentEntry under test for monitor BDD scenarios
     pub monitor_entry: Option<quecto::infrastructure::tools::subagent_registry::SubagentEntry>,
@@ -866,6 +879,7 @@ mod session_steps;
 mod skills_steps;
 mod spawn_tool_steps;
 mod subagent_monitor_steps;
+mod subagent_notify_steps;
 mod subagent_steps;
 mod tool_empty_args_steps;
 mod tool_guard_steps;

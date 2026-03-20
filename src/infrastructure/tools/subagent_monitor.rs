@@ -10,7 +10,10 @@
 
 use std::time::Instant;
 
-use super::subagent_registry::{SubagentEntry, SubagentRegistry, SubagentStatus};
+use super::subagent_registry::{
+    NotificationTx, SubagentEntry, SubagentNotification, SubagentRegistry, SubagentStatus,
+    extract_summary,
+};
 
 /// Maximum length for a single JSON-lines event (1 MiB).
 /// Lines exceeding this are dropped to prevent OOM from misbehaving children.
@@ -114,19 +117,28 @@ pub fn mark_exited(entry: &mut SubagentEntry) {
 /// Spawn a background monitor task that connects to a child agent's UDS socket
 /// and reads the JSON-lines event stream, updating the registry in real-time.
 ///
+/// If `notify_tx` is `Some`, the monitor sends [`SubagentNotification`]s when
+/// the child completes, errors, or exits (#523).
+///
 /// Returns a `JoinHandle` that can be aborted to stop the monitor.
 pub fn spawn_monitor_task(
     agent_id: String,
     socket_path: std::path::PathBuf,
     registry: SubagentRegistry,
+    notify_tx: Option<NotificationTx>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        monitor_loop(&agent_id, &socket_path, &registry).await;
+        monitor_loop(&agent_id, &socket_path, &registry, notify_tx.as_ref()).await;
     })
 }
 
 /// Internal monitor loop: connect → read lines → apply events → detect close.
-async fn monitor_loop(agent_id: &str, socket_path: &std::path::Path, registry: &SubagentRegistry) {
+async fn monitor_loop(
+    agent_id: &str,
+    socket_path: &std::path::Path,
+    registry: &SubagentRegistry,
+    notify_tx: Option<&NotificationTx>,
+) {
     use tokio::io::{AsyncBufReadExt, BufReader};
 
     // Retry connection with increasing backoff — the socket should already be
@@ -136,6 +148,12 @@ async fn monitor_loop(agent_id: &str, socket_path: &std::path::Path, registry: &
         None => {
             tracing::warn!(agent = %agent_id, "monitor: failed to connect to child socket");
             update_entry(registry, agent_id, mark_exited);
+            send_notification(
+                notify_tx,
+                SubagentNotification::Exited {
+                    agent_id: agent_id.to_string(),
+                },
+            );
             return;
         }
     };
@@ -157,24 +175,90 @@ async fn monitor_loop(agent_id: &str, socket_path: &std::path::Path, registry: &
                     continue;
                 }
                 // Only acquire the mutex lock for state-changing events.
-                // The pre-filter inside apply_event handles token events cheaply,
-                // but we also skip the lock entirely for obvious non-state events.
                 if STATE_CHANGING_EVENTS.iter().any(|pat| line.contains(pat)) {
                     update_entry(registry, agent_id, |e| apply_event(e, &line));
+                    // Send notifications for terminal/notable events (#523).
+                    maybe_notify(notify_tx, agent_id, &line);
                 }
             }
             Ok(None) => {
                 // EOF — child closed the connection.
                 tracing::info!(agent = %agent_id, "monitor: child connection closed (EOF)");
                 update_entry(registry, agent_id, mark_exited);
+                send_notification(
+                    notify_tx,
+                    SubagentNotification::Exited {
+                        agent_id: agent_id.to_string(),
+                    },
+                );
                 return;
             }
             Err(e) => {
                 tracing::warn!(agent = %agent_id, error = %e, "monitor: read error");
                 update_entry(registry, agent_id, mark_exited);
+                send_notification(
+                    notify_tx,
+                    SubagentNotification::Exited {
+                        agent_id: agent_id.to_string(),
+                    },
+                );
                 return;
             }
         }
+    }
+}
+
+/// Check if a JSON-lines event should trigger a notification and send it.
+pub fn maybe_notify(notify_tx: Option<&NotificationTx>, agent_id: &str, line: &str) {
+    let Some(tx) = notify_tx else { return };
+
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+        return;
+    };
+    let event_type = match value.get("type").and_then(|v| v.as_str()) {
+        Some(t) => t,
+        None => return,
+    };
+
+    let notification = match event_type {
+        "agent_end" => {
+            let messages = value.get("messages").cloned().unwrap_or_default();
+            let summary = extract_summary(&messages);
+            Some(SubagentNotification::Completed {
+                agent_id: agent_id.to_string(),
+                summary,
+            })
+        }
+        "tool_execution_end" => {
+            let is_error = value
+                .get("isError")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if is_error {
+                let tool_name = value
+                    .get("toolName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                Some(SubagentNotification::Errored {
+                    agent_id: agent_id.to_string(),
+                    error: format!("tool '{}' returned error", tool_name),
+                })
+            } else {
+                None
+            }
+        }
+        _ => None,
+    };
+
+    if let Some(n) = notification {
+        send_notification(Some(tx), n);
+    }
+}
+
+/// Best-effort send of a notification (non-blocking, drops if channel is full).
+fn send_notification(tx: Option<&NotificationTx>, notification: SubagentNotification) {
+    if let Some(tx) = tx {
+        let _ = tx.try_send(notification);
     }
 }
 
@@ -415,5 +499,77 @@ mod tests {
 
         mark_exited(&mut entry);
         assert_eq!(entry.status, SubagentStatus::Exited);
+    }
+
+    // --- maybe_notify (#523) ---
+
+    #[tokio::test]
+    async fn test_notify_on_agent_end() {
+        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
+        let line = r#"{"type":"agent_end","messages":[{"role":"assistant","content":"Done"}]}"#;
+        maybe_notify(Some(&tx), "worker", line);
+        let notif = rx.try_recv().unwrap();
+        match notif {
+            SubagentNotification::Completed { agent_id, summary } => {
+                assert_eq!(agent_id, "worker");
+                assert_eq!(summary, "Done");
+            }
+            _ => panic!("expected Completed"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_notify_on_tool_error() {
+        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
+        let line = r#"{"type":"tool_execution_end","toolCallId":"c1","toolName":"bash","result":{"content":[]},"isError":true}"#;
+        maybe_notify(Some(&tx), "worker", line);
+        let notif = rx.try_recv().unwrap();
+        match notif {
+            SubagentNotification::Errored { agent_id, error } => {
+                assert_eq!(agent_id, "worker");
+                assert!(error.contains("bash"));
+            }
+            _ => panic!("expected Errored"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_no_notify_on_agent_start() {
+        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
+        let line = r#"{"type":"agent_start"}"#;
+        maybe_notify(Some(&tx), "worker", line);
+        assert!(rx.try_recv().is_err(), "no notification should be sent");
+    }
+
+    #[tokio::test]
+    async fn test_no_notify_on_successful_tool_end() {
+        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
+        let line = r#"{"type":"tool_execution_end","toolCallId":"c1","toolName":"bash","result":{"content":[]},"isError":false}"#;
+        maybe_notify(Some(&tx), "worker", line);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_notify_none_tx_is_noop() {
+        // Should not panic
+        maybe_notify(None, "worker", r#"{"type":"agent_end","messages":[]}"#);
+    }
+
+    #[tokio::test]
+    async fn test_send_notification_exited() {
+        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
+        send_notification(
+            Some(&tx),
+            SubagentNotification::Exited {
+                agent_id: "bot".to_string(),
+            },
+        );
+        let notif = rx.try_recv().unwrap();
+        assert_eq!(
+            notif,
+            SubagentNotification::Exited {
+                agent_id: "bot".to_string()
+            }
+        );
     }
 }

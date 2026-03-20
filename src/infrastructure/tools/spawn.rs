@@ -16,6 +16,8 @@ use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 
 pub use super::subagent_registry::{SubagentEntry, SubagentRegistry};
 
+use super::subagent_registry::NotificationTx;
+
 /// Tool that spawns a child `quecto agent` process in UDS mode.
 ///
 /// When executed, validates the request, launches the child as a
@@ -36,6 +38,8 @@ pub struct SpawnTool {
     socket_dir: PathBuf,
     /// Shared registry of spawned subagents.
     registry: SubagentRegistry,
+    /// Optional notification sender for parent LLM auto-notify (#523).
+    notify_tx: Option<NotificationTx>,
 }
 
 impl SpawnTool {
@@ -47,6 +51,7 @@ impl SpawnTool {
             base_dir: PathBuf::new(),
             socket_dir: PathBuf::new(),
             registry: Arc::new(Mutex::new(HashMap::new())),
+            notify_tx: None,
         }
     }
 
@@ -63,6 +68,7 @@ impl SpawnTool {
             base_dir,
             socket_dir: PathBuf::new(),
             registry: Arc::new(Mutex::new(HashMap::new())),
+            notify_tx: None,
         }
     }
 
@@ -81,6 +87,12 @@ impl SpawnTool {
     /// Inject a shared subagent registry (used when wiring spawn + agent_cmd together).
     pub fn with_registry(mut self, registry: SubagentRegistry) -> Self {
         self.registry = registry;
+        self
+    }
+
+    /// Set the notification sender for auto-notifying the parent LLM (#523).
+    pub fn with_notify_tx(mut self, tx: NotificationTx) -> Self {
+        self.notify_tx = Some(tx);
         self
     }
 
@@ -207,10 +219,12 @@ impl SpawnTool {
             );
 
         // Start a persistent monitor task to track child events in real-time (#522).
+        // Pass the notification sender so the monitor can auto-notify the parent (#523).
         let monitor_handle = super::subagent_monitor::spawn_monitor_task(
             session_name.to_string(),
             socket_path.clone(),
             self.registry.clone(),
+            self.notify_tx.clone(),
         );
 
         // Store the monitor handle so it can be aborted on shutdown.
@@ -515,9 +529,6 @@ mod tests {
         );
         assert!(tool.registry.lock().unwrap().contains_key("test"));
     }
-
-    // --- validate_agent_id_format ---
-
     #[test]
     fn test_validate_agent_id_format_empty_string() {
         let result = super::super::subagent_registry::validate_agent_id_format("");
@@ -580,9 +591,6 @@ mod tests {
         let result = super::super::subagent_registry::validate_agent_id_format("böt");
         assert!(result.is_err());
     }
-
-    // --- execute() stub mode (empty base_dir) ---
-
     #[tokio::test]
     async fn test_execute_stub_mode_success() {
         let tool = SpawnTool::new(vec![], true);
@@ -630,9 +638,6 @@ mod tests {
         assert!(!result.is_error);
         assert!(result.content.contains("my-bot"));
     }
-
-    // --- execute() with invalid input ---
-
     #[tokio::test]
     async fn test_execute_invalid_json() {
         let tool = SpawnTool::new(vec![], true);
@@ -663,9 +668,6 @@ mod tests {
         assert!(result.is_error);
         assert!(result.content.contains("[a-zA-Z0-9_-]"));
     }
-
-    // --- parse_args edge cases ---
-
     #[test]
     fn test_parse_args_invalid_json_garbage() {
         let tool = test_tool();
@@ -714,9 +716,6 @@ mod tests {
         assert!(cfg_t.restrict_to_workspace);
         assert!(!cfg_f.restrict_to_workspace);
     }
-
-    // --- shutdown_all ---
-
     #[test]
     fn test_shutdown_all_clears_registry() {
         let registry: SubagentRegistry = Arc::new(Mutex::new(HashMap::new()));
@@ -728,9 +727,6 @@ mod tests {
         shutdown_all(&registry);
         assert!(registry.lock().unwrap().is_empty());
     }
-
-    // --- Debug trait ---
-
     #[test]
     fn test_debug_trait() {
         let tool = SpawnTool::new(vec!["bot".to_string()], true);

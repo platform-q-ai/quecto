@@ -189,6 +189,7 @@ fn execute_uds(world: &mut QuectoWorld) {
             session_store_override: None,
             ext_registry: Some(ext_registry),
             persist: false,
+            notification_rx: None,
         })
     });
 
@@ -881,6 +882,7 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
             session_store_override: None,
             ext_registry: Some(ext_registry),
             persist: false,
+            notification_rx: None,
         })
     });
 
@@ -1220,6 +1222,7 @@ fn mc_spawn_agent(
             session_store_override: None,
             ext_registry: Some(ext_registry),
             persist,
+            notification_rx: None,
         })
     });
 
