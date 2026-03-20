@@ -77,3 +77,17 @@ fn collect_rs_files(dir: &Path, files: &mut Vec<String>) {
         }
     }
 }
+
+#[then("the pre-push script should lint with --workspace flag")]
+fn then_pre_push_lints_workspace(_world: &mut QuectoWorld) {
+    let content = std::fs::read_to_string("scripts/pre-push.sh").expect("read scripts/pre-push.sh");
+    // Find the actual clippy invocation line (not echo/comment lines).
+    let has_workspace_clippy = content.lines().any(|line| {
+        let trimmed = line.trim();
+        trimmed.starts_with("cargo clippy") && trimmed.contains("--workspace")
+    });
+    assert!(
+        has_workspace_clippy,
+        "pre-push.sh must invoke `cargo clippy --workspace` to lint all workspace members including quecto-tui"
+    );
+}

@@ -207,8 +207,8 @@ fn escape_sequence_len(data: &[u8]) -> usize {
                 }
                 return data.len(); // Should not happen if complete.
             }
-            for i in 2..data.len() {
-                if (0x40..=0x7E).contains(&data[i]) {
+            for (i, &byte) in data.iter().enumerate().skip(2) {
+                if (0x40..=0x7E).contains(&byte) {
                     return i + 1;
                 }
             }

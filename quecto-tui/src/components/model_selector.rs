@@ -598,7 +598,7 @@ mod tests {
         // The remaining "[31m" is harmless text (not a valid escape sequence).
         let mut sel = ModelSelector::new(Some("evil\x1b[31mmodel"));
         let lines = sel.render(60);
-        let raw = lines.join("");
+        let _raw = lines.join("");
         // The injected \x1b should be stripped by sanitize_model_name.
         // Count \x1b occurrences that are NOT from theme styling.
         // Verify the model ID stored is sanitized.

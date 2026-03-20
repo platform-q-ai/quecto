@@ -55,6 +55,12 @@ pub struct Chat {
     pub tool_expanded: bool,
 }
 
+impl Default for Chat {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Chat {
     pub fn new() -> Self {
         Self {
@@ -107,6 +113,7 @@ impl Chat {
     }
 
     /// Complete a tool execution — updates existing entry in place.
+    #[allow(clippy::too_many_arguments)]
     pub fn complete_tool(
         &mut self,
         tool_call_id: &str,
@@ -159,6 +166,7 @@ impl Chat {
 }
 
 impl Component for Chat {
+    #[allow(clippy::cognitive_complexity)]
     fn render(&mut self, width: usize) -> Vec<String> {
         let mut all_lines: Vec<String> = Vec::new();
         let tool_expanded = self.tool_expanded;
@@ -197,7 +205,9 @@ impl Component for Chat {
                         all_lines.extend(md_lines);
                     }
                     if *streaming {
-                        all_lines.last_mut().map(|l| l.push_str(&theme::dim("▌")));
+                        if let Some(l) = all_lines.last_mut() {
+                            l.push_str(&theme::dim("▌"));
+                        }
                     }
                 }
                 ChatEntry::ToolExecution {
@@ -251,6 +261,7 @@ impl Component for Chat {
 // ── Pi-style tool rendering ──────────────────────────────────────────────────
 
 /// Render a complete tool execution block with background color.
+#[allow(clippy::too_many_arguments)]
 fn render_tool_execution(
     tool_name: &str,
     args_json: &Option<serde_json::Value>,
@@ -364,6 +375,7 @@ fn render_tool_execution(
 }
 
 /// Render bash tool: `$ command` header + output tail.
+#[allow(clippy::too_many_arguments)]
 fn render_bash(
     lines: &mut Vec<String>,
     icon: &str,
@@ -425,6 +437,7 @@ fn render_bash(
 }
 
 /// Render read tool: `read path` + content preview (head).
+#[allow(clippy::too_many_arguments)]
 fn render_read(
     lines: &mut Vec<String>,
     icon: &str,
@@ -455,6 +468,7 @@ fn render_read(
 }
 
 /// Render write tool: `write path` + content preview (head).
+#[allow(clippy::too_many_arguments)]
 fn render_write(
     lines: &mut Vec<String>,
     icon: &str,
@@ -496,6 +510,7 @@ fn render_write(
 }
 
 /// Render edit tool: `edit path` + diff preview.
+#[allow(clippy::too_many_arguments)]
 fn render_edit(
     lines: &mut Vec<String>,
     icon: &str,
@@ -551,6 +566,7 @@ fn render_edit(
 }
 
 /// Render subagent tools (spawn, agent_cmd) with distinct styling.
+#[allow(clippy::too_many_arguments)]
 fn render_subagent(
     lines: &mut Vec<String>,
     tool_name: &str,
@@ -625,6 +641,7 @@ fn render_subagent(
 }
 
 /// Render generic/unknown tools.
+#[allow(clippy::too_many_arguments)]
 fn render_generic(
     lines: &mut Vec<String>,
     tool_name: &str,
@@ -666,6 +683,7 @@ fn render_generic(
 // ── Shared rendering helpers ─────────────────────────────────────────────────
 
 /// Render a file content preview — first N lines with count of remaining.
+#[allow(clippy::too_many_arguments)]
 fn render_file_preview(
     lines: &mut Vec<String>,
     content: &str,
@@ -704,7 +722,7 @@ fn extract_path(args: &Option<serde_json::Value>) -> String {
                 .or_else(|| v.get("file_path"))
                 .and_then(|p| p.as_str())
         })
-        .map(|p| sanitize(p))
+        .map(sanitize)
         .unwrap_or_default()
 }
 

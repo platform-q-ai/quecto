@@ -73,6 +73,12 @@ pub enum DeliveryMode {
     FollowUp,
 }
 
+impl Default for MessageQueue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MessageQueue {
     pub fn new() -> Self {
         Self {

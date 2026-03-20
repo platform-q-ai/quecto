@@ -6,3 +6,6 @@ Feature: Architecture boundaries and ports
 
   Scenario: Application layer avoids direct runtime I/O
     Then the application source should not contain runtime I/O patterns
+
+  Scenario: Pre-push clippy lints all workspace members
+    Then the pre-push script should lint with --workspace flag

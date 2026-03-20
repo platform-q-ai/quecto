@@ -49,8 +49,8 @@ step "2/7" "BDD quality gate (stubs, always-pass tests, reimplemented logic)"
 step "3/7" "cargo fmt --check"
 cargo fmt --all -- --check
 
-step "4/7" "cargo clippy (strict)"
-cargo clippy --all-targets --features test-support -- -D warnings \
+step "4/7" "cargo clippy (strict, workspace)"
+cargo clippy --workspace --all-targets --features test-support -- -D warnings \
     -W clippy::cognitive_complexity \
     -W clippy::too_many_arguments \
     -W clippy::too_many_lines

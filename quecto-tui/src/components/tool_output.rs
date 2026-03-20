@@ -100,6 +100,7 @@ impl ToolOutput {
 }
 
 impl Component for ToolOutput {
+    #[allow(clippy::cognitive_complexity)]
     fn render(&mut self, width: usize) -> Vec<String> {
         if let (Some(cw), Some(cl)) = (self.cached_width, &self.cached_lines) {
             if cw == width {

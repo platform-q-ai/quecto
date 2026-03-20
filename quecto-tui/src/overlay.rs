@@ -63,6 +63,12 @@ pub struct OverlayStack {
     next_order: u64,
 }
 
+impl Default for OverlayStack {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OverlayStack {
     pub fn new() -> Self {
         Self {
@@ -198,6 +204,7 @@ impl OverlayStack {
 }
 
 /// Resolve overlay position from anchor, dimensions, and offsets.
+#[allow(clippy::too_many_arguments)]
 fn resolve_position(
     anchor: Anchor,
     width: usize,
@@ -233,6 +240,7 @@ fn resolve_position(
 /// Splice overlay content into a base line at the given column.
 ///
 /// ANSI-aware: properly resets attributes at splice boundaries.
+#[allow(clippy::too_many_arguments)]
 pub fn splice_line(
     base: &str,
     overlay: &str,

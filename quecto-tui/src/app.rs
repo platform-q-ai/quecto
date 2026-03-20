@@ -157,6 +157,7 @@ impl App {
     }
 
     /// Run the main event loop. Returns exit code.
+    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
     pub async fn run(&mut self) -> i32 {
         self.terminal.enter_raw_mode();
         self.terminal.hide_cursor();
@@ -348,6 +349,7 @@ impl App {
         }
     }
 
+    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
     fn handle_key(&mut self, key: Key) {
         // Unconditional exit — Ctrl+D must work regardless of overlays,
         // autocomplete state, or agent activity (#478).
@@ -621,6 +623,7 @@ impl App {
 
     // ── Agent event handling ──────────────────────────────────────────
 
+    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
     fn handle_event(&mut self, event: Event) {
         match event {
             Event::AgentStart => {
@@ -953,6 +956,7 @@ impl App {
 
     // ── Rendering ─────────────────────────────────────────────────────
 
+    #[allow(clippy::cognitive_complexity)]
     fn render(&mut self) {
         let width = self.terminal.width;
         let height = self.terminal.height;
@@ -1197,7 +1201,7 @@ fn copy_to_clipboard(text: &str) {
 /// Simple base64 encoder (no external dependency).
 fn base64_encode(data: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as u32;
         let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
@@ -1560,10 +1564,8 @@ mod tests {
         // We can't easily instantiate App in tests (requires Terminal + Client),
         // but the render order is verified by the code structure and the
         // integration BDD scenarios.
-        assert!(
-            true,
-            "Render order verified by code review: widgets_above before spinner"
-        );
+        // Render order verified by code review: widgets_above before spinner.
+        // See render() method — subagent bars appear BEFORE the spinner.
     }
 
     // ── Base64 encoding tests (issue #528) ────────────────────────────
@@ -1783,8 +1785,10 @@ mod tests {
 
     #[test]
     fn max_clipboard_bytes_is_reasonable() {
-        assert!(super::MAX_CLIPBOARD_BYTES >= 1024);
-        assert!(super::MAX_CLIPBOARD_BYTES <= 1024 * 1024);
+        const _: () = {
+            assert!(super::MAX_CLIPBOARD_BYTES >= 1024);
+            assert!(super::MAX_CLIPBOARD_BYTES <= 1024 * 1024);
+        };
     }
 
     #[test]

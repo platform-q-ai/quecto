@@ -31,6 +31,12 @@ pub struct Editor {
     cached_lines: Option<Vec<String>>,
 }
 
+impl Default for Editor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Editor {
     pub fn new() -> Self {
         Self {
@@ -349,13 +355,10 @@ impl Component for Editor {
         for (row_idx, line) in self.lines.iter().enumerate() {
             let display = if row_idx == self.cursor_row {
                 render_line_with_cursor(line, self.cursor_col, inner_width)
+            } else if visible_width(line) > inner_width {
+                wrap_text(line, inner_width)
             } else {
-                let wrapped = if visible_width(line) > inner_width {
-                    wrap_text(line, inner_width)
-                } else {
-                    vec![line.clone()]
-                };
-                wrapped
+                vec![line.clone()]
             };
             for dl in display {
                 let padded = format!(" {} ", dl);
@@ -912,7 +915,7 @@ mod tests {
         let l1 = e.render(40);
         let l2 = e.render(80);
         // Different widths should produce different renders
-        assert!(l1.len() > 0 && l2.len() > 0);
+        assert!(!l1.is_empty() && !l2.is_empty());
     }
 
     #[test]

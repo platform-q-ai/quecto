@@ -206,7 +206,9 @@ mod tests {
 
     #[test]
     fn terminate_grace_ms_constant_is_reasonable() {
-        assert!(TERMINATE_GRACE_MS >= 100, "grace period too short");
-        assert!(TERMINATE_GRACE_MS <= 5000, "grace period too long");
+        const _: () = {
+            assert!(TERMINATE_GRACE_MS >= 100);
+            assert!(TERMINATE_GRACE_MS <= 5000);
+        };
     }
 }
