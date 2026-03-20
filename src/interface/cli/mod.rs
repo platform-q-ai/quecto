@@ -8,6 +8,7 @@ mod uds_ext_protocol;
 mod uds_extensions;
 mod uds_multi;
 pub mod uds_session;
+mod uds_socket;
 
 use std::path::PathBuf;
 

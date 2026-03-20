@@ -210,7 +210,7 @@ fn when_register_workflow_tools(world: &mut QuectoWorld) {
         .workflow_config
         .as_ref()
         .expect("need workflow config");
-    quecto::interface::shared::register_workflow_tool(&mut registry, config);
+    quecto::interface::shared::register_workflow_tool(&mut registry, config, None);
     world.tool_registry = Some(registry);
     world._tool_guard_tmp = Some(tmp);
 }

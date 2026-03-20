@@ -34,6 +34,8 @@ pub struct UdsLoopArgs<'a> {
     pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
     pub subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
+    pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,      // #562
 }
 pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     let rt = match crate::interface::cli::build_tokio_runtime() {
@@ -45,47 +47,8 @@ pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     };
     rt.block_on(uds_loop_async(args))
 }
-pub(crate) fn reap_stale_sockets(dir: &std::path::Path, max_age: std::time::Duration) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    let cutoff = std::time::SystemTime::now()
-        .checked_sub(max_age)
-        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-    for entry in entries.flatten() {
-        let n = entry.file_name();
-        let s = n.to_string_lossy();
-        if !s.starts_with("quecto-agent-") || !s.ends_with(".sock") {
-            continue;
-        }
-        let is_stale = entry
-            .metadata()
-            .ok()
-            .and_then(|m| m.modified().ok())
-            .is_some_and(|t| t < cutoff);
-        if is_stale {
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
-}
-
-struct SocketGuard(std::path::PathBuf);
-
-impl Drop for SocketGuard {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
-}
-fn bind_secure_socket(path: &std::path::Path) -> std::io::Result<tokio::net::UnixListener> {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::remove_file(path);
-    let listener = tokio::net::UnixListener::bind(path)?;
-    if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
-        let _ = std::fs::remove_file(path);
-        return Err(e);
-    }
-    Ok(listener)
-}
+pub(crate) use super::uds_socket::reap_stale_sockets;
+use super::uds_socket::{SocketGuard, bind_secure_socket};
 
 async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     let UdsLoopArgs {
@@ -102,6 +65,8 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         persist,
         notification_rx,
         subagent_registry,
+        workflow_state,
+        workflow_config,
     } = args;
     let file_store;
     let session_store: &dyn SessionStore = match session_store_override {
@@ -158,6 +123,8 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 persist,
                 notification_rx,
                 subagent_registry,
+                workflow_state,
+                workflow_config,
             },
             listener,
             session_store,
@@ -217,6 +184,8 @@ async fn single_client_loop(
             current_client_id: 0,
             subagent_registry: None,
             notification_rx: None,
+            workflow_state: None,
+            workflow_config: None,
         },
     )
     .await;
@@ -366,6 +335,8 @@ pub(super) struct DispatchCtx<'a> {
     pub subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
+    pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
+    pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,      // #562
 }
 
 pub(super) async fn emit_event_to_broadcast_or_writer(
@@ -669,9 +640,38 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
         let ev = AgentEvent::ok(id.as_deref(), &type_name, None);
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
     }
-    drain_and_run_pending(ctx).await;
+    drain_pending_and_nudge(ctx).await;
     false
 }
+
+/// Drain pending messages, then inject a workflow nudge if applicable (#562).
+async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
+    drain_and_run_pending(ctx).await;
+    let nudged = match (&ctx.workflow_state, &ctx.workflow_config) {
+        (Some(ws), Some(wc)) if wc.auto_continue || wc.completion_nudge => {
+            let Ok(s) = ws.lock() else { return };
+            let n = (wc.auto_continue)
+                .then(|| s.auto_continue_nudge())
+                .flatten()
+                .or_else(|| {
+                    (wc.completion_nudge)
+                        .then(|| s.completion_nudge())
+                        .flatten()
+                });
+            if let Some(m) = n {
+                ctx.session.enqueue_pending(m);
+                true
+            } else {
+                false
+            }
+        }
+        _ => false,
+    };
+    if nudged {
+        drain_and_run_pending(ctx).await;
+    }
+}
+
 async fn run_prompt_dispatch(
     ctx: &mut DispatchCtx<'_>,
     message: String,

@@ -191,6 +191,8 @@ fn execute_uds(world: &mut QuectoWorld) {
             persist: false,
             notification_rx: None,
             subagent_registry: None,
+            workflow_state: None,
+            workflow_config: None,
         })
     });
 
@@ -885,6 +887,8 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
             persist: false,
             notification_rx: None,
             subagent_registry: None,
+            workflow_state: None,
+            workflow_config: None,
         })
     });
 
@@ -1226,6 +1230,8 @@ fn mc_spawn_agent(
             persist,
             notification_rx: None,
             subagent_registry: None,
+            workflow_state: None,
+            workflow_config: None,
         })
     });
 
