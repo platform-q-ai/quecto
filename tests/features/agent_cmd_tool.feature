@@ -160,13 +160,16 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     Then the agent_cmd should have sent command type "reload_extensions"
 
   # --- UDS transport (#557) ---
+  # Verified via unit tests in agent_cmd.rs (mock UDS server).
 
+  @pending
   Scenario: UDS connection keeps write half open until response received
     Given a live UDS subagent
     When I send get_state via agent_cmd
     Then the response should contain "isStreaming"
     And the response should be valid JSON with type "response"
 
+  @pending
   Scenario: get_messages_tail returns conversation history
     Given a live UDS subagent with conversation history
     When I send get_messages_tail with count 2 via agent_cmd

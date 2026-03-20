@@ -194,10 +194,11 @@ async fn send_uds_command(
         .write_all(b"\n")
         .await
         .map_err(|e| DomainError::Tool(format!("write to subagent failed: {e}")))?;
-    // Do NOT shutdown the write half (#557). In multi-client mode, the
-    // server's reader loop exits on EOF → aborts the broadcast writer
-    // task → response is never delivered. Keep the connection open until
-    // we've read the response, then drop the stream.
+    // Do NOT shutdown or drop the write half (#557). In multi-client mode,
+    // the server's reader loop exits on EOF → aborts the broadcast writer
+    // task → response is never delivered. `writer` must stay alive (even
+    // unused) to keep the write half open until the response is read.
+    let _keep_alive = writer;
 
     let mut lines = BufReader::new(reader).lines();
 
