@@ -416,11 +416,15 @@ impl App {
         // Note: Ctrl+D is handled at the top of handle_key (unconditional exit).
         match &key {
             Key::Ctrl('c') => {
-                if self.agent_state.is_running() {
-                    self.handle_abort();
-                } else {
-                    self.editor.set_text("");
-                    self.autocomplete.dismiss();
+                match ctrl_c_action(self.agent_state.is_running(), self.editor.text().is_empty()) {
+                    CtrlCAction::ClearEditor => {
+                        self.editor.set_text("");
+                        self.autocomplete.dismiss();
+                    }
+                    CtrlCAction::AbortAgent => {
+                        self.handle_abort();
+                    }
+                    CtrlCAction::Noop => {}
                 }
                 return;
             }
@@ -857,7 +861,7 @@ impl App {
                 "  Enter          Send message",
                 "  Shift+Enter    Insert newline",
                 "  Escape         Abort agent / clear editor",
-                "  Ctrl+C         Clear editor / abort agent",
+                "  Ctrl+C         Clear editor first, abort if empty",
                 "  Ctrl+D         Exit",
                 "  Ctrl+L         Open model selector",
                 "  Ctrl+O         Toggle tool output expansion",
@@ -1370,6 +1374,30 @@ impl AgentRunState {
     }
 }
 
+/// Result of a Ctrl+C key press (#536).
+#[derive(Debug, PartialEq, Eq)]
+enum CtrlCAction {
+    /// Clear the editor text (and dismiss autocomplete).
+    ClearEditor,
+    /// Abort the running agent.
+    AbortAgent,
+    /// Nothing to do.
+    Noop,
+}
+
+/// Decide what Ctrl+C should do based on agent and editor state (#536).
+///
+/// Priority: clear editor text first; only abort if editor is already empty.
+fn ctrl_c_action(agent_running: bool, editor_empty: bool) -> CtrlCAction {
+    if !editor_empty {
+        CtrlCAction::ClearEditor
+    } else if agent_running {
+        CtrlCAction::AbortAgent
+    } else {
+        CtrlCAction::Noop
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1808,5 +1836,43 @@ mod tests {
         let sel2 = sel.clone();
         assert_eq!(sel2.start.col, 0);
         assert_eq!(sel2.end.col, 10);
+    }
+
+    // ── Ctrl+C action decision tests (#536) ──────────────────────────
+
+    #[test]
+    fn ctrl_c_clears_editor_when_running_and_has_text() {
+        assert_eq!(
+            super::ctrl_c_action(true, false),
+            super::CtrlCAction::ClearEditor,
+            "Ctrl+C should clear editor when agent is running but editor has text"
+        );
+    }
+
+    #[test]
+    fn ctrl_c_aborts_when_running_and_editor_empty() {
+        assert_eq!(
+            super::ctrl_c_action(true, true),
+            super::CtrlCAction::AbortAgent,
+            "Ctrl+C should abort agent when running and editor is empty"
+        );
+    }
+
+    #[test]
+    fn ctrl_c_clears_editor_when_idle_and_has_text() {
+        assert_eq!(
+            super::ctrl_c_action(false, false),
+            super::CtrlCAction::ClearEditor,
+            "Ctrl+C should clear editor when idle and editor has text"
+        );
+    }
+
+    #[test]
+    fn ctrl_c_noop_when_idle_and_editor_empty() {
+        assert_eq!(
+            super::ctrl_c_action(false, true),
+            super::CtrlCAction::Noop,
+            "Ctrl+C should do nothing when idle and editor is empty"
+        );
     }
 }
