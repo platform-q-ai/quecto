@@ -505,3 +505,82 @@ fn then_snippet_contains(world: &mut QuectoWorld, expected: String) {
         snippet
     );
 }
+
+// ─── Nudge tests (#562) ─────────────────────────────────────────────────────
+
+#[given(expr = "a workflow with {int} steps and {int} completed")]
+fn given_workflow_partial(world: &mut QuectoWorld, total: usize, done: usize) {
+    let mut state = WorkflowState::default_bdd();
+    for i in 1..=done.min(total) {
+        let _ = state.skip(i as u32);
+    }
+    world.workflow_state = Some(Arc::new(Mutex::new(state)));
+}
+
+#[given(expr = "a workflow with {int} steps all completed")]
+fn given_workflow_all_done(world: &mut QuectoWorld, total: usize) {
+    let mut state = WorkflowState::default_bdd();
+    let actual_total = state.steps().len();
+    for i in 1..=actual_total.min(total) {
+        let _ = state.skip(i as u32);
+    }
+    world.workflow_state = Some(Arc::new(Mutex::new(state)));
+}
+
+#[when("auto_continue_nudge is called")]
+fn when_auto_continue_nudge(world: &mut QuectoWorld) {
+    let state = world.workflow_state.as_ref().unwrap().lock().unwrap();
+    world.stdout = state.auto_continue_nudge().unwrap_or_default();
+}
+
+#[when("completion_nudge is called")]
+fn when_completion_nudge(world: &mut QuectoWorld) {
+    let state = world.workflow_state.as_ref().unwrap().lock().unwrap();
+    world.stdout = state.completion_nudge().unwrap_or_default();
+}
+
+#[then(expr = "the nudge message should mention step 5")]
+fn then_nudge_mentions_step_5(world: &mut QuectoWorld) {
+    assert!(
+        world.stdout.contains("step 5"),
+        "nudge should mention step 5: {}",
+        world.stdout
+    );
+}
+
+#[then("the nudge message should not be empty")]
+fn then_nudge_not_empty(world: &mut QuectoWorld) {
+    assert!(
+        !world.stdout.is_empty(),
+        "nudge message should not be empty"
+    );
+}
+
+#[then("the result should be None")]
+fn then_result_is_none(world: &mut QuectoWorld) {
+    assert!(
+        world.stdout.is_empty(),
+        "expected None (empty), got: {}",
+        world.stdout
+    );
+}
+
+#[then("the nudge message should mention closing the issue")]
+fn then_nudge_mentions_close(world: &mut QuectoWorld) {
+    let lower = world.stdout.to_lowercase();
+    assert!(
+        lower.contains("close") || lower.contains("Close"),
+        "completion nudge should mention closing: {}",
+        world.stdout
+    );
+}
+
+#[then("the nudge message should mention picking the next issue")]
+fn then_nudge_mentions_next(world: &mut QuectoWorld) {
+    let lower = world.stdout.to_lowercase();
+    assert!(
+        lower.contains("next") || lower.contains("pick"),
+        "completion nudge should mention next issue: {}",
+        world.stdout
+    );
+}

@@ -298,6 +298,7 @@ pub(crate) struct AgentBuildResult {
     pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
     pub subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
 }
 
 pub(crate) fn build_agent_from_config(
@@ -345,6 +346,8 @@ pub(crate) fn build_agent_from_config(
         extension_prompt_snippets,
         notification_rx,
         subagent_registry,
+        workflow_state,
+        workflow_config: _workflow_config,
     } = build_tool_registry(ToolRegistryArgs {
         base_dir,
         config: &config,
@@ -404,6 +407,7 @@ pub(crate) fn build_agent_from_config(
         ext_registry: std::sync::Arc::new(std::sync::Mutex::new(ext_registry)),
         notification_rx,
         subagent_registry,
+        workflow_state,
     })
 }
 
@@ -416,6 +420,8 @@ struct ToolRegistryBuild {
     extension_prompt_snippets: String,
     notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
     subagent_registry: Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
+    workflow_config: crate::domain::workflow::WorkflowConfig,              // #562
 }
 
 struct ToolRegistryArgs<'a> {
@@ -481,7 +487,12 @@ fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBuild {
     ));
     let subagent_registry_for_protocol = subagent_registry.clone();
     registry.register(Arc::new(AgentCmdTool::new(subagent_registry)));
-    crate::interface::shared::register_workflow_tool(&mut registry, &config.workflow);
+    let wf_state = crate::interface::shared::register_workflow_tool(
+        &mut registry,
+        &config.workflow,
+        None, // Emitter wired separately in UDS mode (#562)
+    );
+    let wf_config = config.workflow.clone();
 
     let ext_registry =
         crate::interface::shared::build_and_register_native_extensions(config, http_client);
@@ -502,6 +513,8 @@ fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBuild {
         } else {
             None
         },
+        workflow_state: wf_state,
+        workflow_config: wf_config,
     }
 }
 
@@ -712,13 +725,14 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         persist: flags.persist,
         notification_rx: build.notification_rx,
         subagent_registry: build.subagent_registry,
+        workflow_state: build.workflow_state,
+        workflow_config: Some(build.workflow_config),
     })
 }
 
 #[path = "agent_provider.rs"]
 mod agent_provider;
 pub use agent_provider::build_agent_provider;
-
 #[cfg(test)]
 #[path = "agent_config_tests.rs"]
 mod config_tests;

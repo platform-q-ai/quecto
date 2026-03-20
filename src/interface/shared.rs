@@ -99,7 +99,15 @@ pub fn append_workflow_prompt(
     system.push_str(&state.system_prompt_snippet_with_guards(&wf_config.guards));
 }
 
+/// Shared workflow state handle returned by [`register_workflow_tool`].
+pub type WorkflowStateHandle =
+    std::sync::Arc<std::sync::Mutex<crate::domain::workflow::WorkflowState>>;
+
 /// Register the workflow tool and guard in a tool registry if workflow is enabled.
+///
+/// Returns the shared workflow state handle so the UDS dispatch loop can
+/// inject auto-continue/completion nudges after agent runs (#562).
+/// Returns `None` if workflow is disabled.
 ///
 /// Registers:
 /// 1. The workflow tool (so the LLM can check/uncheck steps)
@@ -107,27 +115,37 @@ pub fn append_workflow_prompt(
 pub fn register_workflow_tool(
     registry: &mut crate::infrastructure::tools::registry::ToolRegistryImpl,
     wf_config: &crate::domain::workflow::WorkflowConfig,
-) {
+    event_emitter: Option<crate::infrastructure::tools::workflow_tool::WorkflowEventEmitter>,
+) -> Option<WorkflowStateHandle> {
     if !wf_config.enabled {
-        return;
+        return None;
     }
-    let state = std::sync::Arc::new(std::sync::Mutex::new(
+    let state: WorkflowStateHandle = std::sync::Arc::new(std::sync::Mutex::new(
         crate::domain::workflow::WorkflowState::from_config(wf_config),
     ));
 
-    // Register tool
-    let mut tool = crate::infrastructure::tools::workflow_tool::WorkflowTool::new(state.clone());
+    // Register tool (with optional event emitter for UDS broadcast #562)
+    let mut tool = if let Some(emitter) = event_emitter {
+        crate::infrastructure::tools::workflow_tool::WorkflowTool::with_event_emitter(
+            state.clone(),
+            emitter,
+        )
+    } else {
+        crate::infrastructure::tools::workflow_tool::WorkflowTool::new(state.clone())
+    };
     tool.set_guards(wf_config.guards.clone());
     registry.register(std::sync::Arc::new(tool));
 
     // Register guard if any guard rules are configured
     if !wf_config.guards.is_empty() {
         let guard = crate::infrastructure::tools::workflow_tool::WorkflowGuard::new(
-            state,
+            state.clone(),
             wf_config.guards.clone(),
         );
         registry.register_guard(std::sync::Arc::new(guard));
     }
+
+    Some(state)
 }
 
 /// Resolve an API key for a provider from a credential snapshot.
