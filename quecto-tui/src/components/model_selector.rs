@@ -13,17 +13,16 @@ use crate::utils::{truncate_to_width, visible_width};
 /// Well-known model identifiers, used as fallback when the caller
 /// doesn't supply a model list.
 const KNOWN_MODELS: &[(&str, &str)] = &[
-    ("claude-sonnet-4-20250514", "Anthropic"),
-    ("claude-opus-4-20250514", "Anthropic"),
-    ("claude-haiku-3.5-20241022", "Anthropic"),
-    ("gpt-4o", "OpenAI"),
-    ("gpt-4o-mini", "OpenAI"),
-    ("gpt-4.1", "OpenAI"),
-    ("gpt-4.1-mini", "OpenAI"),
-    ("o3", "OpenAI"),
-    ("o3-mini", "OpenAI"),
-    ("o4-mini", "OpenAI"),
-    ("codex-mini-latest", "OpenAI"),
+    ("anthropic/claude-opus-4-6", "Anthropic"),
+    ("anthropic/claude-opus-4-5", "Anthropic"),
+    ("anthropic/claude-sonnet-4-6", "Anthropic"),
+    ("anthropic/claude-sonnet-4-5", "Anthropic"),
+    ("gpt-5.4", "OpenAI"),
+    ("gpt-5.4-mini", "OpenAI"),
+    ("gpt-5.4-nano", "OpenAI"),
+    ("gpt-5.3-codex", "OpenAI"),
+    ("gpt-5.3-codex-spark", "OpenAI"),
+    ("gpt-5.2-codex", "OpenAI"),
 ];
 
 /// Maximum query length to prevent unbounded growth.

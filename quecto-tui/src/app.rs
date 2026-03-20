@@ -425,6 +425,14 @@ impl App {
                 self.notify(&format!("Tool output {}", state), NotifyLevel::Info);
                 return;
             }
+            Key::ScrollUp => {
+                self.chat.scroll_up(3);
+                return;
+            }
+            Key::ScrollDown => {
+                self.chat.scroll_down(3);
+                return;
+            }
             Key::PageUp => {
                 self.chat.scroll_up(10);
                 return;
