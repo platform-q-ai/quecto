@@ -135,6 +135,29 @@ pub enum Event {
     Unknown,
 }
 
+// ─── Result text extraction ───────────────────────────────────────────────────
+
+/// Extract the first text content from a tool result JSON value.
+///
+/// The server sends tool results as:
+/// ```json
+/// {"content": [{"type": "text", "text": "..."}]}
+/// ```
+/// This function extracts the `text` field from the first text block.
+/// Used by `app.rs` when handling `ToolExecutionEnd` events.
+pub fn extract_result_text(result: &serde_json::Value) -> String {
+    result
+        .get("content")
+        .and_then(|c| c.as_array())
+        .and_then(|arr| {
+            arr.iter()
+                .filter_map(|v| v.get("text").and_then(|t| t.as_str()))
+                .next()
+        })
+        .unwrap_or("")
+        .to_string()
+}
+
 // ─── Client ───────────────────────────────────────────────────────────────────
 
 /// Error type for client operations.
@@ -443,21 +466,7 @@ mod tests {
         }
     }
 
-    // ── Integration: result text extraction (mirrors app.rs logic) ────
-
-    /// Extract result text from a ToolExecutionEnd event the same way app.rs does.
-    fn extract_result_text(result: &serde_json::Value) -> String {
-        result
-            .get("content")
-            .and_then(|c| c.as_array())
-            .and_then(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.get("text").and_then(|t| t.as_str()))
-                    .next()
-            })
-            .unwrap_or("")
-            .to_string()
-    }
+    // ── Integration: result text extraction ─────────────────────────
 
     #[test]
     fn tool_end_read_result_extraction() {

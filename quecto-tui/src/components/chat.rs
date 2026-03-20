@@ -1208,18 +1208,9 @@ mod tests {
     // 3. Feed to Chat via start_tool + complete_tool
     // 4. Render and verify content appears inside the bg box
 
-    /// Extract result text using the same logic as app.rs handle_event.
+    /// Use the shared extraction function from client.rs.
     fn extract_result_text(result: &serde_json::Value) -> String {
-        result
-            .get("content")
-            .and_then(|c| c.as_array())
-            .and_then(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.get("text").and_then(|t| t.as_str()))
-                    .next()
-            })
-            .unwrap_or("")
-            .to_string()
+        crate::client::extract_result_text(result)
     }
 
     /// Check that bg-colored lines (lines containing the bg ANSI code)

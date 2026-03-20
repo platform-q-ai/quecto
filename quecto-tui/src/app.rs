@@ -617,16 +617,7 @@ impl App {
                 is_error,
                 ..
             } => {
-                let result_text = result
-                    .get("content")
-                    .and_then(|c| c.as_array())
-                    .and_then(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.get("text").and_then(|t| t.as_str()))
-                            .next()
-                    })
-                    .unwrap_or("")
-                    .to_string();
+                let result_text = crate::client::extract_result_text(&result);
                 self.chat
                     .complete_tool(&tool_call_id, &result_text, is_error, None);
                 // Restore spinner message after tool completes.
