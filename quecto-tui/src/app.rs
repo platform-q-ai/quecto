@@ -588,14 +588,13 @@ impl App {
                 tool_name,
                 args,
             } => {
+                let is_subagent_tool = tool_name == "spawn" || tool_name == "agent_cmd";
                 let args_str = if args.is_object() || args.is_array() {
                     serde_json::to_string(&args).unwrap_or_default()
                 } else {
                     args.to_string()
                 };
                 if let Some(spinner) = &mut self.spinner {
-                    // Subagent tools get a more descriptive spinner message.
-                    // Sanitize LLM-controlled values to prevent terminal escape injection.
                     let msg = match tool_name.as_str() {
                         "spawn" => {
                             let agent: String = args
@@ -628,18 +627,28 @@ impl App {
                     };
                     spinner.set_message(&msg);
                 }
-                self.chat.start_tool(tool_call_id, tool_name, args_str);
+                // Suppress spawn/agent_cmd tool boxes — the status bar
+                // provides visibility for subagent activity (#525).
+                if !is_subagent_tool {
+                    self.chat.start_tool(tool_call_id, tool_name, args_str);
+                }
             }
             Event::ToolExecutionEnd {
                 tool_call_id,
+                tool_name,
                 result,
                 is_error,
-                ..
             } => {
-                let result_text = crate::client::extract_result_text(&result);
-                self.chat
-                    .complete_tool(&tool_call_id, &result_text, is_error, None);
-                // Restore spinner message after tool completes.
+                let is_subagent_tool = tool_name == "spawn" || tool_name == "agent_cmd";
+                if !is_subagent_tool {
+                    let result_text = crate::client::extract_result_text(&result);
+                    self.chat
+                        .complete_tool(&tool_call_id, &result_text, is_error, None);
+                }
+                // After spawn/agent_cmd, refresh subagent bars immediately.
+                if is_subagent_tool {
+                    self.send_command(Command::GetSubagents { id: None });
+                }
                 if let Some(spinner) = &mut self.spinner {
                     spinner.set_message("Working... (Esc to interrupt)");
                 }
@@ -717,11 +726,11 @@ impl App {
     /// Update the subagent bar widget from state-changed events or responses.
     fn update_subagent_bar(&mut self, subagents: Vec<crate::client::SubagentInfoEvent>) {
         if subagents.is_empty() {
-            self.widgets_below.clear("subagents");
+            self.widgets_above.clear("subagents");
         } else {
             let mut bar = SubagentBar::new();
             bar.update(subagents);
-            self.widgets_below.set("subagents", Box::new(bar));
+            self.widgets_above.set("subagents", Box::new(bar));
         }
     }
 
