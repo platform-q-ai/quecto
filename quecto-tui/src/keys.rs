@@ -145,14 +145,15 @@ fn parse_csi(rest: &[u8]) -> Option<(Key, usize)> {
 ///
 /// Format: `button;col;row` terminated by `M` (press) or `m` (release).
 /// Button 64 = scroll up, 65 = scroll down. We only handle scroll events;
-/// all other mouse events are ignored (returned as Unknown).
+/// all other mouse events are silently consumed.
 fn parse_sgr_mouse(rest: &[u8]) -> Option<(Key, usize)> {
     // Collect digits and semicolons until M or m terminator.
     let mut i = 0;
     while i < rest.len() && rest[i] != b'M' && rest[i] != b'm' {
         if !rest[i].is_ascii_digit() && rest[i] != b';' {
-            // Invalid character in mouse sequence.
-            return Some((Key::Unknown(rest[..=i].to_vec()), 2 + 1 + i + 1));
+            // Invalid character — consume up to here and discard.
+            // \x1b(1) + [(1) + <(1) + bytes up to invalid(i) + invalid(1) = i + 4
+            return Some((Key::Unknown(Vec::new()), i + 4));
         }
         i += 1;
     }
@@ -160,21 +161,21 @@ fn parse_sgr_mouse(rest: &[u8]) -> Option<(Key, usize)> {
         return None; // incomplete — waiting for M/m terminator
     }
 
-    let params_str = std::str::from_utf8(&rest[..i]).unwrap_or("");
-    let _terminator = rest[i]; // M = press, m = release
-    // Total consumed: \x1b (1) + [ (1) + < (1) + params + terminator (1)
-    let total_consumed = 3 + 1 + i + 1; // ESC [ < params M
+    // Total consumed from original input: \x1b(1) + [(1) + <(1) + params(i) + terminator(1)
+    let total_consumed = i + 4;
 
-    // Parse button;col;row
-    let parts: Vec<&str> = params_str.split(';').collect();
-    let button: u32 = parts.first().and_then(|p| p.parse().ok()).unwrap_or(0);
+    // Parse button from the first semicolon-delimited field (no Vec alloc).
+    let params = std::str::from_utf8(&rest[..i]).unwrap_or("");
+    let button_str = params.split(';').next().unwrap_or("0");
+    let button: u32 = button_str.parse().unwrap_or(0);
 
     match button {
         64 => Some((Key::ScrollUp, total_consumed)),
         65 => Some((Key::ScrollDown, total_consumed)),
         _ => {
-            // Ignore other mouse events (clicks, motion, etc.)
-            Some((Key::Unknown(rest[..=i].to_vec()), total_consumed))
+            // Silently consume other mouse events (clicks, motion, etc.)
+            // — no heap allocation, just discard.
+            Some((Key::Unknown(Vec::new()), total_consumed))
         }
     }
 }
@@ -541,18 +542,22 @@ mod tests {
 
     #[test]
     fn sgr_mouse_scroll_up() {
-        // \x1b[<64;10;5M — scroll up at column 10, row 5
-        let (key, n) = parse_key(b"\x1b[<64;10;5M").unwrap();
+        // \x1b[<64;10;5M — scroll up at column 10, row 5 (11 bytes)
+        let input = b"\x1b[<64;10;5M";
+        assert_eq!(input.len(), 11);
+        let (key, n) = parse_key(input).unwrap();
         assert_eq!(key, Key::ScrollUp);
-        assert_eq!(n, 12); // ESC [ < 6 4 ; 1 0 ; 5 M = 12 bytes
+        assert_eq!(n, 11);
     }
 
     #[test]
     fn sgr_mouse_scroll_down() {
-        // \x1b[<65;10;5M — scroll down at column 10, row 5
-        let (key, n) = parse_key(b"\x1b[<65;10;5M").unwrap();
+        // \x1b[<65;10;5M — scroll down at column 10, row 5 (11 bytes)
+        let input = b"\x1b[<65;10;5M";
+        assert_eq!(input.len(), 11);
+        let (key, n) = parse_key(input).unwrap();
         assert_eq!(key, Key::ScrollDown);
-        assert_eq!(n, 12);
+        assert_eq!(n, 11);
     }
 
     #[test]
