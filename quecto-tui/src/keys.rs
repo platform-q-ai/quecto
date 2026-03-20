@@ -31,6 +31,10 @@ pub enum Key {
     ShiftEnter,
     /// A paste event (bracketed paste content).
     Paste(String),
+    /// Mouse scroll up (wheel up).
+    ScrollUp,
+    /// Mouse scroll down (wheel down).
+    ScrollDown,
     /// Unrecognised sequence.
     Unknown(Vec<u8>),
 }
@@ -91,6 +95,11 @@ fn parse_csi(rest: &[u8]) -> Option<(Key, usize)> {
         return parse_bracketed_paste(&rest[4..]);
     }
 
+    // SGR mouse: \x1b[< button;col;row M/m
+    if rest.starts_with(b"<") {
+        return parse_sgr_mouse(&rest[1..]);
+    }
+
     // Collect parameter bytes (digits and semicolons)
     let mut i = 0;
     while i < rest.len() && (rest[i].is_ascii_digit() || rest[i] == b';') {
@@ -130,6 +139,45 @@ fn parse_csi(rest: &[u8]) -> Option<(Key, usize)> {
     };
 
     Some((key, total_consumed))
+}
+
+/// Parse SGR mouse sequence (input starts after `\x1b[<`).
+///
+/// Format: `button;col;row` terminated by `M` (press) or `m` (release).
+/// Button 64 = scroll up, 65 = scroll down. We only handle scroll events;
+/// all other mouse events are silently consumed.
+fn parse_sgr_mouse(rest: &[u8]) -> Option<(Key, usize)> {
+    // Collect digits and semicolons until M or m terminator.
+    let mut i = 0;
+    while i < rest.len() && rest[i] != b'M' && rest[i] != b'm' {
+        if !rest[i].is_ascii_digit() && rest[i] != b';' {
+            // Invalid character — consume up to here and discard.
+            // \x1b(1) + [(1) + <(1) + bytes up to invalid(i) + invalid(1) = i + 4
+            return Some((Key::Unknown(Vec::new()), i + 4));
+        }
+        i += 1;
+    }
+    if i >= rest.len() {
+        return None; // incomplete — waiting for M/m terminator
+    }
+
+    // Total consumed from original input: \x1b(1) + [(1) + <(1) + params(i) + terminator(1)
+    let total_consumed = i + 4;
+
+    // Parse button from the first semicolon-delimited field (no Vec alloc).
+    let params = std::str::from_utf8(&rest[..i]).unwrap_or("");
+    let button_str = params.split(';').next().unwrap_or("0");
+    let button: u32 = button_str.parse().unwrap_or(0);
+
+    match button {
+        64 => Some((Key::ScrollUp, total_consumed)),
+        65 => Some((Key::ScrollDown, total_consumed)),
+        _ => {
+            // Silently consume other mouse events (clicks, motion, etc.)
+            // — no heap allocation, just discard.
+            Some((Key::Unknown(Vec::new()), total_consumed))
+        }
+    }
 }
 
 /// Parse an SS3 sequence (input starts after `\x1b O`).
@@ -488,5 +536,47 @@ mod tests {
         // Ctrl arm matches first (Alt dropped deliberately).
         let (key, _) = parse_key(b"\x1b[100;7u").unwrap();
         assert_eq!(key, Key::Ctrl('d'));
+    }
+
+    // ── SGR mouse scroll tests (issue #519) ───────────────────────────
+
+    #[test]
+    fn sgr_mouse_scroll_up() {
+        // \x1b[<64;10;5M — scroll up at column 10, row 5 (11 bytes)
+        let input = b"\x1b[<64;10;5M";
+        assert_eq!(input.len(), 11);
+        let (key, n) = parse_key(input).unwrap();
+        assert_eq!(key, Key::ScrollUp);
+        assert_eq!(n, 11);
+    }
+
+    #[test]
+    fn sgr_mouse_scroll_down() {
+        // \x1b[<65;10;5M — scroll down at column 10, row 5 (11 bytes)
+        let input = b"\x1b[<65;10;5M";
+        assert_eq!(input.len(), 11);
+        let (key, n) = parse_key(input).unwrap();
+        assert_eq!(key, Key::ScrollDown);
+        assert_eq!(n, 11);
+    }
+
+    #[test]
+    fn sgr_mouse_click_ignored() {
+        // \x1b[<0;10;5M — left click (button 0), should be Unknown
+        let (key, _) = parse_key(b"\x1b[<0;10;5M").unwrap();
+        assert!(matches!(key, Key::Unknown(_)));
+    }
+
+    #[test]
+    fn sgr_mouse_scroll_up_release() {
+        // \x1b[<64;10;5m — scroll up release (lowercase m)
+        let (key, _) = parse_key(b"\x1b[<64;10;5m").unwrap();
+        assert_eq!(key, Key::ScrollUp);
+    }
+
+    #[test]
+    fn sgr_mouse_incomplete_returns_none() {
+        // Incomplete SGR mouse sequence
+        assert!(parse_key(b"\x1b[<64;10;").is_none());
     }
 }

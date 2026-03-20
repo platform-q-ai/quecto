@@ -29,6 +29,9 @@ use crate::theme;
 /// Tick interval for spinner animation (~12fps).
 const SPINNER_TICK: Duration = Duration::from_millis(80);
 
+/// Lines scrolled per mouse wheel tick.
+const MOUSE_SCROLL_LINES: usize = 3;
+
 /// Maximum retry iterations for reassembling multi-fragment escape sequences.
 /// Handles up to 5-fragment CSI splits on slow SSH/serial connections.
 /// Total max wait = MAX_ESCAPE_RETRIES × escape_timeout (10ms) = 50ms.
@@ -423,6 +426,14 @@ impl App {
                     "collapsed"
                 };
                 self.notify(&format!("Tool output {}", state), NotifyLevel::Info);
+                return;
+            }
+            Key::ScrollUp => {
+                self.chat.scroll_up(MOUSE_SCROLL_LINES);
+                return;
+            }
+            Key::ScrollDown => {
+                self.chat.scroll_down(MOUSE_SCROLL_LINES);
                 return;
             }
             Key::PageUp => {
