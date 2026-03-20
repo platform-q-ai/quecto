@@ -23,6 +23,8 @@ pub enum Key {
     PageDown,
     /// Ctrl + a lowercase letter (e.g. Ctrl+C = Ctrl('c')).
     Ctrl(char),
+    /// Ctrl+Shift + a lowercase letter (e.g. Ctrl+Shift+A = CtrlShift('a')).
+    CtrlShift(char),
     /// Alt + a character.
     Alt(char),
     /// Insert key.
@@ -255,9 +257,10 @@ fn parse_kitty_key(params: &[u8]) -> Key {
         9 => Key::Tab,
         127 => Key::Backspace,
         27 => Key::Escape,
-        // Ctrl+letter: keycode 97..=122 (a-z) with ctrl modifier.
-        // Ctrl+Alt is deliberately treated as Ctrl-only to avoid
-        // triggering unintended actions (Alt is dropped).
+        // Ctrl+Shift+letter: keycode 97..=122 (a-z) with ctrl+shift.
+        97..=122 if ctrl && shift => Key::CtrlShift((keycode as u8) as char),
+        // Ctrl+letter: keycode 97..=122 (a-z) with ctrl modifier only.
+        // Ctrl+Alt is deliberately treated as Ctrl-only.
         97..=122 if ctrl => Key::Ctrl((keycode as u8) as char),
         // Alt+letter: keycode 97..=122 (a-z) with alt modifier (no ctrl).
         97..=122 if alt => Key::Alt((keycode as u8) as char),

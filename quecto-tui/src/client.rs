@@ -136,9 +136,14 @@ pub enum Event {
     SubagentStateChanged {
         subagents: Vec<SubagentInfoEvent>,
     },
+    /// Workflow state changed — step checked/unchecked/reset (#563).
+    WorkflowState {
+        steps: Vec<serde_json::Value>,
+        progress: serde_json::Value,
+        #[serde(rename = "activeIssue", default)]
+        active_issue: Option<serde_json::Value>,
+    },
     /// Catch-all for unknown/future event types (forward-compatible).
-    /// Known omissions that will deserialize here: none currently — all
-    /// documented event types are covered above.
     #[serde(other)]
     Unknown,
 }

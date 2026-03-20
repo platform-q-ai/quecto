@@ -15,3 +15,4 @@ pub mod subagent_bar;
 pub mod text;
 pub mod tool_output;
 pub mod widget;
+pub mod workflow_bar;
