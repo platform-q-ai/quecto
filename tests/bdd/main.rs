@@ -583,6 +583,24 @@ pub struct QuectoWorld {
     pub _monitor_rt: Option<tokio::runtime::Runtime>,
     /// Result of aborting the monitor handle
     pub monitor_abort_result: Option<bool>,
+    // --- Subagent protocol (#524) ---
+    /// SubagentInfo list from get_subagents
+    pub subagent_infos: Vec<quecto::interface::cli::protocol::SubagentInfo>,
+    /// Single SubagentInfo under test
+    pub subagent_info_single: Option<quecto::interface::cli::protocol::SubagentInfo>,
+    /// Serialized SubagentInfo JSON
+    pub subagent_info_json: serde_json::Value,
+    /// Raw JSON command string for parsing
+    pub protocol_command_json: String,
+    /// Parsed command
+    pub parsed_command: Option<quecto::interface::cli::protocol::AgentCommand>,
+    /// Protocol event under test
+    pub protocol_event: Option<quecto::interface::cli::protocol::AgentEvent>,
+    /// Deserialized event for round-trip test
+    pub deserialized_event: Option<quecto::interface::cli::protocol::AgentEvent>,
+    /// Registry for protocol BDD scenarios
+    pub subagent_protocol_registry:
+        Option<quecto::infrastructure::tools::subagent_registry::SubagentRegistry>,
     // --- Multi-client UDS (#318) ---
     /// Multi-client UDS: per-client command queues (client_id -> commands)
     pub mc_client_commands: HashMap<u32, Vec<String>>,
@@ -880,6 +898,7 @@ mod skills_steps;
 mod spawn_tool_steps;
 mod subagent_monitor_steps;
 mod subagent_notify_steps;
+mod subagent_protocol_steps;
 mod subagent_steps;
 mod tool_empty_args_steps;
 mod tool_guard_steps;

@@ -118,6 +118,11 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    /// Return the current list of spawned subagents and their live status (#524).
+    GetSubagents {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
 }
 
 /// Tool registration payload for `register_tools`.
@@ -152,6 +157,7 @@ impl AgentCommand {
             Self::UnregisterTools { id, .. } => id.as_deref(),
             Self::ToolResult { .. } => None,
             Self::ClearHistory { id } => id.as_deref(),
+            Self::GetSubagents { id } => id.as_deref(),
         }
     }
 
@@ -173,6 +179,7 @@ impl AgentCommand {
             Self::UnregisterTools { .. } => "unregister_tools",
             Self::ToolResult { .. } => "tool_result",
             Self::ClearHistory { .. } => "clear_history",
+            Self::GetSubagents { .. } => "get_subagents",
         }
     }
 }
@@ -248,6 +255,28 @@ pub enum AgentEvent {
         tool_name: String,
         arguments: String,
     },
+    /// Broadcast when a subagent's status changes (#524).
+    /// Contains the full list of subagents (clients do a simple replace).
+    SubagentStateChanged { subagents: Vec<SubagentInfo> },
+}
+
+/// Snapshot of a single subagent's state, used in `get_subagents` responses
+/// and `subagent_state_changed` events (#524).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentInfo {
+    /// Unique agent identifier (matches the spawn `agent_id`).
+    pub agent_id: String,
+    /// Live status: "starting", "idle", "running", "error", "exited".
+    pub status: String,
+    /// Name of the last tool being executed, or `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_tool: Option<String>,
+    /// Description of the last error, or `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    /// Child process PID.
+    pub pid: u32,
 }
 
 /// Metadata for a registered extension, used in `ExtensionsChanged` events
@@ -285,6 +314,35 @@ pub struct ToolResultEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResultContent {
     pub content: Vec<serde_json::Value>,
+}
+
+// ─── Subagent helpers (#524) ──────────────────────────────────────────────────
+
+/// Build a sorted list of [`SubagentInfo`] from the shared registry.
+///
+/// Acquires the registry mutex briefly and maps each entry to the protocol type.
+/// Returns an empty vec if the registry is `None` or empty.
+pub fn build_subagent_info_list(
+    registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+) -> Vec<SubagentInfo> {
+    let Some(reg) = registry else {
+        return Vec::new();
+    };
+    let mut list: Vec<SubagentInfo> = {
+        let guard = reg.lock().unwrap_or_else(|e| e.into_inner());
+        guard
+            .iter()
+            .map(|(id, entry)| SubagentInfo {
+                agent_id: id.clone(),
+                status: entry.status.to_wire_str().to_string(),
+                last_tool: entry.last_tool.clone(),
+                last_error: entry.last_error.clone(),
+                pid: entry.pid,
+            })
+            .collect()
+    }; // guard dropped here — sort happens outside critical section
+    list.sort_by(|a, b| a.agent_id.cmp(&b.agent_id));
+    list
 }
 
 // ─── Response helpers ────────────────────────────────────────────────────────
@@ -356,314 +414,8 @@ pub struct TokenStats {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    // ─── AgentCommand deserialization ──────────────────────────────────────────
-
-    #[test]
-    fn test_parse_prompt_command() {
-        let json = r#"{"type":"prompt","message":"hello world"}"#;
-        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
-        match cmd {
-            AgentCommand::Prompt {
-                message,
-                id,
-                streaming_behavior,
-            } => {
-                assert_eq!(message, "hello world");
-                assert!(id.is_none());
-                assert!(streaming_behavior.is_none());
-            }
-            _ => panic!("expected Prompt"),
-        }
-    }
-
-    #[test]
-    fn test_parse_prompt_with_id() {
-        let json = r#"{"type":"prompt","id":"req-1","message":"hello"}"#;
-        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
-        assert_eq!(cmd.id(), Some("req-1"));
-    }
-
-    #[test]
-    fn test_parse_prompt_with_steer_behavior() {
-        let json = r#"{"type":"prompt","message":"hi","streamingBehavior":"steer"}"#;
-        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
-        match cmd {
-            AgentCommand::Prompt {
-                streaming_behavior, ..
-            } => {
-                assert_eq!(streaming_behavior, Some(StreamingBehavior::Steer));
-            }
-            _ => panic!("expected Prompt"),
-        }
-    }
-
-    #[test]
-    fn test_parse_prompt_with_follow_up_behavior() {
-        let json = r#"{"type":"prompt","message":"hi","streamingBehavior":"followUp"}"#;
-        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
-        match cmd {
-            AgentCommand::Prompt {
-                streaming_behavior, ..
-            } => {
-                assert_eq!(streaming_behavior, Some(StreamingBehavior::FollowUp));
-            }
-            _ => panic!("expected Prompt"),
-        }
-    }
-
-    #[test]
-    fn test_parse_steer_command() {
-        let json = r#"{"type":"steer","message":"change direction"}"#;
-        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
-        match cmd {
-            AgentCommand::Steer { message, .. } => assert_eq!(message, "change direction"),
-            _ => panic!("expected Steer"),
-        }
-    }
-
-    #[test]
-    fn test_parse_follow_up_command() {
-        let json = r#"{"type":"follow_up","message":"also do this"}"#;
-        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
-        match cmd {
-            AgentCommand::FollowUp { message, .. } => assert_eq!(message, "also do this"),
-            _ => panic!("expected FollowUp"),
-        }
-    }
-
-    #[test]
-    fn test_parse_abort_command() {
-        let json = r#"{"type":"abort"}"#;
-        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
-        matches!(cmd, AgentCommand::Abort { .. });
-    }
-
-    #[test]
-    fn test_parse_get_state_command() {
-        let json = r#"{"type":"get_state","id":"gs-1"}"#;
-        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
-        assert_eq!(cmd.id(), Some("gs-1"));
-        assert_eq!(cmd.type_name(), "get_state");
-    }
-
-    #[test]
-    fn test_parse_get_messages_command() {
-        let json = r#"{"type":"get_messages"}"#;
-        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
-        assert_eq!(cmd.type_name(), "get_messages");
-    }
-
-    #[test]
-    fn test_parse_get_messages_tail_command() {
-        let json = r#"{"type":"get_messages_tail","count":5}"#;
-        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
-        match cmd {
-            AgentCommand::GetMessagesTail { id, count } => {
-                assert!(id.is_none());
-                assert_eq!(count, 5);
-            }
-            _ => panic!("expected GetMessagesTail"),
-        }
-    }
-
-    #[test]
-    fn test_parse_get_messages_tail_with_id() {
-        let json = r#"{"type":"get_messages_tail","id":"gmt-1","count":10}"#;
-        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
-        assert_eq!(cmd.id(), Some("gmt-1"));
-        assert_eq!(cmd.type_name(), "get_messages_tail");
-    }
-
-    #[test]
-    fn test_parse_get_messages_tail_count_zero() {
-        let json = r#"{"type":"get_messages_tail","count":0}"#;
-        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
-        match cmd {
-            AgentCommand::GetMessagesTail { count, .. } => assert_eq!(count, 0),
-            _ => panic!("expected GetMessagesTail"),
-        }
-    }
-
-    #[test]
-    fn test_parse_get_session_stats_command() {
-        let json = r#"{"type":"get_session_stats"}"#;
-        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
-        assert_eq!(cmd.type_name(), "get_session_stats");
-    }
-
-    #[test]
-    fn test_parse_set_model_command() {
-        let json = r#"{"type":"set_model","model":"gpt-5-mini"}"#;
-        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
-        match cmd {
-            AgentCommand::SetModel {
-                model,
-                provider,
-                model_id,
-                ..
-            } => {
-                assert_eq!(model.as_deref(), Some("gpt-5-mini"));
-                assert!(provider.is_none());
-                assert!(model_id.is_none());
-            }
-            _ => panic!("expected SetModel"),
-        }
-    }
-
-    #[test]
-    fn test_parse_set_model_provider_and_model_id_command() {
-        let json = r#"{"type":"set_model","provider":"openai-codex","modelId":"gpt-5.3-codex"}"#;
-        let cmd: AgentCommand = serde_json::from_str(json).unwrap();
-        match cmd {
-            AgentCommand::SetModel {
-                model,
-                provider,
-                model_id,
-                ..
-            } => {
-                assert!(model.is_none());
-                assert_eq!(provider.as_deref(), Some("openai-codex"));
-                assert_eq!(model_id.as_deref(), Some("gpt-5.3-codex"));
-            }
-            _ => panic!("expected SetModel"),
-        }
-    }
-
-    #[test]
-    fn test_malformed_json_fails() {
-        let result: Result<AgentCommand, _> = serde_json::from_str("not json{");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_unknown_type_fails() {
-        let result: Result<AgentCommand, _> = serde_json::from_str(r#"{"type":"unknown_command"}"#);
-        assert!(result.is_err());
-    }
-
-    // ─── AgentEvent serialization ──────────────────────────────────────────────
-
-    #[test]
-    fn test_agent_start_event_serializes() {
-        let event = AgentEvent::AgentStart;
-        let json = event.to_json_line();
-        assert!(json.contains("\"type\":\"agent_start\""));
-    }
-
-    #[test]
-    fn test_agent_end_event_serializes() {
-        let event = AgentEvent::AgentEnd { messages: vec![] };
-        let json = event.to_json_line();
-        assert!(json.contains("\"type\":\"agent_end\""));
-        assert!(json.contains("\"messages\""));
-    }
-
-    #[test]
-    fn test_turn_start_event_serializes() {
-        let event = AgentEvent::TurnStart;
-        let json = event.to_json_line();
-        assert!(json.contains("\"type\":\"turn_start\""));
-    }
-
-    #[test]
-    fn test_tool_execution_start_event_serializes() {
-        let event = AgentEvent::ToolExecutionStart {
-            tool_call_id: "call-1".to_string(),
-            tool_name: "bash".to_string(),
-            args: serde_json::json!({"command": "echo hi"}),
-        };
-        let json = event.to_json_line();
-        assert!(json.contains("\"type\":\"tool_execution_start\""));
-        assert!(json.contains("\"toolName\":\"bash\""));
-        assert!(json.contains("\"toolCallId\":\"call-1\""));
-    }
-
-    #[test]
-    fn test_tool_execution_end_event_serializes() {
-        let event = AgentEvent::ToolExecutionEnd {
-            tool_call_id: "call-1".to_string(),
-            tool_name: "bash".to_string(),
-            result: ToolResultContent {
-                content: vec![serde_json::json!({"type":"text","text":"hi"})],
-            },
-            is_error: false,
-        };
-        let json = event.to_json_line();
-        assert!(json.contains("\"type\":\"tool_execution_end\""));
-        assert!(json.contains("\"isError\":false"));
-    }
-
-    #[test]
-    fn test_response_ok_event_serializes() {
-        let event = AgentEvent::ok(Some("req-1"), "prompt", None);
-        let json = event.to_json_line();
-        assert!(json.contains("\"type\":\"response\""));
-        assert!(json.contains("\"command\":\"prompt\""));
-        assert!(json.contains("\"success\":true"));
-        assert!(json.contains("\"id\":\"req-1\""));
-    }
-
-    #[test]
-    fn test_response_err_event_serializes() {
-        let event = AgentEvent::err(None, "prompt", "agent already running");
-        let json = event.to_json_line();
-        assert!(json.contains("\"success\":false"));
-        assert!(json.contains("\"error\":\"agent already running\""));
-        // id field should be absent when None
-        assert!(!json.contains("\"id\""));
-    }
-
-    #[test]
-    fn test_response_without_id_omits_id_field() {
-        let event = AgentEvent::ok(None, "abort", None);
-        let json = event.to_json_line();
-        assert!(!json.contains("\"id\""));
-    }
-
-    // ─── SessionState / SessionStats ────────────────────────────────────────
-
-    #[test]
-    fn test_session_state_serializes() {
-        let state = SessionState {
-            model: "gpt-5".to_string(),
-            is_streaming: false,
-            session_key: "cli:test".to_string(),
-            message_count: 4,
-            pending_message_count: 0,
-        };
-        let json = serde_json::to_string(&state).unwrap();
-        assert!(json.contains("\"isStreaming\":false"));
-        assert!(json.contains("\"sessionKey\":\"cli:test\""));
-        assert!(json.contains("\"messageCount\":4"));
-    }
-
-    #[test]
-    fn test_session_stats_serializes() {
-        let stats = SessionStats {
-            session_key: "cli:test".to_string(),
-            user_messages: 2,
-            assistant_messages: 2,
-            tool_calls: 3,
-            tool_results: 3,
-            total_messages: 10,
-            tokens: TokenStats {
-                input: 1000,
-                output: 200,
-                cache_read: 800,
-                cache_write: 100,
-                total: 2100,
-            },
-            cost: 0.42,
-        };
-        let json = serde_json::to_string(&stats).unwrap();
-        assert!(json.contains("\"userMessages\":2"));
-        assert!(json.contains("\"totalMessages\":10"));
-        assert!(json.contains("\"tokens\""));
-    }
-}
+#[path = "protocol_tests.rs"]
+mod tests;
 
 #[cfg(test)]
 #[path = "protocol_shape_tests.rs"]

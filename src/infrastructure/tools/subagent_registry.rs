@@ -23,6 +23,19 @@ pub enum SubagentStatus {
     Exited,
 }
 
+impl SubagentStatus {
+    /// Wire-format string for the UDS protocol (lowercase, zero-alloc).
+    pub fn to_wire_str(&self) -> &'static str {
+        match self {
+            Self::Starting => "starting",
+            Self::Idle => "idle",
+            Self::Running => "running",
+            Self::Error => "error",
+            Self::Exited => "exited",
+        }
+    }
+}
+
 impl fmt::Display for SubagentStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -226,6 +239,16 @@ mod tests {
                 .unwrap_err()
                 .contains("[a-zA-Z0-9_-]")
         );
+    }
+
+    // --- SubagentStatus::to_wire_str ---
+    #[test]
+    fn test_status_wire_str_values() {
+        assert_eq!(SubagentStatus::Starting.to_wire_str(), "starting");
+        assert_eq!(SubagentStatus::Idle.to_wire_str(), "idle");
+        assert_eq!(SubagentStatus::Running.to_wire_str(), "running");
+        assert_eq!(SubagentStatus::Error.to_wire_str(), "error");
+        assert_eq!(SubagentStatus::Exited.to_wire_str(), "exited");
     }
 
     // --- SubagentStatus ---

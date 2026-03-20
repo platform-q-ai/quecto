@@ -1,4 +1,3 @@
-// UDS agent loop — headless JSON-lines protocol over a Unix domain socket.
 use super::protocol::{AgentCommand, AgentEvent, StreamingBehavior};
 use super::uds_cancel::{
     CancelHandle, CancelSlot, PromptArgs, PromptOutcome, arm_cancel, disarm_cancel, fire_cancel,
@@ -21,25 +20,20 @@ pub struct UdsLoopArgs<'a> {
     pub session_key: String,
     pub model: String,
     pub ephemeral: bool,
-    /// System prompt (datetime preamble + skills + user `--system`).
     pub system_prompt: String,
-    /// Path to the Unix domain socket.
     pub socket_path: std::path::PathBuf,
-    /// Pre-connected stream injected by tests.
     /// `None` = multi-client mode. `Some` = single-client mode (tests).
     pub socket_override: Option<std::os::unix::net::UnixStream>,
-    /// Injected session store for testing.  `None` = use `FileSessionStore`.
     pub session_store_override: Option<Box<dyn SessionStore + 'static>>,
-    /// Shared extension registry for get_extensions / reload_extensions.
     pub ext_registry: Option<
         std::sync::Arc<
             std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
         >,
     >,
-    /// When true, keep the agent alive after all clients disconnect (#348).
     pub persist: bool,
-    /// Receiver for subagent notifications (#523).
     pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
+    pub subagent_registry:
+        Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
 }
 pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     let rt = match crate::interface::cli::build_tokio_runtime() {
@@ -107,6 +101,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         ext_registry,
         persist,
         notification_rx,
+        subagent_registry,
     } = args;
     let file_store;
     let session_store: &dyn SessionStore = match session_store_override {
@@ -162,6 +157,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 ext_registry,
                 persist,
                 notification_rx,
+                subagent_registry,
             },
             listener,
             session_store,
@@ -223,6 +219,7 @@ async fn single_client_loop(
             ext_registry,
             client_tool_registry: super::uds_ext_protocol::new_client_tool_registry(),
             current_client_id: 0,
+            subagent_registry: None,
         },
     )
     .await;
@@ -365,18 +362,16 @@ pub(super) struct DispatchCtx<'a> {
     pub stdout: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
     pub session_key: &'a str,
     pub cancel_handle: CancelHandle,
-    /// `Some` in multi-client mode; `None` in single-client mode.
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
-    /// Shared extension registry. `None` when extensions are not wired (legacy tests).
     pub ext_registry: Option<
         std::sync::Arc<
             std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
         >,
     >,
-    /// Per-client tool registry for UDS extension protocol (#352).
     pub client_tool_registry: super::uds_ext_protocol::ClientToolRegistry,
-    /// Current client ID for routing (0 = single-client mode).
     pub current_client_id: u64,
+    pub subagent_registry:
+        Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
 }
 
 pub(super) async fn emit_event_to_broadcast_or_writer(
@@ -464,6 +459,10 @@ fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serd
         AgentCommand::GetExtensions { .. } => {
             Some(serde_json::json!({ "extensions": build_extension_list(ctx) }))
         }
+        AgentCommand::GetSubagents { .. } => {
+            let list = super::protocol::build_subagent_info_list(&ctx.subagent_registry);
+            Some(serde_json::json!({ "subagents": list }))
+        }
         AgentCommand::ReloadExtensions { .. } => {
             // Handled in dispatch_command (needs async I/O + broadcast).
             None
@@ -547,6 +546,7 @@ pub(super) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         // Exhaustive: variants handled by dispatch_fieldless_command above.
         AgentCommand::ClearHistory { .. }
         | AgentCommand::GetExtensions { .. }
+        | AgentCommand::GetSubagents { .. }
         | AgentCommand::GetState { .. }
         | AgentCommand::GetMessages { .. }
         | AgentCommand::GetMessagesTail { .. }
