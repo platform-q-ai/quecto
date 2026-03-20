@@ -53,13 +53,14 @@ pub fn render(state: &WorkflowBarState, width: usize) -> Vec<String> {
     }
 
     let issue_num = state.issue_number.unwrap_or(0);
-    let issue_title = state
+    let issue_title: String = state
         .issue_title
         .as_deref()
         .unwrap_or("")
         .chars()
+        .filter(|c| !c.is_control())
         .take(30)
-        .collect::<String>();
+        .collect();
 
     // Progress bar
     let bar_width: usize = 12;
