@@ -580,7 +580,7 @@ impl App {
                     let msg = match tool_name.as_str() {
                         "spawn" => {
                             let agent: String = args
-                                .get("agent")
+                                .get("agent_id")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("agent")
                                 .chars()
@@ -589,21 +589,21 @@ impl App {
                             format!("Spawning {}...", agent)
                         }
                         "agent_cmd" => {
-                            let action: String = args
-                                .get("action")
+                            let command: String = args
+                                .get("command")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("?")
                                 .chars()
                                 .filter(|c| !c.is_control())
                                 .collect();
                             let agent_id: String = args
-                                .get("agentId")
+                                .get("agent_id")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("?")
                                 .chars()
                                 .filter(|c| !c.is_control())
                                 .collect();
-                            format!("{} → {}...", action, agent_id)
+                            format!("{} → {}...", command, agent_id)
                         }
                         _ => format!("{} {}...", tool_name, truncate_args(&args_str)),
                     };

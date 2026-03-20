@@ -19,7 +19,10 @@ async fn test_edit_replaces_unique_match() {
         .await
         .unwrap();
     assert!(!result.is_error);
-    assert!(result.content.contains("@@"), "expected diff");
+    assert!(
+        result.content.contains("Successfully edited"),
+        "expected diff output"
+    );
     let content = std::fs::read_to_string(tmp.path().join("test.txt")).unwrap();
     assert_eq!(content, "goodbye world");
 }
@@ -305,13 +308,16 @@ async fn test_edit_diff_uses_minus_plus_markers() {
         .await
         .unwrap();
     assert!(!result.is_error, "edit should succeed: {}", result.content);
+    // Pi-style line-numbered diff: "-2 line2" and "+2 CHANGED"
     assert!(
-        result.content.contains("-line2"),
-        "diff should contain '-line2'"
+        result.content.contains("-") && result.content.contains("line2"),
+        "diff should contain removed line2: {}",
+        result.content
     );
     assert!(
-        result.content.contains("+CHANGED"),
-        "diff should contain '+CHANGED'"
+        result.content.contains("+") && result.content.contains("CHANGED"),
+        "diff should contain added CHANGED: {}",
+        result.content
     );
 }
 

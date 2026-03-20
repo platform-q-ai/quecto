@@ -313,42 +313,61 @@ fn count_occurrences_capped(haystack: &str, needle: &str, cap: usize) -> (usize,
 /// Context window is [`DIFF_CONTEXT_LINES`] lines on each side of each hunk.
 /// If the diff exceeds [`DIFF_MAX_BYTES`] the full diff is omitted and only
 /// the success message is returned.
+/// Generate a Pi-style diff with per-line numbers and context ellipsis.
+///
+/// Output format (matching Pi's `generateDiffString`):
+/// ```text
+///  11 context line
+/// -12 removed line
+/// +12 added line
+///     ...
+/// ```
 fn make_edit_diff(path: &str, old_content: &str, new_content: &str) -> String {
     let diff = TextDiff::from_lines(old_content, new_content);
-    let mut hunks_str = String::new();
+    let max_line = old_content.lines().count().max(new_content.lines().count());
+    let num_width = if max_line == 0 {
+        1
+    } else {
+        max_line.to_string().len()
+    };
 
-    for group in diff.grouped_ops(DIFF_CONTEXT_LINES) {
-        // Compute hunk header from the first op in the group.
-        let first = group.first().unwrap();
+    let mut output = Vec::new();
+    let mut last_was_change = false;
 
-        // old-file range (1-indexed)
-        let old_start = first.old_range().start + 1;
-        let old_len: usize = group.iter().map(|op| op.old_range().len()).sum();
-        // new-file range (1-indexed)
-        let new_start = first.new_range().start + 1;
-        let new_len: usize = group.iter().map(|op| op.new_range().len()).sum();
-
-        hunks_str.push_str(&format!(
-            "@@ -{},{} +{},{} @@\n",
-            old_start, old_len, new_start, new_len
-        ));
-
-        for op in &group {
+    let ops = diff.grouped_ops(DIFF_CONTEXT_LINES);
+    for (group_idx, group) in ops.iter().enumerate() {
+        for op in group {
             for change in diff.iter_changes(op) {
-                let prefix = match change.tag() {
-                    ChangeTag::Delete => "-",
-                    ChangeTag::Insert => "+",
-                    ChangeTag::Equal => " ",
-                };
-                // `value()` includes the trailing newline; strip it and re-add
-                // consistently so we control formatting.
                 let line = change.value().trim_end_matches('\n');
-                hunks_str.push_str(&format!("{}{}\n", prefix, line));
+                match change.tag() {
+                    ChangeTag::Delete => {
+                        let n = change.old_index().unwrap_or(0) + 1;
+                        output.push(format!("-{:>width$} {}", n, line, width = num_width));
+                        last_was_change = true;
+                    }
+                    ChangeTag::Insert => {
+                        let n = change.new_index().unwrap_or(0) + 1;
+                        output.push(format!("+{:>width$} {}", n, line, width = num_width));
+                        last_was_change = true;
+                    }
+                    ChangeTag::Equal => {
+                        let n = change.old_index().unwrap_or(0) + 1;
+                        output.push(format!(" {:>width$} {}", n, line, width = num_width));
+                        last_was_change = false;
+                    }
+                }
             }
+        }
+        // Add ellipsis between hunks (not after the last one).
+        if group_idx + 1 < ops.len() {
+            output.push(format!(" {:>width$} ...", "", width = num_width));
+            last_was_change = false;
         }
     }
 
-    let diff_body = format!("Successfully edited {}\n\n```diff\n{}```", path, hunks_str);
+    let _ = last_was_change; // suppress unused warning
+
+    let diff_body = format!("Successfully edited {}\n\n{}", path, output.join("\n"));
 
     if diff_body.len() > DIFF_MAX_BYTES {
         format!("Successfully edited {}", path)
