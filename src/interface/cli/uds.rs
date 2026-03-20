@@ -15,7 +15,6 @@ use crate::infrastructure::persistence::session_store::FileSessionStore;
 
 pub use super::protocol::parse_command_line;
 
-/// Arguments for running the UDS loop (avoids long parameter lists).
 pub struct UdsLoopArgs<'a> {
     pub agent: AgentLoopImpl,
     pub base_dir: &'a std::path::Path,
@@ -27,8 +26,7 @@ pub struct UdsLoopArgs<'a> {
     /// Path to the Unix domain socket.
     pub socket_path: std::path::PathBuf,
     /// Pre-connected stream injected by tests.
-    /// `None` = multi-client mode (production).
-    /// `Some` = single-client mode (backward-compatible tests).
+    /// `None` = multi-client mode. `Some` = single-client mode (tests).
     pub socket_override: Option<std::os::unix::net::UnixStream>,
     /// Injected session store for testing.  `None` = use `FileSessionStore`.
     pub session_store_override: Option<Box<dyn SessionStore + 'static>>,
@@ -40,6 +38,8 @@ pub struct UdsLoopArgs<'a> {
     >,
     /// When true, keep the agent alive after all clients disconnect (#348).
     pub persist: bool,
+    /// Receiver for subagent notifications (#523).
+    pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
 }
 pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     let rt = match crate::interface::cli::build_tokio_runtime() {
@@ -106,6 +106,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         session_store_override,
         ext_registry,
         persist,
+        notification_rx,
     } = args;
     let file_store;
     let session_store: &dyn SessionStore = match session_store_override {
@@ -160,6 +161,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 system_prompt,
                 ext_registry,
                 persist,
+                notification_rx,
             },
             listener,
             session_store,
@@ -470,7 +472,6 @@ fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serd
     }
 }
 
-/// Handle commands that need no field extraction (queries + clear_history).
 /// Returns `Some(bool)` if handled, `None` to fall through to the main match.
 async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_>) -> Option<bool> {
     let id = cmd.id();
@@ -704,7 +705,6 @@ async fn run_prompt_dispatch(
         .await
     }
 }
-/// Emit AgentStart + AgentEnd for a pre-cancelled prompt so TUI doesn't hang (#483).
 async fn emit_pre_cancelled(ctx: &mut DispatchCtx<'_>) {
     emit_event_to_broadcast_or_writer(ctx, &AgentEvent::AgentStart).await;
     emit_event_to_broadcast_or_writer(ctx, &AgentEvent::AgentEnd { messages: vec![] }).await;

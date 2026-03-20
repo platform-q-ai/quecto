@@ -43,6 +43,8 @@ pub(super) struct MultiClientArgs {
     >,
     /// When true, keep the agent alive after all clients disconnect (#348).
     pub persist: bool,
+    /// Receiver for subagent notifications (#523).
+    pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
 }
 
 /// A command line from a client.
@@ -98,6 +100,7 @@ pub(super) async fn multi_client_loop(
 ) -> i32 {
     let ext_registry = args.ext_registry;
     let persist = args.persist;
+    let notification_rx = args.notification_rx;
     let MultiClientArgs {
         mut agent,
         mut messages,
@@ -146,7 +149,16 @@ pub(super) async fn multi_client_loop(
         current_client_id: 0,
     };
 
-    run_dispatch_loop(&mut ctx, cmd_rx, &live_clients, persist).await;
+    run_dispatch_loop(
+        &mut ctx,
+        DispatchLoopArgs {
+            cmd_rx,
+            persist,
+            notification_rx,
+        },
+        &live_clients,
+    )
+    .await;
 
     accept_task.abort();
 
@@ -221,46 +233,100 @@ fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
     })
 }
 
+/// Arguments for [`run_dispatch_loop`].
+struct DispatchLoopArgs {
+    cmd_rx: tokio::sync::mpsc::Receiver<ClientMessage>,
+    persist: bool,
+    notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
+}
+
 /// Process commands from all clients until no clients remain or a fatal error.
+/// Also drains subagent notifications and injects them as follow-up messages (#523).
 async fn run_dispatch_loop(
     ctx: &mut DispatchCtx<'_>,
-    mut cmd_rx: tokio::sync::mpsc::Receiver<ClientMessage>,
+    args: DispatchLoopArgs,
     live_clients: &std::sync::atomic::AtomicU32,
-    persist: bool,
 ) {
-    while let Some(client_msg) = cmd_rx.recv().await {
-        match client_msg {
-            ClientMessage::Command(cmd) => {
-                ctx.current_client_id = cmd.client_id;
-                match parse_line(&cmd.line) {
-                    LineResult::LineTooLong => {
-                        let ev = AgentEvent::err(None, "parse_error", "line exceeds 1 MiB limit");
-                        emit_event_to_broadcast_or_writer(ctx, &ev).await;
-                    }
-                    LineResult::ParseError(e) if e.is_empty() => {}
-                    LineResult::ParseError(_) => {
-                        let ev = AgentEvent::Response {
-                            id: None,
-                            command: "parse_error".to_string(),
-                            success: false,
-                            data: None,
-                            error: Some("invalid JSON command".to_string()),
-                        };
-                        emit_event_to_broadcast_or_writer(ctx, &ev).await;
-                    }
-                    LineResult::Command(parsed) => {
-                        if dispatch_command(parsed, ctx).await {
-                            break;
-                        }
-                    }
-                }
-            }
-            ClientMessage::Disconnected(disc) => {
-                handle_disconnect(ctx, disc.client_id).await;
-                if !persist && live_clients.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+    let DispatchLoopArgs {
+        mut cmd_rx,
+        persist,
+        mut notification_rx,
+    } = args;
+    loop {
+        let msg = recv_next_message(&mut cmd_rx, &mut notification_rx).await;
+        let Some(msg) = msg else { break };
+        match msg {
+            DispatchMsg::Client(client_msg) => {
+                if handle_client_msg(ctx, client_msg, persist, live_clients).await {
                     break;
                 }
             }
+            DispatchMsg::Notification(notif) => {
+                let message = notif.to_message();
+                tracing::info!(msg = %message, "injecting subagent notification");
+                ctx.session.enqueue_pending(message);
+            }
+        }
+    }
+}
+
+enum DispatchMsg {
+    Client(ClientMessage),
+    Notification(crate::infrastructure::tools::subagent_registry::SubagentNotification),
+}
+
+async fn recv_next_message(
+    cmd_rx: &mut tokio::sync::mpsc::Receiver<ClientMessage>,
+    notification_rx: &mut Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
+) -> Option<DispatchMsg> {
+    if let Some(rx) = notification_rx {
+        tokio::select! {
+            biased;
+            client_msg = cmd_rx.recv() => client_msg.map(DispatchMsg::Client),
+            Some(notif) = rx.recv() => Some(DispatchMsg::Notification(notif)),
+        }
+    } else {
+        cmd_rx.recv().await.map(DispatchMsg::Client)
+    }
+}
+
+/// Handle a single client message. Returns `true` if the loop should exit.
+async fn handle_client_msg(
+    ctx: &mut DispatchCtx<'_>,
+    client_msg: ClientMessage,
+    persist: bool,
+    live_clients: &std::sync::atomic::AtomicU32,
+) -> bool {
+    match client_msg {
+        ClientMessage::Command(cmd) => {
+            ctx.current_client_id = cmd.client_id;
+            match parse_line(&cmd.line) {
+                LineResult::LineTooLong => {
+                    let ev = AgentEvent::err(None, "parse_error", "line exceeds 1 MiB limit");
+                    emit_event_to_broadcast_or_writer(ctx, &ev).await;
+                }
+                LineResult::ParseError(e) if e.is_empty() => {}
+                LineResult::ParseError(_) => {
+                    let ev = AgentEvent::Response {
+                        id: None,
+                        command: "parse_error".to_string(),
+                        success: false,
+                        data: None,
+                        error: Some("invalid JSON command".to_string()),
+                    };
+                    emit_event_to_broadcast_or_writer(ctx, &ev).await;
+                }
+                LineResult::Command(parsed) => {
+                    if dispatch_command(parsed, ctx).await {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        ClientMessage::Disconnected(disc) => {
+            handle_disconnect(ctx, disc.client_id).await;
+            !persist && live_clients.load(std::sync::atomic::Ordering::SeqCst) == 0
         }
     }
 }
