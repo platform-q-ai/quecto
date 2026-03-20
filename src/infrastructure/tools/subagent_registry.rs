@@ -158,12 +158,17 @@ pub fn extract_summary(messages: &serde_json::Value) -> String {
     default
 }
 
-/// Truncate a string to [`MAX_SUMMARY_LEN`] characters, appending "…" if truncated.
+/// Truncate a string to [`MAX_SUMMARY_LEN`] characters, appending "..." if truncated.
+/// Uses char boundary-safe slicing to avoid panics on multi-byte UTF-8.
 fn truncate_summary(s: &str) -> String {
-    if s.len() <= MAX_SUMMARY_LEN {
+    if s.chars().count() <= MAX_SUMMARY_LEN {
         s.to_string()
     } else {
-        let mut truncated = s[..MAX_SUMMARY_LEN].to_string();
+        let end = s
+            .char_indices()
+            .nth(MAX_SUMMARY_LEN)
+            .map_or(s.len(), |(i, _)| i);
+        let mut truncated = s[..end].to_string();
         truncated.push_str("...");
         truncated
     }
@@ -360,6 +365,17 @@ mod tests {
             {"role": "tool", "content": "tool output"}
         ]);
         assert_eq!(extract_summary(&messages), "(no output)");
+    }
+
+    #[test]
+    fn test_extract_summary_truncates_multibyte_utf8() {
+        // Each emoji is 4 bytes. 201 emojis = 804 bytes but 201 chars.
+        let emojis = "🦀".repeat(201);
+        let messages = serde_json::json!([{"role": "assistant", "content": emojis}]);
+        let summary = extract_summary(&messages);
+        assert!(summary.chars().count() <= 203); // 200 chars + "..."
+        assert!(summary.ends_with("..."));
+        // Should not panic on multi-byte boundary
     }
 
     #[test]

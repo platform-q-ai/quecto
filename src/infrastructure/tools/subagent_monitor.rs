@@ -47,26 +47,26 @@ const STATE_CHANGING_EVENTS: &[&str] = &[
 /// | `tool_execution_end` (!is_error)  | (no status change), clear `last_error`     |
 /// | Connection closed / process exit  | → `Exited`  (via `mark_exited`)            |
 pub fn apply_event(entry: &mut SubagentEntry, line: &str) {
-    // Quick rejection for high-frequency events (tokens, turn_start, etc.)
-    // that never change state. Avoids full JSON parse on the hot path.
     if !STATE_CHANGING_EVENTS.iter().any(|pat| line.contains(pat)) {
         return;
     }
-
     let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
-        // Malformed JSON — ignore silently (resilience).
         return;
     };
+    apply_event_parsed(entry, &value);
+}
 
+/// Apply a pre-parsed JSON event to a SubagentEntry.
+/// This avoids a second parse when the caller already has the Value.
+pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) {
     let event_type = match value.get("type").and_then(|v| v.as_str()) {
         Some(t) => t,
-        None => return, // No "type" field — ignore.
+        None => return,
     };
-
     match event_type {
         "agent_start" => {
             entry.status = SubagentStatus::Running;
-            entry.last_error = None; // Clear stale error on new run.
+            entry.last_error = None;
             entry.updated_at = Instant::now();
         }
         "agent_end" => {
@@ -96,14 +96,10 @@ pub fn apply_event(entry: &mut SubagentEntry, line: &str) {
                     MAX_STORED_STRING,
                 ));
             } else {
-                // Successful tool execution — clear any previous error.
                 entry.last_error = None;
             }
             entry.updated_at = Instant::now();
         }
-        // All other events (token, turn_start, turn_end, response, etc.) are
-        // informational — no status change. The pre-filter above should have
-        // already rejected them, but this is a safety net.
         _ => {}
     }
 }
@@ -176,9 +172,11 @@ async fn monitor_loop(
                 }
                 // Only acquire the mutex lock for state-changing events.
                 if STATE_CHANGING_EVENTS.iter().any(|pat| line.contains(pat)) {
-                    update_entry(registry, agent_id, |e| apply_event(e, &line));
-                    // Send notifications for terminal/notable events (#523).
-                    maybe_notify(notify_tx, agent_id, &line);
+                    // Parse once, use for both state update and notification.
+                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
+                        update_entry(registry, agent_id, |e| apply_event_parsed(e, &value));
+                        notify_from_parsed(notify_tx, agent_id, &value);
+                    }
                 }
             }
             Ok(None) => {
@@ -209,21 +207,32 @@ async fn monitor_loop(
 }
 
 /// Check if a JSON-lines event should trigger a notification and send it.
+/// Parses the line from string — use `notify_from_parsed` when you already have a Value.
 pub fn maybe_notify(notify_tx: Option<&NotificationTx>, agent_id: &str, line: &str) {
     let Some(tx) = notify_tx else { return };
-
     let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
         return;
     };
+    notify_from_parsed(Some(tx), agent_id, &value);
+}
+
+/// Send a notification from a pre-parsed JSON value (avoids double parse).
+fn notify_from_parsed(
+    notify_tx: Option<&NotificationTx>,
+    agent_id: &str,
+    value: &serde_json::Value,
+) {
+    let Some(tx) = notify_tx else { return };
     let event_type = match value.get("type").and_then(|v| v.as_str()) {
         Some(t) => t,
         None => return,
     };
-
     let notification = match event_type {
         "agent_end" => {
-            let messages = value.get("messages").cloned().unwrap_or_default();
-            let summary = extract_summary(&messages);
+            // Use a reference to avoid cloning the entire messages array.
+            let empty = serde_json::Value::Array(vec![]);
+            let messages = value.get("messages").unwrap_or(&empty);
+            let summary = extract_summary(messages);
             Some(SubagentNotification::Completed {
                 agent_id: agent_id.to_string(),
                 summary,
@@ -238,7 +247,8 @@ pub fn maybe_notify(notify_tx: Option<&NotificationTx>, agent_id: &str, line: &s
                 let tool_name = value
                     .get("toolName")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
+                    .map(|s| truncate_string(s, MAX_STORED_STRING))
+                    .unwrap_or_else(|| "unknown".to_string());
                 Some(SubagentNotification::Errored {
                     agent_id: agent_id.to_string(),
                     error: format!("tool '{}' returned error", tool_name),
@@ -249,7 +259,6 @@ pub fn maybe_notify(notify_tx: Option<&NotificationTx>, agent_id: &str, line: &s
         }
         _ => None,
     };
-
     if let Some(n) = notification {
         send_notification(Some(tx), n);
     }
