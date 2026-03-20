@@ -399,7 +399,11 @@ fn render_bash(
         let output_lines: Vec<&str> = output.lines().collect();
         let total = output_lines.len();
 
-        let color_fn: fn(&str) -> String = if is_error { theme::error } else { theme::dim };
+        let color_fn: fn(&str) -> String = if is_error {
+            theme::error
+        } else {
+            theme::tool_output
+        };
 
         if expanded || total <= BASH_PREVIEW_LINES {
             // Show all lines.
@@ -486,7 +490,7 @@ fn render_write(
     } else if let Some(r) = result {
         // Show result (e.g. error message).
         if !r.is_empty() {
-            lines.push(truncate_to_width(&theme::dim(r), width, None));
+            lines.push(truncate_to_width(&theme::tool_output(r), width, None));
         }
     }
 }
@@ -521,12 +525,18 @@ fn render_edit(
         if is_error {
             lines.push(truncate_to_width(&theme::error(output), width, None));
         } else if !output.is_empty() {
-            // Show diff-colored output.
-            let output_lines: Vec<&str> = output.lines().collect();
-            let total = output_lines.len();
+            // Skip "Successfully edited ..." and blank lines / code fences —
+            // the header already shows the tool name + path.
+            let diff_lines: Vec<&str> = output
+                .lines()
+                .filter(|l| {
+                    !l.starts_with("Successfully edited") && !l.starts_with("```") && !l.is_empty()
+                })
+                .collect();
+            let total = diff_lines.len();
             let max = if expanded { total } else { FILE_PREVIEW_LINES };
 
-            for line in output_lines.iter().take(max) {
+            for line in diff_lines.iter().take(max) {
                 let styled = style_diff_line(line);
                 lines.push(truncate_to_width(&styled, width, None));
             }
@@ -551,46 +561,65 @@ fn render_subagent(
     is_error: bool,
     width: usize,
 ) {
-    let args_summary = if let Some(v) = args {
+    let (header_detail, _agent_label) = if let Some(v) = args {
         match tool_name {
             "spawn" => {
-                let agent = sanitize(v.get("agent").and_then(|v| v.as_str()).unwrap_or("?"));
+                let agent = sanitize(
+                    v.get("agent_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("agent"),
+                );
                 let task = sanitize(v.get("task").and_then(|v| v.as_str()).unwrap_or(""));
-                if task.is_empty() {
-                    agent
+                let detail = if task.is_empty() {
+                    agent.clone()
                 } else {
                     format!("{} — {}", agent, truncate_with_ellipsis(&task, 50))
-                }
+                };
+                (detail, Some(agent))
             }
             "agent_cmd" => {
-                let action = sanitize(v.get("action").and_then(|v| v.as_str()).unwrap_or("?"));
-                let agent_id = sanitize(v.get("agentId").and_then(|v| v.as_str()).unwrap_or("?"));
-                format!("{} → {}", action, agent_id)
+                let command = sanitize(v.get("command").and_then(|v| v.as_str()).unwrap_or("?"));
+                let agent_id = sanitize(v.get("agent_id").and_then(|v| v.as_str()).unwrap_or("?"));
+                (format!("{} → {}", command, agent_id), Some(agent_id))
             }
-            _ => String::new(),
+            _ => (String::new(), None),
         }
     } else {
-        String::new()
+        (String::new(), None)
     };
 
-    // Header: ◆ spawn reviewer — Review PR  42ms
+    // Header: ✓ spawn reviewer — Review PR  42ms
     lines.push(truncate_to_width(
         &format!(
             "{} {} {}{}",
             icon,
             theme::magenta(&theme::tool_title(tool_name)),
-            theme::dim(&args_summary),
+            theme::tool_output(&header_detail),
             dur,
         ),
         width,
         None,
     ));
 
+    // Show result preview — for spawn, show agent output; for agent_cmd, show response.
     if let Some(output) = result {
         if !output.is_empty() {
-            let color_fn: fn(&str) -> String = if is_error { theme::error } else { theme::dim };
-            let first_line = output.lines().next().unwrap_or("");
-            lines.push(truncate_to_width(&color_fn(first_line), width, None));
+            let color_fn: fn(&str) -> String = if is_error {
+                theme::error
+            } else {
+                theme::tool_output
+            };
+            let output_lines: Vec<&str> = output.lines().collect();
+            let max = FILE_PREVIEW_LINES.min(output_lines.len());
+            for line in output_lines.iter().take(max) {
+                lines.push(truncate_to_width(&color_fn(line), width, None));
+            }
+            if output_lines.len() > max {
+                lines.push(theme::dim(&format!(
+                    "... ({} more lines, Ctrl+O to expand)",
+                    output_lines.len() - max
+                )));
+            }
         }
     }
 }
@@ -646,7 +675,11 @@ fn render_file_preview(
 ) {
     let content_lines: Vec<&str> = content.lines().collect();
     let total = content_lines.len();
-    let color_fn: fn(&str) -> String = if is_error { theme::error } else { theme::dim };
+    let color_fn: fn(&str) -> String = if is_error {
+        theme::error
+    } else {
+        theme::tool_output
+    };
 
     if expanded || total <= FILE_PREVIEW_LINES {
         for line in &content_lines {
@@ -687,14 +720,12 @@ fn extract_best_arg(v: &serde_json::Value) -> String {
 
 /// Style a diff line with color (green for +, red for -, cyan for @@).
 fn style_diff_line(line: &str) -> String {
-    if line.starts_with('+') && !line.starts_with("+++") {
+    if line.starts_with('+') {
         theme::green(line)
-    } else if line.starts_with('-') && !line.starts_with("---") {
+    } else if line.starts_with('-') {
         theme::red(line)
-    } else if line.starts_with("@@") {
-        theme::cyan(line)
     } else {
-        theme::dim(line)
+        theme::tool_output(line)
     }
 }
 
@@ -1051,9 +1082,8 @@ mod tests {
         let lines = chat.render(80);
         let tool_lines: Vec<_> = lines.iter().filter(|l| !l.is_empty()).collect();
         assert!(!tool_lines.is_empty());
-        // Check for bg256(236) = "\x1b[48;5;236m"
         assert!(
-            tool_lines.iter().any(|l| l.contains("\x1b[48;5;236m")),
+            tool_lines.iter().any(|l| l.contains(theme::BG_PENDING)),
             "should have pending bg: {:?}",
             tool_lines
         );
@@ -1066,9 +1096,8 @@ mod tests {
         chat.complete_tool("c-1", "ok", false, None);
         let lines = chat.render(80);
         let tool_lines: Vec<_> = lines.iter().filter(|l| !l.is_empty()).collect();
-        // Check for bg256(22) = "\x1b[48;5;22m"
         assert!(
-            tool_lines.iter().any(|l| l.contains("\x1b[48;5;22m")),
+            tool_lines.iter().any(|l| l.contains(theme::BG_SUCCESS)),
             "should have success bg: {:?}",
             tool_lines
         );
@@ -1081,9 +1110,8 @@ mod tests {
         chat.complete_tool("c-1", "command not found", true, None);
         let lines = chat.render(80);
         let tool_lines: Vec<_> = lines.iter().filter(|l| !l.is_empty()).collect();
-        // Check for bg256(52) = "\x1b[48;5;52m"
         assert!(
-            tool_lines.iter().any(|l| l.contains("\x1b[48;5;52m")),
+            tool_lines.iter().any(|l| l.contains(theme::BG_ERROR)),
             "should have error bg: {:?}",
             tool_lines
         );
@@ -1097,22 +1125,23 @@ mod tests {
         chat.start_tool(
             "c-1".into(),
             "spawn".into(),
-            r#"{"agent":"reviewer","task":"Review PR"}"#.into(),
+            r#"{"agent_id":"reviewer","task":"Review PR"}"#.into(),
         );
         let plain = render_plain(&mut chat, 80);
         assert!(plain.contains("reviewer"), "should show agent: {}", plain);
+        assert!(plain.contains("Review PR"), "should show task: {}", plain);
     }
 
     #[test]
-    fn agent_cmd_shows_action_and_target() {
+    fn agent_cmd_shows_command_and_target() {
         let mut chat = Chat::new();
         chat.start_tool(
             "c-1".into(),
             "agent_cmd".into(),
-            r#"{"action":"steer","agentId":"reviewer"}"#.into(),
+            r#"{"command":"prompt","agent_id":"reviewer"}"#.into(),
         );
         let plain = render_plain(&mut chat, 80);
-        assert!(plain.contains("steer"), "should show action: {}", plain);
+        assert!(plain.contains("prompt"), "should show command: {}", plain);
         assert!(plain.contains("reviewer"), "should show agent: {}", plain);
     }
 
