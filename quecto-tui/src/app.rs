@@ -506,6 +506,11 @@ impl App {
                         let text = self.extract_selection(&sel.start, &end);
                         if !text.is_empty() {
                             copy_to_clipboard(&text);
+                            let chars = text.chars().count();
+                            self.notify(
+                                &format!("Copied {} chars to clipboard", chars),
+                                NotifyLevel::Success,
+                            );
                         }
                     }
                 }
@@ -1114,6 +1119,15 @@ impl App {
             }
         }
 
+        // Store rendered lines for text selection extraction (#528).
+        // Must happen BEFORE highlight injection to avoid leaking
+        // reverse-video escapes into the extraction buffer (#546 review).
+        self.last_rendered_lines = lines.clone();
+
+        // Apply mouse selection highlight (#546).
+        // Applied to a separate copy so extraction buffer stays clean.
+        apply_selection_highlight(&self.selection, &mut lines);
+
         // Write to terminal.
         let mut buf = String::new();
         buf.push_str("\x1b[?2026h");
@@ -1138,10 +1152,6 @@ impl App {
 
         let _ = std::io::stdout().write_all(buf.as_bytes());
         let _ = std::io::stdout().flush();
-
-        // Store rendered lines for text selection extraction (#528).
-        // Move instead of clone to avoid allocation churn on every frame.
-        self.last_rendered_lines = lines;
     }
 
     fn render_full(&mut self) {
@@ -1265,6 +1275,107 @@ fn base64_encode(data: &[u8]) -> String {
         } else {
             result.push('=');
         }
+    }
+    result
+}
+
+/// Normalize a selection into (start_row, start_col, end_row, end_col) order (#546).
+/// Ensures start ≤ end regardless of drag direction.
+fn selection_range(sel: &TextSelection) -> (u16, u16, u16, u16) {
+    let (sr, sc, er, ec) = if sel.start.row < sel.end.row
+        || (sel.start.row == sel.end.row && sel.start.col <= sel.end.col)
+    {
+        (sel.start.row, sel.start.col, sel.end.row, sel.end.col)
+    } else {
+        (sel.end.row, sel.end.col, sel.start.row, sel.start.col)
+    };
+    (sr, sc, er, ec)
+}
+
+/// Apply mouse selection highlight to rendered lines (#546).
+fn apply_selection_highlight(selection: &Option<TextSelection>, lines: &mut [String]) {
+    let Some(sel) = selection else { return };
+    let (sr, sc, er, ec) = selection_range(sel);
+    for row_idx in sr..=er {
+        if (row_idx as usize) < lines.len() {
+            let line_start = if row_idx == sr { sc } else { 0 };
+            let line_end = if row_idx == er {
+                ec
+            } else {
+                crate::utils::visible_width(&lines[row_idx as usize]) as u16
+            };
+            lines[row_idx as usize] =
+                apply_line_highlight(&lines[row_idx as usize], line_start, line_end);
+        }
+    }
+}
+
+/// Apply reverse-video highlighting to a range of visible columns in a line (#546).
+///
+/// Takes a rendered line (may contain ANSI escapes) and highlights columns
+/// `start_col..end_col` (0-indexed, exclusive end) by wrapping visible chars
+/// in that range with `\x1b[7m` (reverse) and `\x1b[27m` (reverse off).
+#[allow(clippy::cognitive_complexity)]
+fn apply_line_highlight(line: &str, start_col: u16, end_col: u16) -> String {
+    if start_col >= end_col {
+        return line.to_string();
+    }
+    let mut result = String::with_capacity(line.len() + 20);
+    let mut vis_col: u16 = 0;
+    let mut in_esc = false;
+    let mut in_osc = false;
+    let mut highlighted = false;
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        let ch = chars[i];
+        // Pass through ANSI escape sequences without counting columns.
+        if in_osc {
+            result.push(ch);
+            if ch == '\x07' {
+                in_osc = false;
+            } else if ch == '\x1b' && i + 1 < chars.len() && chars[i + 1] == '\\' {
+                result.push(chars[i + 1]);
+                i += 2;
+                in_osc = false;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        if in_esc {
+            result.push(ch);
+            if ch.is_ascii_alphabetic() || ch == '~' {
+                in_esc = false;
+            }
+            i += 1;
+            continue;
+        }
+        if ch == '\x1b' {
+            result.push(ch);
+            in_osc = i + 1 < chars.len() && chars[i + 1] == ']';
+            if !in_osc {
+                in_esc = true;
+            }
+            i += 1;
+            continue;
+        }
+        // Visible character — apply highlight bracketing.
+        if vis_col == start_col && !highlighted {
+            result.push_str("\x1b[7m");
+            highlighted = true;
+        }
+        result.push(ch);
+        vis_col += 1;
+        if vis_col == end_col && highlighted {
+            result.push_str("\x1b[27m");
+            highlighted = false;
+        }
+        i += 1;
+    }
+    if highlighted {
+        result.push_str("\x1b[27m");
     }
     result
 }
@@ -2241,5 +2352,86 @@ mod tests {
     fn exited_subagent_grace_is_reasonable() {
         assert!(super::EXITED_SUBAGENT_GRACE.as_secs() >= 2);
         assert!(super::EXITED_SUBAGENT_GRACE.as_secs() <= 30);
+    }
+
+    // ── Mouse highlight tests (#546) ─────────────────────────────────
+
+    #[test]
+    fn highlight_plain_text_full_line() {
+        let result = super::apply_line_highlight("hello world", 0, 11);
+        assert!(result.contains("\x1b[7m"), "should contain reverse-on");
+        assert!(result.contains("\x1b[27m"), "should contain reverse-off");
+        assert!(result.contains("hello world"));
+    }
+
+    #[test]
+    fn highlight_plain_text_partial() {
+        let result = super::apply_line_highlight("hello world", 2, 7);
+        // Before highlight: "he"
+        // Highlighted: "llo w"
+        // After highlight: "orld"
+        assert!(result.contains("\x1b[7m"));
+        assert!(result.contains("\x1b[27m"));
+    }
+
+    #[test]
+    fn highlight_noop_when_start_equals_end() {
+        let result = super::apply_line_highlight("hello", 3, 3);
+        assert_eq!(result, "hello");
+    }
+
+    #[test]
+    fn highlight_noop_when_start_exceeds_end() {
+        let result = super::apply_line_highlight("hello", 5, 2);
+        assert_eq!(result, "hello");
+    }
+
+    #[test]
+    fn highlight_with_ansi_escapes() {
+        let line = "\x1b[32mgreen\x1b[0m text";
+        let result = super::apply_line_highlight(line, 0, 5);
+        // Should highlight "green" (5 visible chars)
+        assert!(result.contains("\x1b[7m"));
+        assert!(result.contains("\x1b[27m"));
+        // ANSI codes should be preserved
+        assert!(result.contains("\x1b[32m"));
+    }
+
+    #[test]
+    fn highlight_closes_at_line_end() {
+        let result = super::apply_line_highlight("abc", 1, 100);
+        // Start at col 1, end beyond line length
+        assert!(result.contains("\x1b[7m"));
+        assert!(result.contains("\x1b[27m"), "must close highlight at end");
+    }
+
+    #[test]
+    fn selection_range_normalizes_forward() {
+        let sel = super::TextSelection {
+            start: super::SelectionAnchor { col: 5, row: 2 },
+            end: super::SelectionAnchor { col: 10, row: 4 },
+        };
+        let (sr, sc, er, ec) = super::selection_range(&sel);
+        assert_eq!((sr, sc, er, ec), (2, 5, 4, 10));
+    }
+
+    #[test]
+    fn selection_range_normalizes_backward() {
+        let sel = super::TextSelection {
+            start: super::SelectionAnchor { col: 10, row: 4 },
+            end: super::SelectionAnchor { col: 5, row: 2 },
+        };
+        let (sr, sc, er, ec) = super::selection_range(&sel);
+        assert_eq!((sr, sc, er, ec), (2, 5, 4, 10));
+    }
+
+    #[test]
+    fn selection_range_same_row_normalizes() {
+        let sel = super::TextSelection {
+            start: super::SelectionAnchor { col: 10, row: 3 },
+            end: super::SelectionAnchor { col: 2, row: 3 },
+        };
+        let (sr, sc, er, ec) = super::selection_range(&sel);
+        assert_eq!((sr, sc, er, ec), (3, 2, 3, 10));
     }
 }
