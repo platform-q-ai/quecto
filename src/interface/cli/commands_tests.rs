@@ -321,3 +321,59 @@ fn test_status_both_providers_configured() {
     let configured_count = out.stdout.matches("configured").count();
     assert_eq!(configured_count, 2, "stdout: {}", out.stdout);
 }
+
+// --- parse_github_skill_path tests ---
+
+#[test]
+fn test_parse_github_skill_path_valid() {
+    let result = super::parse_github_skill_path("owner/repo/skill");
+    assert_eq!(result, Some(("owner", "repo", "skill")));
+}
+
+#[test]
+fn test_parse_github_skill_path_too_few_parts() {
+    assert!(super::parse_github_skill_path("owner/repo").is_none());
+    assert!(super::parse_github_skill_path("owner").is_none());
+    assert!(super::parse_github_skill_path("").is_none());
+}
+
+#[test]
+fn test_parse_github_skill_path_too_many_parts() {
+    assert!(super::parse_github_skill_path("a/b/c/d").is_none());
+}
+
+#[test]
+fn test_parse_github_skill_path_invalid_owner() {
+    assert!(super::parse_github_skill_path(".hidden/repo/skill").is_none());
+}
+
+// --- is_valid_github_slug tests ---
+
+#[test]
+fn test_is_valid_github_slug_valid() {
+    assert!(super::is_valid_github_slug("owner"));
+    assert!(super::is_valid_github_slug("my-repo"));
+    assert!(super::is_valid_github_slug("my_repo"));
+    assert!(super::is_valid_github_slug("my.repo"));
+    assert!(super::is_valid_github_slug("Owner123"));
+}
+
+#[test]
+fn test_is_valid_github_slug_invalid() {
+    assert!(!super::is_valid_github_slug(""));
+    assert!(!super::is_valid_github_slug("."));
+    assert!(!super::is_valid_github_slug(".."));
+    assert!(!super::is_valid_github_slug(".hidden"));
+    assert!(!super::is_valid_github_slug("trail."));
+    assert!(!super::is_valid_github_slug("has space"));
+    assert!(!super::is_valid_github_slug("has/slash"));
+}
+
+// --- resolve_workspace_for_skills ---
+
+#[test]
+fn test_resolve_workspace_for_skills() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let result = super::resolve_workspace_for_skills(tmp.path());
+    assert!(result.ends_with("workspace"));
+}

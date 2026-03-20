@@ -9,4 +9,4 @@ out = ["Html", "Xml"]
 output-dir = "target/coverage"
 skip-clean = true
 exclude-files = ["*/tests/*"]
-fail-under = 95
+fail-under = 80

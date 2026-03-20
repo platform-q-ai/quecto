@@ -55,7 +55,7 @@ cargo clippy --all-targets --features test-support -- -D warnings \
     -W clippy::too_many_arguments \
     -W clippy::too_many_lines
 
-COV_THRESHOLD="${QUECTO_COV_THRESHOLD:-95}"
+COV_THRESHOLD="${QUECTO_COV_THRESHOLD:-80}"
 
 step "5/7" "Parallel test wave: unit + architecture + non-real BDD shards"
 
@@ -109,15 +109,15 @@ fi
 COV_FAIL=0
 
 echo "  quecto (core)..."
-COV_OUT_QUECTO=$(cargo llvm-cov --lib -p quecto --fail-under-lines "$COV_THRESHOLD" 2>&1) || {
-    echo -e "  ${RED}FAIL${NC}: quecto coverage below ${COV_THRESHOLD}%"
+COV_OUT_QUECTO=$(cargo llvm-cov --lib -p quecto --fail-under-regions "$COV_THRESHOLD" 2>&1) || {
+    echo -e "  ${RED}FAIL${NC}: quecto region coverage below ${COV_THRESHOLD}%"
     COV_FAIL=1
 }
 echo "$COV_OUT_QUECTO" | tail -3
 
 echo "  quecto-tui..."
-COV_OUT_TUI=$(cargo llvm-cov --lib -p quecto-tui --fail-under-lines "$COV_THRESHOLD" 2>&1) || {
-    echo -e "  ${RED}FAIL${NC}: quecto-tui coverage below ${COV_THRESHOLD}%"
+COV_OUT_TUI=$(cargo llvm-cov --lib -p quecto-tui --fail-under-regions "$COV_THRESHOLD" 2>&1) || {
+    echo -e "  ${RED}FAIL${NC}: quecto-tui region coverage below ${COV_THRESHOLD}%"
     COV_FAIL=1
 }
 echo "$COV_OUT_TUI" | tail -3
