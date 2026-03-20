@@ -159,6 +159,20 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
     When I execute agent_cmd with '{"agent_id":"w1","command":"reload_extensions"}'
     Then the agent_cmd should have sent command type "reload_extensions"
 
+  # --- Kill command (#559) ---
+
+  Scenario: kill command is built correctly
+    Given an AgentCmdTool with a mock registry entry "w1"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"kill"}'
+    Then the agent_cmd result should not be an error
+    And the agent_cmd result should contain "killed"
+
+  Scenario: kill unknown agent returns error
+    Given an AgentCmdTool with an empty registry
+    When I execute agent_cmd with '{"agent_id":"nonexistent","command":"kill"}'
+    Then the agent_cmd result should be an error
+    And the agent_cmd result should contain "not found"
+
   # --- UDS transport (#557) ---
   # Verified via unit tests in agent_cmd.rs (mock UDS server).
 
