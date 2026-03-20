@@ -201,9 +201,9 @@ async fn send_uds_command(
 
     let mut lines = BufReader::new(reader).lines();
 
-    // Read lines until we find a "response" event matching our command (#550).
-    // In multi-client mode, the broadcast may deliver token/agent_start/etc.
-    // events before our response arrives. Skip non-response events.
+    // Read lines until we find a "response" event (#555).
+    // In multi-client mode, the broadcast delivers all events to all clients.
+    // Skip non-response events (tokens, agent_start, etc.).
     let deadline = tokio::time::Instant::now() + RESPONSE_TIMEOUT;
     loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -218,9 +218,20 @@ async fn send_uds_command(
             .map_err(|e| DomainError::Tool(format!("read from subagent failed: {e}")))?;
 
         match line {
-            Some(l) if l.contains("\"type\":\"response\"") => return Ok(l),
-            Some(_) => continue, // Skip non-response events (tokens, agent_start, etc.)
-            None => return Ok(String::new()), // EOF
+            Some(l) => {
+                // Parse to check event type — avoids false positives from substring matching.
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&l) {
+                    if json.get("type").and_then(|v| v.as_str()) == Some("response") {
+                        return Ok(l);
+                    }
+                }
+                // Not a response event — skip.
+            }
+            None => {
+                return Err(DomainError::Tool(
+                    "subagent closed connection without sending a response".into(),
+                ));
+            }
         }
     }
 }

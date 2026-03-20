@@ -374,8 +374,8 @@ fn shrink_columns(widths: &mut [usize], avail: usize) {
     let min_col = 3;
     let mut frozen = vec![false; n];
 
-    // Iterative: freeze columns that are already at or below fair share,
-    // then redistribute remaining space among the unfrozen columns.
+    // Iterative: freeze columns at or below fair share, redistribute
+    // remaining space among unfrozen columns.
     for _ in 0..n {
         let unfrozen_count = frozen.iter().filter(|&&f| !f).count();
         if unfrozen_count == 0 {
@@ -388,22 +388,36 @@ fn shrink_columns(widths: &mut [usize], avail: usize) {
             .map(|(&w, _)| w)
             .sum();
         let remaining = avail.saturating_sub(frozen_total);
-        let fair = remaining / unfrozen_count;
+        let fair = if unfrozen_count > 0 {
+            remaining / unfrozen_count
+        } else {
+            0
+        };
 
         let mut changed = false;
         for i in 0..n {
-            if !frozen[i] && widths[i] <= fair.max(min_col) {
+            if !frozen[i] && widths[i] <= fair {
                 frozen[i] = true;
                 changed = true;
             }
         }
         if !changed {
             // All unfrozen columns exceed fair share — distribute evenly.
-            for i in 0..n {
-                if !frozen[i] {
-                    widths[i] = fair.max(min_col);
-                }
+            // Give extra remainder chars to the first unfrozen columns.
+            let mut assigned = 0;
+            let unfrozen: Vec<usize> = (0..n).filter(|&i| !frozen[i]).collect();
+            for (j, &i) in unfrozen.iter().enumerate() {
+                let w = if j < remaining % unfrozen.len() {
+                    fair + 1
+                } else {
+                    fair
+                };
+                widths[i] = w.max(min_col);
+                assigned += widths[i];
             }
+            // If frozen columns already consumed all space, min_col may
+            // push total over avail — accept this as a graceful overflow.
+            let _ = assigned;
             break;
         }
     }
