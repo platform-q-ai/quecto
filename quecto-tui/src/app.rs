@@ -659,7 +659,6 @@ impl App {
                 tool_name,
                 args,
             } => {
-                let is_subagent_tool = tool_name == "spawn" || tool_name == "agent_cmd";
                 let args_str = if args.is_object() || args.is_array() {
                     serde_json::to_string(&args).unwrap_or_default()
                 } else {
@@ -700,9 +699,10 @@ impl App {
                 }
                 // Track spawning subagents locally for immediate bar display.
                 let is_spawn = tool_name == "spawn";
-                // Suppress spawn/agent_cmd tool boxes — the status bar
-                // provides visibility for subagent activity (#525).
-                if !is_subagent_tool {
+                // Suppress spawn tool boxes — the status bar provides
+                // visibility. agent_cmd output is shown so query results
+                // are visible (#538).
+                if !suppress_tool_box(&tool_name) {
                     self.chat.start_tool(tool_call_id, tool_name, args_str);
                 }
                 if is_spawn {
@@ -729,8 +729,7 @@ impl App {
                 result,
                 is_error,
             } => {
-                let is_subagent_tool = tool_name == "spawn" || tool_name == "agent_cmd";
-                if !is_subagent_tool {
+                if !suppress_tool_box(&tool_name) {
                     let result_text = crate::client::extract_result_text(&result);
                     self.chat
                         .complete_tool(&tool_call_id, &result_text, is_error, None);
@@ -752,7 +751,7 @@ impl App {
                     }
                 }
                 // Also request server-side state for eventual consistency.
-                if is_subagent_tool {
+                if tool_name == "spawn" || tool_name == "agent_cmd" {
                     self.send_command(Command::GetSubagents { id: None });
                 }
                 if let Some(spinner) = &mut self.spinner {
@@ -1398,6 +1397,15 @@ fn ctrl_c_action(agent_running: bool, editor_empty: bool) -> CtrlCAction {
     }
 }
 
+/// Whether to suppress tool output boxes in the chat area (#538).
+///
+/// `spawn` output is suppressed because the subagent status bar provides
+/// visibility. `agent_cmd` output is shown so the user can see query
+/// results (get_state, get_messages_tail, get_session_stats, etc.).
+fn suppress_tool_box(tool_name: &str) -> bool {
+    tool_name == "spawn"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1874,5 +1882,31 @@ mod tests {
             super::CtrlCAction::Noop,
             "Ctrl+C should do nothing when idle and editor is empty"
         );
+    }
+
+    // ── Tool output suppression tests (#538) ─────────────────────────
+
+    #[test]
+    fn spawn_tool_output_suppressed() {
+        assert!(
+            super::suppress_tool_box("spawn"),
+            "spawn output should be suppressed (status bar shows it)"
+        );
+    }
+
+    #[test]
+    fn agent_cmd_tool_output_shown() {
+        assert!(
+            !super::suppress_tool_box("agent_cmd"),
+            "agent_cmd output should be shown so query results are visible"
+        );
+    }
+
+    #[test]
+    fn regular_tool_output_shown() {
+        assert!(!super::suppress_tool_box("bash"));
+        assert!(!super::suppress_tool_box("read"));
+        assert!(!super::suppress_tool_box("write"));
+        assert!(!super::suppress_tool_box("edit"));
     }
 }
