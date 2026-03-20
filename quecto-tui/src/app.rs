@@ -835,16 +835,26 @@ impl App {
     /// Update subagent state from server push (full replacement).
     fn update_subagent_bar(&mut self, subagents: Vec<crate::client::SubagentInfoEvent>) {
         // Merge server data with existing local state to preserve exited_at
-        // timestamps. New entries are inserted; missing entries are removed
-        // (unless they have an active grace period).
+        // timestamps. New entries are inserted; entries absent from the
+        // server push are removed unless they have an active grace period.
         let mut new_map = std::collections::BTreeMap::new();
         for s in subagents {
-            let id = s.agent_id.clone();
+            let id = sanitize_agent_id(&s.agent_id);
             if let Some(mut existing) = self.subagent_local.remove(&id) {
                 existing.update_info(s);
                 new_map.insert(id, existing);
             } else {
                 new_map.insert(id, TrackedSubagent::new(s));
+            }
+        }
+        // Preserve locally-tracked exited entries whose grace period
+        // hasn't elapsed yet (server may stop reporting them immediately).
+        let now = tokio::time::Instant::now();
+        for (id, entry) in std::mem::take(&mut self.subagent_local) {
+            if let Some(exited_at) = entry.exited_at {
+                if now.saturating_duration_since(exited_at) < EXITED_SUBAGENT_GRACE {
+                    new_map.entry(id).or_insert(entry);
+                }
             }
         }
         self.subagent_local = new_map;
@@ -870,6 +880,9 @@ impl App {
     /// GC exited subagent bars whose grace period has elapsed (#540).
     /// Returns `true` if the bar was modified.
     fn gc_exited_subagents(&mut self) -> bool {
+        if self.subagent_local.is_empty() {
+            return false;
+        }
         let removed = gc_exited_subagents(
             &mut self.subagent_local,
             tokio::time::Instant::now(),
@@ -1442,8 +1455,16 @@ fn is_subagent_tool(tool_name: &str) -> bool {
 /// status bar shows subagent activity. Query commands (get_state,
 /// get_messages_tail, get_session_stats, etc.) are shown so the user
 /// can inspect results.
+/// Status string for exited subagents — used in multiple comparisons (#540).
+const STATUS_EXITED: &str = "exited";
+
 /// Grace period before exited subagent bars are auto-removed (#540).
 const EXITED_SUBAGENT_GRACE: Duration = Duration::from_secs(5);
+
+/// Strip control characters from an agent_id for safe use as a map key.
+fn sanitize_agent_id(id: &str) -> String {
+    id.chars().filter(|c| !c.is_control()).collect()
+}
 
 /// Subagent entry with optional expiry timestamp (#540).
 #[derive(Debug, Clone)]
@@ -1455,7 +1476,7 @@ struct TrackedSubagent {
 
 impl TrackedSubagent {
     fn new(info: crate::client::SubagentInfoEvent) -> Self {
-        let exited_at = if info.status == "exited" {
+        let exited_at = if info.status == STATUS_EXITED {
             Some(tokio::time::Instant::now())
         } else {
             None
@@ -1465,9 +1486,9 @@ impl TrackedSubagent {
 
     /// Update the info, recording exited_at on transition to "exited".
     fn update_info(&mut self, new_info: crate::client::SubagentInfoEvent) {
-        if new_info.status == "exited" && self.exited_at.is_none() {
+        if new_info.status == STATUS_EXITED && self.exited_at.is_none() {
             self.exited_at = Some(tokio::time::Instant::now());
-        } else if new_info.status != "exited" {
+        } else if new_info.status != STATUS_EXITED {
             self.exited_at = None;
         }
         self.info = new_info;
@@ -1481,15 +1502,19 @@ fn gc_exited_subagents(
     now: tokio::time::Instant,
     grace: Duration,
 ) -> bool {
-    let before = map.len();
+    let mut removed = false;
     map.retain(|_, entry| {
         if let Some(exited_at) = entry.exited_at {
-            now.duration_since(exited_at) < grace
+            let keep = now.saturating_duration_since(exited_at) < grace;
+            if !keep {
+                removed = true;
+            }
+            keep
         } else {
             true
         }
     });
-    map.len() != before
+    removed
 }
 
 fn suppress_tool_box(tool_name: &str, args: &serde_json::Value) -> bool {
