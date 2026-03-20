@@ -1,11 +1,12 @@
+# Coverage is enforced via `cargo llvm-cov` in scripts/pre-push.sh (step 6/7).
+# Target: 95% line coverage for both quecto and quecto-tui.
+#
+# tarpaulin config is kept as a fallback / CI alternative but is NOT the
+# primary enforcement mechanism. llvm-cov is faster and more accurate.
 [default]
-# Unit test coverage only; BDD integration tests (which cover gateway, CLI,
-# voice, and web search paths) cause tarpaulin segfaults with ptrace.
-# Target: 90% once tarpaulin supports cucumber-rs reliably.
-# Tracking: https://github.com/xd009642/tarpaulin/issues/1292
-fail-under = 85
 run-types = ["Lib"]
 out = ["Html", "Xml"]
 output-dir = "target/coverage"
 skip-clean = true
 exclude-files = ["*/tests/*"]
+fail-under = 95
