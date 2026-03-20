@@ -118,13 +118,28 @@ impl AgentCmdTool {
                 serde_json::json!({"type": "get_messages_tail", "count": count})
             }
             "set_model" => {
-                let model = args.get("model").and_then(|v| v.as_str());
-                let provider = args.get("provider").and_then(|v| v.as_str());
-                let model_id = args.get("model_id").and_then(|v| v.as_str());
+                let model = args
+                    .get("model")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty());
+                let provider = args
+                    .get("provider")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty());
+                let model_id = args
+                    .get("model_id")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty());
                 match (model, provider, model_id) {
                     (Some(m), _, _) => serde_json::json!({"type": "set_model", "model": m}),
-                    (_, Some(p), Some(mid)) => {
+                    (None, Some(p), Some(mid)) => {
                         serde_json::json!({"type": "set_model", "provider": p, "modelId": mid})
+                    }
+                    (None, Some(_), None) => {
+                        return Err("set_model: provider requires model_id".to_string());
+                    }
+                    (None, None, Some(_)) => {
+                        return Err("set_model: model_id requires provider".to_string());
                     }
                     _ => return Err("set_model requires model, or provider + model_id".to_string()),
                 }
@@ -559,6 +574,33 @@ mod tests {
             .unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&cmd).unwrap();
         assert_eq!(parsed["type"], "reload_extensions");
+    }
+
+    #[test]
+    fn test_parse_set_model_empty_string_rejected() {
+        let tool = empty_tool();
+        let result = tool.parse_and_build(r#"{"agent_id":"w1","command":"set_model","model":""}"#);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("model"));
+    }
+
+    #[test]
+    fn test_parse_set_model_provider_without_model_id() {
+        let tool = empty_tool();
+        let result = tool
+            .parse_and_build(r#"{"agent_id":"w1","command":"set_model","provider":"anthropic"}"#);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("model_id"));
+    }
+
+    #[test]
+    fn test_parse_set_model_model_id_without_provider() {
+        let tool = empty_tool();
+        let result = tool.parse_and_build(
+            r#"{"agent_id":"w1","command":"set_model","model_id":"claude-sonnet-4-20250514"}"#,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("provider"));
     }
 
     #[test]
