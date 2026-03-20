@@ -149,7 +149,7 @@ impl AgentCmdTool {
             "get_subagents" => serde_json::json!({"type": "get_subagents"}),
             "get_extensions" => serde_json::json!({"type": "get_extensions"}),
             "reload_extensions" => serde_json::json!({"type": "reload_extensions"}),
-            "kill" => unreachable!("kill is handled by try_local_command before parse_and_build"),
+            "kill" => return Err("kill command is handled locally, not via UDS".to_string()),
             _ => unreachable!(), // Covered by SUPPORTED_COMMANDS check above.
         };
 
@@ -186,8 +186,12 @@ impl AgentCmdTool {
 
     /// Kill a specific subagent by ID: SIGTERM + remove from registry (#559).
     fn kill_agent(&self, agent_id: &str) -> ToolResult {
-        let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-        let entry = match entries.remove(agent_id) {
+        // Extract entry then drop the lock before sending SIGTERM (#559 review).
+        let entry = {
+            let mut entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+            entries.remove(agent_id)
+        };
+        let entry = match entry {
             Some(e) => e,
             None => {
                 return ToolResult {
@@ -206,7 +210,8 @@ impl AgentCmdTool {
             handle.abort();
         }
 
-        // Send SIGTERM to the child process.
+        // Send SIGTERM to the child process (lock already released).
+        // The reaper task spawned by SpawnTool will wait() the child.
         if entry.pid != 0 {
             let _ = std::process::Command::new("kill")
                 .arg("-TERM")
