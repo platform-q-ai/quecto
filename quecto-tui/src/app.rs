@@ -117,7 +117,8 @@ pub struct App {
     model_selector: Option<ModelSelector>,
     /// Client-side subagent state for immediate bar updates (#525).
     /// Updated from tool events (spawn/agent_cmd) and server pushes.
-    subagent_local: std::collections::BTreeMap<String, crate::client::SubagentInfoEvent>,
+    /// Entries track expiry timestamps for auto-removal (#540).
+    subagent_local: std::collections::BTreeMap<String, TrackedSubagent>,
     /// Active mouse text selection (#528).
     selection: Option<TextSelection>,
     /// Last rendered lines (for extracting selected text from the buffer).
@@ -316,6 +317,10 @@ impl App {
                     }
                     // GC expired notifications.
                     if self.notifications.gc() {
+                        needs_render = true;
+                    }
+                    // GC exited subagent bars (#540).
+                    if self.gc_exited_subagents() {
                         needs_render = true;
                     }
                     // Kitty fallback — enable modifyOtherKeys if no response.
@@ -710,13 +715,13 @@ impl App {
                             agent_id.chars().filter(|c| !c.is_control()).collect();
                         self.subagent_local.insert(
                             sanitized.clone(),
-                            crate::client::SubagentInfoEvent {
+                            TrackedSubagent::new(crate::client::SubagentInfoEvent {
                                 agent_id: sanitized,
                                 status: "starting".to_string(),
                                 last_tool: None,
                                 last_error: None,
                                 pid: 0,
-                            },
+                            }),
                         );
                         self.rebuild_subagent_bar();
                     }
@@ -743,7 +748,7 @@ impl App {
                             let sanitized: String =
                                 agent_id.chars().filter(|c| !c.is_control()).collect();
                             if let Some(entry) = self.subagent_local.get_mut(&sanitized) {
-                                entry.status = "running".to_string();
+                                entry.info.status = "running".to_string();
                             }
                             self.rebuild_subagent_bar();
                         }
@@ -829,11 +834,30 @@ impl App {
 
     /// Update subagent state from server push (full replacement).
     fn update_subagent_bar(&mut self, subagents: Vec<crate::client::SubagentInfoEvent>) {
-        // Server data is authoritative — replace local state entirely.
-        self.subagent_local.clear();
+        // Merge server data with existing local state to preserve exited_at
+        // timestamps. New entries are inserted; entries absent from the
+        // server push are removed unless they have an active grace period.
+        let mut new_map = std::collections::BTreeMap::new();
         for s in subagents {
-            self.subagent_local.insert(s.agent_id.clone(), s);
+            let id = sanitize_agent_id(&s.agent_id);
+            if let Some(mut existing) = self.subagent_local.remove(&id) {
+                existing.update_info(s);
+                new_map.insert(id, existing);
+            } else {
+                new_map.insert(id, TrackedSubagent::new(s));
+            }
         }
+        // Preserve locally-tracked exited entries whose grace period
+        // hasn't elapsed yet (server may stop reporting them immediately).
+        let now = tokio::time::Instant::now();
+        for (id, entry) in std::mem::take(&mut self.subagent_local) {
+            if let Some(exited_at) = entry.exited_at {
+                if now.saturating_duration_since(exited_at) < EXITED_SUBAGENT_GRACE {
+                    new_map.entry(id).or_insert(entry);
+                }
+            }
+        }
+        self.subagent_local = new_map;
         self.rebuild_subagent_bar();
     }
 
@@ -842,12 +866,32 @@ impl App {
         if self.subagent_local.is_empty() {
             self.widgets_above.clear("subagents");
         } else {
-            let infos: Vec<crate::client::SubagentInfoEvent> =
-                self.subagent_local.values().cloned().collect();
+            let infos: Vec<crate::client::SubagentInfoEvent> = self
+                .subagent_local
+                .values()
+                .map(|t| t.info.clone())
+                .collect();
             let mut bar = SubagentBar::new();
             bar.update(infos);
             self.widgets_above.set("subagents", Box::new(bar));
         }
+    }
+
+    /// GC exited subagent bars whose grace period has elapsed (#540).
+    /// Returns `true` if the bar was modified.
+    fn gc_exited_subagents(&mut self) -> bool {
+        if self.subagent_local.is_empty() {
+            return false;
+        }
+        let removed = gc_exited_subagents(
+            &mut self.subagent_local,
+            tokio::time::Instant::now(),
+            EXITED_SUBAGENT_GRACE,
+        );
+        if removed {
+            self.rebuild_subagent_bar();
+        }
+        removed
     }
 
     // ── Slash command handlers ─────────────────────────────────────────
@@ -1411,6 +1455,68 @@ fn is_subagent_tool(tool_name: &str) -> bool {
 /// status bar shows subagent activity. Query commands (get_state,
 /// get_messages_tail, get_session_stats, etc.) are shown so the user
 /// can inspect results.
+/// Status string for exited subagents — used in multiple comparisons (#540).
+const STATUS_EXITED: &str = "exited";
+
+/// Grace period before exited subagent bars are auto-removed (#540).
+const EXITED_SUBAGENT_GRACE: Duration = Duration::from_secs(5);
+
+/// Strip control characters from an agent_id for safe use as a map key.
+fn sanitize_agent_id(id: &str) -> String {
+    id.chars().filter(|c| !c.is_control()).collect()
+}
+
+/// Subagent entry with optional expiry timestamp (#540).
+#[derive(Debug, Clone)]
+struct TrackedSubagent {
+    info: crate::client::SubagentInfoEvent,
+    /// When the subagent entered the "exited" state. `None` if still active.
+    exited_at: Option<tokio::time::Instant>,
+}
+
+impl TrackedSubagent {
+    fn new(info: crate::client::SubagentInfoEvent) -> Self {
+        let exited_at = if info.status == STATUS_EXITED {
+            Some(tokio::time::Instant::now())
+        } else {
+            None
+        };
+        Self { info, exited_at }
+    }
+
+    /// Update the info, recording exited_at on transition to "exited".
+    fn update_info(&mut self, new_info: crate::client::SubagentInfoEvent) {
+        if new_info.status == STATUS_EXITED && self.exited_at.is_none() {
+            self.exited_at = Some(tokio::time::Instant::now());
+        } else if new_info.status != STATUS_EXITED {
+            self.exited_at = None;
+        }
+        self.info = new_info;
+    }
+}
+
+/// Remove exited subagents whose grace period has elapsed (#540).
+/// Returns `true` if any entries were removed.
+fn gc_exited_subagents(
+    map: &mut std::collections::BTreeMap<String, TrackedSubagent>,
+    now: tokio::time::Instant,
+    grace: Duration,
+) -> bool {
+    let mut removed = false;
+    map.retain(|_, entry| {
+        if let Some(exited_at) = entry.exited_at {
+            let keep = now.saturating_duration_since(exited_at) < grace;
+            if !keep {
+                removed = true;
+            }
+            keep
+        } else {
+            true
+        }
+    });
+    removed
+}
+
 fn suppress_tool_box(tool_name: &str, args: &serde_json::Value) -> bool {
     match tool_name {
         "spawn" => true,
@@ -1974,5 +2080,166 @@ mod tests {
         assert!(!super::suppress_tool_box("read", &args));
         assert!(!super::suppress_tool_box("write", &args));
         assert!(!super::suppress_tool_box("edit", &args));
+    }
+
+    // ── Exited subagent GC tests (#540) ──────────────────────────────
+
+    fn make_tracked(id: &str, status: &str) -> (String, super::TrackedSubagent) {
+        (
+            id.to_string(),
+            super::TrackedSubagent::new(crate::client::SubagentInfoEvent {
+                agent_id: id.to_string(),
+                status: status.to_string(),
+                last_tool: None,
+                last_error: None,
+                pid: 0,
+            }),
+        )
+    }
+
+    #[test]
+    fn gc_removes_expired_exited_subagent() {
+        let mut map = std::collections::BTreeMap::new();
+        let (id, mut entry) = make_tracked("w1", "exited");
+        // Backdate the exited_at to 10 seconds ago.
+        entry.exited_at = Some(tokio::time::Instant::now() - Duration::from_secs(10));
+        map.insert(id, entry);
+
+        let removed = super::gc_exited_subagents(
+            &mut map,
+            tokio::time::Instant::now(),
+            Duration::from_secs(5),
+        );
+        assert!(removed, "should have removed expired entry");
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn gc_keeps_recent_exited_subagent() {
+        let mut map = std::collections::BTreeMap::new();
+        let (id, entry) = make_tracked("w1", "exited");
+        // exited_at is just now — within grace period.
+        map.insert(id, entry);
+
+        let removed = super::gc_exited_subagents(
+            &mut map,
+            tokio::time::Instant::now(),
+            Duration::from_secs(5),
+        );
+        assert!(!removed, "should not remove recent exit");
+        assert_eq!(map.len(), 1);
+    }
+
+    #[test]
+    fn gc_keeps_running_subagent() {
+        let mut map = std::collections::BTreeMap::new();
+        let (id, entry) = make_tracked("w1", "running");
+        map.insert(id, entry);
+
+        let removed = super::gc_exited_subagents(
+            &mut map,
+            tokio::time::Instant::now(),
+            Duration::from_secs(5),
+        );
+        assert!(!removed, "should not remove running subagent");
+        assert_eq!(map.len(), 1);
+    }
+
+    #[test]
+    fn gc_mixed_removes_only_expired() {
+        let mut map = std::collections::BTreeMap::new();
+
+        let (id1, entry1) = make_tracked("active", "running");
+        map.insert(id1, entry1);
+
+        let (id2, mut entry2) = make_tracked("old-exit", "exited");
+        entry2.exited_at = Some(tokio::time::Instant::now() - Duration::from_secs(10));
+        map.insert(id2, entry2);
+
+        let (id3, entry3) = make_tracked("recent-exit", "exited");
+        map.insert(id3, entry3);
+
+        let removed = super::gc_exited_subagents(
+            &mut map,
+            tokio::time::Instant::now(),
+            Duration::from_secs(5),
+        );
+        assert!(removed, "should have removed old-exit");
+        assert_eq!(map.len(), 2);
+        assert!(map.contains_key("active"));
+        assert!(map.contains_key("recent-exit"));
+        assert!(!map.contains_key("old-exit"));
+    }
+
+    #[test]
+    fn tracked_subagent_new_sets_exited_at_for_exited() {
+        let entry = super::TrackedSubagent::new(crate::client::SubagentInfoEvent {
+            agent_id: "w1".into(),
+            status: "exited".into(),
+            last_tool: None,
+            last_error: None,
+            pid: 0,
+        });
+        assert!(entry.exited_at.is_some());
+    }
+
+    #[test]
+    fn tracked_subagent_new_no_exited_at_for_running() {
+        let entry = super::TrackedSubagent::new(crate::client::SubagentInfoEvent {
+            agent_id: "w1".into(),
+            status: "running".into(),
+            last_tool: None,
+            last_error: None,
+            pid: 0,
+        });
+        assert!(entry.exited_at.is_none());
+    }
+
+    #[test]
+    fn tracked_subagent_update_sets_exited_at_on_transition() {
+        let mut entry = super::TrackedSubagent::new(crate::client::SubagentInfoEvent {
+            agent_id: "w1".into(),
+            status: "running".into(),
+            last_tool: None,
+            last_error: None,
+            pid: 0,
+        });
+        assert!(entry.exited_at.is_none());
+
+        entry.update_info(crate::client::SubagentInfoEvent {
+            agent_id: "w1".into(),
+            status: "exited".into(),
+            last_tool: None,
+            last_error: None,
+            pid: 0,
+        });
+        assert!(entry.exited_at.is_some());
+    }
+
+    #[test]
+    fn tracked_subagent_update_clears_exited_at_on_revival() {
+        let mut entry = super::TrackedSubagent::new(crate::client::SubagentInfoEvent {
+            agent_id: "w1".into(),
+            status: "exited".into(),
+            last_tool: None,
+            last_error: None,
+            pid: 0,
+        });
+        assert!(entry.exited_at.is_some());
+
+        entry.update_info(crate::client::SubagentInfoEvent {
+            agent_id: "w1".into(),
+            status: "running".into(),
+            last_tool: None,
+            last_error: None,
+            pid: 0,
+        });
+        assert!(entry.exited_at.is_none());
+    }
+
+    #[test]
+    fn exited_subagent_grace_is_reasonable() {
+        assert!(super::EXITED_SUBAGENT_GRACE.as_secs() >= 2);
+        assert!(super::EXITED_SUBAGENT_GRACE.as_secs() <= 30);
     }
 }
