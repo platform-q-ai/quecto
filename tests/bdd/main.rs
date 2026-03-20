@@ -558,6 +558,18 @@ pub struct QuectoWorld {
     pub guard_captured_name: Option<String>,
     /// Captured guard arguments
     pub guard_captured_args: Option<String>,
+    // --- Subagent monitor (#522) ---
+    /// SubagentEntry under test for monitor BDD scenarios
+    pub monitor_entry: Option<quecto::infrastructure::tools::subagent_registry::SubagentEntry>,
+    /// All SubagentStatus variants for display assertion
+    pub monitor_status_variants:
+        Option<Vec<quecto::infrastructure::tools::subagent_registry::SubagentStatus>>,
+    /// Monitor abort handle for cancellation test
+    pub monitor_abort_handle: Option<tokio::task::JoinHandle<()>>,
+    /// Tokio runtime for abort handle test (keeps spawned task alive)
+    pub _monitor_rt: Option<tokio::runtime::Runtime>,
+    /// Result of aborting the monitor handle
+    pub monitor_abort_result: Option<bool>,
     // --- Multi-client UDS (#318) ---
     /// Multi-client UDS: per-client command queues (client_id -> commands)
     pub mc_client_commands: HashMap<u32, Vec<String>>,
@@ -853,6 +865,7 @@ mod security_steps;
 mod session_steps;
 mod skills_steps;
 mod spawn_tool_steps;
+mod subagent_monitor_steps;
 mod subagent_steps;
 mod tool_empty_args_steps;
 mod tool_guard_steps;
