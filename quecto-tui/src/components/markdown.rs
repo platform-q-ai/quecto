@@ -244,12 +244,22 @@ impl Markdown {
                 }
 
                 Event::Code(code) => {
-                    let styled = theme::cyan(&format!("`{}`", code));
-                    current_line.push_str(&styled);
+                    if in_table {
+                        // Append code text to the table cell (#550).
+                        // Backticks preserved for display as plain text.
+                        current_cell.push('`');
+                        current_cell.push_str(&code);
+                        current_cell.push('`');
+                    } else {
+                        let styled = theme::cyan(&format!("`{}`", code));
+                        current_line.push_str(&styled);
+                    }
                 }
 
                 Event::SoftBreak => {
-                    if in_code_block {
+                    if in_table {
+                        current_cell.push(' ');
+                    } else if in_code_block {
                         code_block_content.push('\n');
                     } else {
                         current_line.push(' ');
@@ -257,7 +267,9 @@ impl Markdown {
                 }
 
                 Event::HardBreak => {
-                    if in_blockquote {
+                    if in_table {
+                        current_cell.push(' ');
+                    } else if in_blockquote {
                         let text = std::mem::take(&mut current_line);
                         blockquote_lines.push(text);
                     } else {
@@ -793,5 +805,50 @@ mod tests {
         assert_eq!(sanitize_for_display("hello world"), "hello world");
         assert_eq!(sanitize_for_display("café"), "café");
         assert_eq!(sanitize_for_display("你好"), "你好");
+    }
+
+    // --- Inline code in table cells (#550) ---
+
+    #[test]
+    fn table_inline_code_stays_in_cell() {
+        let md = "| Tool | Description |\n|------|-------------|\n| `bash` | Run commands |";
+        let plain = render_plain(md, 80);
+        // "bash" should be on the same line as "Run commands", not on a separate line.
+        let lines: Vec<&str> = plain.lines().collect();
+        let data_line = lines
+            .iter()
+            .find(|l| l.contains("bash"))
+            .expect("should contain bash");
+        assert!(
+            data_line.contains("Run commands"),
+            "inline code and description should be on the same line: {:?}",
+            data_line,
+        );
+    }
+
+    #[test]
+    fn table_mixed_text_and_code_in_cell() {
+        let md = "| Command |\n|---------|\n| Use `poem.txt` file |";
+        let plain = render_plain(md, 80);
+        let data_line = plain
+            .lines()
+            .find(|l| l.contains("poem.txt"))
+            .expect("should contain poem.txt");
+        assert!(
+            data_line.contains("Use") && data_line.contains("file"),
+            "mixed text and code should be in one cell: {:?}",
+            data_line,
+        );
+    }
+
+    #[test]
+    fn table_code_only_cell_renders_correctly() {
+        let md = "| Name |\n|------|\n| `test` |";
+        let plain = render_plain(md, 80);
+        assert!(
+            plain.contains("test"),
+            "code-only cell should contain the text: {:?}",
+            plain,
+        );
     }
 }
