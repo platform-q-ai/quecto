@@ -383,4 +383,67 @@ mod tests {
         let rx2 = arm_cancel(&handle);
         assert!(rx2.is_some(), "should re-arm after disarm");
     }
+
+    #[test]
+    fn fire_on_already_fired_is_noop() {
+        let handle = make_handle();
+        fire_cancel(&handle); // Idle → Fired
+        fire_cancel(&handle); // Fired → Fired (noop)
+        // Should still pre-cancel next arm.
+        assert!(arm_cancel(&handle).is_none());
+    }
+
+    #[test]
+    fn disarm_on_idle_is_noop() {
+        let handle = make_handle();
+        disarm_cancel(&handle); // nothing to disarm
+        // Should still arm normally.
+        let rx = arm_cancel(&handle);
+        assert!(rx.is_some());
+    }
+
+    #[test]
+    fn disarm_on_fired_does_not_clear() {
+        let handle = make_handle();
+        fire_cancel(&handle); // → Fired
+        disarm_cancel(&handle); // Fired is not Armed, so this is a no-op
+        // Slot should still be Fired.
+        assert!(
+            arm_cancel(&handle).is_none(),
+            "Fired state should survive disarm"
+        );
+    }
+
+    #[test]
+    fn arm_cancel_returns_receiver() {
+        let handle = make_handle();
+        let rx = arm_cancel(&handle).expect("should arm");
+        // Fire should signal the receiver.
+        fire_cancel(&handle);
+        // rx should be signalled (sender dropped or sent).
+        // In a real scenario we'd poll the receiver.
+        drop(rx); // just verify it exists
+    }
+
+    #[test]
+    fn multiple_arm_disarm_cycles() {
+        let handle = make_handle();
+        for _ in 0..10 {
+            let _rx = arm_cancel(&handle).expect("should arm");
+            disarm_cancel(&handle);
+        }
+        // Final arm should still work.
+        assert!(arm_cancel(&handle).is_some());
+    }
+
+    #[test]
+    fn fire_then_arm_resets_to_idle() {
+        let handle = make_handle();
+        fire_cancel(&handle); // → Fired
+        let result = arm_cancel(&handle); // Fired → Idle, returns None
+        assert!(result.is_none());
+        // Now slot should be Idle, so next arm succeeds.
+        let result2 = arm_cancel(&handle);
+        assert!(result2.is_some(), "should arm after Fired was consumed");
+    }
 }

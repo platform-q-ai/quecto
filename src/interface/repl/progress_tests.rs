@@ -414,3 +414,95 @@ fn test_agent_progress_event_debug_and_clone() {
         assert!(!debug_str.is_empty());
     }
 }
+
+// --- Helper function unit tests ---
+
+#[test]
+fn test_sanitize_for_terminal_strips_ansi() {
+    assert_eq!(sanitize_for_terminal("\x1b[31mred\x1b[0m"), "[31mred[0m");
+}
+
+#[test]
+fn test_sanitize_for_terminal_strips_control() {
+    assert_eq!(sanitize_for_terminal("a\x00b\x01c"), "abc");
+}
+
+#[test]
+fn test_sanitize_for_terminal_preserves_unicode() {
+    assert_eq!(sanitize_for_terminal("héllo 🦀"), "héllo 🦀");
+}
+
+#[test]
+fn test_sanitize_and_truncate_short() {
+    assert_eq!(sanitize_and_truncate("hello", 10), "hello");
+}
+
+#[test]
+fn test_sanitize_and_truncate_long() {
+    let long = "a".repeat(200);
+    let result = sanitize_and_truncate(&long, 10);
+    assert!(result.len() <= 13); // 10 chars + possible "..."
+}
+
+#[test]
+fn test_format_compact_tokens_small() {
+    assert_eq!(format_compact_tokens(500), "500");
+}
+
+#[test]
+fn test_format_compact_tokens_thousands() {
+    assert_eq!(format_compact_tokens(1000), "1k");
+    assert_eq!(format_compact_tokens(1500), "1.5k");
+    assert_eq!(format_compact_tokens(2000), "2k");
+    assert_eq!(format_compact_tokens(15000), "15k");
+}
+
+#[test]
+fn test_format_context_usage() {
+    assert_eq!(format_context_usage(10000, 200000), "5.0%/200k");
+}
+
+#[test]
+fn test_format_context_usage_zero_max() {
+    assert_eq!(format_context_usage(0, 0), "0.0%/0");
+}
+
+#[test]
+fn test_format_status_detail() {
+    let result = format_status_detail(10000, 200000, "anthropic", "claude-4");
+    assert!(result.contains("5.0%/200k"));
+    assert!(result.contains("anthropic"));
+    assert!(result.contains("claude-4"));
+}
+
+#[test]
+fn test_format_tool_status_with_args() {
+    let result = format_tool_status("bash", r#"{"command": "ls -la"}"#);
+    assert!(result.contains("bash"));
+    assert!(result.contains("ls -la"));
+}
+
+#[test]
+fn test_format_tool_status_empty_args() {
+    let result = format_tool_status("bash", "");
+    assert_eq!(result, "bash");
+}
+
+#[test]
+fn test_format_tool_status_sanitizes() {
+    let result = format_tool_status("bash\x1b[31m", "echo\x00hi");
+    assert!(!result.contains('\x1b'));
+    assert!(!result.contains('\x00'));
+}
+
+#[test]
+fn test_spinner_frames_not_empty() {
+    assert!(!SPINNER_FRAMES.is_empty());
+}
+
+#[test]
+fn test_spinner_frames_all_non_empty() {
+    for frame in SPINNER_FRAMES {
+        assert!(!frame.is_empty());
+    }
+}
