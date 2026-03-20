@@ -332,7 +332,6 @@ fn make_edit_diff(path: &str, old_content: &str, new_content: &str) -> String {
     };
 
     let mut output = Vec::new();
-    let mut last_was_change = false;
 
     let ops = diff.grouped_ops(DIFF_CONTEXT_LINES);
     for (group_idx, group) in ops.iter().enumerate() {
@@ -343,17 +342,14 @@ fn make_edit_diff(path: &str, old_content: &str, new_content: &str) -> String {
                     ChangeTag::Delete => {
                         let n = change.old_index().unwrap_or(0) + 1;
                         output.push(format!("-{:>width$} {}", n, line, width = num_width));
-                        last_was_change = true;
                     }
                     ChangeTag::Insert => {
                         let n = change.new_index().unwrap_or(0) + 1;
                         output.push(format!("+{:>width$} {}", n, line, width = num_width));
-                        last_was_change = true;
                     }
                     ChangeTag::Equal => {
                         let n = change.old_index().unwrap_or(0) + 1;
                         output.push(format!(" {:>width$} {}", n, line, width = num_width));
-                        last_was_change = false;
                     }
                 }
             }
@@ -361,11 +357,8 @@ fn make_edit_diff(path: &str, old_content: &str, new_content: &str) -> String {
         // Add ellipsis between hunks (not after the last one).
         if group_idx + 1 < ops.len() {
             output.push(format!(" {:>width$} ...", "", width = num_width));
-            last_was_change = false;
         }
     }
-
-    let _ = last_was_change; // suppress unused warning
 
     let diff_body = format!("Successfully edited {}\n\n{}", path, output.join("\n"));
 

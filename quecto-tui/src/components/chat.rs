@@ -561,7 +561,7 @@ fn render_subagent(
     is_error: bool,
     width: usize,
 ) {
-    let (header_detail, agent_label) = if let Some(v) = args {
+    let (header_detail, _agent_label) = if let Some(v) = args {
         match tool_name {
             "spawn" => {
                 let agent = sanitize(
