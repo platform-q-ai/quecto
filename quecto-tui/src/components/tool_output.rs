@@ -28,6 +28,35 @@ pub struct ToolResult {
     pub duration_ms: Option<u64>,
 }
 
+/// Strip carriage return characters from tool output content (#529).
+///
+/// Git and other tools write progress output using bare `\r` (carriage return)
+/// to overwrite the same line in a real terminal. When captured, these `\r`
+/// characters cause the TUI renderer to produce black line artefacts.
+///
+/// This function:
+/// 1. Removes trailing `\r` before `\n` (i.e. normalizes `\r\n` → `\n`)
+/// 2. For bare `\r` within a line (progress overwrites), keeps only the
+///    content after the last `\r` on each logical line
+fn strip_carriage_returns(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for line in s.split('\n') {
+        if !result.is_empty() {
+            result.push('\n');
+        }
+        // Strip trailing \r (Windows-style line endings: \r\n → \n)
+        let trimmed = line.strip_suffix('\r').unwrap_or(line);
+        // Handle bare \r within the remaining line (progress overwrites):
+        // keep only the content after the last \r
+        if let Some(last_cr) = trimmed.rfind('\r') {
+            result.push_str(&trimmed[last_cr + 1..]);
+        } else {
+            result.push_str(trimmed);
+        }
+    }
+    result
+}
+
 impl ToolOutput {
     pub fn new(tool_name: &str, args: &str) -> Self {
         let args_summary = summarize_args(args);
@@ -43,7 +72,12 @@ impl ToolOutput {
     }
 
     pub fn set_result(&mut self, result: ToolResult) {
-        self.result = Some(result);
+        // Strip carriage returns from content to prevent rendering artefacts (#529).
+        let cleaned = ToolResult {
+            content: strip_carriage_returns(&result.content),
+            ..result
+        };
+        self.result = Some(cleaned);
         self.is_running = false;
         self.invalidate();
     }
@@ -420,6 +454,78 @@ mod tests {
                 "line exceeds width: {} (width={})",
                 line,
                 visible_width(line)
+            );
+        }
+    }
+
+    // ── Carriage return stripping tests (issue #529) ──────────────────
+
+    #[test]
+    fn strip_cr_from_crlf() {
+        assert_eq!(
+            strip_carriage_returns("line1\r\nline2\r\n"),
+            "line1\nline2\n"
+        );
+    }
+
+    #[test]
+    fn strip_bare_cr_keeps_last_segment() {
+        // Git progress: "Counting: 5\rCounting: 10\rDone"
+        assert_eq!(
+            strip_carriage_returns("Counting: 5\rCounting: 10\rDone"),
+            "Done"
+        );
+    }
+
+    #[test]
+    fn strip_cr_multiline_mixed() {
+        let input = "origin\thttps://example.com (fetch)\r\norigin\thttps://example.com (push)\r\n";
+        let output = strip_carriage_returns(input);
+        assert_eq!(
+            output,
+            "origin\thttps://example.com (fetch)\norigin\thttps://example.com (push)\n"
+        );
+    }
+
+    #[test]
+    fn strip_cr_no_cr_unchanged() {
+        let input = "file1.txt\nfile2.txt\nfile3.txt";
+        assert_eq!(strip_carriage_returns(input), input);
+    }
+
+    #[test]
+    fn strip_cr_empty_string() {
+        assert_eq!(strip_carriage_returns(""), "");
+    }
+
+    #[test]
+    fn strip_cr_only_cr() {
+        assert_eq!(strip_carriage_returns("\r"), "");
+    }
+
+    #[test]
+    fn strip_cr_mixed_progress_and_normal() {
+        let input = "Working...\rDone!\nResults: 5 files\n";
+        let output = strip_carriage_returns(input);
+        assert_eq!(output, "Done!\nResults: 5 files\n");
+    }
+
+    #[test]
+    fn tool_output_strips_cr_on_set_result() {
+        let mut t = ToolOutput::new("bash", r#"{"command": "git remote -v"}"#);
+        t.set_result(ToolResult {
+            content: "origin\thttps://ex.com (fetch)\r\norigin\thttps://ex.com (push)\r\n"
+                .to_string(),
+            is_error: false,
+            duration_ms: Some(10),
+        });
+        t.set_expanded(true);
+        let lines = t.render(80);
+        for line in &lines {
+            assert!(
+                !line.contains('\r'),
+                "rendered line should not contain CR: {:?}",
+                line
             );
         }
     }

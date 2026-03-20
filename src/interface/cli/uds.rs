@@ -14,6 +14,10 @@ use crate::infrastructure::persistence::session_store::FileSessionStore;
 
 pub use super::protocol::parse_command_line;
 
+type ExtRegistry = std::sync::Arc<
+    std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
+>;
+
 pub struct UdsLoopArgs<'a> {
     pub agent: AgentLoopImpl,
     pub base_dir: &'a std::path::Path,
@@ -25,11 +29,7 @@ pub struct UdsLoopArgs<'a> {
     /// `None` = multi-client mode. `Some` = single-client mode (tests).
     pub socket_override: Option<std::os::unix::net::UnixStream>,
     pub session_store_override: Option<Box<dyn SessionStore + 'static>>,
-    pub ext_registry: Option<
-        std::sync::Arc<
-            std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
-        >,
-    >,
+    pub ext_registry: Option<ExtRegistry>,
     pub persist: bool,
     pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
     pub subagent_registry:
@@ -173,11 +173,7 @@ struct SingleClientArgs {
     session_key: String,
     ephemeral: bool,
     system_prompt: String,
-    ext_registry: Option<
-        std::sync::Arc<
-            std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
-        >,
-    >,
+    ext_registry: Option<ExtRegistry>,
 }
 
 async fn single_client_loop(
@@ -220,6 +216,7 @@ async fn single_client_loop(
             client_tool_registry: super::uds_ext_protocol::new_client_tool_registry(),
             current_client_id: 0,
             subagent_registry: None,
+            notification_rx: None,
         },
     )
     .await;
@@ -363,15 +360,12 @@ pub(super) struct DispatchCtx<'a> {
     pub session_key: &'a str,
     pub cancel_handle: CancelHandle,
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
-    pub ext_registry: Option<
-        std::sync::Arc<
-            std::sync::Mutex<crate::infrastructure::extensions::registry::ExtensionRegistry>,
-        >,
-    >,
+    pub ext_registry: Option<ExtRegistry>,
     pub client_tool_registry: super::uds_ext_protocol::ClientToolRegistry,
     pub current_client_id: u64,
     pub subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
 }
 
 pub(super) async fn emit_event_to_broadcast_or_writer(
@@ -691,6 +685,8 @@ async fn run_prompt_dispatch(
             broadcast_tx: tx.clone(),
             message,
             cancel_rx,
+            notification_rx: &mut ctx.notification_rx,
+            subagent_registry: &ctx.subagent_registry,
         })
         .await
     } else {
@@ -728,6 +724,8 @@ async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
                     broadcast_tx: tx.clone(),
                     message: msg,
                     cancel_rx: rx,
+                    notification_rx: &mut ctx.notification_rx,
+                    subagent_registry: &ctx.subagent_registry,
                 };
                 run_agent_prompt_broadcast(args).await;
             } else {

@@ -64,11 +64,15 @@ impl Terminal {
         self.saved = Some(saved);
 
         // Enter alternate screen buffer, enable bracketed paste, and enable
-        // SGR mouse reporting (scroll wheel events).
+        // SGR mouse reporting (scroll wheel + click/drag events).
         // The alternate buffer prevents scrollback interference which
         // causes border duplication during streaming (#479).
-        // Mouse: 1000 = basic events, 1006 = SGR extended format (for scroll).
-        let _ = std::io::stdout().write_all(b"\x1b[?1049h\x1b[?2004h\x1b[?1000h\x1b[?1006h");
+        // Mouse: 1000 = basic events, 1002 = button event tracking (drag),
+        //        1006 = SGR extended format.
+        // 1002 supersedes 1000 (adds drag events for text selection #528).
+        // Both are enabled for terminal compatibility.
+        let _ =
+            std::io::stdout().write_all(b"\x1b[?1049h\x1b[?2004h\x1b[?1000h\x1b[?1002h\x1b[?1006h");
         let _ = std::io::stdout().flush();
     }
 
@@ -83,6 +87,7 @@ impl Terminal {
             let _ = std::io::stdout().write_all(
                 concat!(
                     "\x1b[?1006l", // Disable SGR mouse reporting
+                    "\x1b[?1002l", // Disable button event tracking (drag)
                     "\x1b[?1000l", // Disable basic mouse reporting
                     "\x1b[?1049l", // Leave alternate screen buffer (restores main)
                     "\x1b[?2004l", // Disable bracketed paste
