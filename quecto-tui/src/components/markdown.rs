@@ -246,8 +246,7 @@ impl Markdown {
                 Event::Code(code) => {
                     if in_table {
                         // Append code text to the table cell (#550).
-                        // Backticks preserved for display; ANSI stripped by
-                        // sanitize_for_display on TagEnd::TableCell.
+                        // Backticks preserved for display as plain text.
                         current_cell.push('`');
                         current_cell.push_str(&code);
                         current_cell.push('`');
@@ -258,7 +257,9 @@ impl Markdown {
                 }
 
                 Event::SoftBreak => {
-                    if in_code_block {
+                    if in_table {
+                        current_cell.push(' ');
+                    } else if in_code_block {
                         code_block_content.push('\n');
                     } else {
                         current_line.push(' ');
@@ -266,7 +267,9 @@ impl Markdown {
                 }
 
                 Event::HardBreak => {
-                    if in_blockquote {
+                    if in_table {
+                        current_cell.push(' ');
+                    } else if in_blockquote {
                         let text = std::mem::take(&mut current_line);
                         blockquote_lines.push(text);
                     } else {
