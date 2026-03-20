@@ -99,6 +99,9 @@ pub struct App {
     current_model: Option<String>,
     /// The model selector component (created on demand, pushed onto overlay stack).
     model_selector: Option<ModelSelector>,
+    /// Client-side subagent state for immediate bar updates (#525).
+    /// Updated from tool events (spawn/agent_cmd) and server pushes.
+    subagent_local: std::collections::BTreeMap<String, crate::client::SubagentInfoEvent>,
 }
 
 impl App {
@@ -127,6 +130,7 @@ impl App {
             agent_connected: true,
             current_model: None,
             model_selector: None,
+            subagent_local: std::collections::BTreeMap::new(),
         }
     }
 
@@ -627,10 +631,29 @@ impl App {
                     };
                     spinner.set_message(&msg);
                 }
+                // Track spawning subagents locally for immediate bar display.
+                let is_spawn = tool_name == "spawn";
                 // Suppress spawn/agent_cmd tool boxes — the status bar
                 // provides visibility for subagent activity (#525).
                 if !is_subagent_tool {
                     self.chat.start_tool(tool_call_id, tool_name, args_str);
+                }
+                if is_spawn {
+                    if let Some(agent_id) = args.get("agent_id").and_then(|v| v.as_str()) {
+                        let sanitized: String =
+                            agent_id.chars().filter(|c| !c.is_control()).collect();
+                        self.subagent_local.insert(
+                            sanitized.clone(),
+                            crate::client::SubagentInfoEvent {
+                                agent_id: sanitized,
+                                status: "starting".to_string(),
+                                last_tool: None,
+                                last_error: None,
+                                pid: 0,
+                            },
+                        );
+                        self.rebuild_subagent_bar();
+                    }
                 }
             }
             Event::ToolExecutionEnd {
@@ -645,7 +668,23 @@ impl App {
                     self.chat
                         .complete_tool(&tool_call_id, &result_text, is_error, None);
                 }
-                // After spawn/agent_cmd, refresh subagent bars immediately.
+                // Update local subagent state on spawn completion.
+                if tool_name == "spawn" && !is_error {
+                    // Extract agent_id from the result text ("Subagent 'X' is running...")
+                    let result_text = crate::client::extract_result_text(&result);
+                    if let Some(start) = result_text.find('\'') {
+                        if let Some(end) = result_text[start + 1..].find('\'') {
+                            let agent_id = &result_text[start + 1..start + 1 + end];
+                            let sanitized: String =
+                                agent_id.chars().filter(|c| !c.is_control()).collect();
+                            if let Some(entry) = self.subagent_local.get_mut(&sanitized) {
+                                entry.status = "running".to_string();
+                            }
+                            self.rebuild_subagent_bar();
+                        }
+                    }
+                }
+                // Also request server-side state for eventual consistency.
                 if is_subagent_tool {
                     self.send_command(Command::GetSubagents { id: None });
                 }
@@ -723,13 +762,25 @@ impl App {
         }
     }
 
-    /// Update the subagent bar widget from state-changed events or responses.
+    /// Update subagent state from server push (full replacement).
     fn update_subagent_bar(&mut self, subagents: Vec<crate::client::SubagentInfoEvent>) {
-        if subagents.is_empty() {
+        // Server data is authoritative — replace local state entirely.
+        self.subagent_local.clear();
+        for s in subagents {
+            self.subagent_local.insert(s.agent_id.clone(), s);
+        }
+        self.rebuild_subagent_bar();
+    }
+
+    /// Rebuild the widget from local state.
+    fn rebuild_subagent_bar(&mut self) {
+        if self.subagent_local.is_empty() {
             self.widgets_above.clear("subagents");
         } else {
+            let infos: Vec<crate::client::SubagentInfoEvent> =
+                self.subagent_local.values().cloned().collect();
             let mut bar = SubagentBar::new();
-            bar.update(subagents);
+            bar.update(infos);
             self.widgets_above.set("subagents", Box::new(bar));
         }
     }
