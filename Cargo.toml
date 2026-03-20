@@ -3,10 +3,10 @@ members = [".", "quecto-tui"]
 
 [package]
 name = "quecto"
-version = "0.22.0"
+version = "0.23.0"
 edition = "2024"
 description = "Ultra-lightweight personal AI assistant"
-license = "MIT"
+license = "LicenseRef-Proprietary"
 
 [dependencies]
 # Async runtime

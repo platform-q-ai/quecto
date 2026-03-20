@@ -5,6 +5,10 @@ all-features = true
 ignore = []
 
 [licenses]
+exceptions = [
+    { allow = ["LicenseRef-Proprietary"], crate = "quecto" },
+    { allow = ["LicenseRef-Proprietary"], crate = "quecto-tui" },
+]
 allow = [
     "MIT",
     "Apache-2.0",
