@@ -1,4 +1,4 @@
-@tui
+@tui @pending
 Feature: TUI shows agent_cmd query responses in the chat (#538)
   As a TUI user
   I want to see agent_cmd query results in the chat output

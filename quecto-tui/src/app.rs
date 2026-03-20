@@ -699,10 +699,9 @@ impl App {
                 }
                 // Track spawning subagents locally for immediate bar display.
                 let is_spawn = tool_name == "spawn";
-                // Suppress spawn tool boxes — the status bar provides
-                // visibility. agent_cmd output is shown so query results
-                // are visible (#538).
-                if !suppress_tool_box(&tool_name) {
+                // Suppress spawn / agent_cmd mutation tool boxes — the
+                // status bar provides visibility. Query results are shown (#538).
+                if !suppress_tool_box(&tool_name, &args) {
                     self.chat.start_tool(tool_call_id, tool_name, args_str);
                 }
                 if is_spawn {
@@ -729,11 +728,11 @@ impl App {
                 result,
                 is_error,
             } => {
-                if !suppress_tool_box(&tool_name) {
-                    let result_text = crate::client::extract_result_text(&result);
-                    self.chat
-                        .complete_tool(&tool_call_id, &result_text, is_error, None);
-                }
+                // Always call complete_tool — it's a no-op if start was
+                // suppressed (no matching tool_call_id in chat entries).
+                let result_text = crate::client::extract_result_text(&result);
+                self.chat
+                    .complete_tool(&tool_call_id, &result_text, is_error, None);
                 // Update local subagent state on spawn completion.
                 if tool_name == "spawn" && !is_error {
                     // Extract agent_id from the result text ("Subagent 'X' is running...")
@@ -751,7 +750,7 @@ impl App {
                     }
                 }
                 // Also request server-side state for eventual consistency.
-                if tool_name == "spawn" || tool_name == "agent_cmd" {
+                if is_subagent_tool(&tool_name) {
                     self.send_command(Command::GetSubagents { id: None });
                 }
                 if let Some(spinner) = &mut self.spinner {
@@ -1397,13 +1396,30 @@ fn ctrl_c_action(agent_running: bool, editor_empty: bool) -> CtrlCAction {
     }
 }
 
+/// Whether a tool is subagent-related (spawn or agent_cmd).
+///
+/// Used for subagent state refresh — both tools trigger a `GetSubagents`
+/// request after completion.
+fn is_subagent_tool(tool_name: &str) -> bool {
+    tool_name == "spawn" || tool_name == "agent_cmd"
+}
+
 /// Whether to suppress tool output boxes in the chat area (#538).
 ///
-/// `spawn` output is suppressed because the subagent status bar provides
-/// visibility. `agent_cmd` output is shown so the user can see query
-/// results (get_state, get_messages_tail, get_session_stats, etc.).
-fn suppress_tool_box(tool_name: &str) -> bool {
-    tool_name == "spawn"
+/// `spawn` output is always suppressed (status bar provides visibility).
+/// `agent_cmd` mutations (prompt, steer, abort) are suppressed — the
+/// status bar shows subagent activity. Query commands (get_state,
+/// get_messages_tail, get_session_stats, etc.) are shown so the user
+/// can inspect results.
+fn suppress_tool_box(tool_name: &str, args: &serde_json::Value) -> bool {
+    match tool_name {
+        "spawn" => true,
+        "agent_cmd" => {
+            let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
+            matches!(cmd, "prompt" | "steer" | "abort")
+        }
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -1884,29 +1900,79 @@ mod tests {
         );
     }
 
+    // ── Subagent tool classification tests (#538) ──────────────────
+
+    #[test]
+    fn spawn_is_subagent_tool() {
+        assert!(super::is_subagent_tool("spawn"));
+    }
+
+    #[test]
+    fn agent_cmd_is_subagent_tool() {
+        assert!(super::is_subagent_tool("agent_cmd"));
+    }
+
+    #[test]
+    fn regular_tools_are_not_subagent_tools() {
+        assert!(!super::is_subagent_tool("bash"));
+        assert!(!super::is_subagent_tool("read"));
+        assert!(!super::is_subagent_tool("write"));
+    }
+
     // ── Tool output suppression tests (#538) ─────────────────────────
 
     #[test]
     fn spawn_tool_output_suppressed() {
+        let args = serde_json::json!({"agent_id": "worker-1"});
         assert!(
-            super::suppress_tool_box("spawn"),
+            super::suppress_tool_box("spawn", &args),
             "spawn output should be suppressed (status bar shows it)"
         );
     }
 
     #[test]
-    fn agent_cmd_tool_output_shown() {
+    fn agent_cmd_query_output_shown() {
+        for cmd in &[
+            "get_state",
+            "get_messages_tail",
+            "get_session_stats",
+            "get_messages",
+            "get_subagents",
+        ] {
+            let args = serde_json::json!({"agent_id": "w1", "command": cmd});
+            assert!(
+                !super::suppress_tool_box("agent_cmd", &args),
+                "agent_cmd {cmd} output should be shown (query result)"
+            );
+        }
+    }
+
+    #[test]
+    fn agent_cmd_mutation_output_suppressed() {
+        for cmd in &["prompt", "steer", "abort"] {
+            let args = serde_json::json!({"agent_id": "w1", "command": cmd});
+            assert!(
+                super::suppress_tool_box("agent_cmd", &args),
+                "agent_cmd {cmd} output should be suppressed (mutation)"
+            );
+        }
+    }
+
+    #[test]
+    fn agent_cmd_unknown_command_shown() {
+        let args = serde_json::json!({"agent_id": "w1", "command": "future_query"});
         assert!(
-            !super::suppress_tool_box("agent_cmd"),
-            "agent_cmd output should be shown so query results are visible"
+            !super::suppress_tool_box("agent_cmd", &args),
+            "unknown agent_cmd commands should be shown by default"
         );
     }
 
     #[test]
     fn regular_tool_output_shown() {
-        assert!(!super::suppress_tool_box("bash"));
-        assert!(!super::suppress_tool_box("read"));
-        assert!(!super::suppress_tool_box("write"));
-        assert!(!super::suppress_tool_box("edit"));
+        let args = serde_json::json!({});
+        assert!(!super::suppress_tool_box("bash", &args));
+        assert!(!super::suppress_tool_box("read", &args));
+        assert!(!super::suppress_tool_box("write", &args));
+        assert!(!super::suppress_tool_box("edit", &args));
     }
 }
