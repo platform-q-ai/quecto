@@ -1,31 +1,18 @@
 //! Subagent status bar widget (#525).
 //!
-//! Renders one line per spawned subagent, showing a progress-bar style
-//! indicator with live status. Hidden when no subagents exist.
-//!
-//! Visual:
-//! ```text
-//!   reviewer  [████████░░░░░░] Running · bash
-//!   formatter [██████████████] Idle
-//! ```
+//! Renders one line per spawned subagent with a progress-bar style indicator.
+//! Hidden when no subagents exist.
 
+use crate::client::SubagentInfoEvent;
 use crate::component::Component;
 use crate::theme;
-
-/// Wire-format info for a single subagent (matches #524 protocol).
-#[derive(Debug, Clone)]
-pub struct SubagentInfoWire {
-    pub agent_id: String,
-    pub status: String,
-    pub last_tool: Option<String>,
-    pub last_error: Option<String>,
-}
 
 /// Widget that renders live subagent status bars.
 #[derive(Debug)]
 pub struct SubagentBar {
-    agents: Vec<SubagentInfoWire>,
+    agents: Vec<SubagentInfoEvent>,
     cache: Option<Vec<String>>,
+    cached_width: usize,
 }
 
 impl SubagentBar {
@@ -33,11 +20,12 @@ impl SubagentBar {
         Self {
             agents: Vec::new(),
             cache: None,
+            cached_width: 0,
         }
     }
 
     /// Update the agent list (full replacement).
-    pub fn update(&mut self, agents: Vec<SubagentInfoWire>) {
+    pub fn update(&mut self, agents: Vec<SubagentInfoEvent>) {
         self.agents = agents;
         self.cache = None;
     }
@@ -45,19 +33,6 @@ impl SubagentBar {
     /// Whether there are any agents to display.
     pub fn is_empty(&self) -> bool {
         self.agents.is_empty()
-    }
-
-    /// Format a single agent line for the given width.
-    fn format_agent(info: &SubagentInfoWire, name_width: usize, bar_width: usize) -> String {
-        let name = pad_right(&info.agent_id, name_width);
-        let bar = render_bar(&info.status, bar_width);
-        let status_label = status_styled(&info.status);
-        let context = agent_context(info);
-        if context.is_empty() {
-            format!("  {} {} {}", name, bar, status_label)
-        } else {
-            format!("  {} {} {} · {}", name, bar, status_label, context)
-        }
     }
 }
 
@@ -72,24 +47,28 @@ impl Component for SubagentBar {
         if self.agents.is_empty() {
             return Vec::new();
         }
+        if width != self.cached_width {
+            self.cache = None;
+        }
         if let Some(ref cache) = self.cache {
             return cache.clone();
         }
+        let max_name = 20;
         let name_width = self
             .agents
             .iter()
             .map(|a| a.agent_id.len())
             .max()
             .unwrap_or(0)
-            .max(4);
-        // Bar width: 14 chars default, shrink if terminal is narrow
+            .clamp(4, max_name);
         let bar_width = if width > 60 { 14 } else { 8 };
         let lines: Vec<String> = self
             .agents
             .iter()
-            .map(|a| SubagentBar::format_agent(a, name_width, bar_width))
+            .map(|a| format_agent(a, name_width, bar_width))
             .collect();
         self.cache = Some(lines.clone());
+        self.cached_width = width;
         lines
     }
 
@@ -98,12 +77,32 @@ impl Component for SubagentBar {
     }
 }
 
+/// Strip control characters to prevent terminal escape injection.
+fn sanitize(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).collect()
+}
+
+/// Format a single agent line.
+fn format_agent(info: &SubagentInfoEvent, name_width: usize, bar_width: usize) -> String {
+    let name = sanitize(&info.agent_id);
+    let name = pad_right(&name, name_width);
+    let bar = render_bar(&info.status, bar_width);
+    let status_label = status_styled(&info.status);
+    let context = agent_context(info);
+    if context.is_empty() {
+        format!("  {} {} {}", name, bar, status_label)
+    } else {
+        format!("  {} {} {} · {}", name, bar, status_label, context)
+    }
+}
+
 /// Pad a string to the given width with spaces.
 fn pad_right(s: &str, width: usize) -> String {
-    if s.len() >= width {
-        s.to_string()
+    let vis_len = s.chars().count();
+    if vis_len >= width {
+        s.chars().take(width).collect()
     } else {
-        format!("{}{}", s, " ".repeat(width - s.len()))
+        format!("{}{}", s, " ".repeat(width - vis_len))
     }
 }
 
@@ -114,18 +113,13 @@ fn render_bar(status: &str, width: usize) -> String {
         "idle" => (width, 0),
         "error" => (width / 3, width - width / 3),
         "starting" => (1.min(width), width.saturating_sub(1)),
-        "exited" => (0, width),
         _ => (0, width),
     };
-    let fill_str = "█".repeat(fill);
-    let empty_str = "░".repeat(empty);
-    let bar_content = format!("{}{}", fill_str, empty_str);
+    let bar_content = format!("{}{}", "█".repeat(fill), "░".repeat(empty));
     let colored = match status {
         "running" => theme::blue(&bar_content),
         "idle" => theme::green(&bar_content),
         "error" => theme::red(&bar_content),
-        "starting" => theme::dim(&bar_content),
-        "exited" => theme::dim(&bar_content),
         _ => theme::dim(&bar_content),
     };
     format!("[{}]", colored)
@@ -139,20 +133,20 @@ fn status_styled(status: &str) -> String {
         "error" => theme::red("Error"),
         "starting" => theme::dim("Starting"),
         "exited" => theme::dim("Exited"),
-        _ => theme::dim(status),
+        _ => theme::dim("Unknown"),
     }
 }
 
 /// Build the context string (tool name or error) after the `·` separator.
-fn agent_context(info: &SubagentInfoWire) -> String {
+fn agent_context(info: &SubagentInfoEvent) -> String {
     if info.status == "error" {
         if let Some(ref err) = info.last_error {
-            return theme::red(&truncate(err, 40));
+            return theme::red(&sanitize(&truncate(err, 40)));
         }
     }
     if info.status == "running" {
         if let Some(ref tool) = info.last_tool {
-            return theme::dim(&truncate(tool, 30));
+            return theme::dim(&sanitize(&truncate(tool, 30)));
         }
     }
     String::new()
@@ -177,12 +171,13 @@ mod tests {
         status: &str,
         tool: Option<&str>,
         error: Option<&str>,
-    ) -> SubagentInfoWire {
-        SubagentInfoWire {
+    ) -> SubagentInfoEvent {
+        SubagentInfoEvent {
             agent_id: id.to_string(),
             status: status.to_string(),
             last_tool: tool.map(|s| s.to_string()),
             last_error: error.map(|s| s.to_string()),
+            pid: 0,
         }
     }
 
@@ -236,8 +231,7 @@ mod tests {
             make_info("b", "idle", None, None),
             make_info("c", "exited", None, None),
         ]);
-        let lines = bar.render(80);
-        assert_eq!(lines.len(), 3);
+        assert_eq!(bar.render(80).len(), 3);
     }
 
     #[test]
@@ -281,23 +275,21 @@ mod tests {
     fn starting_status() {
         let mut bar = SubagentBar::new();
         bar.update(vec![make_info("init", "starting", None, None)]);
-        let lines = bar.render(80);
-        assert!(lines[0].contains("Starting"));
+        assert!(bar.render(80)[0].contains("Starting"));
     }
 
     #[test]
     fn exited_status() {
         let mut bar = SubagentBar::new();
         bar.update(vec![make_info("done", "exited", None, None)]);
-        let lines = bar.render(80);
-        assert!(lines[0].contains("Exited"));
+        assert!(bar.render(80)[0].contains("Exited"));
     }
 
     #[test]
     fn truncate_long_context() {
         let long = "a".repeat(100);
         let result = truncate(&long, 40);
-        assert!(result.chars().count() <= 41); // 40 + "…"
+        assert!(result.chars().count() <= 41);
     }
 
     #[test]
@@ -306,21 +298,30 @@ mod tests {
     }
 
     #[test]
-    fn pad_right_no_pad_when_at_width() {
-        assert_eq!(pad_right("abc", 3), "abc");
+    fn pad_right_truncates_long() {
+        assert_eq!(pad_right("abcdef", 3), "abc");
     }
 
     #[test]
-    fn render_bar_running() {
-        let bar = render_bar("running", 14);
-        assert!(bar.starts_with('['));
-        assert!(bar.contains("█"));
-        assert!(bar.contains("░"));
+    fn sanitize_strips_control_chars() {
+        assert_eq!(sanitize("ab\x1b[31mcd"), "ab[31mcd");
     }
 
     #[test]
-    fn render_bar_idle_full() {
-        let bar = render_bar("idle", 10);
-        assert!(bar.contains("██████████"));
+    fn cache_invalidated_on_width_change() {
+        let mut bar = SubagentBar::new();
+        bar.update(vec![make_info("a", "idle", None, None)]);
+        let _ = bar.render(80);
+        assert!(bar.cache.is_some());
+        let _ = bar.render(40); // different width
+        // Cache was rebuilt for new width
+        assert_eq!(bar.cached_width, 40);
+    }
+
+    #[test]
+    fn unknown_status_shows_unknown() {
+        let mut bar = SubagentBar::new();
+        bar.update(vec![make_info("x", "weird", None, None)]);
+        assert!(bar.render(80)[0].contains("Unknown"));
     }
 }
