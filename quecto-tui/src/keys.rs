@@ -35,6 +35,12 @@ pub enum Key {
     ScrollUp,
     /// Mouse scroll down (wheel down).
     ScrollDown,
+    /// Mouse press (button 0 = left) at (column, row) — 0-indexed.
+    MousePress(u16, u16),
+    /// Mouse drag (button 0 held) at (column, row) — 0-indexed.
+    MouseDrag(u16, u16),
+    /// Mouse release at (column, row) — 0-indexed.
+    MouseRelease(u16, u16),
     /// Unrecognised sequence.
     Unknown(Vec<u8>),
 }
@@ -144,8 +150,9 @@ fn parse_csi(rest: &[u8]) -> Option<(Key, usize)> {
 /// Parse SGR mouse sequence (input starts after `\x1b[<`).
 ///
 /// Format: `button;col;row` terminated by `M` (press) or `m` (release).
-/// Button 64 = scroll up, 65 = scroll down. We only handle scroll events;
-/// all other mouse events are silently consumed.
+/// Button 64 = scroll up, 65 = scroll down.
+/// Button 0 = left press, 32 = left drag (#528).
+/// Release is indicated by lowercase `m` terminator.
 fn parse_sgr_mouse(rest: &[u8]) -> Option<(Key, usize)> {
     // Collect digits and semicolons until M or m terminator.
     let mut i = 0;
@@ -161,19 +168,34 @@ fn parse_sgr_mouse(rest: &[u8]) -> Option<(Key, usize)> {
         return None; // incomplete — waiting for M/m terminator
     }
 
+    let is_release = rest[i] == b'm';
+
     // Total consumed from original input: \x1b(1) + [(1) + <(1) + params(i) + terminator(1)
     let total_consumed = i + 4;
 
-    // Parse button from the first semicolon-delimited field (no Vec alloc).
+    // Parse button;col;row from params.
     let params = std::str::from_utf8(&rest[..i]).unwrap_or("");
-    let button_str = params.split(';').next().unwrap_or("0");
-    let button: u32 = button_str.parse().unwrap_or(0);
+    let mut fields = params.split(';');
+    let button: u32 = fields.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let col: u16 = fields
+        .next()
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(1)
+        .saturating_sub(1); // SGR uses 1-indexed columns
+    let row: u16 = fields
+        .next()
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(1)
+        .saturating_sub(1); // SGR uses 1-indexed rows
 
     match button {
         64 => Some((Key::ScrollUp, total_consumed)),
         65 => Some((Key::ScrollDown, total_consumed)),
+        0 if is_release => Some((Key::MouseRelease(col, row), total_consumed)),
+        0 => Some((Key::MousePress(col, row), total_consumed)),
+        32 => Some((Key::MouseDrag(col, row), total_consumed)),
         _ => {
-            // Silently consume other mouse events (clicks, motion, etc.)
+            // Silently consume other mouse events (right-click, middle-click, etc.)
             // — no heap allocation, just discard.
             Some((Key::Unknown(Vec::new()), total_consumed))
         }
@@ -561,10 +583,10 @@ mod tests {
     }
 
     #[test]
-    fn sgr_mouse_click_ignored() {
-        // \x1b[<0;10;5M — left click (button 0), should be Unknown
+    fn sgr_mouse_left_click_press() {
+        // \x1b[<0;10;5M — left click press at col 10, row 5 → MousePress(9, 4) (0-indexed)
         let (key, _) = parse_key(b"\x1b[<0;10;5M").unwrap();
-        assert!(matches!(key, Key::Unknown(_)));
+        assert_eq!(key, Key::MousePress(9, 4));
     }
 
     #[test]
@@ -578,5 +600,42 @@ mod tests {
     fn sgr_mouse_incomplete_returns_none() {
         // Incomplete SGR mouse sequence
         assert!(parse_key(b"\x1b[<64;10;").is_none());
+    }
+
+    // ── Mouse press/drag/release tests (issue #528) ──────────────────
+
+    #[test]
+    fn sgr_mouse_left_release() {
+        // \x1b[<0;20;10m — left release at col 20, row 10 → MouseRelease(19, 9)
+        let (key, _) = parse_key(b"\x1b[<0;20;10m").unwrap();
+        assert_eq!(key, Key::MouseRelease(19, 9));
+    }
+
+    #[test]
+    fn sgr_mouse_drag() {
+        // \x1b[<32;15;7M — left drag at col 15, row 7 → MouseDrag(14, 6)
+        let (key, _) = parse_key(b"\x1b[<32;15;7M").unwrap();
+        assert_eq!(key, Key::MouseDrag(14, 6));
+    }
+
+    #[test]
+    fn sgr_mouse_press_at_origin() {
+        // Column 1, row 1 → 0-indexed (0, 0)
+        let (key, _) = parse_key(b"\x1b[<0;1;1M").unwrap();
+        assert_eq!(key, Key::MousePress(0, 0));
+    }
+
+    #[test]
+    fn sgr_mouse_right_click_ignored() {
+        // Button 2 = right click → Unknown
+        let (key, _) = parse_key(b"\x1b[<2;10;5M").unwrap();
+        assert!(matches!(key, Key::Unknown(_)));
+    }
+
+    #[test]
+    fn sgr_mouse_right_release_ignored() {
+        // Button 2 release → Unknown (only left button release triggers MouseRelease)
+        let (key, _) = parse_key(b"\x1b[<2;10;5m").unwrap();
+        assert!(matches!(key, Key::Unknown(_)));
     }
 }

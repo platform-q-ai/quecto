@@ -152,15 +152,12 @@ pub(super) async fn multi_client_loop(
         client_tool_registry: client_tool_registry.clone(),
         current_client_id: 0,
         subagent_registry,
+        notification_rx,
     };
 
     run_dispatch_loop(
         &mut ctx,
-        DispatchLoopArgs {
-            cmd_rx,
-            persist,
-            notification_rx,
-        },
+        DispatchLoopArgs { cmd_rx, persist },
         &live_clients,
     )
     .await;
@@ -242,11 +239,11 @@ fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
 struct DispatchLoopArgs {
     cmd_rx: tokio::sync::mpsc::Receiver<ClientMessage>,
     persist: bool,
-    notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
 }
 
 /// Process commands from all clients until no clients remain or a fatal error.
 /// Also drains subagent notifications and injects them as follow-up messages (#523).
+/// During prompt execution, notifications are drained by run_with_token_drain_broadcast (#534).
 async fn run_dispatch_loop(
     ctx: &mut DispatchCtx<'_>,
     args: DispatchLoopArgs,
@@ -255,10 +252,9 @@ async fn run_dispatch_loop(
     let DispatchLoopArgs {
         mut cmd_rx,
         persist,
-        mut notification_rx,
     } = args;
     loop {
-        let msg = recv_next_message(&mut cmd_rx, &mut notification_rx).await;
+        let msg = recv_next_message(&mut cmd_rx, &mut ctx.notification_rx).await;
         let Some(msg) = msg else { break };
         match msg {
             DispatchMsg::Client(client_msg) => {
@@ -444,6 +440,12 @@ pub(super) struct PromptArgsBroadcast<'a> {
     pub broadcast_tx: tokio::sync::broadcast::Sender<String>,
     pub message: String,
     pub cancel_rx: tokio::sync::oneshot::Receiver<()>,
+    /// Subagent notification receiver — drained during prompt execution (#534).
+    pub notification_rx:
+        &'a mut Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
+    /// Subagent registry for building state-changed events (#534).
+    pub subagent_registry:
+        &'a Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
 }
 
 /// Run an agent prompt, emitting events to the broadcast channel.
@@ -458,6 +460,8 @@ pub(super) async fn run_agent_prompt_broadcast(args: PromptArgsBroadcast<'_>) ->
         broadcast_tx,
         message,
         cancel_rx,
+        notification_rx,
+        subagent_registry,
     } = args;
 
     session.set_streaming(true);
@@ -473,19 +477,27 @@ pub(super) async fn run_agent_prompt_broadcast(args: PromptArgsBroadcast<'_>) ->
         let _ = progress_tx.try_send(ev);
     })));
 
-    let result = run_with_token_drain_broadcast(TokenDrainBroadcastArgs {
+    let drain_result = run_with_token_drain_broadcast(TokenDrainBroadcastArgs {
         broadcast_tx: &broadcast_tx,
         agent,
         messages,
         progress_rx: &mut progress_rx,
         cancel_rx,
+        notification_rx,
+        subagent_registry,
     })
     .await;
 
     agent.set_progress_callback(None);
     session.set_streaming(false);
 
-    match result {
+    // Enqueue notification messages collected during prompt execution (#534).
+    // These will be processed as follow-up prompts by drain_and_run_pending.
+    for msg in drain_result.notification_messages {
+        session.enqueue_pending(msg);
+    }
+
+    match drain_result.result {
         None => {
             messages.truncate(user_msg_idx);
             PromptOutcome::Cancelled
@@ -544,11 +556,22 @@ struct TokenDrainBroadcastArgs<'a> {
     messages: &'a mut Vec<Message>,
     progress_rx: &'a mut tokio::sync::mpsc::Receiver<crate::domain::agent::AgentProgressEvent>,
     cancel_rx: tokio::sync::oneshot::Receiver<()>,
+    /// Subagent notification receiver — drained alongside tokens (#534).
+    notification_rx:
+        &'a mut Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
+    /// Subagent registry for building state-changed events (#534).
+    subagent_registry:
+        &'a Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
 }
 
-async fn run_with_token_drain_broadcast(
-    args: TokenDrainBroadcastArgs<'_>,
-) -> Option<Result<crate::domain::agent::AgentResult, crate::domain::error::DomainError>> {
+/// Result of run_with_token_drain_broadcast, including collected notification messages (#534).
+struct TokenDrainResult {
+    result: Option<Result<crate::domain::agent::AgentResult, crate::domain::error::DomainError>>,
+    /// Notification messages collected during prompt execution, to be enqueued as pending.
+    notification_messages: Vec<String>,
+}
+
+async fn run_with_token_drain_broadcast(args: TokenDrainBroadcastArgs<'_>) -> TokenDrainResult {
     use crate::domain::agent::AgentLoop;
 
     let TokenDrainBroadcastArgs {
@@ -557,26 +580,70 @@ async fn run_with_token_drain_broadcast(
         messages,
         progress_rx,
         cancel_rx,
+        notification_rx,
+        subagent_registry,
     } = args;
 
     tokio::pin!(cancel_rx);
     let mut process_fut = agent.process(messages);
+    let mut notification_messages = Vec::new();
 
-    loop {
+    let result = loop {
+        // Build a future that drains notification_rx if present (#534).
+        // This ensures SubagentStateChanged events propagate to TUI clients
+        // in real-time during prompt execution, not just between prompts.
+        let notif_recv = async {
+            if let Some(rx) = notification_rx.as_mut() {
+                rx.recv().await
+            } else {
+                std::future::pending().await
+            }
+        };
+
         tokio::select! {
             biased;
-            _ = &mut cancel_rx => return None,
+            _ = &mut cancel_rx => break None,
             Some(ev) = progress_rx.recv() => {
                 forward_progress_event_broadcast(ev, broadcast_tx);
+            }
+            Some(notif) = notif_recv => {
+                // Broadcast state-changed event to TUI AND collect message for LLM injection.
+                notification_messages.push(notif.to_message());
+                forward_notification_broadcast(notif, broadcast_tx, subagent_registry);
             }
             result = &mut process_fut => {
                 while let Ok(ev) = progress_rx.try_recv() {
                     forward_progress_event_broadcast(ev, broadcast_tx);
                 }
-                return Some(result);
+                if let Some(rx) = notification_rx.as_mut() {
+                    while let Ok(notif) = rx.try_recv() {
+                        notification_messages.push(notif.to_message());
+                        forward_notification_broadcast(notif, broadcast_tx, subagent_registry);
+                    }
+                }
+                break Some(result);
             }
         }
+    };
+
+    TokenDrainResult {
+        result,
+        notification_messages,
     }
+}
+
+/// Forward a subagent notification as a SubagentStateChanged broadcast event (#534).
+fn forward_notification_broadcast(
+    notif: crate::infrastructure::tools::subagent_registry::SubagentNotification,
+    broadcast_tx: &tokio::sync::broadcast::Sender<String>,
+    subagent_registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+) {
+    let message = notif.to_message();
+    tracing::info!(msg = %message, "injecting subagent notification during prompt");
+    // Build full subagent info list from registry for the state-changed event.
+    let list = super::protocol::build_subagent_info_list(subagent_registry);
+    let ev = AgentEvent::SubagentStateChanged { subagents: list };
+    broadcast_event(broadcast_tx, &ev);
 }
 
 fn forward_progress_event_broadcast(
