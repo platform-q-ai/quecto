@@ -16,6 +16,12 @@ pub struct Footer {
     pwd: String,
 }
 
+impl Default for Footer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Footer {
     pub fn new() -> Self {
         let mut pwd = std::env::current_dir()

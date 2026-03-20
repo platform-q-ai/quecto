@@ -20,6 +20,12 @@ pub struct Terminal {
     pub height: usize,
 }
 
+impl Default for Terminal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Terminal {
     /// Create a new terminal handle and query dimensions.
     pub fn new() -> Self {

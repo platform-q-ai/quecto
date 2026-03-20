@@ -36,6 +36,7 @@ impl Markdown {
     }
 
     /// Render markdown text to styled terminal lines.
+    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
     fn render_markdown(&self, width: usize) -> Vec<String> {
         let content_width = width.saturating_sub(self.padding_x * 2).max(1);
         let pad = " ".repeat(self.padding_x);
@@ -350,6 +351,7 @@ fn apply_inline_styles(text: &str, stack: &[InlineStyle]) -> String {
 }
 
 /// Render a table as aligned text columns.
+#[allow(clippy::cognitive_complexity)]
 fn render_table(rows: &[Vec<String>], max_width: usize) -> Vec<String> {
     if rows.is_empty() {
         return vec![];
@@ -385,9 +387,7 @@ fn render_table(rows: &[Vec<String>], max_width: usize) -> Vec<String> {
             } else {
                 3
             };
-            for w in &mut col_widths {
-                *w = min_per_col;
-            }
+            col_widths.fill(min_per_col);
         }
     }
 

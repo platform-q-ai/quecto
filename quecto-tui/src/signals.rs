@@ -74,6 +74,6 @@ mod tests {
     #[test]
     fn module_compiles() {
         // Verify the module compiles and types are correct.
-        assert!(true);
+        // (compile-time check — no runtime assertion needed)
     }
 }

@@ -68,6 +68,12 @@ pub struct NotificationStack {
     notifications: Vec<Notification>,
 }
 
+impl Default for NotificationStack {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NotificationStack {
     pub fn new() -> Self {
         Self {

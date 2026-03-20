@@ -66,11 +66,7 @@ pub fn truncate_to_width(s: &str, max_width: usize, ellipsis: Option<&str>) -> S
         return s.to_string();
     }
 
-    let target = if max_width > ell_width {
-        max_width - ell_width
-    } else {
-        0
-    };
+    let target = max_width.saturating_sub(ell_width);
 
     let mut result = String::new();
     let mut width = 0;
@@ -329,7 +325,7 @@ mod tests {
     fn visible_width_emoji() {
         // Emoji characters are typically width 2
         let w = visible_width("🦀");
-        assert!(w >= 1 && w <= 2);
+        assert!((1..=2).contains(&w));
     }
 
     #[test]

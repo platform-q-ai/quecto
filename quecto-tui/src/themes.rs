@@ -170,7 +170,8 @@ mod tests {
     #[test]
     fn all_color_methods_produce_ansi() {
         let t = &DARK;
-        let methods: Vec<(fn(&NamedTheme, &str) -> String, u8)> = vec![
+        type ColorMethod = (fn(&NamedTheme, &str) -> String, u8);
+        let methods: Vec<ColorMethod> = vec![
             (NamedTheme::accent, t.accent),
             (NamedTheme::muted, t.muted),
             (NamedTheme::dim, t.dim),
