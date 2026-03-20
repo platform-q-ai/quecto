@@ -190,6 +190,7 @@ fn execute_uds(world: &mut QuectoWorld) {
             ext_registry: Some(ext_registry),
             persist: false,
             notification_rx: None,
+            subagent_registry: None,
         })
     });
 
@@ -883,6 +884,7 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
             ext_registry: Some(ext_registry),
             persist: false,
             notification_rx: None,
+            subagent_registry: None,
         })
     });
 
@@ -1223,6 +1225,7 @@ fn mc_spawn_agent(
             ext_registry: Some(ext_registry),
             persist,
             notification_rx: None,
+            subagent_registry: None,
         })
     });
 

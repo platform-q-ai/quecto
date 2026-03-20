@@ -460,6 +460,138 @@ fn execute_tool_event_roundtrip() {
     }
 }
 
+// ─── Subagent protocol (#524) ─────────────────────────────────────────────────
+
+#[test]
+fn get_subagents_command_serializes() {
+    let cmd = AgentCommand::GetSubagents {
+        id: Some("gs-1".into()),
+    };
+    let j = round_trip(&cmd);
+    assert_eq!(j["type"], "get_subagents");
+    assert_eq!(j["id"], "gs-1");
+}
+
+#[test]
+fn get_subagents_command_parses_without_id() {
+    let raw = r#"{"type":"get_subagents"}"#;
+    let cmd: AgentCommand = serde_json::from_str(raw).unwrap();
+    assert_eq!(cmd.type_name(), "get_subagents");
+    assert!(cmd.id().is_none());
+}
+
+#[test]
+fn subagent_info_camel_case_serialization() {
+    let info = SubagentInfo {
+        agent_id: "test-agent".into(),
+        status: "running".into(),
+        last_tool: Some("bash".into()),
+        last_error: None,
+        pid: 12345,
+    };
+    let j = round_trip(&info);
+    assert_eq!(j["agentId"], "test-agent");
+    assert_eq!(j["status"], "running");
+    assert_eq!(j["lastTool"], "bash");
+    assert_eq!(j["pid"], 12345);
+    // No snake_case
+    assert!(j.get("agent_id").is_none());
+    assert!(j.get("last_tool").is_none());
+    // lastError absent when None
+    assert!(j.get("lastError").is_none());
+}
+
+#[test]
+fn subagent_info_null_fields_omitted() {
+    let info = SubagentInfo {
+        agent_id: "idle".into(),
+        status: "idle".into(),
+        last_tool: None,
+        last_error: None,
+        pid: 1,
+    };
+    let j = round_trip(&info);
+    // skip_serializing_if = Option::is_none should omit these
+    assert!(j.get("lastTool").is_none());
+    assert!(j.get("lastError").is_none());
+}
+
+#[test]
+fn subagent_info_with_error_field() {
+    let info = SubagentInfo {
+        agent_id: "err".into(),
+        status: "error".into(),
+        last_tool: None,
+        last_error: Some("tool 'bash' returned error".into()),
+        pid: 0,
+    };
+    let j = round_trip(&info);
+    assert_eq!(j["lastError"], "tool 'bash' returned error");
+}
+
+#[test]
+fn subagent_state_changed_event_matches_spec() {
+    let ev = AgentEvent::SubagentStateChanged {
+        subagents: vec![
+            SubagentInfo {
+                agent_id: "reviewer".into(),
+                status: "running".into(),
+                last_tool: Some("bash: cargo test".into()),
+                last_error: None,
+                pid: 12345,
+            },
+            SubagentInfo {
+                agent_id: "formatter".into(),
+                status: "idle".into(),
+                last_tool: None,
+                last_error: None,
+                pid: 12346,
+            },
+        ],
+    };
+    let j = round_trip(&ev);
+    assert_eq!(j["type"], "subagent_state_changed");
+    assert!(j["subagents"].is_array());
+    let arr = j["subagents"].as_array().unwrap();
+    assert_eq!(arr.len(), 2);
+    assert_eq!(arr[0]["agentId"], "reviewer");
+    assert_eq!(arr[0]["status"], "running");
+    assert_eq!(arr[0]["lastTool"], "bash: cargo test");
+    assert_eq!(arr[0]["pid"], 12345);
+    assert_eq!(arr[1]["agentId"], "formatter");
+    assert_eq!(arr[1]["status"], "idle");
+}
+
+#[test]
+fn subagent_state_changed_event_roundtrip() {
+    let ev = AgentEvent::SubagentStateChanged {
+        subagents: vec![SubagentInfo {
+            agent_id: "test".into(),
+            status: "exited".into(),
+            last_tool: None,
+            last_error: None,
+            pid: 999,
+        }],
+    };
+    let json = ev.to_json_line();
+    let parsed: AgentEvent = serde_json::from_str(&json).unwrap();
+    match parsed {
+        AgentEvent::SubagentStateChanged { subagents } => {
+            assert_eq!(subagents.len(), 1);
+            assert_eq!(subagents[0].agent_id, "test");
+            assert_eq!(subagents[0].status, "exited");
+        }
+        _ => panic!("expected SubagentStateChanged"),
+    }
+}
+
+#[test]
+fn subagent_state_changed_empty_list() {
+    let ev = AgentEvent::SubagentStateChanged { subagents: vec![] };
+    let json = ev.to_json_line();
+    assert!(json.contains("\"subagents\":[]"));
+}
+
 // ─── AgentCommand::type_name() ────────────────────────────────────────────────
 
 #[test]
@@ -507,6 +639,10 @@ fn core_command_type_names() {
     assert_eq!(
         AgentCommand::ClearHistory { id: None }.type_name(),
         "clear_history"
+    );
+    assert_eq!(
+        AgentCommand::GetSubagents { id: None }.type_name(),
+        "get_subagents"
     );
 }
 

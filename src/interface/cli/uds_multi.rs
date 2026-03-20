@@ -45,6 +45,9 @@ pub(super) struct MultiClientArgs {
     pub persist: bool,
     /// Receiver for subagent notifications (#523).
     pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
+    /// Shared subagent registry for get_subagents / state_changed (#524).
+    pub subagent_registry:
+        Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
 }
 
 /// A command line from a client.
@@ -101,6 +104,7 @@ pub(super) async fn multi_client_loop(
     let ext_registry = args.ext_registry;
     let persist = args.persist;
     let notification_rx = args.notification_rx;
+    let subagent_registry = args.subagent_registry;
     let MultiClientArgs {
         mut agent,
         mut messages,
@@ -147,6 +151,7 @@ pub(super) async fn multi_client_loop(
         ext_registry,
         client_tool_registry: client_tool_registry.clone(),
         current_client_id: 0,
+        subagent_registry,
     };
 
     run_dispatch_loop(
@@ -265,6 +270,10 @@ async fn run_dispatch_loop(
                 let message = notif.to_message();
                 tracing::info!(msg = %message, "injecting subagent notification");
                 ctx.session.enqueue_pending(message);
+                // Broadcast state_changed event to all UDS clients (#524).
+                let list = super::protocol::build_subagent_info_list(&ctx.subagent_registry);
+                let ev = AgentEvent::SubagentStateChanged { subagents: list };
+                emit_event_to_broadcast_or_writer(ctx, &ev).await;
             }
         }
     }

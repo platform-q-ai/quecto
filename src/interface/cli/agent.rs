@@ -22,36 +22,19 @@ const MAX_SOCKET_PATH_BYTES: usize = 104;
 
 /// Parsed flags for the `agent` subcommand.
 pub(crate) struct AgentFlags {
-    /// Session name for persistence. `None` = "default", `Some("-")` = ephemeral.
     pub(crate) session_name: Option<String>,
-    /// When true, run in ephemeral mode: no session is loaded or saved.
-    /// Mutually exclusive with `session_name`.
     pub(crate) no_session: bool,
     pub(crate) message: Option<String>,
     pub(crate) system_prompt: Option<String>,
     pub(crate) model_override: Option<String>,
-    /// Override max tool iterations (takes precedence over config).
     pub(crate) max_iterations: Option<u32>,
-    /// Wall-clock timeout in seconds for the entire agent run.
     pub(crate) max_time: Option<u64>,
-    /// When true, enter UDS mode: read JSON commands from a Unix domain socket.
-    /// When false (default), run in one-shot mode: process one prompt then exit.
     pub(crate) uds_mode: bool,
-    /// Disable workspace path restriction. WARNING: allows any path access.
     pub(crate) no_sandbox: bool,
-    /// Enable network access in bash tool calls. WARNING: allows outbound connections.
     pub(crate) network: bool,
-    /// Explicit socket path for `--mode uds`.
-    /// If `None`, a path is auto-generated in `$TMPDIR` and printed to stderr.
     pub(crate) socket_path: Option<std::path::PathBuf>,
-    /// When true (with `--mode uds`), keep the agent alive after all clients
-    /// disconnect.  Shutdown only via SIGTERM/SIGINT.
     pub(crate) persist: bool,
-    /// Tool names to remove from the registry before the agent starts.
-    /// Repeatable: `--disable-tool bash --disable-tool web_fetch`.
     pub(crate) disabled_tools: Vec<String>,
-    /// Effort level override for 4.6 models (low/medium/high/max).
-    /// Takes precedence over config and env var.
     pub(crate) effort: Option<crate::domain::provider::EffortLevel>,
 }
 
@@ -309,14 +292,12 @@ pub(crate) fn cmd_agent(
 pub(crate) struct AgentBuildResult {
     pub agent: AgentLoopImpl,
     pub workflow_config: crate::domain::workflow::WorkflowConfig,
-    /// Concatenated system prompt snippets from registered extensions.
     pub extension_prompt_snippets: String,
-    /// Resolved model name (after config + flag override).
     pub model: String,
-    /// Shared extension registry for UDS get_extensions / reload_extensions.
     pub ext_registry: std::sync::Arc<std::sync::Mutex<ExtensionRegistry>>,
-    /// Receiver for subagent notifications (#523).
     pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
+    pub subagent_registry:
+        Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
 }
 
 pub(crate) fn build_agent_from_config(
@@ -363,6 +344,7 @@ pub(crate) fn build_agent_from_config(
         ext_registry,
         extension_prompt_snippets,
         notification_rx,
+        subagent_registry,
     } = build_tool_registry(ToolRegistryArgs {
         base_dir,
         config: &config,
@@ -421,6 +403,7 @@ pub(crate) fn build_agent_from_config(
         model,
         ext_registry: std::sync::Arc::new(std::sync::Mutex::new(ext_registry)),
         notification_rx,
+        subagent_registry,
     })
 }
 
@@ -431,8 +414,8 @@ struct ToolRegistryBuild {
     model: String,
     ext_registry: ExtensionRegistry,
     extension_prompt_snippets: String,
-    /// Receiver for subagent notifications (#523). None in stub mode.
     notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
+    subagent_registry: Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
 }
 
 struct ToolRegistryArgs<'a> {
@@ -496,6 +479,7 @@ fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBuild {
             .with_registry(subagent_registry.clone())
             .with_notify_tx(notify_tx),
     ));
+    let subagent_registry_for_protocol = subagent_registry.clone();
     registry.register(Arc::new(AgentCmdTool::new(subagent_registry)));
     crate::interface::shared::register_workflow_tool(&mut registry, &config.workflow);
 
@@ -513,6 +497,11 @@ fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBuild {
         ext_registry,
         extension_prompt_snippets,
         notification_rx: if has_base_dir { Some(notify_rx) } else { None },
+        subagent_registry: if has_base_dir {
+            Some(subagent_registry_for_protocol)
+        } else {
+            None
+        },
     }
 }
 
@@ -722,6 +711,7 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         ext_registry: Some(build.ext_registry),
         persist: flags.persist,
         notification_rx: build.notification_rx,
+        subagent_registry: build.subagent_registry,
     })
 }
 
@@ -730,21 +720,17 @@ mod agent_provider;
 pub use agent_provider::build_agent_provider;
 
 #[cfg(test)]
-#[path = "agent_tests.rs"]
-mod tests;
-
+#[path = "agent_config_tests.rs"]
+mod config_tests;
 #[cfg(test)]
 #[path = "agent_integration_tests.rs"]
 mod integration_tests;
-
-#[cfg(test)]
-#[path = "agent_no_session_tests.rs"]
-mod no_session_tests;
-
 #[cfg(test)]
 #[path = "agent_no_sandbox_tests.rs"]
 mod no_sandbox_tests;
-
 #[cfg(test)]
-#[path = "agent_config_tests.rs"]
-mod config_tests;
+#[path = "agent_no_session_tests.rs"]
+mod no_session_tests;
+#[cfg(test)]
+#[path = "agent_tests.rs"]
+mod tests;
