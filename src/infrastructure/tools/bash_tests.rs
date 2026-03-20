@@ -278,3 +278,95 @@ fn test_exec_description_includes_example() {
         def.description
     );
 }
+
+// --- parse_timeout tests ---
+
+#[test]
+fn test_parse_timeout_integer() {
+    let args = serde_json::json!({"timeout": 30});
+    assert_eq!(super::parse_timeout(&args), Some(Duration::from_secs(30)));
+}
+
+#[test]
+fn test_parse_timeout_float() {
+    let args = serde_json::json!({"timeout": 30.5});
+    assert_eq!(super::parse_timeout(&args), Some(Duration::from_secs(31)));
+}
+
+#[test]
+fn test_parse_timeout_zero() {
+    let args = serde_json::json!({"timeout": 0});
+    assert_eq!(super::parse_timeout(&args), None);
+}
+
+#[test]
+fn test_parse_timeout_missing() {
+    let args = serde_json::json!({"command": "ls"});
+    assert_eq!(super::parse_timeout(&args), None);
+}
+
+#[test]
+fn test_parse_timeout_negative() {
+    let args = serde_json::json!({"timeout": -5});
+    assert_eq!(super::parse_timeout(&args), None);
+}
+
+#[test]
+fn test_parse_timeout_string_ignored() {
+    let args = serde_json::json!({"timeout": "30"});
+    assert_eq!(super::parse_timeout(&args), None);
+}
+
+// --- is_allowed_exec_env_key tests ---
+
+#[test]
+fn test_allowed_env_keys() {
+    assert!(super::is_allowed_exec_env_key("HOME"));
+    assert!(super::is_allowed_exec_env_key("PATH"));
+    assert!(super::is_allowed_exec_env_key("SHELL"));
+    assert!(super::is_allowed_exec_env_key("LANG"));
+    assert!(super::is_allowed_exec_env_key("TERM"));
+}
+
+#[test]
+fn test_lc_prefix_allowed() {
+    assert!(super::is_allowed_exec_env_key("LC_ALL"));
+    assert!(super::is_allowed_exec_env_key("LC_CTYPE"));
+}
+
+#[test]
+fn test_secret_prefix_blocked() {
+    assert!(!super::is_allowed_exec_env_key("QUECTO_SECRET_KEY"));
+}
+
+#[test]
+fn test_random_key_blocked() {
+    assert!(!super::is_allowed_exec_env_key("MY_CUSTOM_VAR"));
+}
+
+// --- build_source_env tests ---
+
+#[test]
+fn test_build_source_env_with_overrides() {
+    let mut overrides = HashMap::new();
+    overrides.insert("HOME".to_string(), "/tmp".to_string());
+    overrides.insert("SECRET_VAR".to_string(), "nope".to_string());
+    let env = super::build_source_env(Some(&overrides));
+    assert_eq!(env.get("HOME").map(|s| s.as_str()), Some("/tmp"));
+    assert!(!env.contains_key("SECRET_VAR"));
+}
+
+#[test]
+fn test_build_source_env_without_overrides() {
+    let env = super::build_source_env(None);
+    // Should contain at least HOME or PATH from the process env
+    assert!(env.contains_key("HOME") || env.contains_key("PATH"));
+}
+
+// --- ALLOWED_SHELLS tests ---
+
+#[test]
+fn test_allowed_shells_contains_common() {
+    assert!(super::ALLOWED_SHELLS.contains(&"/bin/sh"));
+    assert!(super::ALLOWED_SHELLS.contains(&"/bin/bash"));
+}

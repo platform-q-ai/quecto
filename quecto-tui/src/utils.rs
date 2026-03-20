@@ -275,4 +275,66 @@ mod tests {
             assert!(visible_width(line) <= 5, "line '{}' is too wide", line);
         }
     }
+
+    #[test]
+    fn visible_width_control_chars_zero() {
+        assert_eq!(visible_width("\x01\x02\x03"), 0);
+    }
+
+    #[test]
+    fn visible_width_osc_with_st_terminator() {
+        // OSC terminated with ST (\x1b\\)
+        let s = "\x1b]0;title\x1b\\visible";
+        assert_eq!(visible_width(s), 7); // "visible"
+    }
+
+    #[test]
+    fn truncate_to_zero_width() {
+        let result = truncate_to_width("hello", 0, None);
+        assert_eq!(visible_width(&result), 0);
+    }
+
+    #[test]
+    fn truncate_exact_width() {
+        let result = truncate_to_width("hello", 5, None);
+        assert!(result.contains("hello"));
+    }
+
+    #[test]
+    fn truncate_cjk_respects_double_width() {
+        let result = truncate_to_width("日本語テスト", 6, None);
+        assert!(visible_width(&result) <= 6);
+    }
+
+    #[test]
+    fn wrap_empty_string() {
+        let lines = wrap_text("", 80);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0], "");
+    }
+
+    #[test]
+    fn wrap_exact_width() {
+        let lines = wrap_text("12345", 5);
+        assert_eq!(lines.len(), 1);
+    }
+
+    #[test]
+    fn wrap_with_ansi() {
+        let lines = wrap_text("\x1b[31mhello world\x1b[0m", 6);
+        assert!(lines.len() >= 2);
+    }
+
+    #[test]
+    fn visible_width_emoji() {
+        // Emoji characters are typically width 2
+        let w = visible_width("🦀");
+        assert!(w >= 1 && w <= 2);
+    }
+
+    #[test]
+    fn truncate_with_empty_ellipsis() {
+        let result = truncate_to_width("hello world", 5, Some(""));
+        assert!(visible_width(&result) <= 5);
+    }
 }

@@ -40,22 +40,24 @@ step() {
 
 # --- Pre-commit checks (belt-and-suspenders) ---
 
-step "1/6" "Quality gate"
+step "1/7" "Quality gate"
 "$ROOT/scripts/check-quality.sh"
 
-step "2/6" "BDD quality gate (stubs, always-pass tests, reimplemented logic)"
+step "2/7" "BDD quality gate (stubs, always-pass tests, reimplemented logic)"
 "$ROOT/scripts/check-bdd-quality.sh"
 
-step "3/6" "cargo fmt --check"
+step "3/7" "cargo fmt --check"
 cargo fmt --all -- --check
 
-step "4/6" "cargo clippy (strict)"
+step "4/7" "cargo clippy (strict)"
 cargo clippy --all-targets --features test-support -- -D warnings \
     -W clippy::cognitive_complexity \
     -W clippy::too_many_arguments \
     -W clippy::too_many_lines
 
-step "5/6" "Parallel test wave: unit + architecture + non-real BDD shards"
+COV_THRESHOLD="${QUECTO_COV_THRESHOLD:-80}"
+
+step "5/7" "Parallel test wave: unit + architecture + non-real BDD shards"
 
 (
     cargo test --no-fail-fast --lib 2>&1 | "$ROOT/scripts/test-filter.sh"
@@ -93,9 +95,44 @@ if [[ "$FAIL" -ne 0 ]]; then
     exit 1
 fi
 
-step "6/6" "Pre-push summary"
+step "6/7" "Code coverage (cargo llvm-cov, threshold ${COV_THRESHOLD}%)"
+
+# Resolve llvm tools — cargo-llvm-cov needs these when llvm-tools-preview
+# isn't installed via rustup (e.g. system Rust on Arch Linux).
+if [[ -z "${LLVM_COV:-}" ]] && command -v llvm-cov &>/dev/null; then
+    export LLVM_COV="$(command -v llvm-cov)"
+fi
+if [[ -z "${LLVM_PROFDATA:-}" ]] && command -v llvm-profdata &>/dev/null; then
+    export LLVM_PROFDATA="$(command -v llvm-profdata)"
+fi
+
+COV_FAIL=0
+
+echo "  quecto (core)..."
+COV_OUT_QUECTO=$(cargo llvm-cov --lib -p quecto --fail-under-regions "$COV_THRESHOLD" 2>&1) || {
+    echo -e "  ${RED}FAIL${NC}: quecto region coverage below ${COV_THRESHOLD}%"
+    COV_FAIL=1
+}
+echo "$COV_OUT_QUECTO" | tail -3
+
+echo "  quecto-tui..."
+COV_OUT_TUI=$(cargo llvm-cov --lib -p quecto-tui --fail-under-regions "$COV_THRESHOLD" 2>&1) || {
+    echo -e "  ${RED}FAIL${NC}: quecto-tui region coverage below ${COV_THRESHOLD}%"
+    COV_FAIL=1
+}
+echo "$COV_OUT_TUI" | tail -3
+
+if [[ "$COV_FAIL" -ne 0 ]]; then
+    echo -e "\n${RED}FAIL${NC}: Code coverage below ${COV_THRESHOLD}% threshold."
+    echo "  Run: cargo llvm-cov --workspace --lib   to see full report"
+    echo "  Run: cargo llvm-cov --html --workspace --lib   for HTML report"
+    exit 1
+fi
+
+step "7/7" "Pre-push summary"
 echo "All local push gates passed."
 echo "BDD shards: ${BDD_SHARDS}, timeout per shard: ${E2E_TIMEOUT}"
+echo "Coverage threshold: ${COV_THRESHOLD}%"
 
 echo -e "\n${GREEN}Pre-push passed.${NC}"
 rm -f "$ROOT"/.git/pre-push.passed.*

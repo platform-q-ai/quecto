@@ -581,4 +581,79 @@ mod tests {
             }
         );
     }
+
+    #[tokio::test]
+    async fn test_maybe_notify_agent_end() {
+        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
+        let line = r#"{"type":"agent_end","messages":[{"role":"assistant","content":"done"}]}"#;
+        maybe_notify(Some(&tx), "worker", line);
+        let notif = rx.try_recv().unwrap();
+        match notif {
+            SubagentNotification::Completed { agent_id, summary } => {
+                assert_eq!(agent_id, "worker");
+                assert!(summary.contains("done"));
+            }
+            _ => panic!("expected Completed"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_maybe_notify_tool_error() {
+        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
+        let line = r#"{"type":"tool_execution_end","toolName":"bash","isError":true}"#;
+        maybe_notify(Some(&tx), "worker", line);
+        let notif = rx.try_recv().unwrap();
+        match notif {
+            SubagentNotification::Errored { agent_id, error } => {
+                assert_eq!(agent_id, "worker");
+                assert!(error.contains("bash"));
+            }
+            _ => panic!("expected Errored"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_maybe_notify_tool_success_no_notification() {
+        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
+        let line = r#"{"type":"tool_execution_end","toolName":"bash","isError":false}"#;
+        maybe_notify(Some(&tx), "worker", line);
+        assert!(rx.try_recv().is_err()); // No notification for success
+    }
+
+    #[test]
+    fn test_maybe_notify_none_tx_is_noop() {
+        let line = r#"{"type":"agent_end","messages":[]}"#;
+        maybe_notify(None, "worker", line); // should not panic
+    }
+
+    #[test]
+    fn test_maybe_notify_invalid_json_is_noop() {
+        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
+        maybe_notify(Some(&tx), "worker", "not json");
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn test_maybe_notify_non_state_event_is_noop() {
+        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
+        let line = r#"{"type":"token","token":"hello"}"#;
+        maybe_notify(Some(&tx), "worker", line);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn test_notify_from_parsed_unknown_event_is_noop() {
+        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
+        let value = serde_json::json!({"type": "token", "token": "hi"});
+        notify_from_parsed(Some(&tx), "worker", &value);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn test_notify_from_parsed_no_type_is_noop() {
+        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
+        let value = serde_json::json!({"data": "something"});
+        notify_from_parsed(Some(&tx), "worker", &value);
+        assert!(rx.try_recv().is_err());
+    }
 }

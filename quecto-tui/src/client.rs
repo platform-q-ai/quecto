@@ -597,4 +597,168 @@ mod tests {
             _ => panic!("expected ToolExecutionEnd"),
         }
     }
+
+    // --- Missing Command serialization tests ---
+
+    #[test]
+    fn command_steer_serializes() {
+        let cmd = Command::Steer {
+            id: Some("s-1".into()),
+            message: "go left".into(),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"type\":\"steer\""));
+        assert!(json.contains("\"message\":\"go left\""));
+    }
+
+    #[test]
+    fn command_follow_up_serializes() {
+        let cmd = Command::FollowUp {
+            id: None,
+            message: "also do this".into(),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"type\":\"follow_up\""));
+        assert!(json.contains("also do this"));
+    }
+
+    #[test]
+    fn command_get_messages_serializes() {
+        let cmd = Command::GetMessages { id: None };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"type\":\"get_messages\""));
+    }
+
+    #[test]
+    fn command_get_messages_tail_serializes() {
+        let cmd = Command::GetMessagesTail {
+            id: Some("gmt".into()),
+            count: 5,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"type\":\"get_messages_tail\""));
+        assert!(json.contains("\"count\":5"));
+    }
+
+    #[test]
+    fn command_get_session_stats_serializes() {
+        let cmd = Command::GetSessionStats {
+            id: Some("stats".into()),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"type\":\"get_session_stats\""));
+    }
+
+    #[test]
+    fn command_set_model_serializes() {
+        let cmd = Command::SetModel {
+            id: None,
+            model: Some("gpt-4o".into()),
+            provider: None,
+            model_id: None,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"type\":\"set_model\""));
+        assert!(json.contains("\"model\":\"gpt-4o\""));
+        assert!(!json.contains("provider"));
+        assert!(!json.contains("modelId"));
+    }
+
+    #[test]
+    fn command_set_model_with_provider() {
+        let cmd = Command::SetModel {
+            id: None,
+            model: None,
+            provider: Some("anthropic".into()),
+            model_id: Some("claude-sonnet-4-20250514".into()),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"provider\":\"anthropic\""));
+        assert!(json.contains("\"modelId\":\"claude-sonnet-4-20250514\""));
+    }
+
+    #[test]
+    fn command_clear_history_serializes() {
+        let cmd = Command::ClearHistory { id: None };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"type\":\"clear_history\""));
+    }
+
+    // --- Event deserialization edge cases ---
+
+    #[test]
+    fn event_deserializes_turn_start() {
+        let json = r#"{"type":"turn_start"}"#;
+        let event: Event = serde_json::from_str(json).unwrap();
+        assert!(matches!(event, Event::TurnStart));
+    }
+
+    #[test]
+    fn event_deserializes_turn_end() {
+        let json =
+            r#"{"type":"turn_end","message":{"role":"assistant","content":"hi"},"toolResults":[]}"#;
+        let event: Event = serde_json::from_str(json).unwrap();
+        match event {
+            Event::TurnEnd { message, .. } => {
+                assert_eq!(message["role"], "assistant");
+            }
+            _ => panic!("expected TurnEnd"),
+        }
+    }
+
+    #[test]
+    fn event_deserializes_extensions_changed() {
+        let json = r#"{"type":"extensions_changed","extensions":[]}"#;
+        let event: Event = serde_json::from_str(json).unwrap();
+        assert!(matches!(event, Event::ExtensionsChanged { .. }));
+    }
+
+    #[test]
+    fn event_response_with_error() {
+        let json = r#"{"type":"response","command":"set_model","success":false,"error":"model not found"}"#;
+        let event: Event = serde_json::from_str(json).unwrap();
+        match event {
+            Event::Response { success, error, .. } => {
+                assert!(!success);
+                assert_eq!(error.as_deref(), Some("model not found"));
+            }
+            _ => panic!("expected Response"),
+        }
+    }
+
+    // --- extract_result_text edge cases ---
+
+    #[test]
+    fn extract_result_text_no_content_key() {
+        let val = serde_json::json!({"something": "else"});
+        assert_eq!(extract_result_text(&val), "");
+    }
+
+    #[test]
+    fn extract_result_text_non_text_type() {
+        let val = serde_json::json!({"content": [{"type": "image", "data": "abc"}]});
+        assert_eq!(extract_result_text(&val), "");
+    }
+
+    // --- ClientError Display ---
+
+    #[test]
+    fn client_error_display() {
+        let e = ClientError::Disconnected;
+        assert_eq!(e.to_string(), "disconnected from agent");
+    }
+
+    #[test]
+    fn client_error_from_io() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "not found");
+        let e = ClientError::from(io_err);
+        assert!(e.to_string().contains("I/O error"));
+    }
+
+    #[test]
+    fn client_error_from_json() {
+        let json_err: serde_json::Error = serde_json::from_str::<Event>("bad json").unwrap_err();
+        let e = ClientError::from(json_err);
+        assert!(e.to_string().contains("JSON error"));
+    }
 }

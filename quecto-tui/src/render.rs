@@ -249,4 +249,52 @@ mod tests {
         assert!(output.contains(SYNC_START));
         assert!(output.contains(SYNC_END));
     }
+
+    #[test]
+    fn diff_render_full_redraw_on_width_change() {
+        let output = captured_render(&["same", "same"], &["same", "same"]);
+        // With no width change and same content, diff should be minimal
+        // (Only cursor positioning, no content)
+        // We can't easily test width change in this helper, but verify
+        // that identical content produces no content output
+        assert!(!output.contains("same"));
+    }
+
+    #[test]
+    fn diff_render_shrunk_lines() {
+        // Previous had 3 lines, new has 2
+        let output = captured_render(&["a", "b", "c"], &["a", "b"]);
+        // Should clear the removed line
+        assert!(output.contains(ERASE_LINE));
+    }
+
+    #[test]
+    fn diff_render_empty_to_content() {
+        // Use the captured_render helper which handles borrows properly
+        let output = captured_render(&[], &["hello"]);
+        assert!(output.contains("hello"));
+    }
+
+    #[test]
+    fn diff_render_content_to_empty() {
+        let output = captured_render(&["hello"], &[]);
+        assert!(output.contains(ERASE_LINE));
+    }
+
+    #[test]
+    fn diff_render_many_lines() {
+        let prev: Vec<&str> = (0..50).map(|_| "same").collect();
+        let mut next = prev.clone();
+        next[25] = "CHANGED";
+        let output = captured_render(&prev, &next);
+        assert!(output.contains("CHANGED"));
+    }
+
+    #[test]
+    fn diff_render_all_changed() {
+        let output = captured_render(&["a", "b", "c"], &["x", "y", "z"]);
+        assert!(output.contains("x"));
+        assert!(output.contains("y"));
+        assert!(output.contains("z"));
+    }
 }

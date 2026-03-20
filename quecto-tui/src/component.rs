@@ -120,4 +120,66 @@ mod tests {
         c.clear();
         assert_eq!(c.child_count(), 0);
     }
+
+    #[test]
+    fn container_default() {
+        let c = Container::default();
+        assert_eq!(c.child_count(), 0);
+    }
+
+    #[test]
+    fn container_remove_child() {
+        let mut c = Container::new();
+        c.add_child(Box::new(Text::new("a")));
+        c.add_child(Box::new(Text::new("b")));
+        c.add_child(Box::new(Text::new("c")));
+        c.remove_child(1);
+        let lines = c.render(80);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], "a");
+        assert_eq!(lines[1], "c");
+    }
+
+    #[test]
+    fn container_remove_child_out_of_bounds() {
+        let mut c = Container::new();
+        c.add_child(Box::new(Text::new("a")));
+        c.remove_child(99); // should not panic
+        assert_eq!(c.child_count(), 1);
+    }
+
+    #[test]
+    fn container_handle_input_no_children() {
+        let mut c = Container::new();
+        assert!(!c.handle_input(&crate::keys::Key::Enter));
+    }
+
+    #[test]
+    fn container_invalidate_no_panic() {
+        let mut c = Container::new();
+        c.add_child(Box::new(Text::new("a")));
+        c.invalidate(); // should not panic
+        // Re-render still works
+        assert_eq!(c.render(80).len(), 1);
+    }
+
+    /// A component that consumes Enter but ignores other keys.
+    struct EnterConsumer;
+    impl Component for EnterConsumer {
+        fn render(&mut self, _width: usize) -> Vec<String> {
+            vec!["enter-consumer".to_string()]
+        }
+        fn handle_input(&mut self, key: &crate::keys::Key) -> bool {
+            matches!(key, crate::keys::Key::Enter)
+        }
+    }
+
+    #[test]
+    fn container_handle_input_first_consumer_wins() {
+        let mut c = Container::new();
+        c.add_child(Box::new(EnterConsumer));
+        c.add_child(Box::new(Text::new("text")));
+        assert!(c.handle_input(&crate::keys::Key::Enter));
+        assert!(!c.handle_input(&crate::keys::Key::Escape));
+    }
 }
