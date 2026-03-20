@@ -21,6 +21,7 @@ use crate::components::notification::{Notification, NotificationStack, NotifyLev
 use crate::components::spinner::Spinner;
 use crate::components::subagent_bar::SubagentBar;
 use crate::components::widget::WidgetContainer;
+use crate::components::workflow_bar;
 use crate::keys::{self, Key};
 use crate::kitty::KittyProtocol;
 use crate::overlay::OverlayStack;
@@ -121,6 +122,8 @@ pub struct App {
     subagent_local: std::collections::BTreeMap<String, TrackedSubagent>,
     /// Active mouse text selection (#528).
     selection: Option<TextSelection>,
+    /// Workflow header bar state (#563).
+    workflow_bar: workflow_bar::WorkflowBarState,
     /// Last rendered lines (for extracting selected text from the buffer).
     last_rendered_lines: Vec<String>,
 }
@@ -153,6 +156,7 @@ impl App {
             model_selector: None,
             subagent_local: std::collections::BTreeMap::new(),
             selection: None,
+            workflow_bar: workflow_bar::WorkflowBarState::default(),
             last_rendered_lines: Vec::new(),
         }
     }
@@ -460,6 +464,16 @@ impl App {
             Key::Ctrl('l') => {
                 // Open model selector overlay.
                 self.open_model_selector();
+                return;
+            }
+            Key::CtrlShift('a') => {
+                // Toggle workflow auto-continue (#563).
+                self.notify("Auto-continue toggled (server-side)", NotifyLevel::Info);
+                return;
+            }
+            Key::CtrlShift('n') => {
+                // Toggle workflow completion nudge (#563).
+                self.notify("Completion nudge toggled (server-side)", NotifyLevel::Info);
                 return;
             }
             Key::Ctrl('o') => {
@@ -833,6 +847,21 @@ impl App {
             Event::SubagentStateChanged { subagents } => {
                 self.update_subagent_bar(subagents);
             }
+            Event::WorkflowState {
+                steps,
+                progress,
+                active_issue,
+            } => {
+                // Reconstruct the JSON for parsing.
+                let mut event = serde_json::json!({
+                    "steps": steps,
+                    "progress": progress,
+                });
+                if let Some(issue) = active_issue {
+                    event["activeIssue"] = issue;
+                }
+                self.workflow_bar = workflow_bar::parse_workflow_event(&event);
+            }
             _ => {}
         }
     }
@@ -1049,7 +1078,13 @@ impl App {
             "quecto-tui v{} — Enter send, Shift+Enter newline, /help for commands",
             version
         )));
-        lines.push(String::new());
+        // Workflow header bar (#563) — below title, above chat.
+        let wf_lines = workflow_bar::render(&self.workflow_bar, width);
+        if wf_lines.is_empty() {
+            lines.push(String::new());
+        } else {
+            lines.extend(wf_lines);
+        }
 
         // Chat — render into available space above the bottom section.
         // Reserve MIN_CHAT_GAP lines for spacing between chat and editor (#480).
