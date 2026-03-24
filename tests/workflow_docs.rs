@@ -3,6 +3,23 @@ mod common;
 use common::read_repo_file;
 use serde_json::Value;
 
+fn read_workflow_config() -> Value {
+    serde_json::from_str(&read_repo_file("examples/config.json"))
+        .expect("examples/config.json should parse as JSON")
+}
+
+fn workflow_steps(config: &Value) -> &[Value] {
+    config["workflow"]["steps"]
+        .as_array()
+        .expect("workflow steps should be an array")
+}
+
+fn workflow_guards(config: &Value) -> &[Value] {
+    config["workflow"]["guards"]
+        .as_array()
+        .expect("workflow guards should be an array")
+}
+
 #[test]
 fn readme_workflow_config_uses_guards_not_deprecated_fields() {
     let readme = read_repo_file("README.md");
@@ -44,14 +61,9 @@ fn workflow_guide_persistence_notes_match_runtime_behavior() {
 
 #[test]
 fn examples_config_contains_full_reference_workflow() {
-    let config: Value = serde_json::from_str(&read_repo_file("examples/config.json"))
-        .expect("examples/config.json should parse as JSON");
-    let steps = config["workflow"]["steps"]
-        .as_array()
-        .expect("workflow steps should be an array");
-    let guards = config["workflow"]["guards"]
-        .as_array()
-        .expect("workflow guards should be an array");
+    let config = read_workflow_config();
+    let steps = workflow_steps(&config);
+    let guards = workflow_guards(&config);
 
     assert_eq!(steps.len(), 16);
     assert_eq!(steps.first().unwrap()["id"], 1);
