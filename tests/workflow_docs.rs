@@ -20,6 +20,30 @@ fn workflow_guards(config: &Value) -> &[Value] {
         .expect("workflow guards should be an array")
 }
 
+fn assert_reference_steps(steps: &[Value]) {
+    assert_eq!(steps.len(), 16);
+    assert_eq!(steps.first().unwrap()["id"], 1);
+    assert_eq!(
+        steps.first().unwrap()["label"],
+        "Update Scenarios / Add new features"
+    );
+    assert_eq!(steps.last().unwrap()["id"], 16);
+    assert_eq!(
+        steps.last().unwrap()["label"],
+        "Move to local master and pull"
+    );
+}
+
+fn assert_reference_guards(guards: &[Value]) {
+    assert_eq!(guards.len(), 2);
+    assert_eq!(guards[0]["commands"][0], "git commit");
+    assert_eq!(guards[0]["commands"][1], "git push");
+    assert_eq!(guards[0]["before_step"], 7);
+    assert_eq!(guards[1]["commands"][0], "git merge");
+    assert_eq!(guards[1]["commands"][1], "gh pr merge");
+    assert_eq!(guards[1]["before_step"], 15);
+}
+
 #[test]
 fn readme_workflow_config_uses_guards_not_deprecated_fields() {
     let readme = read_repo_file("README.md");
@@ -62,26 +86,7 @@ fn workflow_guide_persistence_notes_match_runtime_behavior() {
 #[test]
 fn examples_config_contains_full_reference_workflow() {
     let config = read_workflow_config();
-    let steps = workflow_steps(&config);
-    let guards = workflow_guards(&config);
 
-    assert_eq!(steps.len(), 16);
-    assert_eq!(steps.first().unwrap()["id"], 1);
-    assert_eq!(
-        steps.first().unwrap()["label"],
-        "Update Scenarios / Add new features"
-    );
-    assert_eq!(steps.last().unwrap()["id"], 16);
-    assert_eq!(
-        steps.last().unwrap()["label"],
-        "Move to local master and pull"
-    );
-
-    assert_eq!(guards.len(), 2);
-    assert_eq!(guards[0]["commands"][0], "git commit");
-    assert_eq!(guards[0]["commands"][1], "git push");
-    assert_eq!(guards[0]["before_step"], 7);
-    assert_eq!(guards[1]["commands"][0], "git merge");
-    assert_eq!(guards[1]["commands"][1], "gh pr merge");
-    assert_eq!(guards[1]["before_step"], 15);
+    assert_reference_steps(workflow_steps(&config));
+    assert_reference_guards(workflow_guards(&config));
 }
