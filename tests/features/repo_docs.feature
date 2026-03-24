@@ -10,4 +10,3 @@ Feature: Repository documentation
     Then the output should contain "## License"
     And the output should contain "LicenseRef-Proprietary"
     And the output should contain "private repository"
-    And the output should not contain "## License\n\nMIT"

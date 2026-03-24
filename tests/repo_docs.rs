@@ -1,14 +1,6 @@
-use std::fs;
-use std::path::PathBuf;
+mod common;
 
-fn repo_file(relative_path: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(relative_path)
-}
-
-fn read_repo_file(relative_path: &str) -> String {
-    fs::read_to_string(repo_file(relative_path))
-        .unwrap_or_else(|e| panic!("failed to read {relative_path}: {e}"))
-}
+use common::read_repo_file;
 
 #[test]
 fn readme_license_section_matches_private_repo_status() {

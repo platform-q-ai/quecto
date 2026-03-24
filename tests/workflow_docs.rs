@@ -1,15 +1,7 @@
+mod common;
+
+use common::read_repo_file;
 use serde_json::Value;
-use std::fs;
-use std::path::PathBuf;
-
-fn repo_file(relative_path: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(relative_path)
-}
-
-fn read_repo_file(relative_path: &str) -> String {
-    fs::read_to_string(repo_file(relative_path))
-        .unwrap_or_else(|e| panic!("failed to read {relative_path}: {e}"))
-}
 
 #[test]
 fn readme_workflow_config_uses_guards_not_deprecated_fields() {
@@ -57,6 +49,9 @@ fn examples_config_contains_full_reference_workflow() {
     let steps = config["workflow"]["steps"]
         .as_array()
         .expect("workflow steps should be an array");
+    let guards = config["workflow"]["guards"]
+        .as_array()
+        .expect("workflow guards should be an array");
 
     assert_eq!(steps.len(), 16);
     assert_eq!(steps.first().unwrap()["id"], 1);
@@ -69,4 +64,12 @@ fn examples_config_contains_full_reference_workflow() {
         steps.last().unwrap()["label"],
         "Move to local master and pull"
     );
+
+    assert_eq!(guards.len(), 2);
+    assert_eq!(guards[0]["commands"][0], "git commit");
+    assert_eq!(guards[0]["commands"][1], "git push");
+    assert_eq!(guards[0]["before_step"], 7);
+    assert_eq!(guards[1]["commands"][0], "git merge");
+    assert_eq!(guards[1]["commands"][1], "gh pr merge");
+    assert_eq!(guards[1]["before_step"], 15);
 }
