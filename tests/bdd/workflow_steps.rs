@@ -301,6 +301,14 @@ fn given_config_without_workflow(world: &mut QuectoWorld) {
     world.config_path = Some(config_path.to_string_lossy().to_string());
 }
 
+#[when(expr = "I read the repository file {string}")]
+fn when_read_repository_file(world: &mut QuectoWorld, relative_path: String) {
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    world.stdout = crate::common::read_repository_file(base, &relative_path)
+        .unwrap_or_else(|e| panic!("{}", e));
+    world.stderr.clear();
+}
+
 // ─── Tool: WorkflowTool ────────────────────────────────────────────────────
 
 #[given("a workflow tool with default state")]

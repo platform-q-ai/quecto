@@ -33,7 +33,7 @@ Add a `workflow` section to your `config.json`:
     "guards": [
       {
         "commands": ["git commit", "git push"],
-        "before_step": 4,
+        "before_step": 5,
         "message": "Cannot commit until tests pass (step 4)"
       }
     ]
@@ -256,13 +256,13 @@ The guard parser handles:
   "guards": [
     {
       "commands": ["git commit", "git push"],
-      "before_step": 6,
-      "message": "Complete refactoring (step 5) and verify tests (step 6) before committing"
+      "before_step": 7,
+      "message": "Complete RED-GREEN-REFACTOR (steps 1-6) before committing."
     },
     {
-      "commands": ["cargo publish", "npm publish"],
+      "commands": ["git merge", "gh pr merge"],
       "before_step": 15,
-      "message": "Cannot publish until the PR is merged (step 15)"
+      "message": "Complete code review (steps 10-14) before merging."
     }
   ]
 }
@@ -270,12 +270,15 @@ The guard parser handles:
 
 ## BDD/TDD workflow example
 
-A full 14-step BDD/TDD workflow used for quecto's own development:
+A full 16-step reference workflow matching [`examples/config.json`](../examples/config.json)
+and the test-only `bdd_steps()` helper:
 
 ```json
 {
   "workflow": {
     "enabled": true,
+    "auto_continue": true,
+    "completion_nudge": true,
     "steps": [
       { "id": 1, "label": "Update Scenarios / Add new features", "phase": "red" },
       { "id": 2, "label": "Write/update unit tests", "phase": "red" },
@@ -290,13 +293,20 @@ A full 14-step BDD/TDD workflow used for quecto's own development:
       { "id": 11, "label": "Fix all valid review concerns", "phase": "review" },
       { "id": 12, "label": "Push changes to remote", "phase": "review" },
       { "id": 13, "label": "Reply to comments and mark resolved", "phase": "review" },
-      { "id": 14, "label": "Run pre-merge hooks (real-LLM, machete, deny)", "phase": "ci_cd" }
+      { "id": 14, "label": "Run pre-merge hooks (real-LLM, machete, deny)", "phase": "ci_cd" },
+      { "id": 15, "label": "Merge", "phase": "ci_cd" },
+      { "id": 16, "label": "Move to local master and pull", "phase": "ci_cd" }
     ],
     "guards": [
       {
         "commands": ["git commit", "git push"],
-        "before_step": 5,
-        "message": "Cannot commit/push until implementation and tests are complete (steps 1-4)"
+        "before_step": 7,
+        "message": "Complete RED-GREEN-REFACTOR (steps 1-6) before committing."
+      },
+      {
+        "commands": ["git merge", "gh pr merge"],
+        "before_step": 15,
+        "message": "Complete code review (steps 10-14) before merging."
       }
     ]
   }
@@ -338,17 +348,17 @@ enforced at the tool registry level, not through the workflow tool).
 
 Workflow state is stored in-memory for the lifetime of the agent process.
 In UDS mode, the state persists across multiple prompts within the same
-session. In one-shot mode (`quecto agent -m`), the state resets on each
-invocation.
+agent lifetime. In one-shot mode (`quecto agent -m`), the state resets on
+each invocation.
 
-For persistent workflow tracking across agent restarts, use session
-persistence (`-s <name>`) — the workflow state is included in the session
-file.
+Restarting the agent currently resets workflow progress even when message
+session persistence (`-s <name>`) is enabled. The domain layer exposes a
+`WorkflowPersistable` snapshot type, but it is not yet wired into the
+session store.
 
-Only the dynamic state (done flags + active issue) is persisted. Step
-definitions come from config.json and are not stored in the session file.
-If steps are added or removed in config.json between sessions, the done
-flags are padded or truncated to match the new step count.
+⚠️ Until persistence is wired, workflow guards can be circumvented by
+restarting the agent. Treat them as process guidance, not a substitute for
+server-side branch protections or other security-critical enforcement.
 
 ## UDS events
 
