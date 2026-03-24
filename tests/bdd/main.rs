@@ -37,6 +37,9 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
+#[path = "../common/mod.rs"]
+mod common;
+
 // ===========================================================================
 // Mock LLM Provider for BDD tests
 // ===========================================================================

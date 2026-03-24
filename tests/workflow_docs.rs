@@ -80,6 +80,7 @@ fn workflow_guide_persistence_notes_match_runtime_behavior() {
     let guide = read_repo_file("docs/workflow.md");
 
     assert!(guide.contains("stored in-memory for the lifetime of the agent process"));
+    assert!(guide.contains("workflow guards can be circumvented by"));
     assert!(!guide.contains("the workflow state is included in the session file"));
 }
 

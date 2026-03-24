@@ -303,9 +303,9 @@ fn given_config_without_workflow(world: &mut QuectoWorld) {
 
 #[when(expr = "I read the repository file {string}")]
 fn when_read_repository_file(world: &mut QuectoWorld, relative_path: String) {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative_path);
-    world.stdout = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("failed to read {:?}: {}", path, e));
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    world.stdout = crate::common::read_repository_file(base, &relative_path)
+        .unwrap_or_else(|e| panic!("{}", e));
     world.stderr.clear();
 }
 

@@ -23,4 +23,5 @@ Feature: Workflow reference docs
     And the output should contain "Complete code review (steps 10-14) before merging."
     And the output should contain "Workflow state is stored in-memory"
     And the output should contain "stored in-memory for the lifetime of the agent process"
+    And the output should contain "workflow guards can be circumvented by"
     And the output should not contain "the workflow state is included in the session file"

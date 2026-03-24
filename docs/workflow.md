@@ -356,6 +356,10 @@ session persistence (`-s <name>`) is enabled. The domain layer exposes a
 `WorkflowPersistable` snapshot type, but it is not yet wired into the
 session store.
 
+⚠️ Until persistence is wired, workflow guards can be circumvented by
+restarting the agent. Treat them as process guidance, not a substitute for
+server-side branch protections or other security-critical enforcement.
+
 ## UDS events
 
 When the workflow state changes, a `workflow_state` event is emitted over
