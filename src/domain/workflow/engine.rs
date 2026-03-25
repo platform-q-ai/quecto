@@ -96,6 +96,12 @@ impl WorkflowEngine {
         self.templates.iter().map(summary_for_template).collect()
     }
 
+    /// Activate the given template and reset step progress for a new live run.
+    ///
+    /// When `issue` is `Some`, it replaces the current active issue.
+    /// When `issue` is `None`, any existing active issue is preserved; call
+    /// [`Self::clear_issue`] first if you need to clear it before selecting a
+    /// template.
     pub fn select_template(
         &mut self,
         template_id: &str,
@@ -112,7 +118,9 @@ impl WorkflowEngine {
         self.run.template_id = Some(template.id.clone());
         self.run.template_index = Some(template_index);
         self.run.done = vec![false; template.steps.len()];
-        self.run.active_issue = issue.map(|(n, t)| (n, truncate_issue_title(t)));
+        if let Some((number, title)) = issue {
+            self.run.active_issue = Some((number, truncate_issue_title(title)));
+        }
         Ok(())
     }
 
