@@ -147,6 +147,36 @@ fn test_build_system_prompt_with_user_only() {
     assert!(result.contains("Be helpful"));
 }
 
+#[tokio::test]
+async fn workflow_subsystem_registers_live_engine_handle() {
+    let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
+    let workflow = register_workflow_tool(
+        &mut registry,
+        crate::domain::workflow::WorkflowConfig::default(),
+        false,
+        None,
+    )
+    .unwrap();
+
+    workflow
+        .lock()
+        .unwrap()
+        .set_issue(77, "shared state".into());
+    let result = registry
+        .execute(
+            "workflow",
+            r#"{"action":"select_template","template":"fix"}"#,
+        )
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+
+    assert_eq!(
+        workflow.lock().unwrap().snapshot(true).active_issue,
+        Some((77, "shared state".into()))
+    );
+}
+
 /// Issue #104: The quecto datetime preamble is intentionally richer than
 /// provider-injected "Current date:" metadata. It includes day-of-week,
 /// full time with seconds, and timezone — critical for cron scheduling

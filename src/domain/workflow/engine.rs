@@ -109,10 +109,13 @@ impl WorkflowEngine {
                 WorkflowError::UnknownTemplate(format!("unknown template: {}", template_id))
             })?;
         let template = &self.templates[template_index];
+        let active_issue = issue
+            .map(|(number, title)| (number, truncate_issue_title(title)))
+            .or_else(|| self.run.active_issue.clone());
         self.run.template_id = Some(template.id.clone());
         self.run.template_index = Some(template_index);
         self.run.done = vec![false; template.steps.len()];
-        self.run.active_issue = issue.map(|(n, t)| (n, truncate_issue_title(t)));
+        self.run.active_issue = active_issue;
         Ok(())
     }
 

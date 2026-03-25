@@ -112,6 +112,19 @@ fn persisted_run_exists_for_issue_without_selected_template() {
 }
 
 #[test]
+fn workflow_subsystem_select_template_preserves_issue_set_in_selector_mode() {
+    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    engine.set_issue(42, "keep me".into());
+
+    engine.select_template("fix", None).unwrap();
+
+    assert_eq!(
+        engine.snapshot(true).active_issue,
+        Some((42, "keep me".into()))
+    );
+}
+
+#[test]
 fn restore_run_clears_ordering_gaps() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine.restore_run(WorkflowRunPersisted {
