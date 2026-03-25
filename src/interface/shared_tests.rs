@@ -177,6 +177,40 @@ async fn workflow_subsystem_registers_live_engine_handle() {
     );
 }
 
+#[test]
+fn workflow_guard_registered_only_when_guards_enabled() {
+    let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
+    let _handle = register_workflow_tool(
+        &mut registry,
+        crate::domain::workflow::WorkflowConfig::default(),
+        true,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        registry.guard_count(),
+        1,
+        "guard should be registered when guards_enabled=true"
+    );
+}
+
+#[test]
+fn workflow_guard_not_registered_when_guards_disabled() {
+    let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
+    let _handle = register_workflow_tool(
+        &mut registry,
+        crate::domain::workflow::WorkflowConfig::default(),
+        false,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        registry.guard_count(),
+        0,
+        "no guard should be registered when guards_enabled=false"
+    );
+}
+
 /// Issue #104: The quecto datetime preamble is intentionally richer than
 /// provider-injected "Current date:" metadata. It includes day-of-week,
 /// full time with seconds, and timezone — critical for cron scheduling
