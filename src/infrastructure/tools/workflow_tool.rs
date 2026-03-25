@@ -168,6 +168,9 @@ fn render_templates(templates: Vec<WorkflowTemplateSummary>) -> String {
     let mut out = String::from("Available workflow templates:\n");
     for t in templates {
         out.push_str(&format!("- {} — {}: {}\n", t.id, t.label, t.description));
+        if let Some(when_to_use) = t.when_to_use {
+            out.push_str(&format!("  When to use: {}\n", when_to_use));
+        }
     }
     out
 }
@@ -349,6 +352,10 @@ impl ToolGuard for WorkflowGuard {
 }
 
 use super::command_match::{command_matches_parsed, extract_bash_command, parse_patterns};
+
+#[cfg(test)]
+#[path = "workflow_tool_comprehensive_tests.rs"]
+mod comprehensive_tests;
 
 #[cfg(test)]
 mod tests {
