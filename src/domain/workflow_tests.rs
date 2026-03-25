@@ -96,9 +96,19 @@ fn persisted_run_round_trip() {
 fn persisted_run_exists_for_issue_without_selected_template() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine.set_issue(99, "triage".into());
-    let persisted = engine.persisted_run().expect("issue-only state should persist");
+    let persisted = engine
+        .persisted_run()
+        .expect("issue-only state should persist");
     assert_eq!(persisted.template_id, None);
     assert_eq!(persisted.active_issue, Some((99, "triage".into())));
+
+    let mut restored = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    restored.restore_run(persisted);
+    assert_eq!(
+        restored.snapshot(true).active_issue,
+        Some((99, "triage".into()))
+    );
+    assert_eq!(restored.mode(), WorkflowMode::SelectingTemplate);
 }
 
 #[test]
