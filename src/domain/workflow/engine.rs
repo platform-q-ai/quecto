@@ -20,9 +20,9 @@ impl WorkflowEngine {
 
     pub fn restore_run(&mut self, persisted: WorkflowRunPersisted) {
         if let Some(ref template_id) = persisted.template_id
-            && let Some(idx) = self.templates.iter().position(|t| &t.id == template_id)
+            && let Some(template_index) = self.templates.iter().position(|t| &t.id == template_id)
         {
-            let template = &self.templates[idx];
+            let template = &self.templates[template_index];
             let mut done = persisted.done;
             done.resize(template.steps.len(), false);
             let mut seen_gap = false;
@@ -36,7 +36,7 @@ impl WorkflowEngine {
             }
             self.run = WorkflowRun {
                 template_id: Some(template_id.clone()),
-                template_index: Some(idx),
+                template_index: Some(template_index),
                 done,
                 active_issue: persisted.active_issue.map(|(n, t)| (n, truncate_issue_title(t))),
             };
@@ -88,14 +88,14 @@ impl WorkflowEngine {
         template_id: &str,
         issue: Option<(u32, String)>,
     ) -> Result<(), WorkflowError> {
-        let idx = self
+        let template_index = self
             .templates
             .iter()
             .position(|t| t.id == template_id)
             .ok_or_else(|| WorkflowError::UnknownTemplate(format!("unknown template: {}", template_id)))?;
-        let template = &self.templates[idx];
+        let template = &self.templates[template_index];
         self.run.template_id = Some(template.id.clone());
-        self.run.template_index = Some(idx);
+        self.run.template_index = Some(template_index);
         self.run.done = vec![false; template.steps.len()];
         self.run.active_issue = issue.map(|(n, t)| (n, truncate_issue_title(t)));
         Ok(())
@@ -296,12 +296,6 @@ impl WorkflowEngine {
             None => return self.selector_status_text(),
         };
         let progress = self.progress();
-        let mode = self.mode();
-        let current_idx = if mode != WorkflowMode::Complete {
-            self.current_step().as_ref().map(|s| s.index as usize)
-        } else {
-            None
-        };
         let mut out = format!(
             "## Active Workflow\nTemplate: {} ({})\nProgress: {}/{}\n",
             template.label, template.id, progress.done, progress.total
@@ -313,7 +307,10 @@ impl WorkflowEngine {
         }
         for (idx, step) in template.steps.iter().enumerate() {
             let done = *self.run.done.get(idx).unwrap_or(&false);
-            if !done && current_idx == Some(idx + 1) {
+            if !done
+                && self.mode() != WorkflowMode::Complete
+                && self.current_step().as_ref().map(|s| s.index as usize) == Some(idx + 1)
+            {
                 out.push_str(&format!(
                     "CURRENT STEP → {}. {} [{}]\n",
                     idx + 1,
