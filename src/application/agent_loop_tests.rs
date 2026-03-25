@@ -476,6 +476,35 @@ async fn test_system_prompt_provider_is_refreshed_before_each_llm_turn() {
     );
 }
 
+#[test]
+fn test_refresh_dynamic_system_prompt_inserts_before_manifest() {
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider: Arc::new(MockProvider::new(vec![])),
+        tool_registry: Box::new(MockRegistry::new()),
+        model: "test-model".to_string(),
+        max_tokens: 1024,
+        temperature: 0.7,
+        spill_store: None,
+        session_key: String::new(),
+        context_collapse_after_turns: u32::MAX,
+        max_context_tokens: 190_000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        system_prompt_provider: Some(Arc::new(|| "live prompt".to_string())),
+    });
+    let mut manifest = Message::system("[Session memory: 1 spilled entry]");
+    manifest.is_manifest = true;
+    manifest.is_pinned = true;
+    let mut messages = vec![manifest, Message::user("hello")];
+
+    agent.refresh_dynamic_system_prompt(&mut messages);
+
+    assert_eq!(messages[0].content, "live prompt");
+    assert!(!messages[0].is_manifest);
+    assert!(messages[1].is_manifest);
+}
+
 // -----------------------------------------------------------------------
 // Progress callback tests
 // -----------------------------------------------------------------------

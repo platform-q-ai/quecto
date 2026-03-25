@@ -213,6 +213,7 @@ impl AgentLoopImpl {
         }
         if let Some(first) = messages.first_mut()
             && first.role == crate::domain::message::Role::System
+            && !first.is_manifest
         {
             first.content = prompt;
         } else {
