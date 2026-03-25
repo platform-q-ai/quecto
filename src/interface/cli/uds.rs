@@ -226,11 +226,18 @@ pub(crate) fn inject_system_prompt(messages: &mut Vec<Message>, prompt: &str) {
 }
 
 pub(crate) fn remove_injected_system_prompt(messages: &mut Vec<Message>, prompt: &str) {
-    if !prompt.is_empty()
-        && messages
-            .first()
-            .is_some_and(|m| m.role == Role::System && m.content == prompt)
-    {
+    if prompt.is_empty() {
+        return;
+    }
+    let is_injected_prompt = messages.first().is_some_and(|m| {
+        m.role == Role::System
+            && !m.is_manifest
+            && (m.content == prompt
+                || m.content
+                    .strip_prefix(prompt)
+                    .is_some_and(|suffix| suffix.starts_with("\n\n## Active Development Workflow")))
+    });
+    if is_injected_prompt {
         messages.remove(0);
     }
 }
