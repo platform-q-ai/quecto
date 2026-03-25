@@ -445,7 +445,6 @@ fn test_build_agent_from_config_no_config_file() {
         disabled_tools: vec![],
         effort: None,
         workflow: false,
-        no_workflow: false,
         workflow_guards: false,
     };
     let mut stderr = String::new();
@@ -475,7 +474,6 @@ fn test_build_agent_from_config_invalid_json() {
         disabled_tools: vec![],
         effort: None,
         workflow: false,
-        no_workflow: false,
         workflow_guards: false,
     };
     let mut stderr = String::new();
@@ -509,7 +507,6 @@ fn test_build_agent_from_config_no_providers() {
         disabled_tools: vec![],
         effort: None,
         workflow: false,
-        no_workflow: false,
         workflow_guards: false,
     };
     let mut stderr = String::new();
@@ -543,7 +540,6 @@ fn test_build_agent_from_config_with_model_override() {
         disabled_tools: vec![],
         effort: None,
         workflow: false,
-        no_workflow: false,
         workflow_guards: false,
     };
     let mut stderr = String::new();
@@ -576,7 +572,6 @@ fn test_build_agent_from_config_workflow_disabled_by_default_has_no_workflow_sta
         disabled_tools: vec![],
         effort: None,
         workflow: false,
-        no_workflow: false,
         workflow_guards: false,
     };
     let mut stderr = String::new();
@@ -584,6 +579,7 @@ fn test_build_agent_from_config_workflow_disabled_by_default_has_no_workflow_sta
     let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr)
         .expect("agent should build without workflow enabled");
     assert!(result.workflow_state.is_none(), "stderr: {}", stderr);
+    assert!(result.workflow_config.is_none(), "stderr: {}", stderr);
 }
 
 #[test]
@@ -610,7 +606,6 @@ fn test_build_agent_from_config_uds_workflow_flag_creates_workflow_state() {
         disabled_tools: vec![],
         effort: None,
         workflow: true,
-        no_workflow: false,
         workflow_guards: false,
     };
     let mut stderr = String::new();
@@ -618,6 +613,7 @@ fn test_build_agent_from_config_uds_workflow_flag_creates_workflow_state() {
     let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr)
         .expect("agent should build with workflow enabled");
     assert!(result.workflow_state.is_some(), "stderr: {}", stderr);
+    assert!(result.workflow_config.is_some(), "stderr: {}", stderr);
 }
 
 // ===================================================================
