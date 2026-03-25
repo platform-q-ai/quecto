@@ -405,6 +405,62 @@ fn test_session_state_serializes() {
 }
 
 #[test]
+fn test_session_state_with_workflow_serializes() {
+    let state = SessionState {
+        model: "gpt-5".to_string(),
+        is_streaming: false,
+        session_key: "cli:wf".to_string(),
+        message_count: 2,
+        pending_message_count: 0,
+        workflow: Some(serde_json::json!({
+            "enabled": true,
+            "guardsEnabled": true,
+            "mode": "active",
+            "progress": { "done": 1, "total": 7, "percent": 14 }
+        })),
+    };
+    let json = serde_json::to_string(&state).unwrap();
+    assert!(json.contains("\"workflow\""));
+    assert!(json.contains("\"active\""));
+}
+
+#[test]
+fn test_session_state_without_workflow_omits_field() {
+    let state = SessionState {
+        model: "gpt-5".to_string(),
+        is_streaming: false,
+        session_key: "cli:no_wf".to_string(),
+        message_count: 0,
+        pending_message_count: 0,
+        workflow: None,
+    };
+    let json = serde_json::to_string(&state).unwrap();
+    assert!(
+        !json.contains("workflow"),
+        "disabled workflow should be absent from get_state"
+    );
+}
+
+#[test]
+fn test_workflow_state_event_serializes() {
+    let event = AgentEvent::WorkflowState {
+        enabled: true,
+        guards_enabled: true,
+        mode: "selecting_template".to_string(),
+        active_template: None,
+        active_issue: None,
+        progress: serde_json::json!({"done": 0, "total": 0, "percent": 0}),
+        current_step: None,
+        steps: vec![],
+        available_templates: vec![serde_json::json!({"id": "feature", "label": "Feature"})],
+    };
+    let json = event.to_json_line();
+    assert!(json.contains("\"type\":\"workflow_state\""));
+    assert!(json.contains("\"selecting_template\""));
+    assert!(json.contains("\"feature\""));
+}
+
+#[test]
 fn test_session_stats_serializes() {
     let stats = SessionStats {
         session_key: "cli:test".to_string(),
