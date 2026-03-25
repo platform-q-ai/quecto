@@ -7,6 +7,7 @@ use std::pin::Pin;
 use crate::domain::error::DomainError;
 use crate::domain::message::{Message, Role, StopReason, ThinkingBlock, ToolCall};
 use crate::domain::session::{Session, SessionStore};
+use crate::domain::workflow::WorkflowRunPersisted;
 
 /// File-based session store. Each session is stored as a JSON file
 /// in `<base_dir>/sessions/`, with the filename derived from the session key.
@@ -21,6 +22,8 @@ pub struct FileSessionStore {
 struct SessionFile {
     key: String,
     messages: Vec<MessageRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    workflow_run: Option<WorkflowRunPersisted>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -141,6 +144,7 @@ impl SessionStore for FileSessionStore {
             Ok(Some(Session {
                 key: file.key,
                 messages: file.messages.into_iter().map(record_to_message).collect(),
+                workflow_run: file.workflow_run,
             }))
         })
     }
@@ -153,6 +157,7 @@ impl SessionStore for FileSessionStore {
         let file = SessionFile {
             key: session.key.clone(),
             messages: session.messages.iter().map(message_to_record).collect(),
+            workflow_run: session.workflow_run.clone(),
         };
         Box::pin(async move {
             self.ensure_dir().await?;
@@ -315,6 +320,7 @@ mod tests {
                 make_message(Role::User, "Hello"),
                 make_message(Role::Assistant, "Hi there!"),
             ],
+            workflow_run: None,
         };
 
         store.save(&session).await.unwrap();
@@ -398,6 +404,7 @@ mod tests {
                 ),
                 Message::tool("call_1", "file1.txt\nfile2.txt"),
             ],
+            workflow_run: None,
         };
 
         store.save(&session).await.unwrap();
@@ -441,6 +448,7 @@ mod tests {
         let session = Session {
             key: "telegram:persist".to_string(),
             messages: vec![make_message(Role::User, "persisted message")],
+            workflow_run: None,
         };
         store1.save(&session).await.unwrap();
 
@@ -464,6 +472,7 @@ mod tests {
         let session = Session {
             key: "test:turn".to_string(),
             messages: vec![tool_msg],
+            workflow_run: None,
         };
         store.save(&session).await.unwrap();
         let loaded = store.load("test:turn").await.unwrap().unwrap();
@@ -485,6 +494,7 @@ mod tests {
         let session = Session {
             key: "test:collapsed".to_string(),
             messages: vec![tool_msg],
+            workflow_run: None,
         };
         store.save(&session).await.unwrap();
         let loaded = store.load("test:collapsed").await.unwrap().unwrap();
@@ -506,6 +516,7 @@ mod tests {
         let session = Session {
             key: "test:manifest".to_string(),
             messages: vec![manifest],
+            workflow_run: None,
         };
         store.save(&session).await.unwrap();
         let loaded = store.load("test:manifest").await.unwrap().unwrap();
@@ -526,6 +537,7 @@ mod tests {
         let session = Session {
             key: "test:pinned".to_string(),
             messages: vec![user_msg],
+            workflow_run: None,
         };
         store.save(&session).await.unwrap();
         let loaded = store.load("test:pinned").await.unwrap().unwrap();
@@ -546,6 +558,7 @@ mod tests {
         let session = Session {
             key: "test:toolname".to_string(),
             messages: vec![tool_msg],
+            workflow_run: None,
         };
         store.save(&session).await.unwrap();
         let loaded = store.load("test:toolname").await.unwrap().unwrap();
@@ -567,6 +580,7 @@ mod tests {
         let session = Session {
             key: "test:preview".to_string(),
             messages: vec![tool_msg],
+            workflow_run: None,
         };
         store.save(&session).await.unwrap();
         let loaded = store.load("test:preview").await.unwrap().unwrap();
@@ -588,6 +602,7 @@ mod tests {
         let session = Session {
             key: "test:spillid".to_string(),
             messages: vec![tool_msg],
+            workflow_run: None,
         };
         store.save(&session).await.unwrap();
         let loaded = store.load("test:spillid").await.unwrap().unwrap();
@@ -606,6 +621,7 @@ mod tests {
         let session = Session {
             key: "test:sys_pinned".to_string(),
             messages: vec![Message::system("system prompt")],
+            workflow_run: None,
         };
         store.save(&session).await.unwrap();
         let loaded = store.load("test:sys_pinned").await.unwrap().unwrap();

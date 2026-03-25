@@ -111,6 +111,7 @@ fn get_state_data_matches_spec_shape() {
         session_key: "cli:my-session".into(),
         message_count: 12,
         pending_message_count: 0,
+        workflow: None,
     };
     let j = round_trip(&state);
     assert_eq!(j["model"], "claude-sonnet-4-20250514");

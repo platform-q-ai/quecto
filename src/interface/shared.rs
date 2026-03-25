@@ -86,66 +86,44 @@ pub fn append_extension_prompt(system: &mut String, snippets: &str) {
     }
 }
 
-/// Append the workflow state snippet to a system prompt if workflow is enabled.
-pub fn append_workflow_prompt(
-    system: &mut String,
-    wf_config: &crate::domain::workflow::WorkflowConfig,
-) {
-    if !wf_config.enabled {
-        return;
-    }
-    let state = crate::domain::workflow::WorkflowState::from_config(wf_config);
+/// Shared workflow engine handle returned by [`register_workflow_tool`].
+pub type WorkflowStateHandle =
+    std::sync::Arc<std::sync::Mutex<crate::domain::workflow::WorkflowEngine>>;
+
+/// Append the workflow prompt snippet from the live engine state.
+pub fn append_workflow_prompt(system: &mut String, workflow: &WorkflowStateHandle) {
+    let Ok(engine) = workflow.lock() else { return };
     system.push_str("\n\n");
-    system.push_str(&state.system_prompt_snippet_with_guards(&wf_config.guards));
+    system.push_str(&engine.prompt_snippet());
 }
 
-/// Shared workflow state handle returned by [`register_workflow_tool`].
-pub type WorkflowStateHandle =
-    std::sync::Arc<std::sync::Mutex<crate::domain::workflow::WorkflowState>>;
-
-/// Register the workflow tool and guard in a tool registry if workflow is enabled.
-///
-/// Returns the shared workflow state handle so the UDS dispatch loop can
-/// inject auto-continue/completion nudges after agent runs (#562).
-/// Returns `None` if workflow is disabled.
-///
-/// Registers:
-/// 1. The workflow tool (so the LLM can check/uncheck steps)
-/// 2. A workflow guard (blocks `git commit`/`git push` at the wrong workflow stage)
+/// Register the workflow tool and optional guard in a tool registry.
 pub fn register_workflow_tool(
     registry: &mut crate::infrastructure::tools::registry::ToolRegistryImpl,
-    wf_config: &crate::domain::workflow::WorkflowConfig,
+    wf_config: crate::domain::workflow::WorkflowConfig,
+    guards_enabled: bool,
     event_emitter: Option<crate::infrastructure::tools::workflow_tool::WorkflowEventEmitter>,
-) -> Option<WorkflowStateHandle> {
-    if !wf_config.enabled {
-        return None;
-    }
-    let state: WorkflowStateHandle = std::sync::Arc::new(std::sync::Mutex::new(
-        crate::domain::workflow::WorkflowState::from_config(wf_config),
+) -> Result<WorkflowStateHandle, crate::domain::workflow::WorkflowError> {
+    let engine: WorkflowStateHandle = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::domain::workflow::WorkflowEngine::new(wf_config, guards_enabled)?,
     ));
 
-    // Register tool (with optional event emitter for UDS broadcast #562)
-    let mut tool = if let Some(emitter) = event_emitter {
+    let tool = if let Some(emitter) = event_emitter {
         crate::infrastructure::tools::workflow_tool::WorkflowTool::with_event_emitter(
-            state.clone(),
+            engine.clone(),
             emitter,
         )
     } else {
-        crate::infrastructure::tools::workflow_tool::WorkflowTool::new(state.clone())
+        crate::infrastructure::tools::workflow_tool::WorkflowTool::new(engine.clone())
     };
-    tool.set_guards(wf_config.guards.clone());
     registry.register(std::sync::Arc::new(tool));
 
-    // Register guard if any guard rules are configured
-    if !wf_config.guards.is_empty() {
-        let guard = crate::infrastructure::tools::workflow_tool::WorkflowGuard::new(
-            state.clone(),
-            wf_config.guards.clone(),
-        );
+    if guards_enabled {
+        let guard = crate::infrastructure::tools::workflow_tool::WorkflowGuard::new(engine.clone());
         registry.register_guard(std::sync::Arc::new(guard));
     }
 
-    Some(state)
+    Ok(engine)
 }
 
 /// Resolve an API key for a provider from a credential snapshot.

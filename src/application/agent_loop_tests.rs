@@ -185,6 +185,7 @@ pub(super) fn make_agent(
         progress_callback: None,
         streaming: false,
         effort: None,
+        system_prompt_provider: None,
     });
     (agent, provider)
 }
@@ -352,6 +353,7 @@ async fn test_tool_error_is_sent_back() {
         progress_callback: None,
         streaming: false,
         effort: None,
+        system_prompt_provider: None,
     });
     let mut messages = vec![Message::user("use a tool")];
     let result = agent.run_loop(&mut messages).await.unwrap();
@@ -403,6 +405,7 @@ fn make_agent_with_callback(
         progress_callback: Some(callback),
         streaming: false,
         effort: None,
+        system_prompt_provider: None,
     });
     (agent, provider, events)
 }

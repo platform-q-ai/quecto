@@ -396,6 +396,7 @@ fn test_session_state_serializes() {
         session_key: "cli:test".to_string(),
         message_count: 4,
         pending_message_count: 0,
+        workflow: None,
     };
     let json = serde_json::to_string(&state).unwrap();
     assert!(json.contains("\"isStreaming\":false"));

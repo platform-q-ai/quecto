@@ -159,7 +159,7 @@ pub(super) async fn multi_client_loop(
         current_client_id: 0,
         subagent_registry,
         notification_rx,
-        workflow_state: wf_state,
+        workflow_state: wf_state.clone(),
         workflow_config: wf_config,
     };
 
@@ -177,6 +177,9 @@ pub(super) async fn multi_client_loop(
         let session = Session {
             key: session_key,
             messages: std::mem::take(&mut messages),
+            workflow_run: wf_state
+                .as_ref()
+                .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run())),
         };
         let _ = session_store.save(&session).await;
     }

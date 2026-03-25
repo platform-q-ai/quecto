@@ -75,6 +75,7 @@ fn test_load_session_messages_existing_session() {
     let session = Session {
         key: "test:key".to_string(),
         messages: vec![Message::user("hello")],
+        workflow_run: None,
     };
     rt.block_on(store.save(&session)).unwrap();
     let messages = load_session_messages_with_rt(&rt, &store, "test:key", false);
@@ -191,6 +192,7 @@ fn make_repl_loop(
         progress_callback: None,
         streaming: false,
         effort: None,
+        system_prompt_provider: None,
     });
     let session_store = FileSessionStore::new(base_dir);
     let session = ReplSession {

@@ -49,6 +49,8 @@ fn test_flags(msg: Option<&str>, session: Option<&str>, sys: Option<&str>) -> Ag
         persist: false,
         disabled_tools: vec![],
         effort: None,
+        workflow: false,
+        workflow_guards: false,
     }
 }
 
@@ -75,6 +77,7 @@ fn make_test_agent(base_dir: &std::path::Path) -> AgentLoopImpl {
         progress_callback: None,
         streaming: false,
         effort: None,
+        system_prompt_provider: None,
     })
     .with_max_tool_iterations(1)
 }
@@ -464,6 +467,7 @@ fn test_run_with_deadline_completes_before_timeout() {
         progress_callback: None,
         streaming: false,
         effort: None,
+        system_prompt_provider: None,
     })
     .with_max_tool_iterations(1);
 

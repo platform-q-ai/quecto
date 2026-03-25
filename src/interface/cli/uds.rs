@@ -76,13 +76,19 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
             &file_store
         }
     };
-    let messages = match load_session(session_store, &session_key, ephemeral).await {
+    let loaded_session = match load_session(session_store, &session_key, ephemeral).await {
         Ok(m) => m,
         Err(err) => {
             eprintln!("failed to load session: {err}");
             return 1;
         }
     };
+    let messages = loaded_session.messages;
+    if let (Some(ws), Some(persisted)) = (&workflow_state, loaded_session.workflow_run) {
+        if let Ok(mut engine) = ws.lock() {
+            engine.restore_run(persisted);
+        }
+    }
 
     if let Some(std_stream) = socket_override {
         // Single-client path: backward-compatible with existing tests.
@@ -95,6 +101,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 ephemeral,
                 system_prompt,
                 ext_registry,
+                workflow_state,
             },
             std_stream,
             session_store,
@@ -141,6 +148,7 @@ struct SingleClientArgs {
     ephemeral: bool,
     system_prompt: String,
     ext_registry: Option<ExtRegistry>,
+    workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
 }
 
 async fn single_client_loop(
@@ -156,6 +164,7 @@ async fn single_client_loop(
         ephemeral,
         system_prompt,
         ext_registry,
+        workflow_state,
     } = args;
     std_stream
         .set_nonblocking(true)
@@ -184,7 +193,7 @@ async fn single_client_loop(
             current_client_id: 0,
             subagent_registry: None,
             notification_rx: None,
-            workflow_state: None,
+            workflow_state: workflow_state.clone(),
             workflow_config: None,
         },
     )
@@ -195,6 +204,9 @@ async fn single_client_loop(
         let session = Session {
             key: session_key,
             messages: std::mem::take(&mut messages),
+            workflow_run: workflow_state
+                .as_ref()
+                .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run())),
         };
         let _ = session_store.save(&session).await;
     }
@@ -306,20 +318,8 @@ async fn run_command_loop(
     reader_task.abort();
 }
 
-async fn load_session(
-    store: &dyn SessionStore,
-    key: &str,
-    ephemeral: bool,
-) -> Result<Vec<Message>, String> {
-    if ephemeral || key.is_empty() {
-        return Ok(Vec::new());
-    }
-    store
-        .load(key)
-        .await
-        .map(|s| s.map_or_else(Vec::new, |s| s.messages))
-        .map_err(|e| e.to_string())
-}
+mod uds_session_load;
+use uds_session_load::load_session;
 
 pub(super) struct DispatchCtx<'a> {
     pub agent: &'a mut AgentLoopImpl,
@@ -407,7 +407,12 @@ async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'_>) -> bool
 fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serde_json::Value> {
     match cmd {
         AgentCommand::GetState { .. } => {
-            let state = ctx.session.state_snapshot(ctx.messages.len());
+            let workflow = ctx.workflow_state.as_ref().and_then(|ws| {
+                ws.lock()
+                    .ok()
+                    .map(|engine| serde_json::to_value(engine.snapshot(true)).unwrap_or_default())
+            });
+            let state = ctx.session.state_snapshot(ctx.messages.len(), workflow);
             Some(serde_json::to_value(&state).unwrap_or_default())
         }
         AgentCommand::GetMessages { .. } => {

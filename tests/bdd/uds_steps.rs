@@ -88,6 +88,7 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         progress_callback: None,
         streaming: false,
         effort: None,
+        system_prompt_provider: None,
     });
     // Enable streaming when the scenario has set the flag (e.g. SSE mock).
     if world._uds_streaming_enabled {

@@ -68,13 +68,18 @@ impl AgentSession {
         Vec::from(std::mem::take(&mut self.pending))
     }
 
-    pub fn state_snapshot(&self, message_count: usize) -> SessionState {
+    pub fn state_snapshot(
+        &self,
+        message_count: usize,
+        workflow: Option<serde_json::Value>,
+    ) -> SessionState {
         SessionState {
             model: self.model.clone(),
             is_streaming: self.streaming,
             session_key: self.session_key.clone(),
             message_count,
             pending_message_count: self.pending.len(),
+            workflow,
         }
     }
 }

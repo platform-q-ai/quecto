@@ -287,8 +287,7 @@ impl Config {
     pub fn load(path: &str) -> Result<Self, ConfigError> {
         let content =
             std::fs::read_to_string(path).map_err(|e| ConfigError::Io(path.to_string(), e))?;
-        let mut config: Config = serde_json::from_str(&content).map_err(ConfigError::Parse)?;
-        config.workflow.migrate_deprecated();
+        let config: Config = serde_json::from_str(&content).map_err(ConfigError::Parse)?;
         Ok(config)
     }
 

@@ -21,6 +21,7 @@ fn test_swap_registry_replaces_tool_registry() {
         progress_callback: None,
         streaming: false,
         effort: None,
+        system_prompt_provider: None,
     });
     assert_eq!(agent.info().tool_count, 1);
     assert_eq!(agent.tool_registry.definitions()[0].name.as_ref(), "tool_a");
@@ -58,6 +59,7 @@ fn test_swap_registry_info_reflects_new_count() {
         progress_callback: None,
         streaming: false,
         effort: None,
+        system_prompt_provider: None,
     });
     assert_eq!(agent.info().tool_count, 0);
 
