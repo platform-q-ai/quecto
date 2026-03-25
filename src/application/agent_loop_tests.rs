@@ -12,6 +12,8 @@ pub(super) struct MockProvider {
     responses: Mutex<Vec<LlmResponse>>,
     /// Captured tool definitions from the last chat() call.
     last_tool_defs: Mutex<Vec<ToolDefinition>>,
+    /// Captured first system prompts from every chat() call.
+    seen_system_prompts: Mutex<Vec<String>>,
 }
 
 impl MockProvider {
@@ -19,11 +21,16 @@ impl MockProvider {
         Self {
             responses: Mutex::new(responses),
             last_tool_defs: Mutex::new(vec![]),
+            seen_system_prompts: Mutex::new(vec![]),
         }
     }
 
     fn last_tool_defs(&self) -> Vec<ToolDefinition> {
         self.last_tool_defs.lock().unwrap().clone()
+    }
+
+    fn seen_system_prompts(&self) -> Vec<String> {
+        self.seen_system_prompts.lock().unwrap().clone()
     }
 }
 
@@ -39,6 +46,14 @@ impl LlmProvider for MockProvider {
     {
         // Capture tool defs
         *self.last_tool_defs.lock().unwrap() = request.tools.to_vec();
+        let system_prompt = request
+            .messages
+            .iter()
+            .find(|m| m.role == Role::System && !m.is_manifest)
+            .map(|m| m.content.clone());
+        if let Some(prompt) = system_prompt {
+            self.seen_system_prompts.lock().unwrap().push(prompt);
+        }
 
         let response = {
             let mut responses = self.responses.lock().unwrap();
@@ -152,6 +167,50 @@ impl crate::domain::tool::Tool for MockTool {
         Box::pin(async move {
             Ok(ToolResult {
                 content,
+                is_error: false,
+                image_blocks: vec![],
+            })
+        })
+    }
+}
+
+#[derive(Debug)]
+struct PromptMutatingTool {
+    def: ToolDefinition,
+    next_prompt: Arc<Mutex<String>>,
+    response: String,
+}
+
+impl PromptMutatingTool {
+    fn new(name: &str, next_prompt: Arc<Mutex<String>>, response: &str) -> Self {
+        Self {
+            def: ToolDefinition {
+                name: name.to_string().into(),
+                description: format!("Prompt-mutating {} tool", name).into(),
+                parameters_schema: r#"{"type":"object"}"#.into(),
+            },
+            next_prompt,
+            response: response.to_string(),
+        }
+    }
+}
+
+impl crate::domain::tool::Tool for PromptMutatingTool {
+    fn definition(&self) -> ToolDefinition {
+        self.def.clone()
+    }
+
+    fn execute(
+        &self,
+        _arguments: &str,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ToolResult, DomainError>> + Send + '_>>
+    {
+        let next_prompt = self.next_prompt.clone();
+        let response = self.response.clone();
+        Box::pin(async move {
+            *next_prompt.lock().unwrap() = "System base\n\n## Active Development Workflow\nTemplate: Fix (fix)\nProgress: 1/6 steps complete.\nCURRENT STEP → 2. Write/update regression tests [RED]".to_string();
+            Ok(ToolResult {
+                content: response,
                 is_error: false,
                 image_blocks: vec![],
             })
@@ -366,6 +425,84 @@ async fn test_tool_error_is_sent_back() {
 async fn test_default_max_iterations() {
     let (agent, _) = make_agent(vec![], vec![]);
     assert_eq!(agent.max_tool_iterations, DEFAULT_MAX_TOOL_ITERATIONS);
+}
+
+#[tokio::test]
+async fn test_system_prompt_provider_is_refreshed_before_each_llm_turn() {
+    let prompts = Arc::new(Mutex::new(
+        "System base\n\n## Active Development Workflow\nMODE: SELECT TEMPLATE".to_string(),
+    ));
+    let provider = Arc::new(MockProvider::new(vec![
+        tool_call_response("advance_workflow", r#"{}"#),
+        text_response("done"),
+    ]));
+    let mut registry = MockRegistry::new();
+    registry.register(Arc::new(PromptMutatingTool::new(
+        "advance_workflow",
+        prompts.clone(),
+        "ok",
+    )));
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider: provider.clone(),
+        tool_registry: Box::new(registry),
+        model: "test-model".to_string(),
+        max_tokens: 1024,
+        temperature: 0.7,
+        spill_store: None,
+        session_key: String::new(),
+        context_collapse_after_turns: u32::MAX,
+        max_context_tokens: 190_000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        system_prompt_provider: Some(Arc::new({
+            let prompts = prompts.clone();
+            move || prompts.lock().unwrap().clone()
+        })),
+    });
+
+    let mut messages = vec![Message::system("stale prompt"), Message::user("advance")];
+    let result = agent.run_loop(&mut messages).await.unwrap();
+
+    assert_eq!(result.response, "done");
+    assert_eq!(
+        provider.seen_system_prompts(),
+        vec![
+            "System base\n\n## Active Development Workflow\nMODE: SELECT TEMPLATE"
+                .to_string(),
+            "System base\n\n## Active Development Workflow\nTemplate: Fix (fix)\nProgress: 1/6 steps complete.\nCURRENT STEP → 2. Write/update regression tests [RED]"
+                .to_string(),
+        ]
+    );
+}
+
+#[test]
+fn test_refresh_dynamic_system_prompt_inserts_before_manifest() {
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider: Arc::new(MockProvider::new(vec![])),
+        tool_registry: Box::new(MockRegistry::new()),
+        model: "test-model".to_string(),
+        max_tokens: 1024,
+        temperature: 0.7,
+        spill_store: None,
+        session_key: String::new(),
+        context_collapse_after_turns: u32::MAX,
+        max_context_tokens: 190_000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        system_prompt_provider: Some(Arc::new(|| "live prompt".to_string())),
+    });
+    let mut manifest = Message::system("[Session memory: 1 spilled entry]");
+    manifest.is_manifest = true;
+    manifest.is_pinned = true;
+    let mut messages = vec![manifest, Message::user("hello")];
+
+    agent.refresh_dynamic_system_prompt(&mut messages);
+
+    assert_eq!(messages[0].content, "live prompt");
+    assert!(!messages[0].is_manifest);
+    assert!(messages[1].is_manifest);
 }
 
 // -----------------------------------------------------------------------

@@ -390,6 +390,26 @@ fn test_remove_system_prompt_noop_when_content_differs() {
     assert_eq!(messages[0].content, "Different.");
 }
 
+#[test]
+fn test_remove_system_prompt_removes_dynamic_workflow_variant() {
+    let base_prompt = "Current date and time: Friday, March 13, 2026 at 10:34 PM GMT\n\nYou are a helpful assistant.";
+    let mut messages: Vec<Message> = vec![
+        Message::system(format!(
+            "{base_prompt}\n\n## Active Development Workflow\nTemplate: Fix (fix)\nProgress: 1/6 steps complete.\nCURRENT STEP → 2. Write/update regression tests [RED]"
+        )),
+        Message::user("hello"),
+    ];
+
+    remove_injected_system_prompt(&mut messages, base_prompt);
+
+    assert_eq!(
+        messages.len(),
+        1,
+        "dynamic workflow prompt should remain transient"
+    );
+    assert_eq!(messages[0].content, "hello");
+}
+
 // ─── Manifest vs system prompt bug ───────────────────────────────────────────
 //
 // Reproduces the bug where a context-pruning manifest (a System message with

@@ -618,16 +618,12 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     );
     if let Some(workflow) = build.workflow_state.clone() {
         let base_prompt = system_prompt.clone();
-        let provider_base = base_prompt.clone();
         let workflow_for_provider = workflow.clone();
         agent.set_system_prompt_provider(Some(Arc::new(move || {
-            let mut prompt = provider_base.clone();
+            let mut prompt = base_prompt.clone();
             crate::interface::shared::append_workflow_prompt(&mut prompt, &workflow_for_provider);
             prompt
         })));
-        let mut prompt = base_prompt;
-        crate::interface::shared::append_workflow_prompt(&mut prompt, &workflow);
-        system_prompt = prompt;
     }
 
     // Use --socket path if provided; otherwise auto-generate in $XDG_RUNTIME_DIR or temp.
