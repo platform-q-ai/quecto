@@ -140,6 +140,17 @@ fn workflow_subsystem_select_template_explicit_issue_overrides_existing_one() {
 }
 
 #[test]
+fn restore_run_unknown_template_recovers_to_selector_mode() {
+    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    engine.restore_run(WorkflowRunPersisted {
+        template_id: Some("deleted_template".into()),
+        done: vec![true, false],
+        active_issue: None,
+    });
+    assert_eq!(engine.mode(), WorkflowMode::SelectingTemplate);
+}
+
+#[test]
 fn restore_run_clears_ordering_gaps() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine.restore_run(WorkflowRunPersisted {

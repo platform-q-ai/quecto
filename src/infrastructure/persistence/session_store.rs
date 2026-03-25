@@ -629,7 +629,9 @@ mod tests {
         };
         store.save(&session).await.unwrap();
         let loaded = store.load("test:wf_persist").await.unwrap().unwrap();
-        let wf = loaded.workflow_run.expect("workflow_run should survive save/load");
+        let wf = loaded
+            .workflow_run
+            .expect("workflow_run should survive save/load");
         assert_eq!(wf.template_id.as_deref(), Some("fix"));
         assert_eq!(wf.done, vec![true, true, false, false, false, false]);
         assert_eq!(wf.active_issue, Some((42, "login bug".to_string())));
@@ -651,11 +653,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_workflow_run_missing_template_backward_compat() {
+    async fn test_workflow_run_unknown_template_persists_raw_fields() {
         let tmp = TempDir::new().unwrap();
         let store = FileSessionStore::new(tmp.path());
 
-        // Save a session with workflow_run referencing a template.
         let session = Session {
             key: "test:wf_compat".to_string(),
             messages: vec![],
@@ -667,20 +668,10 @@ mod tests {
         };
         store.save(&session).await.unwrap();
 
-        // Load and restore into an engine that doesn't have this template.
         let loaded = store.load("test:wf_compat").await.unwrap().unwrap();
         let wf = loaded.workflow_run.expect("persisted run should load");
-        let mut engine = crate::domain::workflow::WorkflowEngine::new(
-            crate::domain::workflow::WorkflowConfig::default(),
-            false,
-        )
-        .unwrap();
-        engine.restore_run(wf);
-        assert_eq!(
-            engine.mode(),
-            crate::domain::workflow::WorkflowMode::SelectingTemplate,
-            "missing template should recover to selector mode"
-        );
+        assert_eq!(wf.template_id.as_deref(), Some("deleted_template"));
+        assert_eq!(wf.done, vec![true, false]);
     }
 
     #[tokio::test]
