@@ -105,6 +105,7 @@ fn test_build_agent_no_sandbox_emits_warning() {
         disabled_tools: vec![],
         effort: None,
         workflow: false,
+        no_workflow: false,
         workflow_guards: false,
     };
 
@@ -182,6 +183,7 @@ fn test_build_agent_with_sandbox_enabled_no_warning() {
         disabled_tools: vec![],
         effort: None,
         workflow: false,
+        no_workflow: false,
         workflow_guards: false,
     };
 
@@ -289,6 +291,7 @@ fn test_build_agent_network_flag_emits_warning() {
         disabled_tools: vec![],
         effort: None,
         workflow: false,
+        no_workflow: false,
         workflow_guards: false,
     };
 
@@ -339,6 +342,7 @@ fn test_build_agent_without_network_flag_no_warning() {
         disabled_tools: vec![],
         effort: None,
         workflow: false,
+        no_workflow: false,
         workflow_guards: false,
     };
 

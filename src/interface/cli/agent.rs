@@ -31,6 +31,7 @@ pub(crate) struct AgentFlags {
     pub(crate) disabled_tools: Vec<String>,
     pub(crate) effort: Option<crate::domain::provider::EffortLevel>,
     pub(crate) workflow: bool,
+    pub(crate) no_workflow: bool,
     pub(crate) workflow_guards: bool,
 }
 
@@ -139,6 +140,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut disabled_tools: Vec<String> = Vec::new();
     let mut effort: Option<crate::domain::provider::EffortLevel> = None;
     let mut workflow = false;
+    let mut no_workflow = false;
     let mut workflow_guards = false;
     let mut i = 0;
 
@@ -154,10 +156,14 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                     "--workflow" => &mut workflow,
                     _ => &mut workflow_guards,
                 } = true;
+                if f == "--workflow" {
+                    no_workflow = false;
+                }
                 i += 1;
             }
             "--no-workflow" => {
                 workflow = false;
+                no_workflow = true;
                 workflow_guards = false;
                 i += 1;
             }
@@ -236,6 +242,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         disabled_tools,
         effort,
         workflow,
+        no_workflow,
         workflow_guards,
     };
     validate_agent_flags(flags, stderr)
@@ -251,8 +258,10 @@ fn validate_agent_flags(flags: AgentFlags, stderr: &mut String) -> Option<AgentF
         stderr.push_str("agent: --persist requires --mode uds\n");
         return None;
     }
-    if (flags.workflow || flags.workflow_guards) && !flags.uds_mode {
-        stderr.push_str("agent: --workflow and --workflow-guards require --mode uds\n");
+    if (flags.workflow || flags.no_workflow || flags.workflow_guards) && !flags.uds_mode {
+        stderr.push_str(
+            "agent: --workflow, --no-workflow, and --workflow-guards require --mode uds\n",
+        );
         return None;
     }
     if flags.workflow_guards && !flags.workflow {
@@ -427,7 +436,7 @@ pub(crate) fn build_agent_from_config(
 }
 
 mod agent_tool_registry;
-use agent_tool_registry::{build_tool_registry, ToolRegistryArgs, ToolRegistryBuild};
+use agent_tool_registry::{ToolRegistryArgs, ToolRegistryBuild, build_tool_registry};
 
 pub(crate) fn run_agent_session(
     base_dir: &std::path::Path,
@@ -635,6 +644,11 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         dir.join(format!("quecto-agent-{id}.sock"))
     });
 
+    let workflow_config = build
+        .workflow_state
+        .as_ref()
+        .map(|_| build.workflow_config.clone());
+
     crate::interface::cli::uds::run_uds_loop(crate::interface::cli::uds::UdsLoopArgs {
         agent,
         base_dir: &base_dir,
@@ -650,7 +664,7 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         notification_rx: build.notification_rx,
         subagent_registry: build.subagent_registry,
         workflow_state: build.workflow_state,
-        workflow_config: Some(build.workflow_config),
+        workflow_config,
     })
 }
 

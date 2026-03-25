@@ -50,6 +50,7 @@ fn test_flags(msg: Option<&str>, session: Option<&str>, sys: Option<&str>) -> Ag
         disabled_tools: vec![],
         effort: None,
         workflow: false,
+        no_workflow: false,
         workflow_guards: false,
     }
 }
