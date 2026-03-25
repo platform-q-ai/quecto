@@ -139,6 +139,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut disabled_tools: Vec<String> = Vec::new();
     let mut effort: Option<crate::domain::provider::EffortLevel> = None;
     let mut workflow = false;
+    let mut no_workflow_requested = false;
     let mut workflow_guards = false;
     let mut i = 0;
 
@@ -154,10 +155,14 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                     "--workflow" => &mut workflow,
                     _ => &mut workflow_guards,
                 } = true;
+                if f == "--workflow" {
+                    no_workflow_requested = false;
+                }
                 i += 1;
             }
             "--no-workflow" => {
                 workflow = false;
+                no_workflow_requested = true;
                 workflow_guards = false;
                 i += 1;
             }
@@ -220,6 +225,13 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         }
     }
 
+    if (workflow || no_workflow_requested || workflow_guards) && !uds_mode {
+        stderr.push_str(
+            "agent: --workflow, --no-workflow, and --workflow-guards require --mode uds\n",
+        );
+        return None;
+    }
+
     let flags = AgentFlags {
         session_name,
         no_session,
@@ -249,10 +261,6 @@ fn validate_agent_flags(flags: AgentFlags, stderr: &mut String) -> Option<AgentF
     }
     if flags.persist && !flags.uds_mode {
         stderr.push_str("agent: --persist requires --mode uds\n");
-        return None;
-    }
-    if (flags.workflow || flags.workflow_guards) && !flags.uds_mode {
-        stderr.push_str("agent: --workflow and --workflow-guards require --mode uds\n");
         return None;
     }
     if flags.workflow_guards && !flags.workflow {
@@ -306,7 +314,7 @@ pub(crate) fn cmd_agent(
 
 pub(crate) struct AgentBuildResult {
     pub agent: AgentLoopImpl,
-    pub workflow_config: crate::domain::workflow::WorkflowConfig,
+    pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,
     pub extension_prompt_snippets: String,
     pub model: String,
     pub ext_registry: std::sync::Arc<std::sync::Mutex<ExtensionRegistry>>,
@@ -392,7 +400,7 @@ pub(crate) fn build_agent_from_config(
         })
     });
 
-    let wf_config = config.workflow.clone();
+    let wf_config = flags.workflow.then(|| config.workflow.clone());
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),
@@ -427,7 +435,7 @@ pub(crate) fn build_agent_from_config(
 }
 
 mod agent_tool_registry;
-use agent_tool_registry::{build_tool_registry, ToolRegistryArgs, ToolRegistryBuild};
+use agent_tool_registry::{ToolRegistryArgs, ToolRegistryBuild, build_tool_registry};
 
 pub(crate) fn run_agent_session(
     base_dir: &std::path::Path,
@@ -650,7 +658,7 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         notification_rx: build.notification_rx,
         subagent_registry: build.subagent_registry,
         workflow_state: build.workflow_state,
-        workflow_config: Some(build.workflow_config),
+        workflow_config: build.workflow_config,
     })
 }
 

@@ -378,6 +378,50 @@ fn test_agent_negative_max_time() {
     assert!(stderr.contains("positive integer"));
 }
 
+#[test]
+fn test_agent_workflow_and_no_workflow_flags_require_uds_mode() {
+    for args in [
+        vec!["--workflow".into(), "-m".into(), "Hi".into()],
+        vec!["--workflow-guards".into(), "-m".into(), "Hi".into()],
+        vec!["--no-workflow".into(), "-m".into(), "Hi".into()],
+    ] {
+        let mut stderr = String::new();
+        let result = parse_agent_flags(&args, &mut stderr);
+        assert!(
+            result.is_none(),
+            "expected parse failure for args: {args:?}"
+        );
+        assert!(
+            stderr.contains("require --mode uds"),
+            "expected UDS validation error for args {args:?}, got: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn test_agent_workflow_guards_require_workflow_even_in_uds_mode() {
+    let mut stderr = String::new();
+    let args: Vec<String> = vec!["--mode".into(), "uds".into(), "--workflow-guards".into()];
+    let result = parse_agent_flags(&args, &mut stderr);
+    assert!(result.is_none());
+    assert!(stderr.contains("--workflow-guards requires --workflow"));
+}
+
+#[test]
+fn test_agent_no_workflow_clears_workflow_flags_in_uds_mode() {
+    let mut stderr = String::new();
+    let args: Vec<String> = vec![
+        "--mode".into(),
+        "uds".into(),
+        "--workflow".into(),
+        "--workflow-guards".into(),
+        "--no-workflow".into(),
+    ];
+    let flags = parse_agent_flags(&args, &mut stderr).unwrap();
+    assert!(!flags.workflow);
+    assert!(!flags.workflow_guards);
+}
+
 // ===================================================================
 // build_agent_from_config tests
 // ===================================================================
@@ -504,6 +548,74 @@ fn test_build_agent_from_config_with_model_override() {
     assert!(result.is_some(), "stderr: {}", stderr);
 }
 
+#[test]
+fn test_build_agent_from_config_workflow_disabled_by_default_has_no_workflow_state() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("config.json"),
+        r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#,
+    )
+    .unwrap();
+    let flags = AgentFlags {
+        session_name: None,
+        no_session: false,
+        message: None,
+        system_prompt: None,
+        model_override: None,
+        max_iterations: None,
+        max_time: None,
+        uds_mode: true,
+        no_sandbox: false,
+        network: false,
+        socket_path: None,
+        persist: false,
+        disabled_tools: vec![],
+        effort: None,
+        workflow: false,
+        workflow_guards: false,
+    };
+    let mut stderr = String::new();
+    let cfg = tmp.path().join("config.json");
+    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr)
+        .expect("agent should build without workflow enabled");
+    assert!(result.workflow_state.is_none(), "stderr: {}", stderr);
+    assert!(result.workflow_config.is_none(), "stderr: {}", stderr);
+}
+
+#[test]
+fn test_build_agent_from_config_uds_workflow_flag_creates_workflow_state() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("config.json"),
+        r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#,
+    )
+    .unwrap();
+    let flags = AgentFlags {
+        session_name: None,
+        no_session: false,
+        message: None,
+        system_prompt: None,
+        model_override: None,
+        max_iterations: None,
+        max_time: None,
+        uds_mode: true,
+        no_sandbox: false,
+        network: false,
+        socket_path: None,
+        persist: false,
+        disabled_tools: vec![],
+        effort: None,
+        workflow: true,
+        workflow_guards: false,
+    };
+    let mut stderr = String::new();
+    let cfg = tmp.path().join("config.json");
+    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr)
+        .expect("agent should build with workflow enabled");
+    assert!(result.workflow_state.is_some(), "stderr: {}", stderr);
+    assert!(result.workflow_config.is_some(), "stderr: {}", stderr);
+}
+
 // ===================================================================
 // Agent cmd_agent integration through run_with_output
 // ===================================================================
@@ -532,6 +644,22 @@ fn test_agent_with_system_and_model_no_config() {
     let out = run_with_output(v, &ctx);
     assert_eq!(out.exit_code, 1);
     assert!(stderr_or_stdout_contains(&out, "config not found"));
+}
+
+#[test]
+fn test_agent_run_with_output_rejects_no_workflow_without_uds_mode() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
+    let out = run_with_output(args("agent --no-workflow -m hello"), &ctx);
+    assert_eq!(out.exit_code, 1);
+    assert!(
+        out.stderr.contains("require --mode uds"),
+        "stderr: {}",
+        out.stderr
+    );
 }
 
 #[test]
