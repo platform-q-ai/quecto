@@ -33,6 +33,8 @@ struct UdsAgentContext {
         std::sync::Mutex<quecto::infrastructure::extensions::registry::ExtensionRegistry>,
     >,
     persist: bool,
+    workflow_state: Option<quecto::interface::shared::WorkflowStateHandle>,
+    workflow_config: Option<quecto::domain::workflow::WorkflowConfig>,
 }
 
 /// Build the agent and session key from world state + config.
@@ -63,6 +65,28 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         sandbox,
         exec_settings,
     );
+
+    // Register workflow engine when scenario requests it (#568–#577).
+    let workflow_state = if world._workflow_enabled {
+        match quecto::interface::shared::register_workflow_tool(
+            &mut registry,
+            config.workflow.clone(),
+            true, // guards enabled
+            None,
+        ) {
+            Ok(handle) => Some(handle),
+            Err(e) => {
+                return Err(format!("workflow init failed: {e}"));
+            }
+        }
+    } else {
+        None
+    };
+    let workflow_config = if world._workflow_enabled {
+        Some(config.workflow.clone())
+    } else {
+        None
+    };
 
     // Build empty extension registry (script extensions removed in #353).
     let ext_registry = quecto::infrastructure::extensions::registry::ExtensionRegistry::new();
@@ -95,6 +119,17 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         agent.set_streaming(true);
     }
 
+    // Set up live prompt injection when workflow is enabled.
+    if let Some(ref wf) = workflow_state {
+        let wf_for_provider = wf.clone();
+        let base_prompt = world.system_prompt.clone().unwrap_or_default();
+        agent.set_system_prompt_provider(Some(std::sync::Arc::new(move || {
+            let mut prompt = base_prompt.clone();
+            quecto::interface::shared::append_workflow_prompt(&mut prompt, &wf_for_provider);
+            prompt
+        })));
+    }
+
     Ok(UdsAgentContext {
         agent,
         model,
@@ -102,6 +137,8 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         ephemeral,
         ext_registry: std::sync::Arc::new(std::sync::Mutex::new(ext_registry)),
         persist: false,
+        workflow_state,
+        workflow_config,
     })
 }
 
@@ -149,6 +186,8 @@ fn execute_uds(world: &mut QuectoWorld) {
         ephemeral,
         ext_registry,
         persist: _,
+        workflow_state,
+        workflow_config,
     } = ctx;
 
     // Create a socket path in the temp dir.
@@ -192,8 +231,8 @@ fn execute_uds(world: &mut QuectoWorld) {
             persist: false,
             notification_rx: None,
             subagent_registry: None,
-            workflow_state: None,
-            workflow_config: None,
+            workflow_state,
+            workflow_config,
         })
     });
 
@@ -869,6 +908,8 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
         ephemeral,
         ext_registry,
         persist: _,
+        workflow_state,
+        workflow_config,
     } = ctx;
     let base_dir = base.clone();
     let sp = socket_path.clone();
@@ -888,8 +929,8 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
             persist: false,
             notification_rx: None,
             subagent_registry: None,
-            workflow_state: None,
-            workflow_config: None,
+            workflow_state,
+            workflow_config,
         })
     });
 
@@ -1213,6 +1254,8 @@ fn mc_spawn_agent(
         ephemeral,
         ext_registry,
         persist,
+        workflow_state,
+        workflow_config,
     } = ctx;
     let base_for_thread = base.to_path_buf();
     let sp = socket_path.clone();
@@ -1231,8 +1274,8 @@ fn mc_spawn_agent(
             persist,
             notification_rx: None,
             subagent_registry: None,
-            workflow_state: None,
-            workflow_config: None,
+            workflow_state,
+            workflow_config,
         })
     });
 

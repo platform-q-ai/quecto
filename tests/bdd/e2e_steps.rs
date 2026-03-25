@@ -2282,3 +2282,200 @@ fn then_get_messages_has_assistant(world: &mut QuectoWorld) {
         "expected at least one assistant message\nmessages: {msgs:?}"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Real-LLM Workflow V2 UDS steps (#568–#577)
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[given("a real LLM UDS workspace is configured with workflow enabled")]
+fn given_real_llm_uds_workflow_workspace(world: &mut QuectoWorld) {
+    ensure_temp_dir(world);
+    let base = base_path(world);
+    let workspace = base.join("workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace");
+
+    let home_creds = dirs::home_dir()
+        .expect("no home dir")
+        .join(".quecto")
+        .join("credentials.json");
+    if !home_creds.exists() {
+        panic!("~/.quecto/credentials.json not found — run 'quecto auth login' first");
+    }
+    let dest = base.join("credentials.json");
+    std::fs::copy(&home_creds, &dest).expect("copy credentials.json");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o600))
+            .expect("set credentials permissions");
+    }
+
+    let config = serde_json::json!({
+        "providers": {
+            "openai": {
+                "api_key": ""
+            }
+        },
+        "agents": {
+            "defaults": {
+                "model": "openai/gpt-5.4",
+                "workspace": workspace.to_string_lossy()
+            }
+        },
+        "workflow": {
+            "auto_continue": false,
+            "completion_nudge": false
+        }
+    });
+    let config_json = serde_json::to_string_pretty(&config).expect("serialize config");
+    std::fs::write(base.join("config.json"), config_json).expect("write workflow config");
+
+    world._workflow_enabled = true;
+}
+
+#[when("I start the real LLM UDS workflow agent")]
+fn when_start_real_llm_uds_workflow(world: &mut QuectoWorld) {
+    world.no_session = true;
+    world._uds_streaming_enabled = true;
+    world._real_llm_uds = true;
+    world._workflow_enabled = true;
+    world.system_prompt = Some(
+        "You are a coding assistant. Use the workflow tool when asked. \
+         Follow instructions precisely and reply with the exact marker words requested."
+            .to_string(),
+    );
+}
+
+// ─── Workflow Then steps ────────────────────────────────────────────────────
+
+#[then(expr = "the get_state response {string} should have workflow mode {string}")]
+fn then_get_state_workflow_mode(world: &mut QuectoWorld, id: String, expected_mode: String) {
+    let resp = find_response_by_id(world, &id).unwrap_or_else(|| {
+        panic!(
+            "no get_state response with id {id:?}\nevents: {:#?}",
+            world.agent_events
+        )
+    });
+    let mode = resp["data"]["workflow"]["mode"]
+        .as_str()
+        .unwrap_or("(missing)");
+    assert_eq!(
+        mode, expected_mode,
+        "expected workflow mode {expected_mode:?}, got {mode:?}"
+    );
+}
+
+#[then(expr = "the get_state response {string} should have {int} available templates")]
+fn then_get_state_template_count(world: &mut QuectoWorld, id: String, count: usize) {
+    let resp = find_response_by_id(world, &id).unwrap_or_else(|| {
+        panic!(
+            "no get_state response with id {id:?}\nevents: {:#?}",
+            world.agent_events
+        )
+    });
+    let templates = resp["data"]["workflow"]["available_templates"]
+        .as_array()
+        .expect("available_templates not an array");
+    assert_eq!(
+        templates.len(),
+        count,
+        "expected {count} templates, got {}",
+        templates.len()
+    );
+}
+
+#[then(expr = "the get_state response {string} should have workflow template {string}")]
+fn then_get_state_workflow_template(world: &mut QuectoWorld, id: String, expected: String) {
+    let resp = find_response_by_id(world, &id).unwrap_or_else(|| {
+        panic!("no get_state response with id {id:?}")
+    });
+    let tpl_id = resp["data"]["workflow"]["active_template"]["id"]
+        .as_str()
+        .unwrap_or("(missing)");
+    assert_eq!(tpl_id, expected);
+}
+
+#[then(expr = "the get_state response {string} should have workflow progress done {int}")]
+fn then_get_state_workflow_progress(world: &mut QuectoWorld, id: String, expected: u64) {
+    let resp = find_response_by_id(world, &id).unwrap_or_else(|| {
+        panic!("no get_state response with id {id:?}")
+    });
+    let done = resp["data"]["workflow"]["progress"]["done"]
+        .as_u64()
+        .unwrap_or(0);
+    assert_eq!(done, expected, "expected progress.done={expected}, got {done}");
+}
+
+#[then(expr = "the get_state response {string} should not have workflow")]
+fn then_get_state_no_workflow(world: &mut QuectoWorld, id: String) {
+    let resp = find_response_by_id(world, &id).unwrap_or_else(|| {
+        panic!("no get_state response with id {id:?}")
+    });
+    assert!(
+        resp["data"]["workflow"].is_null(),
+        "expected no workflow in get_state, got: {}",
+        resp["data"]["workflow"]
+    );
+}
+
+#[then(expr = "the agent output should contain a workflow_state event with mode {string}")]
+fn then_workflow_event_mode(world: &mut QuectoWorld, expected: String) {
+    let found = world.agent_events.iter().any(|l| {
+        serde_json::from_str::<serde_json::Value>(l)
+            .map(|v| {
+                v["type"].as_str() == Some("workflow_state")
+                    && v["mode"].as_str() == Some(&expected)
+            })
+            .unwrap_or(false)
+    });
+    assert!(
+        found,
+        "expected workflow_state event with mode={expected:?}\nevents: {:#?}",
+        world.agent_events
+    );
+}
+
+#[then(expr = "the agent output should contain a workflow_state event with template {string}")]
+fn then_workflow_event_template(world: &mut QuectoWorld, expected: String) {
+    let found = world.agent_events.iter().any(|l| {
+        serde_json::from_str::<serde_json::Value>(l)
+            .map(|v| {
+                v["type"].as_str() == Some("workflow_state")
+                    && v["activeTemplate"]["id"].as_str() == Some(&expected)
+            })
+            .unwrap_or(false)
+    });
+    assert!(
+        found,
+        "expected workflow_state event with template={expected:?}\nevents: {:#?}",
+        world.agent_events
+    );
+}
+
+#[then(expr = "the agent output should contain a workflow_state event with progress done {int}")]
+fn then_workflow_event_progress(world: &mut QuectoWorld, expected: u64) {
+    let found = world.agent_events.iter().any(|l| {
+        serde_json::from_str::<serde_json::Value>(l)
+            .map(|v| {
+                v["type"].as_str() == Some("workflow_state")
+                    && v["progress"]["done"].as_u64() == Some(expected)
+            })
+            .unwrap_or(false)
+    });
+    assert!(
+        found,
+        "expected workflow_state event with progress.done={expected}\nevents: {:#?}",
+        world.agent_events
+    );
+}
+
+fn find_response_by_id(world: &QuectoWorld, id: &str) -> Option<serde_json::Value> {
+    world.agent_events.iter().find_map(|l| {
+        let v: serde_json::Value = serde_json::from_str(l).ok()?;
+        if v["type"].as_str() == Some("response") && v["id"].as_str() == Some(id) {
+            Some(v)
+        } else {
+            None
+        }
+    })
+}
