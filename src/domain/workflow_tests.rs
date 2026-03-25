@@ -6,6 +6,8 @@ fn default_config_uses_builtins_when_templates_empty() {
     let templates = engine.list_templates();
     assert!(templates.iter().any(|t| t.id == "feature"));
     assert!(templates.iter().any(|t| t.id == "fix"));
+    assert!(templates.iter().any(|t| t.id == "refactor"));
+    assert!(templates.iter().any(|t| t.id == "chore"));
 }
 
 #[test]
@@ -91,6 +93,40 @@ fn persisted_run_round_trip() {
 }
 
 #[test]
+fn persisted_run_exists_for_issue_without_selected_template() {
+    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    engine.set_issue(99, "triage".into());
+    let persisted = engine
+        .persisted_run()
+        .expect("issue-only state should persist");
+    assert_eq!(persisted.template_id, None);
+    assert_eq!(persisted.active_issue, Some((99, "triage".into())));
+
+    let mut restored = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    restored.restore_run(persisted);
+    assert_eq!(
+        restored.snapshot(true).active_issue,
+        Some((99, "triage".into()))
+    );
+    assert_eq!(restored.mode(), WorkflowMode::SelectingTemplate);
+}
+
+#[test]
+fn restore_run_clears_ordering_gaps() {
+    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    engine.restore_run(WorkflowRunPersisted {
+        template_id: Some("feature".into()),
+        done: vec![true, false, true, true],
+        active_issue: Some((1, "gap".into())),
+    });
+    let snapshot = engine.snapshot(true);
+    assert_eq!(snapshot.progress.done, 1);
+    assert_eq!(snapshot.current_step.unwrap().index, 2);
+    assert_eq!(snapshot.steps[2].done, false);
+    assert_eq!(snapshot.steps[3].done, false);
+}
+
+#[test]
 fn guards_block_until_before_step_key_threshold() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), true).unwrap();
     engine.select_template("feature", None).unwrap();
@@ -149,6 +185,31 @@ fn validate_duplicate_template_ids() {
                 guards: vec![],
             },
         ],
+        ..Default::default()
+    };
+    assert!(WorkflowEngine::new(cfg, false).is_err());
+}
+
+#[test]
+fn validate_guard_unknown_step_key() {
+    let cfg = WorkflowConfig {
+        templates: vec![WorkflowTemplate {
+            id: "x".into(),
+            label: "X".into(),
+            description: "x".into(),
+            when_to_use: None,
+            steps: vec![WorkflowTemplateStep {
+                key: "a".into(),
+                label: "A".into(),
+                phase: "red".into(),
+                guidance: None,
+            }],
+            guards: vec![WorkflowGuardRule {
+                commands: vec!["git commit".into()],
+                before_step_key: "missing".into(),
+                message: "blocked".into(),
+            }],
+        }],
         ..Default::default()
     };
     assert!(WorkflowEngine::new(cfg, false).is_err());

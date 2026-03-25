@@ -19,10 +19,14 @@ impl WorkflowEngine {
     }
 
     pub fn restore_run(&mut self, persisted: WorkflowRunPersisted) {
+        let active_issue = persisted
+            .active_issue
+            .map(|(number, title)| (number, truncate_issue_title(title)));
+
         if let Some(ref template_id) = persisted.template_id
-            && let Some(idx) = self.templates.iter().position(|t| &t.id == template_id)
+            && let Some(template_index) = self.templates.iter().position(|t| &t.id == template_id)
         {
-            let template = &self.templates[idx];
+            let template = &self.templates[template_index];
             let mut done = persisted.done;
             done.resize(template.steps.len(), false);
             let mut seen_gap = false;
@@ -36,12 +40,21 @@ impl WorkflowEngine {
             }
             self.run = WorkflowRun {
                 template_id: Some(template_id.clone()),
-                template_index: Some(idx),
+                template_index: Some(template_index),
                 done,
-                active_issue: persisted.active_issue.map(|(n, t)| (n, truncate_issue_title(t))),
+                active_issue,
             };
             return;
         }
+
+        if active_issue.is_some() {
+            self.run = WorkflowRun {
+                active_issue,
+                ..WorkflowRun::default()
+            };
+            return;
+        }
+
         self.run = WorkflowRun::default();
     }
 
@@ -88,14 +101,16 @@ impl WorkflowEngine {
         template_id: &str,
         issue: Option<(u32, String)>,
     ) -> Result<(), WorkflowError> {
-        let idx = self
+        let template_index = self
             .templates
             .iter()
             .position(|t| t.id == template_id)
-            .ok_or_else(|| WorkflowError::UnknownTemplate(format!("unknown template: {}", template_id)))?;
-        let template = &self.templates[idx];
+            .ok_or_else(|| {
+                WorkflowError::UnknownTemplate(format!("unknown template: {}", template_id))
+            })?;
+        let template = &self.templates[template_index];
         self.run.template_id = Some(template.id.clone());
-        self.run.template_index = Some(idx);
+        self.run.template_index = Some(template_index);
         self.run.done = vec![false; template.steps.len()];
         self.run.active_issue = issue.map(|(n, t)| (n, truncate_issue_title(t)));
         Ok(())
@@ -297,10 +312,10 @@ impl WorkflowEngine {
         };
         let progress = self.progress();
         let mode = self.mode();
-        let current_idx = if mode != WorkflowMode::Complete {
-            self.current_step().as_ref().map(|s| s.index as usize)
-        } else {
+        let current_idx = if mode == WorkflowMode::Complete {
             None
+        } else {
+            self.current_step().map(|step| step.index as usize)
         };
         let mut out = format!(
             "## Active Workflow\nTemplate: {} ({})\nProgress: {}/{}\n",
@@ -332,7 +347,7 @@ impl WorkflowEngine {
                 ));
             }
         }
-        if self.mode() == WorkflowMode::Complete {
+        if mode == WorkflowMode::Complete {
             out.push_str("\n✓ All workflow steps complete.\n");
         }
         if self.guards_enabled && !template.guards.is_empty() {
@@ -414,7 +429,6 @@ impl WorkflowEngine {
             )
         })
     }
-
 }
 
 fn summary_for_template(template: &WorkflowTemplate) -> WorkflowTemplateSummary {
@@ -521,7 +535,6 @@ fn truncate_issue_title(title: String) -> String {
     }
     title[..end].to_string()
 }
-
 
 pub fn default_templates() -> Vec<WorkflowTemplate> {
     vec![
@@ -735,4 +748,3 @@ fn phase_display_name(phase: &str) -> &str {
         other => other,
     }
 }
-
