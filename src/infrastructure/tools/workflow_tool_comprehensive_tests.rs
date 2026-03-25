@@ -1,5 +1,5 @@
 use super::*;
-use crate::domain::tool::Tool;
+use crate::domain::tool::{Tool, ToolGuard};
 use crate::domain::workflow::{
     WorkflowConfig, WorkflowEngine, WorkflowGuardRule, WorkflowTemplate, WorkflowTemplateStep,
 };
@@ -14,6 +14,28 @@ fn tool_with_config(config: WorkflowConfig, guards_enabled: bool) -> WorkflowToo
 
 fn default_tool() -> WorkflowTool {
     tool_with_config(WorkflowConfig::default(), true)
+}
+
+fn engine_handle_with_config(
+    config: WorkflowConfig,
+    guards_enabled: bool,
+) -> Arc<Mutex<WorkflowEngine>> {
+    Arc::new(Mutex::new(
+        WorkflowEngine::new(config, guards_enabled).expect("workflow config should be valid"),
+    ))
+}
+
+fn tool_with_emitter(
+    config: WorkflowConfig,
+    guards_enabled: bool,
+) -> (WorkflowTool, Arc<Mutex<Vec<serde_json::Value>>>) {
+    let engine = engine_handle_with_config(config, guards_enabled);
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_clone = events.clone();
+    let emitter: WorkflowEventEmitter = Arc::new(move |event| {
+        events_clone.lock().unwrap().push(event);
+    });
+    (WorkflowTool::with_event_emitter(engine, emitter), events)
 }
 
 fn custom_template(
@@ -110,6 +132,46 @@ async fn list_templates_includes_when_to_use_metadata() {
 }
 
 #[tokio::test]
+async fn list_templates_omits_when_to_use_line_for_templates_without_it() {
+    let config = WorkflowConfig {
+        templates: vec![
+            custom_template(
+                "guided",
+                "Guided",
+                "Guided template.",
+                Some("Use when the model needs extra selection guidance."),
+                vec![step("scope", "Scope", "red")],
+                vec![],
+            ),
+            custom_template(
+                "plain",
+                "Plain",
+                "Plain template.",
+                None,
+                vec![step("scope", "Scope", "red")],
+                vec![],
+            ),
+        ],
+        ..Default::default()
+    };
+    let tool = tool_with_config(config, false);
+
+    let result = tool
+        .execute(r#"{"action":"list_templates"}"#)
+        .await
+        .unwrap();
+
+    assert!(!result.is_error);
+    assert!(
+        result
+            .content
+            .contains("When to use: Use when the model needs extra selection guidance.")
+    );
+    assert!(result.content.contains("- plain — Plain: Plain template."));
+    assert!(!result.content.contains("When to use: \n"));
+}
+
+#[tokio::test]
 async fn select_template_with_issue_instantiates_active_run() {
     let tool = default_tool();
 
@@ -148,6 +210,80 @@ async fn step_actions_fail_clearly_without_selected_template() {
             result.content
         );
     }
+}
+
+#[tokio::test]
+async fn check_accepts_string_step_numbers() {
+    let tool = default_tool();
+    tool.execute(r#"{"action":"select_template","template":"fix"}"#)
+        .await
+        .unwrap();
+
+    let result = tool
+        .execute(r#"{"action":"check","step":"1"}"#)
+        .await
+        .unwrap();
+
+    assert!(!result.is_error);
+    assert!(result.content.contains("Step 1 checked."));
+}
+
+#[tokio::test]
+async fn check_rejects_invalid_step_values() {
+    let tool = default_tool();
+    tool.execute(r#"{"action":"select_template","template":"fix"}"#)
+        .await
+        .unwrap();
+
+    let invalid = tool
+        .execute(r#"{"action":"check","step":"abc"}"#)
+        .await
+        .unwrap();
+    assert!(invalid.is_error);
+    assert!(invalid.content.contains("invalid step value"));
+
+    let overflow = tool
+        .execute(r#"{"action":"check","step":4294967297}"#)
+        .await
+        .unwrap();
+    assert!(overflow.is_error);
+    assert!(overflow.content.contains("exceeds valid range"));
+
+    let missing = tool.execute(r#"{"action":"check"}"#).await.unwrap();
+    assert!(missing.is_error);
+    assert!(missing.content.contains("missing field: step"));
+}
+
+#[tokio::test]
+async fn set_issue_accepts_string_issue_numbers() {
+    let tool = default_tool();
+
+    let result = tool
+        .execute(r#"{"action":"set_issue","issueNumber":"42","issueTitle":"My issue"}"#)
+        .await
+        .unwrap();
+
+    assert!(!result.is_error);
+    assert!(result.content.contains("#42 — My issue"));
+}
+
+#[tokio::test]
+async fn set_issue_rejects_invalid_issue_numbers() {
+    let tool = default_tool();
+
+    let invalid = tool
+        .execute(r#"{"action":"set_issue","issueNumber":"abc","issueTitle":"My issue"}"#)
+        .await
+        .unwrap();
+    assert!(invalid.is_error);
+    assert!(invalid.content.contains("invalid issueNumber"));
+
+    let missing = tool
+        .execute(r#"{"action":"set_issue","issueTitle":"My issue"}"#)
+        .await
+        .unwrap();
+    assert!(missing.is_error);
+    assert!(missing.content.contains("missing field: issueNumber"));
 }
 
 #[tokio::test]
@@ -208,6 +344,75 @@ async fn status_reflects_complete_mode() {
 
     let status = tool.execute(r#"{"action":"status"}"#).await.unwrap();
     assert!(status.content.contains("All workflow steps complete"));
+}
+
+#[tokio::test]
+async fn mutating_actions_emit_events_but_status_does_not() {
+    let (tool, events) = tool_with_emitter(WorkflowConfig::default(), true);
+
+    let status = tool.execute(r#"{"action":"status"}"#).await.unwrap();
+    assert!(!status.is_error);
+    assert_eq!(events.lock().unwrap().len(), 0);
+
+    let select = tool
+        .execute(r#"{"action":"select_template","template":"fix"}"#)
+        .await
+        .unwrap();
+    assert!(!select.is_error);
+    {
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["type"], "workflow_state");
+        assert_eq!(events[0]["activeTemplate"]["id"], "fix");
+    }
+
+    let check = tool
+        .execute(r#"{"action":"check","step":1}"#)
+        .await
+        .unwrap();
+    assert!(!check.is_error);
+    let events = events.lock().unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[1]["progress"]["done"], 1);
+}
+
+#[test]
+fn workflow_guard_enforces_bash_command_blocking_on_selected_template() {
+    let engine = engine_handle_with_config(guarded_config(), true);
+    engine
+        .lock()
+        .unwrap()
+        .select_template("guarded", None)
+        .unwrap();
+    let guard = WorkflowGuard::new(engine.clone());
+
+    let blocked = guard.check("bash", r#"{"command":"git commit -m wip"}"#);
+    assert!(blocked.is_err());
+    assert!(
+        blocked
+            .unwrap_err()
+            .contains("BLOCKED: Finish planning before commit.")
+    );
+
+    assert!(guard.check("read", r#"{"path":"README.md"}"#).is_ok());
+
+    engine.lock().unwrap().check(1).unwrap();
+    assert!(
+        guard
+            .check("bash", r#"{"command":"git commit -m wip"}"#)
+            .is_ok()
+    );
+
+    engine
+        .lock()
+        .unwrap()
+        .select_template("open", None)
+        .unwrap();
+    assert!(
+        guard
+            .check("bash", r#"{"command":"git commit -m wip"}"#)
+            .is_ok()
+    );
 }
 
 #[test]
