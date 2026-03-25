@@ -8,13 +8,7 @@ use crate::domain::message::Message;
 use crate::domain::session::{Session, SessionStore};
 use crate::infrastructure::config::Config;
 use crate::infrastructure::extensions::registry::ExtensionRegistry;
-use crate::infrastructure::persistence::context_spill::FileContextSpillStore;
 use crate::infrastructure::persistence::session_store::FileSessionStore;
-use crate::infrastructure::security::sandbox::Sandbox;
-use crate::infrastructure::tools::agent_cmd::AgentCmdTool;
-use crate::infrastructure::tools::recall::RecallTool;
-use crate::infrastructure::tools::registry::ToolRegistryImpl;
-use crate::infrastructure::tools::spawn::SpawnTool;
 
 /// Max byte length for `--socket` paths.  Linux allows 108, macOS 104;
 /// we use the stricter limit for portability.
@@ -36,6 +30,8 @@ pub(crate) struct AgentFlags {
     pub(crate) persist: bool,
     pub(crate) disabled_tools: Vec<String>,
     pub(crate) effort: Option<crate::domain::provider::EffortLevel>,
+    pub(crate) workflow: bool,
+    pub(crate) workflow_guards: bool,
 }
 
 /// Bundles the stdout/stderr pair passed through the agent pipeline.
@@ -142,17 +138,27 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut persist = false;
     let mut disabled_tools: Vec<String> = Vec::new();
     let mut effort: Option<crate::domain::provider::EffortLevel> = None;
+    let mut workflow = false;
+    let mut workflow_guards = false;
     let mut i = 0;
 
     while i < args.len() {
         match args[i].as_str() {
-            f @ ("--no-session" | "--no-sandbox" | "--network" | "--persist") => {
+            f @ ("--no-session" | "--no-sandbox" | "--network" | "--persist" | "--workflow"
+            | "--workflow-guards") => {
                 *match f {
                     "--no-session" => &mut no_session,
                     "--no-sandbox" => &mut no_sandbox,
                     "--network" => &mut network,
-                    _ => &mut persist,
+                    "--persist" => &mut persist,
+                    "--workflow" => &mut workflow,
+                    _ => &mut workflow_guards,
                 } = true;
+                i += 1;
+            }
+            "--no-workflow" => {
+                workflow = false;
+                workflow_guards = false;
                 i += 1;
             }
             "-s" | "--session" => {
@@ -229,6 +235,8 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         persist,
         disabled_tools,
         effort,
+        workflow,
+        workflow_guards,
     };
     validate_agent_flags(flags, stderr)
 }
@@ -241,6 +249,14 @@ fn validate_agent_flags(flags: AgentFlags, stderr: &mut String) -> Option<AgentF
     }
     if flags.persist && !flags.uds_mode {
         stderr.push_str("agent: --persist requires --mode uds\n");
+        return None;
+    }
+    if (flags.workflow || flags.workflow_guards) && !flags.uds_mode {
+        stderr.push_str("agent: --workflow and --workflow-guards require --mode uds\n");
+        return None;
+    }
+    if flags.workflow_guards && !flags.workflow {
+        stderr.push_str("agent: --workflow-guards requires --workflow\n");
         return None;
     }
     Some(flags)
@@ -275,7 +291,7 @@ pub(crate) fn cmd_agent(
         None => return 1,
     };
 
-    // Build system prompt: datetime preamble + skills + extensions + workflow + user prompt
+    // Build system prompt: datetime preamble + skills + extensions + user prompt.
     let skill_prompt = crate::interface::shared::load_skill_prompt(&base_dir);
     let mut system =
         crate::interface::shared::build_system_prompt(&skill_prompt, &flags.system_prompt);
@@ -283,7 +299,6 @@ pub(crate) fn cmd_agent(
         &mut system,
         &build.extension_prompt_snippets,
     );
-    crate::interface::shared::append_workflow_prompt(&mut system, &build.workflow_config);
     flags.system_prompt = Some(system);
     let mut out = AgentOutput { stdout, stderr };
     run_agent_session(&base_dir, build.agent, &flags, &mut out)
@@ -391,6 +406,7 @@ pub(crate) fn build_agent_from_config(
         progress_callback: None,
         streaming: false,
         effort,
+        system_prompt_provider: None,
     })
     .with_max_tool_iterations(
         flags
@@ -410,109 +426,8 @@ pub(crate) fn build_agent_from_config(
     })
 }
 
-struct ToolRegistryBuild {
-    registry: ToolRegistryImpl,
-    spill_store: Arc<FileContextSpillStore>,
-    session_key: String,
-    model: String,
-    ext_registry: ExtensionRegistry,
-    extension_prompt_snippets: String,
-    notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
-    subagent_registry: Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
-    workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
-}
-
-struct ToolRegistryArgs<'a> {
-    base_dir: &'a std::path::Path,
-    config: &'a Config,
-    http_client: &'a reqwest::Client,
-    flags: &'a AgentFlags,
-    stderr: &'a mut String,
-}
-
-fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBuild {
-    let ToolRegistryArgs {
-        base_dir,
-        config,
-        http_client,
-        flags,
-        stderr,
-    } = args;
-    let workspace = crate::interface::shared::resolve_agent_workspace(
-        &config.workspace_path(),
-        flags.no_sandbox,
-    );
-    let model = flags
-        .model_override
-        .clone()
-        .unwrap_or(config.agents.defaults.model.clone());
-    let restrict_to_workspace = !flags.no_sandbox && config.agents.defaults.restrict_to_workspace;
-    if flags.no_sandbox {
-        stderr.push_str("WARNING: --no-sandbox is active — workspace path restriction disabled\n");
-    }
-    let sandbox = Sandbox::new(Some(workspace.clone()), restrict_to_workspace);
-    let mut exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(config);
-    if flags.network {
-        exec_settings.network_passthrough = true;
-        stderr
-            .push_str("WARNING: --network is active — bash network namespace isolation disabled\n");
-        tracing::warn!("--network: bash network namespace isolation disabled");
-    }
-    let effective_network = exec_settings.network_passthrough;
-    let mut registry =
-        ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
-    let session_key = if flags.no_session || flags.session_name.as_deref() == Some("-") {
-        String::new()
-    } else {
-        let name = flags.session_name.as_deref().unwrap_or("default");
-        Session::build_key("cli", name)
-    };
-    let spill_store = Arc::new(FileContextSpillStore::new(base_dir.to_path_buf()));
-    registry.register(Arc::new(RecallTool::new(
-        spill_store.clone(),
-        session_key.clone(),
-    )));
-    let subagent_registry = AgentCmdTool::new_registry();
-    let socket_dir = crate::interface::shared::xdg_runtime_dir_or_temp();
-    let (notify_tx, notify_rx) =
-        crate::infrastructure::tools::subagent_registry::new_notification_channel();
-    registry.register(Arc::new(
-        SpawnTool::with_base_dir(vec![], restrict_to_workspace, base_dir.to_path_buf())
-            .with_network(effective_network)
-            .with_socket_dir(socket_dir)
-            .with_registry(subagent_registry.clone())
-            .with_notify_tx(notify_tx),
-    ));
-    let subagent_registry_for_protocol = subagent_registry.clone();
-    registry.register(Arc::new(AgentCmdTool::new(subagent_registry)));
-    let wf_state = crate::interface::shared::register_workflow_tool(
-        &mut registry,
-        &config.workflow,
-        None, // Emitter wired separately in UDS mode (#562)
-    );
-
-    let ext_registry =
-        crate::interface::shared::build_and_register_native_extensions(config, http_client);
-    let extension_prompt_snippets = ext_registry.system_prompt_snippets();
-    crate::interface::shared::register_extension_tools(&mut registry, &ext_registry);
-
-    let has_base_dir = !base_dir.as_os_str().is_empty();
-    ToolRegistryBuild {
-        registry,
-        spill_store,
-        session_key,
-        model,
-        ext_registry,
-        extension_prompt_snippets,
-        notification_rx: if has_base_dir { Some(notify_rx) } else { None },
-        subagent_registry: if has_base_dir {
-            Some(subagent_registry_for_protocol)
-        } else {
-            None
-        },
-        workflow_state: wf_state,
-    }
-}
+mod agent_tool_registry;
+use agent_tool_registry::{build_tool_registry, ToolRegistryArgs, ToolRegistryBuild};
 
 pub(crate) fn run_agent_session(
     base_dir: &std::path::Path,
@@ -590,6 +505,7 @@ pub(crate) fn run_agent_session(
                 let session = Session {
                     key: session_key,
                     messages: std::mem::take(&mut messages),
+                    workflow_run: None,
                 };
                 if let Err(e) = rt.block_on(session_store.save(&session)) {
                     out.stderr
@@ -684,7 +600,7 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
 
     let model = build.model.clone();
 
-    // Build system prompt: datetime preamble + skills + extensions + workflow + user prompt.
+    // Build the base system prompt; workflow is appended dynamically before each UDS turn.
     let skill_prompt = crate::interface::shared::load_skill_prompt(&base_dir);
     let mut system_prompt =
         crate::interface::shared::build_system_prompt(&skill_prompt, &flags.system_prompt);
@@ -692,7 +608,19 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         &mut system_prompt,
         &build.extension_prompt_snippets,
     );
-    crate::interface::shared::append_workflow_prompt(&mut system_prompt, &build.workflow_config);
+    if let Some(workflow) = build.workflow_state.clone() {
+        let base_prompt = system_prompt.clone();
+        let provider_base = base_prompt.clone();
+        let workflow_for_provider = workflow.clone();
+        agent.set_system_prompt_provider(Some(Arc::new(move || {
+            let mut prompt = provider_base.clone();
+            crate::interface::shared::append_workflow_prompt(&mut prompt, &workflow_for_provider);
+            prompt
+        })));
+        let mut prompt = base_prompt;
+        crate::interface::shared::append_workflow_prompt(&mut prompt, &workflow);
+        system_prompt = prompt;
+    }
 
     // Use --socket path if provided; otherwise auto-generate in $XDG_RUNTIME_DIR or temp.
     let socket_path = flags.socket_path.clone().unwrap_or_else(|| {

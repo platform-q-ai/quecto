@@ -63,6 +63,7 @@ fn when_agent_processes_tool_call(world: &mut QuectoWorld) {
         progress_callback: None,
         streaming: false,
         effort: None,
+        system_prompt_provider: None,
     });
 
     // Capture tracing output

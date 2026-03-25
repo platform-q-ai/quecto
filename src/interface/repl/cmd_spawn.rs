@@ -155,6 +155,7 @@ mod tests {
             progress_callback: None,
             streaming: false,
             effort: None,
+            system_prompt_provider: None,
         });
         let session_store = FileSessionStore::new(tmp.path());
         let session = ReplSession {

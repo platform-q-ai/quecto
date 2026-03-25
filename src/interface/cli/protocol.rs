@@ -258,6 +258,22 @@ pub enum AgentEvent {
     /// Broadcast when a subagent's status changes (#524).
     /// Contains the full list of subagents (clients do a simple replace).
     SubagentStateChanged { subagents: Vec<SubagentInfo> },
+    /// Broadcast when workflow state changes.
+    #[serde(rename_all = "camelCase")]
+    WorkflowState {
+        enabled: bool,
+        guards_enabled: bool,
+        mode: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        active_template: Option<serde_json::Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        active_issue: Option<serde_json::Value>,
+        progress: serde_json::Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        current_step: Option<serde_json::Value>,
+        steps: Vec<serde_json::Value>,
+        available_templates: Vec<serde_json::Value>,
+    },
 }
 
 /// Snapshot of a single subagent's state, used in `get_subagents` responses
@@ -386,6 +402,8 @@ pub struct SessionState {
     pub session_key: String,
     pub message_count: usize,
     pub pending_message_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<serde_json::Value>,
 }
 
 // ─── Session statistics ──────────────────────────────────────────────────────

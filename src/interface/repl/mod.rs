@@ -179,6 +179,7 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
             let session = Session {
                 key: self.session.session_key.clone(),
                 messages: Vec::new(),
+                workflow_run: None,
             };
             if let Err(e) = rt.block_on(self.session.session_store.save(&session)) {
                 let _ = writeln!(self.writer, "Warning: failed to clear session: {e}");
@@ -256,6 +257,7 @@ impl<R: BufRead, W: Write> ReplLoop<R, W> {
             let session = Session {
                 key: self.session.session_key.clone(),
                 messages: self.session.messages.clone(),
+                workflow_run: None,
             };
             if let Err(e) = rt.block_on(self.session.session_store.save(&session)) {
                 let _ = writeln!(self.writer, "Warning: failed to save session: {e}");
@@ -339,6 +341,7 @@ pub fn run_repl<R: BufRead, W: Write>(
         progress_callback,
         streaming: false,
         effort: resolve_effort_from_config(ctx.config),
+        system_prompt_provider: None,
     });
 
     let session_store = FileSessionStore::new(ctx.base_dir);

@@ -40,6 +40,8 @@ pub struct AgentLoopConfig {
     /// Optional effort level for 4.6 models. When `Some`, passed through to
     /// every `ChatRequest`. When `None`, the provider applies its own default.
     pub effort: Option<EffortLevel>,
+    /// Optional dynamic system prompt provider invoked before each LLM turn.
+    pub system_prompt_provider: Option<Arc<dyn Fn() -> String + Send + Sync>>,
 }
 
 /// Concrete implementation of the agent loop.
@@ -61,6 +63,8 @@ pub struct AgentLoopImpl {
     progress_callback: Option<ProgressCallback>,
     /// Optional effort level passed through to every ChatRequest.
     effort: Option<EffortLevel>,
+    /// Optional dynamic system prompt provider invoked before each LLM turn.
+    system_prompt_provider: Option<Arc<dyn Fn() -> String + Send + Sync>>,
 }
 
 impl std::fmt::Debug for AgentLoopImpl {
@@ -99,6 +103,7 @@ impl AgentLoopImpl {
             progress_callback: config.progress_callback,
             streaming: config.streaming,
             effort: config.effort,
+            system_prompt_provider: config.system_prompt_provider,
         }
     }
 
@@ -179,6 +184,14 @@ impl AgentLoopImpl {
         self.progress_callback = cb;
     }
 
+    /// Set or replace the dynamic system prompt provider at runtime.
+    pub fn set_system_prompt_provider(
+        &mut self,
+        provider: Option<Arc<dyn Fn() -> String + Send + Sync>>,
+    ) {
+        self.system_prompt_provider = provider;
+    }
+
     /// Set the skill count (for startup info).
     pub fn with_skill_count(mut self, count: usize) -> Self {
         self.skill_count = count;
@@ -188,6 +201,23 @@ impl AgentLoopImpl {
     /// Access the context spill store (if configured).
     pub fn spill_store(&self) -> Option<&Arc<dyn ContextSpillStore>> {
         self.spill_store.as_ref()
+    }
+
+    fn refresh_dynamic_system_prompt(&self, messages: &mut Vec<Message>) {
+        let Some(ref provider) = self.system_prompt_provider else {
+            return;
+        };
+        let prompt = provider();
+        if prompt.is_empty() {
+            return;
+        }
+        if let Some(first) = messages.first_mut()
+            && first.role == crate::domain::message::Role::System
+        {
+            first.content = prompt;
+        } else {
+            messages.insert(0, Message::system(prompt));
+        }
     }
 
     /// Apply context pruning and return the post-pruning token estimate.
@@ -442,6 +472,7 @@ impl AgentLoopImpl {
         let mut total_output_tokens: u32 = 0;
 
         loop {
+            self.refresh_dynamic_system_prompt(messages);
             let context_tokens = self
                 .apply_context_pruning(messages, current_turn, spills_dirty)
                 .await;

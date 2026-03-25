@@ -1,581 +1,155 @@
 use super::*;
 
 #[test]
-fn test_default_state_has_16_steps() {
-    let state = WorkflowState::default_bdd();
-    assert_eq!(state.steps().len(), 16);
-    assert!(state.done_flags().iter().all(|&d| !d));
-    assert!(state.active_issue().is_none());
+fn default_config_uses_builtins_when_templates_empty() {
+    let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let templates = engine.list_templates();
+    assert!(templates.iter().any(|t| t.id == "feature"));
+    assert!(templates.iter().any(|t| t.id == "fix"));
 }
 
 #[test]
-fn test_check_step() {
-    let mut state = WorkflowState::default_bdd();
-    state.check(1).unwrap();
-    assert!(state.is_done(1).unwrap());
-    assert!(!state.is_done(2).unwrap());
+fn selector_mode_before_template_selection() {
+    let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    assert_eq!(engine.mode(), WorkflowMode::SelectingTemplate);
+    assert!(engine.status_text().contains("Available templates"));
 }
 
 #[test]
-fn test_uncheck_step() {
-    let mut state = WorkflowState::default_bdd();
-    state.check(1).unwrap();
-    state.uncheck(1).unwrap();
-    assert!(!state.is_done(1).unwrap());
+fn select_template_starts_run() {
+    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    engine.select_template("fix", None).unwrap();
+    assert_eq!(engine.mode(), WorkflowMode::Active);
+    assert_eq!(engine.progress().total, 6);
+    assert_eq!(engine.current_step().unwrap().index, 1);
 }
 
 #[test]
-fn test_check_enforces_ordering() {
-    let mut state = WorkflowState::default_bdd();
-    let err = state.check(3).unwrap_err();
-    assert!(err.to_string().contains("complete step 1 first"));
+fn check_enforces_ordering() {
+    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    engine.select_template("feature", None).unwrap();
+    let err = engine.check(3).unwrap_err();
+    assert!(err.to_string().contains("complete step 1"));
 }
 
 #[test]
-fn test_check_allows_next_step() {
-    let mut state = WorkflowState::default_bdd();
-    state.check(1).unwrap();
-    state.check(2).unwrap();
-    assert!(state.is_done(2).unwrap());
+fn check_and_uncheck_work() {
+    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    engine.select_template("feature", None).unwrap();
+    engine.check(1).unwrap();
+    engine.check(2).unwrap();
+    assert_eq!(engine.progress().done, 2);
+    engine.uncheck(2).unwrap();
+    assert_eq!(engine.progress().done, 1);
 }
 
 #[test]
-fn test_skip_bypasses_ordering() {
-    let mut state = WorkflowState::default_bdd();
-    state.skip(5).unwrap();
-    assert!(state.is_done(5).unwrap());
-    assert!(!state.is_done(4).unwrap());
+fn skip_bypasses_ordering() {
+    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    engine.select_template("feature", None).unwrap();
+    engine.skip(5).unwrap();
+    assert_eq!(engine.progress().done, 1);
 }
 
 #[test]
-fn test_reset_clears_all() {
-    let mut state = WorkflowState::default_bdd();
-    state.check(1).unwrap();
-    state.set_issue(42, "My feature".into());
-    state.reset();
-    assert!(state.done_flags().iter().all(|&d| !d));
-    assert!(state.active_issue().is_none());
+fn reset_returns_to_selector_mode() {
+    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    engine
+        .select_template("feature", Some((42, "test".into())))
+        .unwrap();
+    engine.check(1).unwrap();
+    engine.reset();
+    assert_eq!(engine.mode(), WorkflowMode::SelectingTemplate);
+    assert!(engine.persisted_run().is_none());
 }
 
 #[test]
-fn test_set_issue() {
-    let mut state = WorkflowState::default_bdd();
-    state.set_issue(42, "My feature".into());
-    let issue = state.active_issue().unwrap();
-    assert_eq!(issue.0, 42);
-    assert_eq!(issue.1, "My feature");
+fn set_issue_truncates_title() {
+    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let long = "x".repeat(600);
+    engine.set_issue(1, long);
+    assert!(engine.snapshot(true).active_issue.unwrap().1.len() <= 500);
 }
 
 #[test]
-fn test_set_issue_truncates_long_title() {
-    let mut state = WorkflowState::default_bdd();
-    let long_title = "x".repeat(1000);
-    state.set_issue(1, long_title);
-    let issue = state.active_issue().unwrap();
-    assert!(issue.1.len() <= MAX_ISSUE_TITLE_LEN);
-}
+fn persisted_run_round_trip() {
+    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    engine
+        .select_template("fix", Some((7, "bug".into())))
+        .unwrap();
+    engine.check(1).unwrap();
+    let persisted = engine.persisted_run().unwrap();
 
-#[test]
-fn test_clear_issue() {
-    let mut state = WorkflowState::default_bdd();
-    state.set_issue(42, "My feature".into());
-    state.clear_issue();
-    assert!(state.active_issue().is_none());
-}
-
-#[test]
-fn test_progress() {
-    let mut state = WorkflowState::default_bdd();
-    state.check(1).unwrap();
-    state.check(2).unwrap();
-    let progress = state.progress();
-    assert_eq!(progress.done, 2);
-    assert_eq!(progress.total, 16);
-    assert_eq!(progress.percent, 12);
-}
-
-#[test]
-fn test_check_out_of_range() {
-    let mut state = WorkflowState::default_bdd();
-    let err = state.check(0).unwrap_err();
-    assert!(err.to_string().contains("invalid step"));
-    let err = state.check(17).unwrap_err();
-    assert!(err.to_string().contains("invalid step"));
-}
-
-#[test]
-fn test_uncheck_out_of_range() {
-    let mut state = WorkflowState::default_bdd();
-    let err = state.uncheck(0).unwrap_err();
-    assert!(err.to_string().contains("invalid step"));
-}
-
-#[test]
-fn test_new_clamps_steps_to_max() {
-    let steps: Vec<WorkflowStep> = (0..200)
-        .map(|i| WorkflowStep {
-            id: i,
-            label: format!("Step {}", i),
-            phase: "red".into(),
-        })
-        .collect();
-    let state = WorkflowState::new(steps);
-    assert_eq!(state.steps().len(), MAX_STEPS);
-}
-
-#[test]
-fn test_from_config() {
-    let config = WorkflowConfig::default();
-    let state = WorkflowState::from_config(&config);
-    assert_eq!(state.steps().len(), 0, "default config has no steps");
-}
-
-#[test]
-fn test_from_config_with_bdd_steps() {
-    let config = WorkflowConfig {
-        steps: bdd_steps(),
-        ..Default::default()
-    };
-    let state = WorkflowState::from_config(&config);
-    assert_eq!(state.steps().len(), 16);
-}
-
-#[test]
-fn test_snapshot() {
-    let mut state = WorkflowState::default_bdd();
-    state.check(1).unwrap();
-    state.set_issue(42, "feat".into());
-    let snap = state.snapshot();
-    assert_eq!(snap.steps.len(), 16);
-    assert!(snap.steps[0].1); // first step done
-    assert!(!snap.steps[1].1);
-    assert_eq!(snap.progress.done, 1);
-    assert_eq!(snap.active_issue, Some((42, "feat".into())));
-}
-
-// ─── WorkflowConfig tests ────────────────────────────────────────────────
-
-#[test]
-fn test_default_config() {
-    let config = WorkflowConfig::default();
-    assert!(
-        !config.enabled,
-        "workflow is opt-in; default should be disabled"
+    let mut restored = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    restored.restore_run(persisted);
+    assert_eq!(restored.mode(), WorkflowMode::Active);
+    assert_eq!(restored.progress().done, 1);
+    assert_eq!(
+        restored.snapshot(true).active_issue,
+        Some((7, "bug".into()))
     );
-    assert_eq!(config.steps.len(), 0, "no hardcoded default steps");
-    assert!(config.guards.is_empty(), "no default guards");
 }
 
 #[test]
-fn test_config_disabled() {
-    let config = WorkflowConfig {
-        enabled: false,
+fn guards_block_until_before_step_key_threshold() {
+    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), true).unwrap();
+    engine.select_template("feature", None).unwrap();
+    let err = engine.check_guards().unwrap_err();
+    assert!(err.to_string().contains("Complete step 1"));
+    for step in 1..=6 {
+        engine.check(step).unwrap();
+    }
+    assert!(engine.check_guards().is_ok());
+}
+
+#[test]
+fn completion_nudge_only_when_complete() {
+    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    engine.select_template("chore", None).unwrap();
+    assert!(engine.completion_nudge().is_none());
+    for step in 1..=4 {
+        engine.check(step).unwrap();
+    }
+    assert!(
+        engine
+            .completion_nudge()
+            .unwrap()
+            .contains("All workflow steps complete")
+    );
+}
+
+#[test]
+fn validate_duplicate_template_ids() {
+    let cfg = WorkflowConfig {
+        templates: vec![
+            WorkflowTemplate {
+                id: "x".into(),
+                label: "X".into(),
+                description: "x".into(),
+                when_to_use: None,
+                steps: vec![WorkflowTemplateStep {
+                    key: "a".into(),
+                    label: "A".into(),
+                    phase: "red".into(),
+                    guidance: None,
+                }],
+                guards: vec![],
+            },
+            WorkflowTemplate {
+                id: "x".into(),
+                label: "Y".into(),
+                description: "y".into(),
+                when_to_use: None,
+                steps: vec![WorkflowTemplateStep {
+                    key: "b".into(),
+                    label: "B".into(),
+                    phase: "green".into(),
+                    guidance: None,
+                }],
+                guards: vec![],
+            },
+        ],
         ..Default::default()
     };
-    assert!(!config.enabled);
-}
-
-#[test]
-fn test_config_deserialize() {
-    let json = r#"{"enabled":true,"steps":[{"id":1,"label":"Test","phase":"red"}]}"#;
-    let config: WorkflowConfig = serde_json::from_str(json).unwrap();
-    assert!(config.enabled);
-    assert_eq!(config.steps.len(), 1);
-}
-
-#[test]
-fn test_config_deserialize_empty() {
-    let json = r#"{}"#;
-    let config: WorkflowConfig = serde_json::from_str(json).unwrap();
-    assert!(config.enabled);
-    assert_eq!(config.steps.len(), 0, "no hardcoded default steps");
-    assert!(config.guards.is_empty(), "no default guards via serde");
-}
-
-#[test]
-fn test_config_with_guards() {
-    let json = r#"{"enabled":true,"guards":[{"commands":["git commit"],"before_step":7,"message":"Not yet."}]}"#;
-    let config: WorkflowConfig = serde_json::from_str(json).unwrap();
-    assert_eq!(config.guards.len(), 1);
-    assert_eq!(config.guards[0].commands, vec!["git commit"]);
-    assert_eq!(config.guards[0].before_step, 7);
-    assert_eq!(config.guards[0].message, "Not yet.");
-}
-
-#[test]
-fn test_config_empty_guards() {
-    let json = r#"{"enabled":true}"#;
-    let config: WorkflowConfig = serde_json::from_str(json).unwrap();
-    assert!(config.guards.is_empty());
-}
-
-#[test]
-fn test_config_roundtrip_skips_default_steps() {
-    let config = WorkflowConfig::default();
-    let json = serde_json::to_string(&config).unwrap();
-    // Default steps should be skipped in serialization
-    assert!(!json.contains("Update Scenarios"));
-}
-
-// ─── System prompt snippet tests ─────────────────────────────────────────
-
-#[test]
-fn test_system_prompt_snippet_with_checked_step() {
-    let mut state = WorkflowState::default_bdd();
-    state.check(1).unwrap();
-    let snippet = state.system_prompt_snippet();
-    assert!(snippet.contains("1/16"));
-    assert!(snippet.contains("CURRENT STEP"));
-}
-
-#[test]
-fn test_system_prompt_snippet_with_active_issue() {
-    let mut state = WorkflowState::default_bdd();
-    state.set_issue(42, "My feature".into());
-    let snippet = state.system_prompt_snippet();
-    assert!(snippet.contains("#42"));
-    assert!(snippet.contains("My feature"));
-}
-
-#[test]
-fn test_system_prompt_snippet_no_issue() {
-    let state = WorkflowState::default_bdd();
-    let snippet = state.system_prompt_snippet();
-    assert!(snippet.contains("(not set)"));
-}
-
-#[test]
-fn test_system_prompt_snippet_custom_steps() {
-    let steps = vec![
-        WorkflowStep {
-            id: 1,
-            label: "Custom step A".into(),
-            phase: "alpha".into(),
-        },
-        WorkflowStep {
-            id: 2,
-            label: "Custom step B".into(),
-            phase: "alpha".into(),
-        },
-        WorkflowStep {
-            id: 3,
-            label: "Custom step C".into(),
-            phase: "beta".into(),
-        },
-    ];
-    let state = WorkflowState::new(steps);
-    let snippet = state.system_prompt_snippet();
-    assert!(snippet.contains("[alpha]"));
-    assert!(snippet.contains("[beta]"));
-    assert!(snippet.contains("Custom step A"));
-}
-
-// ─── WorkflowError tests ─────────────────────────────────────────────────
-
-#[test]
-fn test_workflow_error_display() {
-    let err = WorkflowError::InvalidStep("invalid step 0".into());
-    assert_eq!(err.to_string(), "invalid step 0");
-    let err = WorkflowError::OrderingViolation("complete step 1 first".into());
-    assert_eq!(err.to_string(), "complete step 1 first");
-}
-
-#[test]
-fn test_phase_display_name() {
-    assert_eq!(phase_display_name("red"), "RED");
-    assert_eq!(phase_display_name("green"), "GREEN");
-    assert_eq!(phase_display_name("refactor"), "REFACTOR");
-    assert_eq!(phase_display_name("ci_cd"), "CI/CD");
-    assert_eq!(phase_display_name("review"), "REVIEW");
-    assert_eq!(phase_display_name("custom"), "custom");
-}
-
-// ─── Auto-continue nudge tests ──────────────────────────────────────────
-
-#[test]
-fn test_auto_continue_nudge_fresh_state() {
-    let state = WorkflowState::default_bdd();
-    let nudge = state.auto_continue_nudge();
-    assert!(nudge.is_some());
-    let nudge = nudge.unwrap();
-    assert!(nudge.contains("step 1"));
-}
-
-#[test]
-fn test_auto_continue_nudge_partial() {
-    let mut state = WorkflowState::default_bdd();
-    state.check(1).unwrap();
-    let nudge = state.auto_continue_nudge();
-    assert!(nudge.is_some());
-    let nudge = nudge.unwrap();
-    assert!(nudge.contains("step 2"));
-}
-
-#[test]
-fn test_auto_continue_nudge_all_done() {
-    let mut state = WorkflowState::default_bdd();
-    for i in 1..=16 {
-        state.check(i).unwrap();
-    }
-    assert!(state.auto_continue_nudge().is_none());
-}
-
-// ─── Completion nudge tests ─────────────────────────────────────────────
-
-#[test]
-fn test_completion_nudge_all_done() {
-    let mut state = WorkflowState::default_bdd();
-    for i in 1..=16 {
-        state.check(i).unwrap();
-    }
-    let nudge = state.completion_nudge();
-    assert!(nudge.is_some());
-    let nudge = nudge.unwrap();
-    assert!(nudge.contains("Close"));
-    assert!(nudge.contains("next"));
-    assert!(nudge.contains("issue"));
-}
-
-#[test]
-fn test_completion_nudge_not_done() {
-    let mut state = WorkflowState::default_bdd();
-    state.check(1).unwrap();
-    assert!(state.completion_nudge().is_none());
-}
-
-// ─── Commit enforcement tests ───────────────────────────────────────────
-
-#[test]
-fn test_check_commit_allowed_none() {
-    let state = WorkflowState::default_bdd();
-    assert!(state.check_commit_allowed(None).is_ok());
-}
-
-#[test]
-fn test_check_commit_allowed_zero() {
-    let state = WorkflowState::default_bdd();
-    assert!(state.check_commit_allowed(Some(0)).is_ok());
-}
-
-#[test]
-fn test_check_commit_blocked() {
-    let state = WorkflowState::default_bdd();
-    let result = state.check_commit_allowed(Some(6));
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("step 1"));
-}
-
-#[test]
-fn test_check_commit_allowed_when_steps_done() {
-    let mut state = WorkflowState::default_bdd();
-    for i in 1..=6 {
-        state.check(i).unwrap();
-    }
-    assert!(state.check_commit_allowed(Some(6)).is_ok());
-}
-
-#[test]
-fn test_check_commit_blocked_partial() {
-    let mut state = WorkflowState::default_bdd();
-    for i in 1..=4 {
-        state.check(i).unwrap();
-    }
-    let result = state.check_commit_allowed(Some(6));
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("step 5"));
-}
-
-// ─── Persistence tests ──────────────────────────────────────────────────
-
-#[test]
-fn test_to_persistable() {
-    let mut state = WorkflowState::default_bdd();
-    state.check(1).unwrap();
-    state.set_issue(42, "feat".into());
-    let p = state.to_persistable();
-    assert!(p.done[0]);
-    assert!(!p.done[1]);
-    assert_eq!(p.active_issue, Some((42, "feat".into())));
-}
-
-#[test]
-fn test_from_persistable() {
-    let steps = bdd_steps();
-    let p = WorkflowPersistable {
-        done: vec![true, false, true],
-        active_issue: Some((42, "feat".into())),
-    };
-    let state = WorkflowState::from_persistable_with_steps(&p, Some(steps));
-    assert!(state.is_done(1).unwrap());
-    assert!(!state.is_done(2).unwrap());
-    assert!(state.is_done(3).unwrap());
-    assert_eq!(state.active_issue(), Some(&(42, "feat".into())));
-}
-
-#[test]
-fn test_persistable_roundtrip() {
-    let mut state = WorkflowState::default_bdd();
-    state.check(1).unwrap();
-    state.set_issue(42, "feat".into());
-    let p = state.to_persistable();
-    let json = serde_json::to_string(&p).unwrap();
-    let p2: WorkflowPersistable = serde_json::from_str(&json).unwrap();
-    let state2 = WorkflowState::from_persistable_with_steps(&p2, Some(bdd_steps()));
-    assert!(state2.is_done(1).unwrap());
-    assert!(!state2.is_done(2).unwrap());
-    assert_eq!(state2.active_issue(), Some(&(42, "feat".into())));
-}
-
-#[test]
-fn test_persistable_size_mismatch_pads() {
-    let p = WorkflowPersistable {
-        done: vec![true, false], // Only 2 items
-        active_issue: None,
-    };
-    let state = WorkflowState::from_persistable_with_steps(&p, Some(bdd_steps()));
-    assert_eq!(state.steps().len(), 16);
-    assert!(state.is_done(1).unwrap());
-    assert!(!state.is_done(2).unwrap());
-    assert!(!state.is_done(3).unwrap()); // Padded with false
-}
-
-// ─── Config extensions tests ────────────────────────────────────────────
-
-#[test]
-fn test_default_config_has_new_fields() {
-    let config = WorkflowConfig::default();
-    assert!(config.auto_continue);
-    assert!(config.completion_nudge);
-    assert!(config.guards.is_empty());
-}
-
-#[test]
-fn test_config_deserialize_new_fields() {
-    let json = r#"{"auto_continue":false,"completion_nudge":false}"#;
-    let config: WorkflowConfig = serde_json::from_str(json).unwrap();
-    assert!(!config.auto_continue);
-    assert!(!config.completion_nudge);
-}
-
-#[test]
-fn test_config_deserialize_missing_new_fields_uses_defaults() {
-    let json = r#"{}"#;
-    let config: WorkflowConfig = serde_json::from_str(json).unwrap();
-    assert!(config.auto_continue);
-    assert!(config.completion_nudge);
-    assert!(config.guards.is_empty());
-}
-
-// ─── System prompt with guards tests ────────────────────────────────────
-
-#[test]
-fn test_system_prompt_snippet_with_guards() {
-    let state = WorkflowState::default_bdd();
-    let guards = vec![GuardRule {
-        commands: vec!["git commit".into()],
-        before_step: 7,
-        message: "Complete steps first.".into(),
-    }];
-    let snippet = state.system_prompt_snippet_with_guards(&guards);
-    assert!(snippet.contains("git commit"));
-    assert!(snippet.contains("Guard"));
-}
-
-#[test]
-fn test_system_prompt_snippet_no_guards() {
-    let state = WorkflowState::default_bdd();
-    let snippet = state.system_prompt_snippet_with_guards(&[]);
-    assert!(!snippet.contains("Guard"));
-}
-
-#[test]
-fn test_check_steps_complete() {
-    let mut state = WorkflowState::default_bdd();
-    // before_step=7 requires steps 1-6
-    assert!(state.check_steps_complete(7).is_err());
-    for i in 1..=6 {
-        state.check(i).unwrap();
-    }
-    assert!(state.check_steps_complete(7).is_ok());
-}
-
-#[test]
-fn test_check_steps_complete_zero_always_ok() {
-    let state = WorkflowState::default_bdd();
-    assert!(state.check_steps_complete(0).is_ok());
-}
-
-#[test]
-fn test_system_prompt_snippet_all_done_shows_complete() {
-    let mut state = WorkflowState::default_bdd();
-    for i in 1..=16 {
-        state.check(i).unwrap();
-    }
-    let snippet = state.system_prompt_snippet();
-    assert!(snippet.contains("All steps complete"));
-}
-// ─── Concurrent access safety ──────────────────────────────────────────
-
-#[test]
-fn test_workflow_state_is_send() {
-    fn assert_send<T: Send>() {}
-    assert_send::<WorkflowState>();
-}
-
-#[test]
-fn test_workflow_state_is_clone() {
-    let mut state = WorkflowState::default_bdd();
-    state.check(1).unwrap();
-    state.set_issue(42, "test".into());
-    let cloned = state.clone();
-    assert!(cloned.is_done(1).unwrap());
-    assert_eq!(cloned.active_issue(), Some(&(42, "test".into())));
-}
-
-// ─── Auto-continue nudge message content ────────────────────────────────
-
-#[test]
-fn test_auto_continue_nudge_references_step_label() {
-    let steps = vec![
-        WorkflowStep {
-            id: 1,
-            label: "Write tests".into(),
-            phase: "red".into(),
-        },
-        WorkflowStep {
-            id: 2,
-            label: "Implement code".into(),
-            phase: "green".into(),
-        },
-    ];
-    let mut state = WorkflowState::new(steps);
-    state.check(1).unwrap();
-    let nudge = state.auto_continue_nudge().unwrap();
-    assert!(nudge.contains("step 2"));
-    assert!(nudge.contains("Implement code"));
-}
-
-// ─── Custom phase names ────────────────────────────────────────────────
-
-#[test]
-fn test_custom_phase_passthrough() {
-    assert_eq!(phase_display_name("deploy"), "deploy");
-    assert_eq!(phase_display_name("testing"), "testing");
-    assert_eq!(phase_display_name(""), "");
-}
-
-// ─── Guard rule serialization ──────────────────────────────────────────
-
-#[test]
-fn test_guard_rule_roundtrip() {
-    let rule = GuardRule {
-        commands: vec!["git commit".into(), "git push".into()],
-        before_step: 7,
-        message: "Not yet!".into(),
-    };
-    let json = serde_json::to_string(&rule).unwrap();
-    let parsed: GuardRule = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed.commands, rule.commands);
-    assert_eq!(parsed.before_step, rule.before_step);
-    assert_eq!(parsed.message, rule.message);
+    assert!(WorkflowEngine::new(cfg, false).is_err());
 }

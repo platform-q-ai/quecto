@@ -11,6 +11,8 @@ pub struct Session {
     pub key: String,
     /// Ordered conversation history.
     pub messages: Vec<Message>,
+    /// Optional persisted workflow run for UDS-native workflow sessions.
+    pub workflow_run: Option<super::workflow::WorkflowRunPersisted>,
 }
 
 impl Session {
@@ -19,6 +21,7 @@ impl Session {
         Self {
             key: key.into(),
             messages: vec![],
+            workflow_run: None,
         }
     }
 
