@@ -125,6 +125,21 @@ fn workflow_subsystem_select_template_preserves_issue_set_in_selector_mode() {
 }
 
 #[test]
+fn workflow_subsystem_select_template_explicit_issue_overrides_existing_one() {
+    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    engine.set_issue(1, "old issue".into());
+
+    engine
+        .select_template("fix", Some((2, "new issue".into())))
+        .unwrap();
+
+    assert_eq!(
+        engine.snapshot(true).active_issue,
+        Some((2, "new issue".into()))
+    );
+}
+
+#[test]
 fn restore_run_clears_ordering_gaps() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine.restore_run(WorkflowRunPersisted {
