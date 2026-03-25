@@ -54,7 +54,7 @@ Zero deps except `thiserror`, `serde` (derive), `serde_yaml`. Defines system voc
 | `extension.rs` | `Extension` trait (`name()`, `tools()`, `system_prompt_snippet()`) |
 | `workspace.rs` | `OnboardStore` port |
 | `subagent.rs` | `SubagentConfig`, `validate_agent_id()` |
-| `workflow.rs` | `WorkflowState`, `WorkflowConfig` (`enabled`, `steps`, `auto_continue`, `completion_nudge`, `guards`; deprecated `guard_commit` fields auto-migrate), `WorkflowStep`, `WorkflowPersistable`, `WorkflowProgress`, `WorkflowError`, `default_steps()` (returns empty — steps must be configured in config.json), `bdd_steps()` (test-only 16-step template), `from_persistable_with_steps()` |
+| `workflow.rs` | `WorkflowEngine`, `WorkflowConfig` (`auto_continue`, `completion_nudge`, `templates`), `WorkflowTemplate`, `WorkflowTemplateStep`, `WorkflowGuardRule`, `WorkflowRun`, `WorkflowRunPersisted`, `WorkflowMode` (SelectingTemplate/Active/Complete), `WorkflowSnapshot`, `WorkflowError`, `default_templates()` (feature/fix/refactor/chore). UDS-only, opt-in via `--workflow` flag |
 | `error.rs` | `DomainError` enum (Provider, Tool, Session, Security, Config, Other) |
 
 Traits use `Pin<Box<dyn Future + Send + '_>>` for `Arc<dyn Trait>` compatibility.
@@ -75,9 +75,9 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 
 | Component | Contents |
 |---|---|
-| `config.rs` | `Config` with serde, env overrides (`QUECTO_AGENTS_DEFAULTS_EFFORT` validated at load), exec isolation settings (nsjail binary/limits/fallback), `WorkflowConfig` (steps must be explicit in config.json, guard rules register `WorkflowGuard`, deprecated fields auto-migrate). Tolerates unknown fields (forward-compatible) |
+| `config.rs` | `Config` with serde, env overrides (`QUECTO_AGENTS_DEFAULTS_EFFORT` validated at load), exec isolation settings (nsjail binary/limits/fallback), `WorkflowConfig` (template library, optional custom templates). Tolerates unknown fields (forward-compatible) |
 | `providers/` | `OpenAiProvider` (SSE streaming via `openai_sse`), `AnthropicProvider` (SSE streaming via `anthropic_sse`, extended thinking support with `signature_delta` capture, auto-enables adaptive thinking for 4.6 models, effort default `low` for 4.6 models, Claude Code identity for OAuth tokens — system prompt prefix + tool name remapping + beta headers, `interleaved-thinking` + `fine-grained-tool-streaming` betas, thinking block replay in multi-turn via `ThinkingBlock`, `claude_code.rs` for tool name canonical casing), `CodexProvider` (Responses API, SSE, `prompt_cache_key`, orphan pair repair), `RefreshableProvider` (OAuth 401 → auto-refresh → retry), `FallbackProvider` (cooldown + error classification + `provider/model` routing syntax). URL validation: https required for non-loopback (override with `QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS=1`) |
-| `tools/` | `bash/` (shell, 1MiB cap, per-invocation timeout, `commandPrefix`, native/nsjail modes), `filesystem/` (`ReadTool` with image base64+auto-resize, `WriteTool`, `EditTool` with fuzzy match+CRLF/BOM+LCS diff, `LsTool` with limit+case-insensitive sort), `grep.rs` (rg JSON output, file-cache context), `find.rs` (fd, nested .gitignore, path-segment globs via `--full-path`), `ensure_tool.rs` (auto-download rg/fd from GitHub), `spawn.rs` (background UDS-mode subagent spawning), `agent_cmd.rs` (send commands to spawned UDS agents — `steer`, `follow_up`, `abort`, `get_state`), `web_search.rs` (Brave+DDG), `web_fetch.rs` (URL fetch with HTML stripping, per-host SSRF allowlist for tests), `recall.rs` (spill retrieval), `workflow_tool.rs` (`WorkflowTool` + `WorkflowGuard` — mutating actions emit `workflow_state`, `check_commit` validates configured guards, and guard registration is driven by the `guards` array), `path_utils.rs`, `truncate.rs`, `command_match.rs`, `registry.rs` (`ToolRegistryImpl`, `guard_count()`) |
+| `tools/` | `bash/` (shell, 1MiB cap, per-invocation timeout, `commandPrefix`, native/nsjail modes), `filesystem/` (`ReadTool` with image base64+auto-resize, `WriteTool`, `EditTool` with fuzzy match+CRLF/BOM+LCS diff, `LsTool` with limit+case-insensitive sort), `grep.rs` (rg JSON output, file-cache context), `find.rs` (fd, nested .gitignore, path-segment globs via `--full-path`), `ensure_tool.rs` (auto-download rg/fd from GitHub), `spawn.rs` (background UDS-mode subagent spawning), `agent_cmd.rs` (send commands to spawned UDS agents — `steer`, `follow_up`, `abort`, `get_state`), `web_search.rs` (Brave+DDG), `web_fetch.rs` (URL fetch with HTML stripping, per-host SSRF allowlist for tests), `recall.rs` (spill retrieval), `workflow_tool.rs` (`WorkflowTool` thin façade over `WorkflowEngine`, `WorkflowGuard` template-aware `ToolGuard` impl — mutating actions emit `workflow_state` events, guard registration gated by `--workflow-guards`), `path_utils.rs`, `truncate.rs`, `command_match.rs`, `registry.rs` (`ToolRegistryImpl`, `guard_count()`) |
 | `persistence/` | `FileSessionStore` (round-trips all Message fields including `thinking_blocks` for multi-turn thinking replay), `MemoryStore`, `FileSkillLoader`, `FileOnboardStore` (`workspace_store.rs`), `FileContextSpillStore` (JSONL append-only) |
 | `security/` | `Sandbox` — workspace path validation + command filtering |
 | `extensions/` | `ExtensionRegistry` (register extensions, aggregate tools + system prompt snippets), `NativeExtension` (compiled-in config-gated tools, e.g. `web_search`, `web_fetch`), `UdsExtensionTool` (routes tool execution to connected UDS clients via mpsc/oneshot channels). See [Extensions guide](docs/extensions.md) |
@@ -435,39 +435,9 @@ Config file: `~/.quecto/config.json`
     }
   },
   "workflow": {
-    "enabled": true,
     "auto_continue": true,
     "completion_nudge": true,
-    "steps": [
-      { "id": 1, "label": "Update Scenarios / Add new features", "phase": "red" },
-      { "id": 2, "label": "Write/update unit tests", "phase": "red" },
-      { "id": 3, "label": "Ensure new/modified tests FAIL (RED)", "phase": "red" },
-      { "id": 4, "label": "Implement code (GREEN)", "phase": "green" },
-      { "id": 5, "label": "Refactor (perf, security, clean arch)", "phase": "refactor" },
-      { "id": 6, "label": "Ensure tests still pass (GREEN)", "phase": "green" },
-      { "id": 7, "label": "Commit", "phase": "ci_cd" },
-      { "id": 8, "label": "Push", "phase": "ci_cd" },
-      { "id": 9, "label": "Create PR", "phase": "ci_cd" },
-      { "id": 10, "label": "Despatch reviewers (Arch, Security, Perf)", "phase": "review" },
-      { "id": 11, "label": "Fix all valid review concerns", "phase": "review" },
-      { "id": 12, "label": "Push changes to remote", "phase": "review" },
-      { "id": 13, "label": "Reply to comments and mark resolved", "phase": "review" },
-      { "id": 14, "label": "Run pre-merge hooks (real-LLM, machete, deny)", "phase": "ci_cd" },
-      { "id": 15, "label": "Merge", "phase": "ci_cd" },
-      { "id": 16, "label": "Move to local master and pull", "phase": "ci_cd" }
-    ],
-    "guards": [
-      {
-        "commands": ["git commit", "git push"],
-        "before_step": 7,
-        "message": "Complete RED-GREEN-REFACTOR (steps 1-6) before committing."
-      },
-      {
-        "commands": ["git merge", "gh pr merge"],
-        "before_step": 15,
-        "message": "Complete code review (steps 10-14) before merging."
-      }
-    ]
+    "templates": []
   }
 }
 ```
@@ -540,7 +510,7 @@ External tool binaries (`rg`, `fd`) are resolved via `ensure_tool`: system PATH 
 | `agent_cmd` | Send commands to spawned UDS subagents: `prompt`, `steer`, `follow_up`, `abort`, `kill`, `get_state`, `get_messages`, `get_messages_tail`, `get_session_stats`, `get_subagents`, `get_extensions`, `set_model`, `clear_history`, `reload_extensions` |
 | `web_search` | Search the web via Brave Search or DuckDuckGo |
 | `web_fetch` | Fetch a URL and return its content as readable text (HTML stripped by default) |
-| `workflow` | Manage the BDD/TDD development workflow (status, check, uncheck, reset, skip, set_issue, clear_issue, check_commit). `WorkflowGuard` enforces configured guard rules before blocked commands run |
+| `workflow` | UDS-only template-based development workflow (status, list_templates, select_template, check, uncheck, skip, reset, set_issue, clear_issue, check_guards). Enabled via `--workflow` flag. See [Workflow docs](docs/workflow.md) |
 
 Filesystem tools (`read`, `write`, `edit`, `ls`) run on async `tokio::fs` adapters.
 
@@ -714,7 +684,7 @@ Tool binary cache (auto-downloaded `rg`, `fd`):
 | [Extensions](docs/extensions.md) | Add custom tools via native extensions (config-gated) or UDS extensions (external processes) |
 | [Subagents](docs/subagents.md) | Spawning and controlling UDS-mode subagents with `spawn` and `agent_cmd` tools |
 | [Disabling Tools](docs/disable-tools.md) | Restricting which tools the agent can access via `--disable-tool` |
-| [Workflow](docs/workflow.md) | Configurable BDD/TDD step-by-step development workflow with guards |
+| [Workflow](docs/workflow.md) | UDS-only template-based workflow engine with selector mode, guards, and live prompt injection |
 
 ## Tech stack
 Rust 2024, Tokio, reqwest+rustls, serde/serde_json, uuid, tracing, dirs, thiserror, similar, base64, sha2, flate2, tar, rand, urlencoding, unicode-normalization. Dev: cucumber 0.21, futures, tempfile, wiremock 0.6, regex.

@@ -514,33 +514,14 @@ pub struct QuectoWorld {
     pub gateway_import_stderr: Option<String>,
     /// RefreshableProvider result (issue #255)
     pub refreshable_result: Option<Result<LlmResponse, DomainError>>,
-    // --- Issue #279: workflow tool ---
-    /// Shared workflow state for workflow BDD scenarios
-    pub workflow_state:
-        Option<std::sync::Arc<std::sync::Mutex<quecto::domain::workflow::WorkflowState>>>,
-    /// Workflow tool instance for BDD scenarios
-    pub workflow_tool: Option<quecto::infrastructure::tools::workflow_tool::WorkflowTool>,
-    /// Captured workflow events for event emission scenarios
-    pub workflow_events: Option<std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>>,
-    /// Workflow error from the last operation
-    pub workflow_error: Option<String>,
-    /// Guard check result (#405)
-    pub guard_result: Option<Result<(), String>>,
-    /// Workflow config for config scenarios
-    pub workflow_config: Option<quecto::domain::workflow::WorkflowConfig>,
-    /// Workflow system prompt snippet for system prompt scenarios
-    pub workflow_snippet: Option<String>,
-    // --- Issue #280: workflow automation ---
-    /// JSON string for workflow config deserialization scenarios
-    pub workflow_config_json: Option<String>,
-    /// Generated nudge message (auto_continue or completion)
-    pub workflow_nudge: Option<String>,
-    /// Guard rules for configurable guard scenarios
-    pub guard_rules: Option<Vec<quecto::domain::workflow::GuardRule>>,
-    /// Commit check result (Ok = allowed, Err = blocked with reason)
-    pub commit_check_result: Option<Result<(), String>>,
-    /// Serialized workflow state JSON for persistence scenarios
-    pub workflow_serialized: Option<String>,
+    // --- Workflow V2 (UDS-only, #568–#577) ---
+    // V1 BDD workflow fields removed. V2 workflow is covered by unit tests in:
+    //   src/domain/workflow_tests.rs
+    //   src/infrastructure/tools/workflow_tool_comprehensive_tests.rs
+    //   src/interface/shared_tests.rs
+    //   src/interface/cli/agent_tests.rs
+    //   src/interface/cli/protocol_tests.rs
+    //   src/infrastructure/persistence/session_store.rs
     // --- Extension system BDD fields ---
     /// Test extension for extension trait scenarios (Debug-opaque)
     pub test_extension: Option<DebugExtension>,
@@ -912,14 +893,10 @@ mod subagent_protocol_steps;
 mod subagent_steps;
 mod subagent_widget_steps;
 mod tool_empty_args_steps;
-mod tool_guard_steps;
 mod tool_output_cr_steps;
 mod truncate_steps;
 mod uds_steps;
 mod web_fetch_steps;
-mod workflow_automation_steps;
-mod workflow_e2e_steps;
-mod workflow_steps;
 
 // Runner
 // ===========================================================================
