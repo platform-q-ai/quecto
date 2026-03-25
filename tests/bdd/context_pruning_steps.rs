@@ -868,6 +868,7 @@ fn when_session_saved_and_reloaded(world: &mut QuectoWorld) {
     let session = Session {
         key: "test:persistence".to_string(),
         messages,
+        workflow_run: None,
     };
 
     let tmp = tempfile::TempDir::new().unwrap();
