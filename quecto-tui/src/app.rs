@@ -70,6 +70,14 @@ fn builtin_commands() -> Vec<SlashCommand> {
             name: "model".into(),
             description: "Switch model".into(),
         },
+        SlashCommand {
+            name: "workflow-auto".into(),
+            description: "Toggle workflow auto-continue".into(),
+        },
+        SlashCommand {
+            name: "workflow-nudge".into(),
+            description: "Toggle workflow completion nudge".into(),
+        },
     ]
 }
 
@@ -124,6 +132,10 @@ pub struct App {
     selection: Option<TextSelection>,
     /// Workflow header bar state (#563).
     workflow_bar: workflow_bar::WorkflowBarState,
+    /// TUI-local: auto-continue sends follow-up when steps are incomplete.
+    workflow_auto_continue: bool,
+    /// TUI-local: completion nudge sends issue-cycling prompt when all done.
+    workflow_completion_nudge: bool,
     /// Last rendered lines (for extracting selected text from the buffer).
     last_rendered_lines: Vec<String>,
 }
@@ -157,6 +169,8 @@ impl App {
             subagent_local: std::collections::BTreeMap::new(),
             selection: None,
             workflow_bar: workflow_bar::WorkflowBarState::default(),
+            workflow_auto_continue: false,
+            workflow_completion_nudge: false,
             last_rendered_lines: Vec::new(),
         }
     }
@@ -467,13 +481,29 @@ impl App {
                 return;
             }
             Key::CtrlShift('a') => {
-                // Toggle workflow auto-continue (#563).
-                self.notify("Auto-continue toggled (server-side)", NotifyLevel::Info);
+                self.workflow_auto_continue = !self.workflow_auto_continue;
+                let state = if self.workflow_auto_continue {
+                    "ON — agent will be nudged to complete all steps"
+                } else {
+                    "OFF"
+                };
+                self.notify(
+                    &format!("Workflow auto-continue {state}"),
+                    NotifyLevel::Info,
+                );
                 return;
             }
             Key::CtrlShift('n') => {
-                // Toggle workflow completion nudge (#563).
-                self.notify("Completion nudge toggled (server-side)", NotifyLevel::Info);
+                self.workflow_completion_nudge = !self.workflow_completion_nudge;
+                let state = if self.workflow_completion_nudge {
+                    "ON — agent will be prompted to pick next issue"
+                } else {
+                    "OFF"
+                };
+                self.notify(
+                    &format!("Workflow completion nudge {state}"),
+                    NotifyLevel::Info,
+                );
                 return;
             }
             Key::Ctrl('o') => {
@@ -599,6 +629,32 @@ impl App {
                         // No model name — open the model selector overlay.
                         self.open_model_selector();
                     }
+                    return;
+                }
+                "/workflow-auto" => {
+                    self.workflow_auto_continue = !self.workflow_auto_continue;
+                    let state = if self.workflow_auto_continue {
+                        "ON — agent will be nudged to complete all steps"
+                    } else {
+                        "OFF"
+                    };
+                    self.notify(
+                        &format!("Workflow auto-continue {state}"),
+                        NotifyLevel::Info,
+                    );
+                    return;
+                }
+                "/workflow-nudge" => {
+                    self.workflow_completion_nudge = !self.workflow_completion_nudge;
+                    let state = if self.workflow_completion_nudge {
+                        "ON — agent will be prompted to pick next issue"
+                    } else {
+                        "OFF"
+                    };
+                    self.notify(
+                        &format!("Workflow completion nudge {state}"),
+                        NotifyLevel::Info,
+                    );
                     return;
                 }
                 _ => {
@@ -788,6 +844,9 @@ impl App {
                     self.footer.set_streaming(false);
                     self.spinner = None;
                     self.chat.finalize_assistant();
+
+                    // Workflow auto-continue / completion nudge (#590).
+                    self.maybe_send_workflow_followup();
                 }
             }
             Event::Response {
@@ -851,6 +910,9 @@ impl App {
                 steps,
                 progress,
                 active_issue,
+                mode,
+                active_template,
+                available_templates,
             } => {
                 // Reconstruct the JSON for parsing.
                 let mut event = serde_json::json!({
@@ -860,6 +922,15 @@ impl App {
                 if let Some(issue) = active_issue {
                     event["activeIssue"] = issue;
                 }
+                if let Some(m) = mode {
+                    event["mode"] = serde_json::json!(m);
+                }
+                if let Some(tpl) = active_template {
+                    event["activeTemplate"] = tpl;
+                }
+                if let Some(templates) = available_templates {
+                    event["availableTemplates"] = serde_json::json!(templates);
+                }
                 self.workflow_bar = workflow_bar::parse_workflow_event(&event);
             }
             _ => {}
@@ -867,6 +938,54 @@ impl App {
     }
 
     /// Update subagent state from server push (full replacement).
+    /// Send a workflow follow-up prompt if auto-continue or completion nudge is active.
+    fn maybe_send_workflow_followup(&mut self) {
+        let wf = &self.workflow_bar;
+        // Only act when workflow is active (has steps).
+        if wf.total == 0 && wf.mode.as_deref() != Some("selecting_template") {
+            return;
+        }
+        let all_done = wf.total > 0 && wf.done == wf.total;
+
+        if self.workflow_auto_continue && !all_done && wf.done > 0 {
+            let msg = format!(
+                "Workflow incomplete ({}/{}). Continue with the next incomplete step. \
+                 Use the workflow tool to check off steps as you complete them. \
+                 Respond with just the word DONE when all {} steps are checked off.",
+                wf.done, wf.total, wf.total
+            );
+            self.send_command(Command::FollowUp {
+                id: None,
+                message: msg,
+            });
+        } else if self.workflow_completion_nudge && all_done {
+            let issue_part = wf
+                .issue_number
+                .map(|n| {
+                    let title = wf.issue_title.as_deref().unwrap_or("");
+                    format!(
+                        "You have completed all {} workflow steps for issue #{}: \"{}\". ",
+                        wf.total, n, title
+                    )
+                })
+                .unwrap_or_else(|| {
+                    format!("You have completed all {} workflow steps. ", wf.total)
+                });
+            let msg = format!(
+                "{issue_part}Now do the following in order:\n\
+                 1. Close the issue (if applicable)\n\
+                 2. Pick the next issue to work on — if no open issues exist, respond with just the word NONE\n\
+                 3. Record it: call the workflow tool with action=\"set_issue\", issueNumber=<n>, issueTitle=\"...\"\n\
+                 4. Reset the checklist: call the workflow tool with action=\"reset\"\n\
+                 5. Begin Step 1 immediately for the new issue"
+            );
+            self.send_command(Command::FollowUp {
+                id: None,
+                message: msg,
+            });
+        }
+    }
+
     fn update_subagent_bar(&mut self, subagents: Vec<crate::client::SubagentInfoEvent>) {
         // Merge server data with existing local state to preserve exited_at
         // timestamps. New entries are inserted; entries absent from the

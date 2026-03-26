@@ -348,6 +348,14 @@ fn render_tool_execution(
             is_error,
             inner_width,
         ),
+        "workflow" => render_workflow(
+            &mut content,
+            &icon,
+            &dur,
+            args_json,
+            result,
+            inner_width,
+        ),
         _ => render_generic(
             &mut content,
             tool_name,
@@ -642,6 +650,73 @@ fn render_subagent(
 
 /// Render generic/unknown tools.
 #[allow(clippy::too_many_arguments)]
+/// Render workflow tool: styled action + result summary.
+fn render_workflow(
+    lines: &mut Vec<String>,
+    icon: &str,
+    dur: &str,
+    args: &Option<serde_json::Value>,
+    result: Option<&str>,
+    width: usize,
+) {
+    let action = args
+        .as_ref()
+        .and_then(|v| v.get("action").and_then(|a| a.as_str()))
+        .unwrap_or("workflow");
+
+    let detail = match action {
+        "check" | "uncheck" | "skip" => {
+            let step = args
+                .as_ref()
+                .and_then(|v| v.get("step"))
+                .and_then(|s| s.as_u64())
+                .map(|n| format!(" step {n}"))
+                .unwrap_or_default();
+            format!("{action}{step}")
+        }
+        "select_template" => {
+            let tpl = args
+                .as_ref()
+                .and_then(|v| v.get("template").and_then(|t| t.as_str()))
+                .unwrap_or("?");
+            format!("select_template {tpl}")
+        }
+        "set_issue" => {
+            let num = args
+                .as_ref()
+                .and_then(|v| v.get("issueNumber"))
+                .and_then(|n| n.as_u64())
+                .map(|n| format!(" #{n}"))
+                .unwrap_or_default();
+            format!("set_issue{num}")
+        }
+        _ => action.to_string(),
+    };
+
+    lines.push(truncate_to_width(
+        &format!(
+            "{} {} {}{}",
+            icon,
+            theme::bold(&theme::accent("workflow")),
+            theme::dim(&detail),
+            dur
+        ),
+        width,
+        None,
+    ));
+
+    if let Some(text) = result {
+        let preview: String = text.lines().next().unwrap_or("").chars().take(120).collect();
+        if !preview.is_empty() {
+            lines.push(truncate_to_width(
+                &theme::dim(&format!("  {preview}")),
+                width,
+                None,
+            ));
+        }
+    }
+}
+
 fn render_generic(
     lines: &mut Vec<String>,
     tool_name: &str,
@@ -1470,6 +1545,60 @@ mod tests {
         assert!(
             bg_lines_contain(&lines, theme::BG_ERROR, "command not found"),
             "error bg box should contain error text"
+        );
+    }
+
+    // ── Workflow tool rendering ────────────────────────────────────
+
+    #[test]
+    fn workflow_tool_renders_action_and_step() {
+        let mut chat = Chat::new();
+        chat.start_tool(
+            "wf-1".into(),
+            "workflow".into(),
+            r#"{"action":"check","step":3}"#.into(),
+        );
+        chat.complete_tool("wf-1", "Step 3 checked.", false, Some(5));
+        let lines = chat.render(80);
+        assert!(
+            bg_lines_contain(&lines, theme::BG_SUCCESS, "workflow"),
+            "should contain 'workflow' in success bg"
+        );
+        assert!(
+            bg_lines_contain(&lines, theme::BG_SUCCESS, "check"),
+            "should contain action 'check'"
+        );
+    }
+
+    #[test]
+    fn workflow_tool_renders_select_template() {
+        let mut chat = Chat::new();
+        chat.start_tool(
+            "wf-2".into(),
+            "workflow".into(),
+            r#"{"action":"select_template","template":"fix"}"#.into(),
+        );
+        chat.complete_tool("wf-2", "Selected workflow template 'fix'.", false, Some(10));
+        let lines = chat.render(80);
+        assert!(
+            bg_lines_contain(&lines, theme::BG_SUCCESS, "fix"),
+            "should contain template name 'fix'"
+        );
+    }
+
+    #[test]
+    fn workflow_tool_renders_set_issue() {
+        let mut chat = Chat::new();
+        chat.start_tool(
+            "wf-3".into(),
+            "workflow".into(),
+            r#"{"action":"set_issue","issueNumber":42,"issueTitle":"Auth bug"}"#.into(),
+        );
+        chat.complete_tool("wf-3", "Active issue set: #42 — Auth bug", false, Some(3));
+        let lines = chat.render(80);
+        assert!(
+            bg_lines_contain(&lines, theme::BG_SUCCESS, "#42"),
+            "should contain issue number"
         );
     }
 }
