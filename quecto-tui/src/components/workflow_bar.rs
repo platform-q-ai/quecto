@@ -21,11 +21,21 @@ pub struct WorkflowBarState {
     pub total: u32,
     pub issue_number: Option<u32>,
     pub issue_title: Option<String>,
+    /// V2: workflow mode (selecting_template, active, complete).
+    pub mode: Option<String>,
+    /// V2: active template display name.
+    pub template_name: Option<String>,
+    /// V2: number of available templates (for selector mode display).
+    pub template_count: u32,
 }
 
 impl WorkflowBarState {
     /// Whether the bar should be visible.
     pub fn is_visible(&self) -> bool {
+        // V2: visible in selector mode even without an issue.
+        if self.mode.as_deref() == Some("selecting_template") {
+            return true;
+        }
         self.issue_number.is_some() && self.total > 0
     }
 
@@ -52,6 +62,30 @@ pub fn render(state: &WorkflowBarState, width: usize) -> Vec<String> {
         return vec![];
     }
 
+    let reset = "\x1b[0m";
+
+    // V2: Selector mode — no progress, just template selection prompt.
+    if state.mode.as_deref() == Some("selecting_template") {
+        let bg = "\x1b[48;2;20;15;40m"; // subtle purple tint
+        let issue_part = state
+            .issue_number
+            .map(|n| format!(" #{} \u{2500}\u{2500}\u{2500}", n))
+            .unwrap_or_default();
+        let content = format!(
+            " \u{2590} WF{} \u{27E8}{}\u{27E9} SELECT TEMPLATE ({} available)",
+            issue_part,
+            theme::bold("SELECT"),
+            state.template_count,
+        );
+        let vis_width = crate::utils::visible_width(&content);
+        let padding = if vis_width < width {
+            " ".repeat(width - vis_width)
+        } else {
+            String::new()
+        };
+        return vec![format!("{bg}{content}{padding}{reset}")];
+    }
+
     let issue_num = state.issue_number.unwrap_or(0);
     let issue_title: String = state
         .issue_title
@@ -76,6 +110,13 @@ pub fn render(state: &WorkflowBarState, width: usize) -> Vec<String> {
     let phase = state.current_phase().unwrap_or("DONE");
     let phase_display = phase_name(phase);
 
+    // Template name (V2) or step info fallback
+    let template_part = state
+        .template_name
+        .as_deref()
+        .map(|name| format!(" [{}]", name))
+        .unwrap_or_default();
+
     // Step info
     let step_info = if let Some(step_id) = state.current_step_id() {
         format!("Step {}", step_id)
@@ -85,12 +126,12 @@ pub fn render(state: &WorkflowBarState, width: usize) -> Vec<String> {
 
     // Build the line with phase-aware background
     let bg = phase_bg(phase);
-    let reset = "\x1b[0m";
 
     let content = format!(
-        " \u{2590} WF #{} \u{2500}\u{2500}\u{2500} {} \u{2500}\u{2500}\u{2500} {} {:02}/{:02} \u{2500}\u{2500}\u{2500} \u{27E8}{}\u{27E9} {}",
+        " \u{2590} WF #{} \u{2500}\u{2500}\u{2500} {}{} \u{2500}\u{2500}\u{2500} {} {:02}/{:02} \u{2500}\u{2500}\u{2500} \u{27E8}{}\u{27E9} {}",
         issue_num,
         issue_title,
+        template_part,
         theme::dim(&progress_bar),
         state.done,
         state.total,
@@ -172,12 +213,30 @@ pub fn parse_workflow_event(data: &serde_json::Value) -> WorkflowBarState {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
+    let mode = data
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let template_name = data
+        .get("activeTemplate")
+        .and_then(|t| t.get("label"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let template_count = data
+        .get("availableTemplates")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len() as u32)
+        .unwrap_or(0);
+
     WorkflowBarState {
         steps,
         done,
         total,
         issue_number,
         issue_title,
+        mode,
+        template_name,
+        template_count,
     }
 }
 
@@ -205,6 +264,9 @@ mod tests {
             total,
             issue_number: issue,
             issue_title: issue.map(|_| "test issue".into()),
+            mode: None,
+            template_name: None,
+            template_count: 0,
         }
     }
 
@@ -335,5 +397,78 @@ mod tests {
     fn current_phase_none_when_all_done() {
         let state = make_state(Some(1), 14, 14);
         assert!(state.current_phase().is_none());
+    }
+
+    // ── V2 tests: mode, template, selector ──────────────────────────
+
+    #[test]
+    fn parse_v2_event_captures_mode() {
+        let event = serde_json::json!({
+            "type": "workflow_state",
+            "mode": "selecting_template",
+            "steps": [],
+            "progress": {"done": 0, "total": 0, "percent": 0},
+            "availableTemplates": [
+                {"id": "feature", "label": "Feature"},
+                {"id": "fix", "label": "Fix"},
+            ],
+        });
+        let state = parse_workflow_event(&event);
+        assert_eq!(state.mode.as_deref(), Some("selecting_template"));
+        assert_eq!(state.template_count, 2);
+    }
+
+    #[test]
+    fn parse_v2_event_captures_template_name() {
+        let event = serde_json::json!({
+            "type": "workflow_state",
+            "mode": "active",
+            "activeTemplate": {"id": "fix", "label": "Fix"},
+            "steps": [
+                {"id": 1, "label": "Reproduce", "phase": "red", "done": true},
+                {"id": 2, "label": "Test", "phase": "red", "done": false},
+            ],
+            "progress": {"done": 1, "total": 2, "percent": 50},
+            "activeIssue": {"number": 42, "title": "auth bug"},
+        });
+        let state = parse_workflow_event(&event);
+        assert_eq!(state.mode.as_deref(), Some("active"));
+        assert_eq!(state.template_name.as_deref(), Some("Fix"));
+    }
+
+    #[test]
+    fn selector_mode_visible_even_without_issue() {
+        let mut state = WorkflowBarState::default();
+        state.mode = Some("selecting_template".into());
+        state.template_count = 4;
+        assert!(state.is_visible(), "selector mode should be visible");
+    }
+
+    #[test]
+    fn selector_mode_renders_select_template() {
+        let mut state = WorkflowBarState::default();
+        state.mode = Some("selecting_template".into());
+        state.template_count = 4;
+        let lines = render(&state, 80);
+        assert!(!lines.is_empty(), "selector mode should render");
+        let line = &lines[0];
+        assert!(
+            line.contains("SELECT") || line.contains("TEMPLATE"),
+            "selector mode should mention template selection: {line}"
+        );
+    }
+
+    #[test]
+    fn active_mode_renders_template_name() {
+        let mut state = make_state(Some(42), 2, 6);
+        state.mode = Some("active".into());
+        state.template_name = Some("Fix".into());
+        let lines = render(&state, 100);
+        assert!(!lines.is_empty());
+        let line = &lines[0];
+        assert!(
+            line.contains("Fix"),
+            "active mode should show template name: {line}"
+        );
     }
 }

@@ -142,6 +142,12 @@ pub enum Event {
         progress: serde_json::Value,
         #[serde(rename = "activeIssue", default)]
         active_issue: Option<serde_json::Value>,
+        #[serde(default)]
+        mode: Option<String>,
+        #[serde(rename = "activeTemplate", default)]
+        active_template: Option<serde_json::Value>,
+        #[serde(rename = "availableTemplates", default)]
+        available_templates: Option<Vec<serde_json::Value>>,
     },
     /// Catch-all for unknown/future event types (forward-compatible).
     #[serde(other)]
