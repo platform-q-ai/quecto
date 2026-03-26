@@ -613,6 +613,8 @@ pub struct QuectoWorld {
     pub _mc_reconnect_clients: Vec<u32>,
     /// Real-LLM UDS mode: use real credentials and real socket bind with sequential prompts
     pub _real_llm_uds: bool,
+    /// Workflow V2: when true, register WorkflowEngine + WorkflowTool + WorkflowGuard
+    pub _workflow_enabled: bool,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
