@@ -19,7 +19,8 @@ struct CliFlags {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    let flags = parse_flags(&args);
+    let mut flags = parse_flags(&args);
+    apply_workflow_defaults(&mut flags);
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -83,6 +84,18 @@ fn parse_flags(args: &[String]) -> CliFlags {
         }
     }
     flags
+}
+
+/// Apply sensible defaults when workflow is enabled.
+fn apply_workflow_defaults(flags: &mut CliFlags) {
+    if flags.workflow && flags.system_prompt.is_none() {
+        flags.system_prompt = Some(
+            "You are a coding assistant. Use the workflow tool to track development progress. \
+             Follow the workflow steps in order and check them off as you complete them. \
+             When all steps are complete, close the current issue and pick the next one."
+                .to_string(),
+        );
+    }
 }
 
 /// Main async entry point.
@@ -281,4 +294,60 @@ fn validate_socket_path(path: &std::path::Path) -> Result<(), String> {
         "socket path '{}' is not under an expected directory (/tmp, $TMPDIR, $XDG_RUNTIME_DIR, $HOME)",
         path_str
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(s: &str) -> Vec<String> {
+        let mut v = vec!["quecto-tui".to_string()];
+        if !s.is_empty() {
+            v.extend(s.split_whitespace().map(String::from));
+        }
+        v
+    }
+
+    #[test]
+    fn parse_workflow_flags() {
+        let flags = parse_flags(&args("--workflow --workflow-guards"));
+        assert!(flags.workflow);
+        assert!(flags.workflow_guards);
+    }
+
+    #[test]
+    fn parse_no_workflow_clears_both() {
+        let flags = parse_flags(&args("--workflow --workflow-guards --no-workflow"));
+        assert!(!flags.workflow);
+        assert!(!flags.workflow_guards);
+    }
+
+    #[test]
+    fn parse_config_and_system() {
+        let flags = parse_flags(&args("--config ./repo/config.json --system hello"));
+        assert_eq!(flags.config_path.unwrap().to_str().unwrap(), "./repo/config.json");
+        assert_eq!(flags.system_prompt.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn workflow_without_system_gets_default_prompt() {
+        let mut flags = parse_flags(&args("--workflow"));
+        apply_workflow_defaults(&mut flags);
+        assert!(flags.system_prompt.is_some());
+        assert!(flags.system_prompt.unwrap().contains("workflow"));
+    }
+
+    #[test]
+    fn workflow_with_explicit_system_keeps_it() {
+        let mut flags = parse_flags(&args("--workflow --system custom"));
+        apply_workflow_defaults(&mut flags);
+        assert_eq!(flags.system_prompt.as_deref(), Some("custom"));
+    }
+
+    #[test]
+    fn no_workflow_no_default_prompt() {
+        let mut flags = parse_flags(&args(""));
+        apply_workflow_defaults(&mut flags);
+        assert!(flags.system_prompt.is_none());
+    }
 }

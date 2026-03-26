@@ -491,6 +491,7 @@ impl App {
                     &format!("Workflow auto-continue {state}"),
                     NotifyLevel::Info,
                 );
+                self.render();
                 return;
             }
             Key::CtrlShift('n') => {
@@ -504,6 +505,7 @@ impl App {
                     &format!("Workflow completion nudge {state}"),
                     NotifyLevel::Info,
                 );
+                self.render();
                 return;
             }
             Key::Ctrl('o') => {
@@ -864,6 +866,10 @@ impl App {
                                 model.chars().filter(|c| !c.is_control()).collect();
                             self.footer.set_model(&sanitized);
                             self.current_model = Some(sanitized);
+                        }
+                        // Seed workflow header bar from get_state (#593).
+                        if let Some(wf) = data.get("workflow") {
+                            self.workflow_bar = workflow_bar::parse_workflow_event(wf);
                         }
                     }
                 }
