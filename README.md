@@ -9,7 +9,7 @@ Built in Rust. No runtime dependencies. Runs on a VPS, Raspberry Pi, or containe
 
 ## Release Notes
 
-Current version: **0.23.0** — see [`CHANGELOG.md`](CHANGELOG.md) for full history.
+Current version: **0.24.0** — see [`CHANGELOG.md`](CHANGELOG.md) for full history.
 
 ## Quick Start
 
@@ -28,7 +28,15 @@ quecto agent -m "Hello, what can you do?"
 
 # Or start an interactive session
 quecto
+
+# Or launch the terminal UI client (workspace member `quecto-tui`)
+cargo run -p quecto-tui -- --workflow --workflow-guards
 ```
+
+`quecto-tui` is a lightweight terminal UI for the UDS agent. By default it
+spawns `quecto agent --mode uds` for you, then connects over the same JSON-lines
+protocol documented below. You can also point it at an already-running agent
+with `--socket /path/to/agent.sock`.
 
 ## Architecture
 

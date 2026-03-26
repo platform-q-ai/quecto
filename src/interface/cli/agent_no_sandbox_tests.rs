@@ -114,6 +114,7 @@ fn test_build_agent_no_sandbox_emits_warning() {
         &tmp.path().join("config.json"),
         &flags,
         &mut stderr,
+        None,
     );
 
     // Agent must build successfully
@@ -191,6 +192,7 @@ fn test_build_agent_with_sandbox_enabled_no_warning() {
         &tmp.path().join("config.json"),
         &flags,
         &mut stderr,
+        None,
     );
     assert!(result.is_some(), "stderr: {}", stderr);
     assert!(
@@ -298,6 +300,7 @@ fn test_build_agent_network_flag_emits_warning() {
         &tmp.path().join("config.json"),
         &flags,
         &mut stderr,
+        None,
     );
 
     assert!(result.is_some(), "stderr: {}", stderr);
@@ -348,6 +351,7 @@ fn test_build_agent_without_network_flag_no_warning() {
         &tmp.path().join("config.json"),
         &flags,
         &mut stderr,
+        None,
     );
     assert!(result.is_some(), "stderr: {}", stderr);
     assert!(

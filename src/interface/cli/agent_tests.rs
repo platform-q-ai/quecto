@@ -449,7 +449,7 @@ fn test_build_agent_from_config_no_config_file() {
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr);
+    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr, None);
     assert!(result.is_none());
     assert!(stderr.contains("config not found"));
 }
@@ -478,7 +478,7 @@ fn test_build_agent_from_config_invalid_json() {
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr);
+    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr, None);
     assert!(result.is_none());
     assert!(stderr.contains("failed to load config"));
 }
@@ -511,7 +511,7 @@ fn test_build_agent_from_config_no_providers() {
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr);
+    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr, None);
     assert!(result.is_none());
     assert!(stderr.contains("no LLM providers"));
 }
@@ -544,7 +544,7 @@ fn test_build_agent_from_config_with_model_override() {
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr);
+    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr, None);
     assert!(result.is_some(), "stderr: {}", stderr);
 }
 
@@ -576,7 +576,7 @@ fn test_build_agent_from_config_workflow_disabled_by_default_has_no_workflow_sta
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr)
+    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr, None)
         .expect("agent should build without workflow enabled");
     assert!(result.workflow_state.is_none(), "stderr: {}", stderr);
     assert!(result.workflow_config.is_none(), "stderr: {}", stderr);
@@ -610,7 +610,7 @@ fn test_build_agent_from_config_uds_workflow_flag_creates_workflow_state() {
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr)
+    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr, None)
         .expect("agent should build with workflow enabled");
     assert!(result.workflow_state.is_some(), "stderr: {}", stderr);
     assert!(result.workflow_config.is_some(), "stderr: {}", stderr);

@@ -748,3 +748,46 @@ Feature: UDS mode for headless agent operation
     And I close all UDS clients
     Then the UDS agent exits with code 0
     And the post-redef get_extensions response should list extension "weather" with description "New description"
+
+  # ─── Workflow broadcast events (#598) ────────────────────────────────────────
+  #
+  # The WorkflowTool must emit workflow_state events on the broadcast channel
+  # so that TUI clients can update the header bar live.
+
+  @done @multi-client @workflow-broadcast
+  Scenario: workflow select_template emits a workflow_state broadcast event
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a tool call for workflow select_template then text "done"
+    When I start the multi-client UDS agent with workflow enabled
+    And client 1 connects
+    And client 2 connects
+    And client 1 sends prompt "select template fix"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 1 should have received a workflow_state event with mode "active"
+    And client 2 should have received a workflow_state event with mode "active"
+
+  @done @multi-client @workflow-broadcast
+  Scenario: workflow check emits a workflow_state broadcast event with updated progress
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns tool calls for workflow select then check then text "done"
+    When I start the multi-client UDS agent with workflow enabled
+    And client 1 connects
+    And client 1 sends prompt "select fix and check step 1"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 1 should have received a workflow_state event with progress done 1
+
+  @done @multi-client @workflow-broadcast
+  Scenario: workflow status does not emit a broadcast event
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a tool call for workflow status then text "done"
+    When I start the multi-client UDS agent with workflow enabled
+    And client 1 connects
+    And client 1 sends prompt "show status"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 1 should not have received a workflow_state event

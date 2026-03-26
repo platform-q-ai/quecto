@@ -472,3 +472,78 @@ async fn check_guards_only_uses_the_selected_template() {
             .contains("Finish planning before commit.")
     );
 }
+
+/// Verify that a broadcast_tx-backed emitter delivers properly formatted
+/// workflow_state JSON lines through the tokio broadcast channel (#598).
+#[tokio::test]
+async fn emitter_sends_workflow_state_through_broadcast_channel() {
+    let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(16);
+    let emitter = broadcast_emitter(broadcast_tx.clone());
+    let engine = engine_handle_with_config(WorkflowConfig::default(), false);
+    let tool = WorkflowTool::with_event_emitter(engine, emitter);
+
+    // select_template should send an event through the channel.
+    tool.execute(r#"{"action":"select_template","template":"fix"}"#)
+        .await
+        .unwrap();
+
+    let line = broadcast_rx.try_recv().expect("expected a broadcast message");
+    assert!(line.ends_with('\n'), "line should end with newline");
+    let parsed: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(parsed["type"], "workflow_state");
+    assert_eq!(parsed["mode"], "active");
+    assert_eq!(parsed["activeTemplate"]["id"], "fix");
+
+    // status should NOT send an event.
+    tool.execute(r#"{"action":"status"}"#).await.unwrap();
+    assert!(
+        broadcast_rx.try_recv().is_err(),
+        "status should not produce a broadcast event"
+    );
+
+    // check should send an event with progress.
+    tool.execute(r#"{"action":"check","step":1}"#)
+        .await
+        .unwrap();
+    let line2 = broadcast_rx.try_recv().expect("expected check broadcast");
+    let parsed2: serde_json::Value = serde_json::from_str(line2.trim()).unwrap();
+    assert_eq!(parsed2["type"], "workflow_state");
+    assert_eq!(parsed2["progress"]["done"], 1);
+}
+
+/// Verify that register_workflow_tool with a broadcast_tx-backed emitter
+/// produces a tool that sends events on the channel (#598).
+#[tokio::test]
+async fn register_workflow_tool_with_broadcast_emitter() {
+    use crate::infrastructure::tools::registry::ToolRegistryImpl;
+    use crate::infrastructure::security::sandbox::Sandbox;
+
+    let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(16);
+    let emitter = broadcast_emitter(broadcast_tx.clone());
+
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().to_path_buf();
+    let sandbox = Sandbox::new(Some(workspace.clone()), false);
+    let mut registry = ToolRegistryImpl::with_core_tools(workspace, sandbox);
+
+    let _engine = crate::interface::shared::register_workflow_tool(
+        &mut registry,
+        WorkflowConfig::default(),
+        false,
+        Some(emitter),
+    )
+    .expect("register should succeed");
+
+    // Find and execute the workflow tool through the registry.
+    let tool = registry.get("workflow").expect("workflow tool should be registered");
+    let result = tool
+        .execute(r#"{"action":"select_template","template":"chore"}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+
+    let line = broadcast_rx.try_recv().expect("expected broadcast after select_template");
+    let parsed: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(parsed["type"], "workflow_state");
+    assert_eq!(parsed["activeTemplate"]["id"], "chore");
+}
