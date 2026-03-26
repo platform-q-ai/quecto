@@ -10,6 +10,10 @@ struct CliFlags {
     socket_path: Option<PathBuf>,
     no_sandbox: bool,
     network: bool,
+    workflow: bool,
+    workflow_guards: bool,
+    config_path: Option<PathBuf>,
+    system_prompt: Option<String>,
 }
 
 fn main() {
@@ -34,6 +38,10 @@ fn parse_flags(args: &[String]) -> CliFlags {
         socket_path: None,
         no_sandbox: false,
         network: false,
+        workflow: false,
+        workflow_guards: false,
+        config_path: None,
+        system_prompt: None,
     };
     let mut i = 1;
     while i < args.len() {
@@ -42,12 +50,33 @@ fn parse_flags(args: &[String]) -> CliFlags {
                 flags.socket_path = Some(PathBuf::from(&args[i + 1]));
                 i += 2;
             }
+            "--config" if i + 1 < args.len() => {
+                flags.config_path = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
+            }
+            "--system" if i + 1 < args.len() => {
+                flags.system_prompt = Some(args[i + 1].clone());
+                i += 2;
+            }
             "--no-sandbox" => {
                 flags.no_sandbox = true;
                 i += 1;
             }
             "--network" => {
                 flags.network = true;
+                i += 1;
+            }
+            "--workflow" => {
+                flags.workflow = true;
+                i += 1;
+            }
+            "--no-workflow" => {
+                flags.workflow = false;
+                flags.workflow_guards = false;
+                i += 1;
+            }
+            "--workflow-guards" => {
+                flags.workflow_guards = true;
                 i += 1;
             }
             _ => i += 1,
@@ -62,7 +91,7 @@ async fn run(flags: CliFlags) -> i32 {
         Some(path) => (path, None),
         None => {
             // Spawn a quecto agent child process
-            match spawn_agent(flags.no_sandbox, flags.network).await {
+            match spawn_agent(&flags).await {
                 Ok((path, child)) => (path, Some(child)),
                 Err(e) => {
                     eprintln!("Failed to start quecto agent: {e}");
@@ -134,23 +163,35 @@ async fn run(flags: CliFlags) -> i32 {
 /// The caller MUST store the child handle and call `child.kill()` + `child.wait()`
 /// on TUI exit. Tokio's `Child` does NOT kill the process on drop — dropping it
 /// creates an orphan. See the security review for PR #442.
-async fn spawn_agent(
-    no_sandbox: bool,
-    network: bool,
-) -> Result<(PathBuf, tokio::process::Child), String> {
+async fn spawn_agent(flags: &CliFlags) -> Result<(PathBuf, tokio::process::Child), String> {
     use tokio::io::AsyncBufReadExt;
     use tokio::process::Command;
 
-    let mut args = vec!["agent", "--mode", "uds"];
-    if no_sandbox {
-        args.push("--no-sandbox");
+    let mut args = vec!["agent".to_string(), "--mode".to_string(), "uds".to_string()];
+    if flags.no_sandbox {
+        args.push("--no-sandbox".to_string());
     }
-    if network {
-        args.push("--network");
+    if flags.network {
+        args.push("--network".to_string());
+    }
+    if flags.workflow {
+        args.push("--workflow".to_string());
+    }
+    if flags.workflow_guards {
+        args.push("--workflow-guards".to_string());
+    }
+    if let Some(ref path) = flags.config_path {
+        args.push("--config".to_string());
+        args.push(path.to_string_lossy().to_string());
+    }
+    if let Some(ref prompt) = flags.system_prompt {
+        args.push("--system".to_string());
+        args.push(prompt.clone());
     }
 
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     let mut child = Command::new("quecto")
-        .args(&args)
+        .args(&args_ref)
         .stderr(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stdin(std::process::Stdio::null())
