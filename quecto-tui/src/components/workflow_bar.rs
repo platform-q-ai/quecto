@@ -181,8 +181,10 @@ pub fn parse_workflow_event(data: &serde_json::Value) -> WorkflowBarState {
         .map(|arr| {
             arr.iter()
                 .filter_map(|s| {
+                    // V2: field is "index"; V1 compat: "id"
+                    let id = s.get("index").or_else(|| s.get("id"))?.as_u64()? as u32;
                     Some(WorkflowStepInfo {
-                        id: s.get("id")?.as_u64()? as u32,
+                        id,
                         phase: s.get("phase")?.as_str()?.to_string(),
                         done: s.get("done")?.as_bool()?,
                     })
@@ -202,14 +204,17 @@ pub fn parse_workflow_event(data: &serde_json::Value) -> WorkflowBarState {
         .and_then(|v| v.as_u64())
         .unwrap_or(0) as u32;
 
+    // Handle both camelCase (workflow_state event) and snake_case (get_state response).
     let issue_number = data
         .get("activeIssue")
-        .and_then(|i| i.get("number"))
+        .or_else(|| data.get("active_issue"))
+        .and_then(|i| i.get("number").or_else(|| i.as_array().and_then(|a| a.first())))
         .and_then(|v| v.as_u64())
         .map(|n| n as u32);
     let issue_title = data
         .get("activeIssue")
-        .and_then(|i| i.get("title"))
+        .or_else(|| data.get("active_issue"))
+        .and_then(|i| i.get("title").or_else(|| i.as_array().and_then(|a| a.get(1))))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
@@ -219,11 +224,13 @@ pub fn parse_workflow_event(data: &serde_json::Value) -> WorkflowBarState {
         .map(|s| s.to_string());
     let template_name = data
         .get("activeTemplate")
+        .or_else(|| data.get("active_template"))
         .and_then(|t| t.get("label"))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
     let template_count = data
         .get("availableTemplates")
+        .or_else(|| data.get("available_templates"))
         .and_then(|v| v.as_array())
         .map(|a| a.len() as u32)
         .unwrap_or(0);
@@ -400,6 +407,44 @@ mod tests {
     }
 
     // ── V2 tests: mode, template, selector ──────────────────────────
+
+    #[test]
+    fn parse_v2_steps_with_index_field() {
+        let event = serde_json::json!({
+            "steps": [
+                {"index": 1, "label": "Scope", "phase": "red", "done": true},
+                {"index": 2, "label": "Change", "phase": "green", "done": false},
+            ],
+            "progress": {"done": 1, "total": 2, "percent": 50},
+        });
+        let state = parse_workflow_event(&event);
+        assert_eq!(state.steps.len(), 2);
+        assert_eq!(state.steps[0].id, 1);
+        assert_eq!(state.steps[1].id, 2);
+    }
+
+    #[test]
+    fn parse_get_state_snake_case_fields() {
+        let event = serde_json::json!({
+            "mode": "active",
+            "active_template": {"id": "chore", "label": "Chore"},
+            "available_templates": [
+                {"id": "feature", "label": "Feature"},
+                {"id": "chore", "label": "Chore"},
+            ],
+            "active_issue": [99, "Fix auth"],
+            "steps": [
+                {"index": 1, "phase": "red", "done": true},
+            ],
+            "progress": {"done": 1, "total": 1, "percent": 100},
+        });
+        let state = parse_workflow_event(&event);
+        assert_eq!(state.mode.as_deref(), Some("active"));
+        assert_eq!(state.template_name.as_deref(), Some("Chore"));
+        assert_eq!(state.template_count, 2);
+        assert_eq!(state.issue_number, Some(99));
+        assert_eq!(state.issue_title.as_deref(), Some("Fix auth"));
+    }
 
     #[test]
     fn parse_v2_event_captures_mode() {
