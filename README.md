@@ -38,6 +38,25 @@ spawns `quecto agent --mode uds` for you, then connects over the same JSON-lines
 protocol documented below. You can also point it at an already-running agent
 with `--socket /path/to/agent.sock`.
 
+Useful `quecto-tui` flags:
+
+| Flag | Description |
+|---|---|
+| `--socket <path>` | Connect to an existing UDS agent instead of spawning one |
+| `--workflow` | Start the spawned agent with workflow support enabled |
+| `--workflow-guards` | Start the spawned agent with workflow bash guards enabled |
+| `--no-workflow` | Disable workflow flags for the spawned agent |
+| `--system <prompt>` | Pass a custom system prompt to the spawned agent |
+| `--config <path>` | Use an alternate quecto config file when spawning the agent |
+| `--no-sandbox` | Spawn the agent with filesystem sandboxing disabled |
+| `--network` | Allow outbound network access for bash in the spawned agent |
+
+Handy TUI controls: `Ctrl+L` opens the model selector, `Ctrl+O` toggles tool
+output expansion, `Ctrl+Shift+A` toggles workflow auto-continue,
+`Ctrl+Shift+N` toggles workflow completion nudge, and slash commands include
+`/model`, `/clear`, `/new`, `/session`, `/workflow-auto`, `/workflow-nudge`,
+`/help`, and `/quit`.
+
 ## Architecture
 
 Four layers, strict dependency direction. Inner layers never import outer.

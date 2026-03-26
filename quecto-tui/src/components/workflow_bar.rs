@@ -1,7 +1,8 @@
 //! Sci-fi styled workflow progress bar for the TUI header (#563).
 //!
-//! Renders a single-line progress indicator showing issue number, title,
-//! progress bar, and current phase. Hidden when no workflow issue is active.
+//! When visible, renders three lines: a blank spacer, the styled progress
+//! bar (issue number, title, progress, phase), and another blank spacer.
+//! Returns an empty vec when no workflow is active.
 
 use crate::theme;
 
@@ -56,7 +57,7 @@ impl WorkflowBarState {
 /// Render the sci-fi workflow header bar.
 ///
 /// Returns an empty vec if no workflow is active.
-/// Returns a single styled line if active.
+/// Returns three lines if active: blank spacer, styled content, blank spacer.
 pub fn render(state: &WorkflowBarState, width: usize) -> Vec<String> {
     if !state.is_visible() {
         return vec![];
@@ -83,7 +84,11 @@ pub fn render(state: &WorkflowBarState, width: usize) -> Vec<String> {
         } else {
             String::new()
         };
-        return vec![format!("{bg}{content}{padding}{reset}")];
+        return vec![
+            String::new(),
+            format!("{bg}{content}{padding}{reset}"),
+            String::new(),
+        ];
     }
 
     let issue_num = state.issue_number.unwrap_or(0);
@@ -147,7 +152,11 @@ pub fn render(state: &WorkflowBarState, width: usize) -> Vec<String> {
         String::new()
     };
 
-    vec![format!("{}{}{}{}", bg, content, padding, reset)]
+    vec![
+        String::new(),
+        format!("{}{}{}{}", bg, content, padding, reset),
+        String::new(),
+    ]
 }
 
 /// Phase display name.
@@ -287,13 +296,13 @@ mod tests {
     fn visible_with_issue() {
         let state = make_state(Some(559), 4, 14);
         let lines = render(&state, 80);
-        assert_eq!(lines.len(), 1);
+        assert_eq!(lines.len(), 3, "blank + content + blank");
     }
 
     #[test]
     fn contains_issue_number() {
         let state = make_state(Some(559), 4, 14);
-        let line = &render(&state, 80)[0];
+        let line = &render(&state, 80)[1];
         assert!(
             line.contains("559"),
             "should contain issue number: {}",
@@ -304,21 +313,21 @@ mod tests {
     #[test]
     fn contains_progress_fraction() {
         let state = make_state(Some(100), 7, 14);
-        let line = &render(&state, 80)[0];
+        let line = &render(&state, 80)[1];
         assert!(line.contains("07/14"), "should contain progress: {}", line);
     }
 
     #[test]
     fn contains_phase_name() {
         let state = make_state(Some(100), 3, 14);
-        let line = &render(&state, 80)[0];
+        let line = &render(&state, 80)[1];
         assert!(line.contains("GREEN"), "step 4 is green phase: {}", line);
     }
 
     #[test]
     fn contains_progress_bar_chars() {
         let state = make_state(Some(100), 7, 14);
-        let line = &render(&state, 80)[0];
+        let line = &render(&state, 80)[1];
         assert!(line.contains('▓'), "should contain filled block");
         assert!(line.contains('░'), "should contain empty block");
     }
@@ -326,7 +335,7 @@ mod tests {
     #[test]
     fn contains_box_drawing() {
         let state = make_state(Some(100), 4, 14);
-        let line = &render(&state, 80)[0];
+        let line = &render(&state, 80)[1];
         assert!(line.contains('─'), "should contain box drawing dash");
         assert!(line.contains('▐'), "should contain right half block sigil");
     }
@@ -334,7 +343,7 @@ mod tests {
     #[test]
     fn contains_angle_brackets() {
         let state = make_state(Some(100), 4, 14);
-        let line = &render(&state, 80)[0];
+        let line = &render(&state, 80)[1];
         assert!(line.contains('⟨'), "should contain left angle bracket");
         assert!(line.contains('⟩'), "should contain right angle bracket");
     }
@@ -342,7 +351,7 @@ mod tests {
     #[test]
     fn contains_true_colour_bg() {
         let state = make_state(Some(100), 0, 14);
-        let line = &render(&state, 80)[0];
+        let line = &render(&state, 80)[1];
         // RED phase bg
         assert!(
             line.contains("\x1b[48;2;"),
@@ -353,7 +362,7 @@ mod tests {
     #[test]
     fn all_done_shows_done() {
         let state = make_state(Some(100), 14, 14);
-        let line = &render(&state, 80)[0];
+        let line = &render(&state, 80)[1];
         assert!(
             line.contains("DONE") || line.contains("Complete"),
             "should show done state: {}",
@@ -496,7 +505,7 @@ mod tests {
         state.template_count = 4;
         let lines = render(&state, 80);
         assert!(!lines.is_empty(), "selector mode should render");
-        let line = &lines[0];
+        let line = &lines[1];
         assert!(
             line.contains("SELECT") || line.contains("TEMPLATE"),
             "selector mode should mention template selection: {line}"
@@ -510,10 +519,36 @@ mod tests {
         state.template_name = Some("Fix".into());
         let lines = render(&state, 100);
         assert!(!lines.is_empty());
-        let line = &lines[0];
+        // Content is in the middle line (between blank spacers).
+        let content_line = lines.iter().find(|l| l.contains("Fix")).unwrap();
         assert!(
-            line.contains("Fix"),
-            "active mode should show template name: {line}"
+            content_line.contains("Fix"),
+            "active mode should show template name: {content_line}"
         );
     }
+
+    // ── Vertical spacing (#600) ─────────────────────────────────────
+
+    #[test]
+    fn active_bar_has_blank_line_above_and_below() {
+        let state = make_state(Some(42), 3, 14);
+        let lines = render(&state, 80);
+        assert_eq!(lines.len(), 3, "expected blank + content + blank, got {lines:?}");
+        assert!(lines[0].trim().is_empty(), "first line should be blank");
+        assert!(!lines[1].trim().is_empty(), "middle line should be content");
+        assert!(lines[2].trim().is_empty(), "last line should be blank");
+    }
+
+    #[test]
+    fn selector_mode_has_blank_line_above_and_below() {
+        let mut state = WorkflowBarState::default();
+        state.mode = Some("selecting_template".into());
+        state.template_count = 4;
+        let lines = render(&state, 80);
+        assert_eq!(lines.len(), 3, "expected blank + content + blank, got {lines:?}");
+        assert!(lines[0].trim().is_empty(), "first line should be blank");
+        assert!(lines[1].contains("SELECT"), "middle line should be content");
+        assert!(lines[2].trim().is_empty(), "last line should be blank");
+    }
+
 }
