@@ -85,16 +85,9 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
     let subagent_registry_for_protocol = subagent_registry.clone();
     registry.register(Arc::new(AgentCmdTool::new(subagent_registry)));
     // Build a workflow event emitter from the broadcast channel (#598).
-    let wf_emitter: Option<crate::infrastructure::tools::workflow_tool::WorkflowEventEmitter> =
-        broadcast_tx.as_ref().map(|tx| {
-            let tx = tx.clone();
-            Arc::new(move |event: serde_json::Value| {
-                let mut line = serde_json::to_string(&event).unwrap_or_default();
-                line.push('\n');
-                let _ = tx.send(line);
-            })
-                as crate::infrastructure::tools::workflow_tool::WorkflowEventEmitter
-        });
+    let wf_emitter = broadcast_tx.map(|tx| {
+        crate::infrastructure::tools::workflow_tool::broadcast_emitter(tx)
+    });
     let wf_state = if flags.workflow {
         match crate::interface::shared::register_workflow_tool(
             &mut registry,

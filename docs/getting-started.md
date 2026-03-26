@@ -49,6 +49,31 @@ quecto agent --mode uds -s my-project
 The session is saved to `~/.quecto/sessions/` and restored on restart
 with the same session name.
 
+### Using `quecto-tui`
+
+If you prefer a terminal UI instead of working with `socat` directly, run the
+workspace member:
+
+```bash
+cargo run -p quecto-tui -- --workflow --workflow-guards
+```
+
+By default, `quecto-tui` spawns `quecto agent --mode uds` automatically and
+connects to the announced socket. You can also attach to an existing agent:
+
+```bash
+cargo run -p quecto-tui -- --socket /tmp/agent.sock
+```
+
+Useful built-in shortcuts and commands:
+
+- `Enter` sends the current message
+- `Shift+Enter` inserts a newline
+- `Ctrl+L` opens the model selector
+- `Ctrl+Shift+A` toggles workflow auto-continue
+- `Ctrl+Shift+N` toggles workflow completion nudge
+- `/model`, `/clear`, `/new`, `/session`, `/help`, `/quit`
+
 ## Your first prompt
 
 Connect with `socat` and send a prompt:

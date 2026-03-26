@@ -377,7 +377,7 @@ pub(crate) fn build_agent_from_config(
         http_client: &http_client,
         flags,
         stderr,
-        broadcast_tx: broadcast_tx.clone(),
+        broadcast_tx,
     });
 
     // Remove disabled tools before boxing the registry (#402).
@@ -595,7 +595,9 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     // Create the broadcast channel early so the WorkflowTool emitter can
     // send workflow_state events from the moment it is constructed (#598).
     let broadcast_tx = if flags.workflow {
-        let (tx, _) = tokio::sync::broadcast::channel::<String>(256);
+        let (tx, _) = tokio::sync::broadcast::channel::<String>(
+            crate::interface::cli::uds_multi::BROADCAST_CHANNEL_CAPACITY,
+        );
         Some(tx)
     } else {
         None

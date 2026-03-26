@@ -76,15 +76,9 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
     };
 
     // Build workflow event emitter from broadcast channel (#598).
-    let wf_emitter: Option<quecto::infrastructure::tools::workflow_tool::WorkflowEventEmitter> =
-        broadcast_tx.as_ref().map(|tx| {
-            let tx = tx.clone();
-            std::sync::Arc::new(move |event: serde_json::Value| {
-                let mut line = serde_json::to_string(&event).unwrap_or_default();
-                line.push('\n');
-                let _ = tx.send(line);
-            }) as quecto::infrastructure::tools::workflow_tool::WorkflowEventEmitter
-        });
+    let wf_emitter = broadcast_tx.as_ref().map(|tx| {
+        quecto::infrastructure::tools::workflow_tool::broadcast_emitter(tx.clone())
+    });
 
     // Register workflow engine when scenario requests it (#568–#577).
     let workflow_state = if world._workflow_enabled {

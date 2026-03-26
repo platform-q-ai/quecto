@@ -13,6 +13,17 @@ use crate::domain::workflow::{
 pub type WorkflowEventEmitter = Arc<dyn Fn(serde_json::Value) + Send + Sync>;
 pub type WorkflowEngineHandle = Arc<Mutex<WorkflowEngine>>;
 
+/// Build a [`WorkflowEventEmitter`] that serializes each event as a JSON line
+/// and sends it through a `tokio::sync::broadcast` channel (#598).
+pub fn broadcast_emitter(tx: tokio::sync::broadcast::Sender<String>) -> WorkflowEventEmitter {
+    Arc::new(move |event: serde_json::Value| {
+        // serde_json::Value → String serialization is infallible.
+        let mut line = serde_json::to_string(&event).expect("serde_json::Value serializes infallibly");
+        line.push('\n');
+        let _ = tx.send(line);
+    })
+}
+
 pub struct WorkflowTool {
     engine: WorkflowEngineHandle,
     event_emitter: Option<WorkflowEventEmitter>,

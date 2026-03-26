@@ -23,6 +23,10 @@ use super::uds_session::{AgentSession, message_to_json};
 /// Maximum number of concurrent client connections.
 const MAX_CLIENTS: u32 = 64;
 
+/// Broadcast channel capacity for UDS event delivery.
+/// Shared between the early-creation path (workflow) and the default path.
+pub(super) const BROADCAST_CHANNEL_CAPACITY: usize = 256;
+
 /// Atomic counter for assigning unique client IDs (#352).
 static NEXT_CLIENT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
@@ -131,7 +135,7 @@ pub(super) async fn multi_client_loop(
     // Use the pre-created broadcast channel when available (workflow emitter
     // is already wired to it), otherwise create a fresh one (#598).
     let broadcast_tx = pre_broadcast_tx
-        .unwrap_or_else(|| tokio::sync::broadcast::channel::<String>(256).0);
+        .unwrap_or_else(|| tokio::sync::broadcast::channel::<String>(BROADCAST_CHANNEL_CAPACITY).0);
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(256);
     let cancel_handle: CancelHandle = std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle));
     let live_clients = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));

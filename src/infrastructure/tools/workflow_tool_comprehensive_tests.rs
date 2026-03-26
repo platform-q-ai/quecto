@@ -478,12 +478,7 @@ async fn check_guards_only_uses_the_selected_template() {
 #[tokio::test]
 async fn emitter_sends_workflow_state_through_broadcast_channel() {
     let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(16);
-    let tx = broadcast_tx.clone();
-    let emitter: WorkflowEventEmitter = Arc::new(move |event: serde_json::Value| {
-        let mut line = serde_json::to_string(&event).unwrap_or_default();
-        line.push('\n');
-        let _ = tx.send(line);
-    });
+    let emitter = broadcast_emitter(broadcast_tx.clone());
     let engine = engine_handle_with_config(WorkflowConfig::default(), false);
     let tool = WorkflowTool::with_event_emitter(engine, emitter);
 
@@ -524,14 +519,10 @@ async fn register_workflow_tool_with_broadcast_emitter() {
     use crate::infrastructure::security::sandbox::Sandbox;
 
     let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(16);
-    let tx = broadcast_tx.clone();
-    let emitter: WorkflowEventEmitter = Arc::new(move |event: serde_json::Value| {
-        let mut line = serde_json::to_string(&event).unwrap_or_default();
-        line.push('\n');
-        let _ = tx.send(line);
-    });
+    let emitter = broadcast_emitter(broadcast_tx.clone());
 
-    let workspace = std::path::PathBuf::from("/tmp/test-wf-598");
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().to_path_buf();
     let sandbox = Sandbox::new(Some(workspace.clone()), false);
     let mut registry = ToolRegistryImpl::with_core_tools(workspace, sandbox);
 
