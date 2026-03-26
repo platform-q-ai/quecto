@@ -65,14 +65,29 @@ connects to the announced socket. You can also attach to an existing agent:
 cargo run -p quecto-tui -- --socket /tmp/agent.sock
 ```
 
+When `quecto-tui` spawns the agent for you, it can also forward several useful
+agent flags:
+
+- `--workflow` enables the workflow subsystem for the spawned agent
+- `--workflow-guards` enables workflow bash guards
+- `--no-workflow` clears both workflow flags
+- `--system <prompt>` passes a custom system prompt through to the spawned agent
+- `--config <path>` uses an alternate quecto config file
+- `--no-sandbox` disables filesystem sandboxing for the spawned agent
+- `--network` enables outbound network access for bash in the spawned agent
+
+For safety, auto-discovered socket paths are validated and must live under
+`/tmp`, `$TMPDIR`, `$XDG_RUNTIME_DIR`, or `$HOME`.
+
 Useful built-in shortcuts and commands:
 
 - `Enter` sends the current message
 - `Shift+Enter` inserts a newline
 - `Ctrl+L` opens the model selector
+- `Ctrl+O` toggles tool output expansion
 - `Ctrl+Shift+A` toggles workflow auto-continue
 - `Ctrl+Shift+N` toggles workflow completion nudge
-- `/model`, `/clear`, `/new`, `/session`, `/help`, `/quit`
+- `/model`, `/clear`, `/new`, `/session`, `/workflow-auto`, `/workflow-nudge`, `/help`, `/quit`
 
 ## Your first prompt
 
