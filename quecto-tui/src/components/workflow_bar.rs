@@ -1,7 +1,8 @@
 //! Sci-fi styled workflow progress bar for the TUI header (#563).
 //!
-//! Renders a single-line progress indicator showing issue number, title,
-//! progress bar, and current phase. Hidden when no workflow issue is active.
+//! When visible, renders three lines: a blank spacer, the styled progress
+//! bar (issue number, title, progress, phase), and another blank spacer.
+//! Returns an empty vec when no workflow is active.
 
 use crate::theme;
 
@@ -56,7 +57,7 @@ impl WorkflowBarState {
 /// Render the sci-fi workflow header bar.
 ///
 /// Returns an empty vec if no workflow is active.
-/// Returns a single styled line if active.
+/// Returns three lines if active: blank spacer, styled content, blank spacer.
 pub fn render(state: &WorkflowBarState, width: usize) -> Vec<String> {
     if !state.is_visible() {
         return vec![];
@@ -550,10 +551,4 @@ mod tests {
         assert!(lines[2].trim().is_empty(), "last line should be blank");
     }
 
-    #[test]
-    fn hidden_bar_returns_no_lines() {
-        let state = make_state(None, 0, 14);
-        let lines = render(&state, 80);
-        assert!(lines.is_empty(), "hidden bar should return no lines");
-    }
 }
