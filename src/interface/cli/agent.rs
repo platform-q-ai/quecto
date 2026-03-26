@@ -294,7 +294,7 @@ pub(crate) fn cmd_agent(
 
     let base_dir = ctx.base_dir();
     let config_path = ctx.config_path();
-    let build = match build_agent_from_config(&base_dir, &config_path, &flags, stderr) {
+    let build = match build_agent_from_config(&base_dir, &config_path, &flags, stderr, None) {
         Some(r) => r,
         None => return 1,
     };
@@ -329,6 +329,7 @@ pub(crate) fn build_agent_from_config(
     config_path: &std::path::Path,
     flags: &AgentFlags,
     stderr: &mut String,
+    broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
 ) -> Option<AgentBuildResult> {
     if !config_path.exists() {
         stderr.push_str(&format!(
@@ -376,6 +377,7 @@ pub(crate) fn build_agent_from_config(
         http_client: &http_client,
         flags,
         stderr,
+        broadcast_tx: broadcast_tx.clone(),
     });
 
     // Remove disabled tools before boxing the registry (#402).
@@ -590,7 +592,21 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
 
     let base_dir = ctx.base_dir();
     let config_path = ctx.config_path();
-    let build = match build_agent_from_config(&base_dir, &config_path, &flags, stderr) {
+    // Create the broadcast channel early so the WorkflowTool emitter can
+    // send workflow_state events from the moment it is constructed (#598).
+    let broadcast_tx = if flags.workflow {
+        let (tx, _) = tokio::sync::broadcast::channel::<String>(256);
+        Some(tx)
+    } else {
+        None
+    };
+    let build = match build_agent_from_config(
+        &base_dir,
+        &config_path,
+        &flags,
+        stderr,
+        broadcast_tx.clone(),
+    ) {
         Some(r) => r,
         None => return 1,
     };
@@ -655,6 +671,7 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         subagent_registry: build.subagent_registry,
         workflow_state: build.workflow_state,
         workflow_config: build.workflow_config,
+        broadcast_tx,
     })
 }
 

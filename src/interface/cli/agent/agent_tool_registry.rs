@@ -24,6 +24,8 @@ pub(super) struct ToolRegistryArgs<'a> {
     pub(super) http_client: &'a reqwest::Client,
     pub(super) flags: &'a AgentFlags,
     pub(super) stderr: &'a mut String,
+    /// Broadcast channel sender for workflow_state events (#598).
+    pub(super) broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
 }
 
 pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBuild {
@@ -33,6 +35,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
         http_client,
         flags,
         stderr,
+        broadcast_tx,
     } = args;
     let workspace = crate::interface::shared::resolve_agent_workspace(
         &config.workspace_path(),
@@ -81,12 +84,23 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
     ));
     let subagent_registry_for_protocol = subagent_registry.clone();
     registry.register(Arc::new(AgentCmdTool::new(subagent_registry)));
+    // Build a workflow event emitter from the broadcast channel (#598).
+    let wf_emitter: Option<crate::infrastructure::tools::workflow_tool::WorkflowEventEmitter> =
+        broadcast_tx.as_ref().map(|tx| {
+            let tx = tx.clone();
+            Arc::new(move |event: serde_json::Value| {
+                let mut line = serde_json::to_string(&event).unwrap_or_default();
+                line.push('\n');
+                let _ = tx.send(line);
+            })
+                as crate::infrastructure::tools::workflow_tool::WorkflowEventEmitter
+        });
     let wf_state = if flags.workflow {
         match crate::interface::shared::register_workflow_tool(
             &mut registry,
             config.workflow.clone(),
             flags.workflow_guards,
-            None,
+            wf_emitter,
         ) {
             Ok(state) => Some(state),
             Err(err) => {

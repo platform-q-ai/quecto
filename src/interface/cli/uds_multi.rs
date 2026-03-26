@@ -52,6 +52,8 @@ pub(super) struct MultiClientArgs {
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
     /// Workflow config (auto_continue, completion_nudge flags).
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,
+    /// Pre-created broadcast channel for workflow event emission (#598).
+    pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
 }
 
 /// A command line from a client.
@@ -111,6 +113,7 @@ pub(super) async fn multi_client_loop(
     let subagent_registry = args.subagent_registry;
     let wf_state = args.workflow_state;
     let wf_config = args.workflow_config;
+    let pre_broadcast_tx = args.broadcast_tx;
     let MultiClientArgs {
         mut agent,
         mut messages,
@@ -125,7 +128,10 @@ pub(super) async fn multi_client_loop(
 
     let mut agent_session = AgentSession::new(model, session_key.clone());
 
-    let (broadcast_tx, _) = tokio::sync::broadcast::channel::<String>(256);
+    // Use the pre-created broadcast channel when available (workflow emitter
+    // is already wired to it), otherwise create a fresh one (#598).
+    let broadcast_tx = pre_broadcast_tx
+        .unwrap_or_else(|| tokio::sync::broadcast::channel::<String>(256).0);
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel::<ClientMessage>(256);
     let cancel_handle: CancelHandle = std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle));
     let live_clients = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));

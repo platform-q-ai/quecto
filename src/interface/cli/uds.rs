@@ -36,6 +36,8 @@ pub struct UdsLoopArgs<'a> {
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,      // #562
+    /// Pre-created broadcast channel for workflow event emission (#598).
+    pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
 }
 pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     let rt = match crate::interface::cli::build_tokio_runtime() {
@@ -67,6 +69,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         subagent_registry,
         workflow_state,
         workflow_config,
+        broadcast_tx,
     } = args;
     let file_store;
     let session_store: &dyn SessionStore = match session_store_override {
@@ -132,6 +135,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 subagent_registry,
                 workflow_state,
                 workflow_config,
+                broadcast_tx,
             },
             listener,
             session_store,

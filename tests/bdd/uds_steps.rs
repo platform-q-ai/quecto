@@ -35,6 +35,7 @@ struct UdsAgentContext {
     persist: bool,
     workflow_state: Option<quecto::interface::shared::WorkflowStateHandle>,
     workflow_config: Option<quecto::domain::workflow::WorkflowConfig>,
+    broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
 }
 
 /// Build the agent and session key from world state + config.
@@ -66,13 +67,32 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         exec_settings,
     );
 
+    // Create broadcast channel early so the workflow emitter can use it (#598).
+    let broadcast_tx = if world._workflow_enabled {
+        let (tx, _) = tokio::sync::broadcast::channel::<String>(256);
+        Some(tx)
+    } else {
+        None
+    };
+
+    // Build workflow event emitter from broadcast channel (#598).
+    let wf_emitter: Option<quecto::infrastructure::tools::workflow_tool::WorkflowEventEmitter> =
+        broadcast_tx.as_ref().map(|tx| {
+            let tx = tx.clone();
+            std::sync::Arc::new(move |event: serde_json::Value| {
+                let mut line = serde_json::to_string(&event).unwrap_or_default();
+                line.push('\n');
+                let _ = tx.send(line);
+            }) as quecto::infrastructure::tools::workflow_tool::WorkflowEventEmitter
+        });
+
     // Register workflow engine when scenario requests it (#568–#577).
     let workflow_state = if world._workflow_enabled {
         match quecto::interface::shared::register_workflow_tool(
             &mut registry,
             config.workflow.clone(),
             true, // guards enabled
-            None,
+            wf_emitter,
         ) {
             Ok(handle) => Some(handle),
             Err(e) => {
@@ -139,6 +159,7 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         persist: false,
         workflow_state,
         workflow_config,
+        broadcast_tx,
     })
 }
 
@@ -188,6 +209,7 @@ fn execute_uds(world: &mut QuectoWorld) {
         persist: _,
         workflow_state,
         workflow_config,
+        broadcast_tx: _,
     } = ctx;
 
     // Create a socket path in the temp dir.
@@ -233,6 +255,7 @@ fn execute_uds(world: &mut QuectoWorld) {
             subagent_registry: None,
             workflow_state,
             workflow_config,
+            broadcast_tx: None,
         })
     });
 
@@ -910,6 +933,7 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
         persist: _,
         workflow_state,
         workflow_config,
+        broadcast_tx: _,
     } = ctx;
     let base_dir = base.clone();
     let sp = socket_path.clone();
@@ -931,6 +955,7 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
             subagent_registry: None,
             workflow_state,
             workflow_config,
+            broadcast_tx: None,
         })
     });
 
@@ -1256,6 +1281,7 @@ fn mc_spawn_agent(
         persist,
         workflow_state,
         workflow_config,
+        broadcast_tx,
     } = ctx;
     let base_for_thread = base.to_path_buf();
     let sp = socket_path.clone();
@@ -1276,6 +1302,7 @@ fn mc_spawn_agent(
             subagent_registry: None,
             workflow_state,
             workflow_config,
+            broadcast_tx,
         })
     });
 
@@ -2196,4 +2223,302 @@ fn then_post_redef_desc(world: &mut QuectoWorld, name: String, desc: String) {
         .find(|e| e["name"].as_str() == Some(&name))
         .unwrap_or_else(|| panic!("'{name}' not in {exts:?}"));
     assert_eq!(ext["description"].as_str(), Some(desc.as_str()));
+}
+
+// ─── Workflow broadcast event steps (#598) ────────────────────────────────────
+
+/// Start the multi-client UDS agent with workflow enabled.
+#[when("I start the multi-client UDS agent with workflow enabled")]
+fn when_start_mc_uds_with_workflow(world: &mut QuectoWorld) {
+    world.mc_mode = true;
+    world.no_session = true;
+    world._workflow_enabled = true;
+}
+
+/// Mock: LLM returns a tool call for `workflow select_template fix`, then a text reply.
+#[given(
+    expr = "the mock LLM returns a tool call for workflow select_template then text {string}"
+)]
+fn given_mock_llm_workflow_select(world: &mut QuectoWorld, text: String) {
+    assert!(
+        world._wiremock_server_uri.is_some(),
+        "mock server URI not set"
+    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+
+        let tool_call_body = serde_json::json!({
+            "id": "chatcmpl-wf-select",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_wf_select",
+                        "type": "function",
+                        "function": {
+                            "name": "workflow",
+                            "arguments": "{\"action\":\"select_template\",\"template\":\"fix\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        });
+        let text_body = serde_json::json!({
+            "id": "chatcmpl-wf-text",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": text },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 15, "completion_tokens": 5, "total_tokens": 20}
+        });
+
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(tool_call_body))
+            .up_to_n_times(1)
+            .with_priority(2)
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(text_body))
+            .mount(&server)
+            .await;
+
+        e2e_steps::rewrite_config_to_uri(world, &new_uri);
+        std::mem::forget(server);
+    });
+    std::mem::forget(rt);
+}
+
+/// Mock: LLM returns select_template, then check step 1, then text reply.
+#[given(
+    expr = "the mock LLM returns tool calls for workflow select then check then text {string}"
+)]
+fn given_mock_llm_workflow_select_check(world: &mut QuectoWorld, text: String) {
+    assert!(
+        world._wiremock_server_uri.is_some(),
+        "mock server URI not set"
+    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+
+        let select_body = serde_json::json!({
+            "id": "chatcmpl-wf-s",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_wf_sel",
+                        "type": "function",
+                        "function": {
+                            "name": "workflow",
+                            "arguments": "{\"action\":\"select_template\",\"template\":\"fix\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        });
+        let check_body = serde_json::json!({
+            "id": "chatcmpl-wf-c",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_wf_chk",
+                        "type": "function",
+                        "function": {
+                            "name": "workflow",
+                            "arguments": "{\"action\":\"check\",\"step\":1}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {"prompt_tokens": 20, "completion_tokens": 5, "total_tokens": 25}
+        });
+        let text_body = serde_json::json!({
+            "id": "chatcmpl-wf-t",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": text },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 25, "completion_tokens": 5, "total_tokens": 30}
+        });
+
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(select_body))
+            .up_to_n_times(1)
+            .with_priority(2)
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(check_body))
+            .up_to_n_times(1)
+            .with_priority(3)
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(text_body))
+            .mount(&server)
+            .await;
+
+        e2e_steps::rewrite_config_to_uri(world, &new_uri);
+        std::mem::forget(server);
+    });
+    std::mem::forget(rt);
+}
+
+/// Mock: LLM returns a tool call for `workflow status`, then a text reply.
+#[given(expr = "the mock LLM returns a tool call for workflow status then text {string}")]
+fn given_mock_llm_workflow_status(world: &mut QuectoWorld, text: String) {
+    assert!(
+        world._wiremock_server_uri.is_some(),
+        "mock server URI not set"
+    );
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+
+        let tool_call_body = serde_json::json!({
+            "id": "chatcmpl-wf-status",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_wf_status",
+                        "type": "function",
+                        "function": {
+                            "name": "workflow",
+                            "arguments": "{\"action\":\"status\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        });
+        let text_body = serde_json::json!({
+            "id": "chatcmpl-wf-text2",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": text },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 15, "completion_tokens": 5, "total_tokens": 20}
+        });
+
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(tool_call_body))
+            .up_to_n_times(1)
+            .with_priority(2)
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(text_body))
+            .mount(&server)
+            .await;
+
+        e2e_steps::rewrite_config_to_uri(world, &new_uri);
+        std::mem::forget(server);
+    });
+    std::mem::forget(rt);
+}
+
+/// Helper: find all workflow_state events in a client's received event lines.
+fn mc_client_workflow_events(world: &QuectoWorld, client_id: u32) -> Vec<serde_json::Value> {
+    world
+        .mc_client_events
+        .get(&client_id)
+        .map(|events| {
+            events
+                .iter()
+                .filter_map(|l| {
+                    let v: serde_json::Value = serde_json::from_str(l).ok()?;
+                    if v["type"].as_str() == Some("workflow_state") {
+                        Some(v)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[then(expr = "client {int} should have received a workflow_state event with mode {string}")]
+fn then_client_received_workflow_mode(
+    world: &mut QuectoWorld,
+    client_id: u32,
+    expected_mode: String,
+) {
+    execute_multi_client_uds(world);
+    let wf_events = mc_client_workflow_events(world, client_id);
+    let found = wf_events.iter().any(|ev| {
+        ev["mode"].as_str() == Some(expected_mode.as_str())
+    });
+    assert!(
+        found,
+        "expected client {client_id} to receive workflow_state with mode={expected_mode:?}\nworkflow events: {wf_events:#?}\nall events: {:#?}",
+        world.mc_client_events.get(&client_id),
+    );
+}
+
+#[then(expr = "client {int} should have received a workflow_state event with progress done {int}")]
+fn then_client_received_workflow_progress(
+    world: &mut QuectoWorld,
+    client_id: u32,
+    expected_done: u64,
+) {
+    execute_multi_client_uds(world);
+    let wf_events = mc_client_workflow_events(world, client_id);
+    let found = wf_events.iter().any(|ev| {
+        ev["progress"]["done"].as_u64() == Some(expected_done)
+    });
+    assert!(
+        found,
+        "expected client {client_id} to receive workflow_state with progress.done={expected_done}\nworkflow events: {wf_events:#?}\nall events: {:#?}",
+        world.mc_client_events.get(&client_id),
+    );
+}
+
+#[then(expr = "client {int} should not have received a workflow_state event")]
+fn then_client_not_received_workflow(world: &mut QuectoWorld, client_id: u32) {
+    execute_multi_client_uds(world);
+    let wf_events = mc_client_workflow_events(world, client_id);
+    assert!(
+        wf_events.is_empty(),
+        "expected client {client_id} to have received NO workflow_state events, got: {wf_events:#?}",
+    );
 }
