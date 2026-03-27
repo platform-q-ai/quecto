@@ -45,29 +45,31 @@ An explicit `--system` value overrides that default.
 | Shortcut | Action |
 |---|---|
 | `Enter` | Send message |
-| `Shift+Enter` | Insert newline |
+| `Shift+Enter` or `Alt+Enter` | Insert newline |
 | `Escape` | Abort the active agent run, or clear the editor if idle |
 | `Ctrl+C` | Clear the editor first; if the editor is empty, abort the active run |
-| `Ctrl+D` | Exit |
+| `Ctrl+D` | Exit immediately |
 | `Ctrl+L` | Open model selector |
 | `Ctrl+O` | Toggle tool output expansion |
 | `Ctrl+Shift+A` | Toggle workflow auto-continue |
 | `Ctrl+Shift+N` | Toggle workflow completion nudge |
 | `Ctrl+Z` | Suspend the TUI (`fg` to resume) |
 | `PageUp` / `PageDown` | Scroll chat |
-| `Up` / `Down` | Input history |
+| `Up` / `Down` | Browse input history |
 
 ## Slash commands
 
-- `/model`
-- `/model <name>`
-- `/clear`
-- `/new`
-- `/session`
-- `/workflow-auto`
-- `/workflow-nudge`
-- `/help`
-- `/quit`
+| Command | Action |
+|---|---|
+| `/model` | Open the model selector |
+| `/model <name>` | Switch to a model directly |
+| `/clear` | Clear the current conversation |
+| `/new` | Start a fresh conversation |
+| `/session` | Show session statistics |
+| `/workflow-auto` | Toggle workflow auto-continue |
+| `/workflow-nudge` | Toggle workflow completion nudge |
+| `/help` or `/hotkeys` | Show built-in help |
+| `/quit` or `/exit` | Exit the TUI |
 
 ## Notes
 
