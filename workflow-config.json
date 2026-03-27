@@ -115,10 +115,34 @@
         ]
       },
       {
+        "id": "docs",
+        "label": "Docs",
+        "description": "Documentation-only changes such as guides, READMEs, reference docs, or examples.",
+        "when_to_use": "Use when the change is limited to documentation and does not alter runtime behavior.",
+        "steps": [
+          { "key": "scope", "label": "Clarify the documentation task", "phase": "red", "guidance": "Restate the docs change, target audience, and any accuracy checks needed." },
+          { "key": "update", "label": "Apply the documentation update", "phase": "green" },
+          { "key": "review_docs", "label": "Review for clarity, accuracy, and broken references", "phase": "green" },
+          { "key": "commit", "label": "Commit", "phase": "ci_cd" },
+          { "key": "push", "label": "Push", "phase": "ci_cd" },
+          { "key": "pr", "label": "Create PR", "phase": "ci_cd" },
+          { "key": "pre_merge", "label": "Run pre-merge hooks", "phase": "ci_cd" },
+          { "key": "merge", "label": "Merge", "phase": "ci_cd" },
+          { "key": "pull", "label": "Move to local master and pull", "phase": "ci_cd" }
+        ],
+        "guards": [
+          {
+            "commands": ["git commit"],
+            "before_step_key": "commit",
+            "message": "Review the documentation update before committing."
+          }
+        ]
+      },
+      {
         "id": "chore",
         "label": "Chore",
-        "description": "Routine maintenance, docs, dependency updates, CI config, or configuration work.",
-        "when_to_use": "Use for docs, dependency bumps, CI pipeline changes, config updates, or any non-behavioral maintenance.",
+        "description": "Routine maintenance, dependency updates, CI config, or configuration work.",
+        "when_to_use": "Use for dependency bumps, CI pipeline changes, config updates, or any non-behavioral maintenance.",
         "steps": [
           { "key": "scope", "label": "Clarify the maintenance task", "phase": "red", "guidance": "Restate the task and identify any required validation." },
           { "key": "change", "label": "Apply the maintenance change", "phase": "green" },
