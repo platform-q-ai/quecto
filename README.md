@@ -52,8 +52,8 @@ Useful `quecto-tui` flags:
 | `--network` | Allow outbound network access for bash in the spawned agent |
 
 Handy TUI controls: `Ctrl+L` opens the model selector, `Ctrl+O` toggles tool
-output expansion, `Ctrl+Shift+A` toggles workflow auto-continue,
-`Ctrl+Shift+N` toggles workflow completion nudge, and slash commands include
+output expansion, `Ctrl+Shift+A` toggles workflow auto-continue, and
+`Ctrl+Shift+N` toggles workflow completion nudge. Slash commands include
 `/model`, `/clear`, `/new`, `/session`, `/workflow-auto`, `/workflow-nudge`,
 `/help`, and `/quit`.
 
