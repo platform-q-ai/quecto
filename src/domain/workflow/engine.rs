@@ -200,13 +200,9 @@ impl WorkflowEngine {
         if !self.auto_continue || self.mode() != WorkflowMode::Active {
             return None;
         }
-        let step = self.current_step()?;
+        self.current_step()?;
         Some(format!(
-            "Continue the workflow — next incomplete step is step {} ({}) in the {} template. Proceed with this step now, then call workflow(action=\"check\", step={}).",
-            step.index,
-            step.label,
-            self.active_template()?.label,
-            step.index
+            "Workflow incomplete. Continue with the next incomplete step. Use the workflow tool to check off steps as you complete them. Respond with just the word DONE (no other text) when all workflow steps are checked off. Never ask for permission or stop for any other reason than the task is entirely complete."
         ))
     }
 

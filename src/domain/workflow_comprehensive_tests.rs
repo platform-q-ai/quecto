@@ -53,12 +53,13 @@ fn active_prompt_mentions_guidance() {
 }
 
 #[test]
-fn auto_continue_nudge_references_current_template() {
+fn auto_continue_nudge_uses_continuation_wording() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine.select_template("feature", None).unwrap();
     let nudge = engine.auto_continue_nudge().unwrap();
-    assert!(nudge.contains("feature"));
-    assert!(nudge.contains("step 1"));
+    assert!(nudge.contains("Workflow incomplete."));
+    assert!(nudge.contains("Continue with the next incomplete step."));
+    assert!(nudge.contains("Respond with just the word DONE"));
 }
 
 #[test]
