@@ -71,6 +71,9 @@ An explicit `--system` value overrides that default.
 | `/help` or `/hotkeys` | Show built-in help |
 | `/quit` or `/exit` | Exit the TUI |
 
+Autocomplete includes the built-in slash commands, including `/hotkeys` as an
+alias for `/help`.
+
 ## Notes
 
 - Auto-discovered socket paths are validated and must live under `/tmp`,

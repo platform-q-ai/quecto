@@ -59,6 +59,10 @@ fn builtin_commands() -> Vec<SlashCommand> {
             description: "Show keyboard shortcuts".into(),
         },
         SlashCommand {
+            name: "hotkeys".into(),
+            description: "Show keyboard shortcuts".into(),
+        },
+        SlashCommand {
             name: "new".into(),
             description: "Start a new session".into(),
         },
@@ -1061,11 +1065,14 @@ impl App {
                 "Keyboard shortcuts:",
                 "  Enter          Send message",
                 "  Shift+Enter    Insert newline",
+                "  Alt+Enter      Insert newline",
                 "  Escape         Abort agent / clear editor",
                 "  Ctrl+C         Clear editor first, abort if empty",
                 "  Ctrl+D         Exit",
                 "  Ctrl+L         Open model selector",
                 "  Ctrl+O         Toggle tool output expansion",
+                "  Ctrl+Shift+A   Toggle workflow auto-continue",
+                "  Ctrl+Shift+N   Toggle workflow completion nudge",
                 "  Ctrl+Z         Suspend (resume with fg)",
                 "  PageUp/Down    Scroll chat",
                 "  Up/Down        Input history",
@@ -1076,8 +1083,10 @@ impl App {
                 "  /clear         Clear conversation",
                 "  /new           New session",
                 "  /session       Show session info",
-                "  /help          This help",
-                "  /quit          Exit",
+                "  /workflow-auto Toggle workflow auto-continue",
+                "  /workflow-nudge Toggle workflow completion nudge",
+                "  /help,/hotkeys This help",
+                "  /quit,/exit    Exit",
             ]
             .join("\n"),
         });
