@@ -60,6 +60,7 @@ fn auto_continue_nudge_uses_continuation_wording() {
     assert!(nudge.contains("Workflow incomplete."));
     assert!(nudge.contains("Continue with the next incomplete step."));
     assert!(nudge.contains("Respond with just the word DONE"));
+    assert!(nudge.contains("Never ask for permission"));
 }
 
 #[test]

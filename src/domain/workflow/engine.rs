@@ -197,13 +197,15 @@ impl WorkflowEngine {
     }
 
     pub fn auto_continue_nudge(&self) -> Option<String> {
+        const AUTO_CONTINUE_NUDGE: &str = "Workflow incomplete. Continue with the next incomplete step. Use the workflow tool to check off steps as you complete them. Respond with just the word DONE (no other text) when all workflow steps are checked off. Never ask for permission or stop for any other reason than the task is entirely complete.";
+
         if !self.auto_continue || self.mode() != WorkflowMode::Active {
             return None;
         }
-        self.current_step()?;
-        Some(format!(
-            "Workflow incomplete. Continue with the next incomplete step. Use the workflow tool to check off steps as you complete them. Respond with just the word DONE (no other text) when all workflow steps are checked off. Never ask for permission or stop for any other reason than the task is entirely complete."
-        ))
+        if self.current_step().is_none() {
+            return None;
+        }
+        Some(AUTO_CONTINUE_NUDGE.to_owned())
     }
 
     pub fn completion_nudge(&self) -> Option<String> {
