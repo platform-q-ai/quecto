@@ -68,7 +68,7 @@ infrastructure/ ----+
 ```
 
 ### domain/ — Pure types and traits
-Zero deps except `thiserror`, `serde` (derive), `serde_yaml`. Defines system vocabulary.
+Zero deps except `thiserror` and `serde` (derive). Defines system vocabulary.
 
 | File | Purpose |
 |---|---|

@@ -143,5 +143,10 @@
         ]
       }
     ]
+  },
+  "tools": {
+    "exec": {
+      "isolation": "native"
+    }
   }
 }
