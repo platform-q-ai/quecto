@@ -54,6 +54,14 @@ This lets different repos define different template libraries, guard rules,
 and nudge behavior. The `--config` flag overrides the entire config — provider
 credentials and all agent defaults must also be present in the specified file.
 
+> **Important:** The default exec isolation mode is `nsjail`, which runs bash
+> commands inside a sandboxed container that only mounts the workspace directory.
+> Tools like `gh`, `git push`, and anything that reads `~/.config/` or
+> `~/.gitconfig` will fail because `$HOME` is not mounted. If your workflow
+> needs Git/GitHub operations, add `"tools": { "exec": { "isolation": "native" } }`
+> to your config file, or pass `--no-sandbox` and `--network` when launching
+> the agent.
+
 ### Minimal per-repo config example
 
 A repo-local config that uses OpenAI with custom workflow templates:
@@ -63,6 +71,11 @@ A repo-local config that uses OpenAI with custom workflow templates:
   "providers": {
     "openai": {
       "api_key": ""
+    }
+  },
+  "tools": {
+    "exec": {
+      "isolation": "native"
     }
   },
   "agents": {

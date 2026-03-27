@@ -76,6 +76,13 @@ agent flags:
 - `--no-sandbox` disables filesystem sandboxing for the spawned agent
 - `--network` enables outbound network access for bash in the spawned agent
 
+> **Gotcha with `--config`:** The default bash isolation mode is `nsjail`,
+> which does not mount `$HOME`. If your custom config omits `tools.exec`,
+> commands like `gh auth status` and `git push` will fail because they
+> cannot reach `~/.config/gh/` or `~/.gitconfig`. Add
+> `"tools": { "exec": { "isolation": "native" } }` to your config file to
+> fix this.
+
 For safety, auto-discovered socket paths are validated and must live under
 `/tmp`, `$TMPDIR`, `$XDG_RUNTIME_DIR`, or `$HOME`.
 

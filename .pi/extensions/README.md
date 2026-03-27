@@ -1,131 +1,141 @@
 # Quecto Workflow Extension
 
-A [Pi](https://github.com/badlogic/pi-mono) extension that enforces the BDD/TDD Red→Green→Refactor development workflow defined in [`README.md`](../../README.md) as an interactive checklist.
+A [Pi](https://github.com/badlogic/pi-mono) extension that adds a native
+workflow checklist to Pi for Quecto's development process.
+
+It is implemented in [`quecto-workflow.ts`](./quecto-workflow.ts) and models the
+current **14-step** Quecto workflow used by the extension itself.
 
 ## Why
 
-The Quecto project mandates a strict 16-step development workflow for every change. This extension makes that workflow visible, trackable, and enforced — both for you and for the LLM agent working alongside you.
+The extension gives both the human operator and the LLM a shared, persistent
+view of development progress:
 
-## The Workflow
+- an interactive checklist UI
+- a `workflow` tool the LLM can call directly
+- prompt injection with current workflow state
+- guardrails around `git commit`
+- optional auto-continue and completion nudges
 
-Steps are grouped into phases, color-coded in the TUI:
+## Current workflow
 
-| Phase | Steps | What happens |
-|-------|-------|-------------|
-| 🔴 **RED** | 1. Update scenarios / add features | Write or update `.feature` files and BDD scenarios |
-| | 2. Write/update unit tests | Add failing test cases |
-| | 3. Ensure tests FAIL | Verify the tests actually fail before implementing |
-| 🟢 **GREEN** | 4. Implement code | Write the minimum code to make tests pass |
-| 🟡 **REFACTOR** | 5. Refactor | Clean up for performance, security, and architecture |
-| 🟢 **GREEN** | 6. Ensure tests still pass | Verify nothing broke during refactor |
-| 🔵 **CI/CD** | 7. Commit | `git commit` |
-| | 8. Push | `git push` |
-| | 9. Create PR | Open a pull request |
-| ⚪ **REVIEW** | 10. Despatch reviewers | Request Architecture, Security, and Performance reviews |
-| | 11. Fix review concerns | Address all valid feedback |
-| | 12. Push changes | Push fixes to remote |
-| | 13. Reply & resolve comments | Mark review threads as resolved |
-| 🔵 **CI/CD** | 14. Run pre-merge hooks | Real-LLM e2e tests (24-shard), cargo machete, cargo deny |
-| | 15. Merge | Merge the PR |
-| | 16. Pull to local master | `git checkout master && git pull` |
+The extension tracks these 14 steps:
+
+| # | Phase | Step |
+|---|---|---|
+| 1 | RED | Update scenarios / add new features |
+| 2 | RED | Write/update unit tests (quick smoke check only) |
+| 3 | RED | Ensure new/modified tests fail (RED) |
+| 4 | GREEN | Implement code (GREEN) |
+| 5 | CI/CD | Commit |
+| 6 | CI/CD | Push (pre-push runs tests/linting) |
+| 7 | CI/CD | Create PR |
+| 8 | REVIEW | Despatch sub agents in parallel as reviewers |
+| 9 | REVIEW | Fix all valid review concerns |
+| 10 | REVIEW | Push changes to remote |
+| 11 | REVIEW | Reply to reviewer comments and mark resolved |
+| 12 | CI/CD | Run pre-merge hooks |
+| 13 | CI/CD | Merge |
+| 14 | CI/CD | Move to local master and pull |
 
 ## Features
 
-### Interactive Checklist
+### Interactive checklist
 
-Open with `/workflow` or `Ctrl+Shift+W`. Navigate with ↑↓ or j/k, toggle steps with Enter/Space, reset all with R, close with Esc.
+Open the checklist with either:
 
-```
-───── Quecto Dev Workflow ─────────────────────
-  BDD/TDD Red → Green → Refactor
+- `/workflow`
+- `Ctrl+Shift+W`
 
-  ████████░░░░░░░░░░░░░░░░░░░░░░ 4/16 (25%)
+Controls:
 
-  RED
-  ▸ ✓  1. Update Scenarios / Add new features
-    ✓  2. Write/update unit tests
-    ✓  3. Ensure new/modified tests FAIL (RED)
-  GREEN
-    ✓  4. Implement code (GREEN)
-  REFACTOR
-    ○  5. Refactor (perf, security, clean arch)
-  ...
+- `↑` / `↓` or `j` / `k` — move selection
+- `Enter`, `Space`, or `x` — toggle selected step
+- `R` — reset all steps
+- `Esc` or `Ctrl+C` — close the checklist
 
-  ↑↓ navigate  ·  Enter/Space toggle  ·  R reset  ·  Esc close
-```
+### Workflow widget
 
-### Progress Widget
+When the workflow is active, the extension shows a widget above the editor with:
 
-A one-line progress bar appears above the editor once you start working:
+- active issue number/title
+- progress through the 14 steps
+- the current phase
+- the next incomplete step
 
-```
-Workflow ████░░░░░░░░░░░ 4/16 (25%) → Step 5: Refactor (perf, security, clean arch) [REFACTOR]
-```
+### LLM workflow tool
 
-Hidden when no steps are checked (no clutter on fresh sessions).
+The agent can call the `workflow` tool to manage progress itself.
 
-### LLM Workflow Tool
-
-The agent can call the `workflow` tool to track its own progress:
+Supported actions:
 
 | Action | Description |
-|--------|-------------|
-| `status` | Show all steps and current progress |
-| `check <step>` | Mark a step as done |
-| `uncheck <step>` | Unmark a step |
-| `reset` | Clear all steps for a new cycle |
-| `skip <step>` | Mark done even if earlier steps are incomplete |
+|---|---|
+| `status` | Show current progress |
+| `check` | Mark a step done |
+| `uncheck` | Unmark a step |
+| `skip` | Force-complete a step out of order |
+| `reset` | Clear the workflow for a new cycle |
+| `set_issue` | Set the active issue number/title |
+| `clear_issue` | Clear the active issue |
 
-The system prompt is injected each turn with the current step and a reminder to follow BDD/TDD order. Step-specific instructions are included when the agent reaches certain steps — for example, step 10 injects concrete `subagent` tool usage showing how to dispatch the architecture, security, and performance reviewers in parallel.
+The tool persists workflow state in tool result details so the checklist can be
+reconstructed across session restores and branch navigation.
 
-### Git Commit Guard
+### System prompt injection
 
-When the LLM runs `git commit`, the extension checks that steps 1–6 (the core RED→GREEN→REFACTOR→GREEN cycle) are all marked done. If not, you get a confirmation dialog listing the incomplete steps. In non-interactive mode, the commit is blocked outright.
+Before each turn, the extension injects workflow context into the system prompt,
+including:
 
-### Sharded BDD Guard
+- active issue information
+- progress summary
+- current required step
+- reminders to use the `workflow` tool
+- completion guidance when all steps are done
 
-When the LLM runs `cargo test --test bdd` without shard environment variables (`QUECTO_BDD_SHARD_INDEX` / `QUECTO_BDD_SHARD_TOTAL`), the extension blocks the command and directs the agent to use `scripts/run-bdd-shards.sh` instead (24-way parallel). Exceptions are allowed for:
+### Git commit guard
 
-- Commands that already set shard env vars inline
-- Commands routed through `run-bdd-shards.sh`
-- Single-scenario debugging with `QUECTO_TAG` (e.g., `@focus`)
+When the agent tries to run `git commit`, the extension checks whether the
+pre-commit workflow steps are complete. If not, the command is blocked (or
+confirmed interactively, depending on Pi runtime behavior).
 
-In interactive mode, you get a confirmation dialog to override. In non-interactive mode, the command is blocked outright.
+### Sharded BDD guard
 
-### Auto-Continue
+The extension also blocks unsharded `cargo test --test bdd` runs and tells the
+agent to use `scripts/run-bdd-shards.sh`, unless the command already specifies
+shards or is doing focused scenario debugging.
 
-When the agent stops with incomplete workflow steps, you can have it automatically continue. Toggle with:
+### Auto-continue and completion nudges
 
-- **`/workflow-auto`** command
-- **`Ctrl+Shift+A`** shortcut
+Two optional helpers are included:
 
-When enabled, the extension detects when the agent finishes (`agent_end`) and, if at least one step is checked but not all are done, sends a follow-up message telling the agent to continue with the next incomplete step. This creates a loop where the agent keeps working through the workflow until all 16 steps are complete.
+- `/workflow-auto` or `Ctrl+Shift+A` toggles auto-continue
+- `/workflow-nudge` or `Ctrl+Shift+N` toggles the completion nudge
 
-The nudge is skipped if no steps have been checked yet (to avoid pestering on fresh sessions where the workflow hasn't started).
-
-### State Persistence
-
-State is stored in two ways:
-
-- **Tool result details** — Every `workflow` tool call snapshots the full checklist into the session. This handles branching correctly (fork, `/tree` navigation).
-- **`appendEntry`** — Manual toggles from `/workflow` are persisted as custom session entries. On restore, the most recent source wins.
-
-State survives session restarts, `/new`, `/resume`, `/fork`, and `/tree`.
+Auto-continue sends a follow-up instruction after `agent_end` when work has
+started but the checklist is not complete yet. The completion nudge fires once
+when all steps are complete and reminds the agent to close the current issue,
+reset the workflow, and pick the next task.
 
 ## Installation
 
-Already installed — the extension lives at:
+The extension lives in this repository at:
 
-```
+```text
 quecto/.pi/extensions/quecto-workflow.ts
 ```
 
-Pi auto-discovers it when you run `pi` from the `quecto` directory. Use `/reload` to hot-reload after edits.
+Pi auto-discovers it when you run Pi from the `quecto` repository. Use
+`/reload` after editing it.
 
-## Future Ideas
+## Relationship to Quecto's native workflow engine
 
-- **Auto-verify RED/GREEN** — Run `cargo test` automatically when checking steps 3 and 6, and confirm the exit code matches expectations (non-zero for RED, zero for GREEN).
-- **Strict ordering** — Hard-block out-of-order step completion instead of warning.
-- **Guard git push** — Block `git push` if step 7 (Commit) isn't checked.
-- **Auto-reset** — Automatically reset the checklist after step 16.
-- **Quality gate integration** — Run `scripts/check-quality.sh` and `cargo clippy` as part of the refactor step verification.
+This extension is separate from Quecto's built-in UDS workflow engine described
+in [`docs/workflow.md`](../../docs/workflow.md):
+
+- **this extension** is a Pi-side checklist and guard system
+- **Quecto workflow V2** is the native in-process workflow runtime exposed via
+  the UDS `workflow` tool
+
+Both are workflow-related, but they are distinct implementations with different
+integration points.
