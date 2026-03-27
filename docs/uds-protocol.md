@@ -861,6 +861,12 @@ All flags for `quecto agent` that affect UDS mode:
 | `--disable-tool <name>` | Remove a tool from the registry (repeatable) |
 | `--config <path>` | Override config file path |
 
+> **Note on `--config`:** When using a custom config file, ensure it includes
+> `"tools": { "exec": { "isolation": "native" } }` if the agent needs access
+> to `$HOME` (e.g. for `gh` credentials, `.gitconfig`). The default isolation
+> mode is `nsjail`, which sandboxes bash commands and does not mount the home
+> directory.
+
 ## See also
 
 - [Extensions](extensions.md) — adding custom tools via native config or UDS registration
