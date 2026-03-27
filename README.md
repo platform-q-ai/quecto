@@ -54,12 +54,10 @@ Useful `quecto-tui` flags:
 Handy TUI controls: `Shift+Enter` or `Alt+Enter` inserts a newline, `Escape`
 aborts the active run (or clears the editor when idle), `Ctrl+C` clears the
 editor first and otherwise aborts the active run, `Ctrl+L` opens the model
-selector, `Ctrl+O` toggles tool output expansion, `Ctrl+Shift+A` toggles
-workflow auto-continue, and `Ctrl+Shift+N` toggles workflow completion nudge.
-Slash commands include `/model`, `/clear`, `/new`, `/session`,
-`/workflow-auto`, `/workflow-nudge`, `/help` (also `/hotkeys`), and `/quit`
-(also `/exit`). See [`quecto-tui/README.md`](quecto-tui/README.md) for a
-dedicated TUI reference.
+selector, and `Ctrl+O` toggles tool output expansion. Slash commands include
+`/model`, `/clear`, `/new`, `/session`, `/workflow-auto`, `/workflow-nudge`,
+`/help` (also `/hotkeys`), and `/quit` (also `/exit`). See
+[`quecto-tui/README.md`](quecto-tui/README.md) for a dedicated TUI reference.
 
 ## Architecture
 

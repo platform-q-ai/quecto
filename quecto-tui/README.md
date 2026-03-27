@@ -51,8 +51,6 @@ An explicit `--system` value overrides that default.
 | `Ctrl+D` | Exit immediately |
 | `Ctrl+L` | Open model selector |
 | `Ctrl+O` | Toggle tool output expansion |
-| `Ctrl+Shift+A` | Toggle workflow auto-continue |
-| `Ctrl+Shift+N` | Toggle workflow completion nudge |
 | `Ctrl+Z` | Suspend the TUI (`fg` to resume) |
 | `PageUp` / `PageDown` | Scroll chat |
 | `Up` / `Down` | Browse input history |
