@@ -484,34 +484,6 @@ impl App {
                 self.open_model_selector();
                 return;
             }
-            Key::CtrlShift('a') => {
-                self.workflow_auto_continue = !self.workflow_auto_continue;
-                let state = if self.workflow_auto_continue {
-                    "ON — agent will be nudged to complete all steps"
-                } else {
-                    "OFF"
-                };
-                self.notify(
-                    &format!("Workflow auto-continue {state}"),
-                    NotifyLevel::Info,
-                );
-                self.render();
-                return;
-            }
-            Key::CtrlShift('n') => {
-                self.workflow_completion_nudge = !self.workflow_completion_nudge;
-                let state = if self.workflow_completion_nudge {
-                    "ON — agent will be prompted to pick next issue"
-                } else {
-                    "OFF"
-                };
-                self.notify(
-                    &format!("Workflow completion nudge {state}"),
-                    NotifyLevel::Info,
-                );
-                self.render();
-                return;
-            }
             Key::Ctrl('o') => {
                 // Toggle tool output expansion.
                 self.chat.toggle_tool_expand();
@@ -1071,8 +1043,6 @@ impl App {
                 "  Ctrl+D         Exit",
                 "  Ctrl+L         Open model selector",
                 "  Ctrl+O         Toggle tool output expansion",
-                "  Ctrl+Shift+A   Toggle workflow auto-continue",
-                "  Ctrl+Shift+N   Toggle workflow completion nudge",
                 "  Ctrl+Z         Suspend (resume with fg)",
                 "  PageUp/Down    Scroll chat",
                 "  Up/Down        Input history",
