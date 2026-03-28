@@ -193,6 +193,7 @@ fn make_repl_loop(
         streaming: false,
         effort: None,
         system_prompt_provider: None,
+        audit_log: None,
     });
     let session_store = FileSessionStore::new(base_dir);
     let session = ReplSession {

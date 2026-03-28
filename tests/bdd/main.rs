@@ -615,6 +615,21 @@ pub struct QuectoWorld {
     pub _real_llm_uds: bool,
     /// Workflow V2: when true, register WorkflowEngine + WorkflowTool + WorkflowGuard
     pub _workflow_enabled: bool,
+    // --- Audit log (#609) ---
+    /// Temp dir for audit log tests (kept alive)
+    pub tempdir: Option<TempDir>,
+    /// Audit event under test (for serde round-trip scenarios)
+    pub audit_event: Option<quecto::domain::audit::AuditEvent>,
+    /// Serialized JSON for audit event
+    pub audit_json: Option<String>,
+    /// Active audit log handle
+    pub audit_log: Option<std::sync::Arc<quecto::infrastructure::persistence::audit_log::AuditLog>>,
+    /// Session key used with audit log
+    pub audit_session_key: Option<String>,
+    /// Long content for preview tests
+    pub audit_long_content: Option<String>,
+    /// Generated content preview
+    pub audit_content_preview: Option<String>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
@@ -862,6 +877,7 @@ fn table_to_json(table: &gherkin::Table) -> String {
 mod agent_cmd_tool_steps;
 mod agent_loop_steps;
 mod agent_tools_steps;
+mod audit_log_steps;
 mod architecture_steps;
 mod auth_steps;
 mod codex_provider_steps;

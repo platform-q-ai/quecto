@@ -49,6 +49,7 @@ fn make_repl(base_dir: &std::path::Path) -> ReplLoop<Cursor<Vec<u8>>, Vec<u8>> {
         streaming: false,
         effort: None,
         system_prompt_provider: None,
+        audit_log: None,
     });
     let session_store = FileSessionStore::new(base_dir);
     let session = ReplSession {

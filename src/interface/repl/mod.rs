@@ -342,6 +342,7 @@ pub fn run_repl<R: BufRead, W: Write>(
         streaming: false,
         effort: resolve_effort_from_config(ctx.config),
         system_prompt_provider: None,
+        audit_log: None,
     });
 
     let session_store = FileSessionStore::new(ctx.base_dir);

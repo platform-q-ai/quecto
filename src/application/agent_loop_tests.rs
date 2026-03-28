@@ -245,6 +245,7 @@ pub(super) fn make_agent(
         streaming: false,
         effort: None,
         system_prompt_provider: None,
+        audit_log: None,
     });
     (agent, provider)
 }
@@ -413,6 +414,7 @@ async fn test_tool_error_is_sent_back() {
         streaming: false,
         effort: None,
         system_prompt_provider: None,
+        audit_log: None,
     });
     let mut messages = vec![Message::user("use a tool")];
     let result = agent.run_loop(&mut messages).await.unwrap();
@@ -459,6 +461,7 @@ async fn test_system_prompt_provider_is_refreshed_before_each_llm_turn() {
             let prompts = prompts.clone();
             move || prompts.lock().unwrap().clone()
         })),
+        audit_log: None,
     });
 
     let mut messages = vec![Message::system("stale prompt"), Message::user("advance")];
@@ -492,6 +495,7 @@ fn test_refresh_dynamic_system_prompt_inserts_before_manifest() {
         streaming: false,
         effort: None,
         system_prompt_provider: Some(Arc::new(|| "live prompt".to_string())),
+        audit_log: None,
     });
     let mut manifest = Message::system("[Session memory: 1 spilled entry]");
     manifest.is_manifest = true;
@@ -543,6 +547,7 @@ fn make_agent_with_callback(
         streaming: false,
         effort: None,
         system_prompt_provider: None,
+        audit_log: None,
     });
     (agent, provider, events)
 }

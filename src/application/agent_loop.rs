@@ -8,11 +8,13 @@ use crate::application::context_pruning;
 use crate::domain::agent::{
     AgentInfo, AgentLoop, AgentProgressEvent, AgentResult, ProgressCallback,
 };
+use crate::domain::audit::AuditEvent;
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
 use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent};
 use crate::domain::session::{ContextSpillStore, SpillEntry};
 use crate::domain::tool::ToolRegistry;
+use crate::infrastructure::persistence::audit_log::AuditLog;
 
 /// Default maximum tool iterations before the loop is forcibly stopped.
 const DEFAULT_MAX_TOOL_ITERATIONS: u32 = 999_999;
@@ -42,6 +44,10 @@ pub struct AgentLoopConfig {
     pub effort: Option<EffortLevel>,
     /// Optional dynamic system prompt provider invoked before each LLM turn.
     pub system_prompt_provider: Option<Arc<dyn Fn() -> String + Send + Sync>>,
+    /// Optional append-only audit log. When `Some`, every significant event
+    /// (tool call, tool result, LLM turn, pruning, etc.) is written to a
+    /// durable JSONL file. When `None`, no audit overhead.
+    pub audit_log: Option<Arc<AuditLog>>,
 }
 
 /// Concrete implementation of the agent loop.
@@ -65,6 +71,8 @@ pub struct AgentLoopImpl {
     effort: Option<EffortLevel>,
     /// Optional dynamic system prompt provider invoked before each LLM turn.
     system_prompt_provider: Option<Arc<dyn Fn() -> String + Send + Sync>>,
+    /// Optional append-only audit log for durable event recording.
+    audit_log: Option<Arc<AuditLog>>,
 }
 
 impl std::fmt::Debug for AgentLoopImpl {
@@ -104,6 +112,7 @@ impl AgentLoopImpl {
             streaming: config.streaming,
             effort: config.effort,
             system_prompt_provider: config.system_prompt_provider,
+            audit_log: config.audit_log,
         }
     }
 
@@ -192,6 +201,29 @@ impl AgentLoopImpl {
         self.system_prompt_provider = provider;
     }
 
+    /// Access the audit log (if configured).
+    pub fn audit_log(&self) -> Option<&Arc<AuditLog>> {
+        self.audit_log.as_ref()
+    }
+
+    /// Set or replace the audit log at runtime.
+    ///
+    /// Used by the UDS entry point to wire the audit log after construction.
+    pub fn set_audit_log(&mut self, log: Option<Arc<AuditLog>>) {
+        self.audit_log = log;
+    }
+
+    /// Emit an audit event if audit logging is enabled.
+    ///
+    /// Write failures are logged via `tracing::warn!` but never crash the agent.
+    async fn audit(&self, turn: u32, event: AuditEvent) {
+        if let Some(ref log) = self.audit_log {
+            if let Err(e) = log.emit(turn, event).await {
+                tracing::warn!(target: "audit", error = %e, "audit log write failed");
+            }
+        }
+    }
+
     /// Set the skill count (for startup info).
     pub fn with_skill_count(mut self, count: usize) -> Self {
         self.skill_count = count;
@@ -264,6 +296,16 @@ impl AgentLoopImpl {
                 total_tokens,
                 "context pruned"
             );
+            self.audit(
+                current_turn,
+                AuditEvent::ContextPruned {
+                    messages_dropped: dropped,
+                    tool_results_collapsed: collapsed,
+                    tokens_before: total_tokens + dropped * 50, // approximate pre-drop
+                    tokens_after: total_tokens,
+                },
+            )
+            .await;
         }
         total_tokens
     }
@@ -309,7 +351,34 @@ impl AgentLoopImpl {
         messages.push(Message::assistant(content, tool_calls.clone()));
 
         for (idx, tc) in tool_calls.iter().enumerate() {
+            // Audit: ToolCall
+            self.audit(
+                current_turn,
+                AuditEvent::ToolCall {
+                    tool: tc.name.clone(),
+                    call_id: tc.id.clone(),
+                    arguments: tc.arguments.clone(),
+                },
+            )
+            .await;
+
             let (content, image_blocks, is_error) = self.execute_single_tool_call(tc).await;
+            let content_tokens = context_pruning::estimate_tokens(&content);
+            let preview = crate::domain::audit::content_preview(&content, 200);
+
+            // Audit: ToolResult
+            self.audit(
+                current_turn,
+                AuditEvent::ToolResult {
+                    call_id: tc.id.clone(),
+                    tool: tc.name.clone(),
+                    is_error,
+                    content_tokens,
+                    content_preview: preview,
+                },
+            )
+            .await;
+
             let spill_id = format!("turn{}:{}:{}", current_turn, tc.name, idx);
             let mut tool_msg = self.build_tool_message(ToolMessageArgs {
                 tc,
@@ -488,6 +557,19 @@ impl AgentLoopImpl {
             });
 
             let request = self.build_chat_request(messages, tool_defs);
+
+            // Audit: LlmTurnStart
+            self.audit(
+                current_turn,
+                AuditEvent::LlmTurnStart {
+                    input_tokens_estimate: context_tokens,
+                    message_count: messages.len(),
+                },
+            )
+            .await;
+
+            let llm_start = std::time::Instant::now();
+
             // Use streaming when enabled (UDS mode) so token events are
             // forwarded in real time.  REPL/one-shot use the
             // non-streaming path.
@@ -496,13 +578,50 @@ impl AgentLoopImpl {
             } else {
                 self.provider.chat(request).await
             };
+
+            let llm_duration_ms = llm_start.elapsed().as_millis() as u64;
+
             let response = match response {
                 Ok(r) => r,
-                Err(e) => {
+                Err(ref e) => {
+                    // Audit: Error on provider failure
+                    self.audit(
+                        current_turn,
+                        AuditEvent::Error {
+                            source: "provider".into(),
+                            tool: None,
+                            message: e.to_string(),
+                        },
+                    )
+                    .await;
                     self.notify(|| AgentProgressEvent::Done);
-                    return Err(e);
+                    return Err(response.unwrap_err());
                 }
             };
+
+            // Audit: LlmTurnEnd
+            {
+                let (input_toks, output_toks) = response
+                    .usage
+                    .as_ref()
+                    .map(|u| (u.prompt_tokens as usize, u.completion_tokens as usize))
+                    .unwrap_or((context_tokens, 0));
+                let stop = response
+                    .stop_reason
+                    .as_ref()
+                    .map(|s| format!("{s:?}"))
+                    .unwrap_or_else(|| "unknown".into());
+                self.audit(
+                    current_turn,
+                    AuditEvent::LlmTurnEnd {
+                        input_tokens: input_toks,
+                        output_tokens: output_toks,
+                        stop_reason: stop,
+                        duration_ms: llm_duration_ms,
+                    },
+                )
+                .await;
+            }
 
             // Track usage: input = last call's prompt tokens (context size),
             // output = sum of all calls' completion tokens.
