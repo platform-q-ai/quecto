@@ -5,6 +5,13 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Issue reference for workflow transition events.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AuditIssue {
+    pub number: u64,
+    pub title: String,
+}
+
 /// A single audit event. Engine-authored, never fabricated by the LLM.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "event", rename_all = "snake_case")]
@@ -42,7 +49,7 @@ pub enum AuditEvent {
         from_mode: String,
         to_mode: String,
         template_id: Option<String>,
-        issue: Option<(u64, String)>,
+        issue: Option<AuditIssue>,
     },
     ContextPruned {
         messages_dropped: usize,
@@ -81,11 +88,34 @@ pub struct AuditEnvelope {
     pub event: AuditEvent,
 }
 
+/// Trait for audit event sinks. Implemented by AuditLog in infrastructure.
+///
+/// This trait lives in the domain layer so the application layer (agent_loop)
+/// can depend on it without importing infrastructure types.
+///
+/// Uses boxed futures instead of `async fn` for dyn-compatibility.
+pub trait AuditSink: Send + Sync {
+    fn emit(
+        &self,
+        turn: u32,
+        event: AuditEvent,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>;
+}
+
 /// Generate a content preview capped at `max_chars` characters.
 ///
 /// Truncates at a character boundary and appends "..." when truncated.
+/// Uses a byte-length fast path for ASCII-dominated content (the common case
+/// for terminal output, code, and JSON) to avoid O(n) char counting.
 pub fn content_preview(content: &str, max_chars: usize) -> String {
-    if content.chars().count() <= max_chars {
+    // Fast path: if byte length ≤ max_chars, the string is guaranteed to
+    // have ≤ max_chars characters (since each char is ≥ 1 byte).
+    if content.len() <= max_chars {
+        return content.to_string();
+    }
+    // Slow path: multi-byte content or long ASCII — count characters.
+    let char_count = content.chars().count();
+    if char_count <= max_chars {
         content.to_string()
     } else {
         let truncated: String = content.chars().take(max_chars.saturating_sub(3)).collect();
@@ -167,7 +197,7 @@ mod tests {
             from_mode: "selector".into(),
             to_mode: "active".into(),
             template_id: Some("feature".into()),
-            issue: Some((42, "Add auth".into())),
+            issue: Some(AuditIssue { number: 42, title: "Add auth".into() }),
         };
         let json = serde_json::to_string(&event).unwrap();
         let back: AuditEvent = serde_json::from_str(&json).unwrap();

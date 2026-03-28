@@ -8,13 +8,12 @@ use crate::application::context_pruning;
 use crate::domain::agent::{
     AgentInfo, AgentLoop, AgentProgressEvent, AgentResult, ProgressCallback,
 };
-use crate::domain::audit::AuditEvent;
+use crate::domain::audit::{AuditEvent, AuditSink};
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
 use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent};
 use crate::domain::session::{ContextSpillStore, SpillEntry};
 use crate::domain::tool::ToolRegistry;
-use crate::infrastructure::persistence::audit_log::AuditLog;
 
 /// Default maximum tool iterations before the loop is forcibly stopped.
 const DEFAULT_MAX_TOOL_ITERATIONS: u32 = 999_999;
@@ -47,7 +46,7 @@ pub struct AgentLoopConfig {
     /// Optional append-only audit log. When `Some`, every significant event
     /// (tool call, tool result, LLM turn, pruning, etc.) is written to a
     /// durable JSONL file. When `None`, no audit overhead.
-    pub audit_log: Option<Arc<AuditLog>>,
+    pub audit_log: Option<Arc<dyn AuditSink>>,
 }
 
 /// Concrete implementation of the agent loop.
@@ -72,7 +71,7 @@ pub struct AgentLoopImpl {
     /// Optional dynamic system prompt provider invoked before each LLM turn.
     system_prompt_provider: Option<Arc<dyn Fn() -> String + Send + Sync>>,
     /// Optional append-only audit log for durable event recording.
-    audit_log: Option<Arc<AuditLog>>,
+    audit_log: Option<Arc<dyn AuditSink>>,
 }
 
 impl std::fmt::Debug for AgentLoopImpl {
@@ -202,14 +201,14 @@ impl AgentLoopImpl {
     }
 
     /// Access the audit log (if configured).
-    pub fn audit_log(&self) -> Option<&Arc<AuditLog>> {
+    pub fn audit_log(&self) -> Option<&Arc<dyn AuditSink>> {
         self.audit_log.as_ref()
     }
 
     /// Set or replace the audit log at runtime.
     ///
     /// Used by the UDS entry point to wire the audit log after construction.
-    pub fn set_audit_log(&mut self, log: Option<Arc<AuditLog>>) {
+    pub fn set_audit_log(&mut self, log: Option<Arc<dyn AuditSink>>) {
         self.audit_log = log;
     }
 
@@ -263,6 +262,9 @@ impl AgentLoopImpl {
         current_turn: u32,
         spills_dirty: bool,
     ) -> usize {
+        // Snapshot token count before pruning for accurate audit logging.
+        let tokens_before = context_pruning::estimate_total_tokens(messages);
+
         // Collapse is disabled by default (COLLAPSE_DISABLED = u32::MAX).
         // Still available for users who explicitly lower the config value.
         let collapsed = if self.context_collapse_after_turns < context_pruning::COLLAPSE_DISABLED {
@@ -301,7 +303,7 @@ impl AgentLoopImpl {
                 AuditEvent::ContextPruned {
                     messages_dropped: dropped,
                     tool_results_collapsed: collapsed,
-                    tokens_before: total_tokens + dropped * 50, // approximate pre-drop
+                    tokens_before,
                     tokens_after: total_tokens,
                 },
             )
@@ -351,33 +353,37 @@ impl AgentLoopImpl {
         messages.push(Message::assistant(content, tool_calls.clone()));
 
         for (idx, tc) in tool_calls.iter().enumerate() {
-            // Audit: ToolCall
-            self.audit(
-                current_turn,
-                AuditEvent::ToolCall {
-                    tool: tc.name.clone(),
-                    call_id: tc.id.clone(),
-                    arguments: tc.arguments.clone(),
-                },
-            )
-            .await;
+            // Audit: ToolCall (guarded — avoid clones when audit is disabled)
+            if self.audit_log.is_some() {
+                self.audit(
+                    current_turn,
+                    AuditEvent::ToolCall {
+                        tool: tc.name.clone(),
+                        call_id: tc.id.clone(),
+                        arguments: tc.arguments.clone(),
+                    },
+                )
+                .await;
+            }
 
             let (content, image_blocks, is_error) = self.execute_single_tool_call(tc).await;
-            let content_tokens = context_pruning::estimate_tokens(&content);
-            let preview = crate::domain::audit::content_preview(&content, 200);
 
-            // Audit: ToolResult
-            self.audit(
-                current_turn,
-                AuditEvent::ToolResult {
-                    call_id: tc.id.clone(),
-                    tool: tc.name.clone(),
-                    is_error,
-                    content_tokens,
-                    content_preview: preview,
-                },
-            )
-            .await;
+            // Audit: ToolResult (guarded — avoid estimate_tokens/preview when disabled)
+            if self.audit_log.is_some() {
+                let content_tokens = context_pruning::estimate_tokens(&content);
+                let preview = crate::domain::audit::content_preview(&content, 200);
+                self.audit(
+                    current_turn,
+                    AuditEvent::ToolResult {
+                        call_id: tc.id.clone(),
+                        tool: tc.name.clone(),
+                        is_error,
+                        content_tokens,
+                        content_preview: preview,
+                    },
+                )
+                .await;
+            }
 
             let spill_id = format!("turn{}:{}:{}", current_turn, tc.name, idx);
             let mut tool_msg = self.build_tool_message(ToolMessageArgs {
@@ -558,15 +564,17 @@ impl AgentLoopImpl {
 
             let request = self.build_chat_request(messages, tool_defs);
 
-            // Audit: LlmTurnStart
-            self.audit(
-                current_turn,
-                AuditEvent::LlmTurnStart {
-                    input_tokens_estimate: context_tokens,
-                    message_count: messages.len(),
-                },
-            )
-            .await;
+            // Audit: LlmTurnStart (guarded)
+            if self.audit_log.is_some() {
+                self.audit(
+                    current_turn,
+                    AuditEvent::LlmTurnStart {
+                        input_tokens_estimate: context_tokens,
+                        message_count: messages.len(),
+                    },
+                )
+                .await;
+            }
 
             let llm_start = std::time::Instant::now();
 
@@ -583,7 +591,7 @@ impl AgentLoopImpl {
 
             let response = match response {
                 Ok(r) => r,
-                Err(ref e) => {
+                Err(e) => {
                     // Audit: Error on provider failure
                     self.audit(
                         current_turn,
@@ -595,12 +603,12 @@ impl AgentLoopImpl {
                     )
                     .await;
                     self.notify(|| AgentProgressEvent::Done);
-                    return Err(response.unwrap_err());
+                    return Err(e);
                 }
             };
 
-            // Audit: LlmTurnEnd
-            {
+            // Audit: LlmTurnEnd (guarded)
+            if self.audit_log.is_some() {
                 let (input_toks, output_toks) = response
                     .usage
                     .as_ref()
@@ -609,8 +617,17 @@ impl AgentLoopImpl {
                 let stop = response
                     .stop_reason
                     .as_ref()
-                    .map(|s| format!("{s:?}"))
-                    .unwrap_or_else(|| "unknown".into());
+                    .map(|s| match s {
+                        crate::domain::message::StopReason::EndTurn => "end_turn",
+                        crate::domain::message::StopReason::MaxTokens => "max_tokens",
+                        crate::domain::message::StopReason::ToolUse => "tool_use",
+                        crate::domain::message::StopReason::Refusal => "refusal",
+                        crate::domain::message::StopReason::Error => "error",
+                        crate::domain::message::StopReason::Aborted => "aborted",
+                        crate::domain::message::StopReason::Unknown(s) => s.as_str(),
+                    })
+                    .unwrap_or("unknown")
+                    .to_string();
                 self.audit(
                     current_turn,
                     AuditEvent::LlmTurnEnd {

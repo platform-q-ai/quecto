@@ -8,13 +8,16 @@ use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
-use crate::domain::audit::{AuditEnvelope, AuditEvent};
+use crate::domain::audit::{AuditEnvelope, AuditEvent, AuditSink};
 use crate::domain::error::DomainError;
 use crate::infrastructure::persistence::filename::sanitize_session_key;
 
 /// Append-only audit log handle for a single session.
+///
+/// Uses a raw `tokio::fs::File` (no `BufWriter`) because every `emit()` call
+/// flushes immediately for crash durability — buffering would be negated.
 pub struct AuditLog {
-    writer: Mutex<tokio::io::BufWriter<tokio::fs::File>>,
+    writer: Mutex<tokio::fs::File>,
     session_key: String,
 }
 
@@ -48,7 +51,7 @@ impl AuditLog {
             .map_err(|e| DomainError::Session(format!("failed to open audit log: {e}")))?;
 
         Ok(Self {
-            writer: Mutex::new(tokio::io::BufWriter::new(file)),
+            writer: Mutex::new(file),
             session_key: session_key.to_string(),
         })
     }
@@ -74,7 +77,7 @@ impl AuditLog {
         let tokio_file = tokio::fs::File::from_std(std_file);
 
         Ok(Self {
-            writer: Mutex::new(tokio::io::BufWriter::new(tokio_file)),
+            writer: Mutex::new(tokio_file),
             session_key: session_key.to_string(),
         })
     }
@@ -95,15 +98,14 @@ impl AuditLog {
             serde_json::to_string(&envelope).map_err(|e| DomainError::Other(e.to_string()))?;
         line.push('\n');
 
+        // Write directly — no BufWriter since we need every line flushed for
+        // crash durability. On Linux, append-mode writes of < PIPE_BUF (4096)
+        // bytes are atomic, and a typical JSONL line is 200-500 bytes.
         let mut writer = self.writer.lock().await;
         writer
             .write_all(line.as_bytes())
             .await
             .map_err(|e| DomainError::Session(format!("audit log write failed: {e}")))?;
-        writer
-            .flush()
-            .await
-            .map_err(|e| DomainError::Session(format!("audit log flush failed: {e}")))?;
 
         Ok(())
     }
@@ -114,6 +116,16 @@ impl AuditLog {
     pub fn file_path(base_dir: &Path, session_key: &str) -> PathBuf {
         let filename = format!("{}.jsonl", sanitize_session_key(session_key));
         base_dir.join("audit").join(filename)
+    }
+}
+
+impl AuditSink for AuditLog {
+    fn emit(
+        &self,
+        turn: u32,
+        event: AuditEvent,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + '_>> {
+        Box::pin(AuditLog::emit(self, turn, event))
     }
 }
 

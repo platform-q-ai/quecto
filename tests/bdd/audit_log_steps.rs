@@ -1,5 +1,5 @@
 use super::*;
-use quecto::domain::audit::{AuditEvent, content_preview};
+use quecto::domain::audit::{AuditEvent, AuditIssue, content_preview};
 use quecto::infrastructure::persistence::audit_log::AuditLog;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -66,7 +66,7 @@ fn given_workflow_transition(world: &mut QuectoWorld, from_mode: String, to_mode
         from_mode,
         to_mode,
         template_id: Some(template_id),
-        issue: Some((issue_num, issue_title)),
+        issue: Some(AuditIssue { number: issue_num, title: issue_title }),
     };
     world.audit_event = Some(event);
 }
