@@ -91,6 +91,7 @@ async fn test_spill_preserves_message_content_after_spill() {
         streaming: false,
         effort: None,
         system_prompt_provider: None,
+        audit_log: None,
     });
 
     let mut messages = vec![Message::user("run it")];

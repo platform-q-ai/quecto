@@ -78,6 +78,7 @@ fn make_test_agent(base_dir: &std::path::Path) -> AgentLoopImpl {
         streaming: false,
         effort: None,
         system_prompt_provider: None,
+        audit_log: None,
     })
     .with_max_tool_iterations(1)
 }
@@ -468,6 +469,7 @@ fn test_run_with_deadline_completes_before_timeout() {
         streaming: false,
         effort: None,
         system_prompt_provider: None,
+        audit_log: None,
     })
     .with_max_tool_iterations(1);
 

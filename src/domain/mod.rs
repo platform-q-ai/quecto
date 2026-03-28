@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod audit;
 pub mod error;
 pub mod extension;
 pub mod message;

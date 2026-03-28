@@ -64,6 +64,7 @@ fn when_agent_processes_tool_call(world: &mut QuectoWorld) {
         streaming: false,
         effort: None,
         system_prompt_provider: None,
+        audit_log: None,
     });
 
     // Capture tracing output

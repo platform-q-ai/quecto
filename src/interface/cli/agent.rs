@@ -417,6 +417,7 @@ pub(crate) fn build_agent_from_config(
         streaming: false,
         effort,
         system_prompt_provider: None,
+        audit_log: None,
     })
     .with_max_tool_iterations(
         flags
@@ -623,6 +624,21 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         let name = flags.session_name.as_deref().unwrap_or("default");
         crate::domain::session::Session::build_key("cli", name)
     };
+
+    // When workflow is active, create the audit log for durable event recording.
+    if flags.workflow && !ephemeral && !session_key.is_empty() {
+        match crate::infrastructure::persistence::audit_log::AuditLog::open_sync(
+            &base_dir,
+            &session_key,
+        ) {
+            Ok(log) => {
+                agent.set_audit_log(Some(Arc::new(log) as Arc<dyn crate::domain::audit::AuditSink>));
+            }
+            Err(e) => {
+                stderr.push_str(&format!("WARNING: failed to open audit log: {e}\n"));
+            }
+        }
+    }
 
     let model = build.model.clone();
 

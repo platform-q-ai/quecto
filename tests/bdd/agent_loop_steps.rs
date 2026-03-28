@@ -46,6 +46,7 @@ fn build_agent_loop(world: &QuectoWorld, max_iterations: Option<u32>) -> AgentLo
         streaming: false,
         effort: None,
         system_prompt_provider: None,
+        audit_log: None,
     });
 
     if let Some(max) = max_iterations {
