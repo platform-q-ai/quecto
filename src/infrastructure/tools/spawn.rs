@@ -277,6 +277,10 @@ impl SpawnTool {
         }
 
         // Create exit signal channel for `await` support (#612).
+        // The receiver is intentionally dropped — `watch` channels remain
+        // functional after the initial receiver is dropped. Await callers
+        // get their own receiver via `tx.subscribe()`. Do NOT switch to
+        // `mpsc` or `oneshot` without updating the subscribe pattern.
         let (exit_tx, _exit_rx) = new_exit_signal_channel();
 
         // Register in shared registry BEFORE starting the monitor task,

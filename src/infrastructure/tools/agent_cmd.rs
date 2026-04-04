@@ -45,11 +45,17 @@ const RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
 /// Default timeout for `await` command (seconds).
 const AWAIT_DEFAULT_TIMEOUT: u64 = 300;
 
+/// Maximum allowed timeout for `await` command (1 hour). Prevents DoS from
+/// unbounded blocking when a hallucinating LLM passes u64::MAX.
+const AWAIT_MAX_TIMEOUT: u64 = 3600;
+
 /// Default idle_timeout for `await` command (seconds).
 const AWAIT_DEFAULT_IDLE_TIMEOUT: u64 = 5;
 
 /// Polling interval for checking subagent status during `await` (milliseconds).
-const AWAIT_POLL_INTERVAL_MS: u64 = 200;
+/// Exit signals are handled via `tokio::select!` for instant wakeup, so this
+/// only affects idle-timeout and registry-status polling.
+const AWAIT_POLL_INTERVAL_MS: u64 = 500;
 
 /// Tool that sends UDS commands to spawned subagents.
 ///
@@ -251,7 +257,8 @@ impl AgentCmdTool {
         let timeout_secs = args
             .get("timeout")
             .and_then(|v| v.as_u64())
-            .unwrap_or(AWAIT_DEFAULT_TIMEOUT);
+            .unwrap_or(AWAIT_DEFAULT_TIMEOUT)
+            .min(AWAIT_MAX_TIMEOUT);
 
         let idle_timeout_secs = args
             .get("idle_timeout")
@@ -356,13 +363,14 @@ impl AgentCmdTool {
         }
 
         // Main await loop: poll status + listen for exit signals.
+        // Uses `tokio::select!` to wake instantly on exit signals while
+        // polling registry status at a slower interval.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
         let mut idle_since: Option<tokio::time::Instant> = None;
         let mut poll_interval =
             tokio::time::interval(Duration::from_millis(AWAIT_POLL_INTERVAL_MS));
         poll_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-        // Clone the exit signal receiver for use in the select loop.
         let mut exit_rx = exit_signal_rx;
 
         loop {
@@ -383,32 +391,43 @@ impl AgentCmdTool {
                 });
             }
 
-            // Check for process exit signal (non-blocking).
-            if let Some(ref mut rx) = exit_rx {
-                if let Ok(has_changed) = rx.has_changed() {
-                    if has_changed {
-                        let signal = rx.borrow_and_update().clone();
-                        if let Some(exit_signal) = signal {
-                            let (status, reason) = if let Some(code) = exit_signal.exit_code {
-                                ("exited".to_string(), Some(format!("exit_code_{code}")))
-                            } else if let Some(sig) = exit_signal.signal {
-                                ("exited".to_string(), Some(format!("signal_{sig}")))
-                            } else {
-                                ("exited".to_string(), Some("exit_code_0".to_string()))
-                            };
-                            let result = AwaitResult {
-                                status,
-                                reason,
-                                agent_id: agent_id.clone(),
-                                elapsed_ms: start.elapsed().as_millis() as u64,
-                                workflow: None,
-                            };
-                            return Ok(ToolResult {
-                                content: serde_json::to_string(&result).unwrap(),
-                                is_error: false,
-                                image_blocks: vec![],
-                            });
-                        }
+            // Wait for either an exit signal (instant wakeup) or the next
+            // poll tick (for status/idle checks). This avoids burning CPU
+            // and reduces exit-detection latency from 500ms to near-zero.
+            let got_exit_signal = if let Some(ref mut rx) = exit_rx {
+                tokio::select! {
+                    result = rx.changed() => result.is_ok(),
+                    _ = poll_interval.tick() => false,
+                }
+            } else {
+                poll_interval.tick().await;
+                false
+            };
+
+            // Handle exit signal (instant path).
+            if got_exit_signal {
+                if let Some(ref mut rx) = exit_rx {
+                    let signal = rx.borrow_and_update().clone();
+                    if let Some(exit_signal) = signal {
+                        let reason = if let Some(code) = exit_signal.exit_code {
+                            Some(format!("exit_code_{code}"))
+                        } else if let Some(sig) = exit_signal.signal {
+                            Some(format!("signal_{sig}"))
+                        } else {
+                            Some("exit_code_0".to_string())
+                        };
+                        let result = AwaitResult {
+                            status: "exited".into(),
+                            reason,
+                            agent_id: agent_id.clone(),
+                            elapsed_ms: start.elapsed().as_millis() as u64,
+                            workflow: None,
+                        };
+                        return Ok(ToolResult {
+                            content: serde_json::to_string(&result).unwrap(),
+                            is_error: false,
+                            image_blocks: vec![],
+                        });
                     }
                 }
             }
@@ -421,21 +440,17 @@ impl AgentCmdTool {
 
             match current_status {
                 None | Some(super::subagent_registry::SubagentStatus::Exited) => {
-                    // Agent removed from registry (exited and reaped) or marked
-                    // as Exited. Try to read the exit signal for the actual exit
+                    // Agent removed from registry or marked Exited. Read the
+                    // exit signal from the registry entry for the actual exit
                     // code/signal; fall back to exit_code_0 if unavailable.
-                    // Read directly from the exit_signal_tx in the registry
-                    // entry (if still present) for a reliable read.
                     let reason = {
                         let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
                         entries
                             .get(&agent_id)
                             .and_then(|e| e.exit_signal_tx.as_ref())
                             .and_then(|tx| {
-                                // subscribe() gives us the current value.
                                 let rx = tx.subscribe();
-                                let signal = rx.borrow().clone();
-                                signal
+                                rx.borrow().clone()
                             })
                             .map(|es| {
                                 if let Some(code) = es.exit_code {
@@ -468,7 +483,6 @@ impl AgentCmdTool {
                         None => {
                             idle_since = Some(now);
                             if idle_timeout_secs == 0 {
-                                // Immediate return on idle.
                                 let workflow =
                                     self.fetch_workflow_snapshot(&agent_id).await;
                                 let result = AwaitResult {
@@ -486,9 +500,7 @@ impl AgentCmdTool {
                             }
                         }
                         Some(since) => {
-                            let idle_duration = now.duration_since(since);
-                            if idle_duration >= Duration::from_secs(idle_timeout_secs) {
-                                // Stable idle — return.
+                            if now.duration_since(since) >= Duration::from_secs(idle_timeout_secs) {
                                 let workflow =
                                     self.fetch_workflow_snapshot(&agent_id).await;
                                 let result = AwaitResult {
@@ -507,14 +519,43 @@ impl AgentCmdTool {
                         }
                     }
                 }
-                Some(_) => {
-                    // Agent is running/starting/error — reset idle countdown.
+                Some(super::subagent_registry::SubagentStatus::Running)
+                | Some(super::subagent_registry::SubagentStatus::Starting) => {
+                    // Agent is actively working — reset idle countdown.
                     idle_since = None;
+                }
+                Some(super::subagent_registry::SubagentStatus::Error) => {
+                    // Agent's last tool returned an error. Treat like idle —
+                    // if it stays in Error for the full idle_timeout, return
+                    // so the caller can inspect and decide what to do.
+                    let now = tokio::time::Instant::now();
+                    if idle_since.is_none() {
+                        idle_since = Some(now);
+                    }
+                    if let Some(since) = idle_since {
+                        let elapsed_idle = now.duration_since(since);
+                        if idle_timeout_secs == 0
+                            || elapsed_idle >= Duration::from_secs(idle_timeout_secs)
+                        {
+                            let workflow =
+                                self.fetch_workflow_snapshot(&agent_id).await;
+                            let result = AwaitResult {
+                                status: "idle".into(),
+                                reason: Some("completed".into()),
+                                agent_id: agent_id.clone(),
+                                elapsed_ms: start.elapsed().as_millis() as u64,
+                                workflow,
+                            };
+                            return Ok(ToolResult {
+                                content: serde_json::to_string(&result).unwrap(),
+                                is_error: false,
+                                image_blocks: vec![],
+                            });
+                        }
+                    }
                 }
             }
 
-            // Wait for next poll tick.
-            poll_interval.tick().await;
         }
     }
 
@@ -579,6 +620,15 @@ impl AgentCmdTool {
                 };
             }
         };
+
+        // Signal any waiting `await` call before dropping the entry (#612).
+        // This ensures await returns "exited" instead of spinning until timeout.
+        if let Some(ref tx) = entry.exit_signal_tx {
+            let _ = tx.send(Some(super::subagent_registry::ExitSignal {
+                exit_code: None,
+                signal: Some(15), // SIGTERM
+            }));
+        }
 
         // Abort monitor task if running.
         if let Some(ref handle) = entry.monitor_handle {
