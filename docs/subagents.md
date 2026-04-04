@@ -79,16 +79,27 @@ Subagent 'security-reviewer' is running. Use agent_cmd to interact.
     },
     "command": {
       "type": "string",
-      "enum": ["prompt", "get_state", "get_messages_tail", "steer", "abort", "get_session_stats"],
+      "enum": ["prompt", "steer", "follow_up", "abort", "kill", "await",
+               "get_state", "get_messages", "get_messages_tail",
+               "get_session_stats", "get_subagents", "get_extensions",
+               "set_model", "clear_history", "reload_extensions"],
       "description": "Command to send"
     },
     "message": {
       "type": "string",
-      "description": "Message for prompt/steer commands"
+      "description": "Message for prompt/steer/follow_up commands"
     },
     "count": {
       "type": "integer",
       "description": "Number of messages for get_messages_tail (default: 1)"
+    },
+    "timeout": {
+      "type": "integer",
+      "description": "Max seconds for await (default: 300)"
+    },
+    "idle_timeout": {
+      "type": "integer",
+      "description": "Seconds agent must stay idle before await returns (default: 5). Set to 0 for immediate return."
     }
   },
   "required": ["agent_id", "command"]
@@ -100,11 +111,20 @@ Subagent 'security-reviewer' is running. Use agent_cmd to interact.
 | Command | Description | Requires `message` |
 |---------|-------------|--------------------|
 | `prompt` | Send a task/message to the subagent | Yes |
-| `get_state` | Check if the agent is idle or streaming | No |
-| `get_messages_tail` | Read the last N messages (use `count`) | No |
 | `steer` | Interrupt and redirect the agent | Yes |
+| `follow_up` | Queue a message for after the current run | Yes |
 | `abort` | Cancel the agent's current run | No |
+| `kill` | Terminate the subagent process (SIGTERM) | No |
+| `await` | Block until the subagent reaches a terminal state | No |
+| `get_state` | Check if the agent is idle or streaming | No |
+| `get_messages` | Read the full message history | No |
+| `get_messages_tail` | Read the last N messages (use `count`) | No |
 | `get_session_stats` | Get token usage and cost | No |
+| `get_subagents` | List subagents spawned by this agent | No |
+| `get_extensions` | List loaded extensions | No |
+| `set_model` | Change the LLM model | No |
+| `clear_history` | Clear conversation history | No |
+| `reload_extensions` | Hot-reload extensions | No |
 
 **Examples:**
 
@@ -119,6 +139,68 @@ Subagent 'security-reviewer' is running. Use agent_cmd to interact.
 ```json
 {"name": "agent_cmd", "arguments": {"agent_id": "security-reviewer", "command": "steer", "message": "Focus on auth vulnerabilities only"}}
 ```
+
+### `await` — block until a subagent finishes
+
+The `await` command blocks the calling tool until the target subagent reaches
+a terminal state — idle, exited, or timeout. This eliminates the need for
+polling loops that burn LLM tokens.
+
+**Parameters:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `timeout` | integer (seconds) | 300 | Max wall-clock wait time |
+| `idle_timeout` | integer (seconds) | 5 | Seconds the agent must stay idle before returning. Resets if the agent resumes streaming (e.g. auto-continue between workflow steps). Set to 0 for immediate return on first idle. |
+
+**Return value (structured JSON):**
+
+```json
+{
+  "status": "idle",
+  "reason": "completed",
+  "agent_id": "bookmarks-v1",
+  "elapsed_ms": 47200,
+  "workflow": {
+    "mode": "complete",
+    "steps_completed": 7,
+    "steps_total": 7
+  }
+}
+```
+
+| Status | Reason | Description |
+|--------|--------|-------------|
+| `idle` | `completed` | Agent stayed idle for the full `idle_timeout` window |
+| `exited` | `exit_code_0` | Process exited cleanly |
+| `exited` | `exit_code_<N>` | Process exited with error code N |
+| `exited` | `signal_<N>` | Process killed by signal N |
+| `timeout` | `null` | Wall-clock `timeout` exceeded |
+| `error` | `agent_not_found` | Agent ID not in registry |
+| `error` | `connection_failed` | Socket exists but connection refused |
+| `error` | `another_await_active` | Another `await` is already waiting on this agent |
+
+**Examples:**
+
+```json
+{"name": "agent_cmd", "arguments": {"agent_id": "reviewer", "command": "await", "timeout": 600}}
+```
+
+```json
+{"name": "agent_cmd", "arguments": {"agent_id": "reviewer", "command": "await", "idle_timeout": 0}}
+```
+
+**Key behaviors:**
+
+- **Auto-continue safe:** The `idle_timeout` window correctly filters brief
+  idle gaps between auto-continue workflow steps.
+- **One awaiter per agent:** A second `await` on the same agent returns
+  `"another_await_active"` immediately.
+- **Interacts with abort/steer/kill:** `abort` and `steer` do not interrupt
+  `await` — it continues waiting. `kill` causes `await` to return with
+  `"exited"` status.
+- **Workflow snapshot:** The `workflow` field is a read-only snapshot of
+  workflow state at the moment of return (null if workflow is not enabled).
 
 ## Sessions
 
@@ -291,9 +373,9 @@ Parent Agent Process
 
 ## Practical patterns
 
-### Parallel code review
+### Parallel code review with await
 
-Spawn multiple reviewers and poll for results:
+Spawn multiple reviewers and await their completion:
 
 ```
 "Spawn three subagents for parallel review:
@@ -301,19 +383,24 @@ Spawn multiple reviewers and poll for results:
 2. spawn(agent_id='security-review', task='Review src/ for security issues')
 3. spawn(agent_id='perf-review', task='Review src/ for performance issues')
 
-Then poll each with agent_cmd get_state until all are idle,
-read results with agent_cmd get_messages_tail, and compile a summary."
+Then await each:
+  agent_cmd(agent_id='arch-review', command='await', timeout=600)
+  agent_cmd(agent_id='security-review', command='await', timeout=600)
+  agent_cmd(agent_id='perf-review', command='await', timeout=600)
+
+Read results with agent_cmd get_messages_tail and compile a summary."
 ```
 
 All three run concurrently — total time is the max of the three, not the sum.
+No polling loop needed — `await` blocks efficiently until each finishes.
 
 ### Fire-and-forget with later collection
 
 ```
 "Spawn agent_id='researcher' with task='Analyze the codebase and write findings to /tmp/report.md'.
-Continue working on other tasks. Periodically check:
-  agent_cmd(agent_id='researcher', command='get_state')
-When it's idle, read the report."
+Continue working on other tasks. When ready:
+  agent_cmd(agent_id='researcher', command='await', idle_timeout=0)
+Read the report."
 ```
 
 ### Idle agents with on-demand prompts

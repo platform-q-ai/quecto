@@ -16,7 +16,7 @@ use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 
 pub use super::subagent_registry::{SubagentEntry, SubagentRegistry};
 
-use super::subagent_registry::NotificationTx;
+use super::subagent_registry::{ExitSignal, NotificationTx, new_exit_signal_channel};
 
 /// Validate a config file path supplied via the spawn tool's JSON input.
 ///
@@ -276,15 +276,23 @@ impl SpawnTool {
             return Err(e);
         }
 
+        // Create exit signal channel for `await` support (#612).
+        // The receiver is intentionally dropped — `watch` channels remain
+        // functional after the initial receiver is dropped. Await callers
+        // get their own receiver via `tx.subscribe()`. Do NOT switch to
+        // `mpsc` or `oneshot` without updating the subscribe pattern.
+        let (exit_tx, _exit_rx) = new_exit_signal_channel();
+
         // Register in shared registry BEFORE starting the monitor task,
         // so the monitor's update_entry calls find the entry (#522).
-        self.registry
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(
-                session_name.to_string(),
-                SubagentEntry::new(socket_path.clone(), pid),
-            );
+        {
+            let mut entry = SubagentEntry::new(socket_path.clone(), pid);
+            entry.exit_signal_tx = Some(exit_tx.clone());
+            self.registry
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(session_name.to_string(), entry);
+        }
 
         // Start a persistent monitor task to track child events in real-time (#522).
         // Pass the notification sender so the monitor can auto-notify the parent (#523).
@@ -305,11 +313,49 @@ impl SpawnTool {
 
         // Spawn a background reaper task so the child process is always
         // cleaned up (no zombies) even if the parent never calls shutdown_all.
-        // The reaper also aborts the monitor task to prevent leaks (#522).
+        // The reaper also aborts the monitor task to prevent leaks (#522),
+        // and signals any waiting `await` calls with the exit status (#612).
         let reaper_registry = self.registry.clone();
         let reaper_name = session_name.to_string();
+        let reaper_exit_tx = exit_tx;
         tokio::spawn(async move {
-            let _ = child.wait().await;
+            let status = child.wait().await;
+
+            // Build the exit signal from the child's exit status (#612).
+            let exit_signal = match status {
+                Ok(exit_status) => {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::process::ExitStatusExt;
+                        if let Some(signal) = exit_status.signal() {
+                            ExitSignal {
+                                exit_code: None,
+                                signal: Some(signal),
+                            }
+                        } else {
+                            ExitSignal {
+                                exit_code: exit_status.code(),
+                                signal: None,
+                            }
+                        }
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        ExitSignal {
+                            exit_code: exit_status.code(),
+                            signal: None,
+                        }
+                    }
+                }
+                Err(_) => ExitSignal {
+                    exit_code: None,
+                    signal: None,
+                },
+            };
+
+            // Signal any waiting `await` call before removing from registry.
+            let _ = reaper_exit_tx.send(Some(exit_signal));
+
             // Abort the monitor task and remove from registry when the child exits.
             let mut entries = reaper_registry.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(entry) = entries.get(&reaper_name) {

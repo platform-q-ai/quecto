@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.25.0 (2026-04-04)
+
+### Added
+- **`agent_cmd await` command** (#612): Block until a sub-agent reaches a terminal state (idle, exited, timeout, or error). Returns a structured JSON result with status, reason, elapsed time, and optional workflow snapshot. Supports `timeout` (default 300s) and `idle_timeout` (default 5s) parameters. The `idle_timeout` window correctly filters brief idle gaps during auto-continue workflow steps. Only one `await` per agent is allowed — a second returns `"another_await_active"` immediately.
+- **Exit signal channel for subagents** (#612): The reaper task now signals waiting `await` calls with the child's exit code or signal via `tokio::sync::watch` channels. This enables `await` to report accurate exit reasons (e.g. `exit_code_1`, `signal_9`) instead of a generic result.
+- **`SubagentAwait` audit event** (#612): When `await` returns, a `subagent_await` event is emitted on the parent's audit log with `agent_id`, `status`, `reason`, and `elapsed_ms`.
+
+### Changed
+- **`agent_cmd` tool definition updated**: Command enum and description now include `await`. Schema includes `timeout` and `idle_timeout` properties.
+- **`SubagentEntry` extended**: Added `exit_signal_tx` field for reaper-to-await signaling.
+
+## 0.24.0 (2026-03-27)
+
+### Added
+- **Spawn forwards --config, --workflow, --workflow-guards** (#611): Child agents spawned with the `spawn` tool can now inherit workflow configuration from the parent via `config`, `workflow`, and `workflow_guards` parameters.
+- **Append-only audit log** (#609): Durable event recording for all tool calls, LLM turns, workflow steps, and subagent operations. JSON-lines format with envelope (timestamp, session, turn).
+
+### Fixed
+- **TUI workflow shortcuts** (#608): Removed broken Ctrl+Shift+A/N toggle shortcuts that conflicted with terminal emulator bindings.
+
 ## 0.23.0 (2026-03-20)
 
 ### Added

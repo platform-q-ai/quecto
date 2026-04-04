@@ -3,6 +3,9 @@
 // Connects to child agent UDS sockets directly from Rust — no ncat, no socat,
 // no bash intermediary.  Uses the existing JSON-lines protocol from
 // `src/interface/cli/protocol.rs`.
+//
+// Extended with `await` command (#612) that blocks until a sub-agent reaches a
+// terminal state (idle, exited, timeout, or error).
 
 use std::future::Future;
 use std::pin::Pin;
@@ -13,7 +16,8 @@ use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 
 // Re-export shared types for external consumers.
 pub use super::subagent_registry::{
-    SubagentEntry, SubagentRegistry, new_registry, validate_agent_id_format,
+    ActiveAwaits, AwaitResult, ExitSignalRx, SubagentEntry, SubagentRegistry, WorkflowSnapshot,
+    new_active_awaits, new_registry, validate_agent_id_format,
 };
 
 /// Supported commands for interacting with a subagent.
@@ -23,6 +27,7 @@ const SUPPORTED_COMMANDS: &[&str] = &[
     "follow_up",
     "abort",
     "kill",
+    "await",
     "get_state",
     "get_messages",
     "get_messages_tail",
@@ -37,6 +42,21 @@ const SUPPORTED_COMMANDS: &[&str] = &[
 /// Timeout for reading a response from a subagent UDS socket.
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
 
+/// Default timeout for `await` command (seconds).
+const AWAIT_DEFAULT_TIMEOUT: u64 = 300;
+
+/// Maximum allowed timeout for `await` command (1 hour). Prevents DoS from
+/// unbounded blocking when a hallucinating LLM passes u64::MAX.
+const AWAIT_MAX_TIMEOUT: u64 = 3600;
+
+/// Default idle_timeout for `await` command (seconds).
+const AWAIT_DEFAULT_IDLE_TIMEOUT: u64 = 5;
+
+/// Polling interval for checking subagent status during `await` (milliseconds).
+/// Exit signals are handled via `tokio::select!` for instant wakeup, so this
+/// only affects idle-timeout and registry-status polling.
+const AWAIT_POLL_INTERVAL_MS: u64 = 500;
+
 /// Tool that sends UDS commands to spawned subagents.
 ///
 /// Looks up the socket path from a shared [`SubagentRegistry`], connects,
@@ -46,17 +66,35 @@ const RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
 pub struct AgentCmdTool {
     /// Shared registry populated by [`super::spawn::SpawnTool`].
     registry: SubagentRegistry,
+    /// Tracks active `await` calls to prevent duplicates (#612).
+    active_awaits: ActiveAwaits,
 }
 
 impl AgentCmdTool {
     /// Create a new `AgentCmdTool` backed by the given registry.
     pub fn new(registry: SubagentRegistry) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            active_awaits: new_active_awaits(),
+        }
+    }
+
+    /// Create with both a registry and a shared active_awaits tracker.
+    pub fn with_active_awaits(registry: SubagentRegistry, active_awaits: ActiveAwaits) -> Self {
+        Self {
+            registry,
+            active_awaits,
+        }
     }
 
     /// Create a new empty registry (convenience for tests and wiring).
     pub fn new_registry() -> SubagentRegistry {
         new_registry()
+    }
+
+    /// Return a reference to the active awaits tracker (for testing / wiring).
+    pub fn active_awaits(&self) -> &ActiveAwaits {
+        &self.active_awaits
     }
 
     /// Parse arguments and build the JSON command to send.
@@ -150,14 +188,18 @@ impl AgentCmdTool {
             "get_extensions" => serde_json::json!({"type": "get_extensions"}),
             "reload_extensions" => serde_json::json!({"type": "reload_extensions"}),
             "kill" => return Err("kill command is handled locally, not via UDS".to_string()),
+            "await" => return Err("await command is handled locally, not via UDS".to_string()),
             _ => unreachable!(), // Covered by SUPPORTED_COMMANDS check above.
         };
 
         Ok((agent_id, json_cmd.to_string()))
     }
 
-    /// Handle commands that are executed locally (not via UDS) (#559).
-    /// Returns `Some(result)` if the command was handled, `None` to fall through.
+    /// Handle commands that are executed locally (not via UDS) (#559, #612).
+    /// Returns `Some(result)` if the command was handled synchronously,
+    /// `None` to fall through to UDS dispatch.
+    /// For async local commands (await), returns `None` but sets a flag —
+    /// the caller must check `is_await_command` separately.
     fn try_local_command(&self, arguments: &str) -> Option<ToolResult> {
         let args: serde_json::Value = serde_json::from_str(arguments).ok()?;
         let command = args.get("command").and_then(|v| v.as_str())?;
@@ -184,6 +226,380 @@ impl AgentCmdTool {
         Some(self.kill_agent(agent_id))
     }
 
+    /// Check if the arguments specify an `await` command.
+    fn is_await_command(arguments: &str) -> bool {
+        serde_json::from_str::<serde_json::Value>(arguments)
+            .ok()
+            .and_then(|v| v.get("command").and_then(|c| c.as_str()).map(|s| s == "await"))
+            .unwrap_or(false)
+    }
+
+    /// Execute the `await` command: block until the sub-agent reaches a terminal
+    /// condition, then return a structured [`AwaitResult`] as JSON (#612).
+    async fn execute_await(&self, arguments: &str) -> Result<ToolResult, DomainError> {
+        let args: serde_json::Value = serde_json::from_str(arguments)
+            .map_err(|e| DomainError::Tool(format!("invalid JSON: {e}")))?;
+
+        let agent_id = args
+            .get("agent_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| DomainError::Tool("missing required field: agent_id".into()))?
+            .to_string();
+
+        if let Err(e) = validate_agent_id_format(&agent_id) {
+            return Ok(ToolResult {
+                content: format!("agent_cmd error: {e}"),
+                is_error: true,
+                image_blocks: vec![],
+            });
+        }
+
+        let timeout_secs = args
+            .get("timeout")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(AWAIT_DEFAULT_TIMEOUT)
+            .min(AWAIT_MAX_TIMEOUT);
+
+        let idle_timeout_secs = args
+            .get("idle_timeout")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(AWAIT_DEFAULT_IDLE_TIMEOUT);
+
+        let start = std::time::Instant::now();
+
+        // Check if agent exists in registry.
+        let (socket_path, exit_signal_rx) = {
+            let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+            match entries.get(&agent_id) {
+                Some(entry) => {
+                    let rx = entry.exit_signal_tx.as_ref().map(|tx| tx.subscribe());
+                    (entry.socket_path.clone(), rx)
+                }
+                None => {
+                    let result = AwaitResult {
+                        status: "error".into(),
+                        reason: Some("agent_not_found".into()),
+                        agent_id: agent_id.clone(),
+                        elapsed_ms: 0,
+                        workflow: None,
+                    };
+                    return Ok(ToolResult {
+                        content: serde_json::to_string(&result).unwrap(),
+                        is_error: false,
+                        image_blocks: vec![],
+                    });
+                }
+            }
+        };
+
+        // Check for duplicate awaiters.
+        {
+            let mut active = self.active_awaits.lock().unwrap_or_else(|e| e.into_inner());
+            if active.contains(&agent_id) {
+                let result = AwaitResult {
+                    status: "error".into(),
+                    reason: Some("another_await_active".into()),
+                    agent_id: agent_id.clone(),
+                    elapsed_ms: 0,
+                    workflow: None,
+                };
+                return Ok(ToolResult {
+                    content: serde_json::to_string(&result).unwrap(),
+                    is_error: false,
+                    image_blocks: vec![],
+                });
+            }
+            active.insert(agent_id.clone());
+        }
+
+        // Ensure we remove from active_awaits when done (RAII guard).
+        let _guard = AwaitGuard {
+            active_awaits: self.active_awaits.clone(),
+            agent_id: agent_id.clone(),
+        };
+
+        // Check if socket is connectable (detect stale sockets early).
+        // Use a synchronous non-blocking connect to avoid issues with tokio
+        // single-threaded runtimes where async connect may not yield properly.
+        let connectable = if socket_path.exists() {
+            std::os::unix::net::UnixStream::connect(&socket_path).is_ok()
+        } else {
+            false
+        };
+        if !connectable {
+            // Check if the entry is still in the registry (might have been
+            // removed by the reaper between our lookup and here).
+            let still_registered = {
+                let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+                entries.contains_key(&agent_id)
+            };
+            if still_registered {
+                let result = AwaitResult {
+                    status: "error".into(),
+                    reason: Some("connection_failed".into()),
+                    agent_id: agent_id.clone(),
+                    elapsed_ms: start.elapsed().as_millis() as u64,
+                    workflow: None,
+                };
+                return Ok(ToolResult {
+                    content: serde_json::to_string(&result).unwrap(),
+                    is_error: false,
+                    image_blocks: vec![],
+                });
+            } else {
+                let result = AwaitResult {
+                    status: "error".into(),
+                    reason: Some("agent_not_found".into()),
+                    agent_id: agent_id.clone(),
+                    elapsed_ms: start.elapsed().as_millis() as u64,
+                    workflow: None,
+                };
+                return Ok(ToolResult {
+                    content: serde_json::to_string(&result).unwrap(),
+                    is_error: false,
+                    image_blocks: vec![],
+                });
+            }
+        }
+
+        // Main await loop: poll status + listen for exit signals.
+        // Uses `tokio::select!` to wake instantly on exit signals while
+        // polling registry status at a slower interval.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
+        let mut idle_since: Option<tokio::time::Instant> = None;
+        let mut poll_interval =
+            tokio::time::interval(Duration::from_millis(AWAIT_POLL_INTERVAL_MS));
+        poll_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+        let mut exit_rx = exit_signal_rx;
+
+        loop {
+            // Check if we've exceeded the overall timeout.
+            if tokio::time::Instant::now() >= deadline {
+                let workflow = self.fetch_workflow_snapshot(&agent_id).await;
+                let result = AwaitResult {
+                    status: "timeout".into(),
+                    reason: None,
+                    agent_id: agent_id.clone(),
+                    elapsed_ms: start.elapsed().as_millis() as u64,
+                    workflow,
+                };
+                return Ok(ToolResult {
+                    content: serde_json::to_string(&result).unwrap(),
+                    is_error: false,
+                    image_blocks: vec![],
+                });
+            }
+
+            // Wait for either an exit signal (instant wakeup) or the next
+            // poll tick (for status/idle checks). This avoids burning CPU
+            // and reduces exit-detection latency from 500ms to near-zero.
+            let got_exit_signal = if let Some(ref mut rx) = exit_rx {
+                tokio::select! {
+                    result = rx.changed() => result.is_ok(),
+                    _ = poll_interval.tick() => false,
+                }
+            } else {
+                poll_interval.tick().await;
+                false
+            };
+
+            // Handle exit signal (instant path).
+            if got_exit_signal {
+                if let Some(ref mut rx) = exit_rx {
+                    let signal = rx.borrow_and_update().clone();
+                    if let Some(exit_signal) = signal {
+                        let reason = if let Some(code) = exit_signal.exit_code {
+                            Some(format!("exit_code_{code}"))
+                        } else if let Some(sig) = exit_signal.signal {
+                            Some(format!("signal_{sig}"))
+                        } else {
+                            Some("exit_code_0".to_string())
+                        };
+                        let result = AwaitResult {
+                            status: "exited".into(),
+                            reason,
+                            agent_id: agent_id.clone(),
+                            elapsed_ms: start.elapsed().as_millis() as u64,
+                            workflow: None,
+                        };
+                        return Ok(ToolResult {
+                            content: serde_json::to_string(&result).unwrap(),
+                            is_error: false,
+                            image_blocks: vec![],
+                        });
+                    }
+                }
+            }
+
+            // Poll the registry for current status.
+            let current_status = {
+                let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+                entries.get(&agent_id).map(|e| e.status.clone())
+            };
+
+            match current_status {
+                None | Some(super::subagent_registry::SubagentStatus::Exited) => {
+                    // Agent removed from registry or marked Exited. Read the
+                    // exit signal from the registry entry for the actual exit
+                    // code/signal; fall back to exit_code_0 if unavailable.
+                    let reason = {
+                        let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+                        entries
+                            .get(&agent_id)
+                            .and_then(|e| e.exit_signal_tx.as_ref())
+                            .and_then(|tx| {
+                                let rx = tx.subscribe();
+                                rx.borrow().clone()
+                            })
+                            .map(|es| {
+                                if let Some(code) = es.exit_code {
+                                    format!("exit_code_{code}")
+                                } else if let Some(sig) = es.signal {
+                                    format!("signal_{sig}")
+                                } else {
+                                    "exit_code_0".into()
+                                }
+                            })
+                            .or(Some("exit_code_0".into()))
+                    };
+                    let result = AwaitResult {
+                        status: "exited".into(),
+                        reason,
+                        agent_id: agent_id.clone(),
+                        elapsed_ms: start.elapsed().as_millis() as u64,
+                        workflow: None,
+                    };
+                    return Ok(ToolResult {
+                        content: serde_json::to_string(&result).unwrap(),
+                        is_error: false,
+                        image_blocks: vec![],
+                    });
+                }
+                Some(super::subagent_registry::SubagentStatus::Idle) => {
+                    // Agent is idle — start or continue the idle_timeout countdown.
+                    let now = tokio::time::Instant::now();
+                    match idle_since {
+                        None => {
+                            idle_since = Some(now);
+                            if idle_timeout_secs == 0 {
+                                let workflow =
+                                    self.fetch_workflow_snapshot(&agent_id).await;
+                                let result = AwaitResult {
+                                    status: "idle".into(),
+                                    reason: Some("completed".into()),
+                                    agent_id: agent_id.clone(),
+                                    elapsed_ms: start.elapsed().as_millis() as u64,
+                                    workflow,
+                                };
+                                return Ok(ToolResult {
+                                    content: serde_json::to_string(&result).unwrap(),
+                                    is_error: false,
+                                    image_blocks: vec![],
+                                });
+                            }
+                        }
+                        Some(since) => {
+                            if now.duration_since(since) >= Duration::from_secs(idle_timeout_secs) {
+                                let workflow =
+                                    self.fetch_workflow_snapshot(&agent_id).await;
+                                let result = AwaitResult {
+                                    status: "idle".into(),
+                                    reason: Some("completed".into()),
+                                    agent_id: agent_id.clone(),
+                                    elapsed_ms: start.elapsed().as_millis() as u64,
+                                    workflow,
+                                };
+                                return Ok(ToolResult {
+                                    content: serde_json::to_string(&result).unwrap(),
+                                    is_error: false,
+                                    image_blocks: vec![],
+                                });
+                            }
+                        }
+                    }
+                }
+                Some(super::subagent_registry::SubagentStatus::Running)
+                | Some(super::subagent_registry::SubagentStatus::Starting) => {
+                    // Agent is actively working — reset idle countdown.
+                    idle_since = None;
+                }
+                Some(super::subagent_registry::SubagentStatus::Error) => {
+                    // Agent's last tool returned an error. Treat like idle —
+                    // if it stays in Error for the full idle_timeout, return
+                    // so the caller can inspect and decide what to do.
+                    let now = tokio::time::Instant::now();
+                    if idle_since.is_none() {
+                        idle_since = Some(now);
+                    }
+                    if let Some(since) = idle_since {
+                        let elapsed_idle = now.duration_since(since);
+                        if idle_timeout_secs == 0
+                            || elapsed_idle >= Duration::from_secs(idle_timeout_secs)
+                        {
+                            let workflow =
+                                self.fetch_workflow_snapshot(&agent_id).await;
+                            let result = AwaitResult {
+                                status: "idle".into(),
+                                reason: Some("completed".into()),
+                                agent_id: agent_id.clone(),
+                                elapsed_ms: start.elapsed().as_millis() as u64,
+                                workflow,
+                            };
+                            return Ok(ToolResult {
+                                content: serde_json::to_string(&result).unwrap(),
+                                is_error: false,
+                                image_blocks: vec![],
+                            });
+                        }
+                    }
+                }
+            }
+
+        }
+    }
+
+    /// Fetch workflow state from a subagent via UDS `get_state` command.
+    /// Returns `None` if the fetch fails or workflow is not enabled.
+    /// Uses a short timeout (2s) to avoid blocking if the agent is unresponsive.
+    async fn fetch_workflow_snapshot(&self, agent_id: &str) -> Option<WorkflowSnapshot> {
+        let socket_path = self.lookup_socket(agent_id).ok()?;
+        let cmd = serde_json::json!({"type": "get_state"}).to_string();
+        let response = tokio::time::timeout(
+            Duration::from_secs(2),
+            send_uds_command(&socket_path, &cmd),
+        )
+        .await
+        .ok()?
+        .ok()?;
+        let parsed: serde_json::Value = serde_json::from_str(&response).ok()?;
+        let data = parsed.get("data")?;
+
+        // Look for workflow state in the response.
+        let workflow = data.get("workflow").or_else(|| data.get("workflowState"))?;
+        let mode = workflow
+            .get("mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let steps_completed = workflow
+            .get("steps_completed")
+            .or_else(|| workflow.get("stepsCompleted"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+        let steps_total = workflow
+            .get("steps_total")
+            .or_else(|| workflow.get("stepsTotal"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+
+        Some(WorkflowSnapshot {
+            mode,
+            steps_completed,
+            steps_total,
+        })
+    }
+
     /// Kill a specific subagent by ID: SIGTERM + remove from registry (#559).
     fn kill_agent(&self, agent_id: &str) -> ToolResult {
         // Extract entry then drop the lock before sending SIGTERM (#559 review).
@@ -204,6 +620,15 @@ impl AgentCmdTool {
                 };
             }
         };
+
+        // Signal any waiting `await` call before dropping the entry (#612).
+        // This ensures await returns "exited" instead of spinning until timeout.
+        if let Some(ref tx) = entry.exit_signal_tx {
+            let _ = tx.send(Some(super::subagent_registry::ExitSignal {
+                exit_code: None,
+                signal: Some(15), // SIGTERM
+            }));
+        }
 
         // Abort monitor task if running.
         if let Some(ref handle) = entry.monitor_handle {
@@ -235,6 +660,19 @@ impl AgentCmdTool {
             .get(agent_id)
             .map(|e| e.socket_path.clone())
             .ok_or_else(|| format!("subagent '{}' not found in registry", agent_id))
+    }
+}
+
+/// RAII guard that removes the agent_id from active_awaits when dropped (#612).
+struct AwaitGuard {
+    active_awaits: ActiveAwaits,
+    agent_id: String,
+}
+
+impl Drop for AwaitGuard {
+    fn drop(&mut self) {
+        let mut active = self.active_awaits.lock().unwrap_or_else(|e| e.into_inner());
+        active.remove(&self.agent_id);
     }
 }
 
@@ -316,12 +754,14 @@ impl Tool for AgentCmdTool {
         ToolDefinition {
             name: "agent_cmd".into(),
             description: "Send a command to a spawned subagent. \
-                Supported commands: prompt, steer, follow_up, abort, kill, \
+                Supported commands: prompt, steer, follow_up, abort, kill, await, \
                 get_state, get_messages, get_messages_tail, get_session_stats, \
                 get_subagents, get_extensions, set_model, clear_history, \
-                reload_extensions."
+                reload_extensions. \
+                The await command blocks until the sub-agent reaches a terminal \
+                state (idle, exited, timeout, or error)."
                 .into(),
-            parameters_schema: r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","get_state","get_messages","get_messages_tail","get_session_stats","get_subagents","get_extensions","set_model","clear_history","reload_extensions"],"description":"Command to send (kill terminates the subagent process)"},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Number of messages for get_messages_tail (default: 1)"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"}},"required":["agent_id","command"]}"#.into(),
+            parameters_schema: r#"{"type":"object","properties":{"agent_id":{"type":"string","description":"ID of the spawned subagent"},"command":{"type":"string","enum":["prompt","steer","follow_up","abort","kill","await","get_state","get_messages","get_messages_tail","get_session_stats","get_subagents","get_extensions","set_model","clear_history","reload_extensions"],"description":"Command to send (kill terminates the subagent process, await blocks until terminal state)"},"message":{"type":"string","description":"Message for prompt/steer/follow_up commands"},"count":{"type":"integer","description":"Number of messages for get_messages_tail (default: 1)"},"model":{"type":"string","description":"Model identifier for set_model (e.g. provider/modelId)"},"provider":{"type":"string","description":"Provider name for set_model (alternative to model)"},"model_id":{"type":"string","description":"Model ID for set_model (used with provider)"},"timeout":{"type":"integer","description":"Maximum wall-clock seconds to wait for await command (default: 300)"},"idle_timeout":{"type":"integer","description":"Seconds the agent must stay idle before await returns (default: 5). Set to 0 for immediate return on first idle."}},"required":["agent_id","command"]}"#.into(),
         }
     }
 
@@ -331,7 +771,12 @@ impl Tool for AgentCmdTool {
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
         let args = arguments.to_string();
         Box::pin(async move {
-            // Check for locally-handled commands first (#559).
+            // Check for async local commands first (#612).
+            if Self::is_await_command(&args) {
+                return self.execute_await(&args).await;
+            }
+
+            // Check for sync locally-handled commands (#559).
             if let Some(result) = self.try_local_command(&args) {
                 return Ok(result);
             }
