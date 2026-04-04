@@ -102,7 +102,7 @@ impl SpawnTool {
     }
 
     /// Parse the tool arguments and create a SubagentConfig.
-    fn parse_args(&self, arguments: &str) -> Result<SubagentConfig, String> {
+    pub fn parse_args(&self, arguments: &str) -> Result<SubagentConfig, String> {
         let args: serde_json::Value =
             serde_json::from_str(arguments).map_err(|e| format!("invalid JSON: {}", e))?;
 
@@ -118,6 +118,21 @@ impl SpawnTool {
             .and_then(|v| v.as_str())
             .map(String::from);
 
+        let config_path = args
+            .get("config")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from);
+
+        let workflow = args
+            .get("workflow")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let workflow_guards = args
+            .get("workflow_guards")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
         if let Some(ref id) = agent_id {
             super::subagent_registry::validate_agent_id_format(id)?;
             if !self.allowed_agents.is_empty() {
@@ -130,6 +145,9 @@ impl SpawnTool {
             agent_id,
             restrict_to_workspace: self.restrict_to_workspace,
             system,
+            config_path,
+            workflow,
+            workflow_guards,
         })
     }
 
@@ -172,6 +190,19 @@ impl SpawnTool {
 
         if let Some(ref system) = config.system {
             cmd.arg("--system").arg(system);
+        }
+
+        // Forward --config if the caller specified a custom config path.
+        if let Some(ref cfg_path) = config.config_path {
+            cmd.arg("--config").arg(cfg_path);
+        }
+
+        // Forward --workflow / --workflow-guards when requested.
+        if config.workflow {
+            cmd.arg("--workflow");
+        }
+        if config.workflow_guards {
+            cmd.arg("--workflow-guards");
         }
 
         // Propagate --no-sandbox so child agents inherit the same workspace
@@ -327,7 +358,7 @@ impl Tool for SpawnTool {
                 Returns immediately. Use agent_cmd to send commands, check status, \
                 read results, steer, or abort the subagent."
                 .into(),
-            parameters_schema: r#"{"type":"object","properties":{"task":{"type":"string","description":"Initial task to send to the subagent (optional — starts idle if omitted)"},"agent_id":{"type":"string","description":"Session name for the subagent (used to address it via agent_cmd)"},"system":{"type":"string","description":"System prompt for the subagent"}}}"#.into(),
+            parameters_schema: r#"{"type":"object","properties":{"task":{"type":"string","description":"Initial task to send to the subagent (optional — starts idle if omitted)"},"agent_id":{"type":"string","description":"Session name for the subagent (used to address it via agent_cmd)"},"system":{"type":"string","description":"System prompt for the subagent"},"config":{"type":"string","description":"Path to a config file to pass to the child agent via --config (optional)"},"workflow":{"type":"boolean","description":"Start the child agent with --workflow (requires --mode uds, always enabled for spawned agents)"},"workflow_guards":{"type":"boolean","description":"Start the child agent with --workflow-guards (requires --workflow)"}}}"#.into(),
         }
     }
 

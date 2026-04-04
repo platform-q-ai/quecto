@@ -32,7 +32,9 @@ fn given_spawn_tool_with_base_dir(world: &mut QuectoWorld, base_dir: String) {
 #[when(expr = "I parse spawn arguments {string}")]
 fn when_parse_spawn_args(world: &mut QuectoWorld, arguments: String) {
     // execute() in stub mode (empty base_dir) exercises parse_args → config → stub output.
+    // Also store the parsed SubagentConfig so new Then steps can inspect it.
     let tool = world.spawn_tool.as_ref().expect("spawn_tool not set");
+    world.subagent_config = tool.parse_args(&arguments).ok();
     let rt = tokio::runtime::Runtime::new().unwrap();
     let result = rt.block_on(tool.execute(&arguments)).unwrap();
     world.spawn_result = Some(result);
@@ -308,6 +310,80 @@ fn then_debug_contains(world: &mut QuectoWorld, expected: String) {
         "expected debug to contain '{}', got: {}",
         expected,
         debug
+    );
+}
+
+// --- New steps for config, workflow, workflow_guards forwarding ---
+
+#[then(expr = "the parsed spawn config should have config path {string}")]
+fn then_parsed_spawn_config_has_config_path(world: &mut QuectoWorld, expected: String) {
+    let cfg = world
+        .subagent_config
+        .as_ref()
+        .expect("subagent_config not set — was parse_args called?");
+    assert_eq!(
+        cfg.config_path,
+        Some(std::path::PathBuf::from(&expected)),
+        "expected config_path {:?}, got {:?}",
+        expected,
+        cfg.config_path
+    );
+}
+
+#[then("the parsed spawn config should have no config path")]
+fn then_parsed_spawn_config_has_no_config_path(world: &mut QuectoWorld) {
+    let cfg = world
+        .subagent_config
+        .as_ref()
+        .expect("subagent_config not set — was parse_args called?");
+    assert!(
+        cfg.config_path.is_none(),
+        "expected no config_path, got {:?}",
+        cfg.config_path
+    );
+}
+
+#[then(expr = "the parsed spawn config should have workflow {word}")]
+fn then_parsed_spawn_config_has_workflow(world: &mut QuectoWorld, expected: String) {
+    let cfg = world
+        .subagent_config
+        .as_ref()
+        .expect("subagent_config not set — was parse_args called?");
+    let expected_bool = expected == "true";
+    assert_eq!(
+        cfg.workflow, expected_bool,
+        "expected workflow={}, got {}",
+        expected_bool, cfg.workflow
+    );
+}
+
+#[then(expr = "the parsed spawn config should have workflow_guards {word}")]
+fn then_parsed_spawn_config_has_workflow_guards(world: &mut QuectoWorld, expected: String) {
+    let cfg = world
+        .subagent_config
+        .as_ref()
+        .expect("subagent_config not set — was parse_args called?");
+    let expected_bool = expected == "true";
+    assert_eq!(
+        cfg.workflow_guards, expected_bool,
+        "expected workflow_guards={}, got {}",
+        expected_bool, cfg.workflow_guards
+    );
+}
+
+#[then(expr = "the spawn tool schema should include property {string}")]
+fn then_spawn_tool_schema_includes_property(world: &mut QuectoWorld, property: String) {
+    let tool = world.spawn_tool.as_ref().expect("spawn_tool not set");
+    let def = tool.definition();
+    let schema: serde_json::Value = serde_json::from_str(&def.parameters_schema).unwrap();
+    let properties = schema["properties"]
+        .as_object()
+        .expect("schema should have properties");
+    assert!(
+        properties.contains_key(property.as_str()),
+        "expected schema to include property '{}', got keys: {:?}",
+        property,
+        properties.keys().collect::<Vec<_>>()
     );
 }
 
