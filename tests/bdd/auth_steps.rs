@@ -903,8 +903,8 @@ fn then_token_exchange_no_refresh_token(world: &mut QuectoWorld) {
 // OpenAI OAuth import refresh steps (issue #258)
 // ===========================================================================
 
-#[given("an opencode auth.json with expired OpenAI OAuth credential")]
-fn given_opencode_expired_openai(world: &mut QuectoWorld) {
+#[given("an external auth.json with expired OpenAI OAuth credential")]
+fn given_external_expired_openai(world: &mut QuectoWorld) {
     ensure_temp_dir(world);
     let now = quecto::infrastructure::time::unix_timestamp_secs();
     // Token expired 100 seconds ago
@@ -919,8 +919,8 @@ fn given_opencode_expired_openai(world: &mut QuectoWorld) {
     }));
 }
 
-#[given(expr = "an opencode auth.json with valid OpenAI OAuth credential {string}")]
-fn given_opencode_valid_openai(world: &mut QuectoWorld, token: String) {
+#[given(expr = "an external auth.json with valid OpenAI OAuth credential {string}")]
+fn given_external_valid_openai(world: &mut QuectoWorld, token: String) {
     ensure_temp_dir(world);
     let now = quecto::infrastructure::time::unix_timestamp_secs();
     let expires_ms = (now + 7200) * 1000;
@@ -934,8 +934,8 @@ fn given_opencode_valid_openai(world: &mut QuectoWorld, token: String) {
     }));
 }
 
-#[when("the opencode credentials are imported")]
-fn when_opencode_imported(world: &mut QuectoWorld) {
+#[when("the external credentials are imported")]
+fn when_external_imported(world: &mut QuectoWorld) {
     let base = base_path(world);
     let store = CredentialStore::new(&base);
     let auth_json = world

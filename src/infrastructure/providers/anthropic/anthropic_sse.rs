@@ -10,7 +10,7 @@ use crate::domain::tool::ToolDefinition;
 /// Accumulates Anthropic SSE events into a final [`LlmResponse`].
 #[derive(Default)]
 pub(super) struct SseAccumulator {
-    /// When `Some`, reverse-maps PascalCase Claude Code tool names (e.g. `"Read"`)
+    /// When `Some`, reverse-maps PascalCase canonical tool names (e.g. `"Read"`)
     /// back to registry names (e.g. `"read"`) using case-insensitive matching.
     /// Set for OAuth mode; `None` for API key mode (no remapping).
     tool_defs: Option<Vec<ToolDefinition>>,

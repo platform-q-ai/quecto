@@ -593,12 +593,12 @@ fn test_haiku_4_5_dated_variant_matches() {
 }
 
 // ---------------------------------------------------------------------------
-// Beta header parity with Pi + OpenCode (#437-2,3)
+// Beta header parity (#437-2,3)
 // ---------------------------------------------------------------------------
 
-/// API-key auth sends the correct beta headers for parity with Pi and OpenCode.
-/// Both Pi and OpenCode always send fine-grained-tool-streaming and
-/// interleaved-thinking (except interleaved is omitted for 4.6 models).
+/// API-key auth sends the correct beta headers.
+/// Always sends fine-grained-tool-streaming and interleaved-thinking
+/// (except interleaved is omitted for 4.6 models where it's built-in).
 #[tokio::test]
 async fn test_api_key_auth_sends_correct_beta_headers() {
     use wiremock::matchers::{method, path};
@@ -651,7 +651,7 @@ async fn test_api_key_auth_sends_correct_beta_headers() {
     // For 4.6 models: fine-grained-tool-streaming present, interleaved-thinking absent
     assert!(
         beta.contains("fine-grained-tool-streaming-2025-05-14"),
-        "fine-grained-tool-streaming should be sent for Pi/OC parity, got: {:?}",
+        "fine-grained-tool-streaming should be sent for API parity, got: {:?}",
         beta
     );
     assert!(
@@ -721,10 +721,10 @@ async fn test_api_key_auth_sends_interleaved_thinking_for_non_46_models() {
         "interleaved-thinking should be present for non-4.6 models, got: {:?}",
         beta
     );
-    // Should NOT have claude-code or oauth betas (API key auth)
+    // Should NOT have identity or oauth betas (API key auth)
     assert!(
         !beta.contains("claude-code"),
-        "claude-code beta should only appear for OAuth, got: {:?}",
+        "identity beta should only appear for OAuth, got: {:?}",
         beta
     );
 }

@@ -106,10 +106,10 @@ Feature: LLM Providers
     Then the tool result JSON should contain "is_error" set to false
 
   # --- #179: Beta headers for API key auth ---
-  # NOTE: fine-grained-tool-streaming was previously removed as "GA", but Pi and OpenCode
-  # both still send it (#437-3). Updated to verify it IS sent for parity.
+  # NOTE: fine-grained-tool-streaming was previously removed as "GA", but is
+  # still required (#437-3). Updated to verify it IS sent for parity.
 
-  Scenario: Anthropic provider sends fine-grained-tool-streaming beta header for Pi/OC parity
+  Scenario: Anthropic provider sends fine-grained-tool-streaming beta header for API parity
     Given an Anthropic provider with API key auth and a mock server
     When I send an Anthropic chat request
     Then the request should include the "anthropic-beta" header with "fine-grained-tool-streaming-2025-05-14"
@@ -513,10 +513,10 @@ Feature: LLM Providers
     When I normalize the messages
     Then all messages should be returned without deep cloning
 
-  # --- #437: Anthropic provider parity with Pi and OpenCode ---
+  # --- #437: Anthropic provider API parity ---
 
-  # #437-1: Claude Code system prompt for OAuth
-  Scenario: OAuth token prepends Claude Code system prompt identity
+  # #437-1: System prompt for OAuth
+  Scenario: OAuth token prepends identity system prompt
     Given an Anthropic request with system prompt "Be helpful" and is_oauth true
     When I build the Anthropic request body with OAuth
     Then the system prompt array should have 2 blocks
@@ -524,13 +524,13 @@ Feature: LLM Providers
     And the second system block text should be "Be helpful"
     And both system blocks should have cache_control ephemeral
 
-  Scenario: OAuth token without system prompt still includes Claude Code identity
+  Scenario: OAuth token without system prompt still includes identity prefix
     Given an Anthropic request with no system prompt and is_oauth true
     When I build the Anthropic request body with OAuth
     Then the system prompt array should have 1 block
     And the first system block text should be "You are Claude Code, Anthropic's official CLI for Claude."
 
-  Scenario: API key auth does not prepend Claude Code system prompt
+  Scenario: API key auth does not prepend identity system prompt
     Given an Anthropic request with system prompt "Be helpful" and is_oauth false
     When I build the Anthropic request body without OAuth
     Then the system prompt array should have 1 block
@@ -550,7 +550,7 @@ Feature: LLM Providers
     Then the beta header should contain "fine-grained-tool-streaming-2025-05-14"
     And the beta header should not contain "interleaved-thinking-2025-05-14"
 
-  Scenario: OAuth auth includes claude-code and oauth betas plus streaming betas
+  Scenario: OAuth auth includes identity and oauth betas plus streaming betas
     Given an Anthropic beta header for model "claude-sonnet-4-20250514" with is_oauth true
     When I build the beta header
     Then the beta header should contain "claude-code-20250219"
@@ -559,19 +559,19 @@ Feature: LLM Providers
     And the beta header should contain "interleaved-thinking-2025-05-14"
 
   # #437-4: Tool name remapping for OAuth
-  Scenario: OAuth mode remaps tool names to Claude Code canonical casing
+  Scenario: OAuth mode remaps tool names to canonical casing
     Given a tool named "read"
-    When I convert it to Claude Code name
+    When I convert it to canonical name
     Then the result should be "Read"
 
   Scenario: OAuth mode remaps "bash" to "Bash"
     Given a tool named "bash"
-    When I convert it to Claude Code name
+    When I convert it to canonical name
     Then the result should be "Bash"
 
   Scenario: Unknown tool names pass through unchanged
     Given a tool named "my_custom_tool"
-    When I convert it to Claude Code name
+    When I convert it to canonical name
     Then the result should be "my_custom_tool"
 
   Scenario: Tool definitions are remapped in OAuth mode

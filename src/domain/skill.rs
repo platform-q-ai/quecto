@@ -24,7 +24,7 @@ pub enum SkillSource {
 /// YAML frontmatter extracted from a SKILL.md file.
 ///
 /// Required fields: `name`, `description`.
-/// Optional fields are parsed for forward-compatibility with OpenCode
+/// Optional fields are parsed for forward-compatibility
 /// but are not used by quecto's runtime yet.
 #[derive(Debug, Clone)]
 pub struct SkillFrontmatter {
@@ -309,12 +309,12 @@ mod tests {
 
     #[test]
     fn test_parse_all_fields() {
-        let yaml = "\nname: git-release\ndescription: Create releases\nlicense: MIT\ncompatibility: opencode\nmetadata:\n  audience: maintainers\n  workflow: github\n";
+        let yaml = "\nname: git-release\ndescription: Create releases\nlicense: MIT\ncompatibility: quecto\nmetadata:\n  audience: maintainers\n  workflow: github\n";
         let fm = SkillFrontmatter::parse(yaml).unwrap();
         assert_eq!(fm.name, "git-release");
         assert_eq!(fm.description, "Create releases");
         assert_eq!(fm.license.as_deref(), Some("MIT"));
-        assert_eq!(fm.compatibility.as_deref(), Some("opencode"));
+        assert_eq!(fm.compatibility.as_deref(), Some("quecto"));
         let meta = fm.metadata.unwrap();
         assert_eq!(meta.get("audience").unwrap(), "maintainers");
         assert_eq!(meta.get("workflow").unwrap(), "github");

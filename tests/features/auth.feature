@@ -231,23 +231,23 @@ Feature: Authentication
 
   @done
   Scenario: OpenAI import refreshes expired token
-    Given an opencode auth.json with expired OpenAI OAuth credential
+    Given an external auth.json with expired OpenAI OAuth credential
     And a mock OAuth refresh server that returns a new token "eyJrefreshed-openai" with refresh token "rt-new-openai"
-    When the opencode credentials are imported
+    When the external credentials are imported
     Then the stored OpenAI credential should have token "eyJrefreshed-openai"
     And the import output should contain "OpenAI token expired, refreshing"
 
   @done
   Scenario: OpenAI import stores non-expired token as-is
-    Given an opencode auth.json with valid OpenAI OAuth credential "eyJvalid-openai"
-    When the opencode credentials are imported
+    Given an external auth.json with valid OpenAI OAuth credential "eyJvalid-openai"
+    When the external credentials are imported
     Then the stored OpenAI credential should have token "eyJvalid-openai"
 
   @done
   Scenario: OpenAI import fails gracefully when refresh fails
-    Given an opencode auth.json with expired OpenAI OAuth credential
+    Given an external auth.json with expired OpenAI OAuth credential
     And a mock OAuth refresh server that returns an error
-    When the opencode credentials are imported
+    When the external credentials are imported
     Then the import output should contain "failed to refresh OpenAI token"
 
   # --- Mid-session OAuth token refresh on 401 (issue #255) ---

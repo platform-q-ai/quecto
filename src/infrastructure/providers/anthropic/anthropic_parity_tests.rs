@@ -1,19 +1,19 @@
-// Tests for #437: Anthropic provider parity with Pi and OpenCode.
+// Tests for #437: Anthropic provider API parity.
 //
-// Covers: Claude Code system prompt, beta headers, tool name remapping,
+// Covers: OAuth system prompt, beta headers, tool name remapping,
 // thinking block replay, signature_delta, Accept header, stop reasons.
 
 use super::*;
 use crate::domain::message::{Message, StopReason, ThinkingBlock};
 use crate::domain::provider::ChatRequest;
 
-// #437: Anthropic provider parity with Pi and OpenCode
+// #437: Anthropic provider API parity
 // ===========================================================================
 
-// --- #437-1: Claude Code system prompt for OAuth ---
+// --- #437-1: OAuth system prompt ---
 
 #[test]
-fn test_oauth_prepends_claude_code_system_prompt() {
+fn test_oauth_prepends_identity_system_prompt() {
     let messages = vec![Message::system("Be helpful"), Message::user("Hi")];
     let req = ChatRequest {
         messages: &messages,
@@ -42,7 +42,7 @@ fn test_oauth_prepends_claude_code_system_prompt() {
 }
 
 #[test]
-fn test_oauth_without_system_prompt_still_has_claude_code_identity() {
+fn test_oauth_without_system_prompt_still_has_identity() {
     let messages = vec![Message::user("Hi")];
     let req = ChatRequest {
         messages: &messages,
@@ -67,7 +67,7 @@ fn test_oauth_without_system_prompt_still_has_claude_code_identity() {
 }
 
 #[test]
-fn test_api_key_does_not_prepend_claude_code_system_prompt() {
+fn test_api_key_does_not_prepend_identity_system_prompt() {
     let messages = vec![Message::system("Be helpful"), Message::user("Hi")];
     let req = ChatRequest {
         messages: &messages,

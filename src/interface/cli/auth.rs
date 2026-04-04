@@ -46,7 +46,7 @@ fn cmd_auth_login(
     let mut provider: Option<String> = None;
     let mut token: Option<String> = None;
     let mut use_device_code = false;
-    let mut import_opencode = false;
+    let mut import_external = false;
     let mut i = 0;
 
     while i < args.len() {
@@ -73,8 +73,8 @@ fn cmd_auth_login(
                 use_device_code = true;
                 i += 1;
             }
-            "--import-opencode" => {
-                import_opencode = true;
+            "--import-external" => {
+                import_external = true;
                 i += 1;
             }
             // Keep --oauth as a silent alias (backwards compat)
@@ -93,8 +93,8 @@ fn cmd_auth_login(
 
     let mut out = Output { stdout, stderr };
 
-    if import_opencode {
-        return cmd_auth_import_opencode(ctx, &mut out);
+    if import_external {
+        return cmd_auth_import_external(ctx, &mut out);
     }
 
     if let Some(token_val) = token {
@@ -516,9 +516,9 @@ fn cmd_auth_login_anthropic_oauth(
     }
 }
 
-/// Import credentials from opencode's auth.json file.
-fn cmd_auth_import_opencode(ctx: &CliContext, out: &mut Output<'_>) -> i32 {
-    let auth_json = match auth_import::load_opencode_auth_json(out.stderr) {
+/// Import credentials from an external auth.json file.
+fn cmd_auth_import_external(ctx: &CliContext, out: &mut Output<'_>) -> i32 {
+    let auth_json = match auth_import::load_external_auth_json(out.stderr) {
         Some(v) => v,
         None => return 1,
     };
@@ -552,12 +552,12 @@ fn cmd_auth_import_opencode(ctx: &CliContext, out: &mut Output<'_>) -> i32 {
 
     if imported == 0 {
         out.stderr
-            .push_str("auth login: no OAuth credentials found in opencode auth.json\n");
+            .push_str("auth login: no OAuth credentials found in auth.json\n");
         return 1;
     }
 
     out.stdout.push_str(&format!(
-        "Imported {} credential(s) from opencode\n",
+        "Imported {} credential(s)\n",
         imported
     ));
     0

@@ -1,10 +1,10 @@
-//! Claude Code stealth mode: tool name remapping and identity constants (#437-4).
+//! Tool name remapping and identity constants for Anthropic OAuth (#437-4).
 //!
-//! When using Anthropic OAuth tokens (`sk-ant-oat-*`), Pi mimics Claude Code's
-//! canonical tool naming and identity. This module provides the mappings.
+//! When using Anthropic OAuth tokens (`sk-ant-oat-*`), the provider uses
+//! canonical tool naming required by the `claude-code-20250219` beta.
+//! This module provides the mappings.
 
-/// Claude Code 2.x canonical tool names (case-sensitive).
-/// Source: https://cchistory.mariozechner.at/data/prompts-2.1.11.md
+/// Canonical tool names for OAuth identity (case-sensitive).
 const CLAUDE_CODE_TOOLS: &[&str] = &[
     "Read",
     "Write",
@@ -25,10 +25,10 @@ const CLAUDE_CODE_TOOLS: &[&str] = &[
     "WebSearch",
 ];
 
-/// Version string used in `user-agent` header for OAuth (Claude Code identity).
+/// Version string used in `user-agent` header for OAuth identity.
 pub(super) const CLAUDE_CODE_VERSION: &str = "2.1.75";
 
-/// Convert a tool name to Claude Code canonical casing (case-insensitive match).
+/// Convert a tool name to canonical casing for OAuth (case-insensitive match).
 /// Returns the original name if no match is found.
 ///
 /// Uses `eq_ignore_ascii_case` to avoid String allocations (#437 perf review).
@@ -44,7 +44,7 @@ pub(super) fn to_claude_code_name(name: &str) -> &str {
 /// Convert a tool name received from the API back to the original tool name
 /// used in the tool registry (reverse of `to_claude_code_name`).
 ///
-/// Used in production to reverse-map API-returned Claude Code tool names
+/// Used in production to reverse-map API-returned canonical tool names
 /// (e.g. `"Read"`) back to the registered tool names (e.g. `"read"`).
 pub(super) fn from_claude_code_name(
     name: &str,
@@ -84,7 +84,7 @@ pub(super) fn build_assistant_message(
                     continue;
                 }
                 if signature.is_empty() {
-                    // Missing signature → convert to plain text (Pi does the same).
+                    // Missing signature → convert to plain text.
                     content_blocks.push(serde_json::json!({
                         "type": "text",
                         "text": sanitize_surrogates(thinking),
@@ -136,7 +136,7 @@ pub(super) fn build_assistant_message(
     serde_json::json!({"role": "assistant", "content": content_blocks})
 }
 
-/// Defence-in-depth parity stub with pi-mono's `sanitizeSurrogates`.
+/// Defence-in-depth surrogate sanitization stub.
 ///
 /// Rust `String` is guaranteed valid UTF-8 and cannot contain unpaired
 /// surrogates, so this is a no-op that avoids allocation by returning
