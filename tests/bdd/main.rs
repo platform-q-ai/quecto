@@ -630,6 +630,17 @@ pub struct QuectoWorld {
     pub audit_long_content: Option<String>,
     /// Generated content preview
     pub audit_content_preview: Option<String>,
+    // --- agent_cmd await (#612) ---
+    /// Parsed await result for BDD assertions
+    pub await_result: Option<serde_json::Value>,
+    /// Mock await registry for BDD scenarios
+    pub await_registry: Option<quecto::infrastructure::tools::agent_cmd::SubagentRegistry>,
+    /// Active awaits tracker for BDD scenarios
+    pub await_active_awaits: Option<quecto::infrastructure::tools::agent_cmd::ActiveAwaits>,
+    /// Temp dir for await mock sockets (kept alive)
+    pub _await_mock_tmp: Option<TempDir>,
+    /// Mock listener for await scenarios (kept alive)
+    pub _await_mock_listener: Option<std::os::unix::net::UnixListener>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
@@ -874,6 +885,7 @@ fn table_to_json(table: &gherkin::Table) -> String {
     obj.to_string()
 }
 
+mod agent_cmd_await_steps;
 mod agent_cmd_tool_steps;
 mod agent_loop_steps;
 mod agent_tools_steps;

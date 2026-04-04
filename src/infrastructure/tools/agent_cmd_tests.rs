@@ -381,6 +381,457 @@ async fn test_kill_known_agent_removes_from_registry() {
     );
 }
 
+// ── Await command tests (#612) ────────────────────────────────────
+
+#[test]
+fn test_await_is_in_supported_commands() {
+    assert!(SUPPORTED_COMMANDS.contains(&"await"));
+}
+
+#[test]
+fn test_is_await_command_true() {
+    assert!(AgentCmdTool::is_await_command(
+        r#"{"agent_id":"w1","command":"await"}"#
+    ));
+}
+
+#[test]
+fn test_is_await_command_false() {
+    assert!(!AgentCmdTool::is_await_command(
+        r#"{"agent_id":"w1","command":"get_state"}"#
+    ));
+}
+
+#[test]
+fn test_is_await_command_invalid_json() {
+    assert!(!AgentCmdTool::is_await_command("not json"));
+}
+
+#[tokio::test]
+async fn test_await_unknown_agent_returns_structured_error() {
+    let tool = empty_tool();
+    let result = tool
+        .execute(r#"{"agent_id":"nonexistent","command":"await"}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error, "await errors should be in the structured result, not tool errors");
+    let parsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(parsed["status"], "error");
+    assert_eq!(parsed["reason"], "agent_not_found");
+    assert_eq!(parsed["agent_id"], "nonexistent");
+    assert_eq!(parsed["elapsed_ms"], 0);
+}
+
+#[tokio::test]
+async fn test_await_invalid_agent_id_format() {
+    let tool = empty_tool();
+    let result = tool
+        .execute(r#"{"agent_id":"bad id!","command":"await"}"#)
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    assert!(result.content.contains("[a-zA-Z0-9_-]"));
+}
+
+#[tokio::test]
+async fn test_await_idle_agent_with_zero_idle_timeout() {
+    use super::super::subagent_registry::SubagentStatus;
+    let registry = new_registry();
+    let dir = tempfile::tempdir().unwrap();
+    let sock_path = dir.path().join("test.sock");
+
+    // Create a mock server on the socket so connection check succeeds.
+    let _listener = tokio::net::UnixListener::bind(&sock_path).unwrap();
+
+    let mut entry = SubagentEntry::new(sock_path, 0);
+    entry.status = SubagentStatus::Idle;
+    registry
+        .lock()
+        .unwrap()
+        .insert("w1".to_string(), entry);
+
+    let tool = AgentCmdTool::new(registry);
+    let result = tool
+        .execute(r#"{"agent_id":"w1","command":"await","idle_timeout":0}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    let parsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(parsed["status"], "idle");
+    assert_eq!(parsed["reason"], "completed");
+    assert_eq!(parsed["agent_id"], "w1");
+}
+
+#[tokio::test]
+async fn test_await_timeout_when_running() {
+    use super::super::subagent_registry::SubagentStatus;
+    let registry = new_registry();
+    let dir = tempfile::tempdir().unwrap();
+    let sock_path = dir.path().join("test.sock");
+
+    let _listener = tokio::net::UnixListener::bind(&sock_path).unwrap();
+
+    let mut entry = SubagentEntry::new(sock_path, 0);
+    entry.status = SubagentStatus::Running;
+    registry
+        .lock()
+        .unwrap()
+        .insert("w1".to_string(), entry);
+
+    let tool = AgentCmdTool::new(registry);
+    let result = tool
+        .execute(r#"{"agent_id":"w1","command":"await","timeout":1}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    let parsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(parsed["status"], "timeout");
+    assert!(parsed["reason"].is_null());
+}
+
+#[tokio::test]
+async fn test_await_duplicate_returns_error() {
+    use super::super::subagent_registry::SubagentStatus;
+    let registry = new_registry();
+    let dir = tempfile::tempdir().unwrap();
+    let sock_path = dir.path().join("test.sock");
+
+    let _listener = tokio::net::UnixListener::bind(&sock_path).unwrap();
+
+    let mut entry = SubagentEntry::new(sock_path, 0);
+    entry.status = SubagentStatus::Running;
+    registry
+        .lock()
+        .unwrap()
+        .insert("w1".to_string(), entry);
+
+    let active_awaits = new_active_awaits();
+    // Pre-register an active await.
+    active_awaits.lock().unwrap().insert("w1".to_string());
+
+    let tool = AgentCmdTool::with_active_awaits(registry, active_awaits);
+    let result = tool
+        .execute(r#"{"agent_id":"w1","command":"await","timeout":5}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    let parsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(parsed["status"], "error");
+    assert_eq!(parsed["reason"], "another_await_active");
+    assert_eq!(parsed["elapsed_ms"], 0);
+}
+
+#[tokio::test]
+async fn test_await_stale_socket_returns_connection_failed() {
+    let registry = new_registry();
+    // Create a socket path that doesn't have a listener.
+    let dir = tempfile::tempdir().unwrap();
+    let sock_path = dir.path().join("stale.sock");
+    // Create the file so it "exists" but can't be connected to.
+    std::fs::write(&sock_path, b"").unwrap();
+
+    let entry = SubagentEntry::new(sock_path, 0);
+    registry
+        .lock()
+        .unwrap()
+        .insert("w1".to_string(), entry);
+
+    let tool = AgentCmdTool::new(registry);
+    let result = tool
+        .execute(r#"{"agent_id":"w1","command":"await"}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    let parsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(parsed["status"], "error");
+    assert_eq!(parsed["reason"], "connection_failed");
+}
+
+#[tokio::test]
+async fn test_await_exited_agent_returns_immediately() {
+    use super::super::subagent_registry::SubagentStatus;
+    let registry = new_registry();
+    let dir = tempfile::tempdir().unwrap();
+    let sock_path = dir.path().join("test.sock");
+
+    let _listener = tokio::net::UnixListener::bind(&sock_path).unwrap();
+
+    let mut entry = SubagentEntry::new(sock_path, 0);
+    entry.status = SubagentStatus::Exited;
+    registry
+        .lock()
+        .unwrap()
+        .insert("w1".to_string(), entry);
+
+    let tool = AgentCmdTool::new(registry);
+    let result = tool
+        .execute(r#"{"agent_id":"w1","command":"await","timeout":5}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    let parsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(parsed["status"], "exited");
+}
+
+#[tokio::test]
+async fn test_await_exit_signal_returns_exit_code() {
+    use super::super::subagent_registry::{SubagentStatus, new_exit_signal_channel, ExitSignal};
+    let registry = new_registry();
+    let dir = tempfile::tempdir().unwrap();
+    let sock_path = dir.path().join("test.sock");
+
+    let _listener = tokio::net::UnixListener::bind(&sock_path).unwrap();
+
+    let (exit_tx, _exit_rx) = new_exit_signal_channel();
+
+    let mut entry = SubagentEntry::new(sock_path, 0);
+    entry.status = SubagentStatus::Running;
+    entry.exit_signal_tx = Some(exit_tx.clone());
+    registry
+        .lock()
+        .unwrap()
+        .insert("w1".to_string(), entry);
+
+    let tool = AgentCmdTool::new(registry);
+
+    // Send exit signal after a short delay.
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let _ = exit_tx.send(Some(ExitSignal {
+            exit_code: Some(1),
+            signal: None,
+        }));
+    });
+
+    let result = tool
+        .execute(r#"{"agent_id":"w1","command":"await","timeout":5}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    let parsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(parsed["status"], "exited");
+    assert_eq!(parsed["reason"], "exit_code_1");
+}
+
+#[tokio::test]
+async fn test_await_guard_cleanup_on_completion() {
+    use super::super::subagent_registry::SubagentStatus;
+    let registry = new_registry();
+    let dir = tempfile::tempdir().unwrap();
+    let sock_path = dir.path().join("test.sock");
+
+    let _listener = tokio::net::UnixListener::bind(&sock_path).unwrap();
+
+    let mut entry = SubagentEntry::new(sock_path, 0);
+    entry.status = SubagentStatus::Idle;
+    registry
+        .lock()
+        .unwrap()
+        .insert("w1".to_string(), entry);
+
+    let tool = AgentCmdTool::new(registry);
+    let _ = tool
+        .execute(r#"{"agent_id":"w1","command":"await","idle_timeout":0}"#)
+        .await
+        .unwrap();
+
+    // After completion, the active_awaits should be cleaned up.
+    let active = tool.active_awaits().lock().unwrap();
+    assert!(
+        !active.contains("w1"),
+        "active_awaits should be cleaned up after completion"
+    );
+}
+
+#[tokio::test]
+async fn test_await_idle_timeout_waits_correct_duration() {
+    use super::super::subagent_registry::SubagentStatus;
+    let registry = new_registry();
+    let dir = tempfile::tempdir().unwrap();
+    let sock_path = dir.path().join("test.sock");
+
+    let _listener = tokio::net::UnixListener::bind(&sock_path).unwrap();
+
+    let mut entry = SubagentEntry::new(sock_path, 0);
+    entry.status = SubagentStatus::Idle;
+    registry
+        .lock()
+        .unwrap()
+        .insert("w1".to_string(), entry);
+
+    let tool = AgentCmdTool::new(registry);
+    let start = std::time::Instant::now();
+    let result = tool
+        .execute(r#"{"agent_id":"w1","command":"await","idle_timeout":1}"#)
+        .await
+        .unwrap();
+    let elapsed = start.elapsed();
+
+    assert!(!result.is_error);
+    let parsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(parsed["status"], "idle");
+    // Should have waited at least 1 second.
+    assert!(
+        elapsed >= Duration::from_millis(900),
+        "expected at least ~1s wait, got {:?}",
+        elapsed
+    );
+}
+
+#[tokio::test]
+async fn test_await_idle_resets_on_running() {
+    use super::super::subagent_registry::SubagentStatus;
+    let registry = new_registry();
+    let dir = tempfile::tempdir().unwrap();
+    let sock_path = dir.path().join("test.sock");
+
+    let _listener = tokio::net::UnixListener::bind(&sock_path).unwrap();
+
+    let mut entry = SubagentEntry::new(sock_path, 0);
+    entry.status = SubagentStatus::Idle;
+    registry
+        .lock()
+        .unwrap()
+        .insert("w1".to_string(), entry);
+
+    let registry_clone = registry.clone();
+    // After 200ms, set status to Running, then after 400ms set back to Idle.
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        {
+            let mut entries = registry_clone.lock().unwrap();
+            if let Some(e) = entries.get_mut("w1") {
+                e.status = SubagentStatus::Running;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        {
+            let mut entries = registry_clone.lock().unwrap();
+            if let Some(e) = entries.get_mut("w1") {
+                e.status = SubagentStatus::Idle;
+            }
+        }
+    });
+
+    let tool = AgentCmdTool::new(registry);
+    let result = tool
+        .execute(r#"{"agent_id":"w1","command":"await","idle_timeout":1,"timeout":10}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    let parsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(parsed["status"], "idle");
+    assert_eq!(parsed["reason"], "completed");
+}
+
+#[test]
+fn test_definition_includes_await() {
+    let tool = empty_tool();
+    let def = tool.definition();
+    assert!(def.description.contains("await"));
+}
+
+#[test]
+fn test_definition_schema_includes_await() {
+    let tool = empty_tool();
+    let def = tool.definition();
+    let schema: serde_json::Value = serde_json::from_str(&def.parameters_schema).unwrap();
+    let command_enum = schema["properties"]["command"]["enum"].as_array().unwrap();
+    assert!(
+        command_enum.iter().any(|v| v.as_str() == Some("await")),
+        "await should be in command enum"
+    );
+}
+
+#[test]
+fn test_definition_schema_includes_timeout_and_idle_timeout() {
+    let tool = empty_tool();
+    let def = tool.definition();
+    let schema: serde_json::Value = serde_json::from_str(&def.parameters_schema).unwrap();
+    assert!(
+        schema["properties"]["timeout"].is_object(),
+        "timeout should be in schema properties"
+    );
+    assert!(
+        schema["properties"]["idle_timeout"].is_object(),
+        "idle_timeout should be in schema properties"
+    );
+}
+
+#[tokio::test]
+async fn test_await_removed_agent_returns_exited() {
+    use super::super::subagent_registry::SubagentStatus;
+    let registry = new_registry();
+    let dir = tempfile::tempdir().unwrap();
+    let sock_path = dir.path().join("test.sock");
+
+    let _listener = tokio::net::UnixListener::bind(&sock_path).unwrap();
+
+    let mut entry = SubagentEntry::new(sock_path, 0);
+    entry.status = SubagentStatus::Running;
+    registry
+        .lock()
+        .unwrap()
+        .insert("w1".to_string(), entry);
+
+    let registry_clone = registry.clone();
+    // After 200ms, remove the agent from the registry (simulating reaper).
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let mut entries = registry_clone.lock().unwrap();
+        entries.remove("w1");
+    });
+
+    let tool = AgentCmdTool::new(registry);
+    let result = tool
+        .execute(r#"{"agent_id":"w1","command":"await","timeout":5}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    let parsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(parsed["status"], "exited");
+}
+
+// ── Await result serde tests (#612) ──────────────────────────────
+
+#[test]
+fn test_await_result_serialization() {
+    let result = AwaitResult {
+        status: "idle".into(),
+        reason: Some("completed".into()),
+        agent_id: "w1".into(),
+        elapsed_ms: 5000,
+        workflow: Some(WorkflowSnapshot {
+            mode: "complete".into(),
+            steps_completed: 7,
+            steps_total: 7,
+        }),
+    };
+    let json = serde_json::to_string(&result).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed["status"], "idle");
+    assert_eq!(parsed["reason"], "completed");
+    assert_eq!(parsed["agent_id"], "w1");
+    assert_eq!(parsed["elapsed_ms"], 5000);
+    assert_eq!(parsed["workflow"]["mode"], "complete");
+    assert_eq!(parsed["workflow"]["steps_completed"], 7);
+    assert_eq!(parsed["workflow"]["steps_total"], 7);
+}
+
+#[test]
+fn test_await_result_round_trip() {
+    let result = AwaitResult {
+        status: "timeout".into(),
+        reason: None,
+        agent_id: "bot-1".into(),
+        elapsed_ms: 120000,
+        workflow: None,
+    };
+    let json = serde_json::to_string(&result).unwrap();
+    let back: AwaitResult = serde_json::from_str(&json).unwrap();
+    assert_eq!(result, back);
+}
+
 // ── UDS transport tests (#557) ───────────────────────────────────
 
 /// Mock UDS server that replicates the multi-client broadcast pattern:

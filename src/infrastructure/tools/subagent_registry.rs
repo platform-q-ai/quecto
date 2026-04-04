@@ -1,7 +1,8 @@
 // Shared subagent registry types for spawn + agent_cmd tools (#421).
 // Extended with live status tracking for persistent monitor (#522).
+// Extended with await signaling for agent_cmd await (#612).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -65,6 +66,9 @@ pub struct SubagentEntry {
     pub updated_at: Instant,
     /// Abort handle for the monitor task (if running).
     pub monitor_handle: Option<Arc<tokio::task::JoinHandle<()>>>,
+    /// Exit signal sender — the reaper task sends the exit code/signal through
+    /// this channel so that a waiting `await` call can return immediately (#612).
+    pub exit_signal_tx: Option<ExitSignalTx>,
 }
 
 impl SubagentEntry {
@@ -78,6 +82,7 @@ impl SubagentEntry {
             last_error: None,
             updated_at: Instant::now(),
             monitor_handle: None,
+            exit_signal_tx: None,
         }
     }
 }
@@ -88,6 +93,54 @@ pub type SubagentRegistry = Arc<Mutex<HashMap<String, SubagentEntry>>>;
 /// Create a new empty registry.
 pub fn new_registry() -> SubagentRegistry {
     Arc::new(Mutex::new(HashMap::new()))
+}
+
+// ─── Await support (#612) ────────────────────────────────────────────────────
+
+/// Result of an `agent_cmd await` call.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct AwaitResult {
+    pub status: String,
+    pub reason: Option<String>,
+    pub agent_id: String,
+    pub elapsed_ms: u64,
+    pub workflow: Option<WorkflowSnapshot>,
+}
+
+/// Snapshot of workflow state at the moment `await` returns.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct WorkflowSnapshot {
+    pub mode: String,
+    pub steps_completed: u32,
+    pub steps_total: u32,
+}
+
+/// Signal sent by the reaper task when a child process exits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExitSignal {
+    /// Process exit code (0 for success, non-zero for error).
+    /// `None` if the process was killed by a signal.
+    pub exit_code: Option<i32>,
+    /// Signal number if the process was killed by a signal.
+    pub signal: Option<i32>,
+}
+
+/// Channel for signaling process exit to a waiting `await` call.
+pub type ExitSignalTx = tokio::sync::watch::Sender<Option<ExitSignal>>;
+/// Receiver for process exit signals.
+pub type ExitSignalRx = tokio::sync::watch::Receiver<Option<ExitSignal>>;
+
+/// Create a new exit signal channel (initially no signal).
+pub fn new_exit_signal_channel() -> (ExitSignalTx, ExitSignalRx) {
+    tokio::sync::watch::channel(None)
+}
+
+/// Tracks which agent_ids have an active `await` call to prevent duplicates.
+pub type ActiveAwaits = Arc<Mutex<HashSet<String>>>;
+
+/// Create a new empty active awaits tracker.
+pub fn new_active_awaits() -> ActiveAwaits {
+    Arc::new(Mutex::new(HashSet::new()))
 }
 
 // ─── Subagent notifications (#523) ───────────────────────────────────────────

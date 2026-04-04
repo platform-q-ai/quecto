@@ -71,6 +71,12 @@ pub enum AuditEvent {
         guard_message: String,
         before_step_key: String,
     },
+    SubagentAwait {
+        agent_id: String,
+        status: String,
+        reason: Option<String>,
+        elapsed_ms: u64,
+    },
     Error {
         source: String,
         tool: Option<String>,
@@ -270,6 +276,32 @@ mod tests {
             source: "provider".into(),
             tool: None,
             message: "rate limited".into(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: AuditEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn subagent_await_round_trip() {
+        let event = AuditEvent::SubagentAwait {
+            agent_id: "bookmarks-v1".into(),
+            status: "idle".into(),
+            reason: Some("completed".into()),
+            elapsed_ms: 52000,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let back: AuditEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, back);
+    }
+
+    #[test]
+    fn subagent_await_null_reason_round_trip() {
+        let event = AuditEvent::SubagentAwait {
+            agent_id: "worker-1".into(),
+            status: "timeout".into(),
+            reason: None,
+            elapsed_ms: 120000,
         };
         let json = serde_json::to_string(&event).unwrap();
         let back: AuditEvent = serde_json::from_str(&json).unwrap();
