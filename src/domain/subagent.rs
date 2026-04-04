@@ -1,5 +1,7 @@
 // Subagent domain types: configuration and validation.
 
+use std::path::PathBuf;
+
 use super::error::DomainError;
 
 /// Configuration for spawning a subagent.
@@ -13,6 +15,12 @@ pub struct SubagentConfig {
     pub restrict_to_workspace: bool,
     /// Optional system prompt for the subagent.
     pub system: Option<String>,
+    /// Optional config file path to forward as `--config <path>`.
+    pub config_path: Option<PathBuf>,
+    /// Whether to start the child with `--workflow`.
+    pub workflow: bool,
+    /// Whether to start the child with `--workflow-guards`.
+    pub workflow_guards: bool,
 }
 
 /// Validate an agent_id against an allowlist.
@@ -44,5 +52,50 @@ mod tests {
         let result = validate_agent_id("evil-bot", &allowlist);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not allowed"));
+    }
+
+    #[test]
+    fn test_subagent_config_new_fields_default() {
+        let cfg = SubagentConfig {
+            task: None,
+            agent_id: None,
+            restrict_to_workspace: true,
+            system: None,
+            config_path: None,
+            workflow: false,
+            workflow_guards: false,
+        };
+        assert!(cfg.config_path.is_none());
+        assert!(!cfg.workflow);
+        assert!(!cfg.workflow_guards);
+    }
+
+    #[test]
+    fn test_subagent_config_with_config_path() {
+        let cfg = SubagentConfig {
+            task: None,
+            agent_id: None,
+            restrict_to_workspace: true,
+            system: None,
+            config_path: Some(PathBuf::from("/custom/config.json")),
+            workflow: false,
+            workflow_guards: false,
+        };
+        assert_eq!(cfg.config_path, Some(PathBuf::from("/custom/config.json")));
+    }
+
+    #[test]
+    fn test_subagent_config_with_workflow() {
+        let cfg = SubagentConfig {
+            task: None,
+            agent_id: None,
+            restrict_to_workspace: true,
+            system: None,
+            config_path: None,
+            workflow: true,
+            workflow_guards: true,
+        };
+        assert!(cfg.workflow);
+        assert!(cfg.workflow_guards);
     }
 }

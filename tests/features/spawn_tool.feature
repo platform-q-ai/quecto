@@ -189,3 +189,101 @@ Feature: SpawnTool — child agent process spawning
     Then the debug output should include "SpawnTool"
     And the debug output should include "bot"
     And the debug output should include "restrict_to_workspace: true"
+
+  # --- config forwarding ---
+
+  
+  Scenario: Parse a request with config path
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work","config":"/custom/config.json"}'
+    Then the spawn result should not be an error
+    And the parsed spawn config should have config path "/custom/config.json"
+
+  
+  Scenario: Parse a request without config path has no config
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work"}'
+    Then the spawn result should not be an error
+    And the parsed spawn config should have no config path
+
+  
+  Scenario: Non-string config path is ignored
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work","config":123}'
+    Then the spawn result should not be an error
+    And the parsed spawn config should have no config path
+
+  Scenario: Config path with path traversal is rejected
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work","config":"../../etc/shadow"}'
+    Then the spawn result should be an error
+    And the spawn result should contain "'..' which is not allowed"
+
+  # --- workflow forwarding ---
+
+  
+  Scenario: Parse a request with workflow enabled
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work","workflow":true}'
+    Then the spawn result should not be an error
+    And the parsed spawn config should have workflow true
+
+  
+  Scenario: Parse a request without workflow defaults to false
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work"}'
+    Then the spawn result should not be an error
+    And the parsed spawn config should have workflow false
+
+  
+  Scenario: Non-bool workflow is ignored (defaults to false)
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work","workflow":"yes"}'
+    Then the spawn result should not be an error
+    And the parsed spawn config should have workflow false
+
+  # --- workflow_guards forwarding ---
+
+  
+  Scenario: Parse a request with workflow_guards enabled
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work","workflow":true,"workflow_guards":true}'
+    Then the spawn result should not be an error
+    And the parsed spawn config should have workflow_guards true
+
+  
+  Scenario: Parse a request without workflow_guards defaults to false
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work"}'
+    Then the spawn result should not be an error
+    And the parsed spawn config should have workflow_guards false
+
+  
+  Scenario: Non-bool workflow_guards is ignored (defaults to false)
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work","workflow_guards":1}'
+    Then the spawn result should not be an error
+    And the parsed spawn config should have workflow_guards false
+
+  Scenario: workflow_guards true without workflow true is rejected
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work","workflow_guards":true}'
+    Then the spawn result should be an error
+    And the spawn result should contain "workflow_guards requires workflow"
+
+  # --- tool definition schema includes new fields ---
+
+  
+  Scenario: Tool definition schema includes config field
+    Given a SpawnTool with allowlist "bot" and restrict_to_workspace true
+    Then the spawn tool schema should include property "config"
+
+  
+  Scenario: Tool definition schema includes workflow field
+    Given a SpawnTool with allowlist "bot" and restrict_to_workspace true
+    Then the spawn tool schema should include property "workflow"
+
+  
+  Scenario: Tool definition schema includes workflow_guards field
+    Given a SpawnTool with allowlist "bot" and restrict_to_workspace true
+    Then the spawn tool schema should include property "workflow_guards"

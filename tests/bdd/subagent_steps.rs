@@ -10,6 +10,9 @@ fn given_subagent_spawn_request(world: &mut QuectoWorld, task: String) {
         agent_id: None,
         restrict_to_workspace: false,
         system: None,
+        config_path: None,
+        workflow: false,
+        workflow_guards: false,
     });
 }
 
@@ -21,6 +24,9 @@ fn given_parent_config_restrict(world: &mut QuectoWorld, value: String) {
         agent_id: None,
         restrict_to_workspace: restrict,
         system: None,
+        config_path: None,
+        workflow: false,
+        workflow_guards: false,
     });
 }
 

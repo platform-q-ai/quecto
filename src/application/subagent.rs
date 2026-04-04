@@ -36,6 +36,9 @@ mod tests {
             agent_id: None,
             restrict_to_workspace: true,
             system: None,
+            config_path: None,
+            workflow: false,
+            workflow_guards: false,
         };
         let ctx = SubagentContext::from_config(&config);
         assert_eq!(ctx.task, "Do stuff");
@@ -49,6 +52,9 @@ mod tests {
             agent_id: None,
             restrict_to_workspace: true,
             system: None,
+            config_path: None,
+            workflow: false,
+            workflow_guards: false,
         };
         let ctx = SubagentContext::from_config(&config);
         assert!(ctx.restrict_to_workspace);
@@ -61,6 +67,9 @@ mod tests {
             agent_id: None,
             restrict_to_workspace: false,
             system: None,
+            config_path: None,
+            workflow: false,
+            workflow_guards: false,
         };
         let ctx = SubagentContext::from_config(&config);
         assert!(!ctx.restrict_to_workspace);
@@ -73,6 +82,9 @@ mod tests {
             agent_id: None,
             restrict_to_workspace: true,
             system: None,
+            config_path: None,
+            workflow: false,
+            workflow_guards: false,
         };
         let ctx = SubagentContext::from_config(&config);
         assert_eq!(ctx.task, "");
