@@ -18,6 +18,26 @@ pub use super::subagent_registry::{SubagentEntry, SubagentRegistry};
 
 use super::subagent_registry::NotificationTx;
 
+/// Validate a config file path supplied via the spawn tool's JSON input.
+///
+/// Rejects paths that contain `..` components to prevent path-traversal attacks
+/// (e.g. `../../../../etc/shadow`).  Absolute paths and relative paths without
+/// traversal are accepted — the config file may legitimately live anywhere the
+/// user chooses, but the LLM must not be able to escape to arbitrary system paths
+/// via traversal sequences.
+fn validate_config_path(s: &str) -> Result<PathBuf, String> {
+    let p = PathBuf::from(s);
+    for component in p.components() {
+        if component == std::path::Component::ParentDir {
+            return Err(format!(
+                "config path '{}' contains '..' which is not allowed",
+                s
+            ));
+        }
+    }
+    Ok(p)
+}
+
 /// Tool that spawns a child `quecto agent` process in UDS mode.
 ///
 /// When executed, validates the request, launches the child as a
@@ -101,8 +121,16 @@ impl SpawnTool {
         &self.registry
     }
 
+    /// Parse spawn arguments and return the resulting config.
+    /// Available in tests and the `test-support` feature so BDD steps can
+    /// inspect parsed values without promoting the method to the full public API.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn parse_args_for_test(&self, arguments: &str) -> Result<SubagentConfig, String> {
+        self.parse_args(arguments)
+    }
+
     /// Parse the tool arguments and create a SubagentConfig.
-    pub fn parse_args(&self, arguments: &str) -> Result<SubagentConfig, String> {
+    fn parse_args(&self, arguments: &str) -> Result<SubagentConfig, String> {
         let args: serde_json::Value =
             serde_json::from_str(arguments).map_err(|e| format!("invalid JSON: {}", e))?;
 
@@ -121,7 +149,8 @@ impl SpawnTool {
         let config_path = args
             .get("config")
             .and_then(|v| v.as_str())
-            .map(PathBuf::from);
+            .map(|s| validate_config_path(s))
+            .transpose()?;
 
         let workflow = args
             .get("workflow")
@@ -132,6 +161,14 @@ impl SpawnTool {
             .get("workflow_guards")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+
+        // workflow_guards requires workflow — reject early rather than letting the
+        // child process fail with an opaque CLI error.
+        if workflow_guards && !workflow {
+            return Err(
+                "workflow_guards requires workflow to also be true".to_string(),
+            );
+        }
 
         if let Some(ref id) = agent_id {
             super::subagent_registry::validate_agent_id_format(id)?;
@@ -772,5 +809,151 @@ mod tests {
         let tool = SpawnTool::with_base_dir(vec![], false, PathBuf::from("/some/path"));
         let debug_str = format!("{:?}", tool);
         assert!(debug_str.contains("/some/path"));
+    }
+
+    // --- config_path validation ---
+
+    #[test]
+    fn test_parse_config_path_valid_absolute() {
+        let tool = SpawnTool::new(vec![], true);
+        let cfg = tool
+            .parse_args(r#"{"task":"work","config":"/home/user/.quecto/config.json"}"#)
+            .unwrap();
+        assert_eq!(
+            cfg.config_path,
+            Some(PathBuf::from("/home/user/.quecto/config.json"))
+        );
+    }
+
+    #[test]
+    fn test_parse_config_path_valid_relative() {
+        let tool = SpawnTool::new(vec![], true);
+        let cfg = tool
+            .parse_args(r#"{"task":"work","config":"configs/custom.json"}"#)
+            .unwrap();
+        assert_eq!(cfg.config_path, Some(PathBuf::from("configs/custom.json")));
+    }
+
+    #[test]
+    fn test_parse_config_path_traversal_rejected() {
+        let tool = SpawnTool::new(vec![], true);
+        let result = tool.parse_args(r#"{"task":"work","config":"../../etc/shadow"}"#);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains(".."), "expected '..' in error, got: {err}");
+        assert!(err.contains("not allowed"), "expected 'not allowed' in error, got: {err}");
+    }
+
+    #[test]
+    fn test_parse_config_path_traversal_absolute_rejected() {
+        let tool = SpawnTool::new(vec![], true);
+        let result = tool.parse_args(r#"{"task":"work","config":"/safe/../etc/shadow"}"#);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_config_path_absent_is_none() {
+        let tool = SpawnTool::new(vec![], true);
+        let cfg = tool.parse_args(r#"{"task":"work"}"#).unwrap();
+        assert!(cfg.config_path.is_none());
+    }
+
+    #[test]
+    fn test_parse_config_path_non_string_ignored() {
+        let tool = SpawnTool::new(vec![], true);
+        let cfg = tool.parse_args(r#"{"task":"work","config":123}"#).unwrap();
+        assert!(cfg.config_path.is_none());
+    }
+
+    // --- workflow / workflow_guards validation ---
+
+    #[test]
+    fn test_parse_workflow_true() {
+        let tool = SpawnTool::new(vec![], true);
+        let cfg = tool
+            .parse_args(r#"{"task":"work","workflow":true}"#)
+            .unwrap();
+        assert!(cfg.workflow);
+        assert!(!cfg.workflow_guards);
+    }
+
+    #[test]
+    fn test_parse_workflow_false_by_default() {
+        let tool = SpawnTool::new(vec![], true);
+        let cfg = tool.parse_args(r#"{"task":"work"}"#).unwrap();
+        assert!(!cfg.workflow);
+        assert!(!cfg.workflow_guards);
+    }
+
+    #[test]
+    fn test_parse_workflow_guards_requires_workflow() {
+        let tool = SpawnTool::new(vec![], true);
+        let result = tool.parse_args(r#"{"task":"work","workflow_guards":true}"#);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("workflow_guards requires workflow"));
+    }
+
+    #[test]
+    fn test_parse_workflow_guards_with_workflow_ok() {
+        let tool = SpawnTool::new(vec![], true);
+        let cfg = tool
+            .parse_args(r#"{"task":"work","workflow":true,"workflow_guards":true}"#)
+            .unwrap();
+        assert!(cfg.workflow);
+        assert!(cfg.workflow_guards);
+    }
+
+    #[test]
+    fn test_parse_workflow_non_bool_ignored() {
+        let tool = SpawnTool::new(vec![], true);
+        let cfg = tool
+            .parse_args(r#"{"task":"work","workflow":"yes"}"#)
+            .unwrap();
+        assert!(!cfg.workflow);
+    }
+
+    #[test]
+    fn test_parse_workflow_guards_non_bool_ignored() {
+        let tool = SpawnTool::new(vec![], true);
+        let cfg = tool
+            .parse_args(r#"{"task":"work","workflow_guards":1}"#)
+            .unwrap();
+        assert!(!cfg.workflow_guards);
+    }
+
+    // --- validate_config_path unit tests ---
+
+    #[test]
+    fn test_validate_config_path_clean_absolute() {
+        let result = validate_config_path("/home/user/.quecto/config.json");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_config_path_clean_relative() {
+        let result = validate_config_path("configs/custom.json");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_config_path_dotdot_relative() {
+        let result = validate_config_path("../../etc/shadow");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains(".."));
+        assert!(err.contains("not allowed"));
+    }
+
+    #[test]
+    fn test_validate_config_path_dotdot_embedded() {
+        let result = validate_config_path("/safe/path/../etc/passwd");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_config_path_single_dot_ok() {
+        // A single "." (current dir) is fine — it's not traversal.
+        let result = validate_config_path("./config.json");
+        assert!(result.is_ok());
     }
 }

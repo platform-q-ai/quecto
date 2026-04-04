@@ -33,8 +33,10 @@ fn given_spawn_tool_with_base_dir(world: &mut QuectoWorld, base_dir: String) {
 fn when_parse_spawn_args(world: &mut QuectoWorld, arguments: String) {
     // execute() in stub mode (empty base_dir) exercises parse_args → config → stub output.
     // Also store the parsed SubagentConfig so new Then steps can inspect it.
+    // Use parse_args_for_test (test-only accessor) to avoid a double-parse:
+    // the config is captured here, then execute() reuses the same code path internally.
     let tool = world.spawn_tool.as_ref().expect("spawn_tool not set");
-    world.subagent_config = tool.parse_args(&arguments).ok();
+    world.subagent_config = tool.parse_args_for_test(&arguments).ok();
     let rt = tokio::runtime::Runtime::new().unwrap();
     let result = rt.block_on(tool.execute(&arguments)).unwrap();
     world.spawn_result = Some(result);
@@ -44,20 +46,14 @@ fn when_parse_spawn_args(world: &mut QuectoWorld, arguments: String) {
 fn when_parse_64_char_agent_id(world: &mut QuectoWorld) {
     let id = "a".repeat(64);
     let json = format!(r#"{{"task":"test","agent_id":"{}"}}"#, id);
-    let tool = world.spawn_tool.as_ref().expect("spawn_tool not set");
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let result = rt.block_on(tool.execute(&json)).unwrap();
-    world.spawn_result = Some(result);
+    when_parse_spawn_args(world, json);
 }
 
 #[when("I parse spawn arguments with a 65-character agent_id")]
 fn when_parse_65_char_agent_id(world: &mut QuectoWorld) {
     let id = "a".repeat(65);
     let json = format!(r#"{{"task":"test","agent_id":"{}"}}"#, id);
-    let tool = world.spawn_tool.as_ref().expect("spawn_tool not set");
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let result = rt.block_on(tool.execute(&json)).unwrap();
-    world.spawn_result = Some(result);
+    when_parse_spawn_args(world, json);
 }
 
 #[when(expr = "I execute the SpawnTool with {string}")]

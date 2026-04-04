@@ -213,6 +213,12 @@ Feature: SpawnTool — child agent process spawning
     Then the spawn result should not be an error
     And the parsed spawn config should have no config path
 
+  Scenario: Config path with path traversal is rejected
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work","config":"../../etc/shadow"}'
+    Then the spawn result should be an error
+    And the spawn result should contain "'..' which is not allowed"
+
   # --- workflow forwarding ---
 
   
@@ -258,6 +264,12 @@ Feature: SpawnTool — child agent process spawning
     When I parse spawn arguments '{"task":"work","workflow_guards":1}'
     Then the spawn result should not be an error
     And the parsed spawn config should have workflow_guards false
+
+  Scenario: workflow_guards true without workflow true is rejected
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work","workflow_guards":true}'
+    Then the spawn result should be an error
+    And the spawn result should contain "workflow_guards requires workflow"
 
   # --- tool definition schema includes new fields ---
 
