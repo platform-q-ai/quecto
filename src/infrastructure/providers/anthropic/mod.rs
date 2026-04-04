@@ -1,7 +1,6 @@
 // Anthropic adapter: impl LlmProvider for AnthropicProvider.
 //
-// Parity targets: pi-mono (github.com/badlogic/pi-mono) and
-// OpenCode (github.com/anomalyco/opencode). See gap analysis #437.
+// See gap analysis #437 for Anthropic API parity work.
 
 mod claude_code;
 mod normalize;
@@ -25,7 +24,7 @@ pub struct AnthropicProvider {
     api_key: String,
     api_base: String,
     client: reqwest::Client,
-    /// Whether the token is an OAuth access token (Bearer auth + Claude Code headers).
+    /// Whether the token is an OAuth access token (Bearer auth + OAuth beta headers).
     is_oauth: bool,
 }
 
@@ -55,8 +54,8 @@ impl AnthropicProvider {
 
     /// Build the `anthropic-beta` header value.
     ///
-    /// Both Pi and OpenCode always send `fine-grained-tool-streaming-2025-05-14`
-    /// and `interleaved-thinking-2025-05-14` (except for 4.6 models where
+    /// Always sends `fine-grained-tool-streaming-2025-05-14` and
+    /// `interleaved-thinking-2025-05-14` (except for 4.6 models where
     /// interleaved thinking is built-in and the beta is redundant).
     fn build_beta_header(model: &str, is_oauth: bool) -> String {
         let adaptive = Self::model_uses_adaptive_thinking(model);
@@ -67,7 +66,7 @@ impl AnthropicProvider {
             betas.push("oauth-2025-04-20");
         }
 
-        // Both Pi and OpenCode still send this despite "GA" status.
+        // Still required despite "GA" status.
         betas.push("fine-grained-tool-streaming-2025-05-14");
 
         // Omit for 4.6 models where interleaved thinking is built-in (#437-9).
@@ -405,7 +404,7 @@ impl AnthropicProvider {
                 Some("tool_use") => {
                     let id = block["id"].as_str().unwrap_or_default().to_string();
                     let raw_name = block["name"].as_str().unwrap_or_default().to_string();
-                    // Reverse-map Claude Code tool names for OAuth (#437-4)
+                    // Reverse-map canonical tool names for OAuth (#437-4)
                     let name = if is_oauth {
                         claude_code::from_claude_code_name(&raw_name, tools)
                     } else {

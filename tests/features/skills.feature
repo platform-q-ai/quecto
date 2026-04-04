@@ -4,8 +4,8 @@ Feature: Skills System
   I want to install and manage skills that extend the agent
   So that I can customize what Quecto can do
 
-  Skills use YAML frontmatter in SKILL.md files following the OpenCode
-  skill format. Required fields: name, description. Optional fields:
+  Skills use YAML frontmatter in SKILL.md files. Required fields:
+  name, description. Optional fields:
   license, compatibility, metadata. The name must match the directory
   name and follow lowercase-alphanumeric-with-hyphens convention.
 
@@ -33,7 +33,7 @@ Feature: Skills System
       name: git-release
       description: Create consistent releases and changelogs
       license: MIT
-      compatibility: opencode
+      compatibility: quecto
       metadata:
         audience: maintainers
         workflow: github

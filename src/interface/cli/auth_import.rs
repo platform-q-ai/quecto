@@ -1,18 +1,18 @@
-//! Import credentials from opencode's auth.json file.
+//! Import credentials from a compatible auth.json file.
 
 use super::Output;
 use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
 
-/// Load and parse opencode's auth.json file.
-pub(super) fn load_opencode_auth_json(stderr: &mut String) -> Option<serde_json::Value> {
+/// Load and parse a compatible auth.json file.
+pub(super) fn load_external_auth_json(stderr: &mut String) -> Option<serde_json::Value> {
     let auth_path = dirs::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("~/.local/share"))
-        .join("opencode")
+        .join("quecto")
         .join("auth.json");
 
     if !auth_path.exists() {
         stderr.push_str(&format!(
-            "auth login: opencode auth.json not found at {}\n",
+            "auth login: auth.json not found at {}\n",
             auth_path.display()
         ));
         return None;
@@ -39,7 +39,7 @@ pub(super) fn load_opencode_auth_json(stderr: &mut String) -> Option<serde_json:
     }
 }
 
-/// Import Anthropic OAuth credential from opencode auth.json.
+/// Import Anthropic OAuth credential from auth.json.
 pub(super) fn import_anthropic(
     auth_json: &serde_json::Value,
     store: &CredentialStore,
@@ -128,7 +128,7 @@ pub struct OpenAiImportParams<'a> {
     pub oauth_base_url: Option<&'a str>,
 }
 
-/// Import OpenAI OAuth credential from opencode auth.json.
+/// Import OpenAI OAuth credential from auth.json.
 ///
 /// Mirrors `import_anthropic`: if the token is expired and a refresh token
 /// is available, attempts to refresh before storing (issue #258).
