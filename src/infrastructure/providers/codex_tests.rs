@@ -65,7 +65,7 @@ fn test_build_request_body() {
     let request = ChatRequest {
         messages: &messages,
         tools: &tools,
-        model: "gpt-5.1-codex",
+        model: "gpt-5.4",
         max_tokens: 4096,
         temperature: 0.7,
         session_id: None,
@@ -76,7 +76,7 @@ fn test_build_request_body() {
         effort: None,
     };
     let body = CodexProvider::build_request_body(&request);
-    assert_eq!(body["model"], "gpt-5.1-codex");
+    assert_eq!(body["model"], "gpt-5.4");
     assert_eq!(body["instructions"], "Be concise.");
     assert_eq!(body["store"], false);
     assert_eq!(body["stream"], true);
@@ -92,7 +92,7 @@ fn test_build_request_body_includes_prompt_cache_key_when_session_id_set() {
     let request = ChatRequest {
         messages: &messages,
         tools: &[],
-        model: "gpt-5.3-codex",
+        model: "gpt-5.4",
         max_tokens: 4096,
         temperature: 0.7,
         session_id: Some("cli:default"),
@@ -126,7 +126,7 @@ fn test_build_request_body_omits_prompt_cache_key_when_no_session_id() {
     let request = ChatRequest {
         messages: &messages,
         tools: &[],
-        model: "gpt-5.3-codex",
+        model: "gpt-5.4",
         max_tokens: 4096,
         temperature: 0.7,
         session_id: None,
@@ -201,7 +201,7 @@ fn test_build_request_body_responses_api_fields() {
     let request = ChatRequest {
         messages: &messages,
         tools: &tools,
-        model: "gpt-5.3-codex",
+        model: "gpt-5.4",
         max_tokens: 4096,
         temperature: 0.7,
         session_id: None,
@@ -224,6 +224,35 @@ fn test_build_request_body_responses_api_fields() {
             .any(|v| v.as_str() == Some("reasoning.encrypted_content"))
     );
     assert!(body.get("max_completion_tokens").is_none());
+}
+
+#[test]
+fn test_build_input_marks_assistant_phase_for_gpt54() {
+    let messages = vec![
+        Message::system("Be concise."),
+        Message::assistant("Working through the repo...", vec![]),
+        Message::assistant("Final answer.", vec![]),
+        Message::user("Continue"),
+    ];
+    let (_, input) = CodexProvider::build_input(&messages);
+    assert_eq!(input[0]["role"], "assistant");
+    assert_eq!(input[0]["phase"], "commentary");
+    assert_eq!(input[1]["role"], "assistant");
+    assert_eq!(input[1]["phase"], "final_answer");
+    assert_eq!(input[2]["role"], "user");
+}
+
+#[test]
+fn test_build_input_marks_final_answer_phase_for_terminal_assistant_turn() {
+    let messages = vec![
+        Message::system("Be concise."),
+        Message::user("Hi"),
+        Message::assistant("Done.", vec![]),
+    ];
+    let (_, input) = CodexProvider::build_input(&messages);
+    let last = input.last().unwrap();
+    assert_eq!(last["role"], "assistant");
+    assert_eq!(last["phase"], "final_answer");
 }
 
 #[test]
@@ -287,6 +316,9 @@ fn test_parse_response_text() {
         "usage": {
             "input_tokens": 10,
             "output_tokens": 5,
+            "input_tokens_details": {
+                "cached_tokens": 7
+            }
         }
     });
     let resp = CodexProvider::parse_response(&body).unwrap();
@@ -295,6 +327,7 @@ fn test_parse_response_text() {
     let usage = resp.usage.unwrap();
     assert_eq!(usage.prompt_tokens, 10);
     assert_eq!(usage.completion_tokens, 5);
+    assert_eq!(usage.cache_read_tokens, Some(7));
 }
 
 #[test]
