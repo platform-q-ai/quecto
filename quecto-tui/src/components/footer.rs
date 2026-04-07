@@ -60,6 +60,19 @@ impl Footer {
         self.context_window = window;
     }
 
+    pub fn set_context_window(&mut self, window: usize) {
+        self.context_window = window;
+    }
+
+    pub fn update_context_usage(&mut self, input_tokens: u64, window: usize) {
+        let pct = if window > 0 {
+            Some((input_tokens as f64 / window as f64) * 100.0)
+        } else {
+            None
+        };
+        self.set_context(pct, window);
+    }
+
     pub fn set_streaming(&mut self, streaming: bool) {
         self.is_streaming = streaming;
     }
@@ -249,10 +262,10 @@ mod tests {
     #[test]
     fn footer_no_context() {
         let mut f = Footer::new();
-        f.set_context(None, 200_000);
+        f.set_context(None, 0);
         let lines = f.render(80);
         let joined = lines.join("");
-        assert!(joined.contains("?/200k"));
+        assert!(joined.contains("?/0"));
     }
 
     #[test]

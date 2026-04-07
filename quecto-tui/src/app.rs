@@ -142,6 +142,9 @@ pub struct App {
     workflow_completion_nudge: bool,
     /// Last rendered lines (for extracting selected text from the buffer).
     last_rendered_lines: Vec<String>,
+    /// Whether we've already requested session stats as a fallback to learn
+    /// the real context window for the current session/model.
+    context_stats_requested: bool,
 }
 
 impl App {
@@ -176,6 +179,7 @@ impl App {
             workflow_auto_continue: false,
             workflow_completion_nudge: false,
             last_rendered_lines: Vec::new(),
+            context_stats_requested: false,
         }
     }
 
@@ -704,11 +708,16 @@ impl App {
                     let input = usage.get("input").and_then(|v| v.as_u64()).unwrap_or(0);
                     let _output = usage.get("output").and_then(|v| v.as_u64()).unwrap_or(0);
                     let total = usage.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
-                    if total > 0 {
-                        // Rough context estimate: input tokens as percentage of a 200k window.
-                        let window = 200_000usize;
-                        let pct = (input as f64 / window as f64) * 100.0;
-                        self.footer.set_context(Some(pct), window);
+                    if let Some(window) = message
+                        .get("maxContextTokens")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as usize)
+                    {
+                        self.footer.update_context_usage(input, window);
+                        self.context_stats_requested = true;
+                    } else if total > 0 && !self.context_stats_requested {
+                        self.context_stats_requested = true;
+                        self.send_session_stats();
                     }
                 }
             }
@@ -842,6 +851,11 @@ impl App {
                                 model.chars().filter(|c| !c.is_control()).collect();
                             self.footer.set_model(&sanitized);
                             self.current_model = Some(sanitized);
+                        }
+                        if let Some(max_ctx) = data.get("maxContextTokens").and_then(|v| v.as_u64())
+                        {
+                            self.footer.set_context_window(max_ctx as usize);
+                            self.context_stats_requested = true;
                         }
                         // Seed workflow header bar from get_state (#593).
                         if let Some(wf) = data.get("workflow") {
@@ -1088,6 +1102,14 @@ impl App {
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
         let cost = data.get("cost").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let max_context_tokens = data
+            .get("maxContextTokens")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize);
+        if let Some(window) = max_context_tokens {
+            self.footer.update_context_usage(input, window);
+            self.context_stats_requested = true;
+        }
 
         self.chat.add_entry(ChatEntry::Status {
             text: format!(
@@ -1106,6 +1128,7 @@ impl App {
         });
         self.footer.set_model(model);
         self.current_model = Some(model.to_string());
+        self.context_stats_requested = false;
     }
 
     // ── Model selector ──────────────────────────────────────────────
@@ -1303,6 +1326,7 @@ impl App {
         self.send_clear_history();
         self.chat.clear();
         self.footer.set_context(None, 0);
+        self.context_stats_requested = false;
         self.notify(message, NotifyLevel::Success);
     }
 
