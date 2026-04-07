@@ -249,10 +249,10 @@ mod tests {
     #[test]
     fn footer_no_context() {
         let mut f = Footer::new();
-        f.set_context(None, 200_000);
+        f.set_context(None, 0);
         let lines = f.render(80);
         let joined = lines.join("");
-        assert!(joined.contains("?/200k"));
+        assert!(joined.contains("?/0"));
     }
 
     #[test]

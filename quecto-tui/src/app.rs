@@ -704,11 +704,19 @@ impl App {
                     let input = usage.get("input").and_then(|v| v.as_u64()).unwrap_or(0);
                     let _output = usage.get("output").and_then(|v| v.as_u64()).unwrap_or(0);
                     let total = usage.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
-                    if total > 0 {
-                        // Rough context estimate: input tokens as percentage of a 200k window.
-                        let window = 200_000usize;
-                        let pct = (input as f64 / window as f64) * 100.0;
-                        self.footer.set_context(Some(pct), window);
+                    if let Some(window) = message
+                        .get("maxContextTokens")
+                        .and_then(|v| v.as_u64())
+                        .map(|v| v as usize)
+                    {
+                        let pct = if window > 0 {
+                            Some((input as f64 / window as f64) * 100.0)
+                        } else {
+                            None
+                        };
+                        self.footer.set_context(pct, window);
+                    } else if total > 0 {
+                        self.send_session_stats();
                     }
                 }
             }
@@ -842,6 +850,10 @@ impl App {
                                 model.chars().filter(|c| !c.is_control()).collect();
                             self.footer.set_model(&sanitized);
                             self.current_model = Some(sanitized);
+                        }
+                        if let Some(max_ctx) = data.get("maxContextTokens").and_then(|v| v.as_u64())
+                        {
+                            self.footer.set_context(None, max_ctx as usize);
                         }
                         // Seed workflow header bar from get_state (#593).
                         if let Some(wf) = data.get("workflow") {
@@ -1088,6 +1100,18 @@ impl App {
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
         let cost = data.get("cost").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let max_context_tokens = data
+            .get("maxContextTokens")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize);
+        if let Some(window) = max_context_tokens {
+            let pct = if window > 0 {
+                Some((input as f64 / window as f64) * 100.0)
+            } else {
+                None
+            };
+            self.footer.set_context(pct, window);
+        }
 
         self.chat.add_entry(ChatEntry::Status {
             text: format!(
