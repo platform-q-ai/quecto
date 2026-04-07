@@ -331,6 +331,27 @@ fn test_parse_response_text() {
 }
 
 #[test]
+fn test_parse_response_without_cached_token_details() {
+    let body = serde_json::json!({
+        "output": [
+            {
+                "type": "message",
+                "content": [
+                    { "type": "output_text", "text": "Hello!" }
+                ]
+            }
+        ],
+        "usage": {
+            "input_tokens": 10,
+            "output_tokens": 5
+        }
+    });
+    let resp = CodexProvider::parse_response(&body).unwrap();
+    let usage = resp.usage.unwrap();
+    assert_eq!(usage.cache_read_tokens, None);
+}
+
+#[test]
 fn test_parse_response_tool_call() {
     let body = serde_json::json!({
         "output": [

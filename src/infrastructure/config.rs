@@ -243,11 +243,11 @@ fn default_context_collapse_after_turns() -> u32 {
     u32::MAX
 }
 fn default_max_context_tokens() -> usize {
-    // Upper bound for modern large-context models (Claude 200k, Gemini 1M+).
-    // Users on smaller-context models (GPT-4 128k) should override this.
-    // This is an application-level budget; it does not validate against the
-    // actual model context window.
-    190_000
+    // Application-level budget aligned with OpenAI GPT-5.4's documented ~1.05M
+    // token context window. This remains a local pruning ceiling; QuEcto does
+    // not validate against or auto-detect the provider's actual model limit.
+    // Users on smaller-context models should override this.
+    1_000_000
 }
 fn default_true() -> bool {
     true

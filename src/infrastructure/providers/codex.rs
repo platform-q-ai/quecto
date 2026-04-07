@@ -83,7 +83,7 @@ impl CodexProvider {
         let mut instructions: Option<String> = None;
         let mut input = Vec::new();
 
-        for msg in messages {
+        for (idx, msg) in messages.iter().enumerate() {
             match msg.role {
                 Role::System => match &mut instructions {
                     Some(existing) => {
@@ -96,9 +96,7 @@ impl CodexProvider {
                     input.push(serde_json::json!({ "role": "user", "content": msg.content }));
                 }
                 Role::Assistant => {
-                    let phase = if Some(messages.iter().position(|m| std::ptr::eq(m, msg)).unwrap_or(usize::MAX))
-                        == last_non_tool_assistant_idx
-                    {
+                    let phase = if Some(idx) == last_non_tool_assistant_idx {
                         "final_answer"
                     } else {
                         "commentary"
@@ -280,8 +278,10 @@ impl CodexProvider {
         let usage = body["usage"].as_object().map(|u| UsageInfo {
             prompt_tokens: u["input_tokens"].as_u64().unwrap_or(0) as u32,
             completion_tokens: u["output_tokens"].as_u64().unwrap_or(0) as u32,
-            cache_read_tokens: u["input_tokens_details"]["cached_tokens"]
-                .as_u64()
+            cache_read_tokens: u
+                .get("input_tokens_details")
+                .and_then(|d| d.get("cached_tokens"))
+                .and_then(|v| v.as_u64())
                 .map(|v| v as u32),
             cache_write_tokens: None,
             cost: None,
