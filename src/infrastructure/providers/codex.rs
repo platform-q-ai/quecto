@@ -442,8 +442,10 @@ impl SseAccumulator {
                     self.usage = resp["usage"].as_object().map(|u| UsageInfo {
                         prompt_tokens: u["input_tokens"].as_u64().unwrap_or(0) as u32,
                         completion_tokens: u["output_tokens"].as_u64().unwrap_or(0) as u32,
-                        cache_read_tokens: u["input_tokens_details"]["cached_tokens"]
-                            .as_u64()
+                        cache_read_tokens: u
+                            .get("input_tokens_details")
+                            .and_then(|d| d.get("cached_tokens"))
+                            .and_then(|v| v.as_u64())
                             .map(|v| v as u32),
                         cache_write_tokens: None,
                         cost: None,

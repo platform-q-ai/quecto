@@ -386,6 +386,17 @@ data: [DONE]
 }
 
 #[test]
+fn test_parse_sse_text_response_without_cached_token_details() {
+    let sse = r#"data: {"type":"response.output_text.delta","delta":"Hello"}
+data: {"type":"response.completed","response":{"usage":{"input_tokens":8,"output_tokens":2}}}
+data: [DONE]
+"#;
+    let resp = CodexProvider::parse_sse_response(sse).unwrap();
+    let usage = resp.usage.unwrap();
+    assert_eq!(usage.cache_read_tokens, None);
+}
+
+#[test]
 fn test_parse_sse_tool_call() {
     let sse = r#"data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_x","name":"shell","arguments":""}}
 data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"cmd\""}
