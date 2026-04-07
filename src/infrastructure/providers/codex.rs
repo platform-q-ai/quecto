@@ -65,6 +65,12 @@ impl CodexProvider {
     /// HTTP 400). Logs any orphaned pairs with Codex-specific context.
     fn build_input(messages: &[Message]) -> (Option<String>, Vec<serde_json::Value>) {
         let (valid_pairs, diag) = crate::domain::session::filter_orphan_tool_pairs(messages);
+        let last_non_tool_assistant_idx = messages
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, m)| matches!(m.role, Role::Assistant) && m.tool_calls.is_empty())
+            .map(|(i, _)| i);
         if diag.has_orphans() {
             tracing::warn!(
                 orphaned_calls = ?diag.orphaned_calls,
@@ -77,7 +83,7 @@ impl CodexProvider {
         let mut instructions: Option<String> = None;
         let mut input = Vec::new();
 
-        for msg in messages {
+        for (idx, msg) in messages.iter().enumerate() {
             match msg.role {
                 Role::System => match &mut instructions {
                     Some(existing) => {
@@ -90,6 +96,11 @@ impl CodexProvider {
                     input.push(serde_json::json!({ "role": "user", "content": msg.content }));
                 }
                 Role::Assistant => {
+                    let phase = if Some(idx) == last_non_tool_assistant_idx {
+                        "final_answer"
+                    } else {
+                        "commentary"
+                    };
                     if !msg.tool_calls.is_empty() {
                         // Emit only the valid (matched) tool calls.
                         let mut emitted = 0usize;
@@ -110,12 +121,14 @@ impl CodexProvider {
                         if emitted == 0 && !msg.content.is_empty() {
                             input.push(serde_json::json!({
                                 "role": "assistant",
+                                "phase": phase,
                                 "content": msg.content,
                             }));
                         }
                     } else {
                         input.push(serde_json::json!({
                             "role": "assistant",
+                            "phase": phase,
                             "content": msg.content,
                         }));
                     }
@@ -265,7 +278,11 @@ impl CodexProvider {
         let usage = body["usage"].as_object().map(|u| UsageInfo {
             prompt_tokens: u["input_tokens"].as_u64().unwrap_or(0) as u32,
             completion_tokens: u["output_tokens"].as_u64().unwrap_or(0) as u32,
-            cache_read_tokens: None,
+            cache_read_tokens: u
+                .get("input_tokens_details")
+                .and_then(|d| d.get("cached_tokens"))
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32),
             cache_write_tokens: None,
             cost: None,
         });
@@ -425,7 +442,11 @@ impl SseAccumulator {
                     self.usage = resp["usage"].as_object().map(|u| UsageInfo {
                         prompt_tokens: u["input_tokens"].as_u64().unwrap_or(0) as u32,
                         completion_tokens: u["output_tokens"].as_u64().unwrap_or(0) as u32,
-                        cache_read_tokens: None,
+                        cache_read_tokens: u
+                            .get("input_tokens_details")
+                            .and_then(|d| d.get("cached_tokens"))
+                            .and_then(|v| v.as_u64())
+                            .map(|v| v as u32),
                         cache_write_tokens: None,
                         cost: None,
                     });

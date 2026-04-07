@@ -219,7 +219,7 @@ fn default_workspace() -> String {
     "~/.quecto/workspace".to_string()
 }
 fn default_model() -> String {
-    "gpt-5.2".to_string()
+    "gpt-5.4".to_string()
 }
 fn default_max_tokens() -> u32 {
     8192
@@ -243,11 +243,11 @@ fn default_context_collapse_after_turns() -> u32 {
     u32::MAX
 }
 fn default_max_context_tokens() -> usize {
-    // Upper bound for modern large-context models (Claude 200k, Gemini 1M+).
-    // Users on smaller-context models (GPT-4 128k) should override this.
-    // This is an application-level budget; it does not validate against the
-    // actual model context window.
-    190_000
+    // Application-level budget aligned with OpenAI GPT-5.4's documented ~1.05M
+    // token context window. This remains a local pruning ceiling; QuEcto does
+    // not validate against or auto-detect the provider's actual model limit.
+    // Users on smaller-context models should override this.
+    1_000_000
 }
 fn default_true() -> bool {
     true
@@ -416,7 +416,7 @@ mod tests {
     #[test]
     fn test_deserialize_empty_uses_defaults() {
         let config: Config = serde_json::from_str("{}").unwrap();
-        assert_eq!(config.agents.defaults.model, "gpt-5.2");
+        assert_eq!(config.agents.defaults.model, "gpt-5.4");
         assert_eq!(config.agents.defaults.max_tokens, 8192);
         assert!((config.agents.defaults.temperature - 0.7).abs() < f32::EPSILON);
         assert_eq!(config.agents.defaults.workspace, "~/.quecto/workspace");
