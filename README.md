@@ -424,7 +424,7 @@ Config file: `~/.quecto/config.json`
       "max_tokens": 8192,
       "max_tool_iterations": 999999,
       "max_session_messages": 200,
-      "max_context_tokens": 190000,
+      "max_context_tokens": 1000000,
       "restrict_to_workspace": true,
       "effort": "low"
     }

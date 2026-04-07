@@ -16,7 +16,7 @@ fn sample_thinking_event() -> AgentProgressEvent {
         context_tokens: 0,
         max_context_tokens: 100,
         provider: "openai".to_string(),
-        model: "gpt-5.2".to_string(),
+        model: "gpt-5.4".to_string(),
     }
 }
 

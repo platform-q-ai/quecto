@@ -63,7 +63,7 @@ fn test_onboard_existing_config() {
 fn test_status_shows_summary() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config_json = r#"{
-        "agents": { "defaults": { "model": "gpt-5.2" } },
+        "agents": { "defaults": { "model": "gpt-5.4" } },
         "providers": {
             "openai": { "api_key": "sk-test" },
             "anthropic": { "api_key": "" }
@@ -83,7 +83,7 @@ fn test_status_shows_summary() {
             "Config:",
             "Workspace:",
             "Model:",
-            "gpt-5.2",
+            "gpt-5.4",
             "OpenAI API:",
             "configured",
             "Anthropic API:",

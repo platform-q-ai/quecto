@@ -219,7 +219,7 @@ fn default_workspace() -> String {
     "~/.quecto/workspace".to_string()
 }
 fn default_model() -> String {
-    "gpt-5.2".to_string()
+    "gpt-5.4".to_string()
 }
 fn default_max_tokens() -> u32 {
     8192
@@ -416,7 +416,7 @@ mod tests {
     #[test]
     fn test_deserialize_empty_uses_defaults() {
         let config: Config = serde_json::from_str("{}").unwrap();
-        assert_eq!(config.agents.defaults.model, "gpt-5.2");
+        assert_eq!(config.agents.defaults.model, "gpt-5.4");
         assert_eq!(config.agents.defaults.max_tokens, 8192);
         assert!((config.agents.defaults.temperature - 0.7).abs() < f32::EPSILON);
         assert_eq!(config.agents.defaults.workspace, "~/.quecto/workspace");

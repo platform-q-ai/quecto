@@ -160,7 +160,7 @@ Session behavior is configured in `config.json` under `agents.defaults`:
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `max_context_tokens` | `190000` | Maximum tokens before context pruning |
+| `max_context_tokens` | `1000000` | Maximum tokens before context pruning |
 | `context_collapse_after_turns` | `u32::MAX` (disabled) | Collapse tool outputs older than N turns. Set to a lower value (e.g. `3`) to enable |
 
 ## See also
