@@ -240,12 +240,29 @@ impl AgentGateway for UdsGateway {
             let timeout = tokio::time::Duration::from_secs(120);
             let deadline = tokio::time::Instant::now() + timeout;
 
+            // Determine the command name for fallback matching (agent_error
+            // responses may not carry the correlation ID).
+            let command_name = match &json_value["type"] {
+                serde_json::Value::String(s) => s.clone(),
+                _ => String::new(),
+            };
+
             loop {
                 match tokio::time::timeout_at(deadline, rx.recv()).await {
                     Ok(Ok(event)) => {
-                        // Check if this is our correlated response.
-                        if let AgentEvent::Response { id: ref resp_id, .. } = event {
+                        if let AgentEvent::Response {
+                            id: ref resp_id,
+                            ref command,
+                            ..
+                        } = event
+                        {
+                            // Match by correlation ID if present.
                             if resp_id.as_deref() == Some(id.as_str()) {
+                                return Ok(event);
+                            }
+                            // Fallback: match agent_error responses for our
+                            // command type (they may omit the correlation ID).
+                            if command == "agent_error" && command_name == "prompt" {
                                 return Ok(event);
                             }
                         }
