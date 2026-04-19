@@ -58,3 +58,11 @@ panic = "abort"
 [[test]]
 name = "bdd"
 harness = false
+# BDD steps reach into test-only surface (e.g. `*_public`, `parse_args_for_test`,
+# `run_repl_with_tty_captured`, `ReplRecorderOptions`) that is gated behind
+# `#[cfg(any(test, feature = "test-support"))]`. Without this line, invoking
+# `cargo test --test bdd` fails with 40+ "function not found" errors because
+# the integration-test target is a separate crate compilation that doesn't
+# inherit the unit-test `#[cfg(test)]`. `required-features` makes cargo pull
+# the feature in automatically whenever the bdd target is built.
+required-features = ["test-support"]
