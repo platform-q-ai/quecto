@@ -237,14 +237,25 @@ impl AgentCmdTool {
     /// Execute the `await` command: block until the sub-agent reaches a terminal
     /// condition, then return a structured [`AwaitResult`] as JSON (#612).
     async fn execute_await(&self, arguments: &str) -> Result<ToolResult, DomainError> {
-        let args: serde_json::Value = serde_json::from_str(arguments)
-            .map_err(|e| DomainError::Tool(format!("invalid JSON: {e}")))?;
+        // LLM-addressable: malformed JSON and missing fields → Ok(is_error=true)
+        // so the LLM can see the message and retry. Tool contract.
+        let args: serde_json::Value = match serde_json::from_str(arguments) {
+            Ok(v) => v,
+            Err(e) => return Ok(ToolResult {
+                content: format!("invalid JSON arguments: {e}. Example: {{\"agent_id\": \"my-agent\"}}"),
+                is_error: true,
+                image_blocks: vec![],
+            }),
+        };
 
-        let agent_id = args
-            .get("agent_id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| DomainError::Tool("missing required field: agent_id".into()))?
-            .to_string();
+        let agent_id = match args.get("agent_id").and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => return Ok(ToolResult {
+                content: "missing required field: agent_id".to_string(),
+                is_error: true,
+                image_blocks: vec![],
+            }),
+        };
 
         if let Err(e) = validate_agent_id_format(&agent_id) {
             return Ok(ToolResult {

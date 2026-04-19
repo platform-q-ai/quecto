@@ -100,7 +100,15 @@ impl Tool for GrepTool {
         let rg_cmd = self.rg_cmd();
 
         Box::pin(async move {
-            let args = args.map_err(|e| DomainError::Tool(e.to_string()))?;
+            // LLM-addressable: malformed JSON → Ok(is_error=true). Tool contract.
+            let args = match args {
+                Ok(v) => v,
+                Err(e) => return Ok(ToolResult {
+                    content: format!("invalid JSON arguments: {e}. Example: {{\"pattern\": \"search_term\"}}"),
+                    is_error: true,
+                    image_blocks: vec![],
+                }),
+            };
 
             let Some(pattern) = args["pattern"].as_str() else {
                 return Ok(ToolResult {
