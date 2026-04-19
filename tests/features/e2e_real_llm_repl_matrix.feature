@@ -97,7 +97,7 @@ Feature: E2E Real LLM REPL Matrix
 
   @done @real-llm
   Scenario: REPL skill marker S-A
-    Given a workspace skill "repl-skill-a" with frontmatter:
+    Given a workspace [skill] "repl-skill-a" with frontmatter:
       """
       ---
       name: repl-skill-a
@@ -113,7 +113,7 @@ Feature: E2E Real LLM REPL Matrix
 
   @done @real-llm
   Scenario: REPL skill marker S-B
-    Given a workspace skill "repl-skill-b" with frontmatter:
+    Given a workspace [skill] "repl-skill-b" with frontmatter:
       """
       ---
       name: repl-skill-b
@@ -183,7 +183,7 @@ Feature: E2E Real LLM REPL Matrix
 
   @done @real-llm
   Scenario: REPL uses two skills together
-    Given a workspace skill "repl-combo-1" with frontmatter:
+    Given a workspace [skill] "repl-combo-1" with frontmatter:
       """
       ---
       name: repl-combo-1
@@ -191,7 +191,7 @@ Feature: E2E Real LLM REPL Matrix
       ---
       Include REPL_COMBO_ONE in every response.
       """
-    And a workspace skill "repl-combo-2" with frontmatter:
+    And a workspace [skill] "repl-combo-2" with frontmatter:
       """
       ---
       name: repl-combo-2
@@ -208,7 +208,7 @@ Feature: E2E Real LLM REPL Matrix
 
   @done @real-llm
   Scenario: REPL invalid skill frontmatter ignored
-    Given a workspace skill directory "repl-bad" with raw content "invalid skill body"
+    Given a workspace [skill] directory "repl-bad" with raw content "invalid skill body"
     When I start quecto in REPL mode
     And I type "Reply with REPL_BAD_IGNORED"
     And I type "/exit"

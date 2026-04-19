@@ -15,7 +15,7 @@ Feature: End-to-End Subprocess Protocol
     When I spawn quecto as a subprocess with args: agent -s child-001 -m "Do the subtask"
     Then the subprocess exit code should be 0
     And the subprocess stdout should contain "Subtask complete"
-    And a session file should exist for key "cli:child-001"
+    And a [session] file should exist for key "cli:child-001"
 
   @done
   Scenario: Child process inherits QUECTO_BASE_DIR from parent
@@ -33,8 +33,8 @@ Feature: End-to-End Subprocess Protocol
     When I run quecto agent -s parent -m "Parent message"
     And the mock LLM returns a text response "Child response"
     And I spawn quecto as a subprocess with args: agent -s child -m "Child message"
-    Then the session "cli:parent" should not contain text "Child message"
-    And the session "cli:child" should not contain text "Parent message"
+    Then the [session] "cli:parent" should not contain text "Child message"
+    And the [session] "cli:child" should not contain text "Parent message"
 
   @done
   Scenario: Ephemeral child leaves no session trace
@@ -42,7 +42,7 @@ Feature: End-to-End Subprocess Protocol
     When I spawn quecto as a subprocess with args: agent -s - -m "Ephemeral task"
     Then the subprocess exit code should be 0
     And the subprocess stdout should contain "No trace"
-    And no session files should exist
+    And no [session] files should exist
 
   # --- Resource limits on child processes ---
 

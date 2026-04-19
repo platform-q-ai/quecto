@@ -29,13 +29,13 @@ Feature: Observability
   Scenario: Structured logging includes span fields for tool execution
     Given an agent loop with a mock provider and mock tools
     And a tracing subscriber capturing JSON log output
-    When the agent processes a message that triggers a tool call
+    When the agent processes a [message] that triggers a tool call
     Then the captured log output should include span "tool_exec"
     And the captured log output should include field "tool_name"
     And the captured log output should include field "duration_ms"
 
   Scenario: API keys are redacted in log output
     Given a tracing subscriber capturing JSON log output
-    When the message "Provider configured with key sk-secret-key-12345" is logged at info level
+    When the [message] "Provider configured with key sk-secret-key-12345" is logged at info level
     Then the captured log output should not contain "sk-secret-key-12345"
     And the captured log output should contain a redacted placeholder

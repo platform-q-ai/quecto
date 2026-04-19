@@ -44,7 +44,7 @@ Feature: E2E Real LLM REPL
 
   @done @real-llm @real-llm-smoke
   Scenario: Skills influence REPL behavior with real LLM
-    Given a workspace skill "repl-format" with frontmatter:
+    Given a workspace [skill] "repl-format" with frontmatter:
       """
       ---
       name: repl-format

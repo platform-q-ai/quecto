@@ -35,7 +35,7 @@ Feature: LLM Providers
     And the error should be retryable
 
   Scenario: Anthropic overloaded_error body text is classified as server error
-    Given a provider error with message "HTTP 529 from Anthropic: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}"
+    Given a provider error with [message] "HTTP 529 from Anthropic: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}"
     Then the error should be classified as "server"
     And the error should be retryable
 
@@ -47,7 +47,7 @@ Feature: LLM Providers
   Scenario: Provider sends chat request with tools
     Given an OpenAI provider with a mock server
     And the mock server returns a chat response with content "Hello!"
-    When I send a chat request with message "Hi" and a tool "bash"
+    When I send a chat request with [message] "Hi" and a tool "bash"
     Then the chat response content should be "Hello!"
     And the chat request should have included an Authorization header
 
@@ -59,13 +59,13 @@ Feature: LLM Providers
   Scenario: OpenAI provider handles streaming responses
     Given an OpenAI provider with a mock server
     And the mock server returns an OpenAI streaming response with content "Hello world"
-    When I send a streaming chat request with message "Hi"
+    When I send a streaming chat request with [message] "Hi"
     Then the streaming response content should be "Hello world"
 
   Scenario: Anthropic provider handles streaming responses
     Given an Anthropic provider with a mock server
     And the mock server returns an Anthropic streaming response with content "Hello from Claude"
-    When I send a streaming chat request with message "Hi"
+    When I send a streaming chat request with [message] "Hi"
     Then the streaming response content should be "Hello from Claude"
 
   Scenario: Explicit anthropic/ prefix routes to Anthropic provider
@@ -97,12 +97,12 @@ Feature: LLM Providers
 
   Scenario: Anthropic provider sends is_error flag on tool result messages
     Given an Anthropic request with a tool result marked as error
-    When I build the Anthropic tool result message
+    When I build the Anthropic tool result [message]
     Then the tool result JSON should contain "is_error" set to true
 
   Scenario: Anthropic provider sends is_error false for successful tool results
     Given an Anthropic request with a successful tool result
-    When I build the Anthropic tool result message
+    When I build the Anthropic tool result [message]
     Then the tool result JSON should contain "is_error" set to false
 
   # --- #179: Beta headers for API key auth ---
@@ -158,19 +158,19 @@ Feature: LLM Providers
   Scenario: Anthropic provider adds cache_control to last user message
     Given an Anthropic request with multiple user messages
     When I build the Anthropic request body
-    Then the last user message content block should have cache_control
+    Then the last user [message] content block should have cache_control
 
   # --- #187: Batch consecutive tool results ---
 
   Scenario: Anthropic provider batches consecutive tool results into single user message
     Given an Anthropic request with 3 consecutive tool result messages
     When I build the Anthropic messages
-    Then the tool results should be batched into a single user message with 3 tool_result blocks
+    Then the tool results should be batched into a single user [message] with 3 tool_result blocks
 
   Scenario: Anthropic provider keeps single tool result as-is
     Given an Anthropic request with 1 consecutive tool result messages
     When I build the Anthropic messages
-    Then the tool result should be in a single user message with 1 tool_result block
+    Then the tool result should be in a single user [message] with 1 tool_result block
 
   # --- #183: tool_choice parameter ---
 
@@ -321,28 +321,28 @@ Feature: LLM Providers
 
   # Tool call ID normalization
   Scenario: Tool call IDs with invalid characters are normalized before sending
-    Given a message history with an assistant tool call id "call|with|pipes" for tool "bash"
+    Given a [message] history with an assistant tool call id "call|with|pipes" for tool "bash"
     And a matching tool result for id "call|with|pipes"
     When I build Anthropic messages from that history
     Then the tool_use block should have id "call_with_pipes"
     And the tool_result block should have tool_use_id "call_with_pipes"
 
   Scenario: Tool call IDs longer than 64 characters are truncated
-    Given a message history with an assistant tool call id "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaXXX" for tool "bash"
+    Given a [message] history with an assistant tool call id "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaXXX" for tool "bash"
     And a matching tool result for id "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaXXX"
     When I build Anthropic messages from that history
     Then the tool_use block should have id "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     And the tool_result block should have tool_use_id "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
   Scenario: Tool call IDs with valid characters pass through unchanged
-    Given a message history with an assistant tool call id "valid-ID_123" for tool "bash"
+    Given a [message] history with an assistant tool call id "valid-ID_123" for tool "bash"
     And a matching tool result for id "valid-ID_123"
     When I build Anthropic messages from that history
     Then the tool_use block should have id "valid-ID_123"
     And the tool_result block should have tool_use_id "valid-ID_123"
 
   Scenario: Codex-style long pipe-delimited tool call IDs are normalized
-    Given a message history with an assistant tool call id "call_abc123|call_abc123|0" for tool "grep"
+    Given a [message] history with an assistant tool call id "call_abc123|call_abc123|0" for tool "grep"
     And a matching tool result for id "call_abc123|call_abc123|0"
     When I build Anthropic messages from that history
     Then the tool_use block should have id "call_abc123_call_abc123_0"
@@ -350,91 +350,91 @@ Feature: LLM Providers
 
   # Orphaned tool call detection
   Scenario: Orphaned tool call without a matching result gets a synthetic error result
-    Given a message history with an assistant tool call id "orphan-id-1" for tool "bash" and no tool result
+    Given a [message] history with an assistant tool call id "orphan-id-1" for tool "bash" and no tool result
     When I build Anthropic messages from that history
     Then a synthetic tool result with tool_use_id "orphan-id-1" is injected
     And the synthetic result has content "No result provided" and is_error true
 
   Scenario: Multiple orphaned tool calls each get a synthetic error result
-    Given a message history with two orphaned assistant tool calls "orphan-a" and "orphan-b"
+    Given a [message] history with two orphaned assistant tool calls "orphan-a" and "orphan-b"
     When I build Anthropic messages from that history
     Then a synthetic tool result with tool_use_id "orphan-a" is injected
     And a synthetic tool result with tool_use_id "orphan-b" is injected
 
   Scenario: Tool call with a matching result is not treated as orphaned
-    Given a message history with an assistant tool call id "matched-id" for tool "bash"
+    Given a [message] history with an assistant tool call id "matched-id" for tool "bash"
     And a matching tool result for id "matched-id"
     When I build Anthropic messages from that history
     Then no synthetic tool result is injected for id "matched-id"
 
   # Message filtering
   Scenario: Assistant message with stop_reason error is filtered out before sending
-    Given a message history containing an assistant message with stop_reason "error"
+    Given a [message] history containing an assistant message with stop_reason "error"
     When I build Anthropic messages from that history
-    Then the errored assistant message is not present in the API payload
+    Then the errored assistant [message] is not present in the API payload
 
   Scenario: Assistant message with no stop_reason is not filtered out
-    Given a message history containing an assistant message with stop_reason ""
+    Given a [message] history containing an assistant message with stop_reason ""
     When I build Anthropic messages from that history
-    Then the assistant message is present in the API payload
+    Then the assistant [message] is present in the API payload
 
   # --- #188: User message content block support (inline images + capability filtering) ---
 
   # Plain text user messages — backward compat (no image blocks)
   Scenario: Plain text user message is sent as a simple string
-    Given a user message with text "hello world" and no image blocks
+    Given a user [message] with text "hello world" and no image blocks
     When I build Anthropic messages from that history for model "claude-opus-4-5"
-    Then the user message content should be the string "hello world"
+    Then the user [message] content should be the string "hello world"
 
   # User message with image blocks — structured content array
   Scenario: User message with one image block is sent as a content block array
-    Given a user message with text "look at this" and one image block of type "image/png"
+    Given a user [message] with text "look at this" and one image block of type "image/png"
     When I build Anthropic messages from that history for model "claude-opus-4-5"
-    Then the user message content should be a block array
+    Then the user [message] content should be a block array
     And the block array should contain a text block "look at this"
     And the block array should contain an image block of media_type "image/png"
 
   Scenario: User message with multiple image blocks emits one text block and multiple image blocks
-    Given a user message with text "compare these" and two image blocks of type "image/jpeg"
+    Given a user [message] with text "compare these" and two image blocks of type "image/jpeg"
     When I build Anthropic messages from that history for model "claude-opus-4-5"
-    Then the user message content should be a block array
+    Then the user [message] content should be a block array
     And the block array should contain a text block "compare these"
     And the block array should contain 2 image blocks
 
   # Vision capability filtering
   Scenario: Image blocks are filtered out for non-vision models
-    Given a user message with text "look at this" and one image block of type "image/png"
+    Given a user [message] with text "look at this" and one image block of type "image/png"
     When I build Anthropic messages from that history for model "claude-instant-1"
-    Then the user message content should be the string "look at this"
+    Then the user [message] content should be the string "look at this"
 
   Scenario: Image blocks are kept for vision-capable models
-    Given a user message with text "look at this" and one image block of type "image/png"
+    Given a user [message] with text "look at this" and one image block of type "image/png"
     When I build Anthropic messages from that history for model "claude-3-opus-20240229"
-    Then the user message content should be a block array
+    Then the user [message] content should be a block array
     And the block array should contain an image block of media_type "image/png"
 
   # --- #310: Vision allow-list (fail-closed for unknown models) ---
 
   Scenario: Unknown model is treated as non-vision (fail-closed)
-    Given a user message with text "look at this" and one image block of type "image/png"
+    Given a user [message] with text "look at this" and one image block of type "image/png"
     When I build Anthropic messages from that history for model "unknown-future-model"
-    Then the user message content should be the string "look at this"
+    Then the user [message] content should be the string "look at this"
 
   # Empty content filtering
   Scenario: User message with only whitespace text and no images is skipped
-    Given a user message with text "   " and no image blocks
+    Given a user [message] with text "   " and no image blocks
     When I build Anthropic messages from that history for model "claude-opus-4-5"
     Then the Anthropic payload should contain no user messages
 
   Scenario: User message with image but empty text emits only the image block
-    Given a user message with text "" and one image block of type "image/webp"
+    Given a user [message] with text "" and one image block of type "image/webp"
     When I build Anthropic messages from that history for model "claude-opus-4-5"
-    Then the user message content should be a block array
+    Then the user [message] content should be a block array
     And the block array should contain 1 image blocks
     And the block array should contain no text blocks
 
   Scenario: User message filtered to empty after removing images for non-vision model is skipped
-    Given a user message with text "" and one image block of type "image/png"
+    Given a user [message] with text "" and one image block of type "image/png"
     When I build Anthropic messages from that history for model "claude-instant-1"
     Then the Anthropic payload should contain no user messages
 
@@ -470,10 +470,10 @@ Feature: LLM Providers
     Then the stop reason should be Aborted
 
   Scenario: Aborted assistant messages are dropped from normalized message list
-    Given a message list with an aborted assistant turn followed by a new user message
+    Given a [message] list with an aborted assistant turn followed by a new user message
     When I normalize the messages
-    Then the aborted assistant message should be removed
-    And the new user message should remain
+    Then the aborted assistant [message] should be removed
+    And the new user [message] should remain
 
   # --- #416: Default effort=low for 4.6 models; model_context_window_exceeded ---
 
@@ -509,7 +509,7 @@ Feature: LLM Providers
 
   @done
   Scenario: normalize_messages does not clone messages that need no modification
-    Given a message list with only user and assistant messages and no tool calls
+    Given a [message] list with only user and assistant messages and no tool calls
     When I normalize the messages
     Then all messages should be returned without deep cloning
 
@@ -586,18 +586,18 @@ Feature: LLM Providers
 
   # #437-5: Thinking block replay in multi-turn conversations
   Scenario: Assistant message with normal thinking block includes thinking in API payload
-    Given an assistant message with a normal thinking block "Let me reason" and signature "sig123"
-    When I build the Anthropic assistant message
+    Given an assistant [message] with a normal thinking block "Let me reason" and signature "sig123"
+    When I build the Anthropic assistant [message]
     Then the content blocks should include a thinking block with text "Let me reason" and signature "sig123"
 
   Scenario: Assistant message with redacted thinking block includes redacted_thinking in API payload
-    Given an assistant message with a redacted thinking block with data "opaque_data_abc"
-    When I build the Anthropic assistant message
+    Given an assistant [message] with a redacted thinking block with data "opaque_data_abc"
+    When I build the Anthropic assistant [message]
     Then the content blocks should include a redacted_thinking block with data "opaque_data_abc"
 
   Scenario: Thinking block with empty signature falls back to plain text
-    Given an assistant message with a normal thinking block "some reasoning" and signature ""
-    When I build the Anthropic assistant message
+    Given an assistant [message] with a normal thinking block "some reasoning" and signature ""
+    When I build the Anthropic assistant [message]
     Then the content blocks should include a text block with "some reasoning" instead of thinking
 
   # #437-6: signature_delta SSE handling

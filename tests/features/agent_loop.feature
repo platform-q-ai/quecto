@@ -7,7 +7,7 @@ Feature: Agent Loop
   Scenario: Simple message without tool calls
     Given a configured agent with a mock LLM
     And the LLM returns a plain text response "The answer is 42"
-    When the agent processes message "What is the answer?"
+    When the agent processes [message] "What is the answer?"
     Then the response should be "The answer is 42"
 
   Scenario: Message triggers a single tool call
@@ -16,20 +16,20 @@ Feature: Agent Loop
       | path | notes.txt |
     And the tool "read" returns "Buy groceries"
     And the LLM then returns "Your notes say: Buy groceries"
-    When the agent processes message "What are my notes?"
+    When the agent processes [message] "What are my notes?"
     Then the response should be "Your notes say: Buy groceries"
 
   Scenario: Message triggers multiple tool calls in sequence
     Given a configured agent with a mock LLM
     And the LLM returns tool calls in sequence: "read", "write"
-    When the agent processes message "Copy my notes to output.txt"
+    When the agent processes [message] "Copy my notes to output.txt"
     Then both tools should be executed in order
     And the final response should confirm completion
 
   Scenario: Tool iteration limit prevents infinite loops
     Given a configured agent with max_tool_iterations 3
     And the LLM always returns a tool call
-    When the agent processes message "Do something"
+    When the agent processes [message] "Do something"
     Then the agent should stop after 3 tool iterations
     And the response should indicate the iteration limit was reached
 

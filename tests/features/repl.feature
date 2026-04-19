@@ -29,7 +29,7 @@ Feature: REPL — Interactive Conversational Mode
     When I start quecto in REPL mode with flags "-s myrepl"
     And I type "Hello"
     And I type "/exit"
-    Then a session file for "myrepl" should exist in the base directory
+    Then a [session] file for "myrepl" should exist in the base directory
     And the session should contain the user message "Hello"
     And the session should contain the assistant message "First reply"
 

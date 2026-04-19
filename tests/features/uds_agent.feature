@@ -10,7 +10,7 @@ Feature: UDS mode for headless agent operation
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "hello"
-    When I start the UDS agent with no session and system prompt "You are a helpful assistant."
+    When I start the UDS agent with no [session] and system prompt "You are a helpful assistant."
     And I send prompt "hi"
     And I close the UDS connection
     Then the UDS agent exits with code 0
@@ -21,11 +21,11 @@ Feature: UDS mode for headless agent operation
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "saved"
-    When I start the UDS agent with session "sys-persist-test" and system prompt "You are helpful."
+    When I start the UDS agent with [session] "sys-persist-test" and system prompt "You are helpful."
     And I send prompt "remember this"
     And I close the UDS connection
     Then the UDS agent exits with code 0
-    And a session file for "sys-persist-test" should exist
+    And a [session] file for "sys-persist-test" should exist
     And the session for "sys-persist-test" should not contain a system message
 
   # ─── Flag parsing ───────────────────────────────────────────────────────────
@@ -35,7 +35,7 @@ Feature: UDS mode for headless agent operation
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "hello"
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send prompt "hi"
     And I close the UDS connection
     Then the UDS agent exits with code 0
@@ -50,7 +50,7 @@ Feature: UDS mode for headless agent operation
   @done
   Scenario: --mode uds without config shows error
     Given a temp base directory
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I close the UDS connection
     Then the agent stderr should contain "config not found"
     And the UDS agent exits with code 1
@@ -70,7 +70,7 @@ Feature: UDS mode for headless agent operation
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "The answer is 42"
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send prompt "What is the answer?"
     And I close the UDS connection
     Then the agent output should contain an event of type "agent_start"
@@ -82,7 +82,7 @@ Feature: UDS mode for headless agent operation
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "pong"
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send prompt "ping"
     And I close the UDS connection
     Then the agent output should contain an event of type "turn_start"
@@ -93,7 +93,7 @@ Feature: UDS mode for headless agent operation
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a tool call then a text response "done"
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send prompt "run a tool"
     And I close the UDS connection
     Then the agent output should contain an event of type "tool_execution_start"
@@ -104,8 +104,8 @@ Feature: UDS mode for headless agent operation
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "ok"
-    When I start the UDS agent with no session
-    And I send prompt with id "req-42" and message "hello"
+    When I start the UDS agent with no [session]
+    And I send prompt with id "req-42" and [message] "hello"
     And I close the UDS connection
     Then the agent output should contain a response with id "req-42"
 
@@ -115,7 +115,7 @@ Feature: UDS mode for headless agent operation
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "first reply"
     And the mock LLM returns a text response "second reply"
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send prompt "first"
     And I send prompt "second"
     And I close the UDS connection
@@ -128,7 +128,7 @@ Feature: UDS mode for headless agent operation
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "ok"
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send prompt "hello"
     And I send command "get_state" with id "gs-1"
     And I close the UDS connection
@@ -144,7 +144,7 @@ Feature: UDS mode for headless agent operation
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "hello back"
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send prompt "hello"
     And I send command "get_messages" with id "gm-1"
     And I close the UDS connection
@@ -158,7 +158,7 @@ Feature: UDS mode for headless agent operation
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "stats test"
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send prompt "hi"
     And I send command "get_session_stats" with id "ss-1"
     And I close the UDS connection
@@ -175,7 +175,7 @@ Feature: UDS mode for headless agent operation
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "ok"
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send set_model "gpt-5-mini"
     And I send command "get_state" with id "sm-2"
     And I close the UDS connection
@@ -187,7 +187,7 @@ Feature: UDS mode for headless agent operation
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "ok"
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send set_model provider "openai-codex" modelId "gpt-5.3-codex"
     And I send command "get_state" with id "sm-3"
     And I close the UDS connection
@@ -200,7 +200,7 @@ Feature: UDS mode for headless agent operation
   Scenario: abort while idle returns success
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send command "abort" with id "ab-1"
     And I close the UDS connection
     Then the agent output should contain a response command "abort" with success true
@@ -211,7 +211,7 @@ Feature: UDS mode for headless agent operation
   Scenario: follow_up while idle is queued and acknowledged
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send follow_up "also do this" with id "fu-1"
     And I close the UDS connection
     Then the agent output should contain a response command "follow_up" with success true
@@ -222,7 +222,7 @@ Feature: UDS mode for headless agent operation
   Scenario: steer while idle is acknowledged
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send steer "change direction" with id "st-1"
     And I close the UDS connection
     Then the agent output should contain a response command "steer" with success true
@@ -233,7 +233,7 @@ Feature: UDS mode for headless agent operation
   Scenario: malformed JSON line produces an error response
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send raw line "not valid json{"
     And I close the UDS connection
     Then the agent output should contain a parse error response
@@ -242,7 +242,7 @@ Feature: UDS mode for headless agent operation
   Scenario: unknown command type produces an error response
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send unknown command with id "u-1"
     And I close the UDS connection
     Then the agent output should contain a response with success false
@@ -254,11 +254,11 @@ Feature: UDS mode for headless agent operation
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "saved response"
-    When I start the UDS agent with session "uds-test"
+    When I start the UDS agent with [session] "uds-test"
     And I send prompt "save this"
     And I close the UDS connection
     Then the UDS agent exits with code 0
-    And a session file for "uds-test" should exist
+    And a [session] file for "uds-test" should exist
 
   @done
   Scenario: UDS mode with --no-session does not persist session
@@ -269,7 +269,7 @@ Feature: UDS mode for headless agent operation
     And I send prompt "do not save"
     And I close the UDS connection
     Then the UDS agent exits with code 0
-    And no session file for "uds-no-session" should exist
+    And no [session] file for "uds-no-session" should exist
 
   # ─── EOF / shutdown ──────────────────────────────────────────────────────────
 
@@ -277,7 +277,7 @@ Feature: UDS mode for headless agent operation
   Scenario: closing the connection causes clean shutdown
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I close the UDS connection
     Then the UDS agent exits with code 0
 
@@ -287,7 +287,7 @@ Feature: UDS mode for headless agent operation
   Scenario: parse error response uses type response with command parse_error
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send raw line "{{not json"
     And I close the UDS connection
     Then the agent output should contain a parse error response
@@ -301,7 +301,7 @@ Feature: UDS mode for headless agent operation
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "reply one"
     And the mock LLM returns a text response "reply two"
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send prompt "first"
     And I send prompt "second"
     And I send get_messages_tail with count 2 and id "gmt-1"
@@ -315,7 +315,7 @@ Feature: UDS mode for headless agent operation
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "only reply"
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send prompt "only prompt"
     And I send get_messages_tail with count 100 and id "gmt-2"
     And I close the UDS connection
@@ -327,7 +327,7 @@ Feature: UDS mode for headless agent operation
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "any reply"
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send prompt "any prompt"
     And I send get_messages_tail with count 0 and id "gmt-3"
     And I close the UDS connection
@@ -338,7 +338,7 @@ Feature: UDS mode for headless agent operation
   Scenario: get_messages_tail on empty history returns empty array
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send get_messages_tail with count 5 and id "gmt-4"
     And I close the UDS connection
     Then the agent output should contain a response command "get_messages_tail" with success true
@@ -351,7 +351,7 @@ Feature: UDS mode for headless agent operation
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "counted"
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send prompt "count me"
     And I send command "get_session_stats" with id "stats-2"
     And I close the UDS connection
@@ -366,7 +366,7 @@ Feature: UDS mode for headless agent operation
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "hello"
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send prompt "hi"
     And I close the UDS connection
     Then the UDS agent exits with code 0
@@ -393,7 +393,7 @@ Feature: UDS mode for headless agent operation
   Scenario: socket file is removed after agent exits
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I close the UDS connection
     Then the UDS agent exits with code 0
     And the socket file should not exist after agent exits
@@ -414,7 +414,7 @@ Feature: UDS mode for headless agent operation
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM will delay its response by 3 seconds
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send prompt "slow task"
     And I send command "abort" with id "ab-running-1"
     And I close the UDS connection
@@ -428,7 +428,7 @@ Feature: UDS mode for headless agent operation
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM will delay its response by 3 seconds
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send prompt "original task"
     And I send steer "new direction" with id "st-running-1"
     And I close the UDS connection
@@ -443,7 +443,7 @@ Feature: UDS mode for headless agent operation
     And a config file with an OpenAI provider pointing at a mock server
     And UDS streaming is enabled
     And the mock LLM returns a streaming response with tokens "Hello" " world"
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send prompt "greet me"
     And I close the UDS connection
     Then the UDS agent exits with code 0
@@ -519,7 +519,7 @@ Feature: UDS mode for headless agent operation
     When I start the multi-client UDS agent
     And client 1 connects
     And client 2 connects
-    And client 1 sends prompt with id "req-c1" and message "hello"
+    And client 1 sends prompt with id "req-c1" and [message] "hello"
     And I close all UDS clients
     Then the UDS agent exits with code 0
     And client 1 should have received a response with id "req-c1"
@@ -582,7 +582,7 @@ Feature: UDS mode for headless agent operation
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a tool call then a text response "done"
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send prompt "run a tool"
     And I close the UDS connection
     Then the UDS agent exits with code 0
@@ -594,7 +594,7 @@ Feature: UDS mode for headless agent operation
   Scenario: get_extensions returns empty list when no extensions are installed
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send command "get_extensions" with id "ge-2"
     And I close the UDS connection
     Then the UDS agent exits with code 0
@@ -607,7 +607,7 @@ Feature: UDS mode for headless agent operation
   Scenario: reload_extensions returns success
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
-    When I start the UDS agent with no session
+    When I start the UDS agent with no [session]
     And I send command "reload_extensions" with id "re-1"
     And I close the UDS connection
     Then the UDS agent exits with code 0

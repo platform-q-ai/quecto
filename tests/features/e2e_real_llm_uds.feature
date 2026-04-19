@@ -38,7 +38,7 @@ Feature: E2E Real LLM UDS Agent
   @done @real-llm
   Scenario: UDS prompt with correlation id echoes id in response
     When I start the real LLM UDS agent
-    And I send prompt with id "req-llm-42" and message "Reply with exactly UDS_ID_OK"
+    And I send prompt with id "req-llm-42" and [message] "Reply with exactly UDS_ID_OK"
     And I close the UDS connection
     Then the UDS agent exits with code 0
     And the agent output should contain a response with id "req-llm-42"
@@ -191,8 +191,8 @@ Feature: E2E Real LLM UDS Agent
     Then the UDS agent exits with code 0
     And the agent output should contain a response command "get_messages" with success true
     And the get_messages response data should include a "messages" array
-    And the get_messages response should include a user message containing "HISTORY_OK"
-    And the get_messages response should include an assistant message
+    And the get_messages response should include a user [message] containing "HISTORY_OK"
+    And the get_messages response should include an assistant [message]
 
   @done @real-llm
   Scenario: UDS get_messages on empty session returns empty array

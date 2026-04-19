@@ -92,5 +92,5 @@ Feature: End-to-End Tool Execution
     And the mock LLM then returns a text response "The data is 42"
     When I run quecto agent -s tool-session -m "Read data.txt"
     Then the exit code should be 0
-    And a session file should exist for key "cli:tool-session"
-    And the session "cli:tool-session" should contain at least 4 messages
+    And a [session] file should exist for key "cli:tool-session"
+    And the [session] "cli:tool-session" should contain at least 4 messages
