@@ -41,11 +41,36 @@ pub struct ToolResult {
 ///
 /// Uses `Pin<Box<dyn Future>>` return type for dyn-compatibility,
 /// allowing tools to be stored in a registry as `Arc<dyn Tool>`.
+///
+/// # Error handling contract
+///
+/// `execute` distinguishes **LLM-addressable** errors from **infrastructure**
+/// errors via its return type:
+///
+/// - `Ok(ToolResult { is_error: true, content })` — the LLM supplied bad
+///   input (malformed JSON arguments, missing or invalid field, forbidden
+///   path, tool-specific validation failure). The agent loop surfaces
+///   `content` back to the LLM so it can read the explanation and retry.
+///   **This is the preferred form for anything the LLM can fix.**
+///
+/// - `Err(DomainError)` — an infrastructure-level failure the LLM cannot
+///   reasonably correct (OS I/O error, sandbox violation, timeout, upstream
+///   service outage). The agent loop still surfaces these as tool errors,
+///   but adapter authors should reserve them for genuinely external failures.
+///
+/// Both forms terminate the tool call with `is_error: true` from the agent
+/// loop's perspective, so neither is "wrong"; the distinction is a style
+/// contract for readability and future telemetry, not a functional one.
+/// Adapter unit tests should assert the chosen shape to pin down behaviour.
 pub trait Tool: Send + Sync {
     /// Return the tool's definition for the LLM.
     fn definition(&self) -> ToolDefinition;
 
     /// Execute the tool with JSON-encoded arguments.
+    ///
+    /// See the trait-level docs for the error-handling contract:
+    /// prefer `Ok(ToolResult { is_error: true })` for LLM-addressable
+    /// errors; use `Err` only for infrastructure failures.
     fn execute(
         &self,
         arguments: &str,

@@ -48,17 +48,17 @@ async fn execute_returns_tool_result_for_valid_call() {
 }
 
 #[tokio::test]
-async fn execute_signals_an_error_on_invalid_json_rather_than_panicking() {
+async fn invalid_json_arguments_are_llm_addressable_errors() {
     let tmp = tempfile::tempdir().unwrap();
     let tool = read_tool(tmp.path().to_path_buf());
 
-    // The port's contract for argument-handling is "signal an error somehow" —
-    // adapters are free to use Err(DomainError) OR ToolResult { is_error: true }.
-    // What matters is that invalid input never panics and the caller can
-    // distinguish success from failure.
-    let signalled_error = match tool.execute("{ not json").await {
-        Err(_) => true,
-        Ok(r) => r.is_error,
-    };
-    assert!(signalled_error, "invalid JSON must produce either Err or is_error=true");
+    // Per the Tool port contract: LLM-addressable errors — malformed JSON,
+    // missing or invalid fields, tool-specific validation — must be returned
+    // as Ok(ToolResult { is_error: true, content }). Err is reserved for
+    // infrastructure failures the LLM cannot reasonably correct.
+    let r = tool.execute("{ not json").await
+        .expect("LLM-addressable argument errors must not bubble as Err");
+    assert!(r.is_error, "invalid JSON must be reported via is_error=true");
+    assert!(r.content.contains("JSON") || r.content.contains("json"),
+        "content should explain the parse problem so the LLM can retry; got: {}", r.content);
 }

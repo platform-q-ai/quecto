@@ -101,11 +101,21 @@ impl AuditLog {
         // Write directly — no BufWriter since we need every line flushed for
         // crash durability. On Linux, append-mode writes of < PIPE_BUF (4096)
         // bytes are atomic, and a typical JSONL line is 200-500 bytes.
+        //
+        // `flush` after `write_all` is required even without BufWriter:
+        // tokio::fs::File wraps std::fs::File on a blocking thread pool and
+        // may hold a pending write across `await` points. Without the flush,
+        // a drop of the File (or a process crash) can lose the last line —
+        // exactly the case the contract test caught.
         let mut writer = self.writer.lock().await;
         writer
             .write_all(line.as_bytes())
             .await
             .map_err(|e| DomainError::Session(format!("audit log write failed: {e}")))?;
+        writer
+            .flush()
+            .await
+            .map_err(|e| DomainError::Session(format!("audit log flush failed: {e}")))?;
 
         Ok(())
     }
