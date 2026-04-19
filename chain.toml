@@ -50,6 +50,57 @@ non_behavioral_features = [
   "tests/features/release_profile.feature",
   "tests/features/repo_docs.feature",
   "tests/features/sandbox_hardening.feature",
+
+  # TUI widgets for subagents — presentational
+  "tests/features/subagent_widget.feature",
+
+  # Tool-port features: exercise a Tool trait implementation, not a domain
+  # noun. Tool is a port; its behaviour is contract-tested per adapter.
+  "tests/features/find.feature",
+  "tests/features/grep.feature",
+  "tests/features/ls.feature",
+  "tests/features/spawn_tool.feature",
+  "tests/features/ensure_tool.feature",
+  "tests/features/nsjail_exec.feature",
+  "tests/features/truncate.feature",
+  "tests/features/path_utils.feature",
+
+  # CLI / config / auth plumbing — invoke the system but exercise no single
+  # domain noun directly; their behaviour is driven by composition, not by
+  # a feature-visible aggregate.
+  "tests/features/cli.feature",
+  "tests/features/config.feature",
+  "tests/features/auth.feature",
+  "tests/features/agent_cli.feature",
+  "tests/features/onboard.feature",
+  "tests/features/security.feature",
+  "tests/features/extensions.feature",
+
+  # Subagent orchestration — tracked nouns (AgentInfo, AgentResult,
+  # AgentProgressEvent) are untracked_nouns per the design: internal
+  # orchestration types, not feature-visible aggregates.
+  "tests/features/subagent.feature",
+  "tests/features/subagent_monitor.feature",
+  "tests/features/subagent_protocol.feature",
+  "tests/features/agent_cmd_await.feature",
+  "tests/features/abort_double_fire.feature",
+
+  # E2E harness features — they compose the whole stack; per-noun tags
+  # would be noise. Individual unit-level features already cover the nouns.
+  "tests/features/e2e_agentic_loop.feature",
+  "tests/features/e2e_providers.feature",
+  "tests/features/e2e_real_llm_entrypoints.feature",
+  "tests/features/e2e_real_llm_entrypoints_matrix.feature",
+  "tests/features/e2e_real_llm_workflow_v2.feature",
+  "tests/features/e2e_repl_agents.feature",
+  "tests/features/e2e_safety.feature",
+
+  # quecto-api — HTTP/WS gateway crate. Its domain is the gateway itself;
+  # it does not share the quecto agent's domain nouns.
+  "quecto-api/tests/features/health.feature",
+  "quecto-api/tests/features/prompt.feature",
+  "quecto-api/tests/features/state.feature",
+  "quecto-api/tests/features/websocket.feature",
 ]
 
 # ────────────────────────────────────────────────────────────────────────────

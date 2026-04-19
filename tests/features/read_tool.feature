@@ -13,41 +13,41 @@ Feature: ReadTool — Pi parity
     Given a PNG image file "screenshot" exists in the workspace
     When the agent executes tool "read" with args:
       | path | screenshot |
-    Then the tool result should not be an error
-    And the tool result image blocks should contain a "image/png" block
+    Then the [ToolResult] should not be an error
+    And the [ToolResult] image blocks should contain a "image/png" block
 
   @done
   Scenario: Magic bytes detect JPEG with wrong extension (.dat)
     Given a JPEG image file "photo.dat" exists in the workspace
     When the agent executes tool "read" with args:
       | path | photo.dat |
-    Then the tool result should not be an error
-    And the tool result image blocks should contain a "image/jpeg" block
+    Then the [ToolResult] should not be an error
+    And the [ToolResult] image blocks should contain a "image/jpeg" block
 
   @done
   Scenario: Magic bytes detect WebP with no extension
     Given a WebP image file "icon" exists in the workspace
     When the agent executes tool "read" with args:
       | path | icon |
-    Then the tool result should not be an error
-    And the tool result image blocks should contain a "image/webp" block
+    Then the [ToolResult] should not be an error
+    And the [ToolResult] image blocks should contain a "image/webp" block
 
   @done
   Scenario: Magic bytes detect GIF with wrong extension
     Given a GIF image file "anim.bin" exists in the workspace
     When the agent executes tool "read" with args:
       | path | anim.bin |
-    Then the tool result should not be an error
-    And the tool result image blocks should contain a "image/gif" block
+    Then the [ToolResult] should not be an error
+    And the [ToolResult] image blocks should contain a "image/gif" block
 
   @done
   Scenario: Text file with .jpg extension is not mis-detected as image
     Given a file "not_an_image.jpg" exists with content "hello world"
     When the agent executes tool "read" with args:
       | path | not_an_image.jpg |
-    Then the tool result should not be an error
-    And the tool result image blocks should be empty
-    And the tool result should contain "hello world"
+    Then the [ToolResult] should not be an error
+    And the [ToolResult] image blocks should be empty
+    And the [ToolResult] should contain "hello world"
 
   # --- Images sent as-is without client-side resize (#368) ---
 
@@ -56,9 +56,9 @@ Feature: ReadTool — Pi parity
     Given a PNG image file "photo.png" exists in the workspace
     When the agent executes tool "read" with args:
       | path | photo.png |
-    Then the tool result should not be an error
-    And the tool result image blocks should contain a "image/png" block
-    And the tool result should contain "Read image file"
+    Then the [ToolResult] should not be an error
+    And the [ToolResult] image blocks should contain a "image/png" block
+    And the [ToolResult] should contain "Read image file"
 
   # --- Truncation notice formatting ---
 
@@ -67,8 +67,8 @@ Feature: ReadTool — Pi parity
     Given a file "bytes.txt" exists with 60000 bytes of content
     When the agent executes tool "read" with args:
       | path | bytes.txt |
-    Then the tool result should not be an error
-    And the tool result should contain "50KB limit"
+    Then the [ToolResult] should not be an error
+    And the [ToolResult] should contain "50KB limit"
 
   @done
   Scenario: User-specified limit notice shows remaining lines
@@ -76,5 +76,5 @@ Feature: ReadTool — Pi parity
     When the agent executes tool "read" with args:
       | path  | big.txt |
       | limit | 10      |
-    Then the tool result should not be an error
-    And the tool result should contain "more lines in file"
+    Then the [ToolResult] should not be an error
+    And the [ToolResult] should contain "more lines in file"
