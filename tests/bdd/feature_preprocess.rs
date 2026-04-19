@@ -33,13 +33,21 @@ pub fn prepare_stripped_features(source: &Path, target: &Path) -> std::io::Resul
     mirror_dir(source, target, &bracket_re)
 }
 
-/// Walk the line rewriting each `[tag]` in place. A CamelCase tag preceded
-/// by `the ` expands to its spaced-lowercase prose form; any other tag just
+/// Walk the line rewriting each `[tag]` in place. Brackets inside quoted
+/// string arguments are preserved verbatim — step text like
+/// `the notification should start with "[subagent]"` asserts on a literal
+/// output string, not on a chainlink tag. A CamelCase tag preceded by
+/// `the ` expands to its spaced-lowercase prose form; any other tag just
 /// has its brackets stripped (preserving whatever was inside).
 fn rewrite_step_tags(line: &str, re: &Regex) -> String {
     let mut out = String::with_capacity(line.len());
     let mut cursor = 0;
     for mat in re.find_iter(line) {
+        // Preserve anything — including the bracketed match — verbatim up to
+        // the end of this match if it falls inside a quoted string.
+        if is_inside_quotes(line, mat.start()) {
+            continue;
+        }
         out.push_str(&line[cursor..mat.start()]);
         let tag = &line[mat.start() + 1 .. mat.end() - 1];
         let preceded_by_the = out.trim_end().ends_with(" the") || out.trim_end() == "the";
@@ -54,6 +62,29 @@ fn rewrite_step_tags(line: &str, re: &Regex) -> String {
     }
     out.push_str(&line[cursor..]);
     out
+}
+
+/// True if byte offset `pos` in `line` falls inside a `"..."` or `'...'`
+/// region. Walks left-to-right tracking quote state.
+fn is_inside_quotes(line: &str, pos: usize) -> bool {
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        if c == '"' || c == '\'' {
+            match line[i + 1..].find(c) {
+                Some(rel) => {
+                    let close = i + 1 + rel;
+                    if pos > i && pos < close { return true; }
+                    i = close + 1;
+                    continue;
+                }
+                None => return pos > i,
+            }
+        }
+        i += 1;
+    }
+    false
 }
 
 /// Convert a chainlink noun tag body to the prose form a cucumber step
