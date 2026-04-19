@@ -39,6 +39,7 @@ use tempfile::TempDir;
 
 #[path = "../common/mod.rs"]
 mod common;
+mod feature_preprocess;
 
 // ===========================================================================
 // Mock LLM Provider for BDD tests
@@ -949,11 +950,20 @@ fn main() {
     };
     let shard_plan = shard.map(|(_, total)| build_shard_plan("tests/features", total));
 
+    // Strip chainlink-style `[noun]` step tags into a tempdir before cucumber
+    // parses the features. On-disk .feature files keep their brackets (so
+    // `chainlink scan` sees the authoritative noun-feature mapping) while
+    // cucumber-rs sees the bare-prose form its step-def regexes are written
+    // against. Tempdir must outlive the cucumber run, hence the binding here.
+    let (_stripped_dir, stripped_features_path) = feature_preprocess::stripped_features_tempdir(
+        std::path::Path::new("tests/features"),
+    ).expect("failed to preprocess .feature files into tempdir");
+
     futures::executor::block_on(
         QuectoWorld::cucumber()
             .max_concurrent_scenarios(25)
             .fail_on_skipped()
-            .filter_run("tests/features", move |feat, _, sc| {
+            .filter_run(stripped_features_path.clone(), move |feat, _, sc| {
                 // Exclude scenarios explicitly tagged @pending
                 if sc.tags.iter().any(|t| t == "pending") {
                     return false;
