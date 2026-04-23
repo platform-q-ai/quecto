@@ -346,13 +346,26 @@ async fn forward_tool_requests(
     while let Some(req) = rx.recv().await {
         let UdsToolRequest {
             tool_call_id,
-            tool_name: _sent_tool,
+            tool_name: sent_tool,
             arguments,
             result_tx,
         } = req;
 
-        // Stash the oneshot before emitting the event so a fast
-        // response can't race the insert.
+        // Dispatch bugs would show up here as a mismatch between the
+        // tool the UdsTool thinks it's calling and the one we're
+        // forwarding for. Catch it loudly in debug builds; in release
+        // we continue using the forwarder's own `tool_name` (the one
+        // keyed into this task at registration).
+        debug_assert_eq!(
+            sent_tool, tool_name,
+            "forwarder tool_name mismatch: registered={tool_name:?} request={sent_tool:?}"
+        );
+
+        // Stash the oneshot in `pending_results` BEFORE broadcasting
+        // `execute_tool` so the reader task's `handle_tool_result`
+        // (which takes the same registry mutex) always finds the
+        // pending entry when the client responds — even on the fastest
+        // possible local-socket round-trip.
         {
             let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
             match reg.get_mut(&client_id) {
