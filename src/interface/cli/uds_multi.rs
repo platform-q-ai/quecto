@@ -245,9 +245,26 @@ fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
                         cmd_tx: cmd_tx.clone(),
                         client_id,
                     };
+                    // Per-client targeted event channel (V4): the
+                    // forwarder task for tools this client registers
+                    // will route `execute_tool` events here — NOT on
+                    // the broadcast — so they don't leak across
+                    // clients. 64-slot buffer: any single LLM turn
+                    // issues only a handful of tool calls, so the
+                    // common-case depth is 1–2; the channel fills up
+                    // only if the client stops reading.
+                    let (targeted_tx, targeted_rx) =
+                        tokio::sync::mpsc::channel::<String>(64);
+                    super::uds_ext_protocol::register_client_writer(
+                        &client_tool_registry,
+                        client_id,
+                        targeted_tx,
+                    );
+
                     let args = ClientHandlerArgs {
                         stream,
                         broadcast_rx: broadcast_tx.subscribe(),
+                        targeted_rx,
                         cmd_tx: cmd_tx.clone(),
                         cancel_handle: cancel_handle.clone(),
                         client_id,
@@ -387,6 +404,12 @@ async fn handle_disconnect(ctx: &mut DispatchCtx<'_>, client_id: u64) {
 struct ClientHandlerArgs {
     stream: tokio::net::UnixStream,
     broadcast_rx: tokio::sync::broadcast::Receiver<String>,
+    /// Per-client targeted event stream — receives events addressed
+    /// to this client only (currently just `execute_tool` from
+    /// forwarder tasks). Writer_task selects over this AND
+    /// broadcast_rx so targeted events aren't visible to other
+    /// clients.
+    targeted_rx: tokio::sync::mpsc::Receiver<String>,
     cmd_tx: tokio::sync::mpsc::Sender<ClientMessage>,
     cancel_handle: CancelHandle,
     /// Unique client identifier (#352).
@@ -401,6 +424,7 @@ async fn handle_client(args: ClientHandlerArgs) {
     let ClientHandlerArgs {
         stream,
         mut broadcast_rx,
+        mut targeted_rx,
         cmd_tx,
         cancel_handle,
         client_id,
@@ -412,28 +436,43 @@ async fn handle_client(args: ClientHandlerArgs) {
     let (reader, mut writer) = tokio::io::split(stream);
     let mut lines = BufReader::new(reader).lines();
 
-    // Writer task: drain broadcast → this client.
+    // Writer task: multiplex shared broadcast events AND per-client
+    // targeted events (currently just `execute_tool` from forwarder
+    // tasks) onto the client's socket. Targeted events never fan out
+    // to other clients.
     let writer_task = tokio::spawn(async move {
         loop {
-            match broadcast_rx.recv().await {
-                Ok(line) => {
-                    if writer.write_all(line.as_bytes()).await.is_err() {
-                        break;
+            tokio::select! {
+                b = broadcast_rx.recv() => match b {
+                    Ok(line) => {
+                        if writer.write_all(line.as_bytes()).await.is_err() {
+                            break;
+                        }
                     }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!("client lagged by {n} events");
-                    // Notify the client so it can request a state refresh.
-                    let msg = format!(
-                        "{{\"type\":\"error\",\"message\":\"dropped {} events — use get_messages to re-sync\"}}\n",
-                        n
-                    );
-                    if writer.write_all(msg.as_bytes()).await.is_err() {
-                        break;
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("client lagged by {n} events");
+                        let msg = format!(
+                            "{{\"type\":\"error\",\"message\":\"dropped {} events — use get_messages to re-sync\"}}\n",
+                            n
+                        );
+                        if writer.write_all(msg.as_bytes()).await.is_err() {
+                            break;
+                        }
                     }
-                    continue;
-                }
+                },
+                t = targeted_rx.recv() => match t {
+                    Some(line) => {
+                        if writer.write_all(line.as_bytes()).await.is_err() {
+                            break;
+                        }
+                    }
+                    None => {
+                        // Sender side closed (client registry
+                        // entry dropped). Fall through — broadcast
+                        // may still be delivering.
+                    }
+                },
             }
         }
     });

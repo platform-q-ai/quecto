@@ -75,6 +75,28 @@ pub struct ClientToolState {
     /// we signal `shutdown` rather than `abort` so buffered requests
     /// are drained with a clean error.
     pub tool_request_tasks: HashMap<String, ForwarderHandle>,
+    /// Per-client *targeted* event channel (V4). The forwarder uses
+    /// this — not the shared broadcast — to deliver `execute_tool` to
+    /// the specific client that registered the tool.  Other
+    /// connected clients (e.g. a separate `quecto-tui` watching the
+    /// same agent) never see the tool name or arguments of requests
+    /// that aren't addressed to them.  Set on accept via
+    /// `register_client_writer`; cleared on disconnect.
+    pub writer_tx: Option<tokio::sync::mpsc::Sender<String>>,
+}
+
+/// Register a per-client writer sender so `forward_tool_requests` can
+/// route `execute_tool` events to this client only.  Called from the
+/// accept loop the moment a new client connection is set up, before
+/// any `register_tools` command can arrive.
+pub fn register_client_writer(
+    registry: &ClientToolRegistry,
+    client_id: u64,
+    writer_tx: tokio::sync::mpsc::Sender<String>,
+) {
+    let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+    let state = reg.entry(client_id).or_default();
+    state.writer_tx = Some(writer_tx);
 }
 
 /// Shared registry of per-client tool state, keyed by client ID.
@@ -326,23 +348,23 @@ fn spawn_tool_forwarder_for(
 ) {
     let client_id = ctx.current_client_id;
     let registry = ctx.client_tool_registry.clone();
-    let broadcast_tx = ctx.broadcast_tx.clone();
 
-    let rx_opt = {
+    // Snapshot the rx (to own) and writer_tx (to clone) under a
+    // single short critical section.
+    let staged = {
         let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
         let state = match reg.get_mut(&client_id) {
             Some(s) => s,
             None => return,
         };
-        // Graceful shutdown for any forwarder this re-register replaces
-        // — drains the old rx so in-flight callers get "Tool
-        // re-registered" instead of a 30-second silent timeout.
         if let Some(old) = state.tool_request_tasks.remove(tool_name) {
             old.shutdown("Tool re-registered");
         }
-        state.tool_request_rxs.remove(tool_name)
+        let rx = state.tool_request_rxs.remove(tool_name);
+        let writer_tx = state.writer_tx.clone();
+        rx.map(|rx| (rx, writer_tx))
     };
-    let Some(rx) = rx_opt else {
+    let Some((rx, writer_tx)) = staged else {
         return;
     };
 
@@ -354,7 +376,7 @@ fn spawn_tool_forwarder_for(
         rx,
         shutdown_rx,
         registry.clone(),
-        broadcast_tx,
+        writer_tx,
     ));
 
     let handle = ForwarderHandle {
@@ -374,20 +396,17 @@ fn spawn_tool_forwarder_for(
 
 /// Drain `ToolInvocation`s for a single (client, tool) pair: stash the
 /// oneshot result sender in `pending_results` so `tool_result` handlers
-/// can resolve it, then emit an `execute_tool` event to the wire.
-///
-/// Broadcast-wide event is fine because `execute_tool` is scoped by
-/// `tool_name` — only the client that registered the tool has a
-/// dispatcher for it.  Other connected clients see the event, find no
-/// matching handler, and ignore it.  This avoids adding a per-client
-/// event channel just for one event type.
+/// can resolve it, then emit an `execute_tool` event to the wire,
+/// addressed via the client's per-connection `writer_tx`.  Scoping to
+/// one client prevents other connected clients from ever seeing tool
+/// names or arguments not addressed to them.
 async fn forward_tool_requests(
     client_id: u64,
     tool_name: String,
     mut rx: tokio::sync::mpsc::Receiver<ToolInvocation>,
     mut shutdown: tokio::sync::oneshot::Receiver<&'static str>,
     registry: ClientToolRegistry,
-    broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    writer_tx: Option<tokio::sync::mpsc::Sender<String>>,
 ) {
     // Hot loop: serve requests or honour a shutdown signal. `biased`
     // so a shutdown that arrives concurrently with a buffered request
@@ -402,7 +421,7 @@ async fn forward_tool_requests(
             }
             maybe_req = rx.recv() => {
                 let Some(req) = maybe_req else { break None; };
-                handle_one_request(&tool_name, req, client_id, &registry, &broadcast_tx);
+                handle_one_request(&tool_name, req, client_id, &registry, &writer_tx).await;
             }
         }
     };
@@ -422,13 +441,14 @@ async fn forward_tool_requests(
 }
 
 /// Single-request side of `forward_tool_requests`: stash the oneshot,
-/// broadcast `execute_tool`, clean up on broadcast failure.
-fn handle_one_request(
+/// send `execute_tool` to the target client's writer channel, clean
+/// up on delivery failure.
+async fn handle_one_request(
     tool_name: &str,
     req: ToolInvocation,
     client_id: u64,
     registry: &ClientToolRegistry,
-    broadcast_tx: &Option<tokio::sync::broadcast::Sender<String>>,
+    writer_tx: &Option<tokio::sync::mpsc::Sender<String>>,
 ) {
     let ToolInvocation {
         tool_call_id,
@@ -447,7 +467,7 @@ fn handle_one_request(
         "forwarder tool_name mismatch: registered={tool_name:?} request={sent_tool:?}"
     );
 
-    // Stash the oneshot in `pending_results` BEFORE broadcasting
+    // Stash the oneshot in `pending_results` BEFORE sending
     // `execute_tool` so the reader task's `handle_tool_result` (which
     // takes the same registry mutex) always finds the pending entry
     // when the client responds — even on the fastest possible local-
@@ -473,20 +493,18 @@ fn handle_one_request(
         tool_name: tool_name.to_string(),
         arguments,
     };
-    // Broadcast the event. If it doesn't go out (no subscribers,
-    // closed channel, or no broadcast_tx at all in single-client test
-    // mode) no client can ever send `tool_result` for it, so the
-    // pending entry we just inserted would never be drained.
-    // Proactively remove it — dropping the oneshot sender wakes
-    // `UdsTool::execute` with `Err(RecvError)`, which it maps to
-    // "Extension disconnected during execution". That is immediate
-    // and actionable, rather than a 30-second silent wait for the
-    // UdsTool timeout to elapse.
-    let delivered = match broadcast_tx {
+
+    // Deliver to the registering client's targeted writer channel.
+    // If we have no writer (e.g. client disconnect window, or a test
+    // harness that set up the state without one) or the send fails
+    // (receiver dropped), proactively remove the pending entry so
+    // `UdsTool::execute` fails fast with "Extension disconnected"
+    // rather than waiting out the 30-second tool timeout.
+    let delivered = match writer_tx {
         Some(tx) => {
             let mut line = ev.to_json_line();
             line.push('\n');
-            tx.send(line).is_ok()
+            tx.send(line).await.is_ok()
         }
         None => false,
     };
@@ -747,17 +765,18 @@ mod tests {
         assert!(locked[&2].tool_names.contains("translate"));
     }
 
-    // ─── forward_tool_requests cleanup-on-broadcast-failure (V3) ───────────
+    // ─── forward_tool_requests cleanup-on-delivery-failure (V3) ────────────
 
-    /// When the broadcast channel has no live receivers, every `send`
-    /// returns `Err(SendError)`. Without cleanup the oneshot sender
-    /// would sit in `pending_results` until the 30-second UdsTool
-    /// timeout fired — forever, for repeated calls into a dead
-    /// broadcast. The forwarder must remove the pending entry so the
-    /// oneshot drops and UdsTool::execute returns "Extension
+    /// When the targeted writer channel's receiver has been dropped
+    /// (client disconnected, test harness never connected one), every
+    /// `send` returns `Err(SendError)`. Without cleanup the oneshot
+    /// sender would sit in `pending_results` until the 30-second
+    /// UdsTool timeout fired — forever, for repeated calls into a
+    /// dead writer. The forwarder must remove the pending entry so
+    /// the oneshot drops and UdsTool::execute returns "Extension
     /// disconnected during execution" immediately.
     #[tokio::test]
-    async fn forwarder_cleans_pending_when_broadcast_has_no_subscribers() {
+    async fn forwarder_cleans_pending_when_writer_has_no_receiver() {
         use crate::application::extension_tool::ToolInvocation;
         use std::time::Duration;
 
@@ -768,9 +787,10 @@ mod tests {
             reg.insert(client_id, ClientToolState::default());
         }
 
-        // Broadcast channel with no subscribers — every .send() errs.
-        let (broadcast_tx, _rx) = tokio::sync::broadcast::channel::<String>(8);
-        drop(_rx);
+        // Writer channel with no receiver — every .send() errs.
+        let (writer_tx, writer_rx) =
+            tokio::sync::mpsc::channel::<String>(8);
+        drop(writer_rx);
 
         let (req_tx, req_rx) = tokio::sync::mpsc::channel::<ToolInvocation>(4);
         let (_shutdown_tx, shutdown_rx) =
@@ -781,7 +801,7 @@ mod tests {
             req_rx,
             shutdown_rx,
             registry.clone(),
-            Some(broadcast_tx),
+            Some(writer_tx),
         ));
 
         let (reply_tx, result_rx) = tokio::sync::oneshot::channel();
@@ -839,8 +859,7 @@ mod tests {
             reg.insert(client_id, ClientToolState::default());
         }
 
-        let (broadcast_tx, _subscriber) =
-            tokio::sync::broadcast::channel::<String>(8);
+        let (writer_tx, _writer_rx) = tokio::sync::mpsc::channel::<String>(8);
         let (req_tx, req_rx) = tokio::sync::mpsc::channel::<ToolInvocation>(8);
         let (shutdown_tx, shutdown_rx) =
             tokio::sync::oneshot::channel::<&'static str>();
@@ -882,7 +901,7 @@ mod tests {
             req_rx,
             shutdown_rx,
             registry.clone(),
-            Some(broadcast_tx),
+            Some(writer_tx),
         ));
 
         let r1 = tokio::time::timeout(Duration::from_millis(500), r1_rx)
@@ -902,11 +921,11 @@ mod tests {
         let _ = forwarder.await;
     }
 
-    /// Control case: when the broadcast DOES have a live subscriber
-    /// the forwarder leaves the pending entry in place (the reader
-    /// task will clear it when `tool_result` comes back).
+    /// Control case: when the targeted writer channel DOES have a
+    /// live receiver the forwarder leaves the pending entry in place
+    /// (the reader task will clear it when `tool_result` comes back).
     #[tokio::test]
-    async fn forwarder_leaves_pending_when_broadcast_delivered() {
+    async fn forwarder_leaves_pending_when_writer_delivered() {
         use crate::application::extension_tool::ToolInvocation;
         use std::time::Duration;
 
@@ -917,8 +936,8 @@ mod tests {
             reg.insert(client_id, ClientToolState::default());
         }
 
-        let (broadcast_tx, mut broadcast_rx) =
-            tokio::sync::broadcast::channel::<String>(8);
+        let (writer_tx, mut writer_rx) =
+            tokio::sync::mpsc::channel::<String>(8);
 
         let (req_tx, req_rx) = tokio::sync::mpsc::channel::<ToolInvocation>(4);
         let (_shutdown_tx, shutdown_rx) =
@@ -929,7 +948,7 @@ mod tests {
             req_rx,
             shutdown_rx,
             registry.clone(),
-            Some(broadcast_tx),
+            Some(writer_tx),
         ));
 
         let (reply_tx, _result_rx) = tokio::sync::oneshot::channel();
@@ -943,12 +962,12 @@ mod tests {
             .await
             .unwrap();
 
-        // Receive the broadcast (proving delivery happened).
+        // Receive the targeted event (proving delivery happened).
         let line =
-            tokio::time::timeout(Duration::from_millis(500), broadcast_rx.recv())
+            tokio::time::timeout(Duration::from_millis(500), writer_rx.recv())
                 .await
-                .expect("broadcast never arrived")
-                .expect("broadcast channel closed unexpectedly");
+                .expect("writer event never arrived")
+                .expect("writer channel closed unexpectedly");
         assert!(line.contains("\"execute_tool\""));
 
         // Short yield so the forwarder-side insert completes even if

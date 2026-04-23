@@ -2752,6 +2752,25 @@ fn then_client_received_execute_tool(
     );
 }
 
+#[then(expr = "client {int} should not have received an execute_tool for tool {string}")]
+fn then_client_did_not_receive_execute_tool(
+    world: &mut QuectoWorld,
+    client_id: u32,
+    tool_name: String,
+) {
+    execute_multi_client_uds(world);
+    let events = world
+        .mc_client_events
+        .get(&client_id)
+        .cloned()
+        .unwrap_or_default();
+    let leaked = find_execute_tool_for(&events, &tool_name);
+    assert!(
+        leaked.is_none(),
+        "client {client_id} unexpectedly received an execute_tool for tool {tool_name:?}\nevents: {events:#?}",
+    );
+}
+
 #[then(
     expr = "the execute_tool event for {string} should carry arguments containing {string}"
 )]

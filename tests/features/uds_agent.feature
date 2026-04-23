@@ -827,3 +827,19 @@ Feature: UDS mode for headless agent operation
     Then the UDS agent exits with code 0
     And client 1 should have received an execute_tool for tool "weather"
     And client 1 should have received an event of type "agent_end"
+
+  @done @multi-client @uds-ext
+  Scenario: execute_tool is delivered only to the client that registered the tool
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a tool call for tool "weather" with arguments "city=Edinburgh" then text "done"
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And client 2 connects
+    And client 1 sends register_tools with tool "weather" described as "Get weather"
+    And client 1 sends prompt "what's the weather?"
+    And client 1 replies to execute_tool for "weather" with content "sunny"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 1 should have received an execute_tool for tool "weather"
+    And client 2 should not have received an execute_tool for tool "weather"
