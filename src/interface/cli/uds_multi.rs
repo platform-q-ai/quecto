@@ -459,7 +459,7 @@ async fn handle_client(args: ClientHandlerArgs) {
         // resolve the pending oneshot directly against the shared
         // tool registry; the agent's UdsTool::execute wakes and the
         // turn resumes.
-        if let Some(parsed) = try_parse_tool_result(&line) {
+        if let Some(parsed) = try_intercept_tool_result(&line) {
             super::uds_ext_protocol::handle_tool_result(
                 super::uds_ext_protocol::ToolResultArgs {
                     client_id,
@@ -745,22 +745,110 @@ fn forward_progress_event_broadcast(
     }
 }
 
-/// Parse a raw client line as a `tool_result` command. Returns `None`
-/// if the line isn't a tool_result (so the caller passes it through to
-/// normal dispatch).
+/// Parsed representation of a client-sent `tool_result` command, ready
+/// for `handle_tool_result` to consume.
 struct ParsedToolResult {
     tool_call_id: String,
     content: String,
     is_error: bool,
 }
 
-fn try_parse_tool_result(line: &str) -> Option<ParsedToolResult> {
-    let v: serde_json::Value = serde_json::from_str(line).ok()?;
-    if v.get("type").and_then(|t| t.as_str())? != "tool_result" {
+/// Intercept a raw client line that carries a `tool_result` so it can
+/// be resolved inline against `client_tool_registry`, bypassing the
+/// (blocked-on-prompt) main dispatch loop.  Returns `None` when the
+/// line isn't a tool_result, in which case the caller forwards it to
+/// the dispatcher via the normal channel.
+///
+/// Implementation notes:
+///
+///  * **Cheap gate first.**  Every line the reader observes flows
+///    through here, and the vast majority aren't tool_results.  A
+///    cheap `contains` check short-circuits the full JSON parse for
+///    the common case (prompts, register_tools, set_model, …).  The
+///    needle is tight enough to avoid false positives on, say, a
+///    prompt that literally discusses tool results.
+///
+///  * **Canonical parser reuse.**  Once the gate passes, we defer to
+///    the same `parse_line` → `AgentCommand` path used by the main
+///    dispatcher.  If `AgentCommand::ToolResult` ever gains a field,
+///    the intercept path picks it up automatically and stays in sync
+///    with the rest of the protocol surface — no hand-rolled JSON
+///    extraction to drift.
+fn try_intercept_tool_result(line: &str) -> Option<ParsedToolResult> {
+    if !line.contains(r#""tool_result""#) {
         return None;
     }
-    let tool_call_id = v.get("toolCallId")?.as_str()?.to_string();
-    let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
-    let is_error = v.get("isError").and_then(|b| b.as_bool()).unwrap_or(false);
-    Some(ParsedToolResult { tool_call_id, content, is_error })
+    match super::uds::parse_line(line) {
+        super::uds::LineResult::Command(super::protocol::AgentCommand::ToolResult {
+            tool_call_id,
+            content,
+            is_error,
+        }) => Some(ParsedToolResult {
+            tool_call_id,
+            content,
+            is_error,
+        }),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod interception_tests {
+    use super::*;
+
+    #[test]
+    fn intercepts_vanilla_tool_result() {
+        let line = r#"{"type":"tool_result","toolCallId":"uds-abc","content":"ok","isError":false}"#;
+        let got = try_intercept_tool_result(line).expect("should intercept");
+        assert_eq!(got.tool_call_id, "uds-abc");
+        assert_eq!(got.content, "ok");
+        assert!(!got.is_error);
+    }
+
+    #[test]
+    fn intercepts_tool_result_with_error_flag() {
+        let line = r#"{"type":"tool_result","toolCallId":"uds-xyz","content":"oh no","isError":true}"#;
+        let got = try_intercept_tool_result(line).expect("should intercept");
+        assert!(got.is_error);
+    }
+
+    #[test]
+    fn intercepts_tool_result_with_unknown_future_field() {
+        // Future-proofing: if `AgentCommand::ToolResult` gains, say, a
+        // `metadata` field later, deserialisation keeps working; the
+        // bypass path must not be more strict than the canonical one.
+        let line = r#"{"type":"tool_result","toolCallId":"uds-1","content":"","isError":false,"metadata":{"elapsed_ms":42}}"#;
+        let got = try_intercept_tool_result(line).expect("should intercept");
+        assert_eq!(got.tool_call_id, "uds-1");
+    }
+
+    #[test]
+    fn does_not_intercept_prompt_command() {
+        let line = r#"{"type":"prompt","message":"hello"}"#;
+        assert!(try_intercept_tool_result(line).is_none());
+    }
+
+    #[test]
+    fn does_not_intercept_register_tools() {
+        let line = r#"{"type":"register_tools","id":"r1","tools":[{"name":"t","description":"d"}]}"#;
+        assert!(try_intercept_tool_result(line).is_none());
+    }
+
+    #[test]
+    fn does_not_intercept_garbage_or_empty() {
+        assert!(try_intercept_tool_result("not json").is_none());
+        assert!(try_intercept_tool_result("").is_none());
+        assert!(try_intercept_tool_result("{}").is_none());
+    }
+
+    #[test]
+    fn does_not_intercept_line_that_only_mentions_the_literal_in_a_string() {
+        // Cheap gate false-positive guard: a prompt whose message body
+        // contains the substring `tool_result` should not intercept
+        // (the full parse will reject it since the command's `type`
+        // is `prompt`).
+        let line =
+            r#"{"type":"prompt","message":"explain what tool_result means"}"#;
+        assert!(try_intercept_tool_result(line).is_none());
+    }
 }
