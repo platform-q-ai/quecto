@@ -21,6 +21,36 @@ use super::protocol::{AgentEvent, ExtensionInfo, ToolRegistration};
 /// Default timeout for UDS extension tool execution (seconds).
 const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 30;
 
+/// Handle to a spawned forwarder task. Stored alongside a
+/// cooperative shutdown `oneshot` so unregister / disconnect can ask
+/// the task to drain its inbound mpsc of any buffered
+/// `UdsToolRequest`s — resolving their oneshots with an immediate
+/// error — instead of abort-killing the task and leaving those
+/// in-flight callers to wait out the 30-second UdsTool timeout.
+#[derive(Debug)]
+pub struct ForwarderHandle {
+    /// JoinHandle is kept so `Drop` detaches cleanly; we never
+    /// `.abort()` it — a voluntary shutdown is always preferred so the
+    /// drain runs.
+    join_handle: tokio::task::JoinHandle<()>,
+    /// One-shot signal: send a short reason string and the task
+    /// shifts into drain-and-exit mode.
+    shutdown: Option<tokio::sync::oneshot::Sender<&'static str>>,
+}
+
+impl ForwarderHandle {
+    /// Signal a graceful shutdown with `reason`. The task drains any
+    /// buffered requests, resolves their oneshots with an error
+    /// carrying `reason`, then exits. Consumes `self`.
+    pub fn shutdown(mut self, reason: &'static str) {
+        if let Some(tx) = self.shutdown.take() {
+            let _ = tx.send(reason);
+        }
+        // Drop self — JoinHandle detaches, task completes on its own.
+        let _ = self.join_handle;
+    }
+}
+
 /// Per-client tool state.
 #[derive(Debug, Default)]
 pub struct ClientToolState {
@@ -40,9 +70,10 @@ pub struct ClientToolState {
     /// Forwarder tasks that consume `UdsToolRequest`s from the mpsc
     /// receiver created by `create_uds_tool`, register the oneshot
     /// result sender into `pending_results`, and emit an `execute_tool`
-    /// event to the wire. Keyed by tool name. Aborted on unregister or
-    /// client disconnect.
-    pub tool_request_tasks: HashMap<String, tokio::task::JoinHandle<()>>,
+    /// event to the wire. Keyed by tool name. On unregister/disconnect
+    /// we signal `shutdown` rather than `abort` so buffered requests
+    /// are drained with a clean error.
+    pub tool_request_tasks: HashMap<String, ForwarderHandle>,
 }
 
 /// Shared registry of per-client tool state, keyed by client ID.
@@ -141,7 +172,11 @@ pub fn handle_unregister_tools(
             if state.tool_names.remove(name) {
                 state.tool_request_rxs.remove(name);
                 if let Some(handle) = state.tool_request_tasks.remove(name) {
-                    handle.abort();
+                    // Graceful shutdown: task drains any buffered
+                    // UdsToolRequests and errors them with this reason
+                    // (clients see an immediate result rather than
+                    // waiting out the UdsTool timeout).
+                    handle.shutdown("Tool unregistered");
                 }
                 removed.push(name.clone());
             }
@@ -205,11 +240,12 @@ pub fn handle_client_disconnect(client_id: u64, registry: &ClientToolRegistry) -
         });
     }
 
-    // Abort any forwarder tasks owned by the disconnecting client —
-    // dropping their mpsc receivers would let them exit naturally, but
-    // explicit abort shaves a small amount of background work.
+    // Graceful shutdown of each forwarder: drain any buffered
+    // requests and reply with "Extension disconnected" so in-flight
+    // callers get an immediate error. The tasks finish on their own
+    // after the drain — no .abort() needed.
     for (_, handle) in state.tool_request_tasks {
-        handle.abort();
+        handle.shutdown("Extension disconnected");
     }
 
     state.tool_names.into_iter().collect()
@@ -282,7 +318,7 @@ pub(super) async fn dispatch_register_tools(
 /// Take the just-staged receiver for `tool_name` out of the client's
 /// `tool_request_rxs`, spawn a forwarder task that emits `execute_tool`
 /// events and parks `result_tx` senders into `pending_results`, and
-/// record the task handle for abort on unregister/disconnect.
+/// record the task handle for shutdown on unregister/disconnect.
 fn spawn_tool_forwarder_for(
     ctx: &mut super::uds::DispatchCtx<'_>,
     tool_name: &str,
@@ -297,9 +333,11 @@ fn spawn_tool_forwarder_for(
             Some(s) => s,
             None => return,
         };
-        // Abort any forwarder for the same tool (re-register case).
+        // Graceful shutdown for any forwarder this re-register replaces
+        // — drains the old rx so in-flight callers get "Tool
+        // re-registered" instead of a 30-second silent timeout.
         if let Some(old) = state.tool_request_tasks.remove(tool_name) {
-            old.abort();
+            old.shutdown("Tool re-registered");
         }
         state.tool_request_rxs.remove(tool_name)
     };
@@ -307,23 +345,29 @@ fn spawn_tool_forwarder_for(
         return;
     };
 
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let name_for_task = tool_name.to_string();
-    let handle = tokio::spawn(forward_tool_requests(
+    let join_handle = tokio::spawn(forward_tool_requests(
         client_id,
         name_for_task,
         rx,
+        shutdown_rx,
         registry.clone(),
         broadcast_tx,
     ));
+
+    let handle = ForwarderHandle {
+        join_handle,
+        shutdown: Some(shutdown_tx),
+    };
 
     let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(state) = reg.get_mut(&client_id) {
         state.tool_request_tasks.insert(tool_name.to_string(), handle);
     } else {
-        // Client disappeared between the two locks. Dropping the
-        // handle aborts it; tool exec will surface "Extension
-        // disconnected" via the existing UdsTool path.
-        handle.abort();
+        // Client disappeared between the two locks. Signal shutdown
+        // so the task drains cleanly instead of hanging.
+        handle.shutdown("Client gone");
     }
 }
 
@@ -340,73 +384,115 @@ async fn forward_tool_requests(
     client_id: u64,
     tool_name: String,
     mut rx: tokio::sync::mpsc::Receiver<UdsToolRequest>,
+    mut shutdown: tokio::sync::oneshot::Receiver<&'static str>,
     registry: ClientToolRegistry,
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
 ) {
-    while let Some(req) = rx.recv().await {
-        let UdsToolRequest {
-            tool_call_id,
-            tool_name: sent_tool,
-            arguments,
-            result_tx,
-        } = req;
-
-        // Dispatch bugs would show up here as a mismatch between the
-        // tool the UdsTool thinks it's calling and the one we're
-        // forwarding for. Catch it loudly in debug builds; in release
-        // we continue using the forwarder's own `tool_name` (the one
-        // keyed into this task at registration).
-        debug_assert_eq!(
-            sent_tool, tool_name,
-            "forwarder tool_name mismatch: registered={tool_name:?} request={sent_tool:?}"
-        );
-
-        // Stash the oneshot in `pending_results` BEFORE broadcasting
-        // `execute_tool` so the reader task's `handle_tool_result`
-        // (which takes the same registry mutex) always finds the
-        // pending entry when the client responds — even on the fastest
-        // possible local-socket round-trip.
-        {
-            let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
-            match reg.get_mut(&client_id) {
-                Some(state) => {
-                    state.pending_results.insert(tool_call_id.clone(), result_tx);
-                }
-                None => {
-                    // Client gone — drop the request; the UdsTool
-                    // timeout path surfaces a clean error upstream.
-                    continue;
-                }
+    // Hot loop: serve requests or honour a shutdown signal. `biased`
+    // so a shutdown that arrives concurrently with a buffered request
+    // preempts normal dispatch — once unregister has been requested
+    // we don't want any more execute_tool events going out, only
+    // drain-with-error for whatever is already queued.
+    let shutdown_reason: Option<&'static str> = loop {
+        tokio::select! {
+            biased;
+            reason = &mut shutdown => {
+                break reason.ok();
+            }
+            maybe_req = rx.recv() => {
+                let Some(req) = maybe_req else { break None; };
+                handle_one_request(&tool_name, req, client_id, &registry, &broadcast_tx);
             }
         }
+    };
 
-        let ev = super::protocol::AgentEvent::ExecuteTool {
-            tool_call_id: tool_call_id.clone(),
-            tool_name: tool_name.clone(),
-            arguments,
-        };
-        // Broadcast the event. If it doesn't go out (no subscribers,
-        // closed channel, or no broadcast_tx at all in single-client
-        // test mode) no client can ever send `tool_result` for it, so
-        // the pending entry we just inserted will never be drained.
-        // Proactively remove it — dropping the oneshot sender wakes
-        // `UdsTool::execute` with `Err(RecvError)`, which it maps to
-        // "Extension disconnected during execution". That is
-        // immediate and actionable, rather than a 30-second silent
-        // wait for the UdsTool timeout to elapse.
-        let delivered = match broadcast_tx {
-            Some(ref tx) => {
-                let mut line = ev.to_json_line();
-                line.push('\n');
-                tx.send(line).is_ok()
+    // Drain: any request already in the mpsc queue gets an immediate
+    // error instead of sitting forever (would be 30s timeout from
+    // UdsTool::execute). The drain is bounded by the mpsc buffer size.
+    let drain_reason = shutdown_reason.unwrap_or("Extension disconnected");
+    rx.close();
+    while let Ok(req) = rx.try_recv() {
+        let _ = req.result_tx.send(ToolResult {
+            content: drain_reason.to_string(),
+            is_error: true,
+            image_blocks: vec![],
+        });
+    }
+}
+
+/// Single-request side of `forward_tool_requests`: stash the oneshot,
+/// broadcast `execute_tool`, clean up on broadcast failure.
+fn handle_one_request(
+    tool_name: &str,
+    req: UdsToolRequest,
+    client_id: u64,
+    registry: &ClientToolRegistry,
+    broadcast_tx: &Option<tokio::sync::broadcast::Sender<String>>,
+) {
+    let UdsToolRequest {
+        tool_call_id,
+        tool_name: sent_tool,
+        arguments,
+        result_tx,
+    } = req;
+
+    // Dispatch bugs would show up here as a mismatch between the tool
+    // the UdsTool thinks it's calling and the one we're forwarding
+    // for. Catch it loudly in debug builds; in release we use the
+    // forwarder's own `tool_name` (the one keyed into this task at
+    // registration).
+    debug_assert_eq!(
+        sent_tool, tool_name,
+        "forwarder tool_name mismatch: registered={tool_name:?} request={sent_tool:?}"
+    );
+
+    // Stash the oneshot in `pending_results` BEFORE broadcasting
+    // `execute_tool` so the reader task's `handle_tool_result` (which
+    // takes the same registry mutex) always finds the pending entry
+    // when the client responds — even on the fastest possible local-
+    // socket round-trip.
+    {
+        let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+        match reg.get_mut(&client_id) {
+            Some(state) => {
+                state.pending_results.insert(tool_call_id.clone(), result_tx);
             }
-            None => false,
-        };
-        if !delivered {
-            let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(state) = reg.get_mut(&client_id) {
-                state.pending_results.remove(&tool_call_id);
+            None => {
+                // Client gone — drop the request; the UdsTool's
+                // `result_rx` then resolves with `Err(RecvError)` and
+                // surfaces "Extension disconnected during execution"
+                // upstream.
+                return;
             }
+        }
+    }
+
+    let ev = super::protocol::AgentEvent::ExecuteTool {
+        tool_call_id: tool_call_id.clone(),
+        tool_name: tool_name.to_string(),
+        arguments,
+    };
+    // Broadcast the event. If it doesn't go out (no subscribers,
+    // closed channel, or no broadcast_tx at all in single-client test
+    // mode) no client can ever send `tool_result` for it, so the
+    // pending entry we just inserted would never be drained.
+    // Proactively remove it — dropping the oneshot sender wakes
+    // `UdsTool::execute` with `Err(RecvError)`, which it maps to
+    // "Extension disconnected during execution". That is immediate
+    // and actionable, rather than a 30-second silent wait for the
+    // UdsTool timeout to elapse.
+    let delivered = match broadcast_tx {
+        Some(tx) => {
+            let mut line = ev.to_json_line();
+            line.push('\n');
+            tx.send(line).is_ok()
+        }
+        None => false,
+    };
+    if !delivered {
+        let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = reg.get_mut(&client_id) {
+            state.pending_results.remove(&tool_call_id);
         }
     }
 }
@@ -686,10 +772,13 @@ mod tests {
         drop(_rx);
 
         let (req_tx, req_rx) = tokio::sync::mpsc::channel::<UdsToolRequest>(4);
+        let (_shutdown_tx, shutdown_rx) =
+            tokio::sync::oneshot::channel::<&'static str>();
         let forwarder = tokio::spawn(super::forward_tool_requests(
             client_id,
             "weather".to_string(),
             req_rx,
+            shutdown_rx,
             registry.clone(),
             Some(broadcast_tx),
         ));
@@ -732,6 +821,86 @@ mod tests {
         let _ = forwarder.await;
     }
 
+    /// N3 — When a client unregisters a tool (or disconnects) while a
+    /// UdsToolRequest is already buffered in the mpsc but not yet
+    /// consumed by the forwarder, the request must resolve promptly
+    /// with an error carrying the shutdown reason — not sit there
+    /// waiting out the 30-second UdsTool timeout.
+    #[tokio::test]
+    async fn forwarder_drains_buffered_requests_on_shutdown() {
+        use crate::infrastructure::extensions::uds_tool::UdsToolRequest;
+        use std::time::Duration;
+
+        let registry = new_client_tool_registry();
+        let client_id: u64 = 101;
+        {
+            let mut reg = registry.lock().unwrap();
+            reg.insert(client_id, ClientToolState::default());
+        }
+
+        let (broadcast_tx, _subscriber) =
+            tokio::sync::broadcast::channel::<String>(8);
+        let (req_tx, req_rx) = tokio::sync::mpsc::channel::<UdsToolRequest>(8);
+        let (shutdown_tx, shutdown_rx) =
+            tokio::sync::oneshot::channel::<&'static str>();
+
+        // Queue the requests AND fire shutdown BEFORE spawning the
+        // forwarder. When the task starts, `biased; shutdown` wins
+        // deterministically and the subsequent drain pass picks up
+        // every already-buffered request.
+        let (r1_tx, r1_rx) = tokio::sync::oneshot::channel();
+        let (r2_tx, r2_rx) = tokio::sync::oneshot::channel();
+        req_tx
+            .send(UdsToolRequest {
+                tool_call_id: "drain-1".into(),
+                tool_name: "weather".into(),
+                arguments: "{}".into(),
+                result_tx: r1_tx,
+            })
+            .await
+            .unwrap();
+        req_tx
+            .send(UdsToolRequest {
+                tool_call_id: "drain-2".into(),
+                tool_name: "weather".into(),
+                arguments: "{}".into(),
+                result_tx: r2_tx,
+            })
+            .await
+            .unwrap();
+        shutdown_tx.send("Tool unregistered").unwrap();
+
+        // Drop our sender so the forwarder's drain loop eventually
+        // sees an empty channel. (It already exits after the shutdown
+        // branch fires, but closing the channel is defensive.)
+        drop(req_tx);
+
+        let forwarder = tokio::spawn(super::forward_tool_requests(
+            client_id,
+            "weather".to_string(),
+            req_rx,
+            shutdown_rx,
+            registry.clone(),
+            Some(broadcast_tx),
+        ));
+
+        let r1 = tokio::time::timeout(Duration::from_millis(500), r1_rx)
+            .await
+            .expect("buffered request 1 hung past 500ms")
+            .expect("result_tx dropped without send");
+        let r2 = tokio::time::timeout(Duration::from_millis(500), r2_rx)
+            .await
+            .expect("buffered request 2 hung past 500ms")
+            .expect("result_tx dropped without send");
+
+        assert!(r1.is_error);
+        assert!(r1.content.contains("unregistered"));
+        assert!(r2.is_error);
+        assert!(r2.content.contains("unregistered"));
+
+        let _ = forwarder.await;
+    }
+
     /// Control case: when the broadcast DOES have a live subscriber
     /// the forwarder leaves the pending entry in place (the reader
     /// task will clear it when `tool_result` comes back).
@@ -751,10 +920,13 @@ mod tests {
             tokio::sync::broadcast::channel::<String>(8);
 
         let (req_tx, req_rx) = tokio::sync::mpsc::channel::<UdsToolRequest>(4);
+        let (_shutdown_tx, shutdown_rx) =
+            tokio::sync::oneshot::channel::<&'static str>();
         let forwarder = tokio::spawn(super::forward_tool_requests(
             client_id,
             "weather".to_string(),
             req_rx,
+            shutdown_rx,
             registry.clone(),
             Some(broadcast_tx),
         ));
