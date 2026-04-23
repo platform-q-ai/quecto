@@ -1,4 +1,5 @@
 pub mod agent_loop;
 pub mod context_pruning;
+pub mod extension_tool;
 pub mod onboard;
 pub mod subagent;

@@ -14,7 +14,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use crate::domain::tool::{ToolDefinition, ToolResult};
-use crate::infrastructure::extensions::uds_tool::{UdsToolRequest, create_uds_tool};
+use crate::application::extension_tool::ToolInvocation;
+use crate::infrastructure::extensions::uds_tool::create_uds_tool;
 
 use super::protocol::{AgentEvent, ExtensionInfo, ToolRegistration};
 
@@ -24,7 +25,7 @@ const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 30;
 /// Handle to a spawned forwarder task. Stored alongside a
 /// cooperative shutdown `oneshot` so unregister / disconnect can ask
 /// the task to drain its inbound mpsc of any buffered
-/// `UdsToolRequest`s — resolving their oneshots with an immediate
+/// `ToolInvocation`s — resolving their oneshots with an immediate
 /// error — instead of abort-killing the task and leaving those
 /// in-flight callers to wait out the 30-second UdsTool timeout.
 #[derive(Debug)]
@@ -66,8 +67,8 @@ pub struct ClientToolState {
     /// takes ownership and spawns a forwarder task for each — at which
     /// point the rx is moved out and replaced by an entry in
     /// `tool_request_tasks`.
-    pub tool_request_rxs: HashMap<String, tokio::sync::mpsc::Receiver<UdsToolRequest>>,
-    /// Forwarder tasks that consume `UdsToolRequest`s from the mpsc
+    pub tool_request_rxs: HashMap<String, tokio::sync::mpsc::Receiver<ToolInvocation>>,
+    /// Forwarder tasks that consume `ToolInvocation`s from the mpsc
     /// receiver created by `create_uds_tool`, register the oneshot
     /// result sender into `pending_results`, and emit an `execute_tool`
     /// event to the wire. Keyed by tool name. On unregister/disconnect
@@ -173,7 +174,7 @@ pub fn handle_unregister_tools(
                 state.tool_request_rxs.remove(name);
                 if let Some(handle) = state.tool_request_tasks.remove(name) {
                     // Graceful shutdown: task drains any buffered
-                    // UdsToolRequests and errors them with this reason
+                    // ToolInvocations and errors them with this reason
                     // (clients see an immediate result rather than
                     // waiting out the UdsTool timeout).
                     handle.shutdown("Tool unregistered");
@@ -371,7 +372,7 @@ fn spawn_tool_forwarder_for(
     }
 }
 
-/// Drain `UdsToolRequest`s for a single (client, tool) pair: stash the
+/// Drain `ToolInvocation`s for a single (client, tool) pair: stash the
 /// oneshot result sender in `pending_results` so `tool_result` handlers
 /// can resolve it, then emit an `execute_tool` event to the wire.
 ///
@@ -383,7 +384,7 @@ fn spawn_tool_forwarder_for(
 async fn forward_tool_requests(
     client_id: u64,
     tool_name: String,
-    mut rx: tokio::sync::mpsc::Receiver<UdsToolRequest>,
+    mut rx: tokio::sync::mpsc::Receiver<ToolInvocation>,
     mut shutdown: tokio::sync::oneshot::Receiver<&'static str>,
     registry: ClientToolRegistry,
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
@@ -412,7 +413,7 @@ async fn forward_tool_requests(
     let drain_reason = shutdown_reason.unwrap_or("Extension disconnected");
     rx.close();
     while let Ok(req) = rx.try_recv() {
-        let _ = req.result_tx.send(ToolResult {
+        let _ = req.reply.send(ToolResult {
             content: drain_reason.to_string(),
             is_error: true,
             image_blocks: vec![],
@@ -424,16 +425,16 @@ async fn forward_tool_requests(
 /// broadcast `execute_tool`, clean up on broadcast failure.
 fn handle_one_request(
     tool_name: &str,
-    req: UdsToolRequest,
+    req: ToolInvocation,
     client_id: u64,
     registry: &ClientToolRegistry,
     broadcast_tx: &Option<tokio::sync::broadcast::Sender<String>>,
 ) {
-    let UdsToolRequest {
+    let ToolInvocation {
         tool_call_id,
         tool_name: sent_tool,
         arguments,
-        result_tx,
+        reply,
     } = req;
 
     // Dispatch bugs would show up here as a mismatch between the tool
@@ -455,7 +456,7 @@ fn handle_one_request(
         let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
         match reg.get_mut(&client_id) {
             Some(state) => {
-                state.pending_results.insert(tool_call_id.clone(), result_tx);
+                state.pending_results.insert(tool_call_id.clone(), reply);
             }
             None => {
                 // Client gone — drop the request; the UdsTool's
@@ -757,7 +758,7 @@ mod tests {
     /// disconnected during execution" immediately.
     #[tokio::test]
     async fn forwarder_cleans_pending_when_broadcast_has_no_subscribers() {
-        use crate::infrastructure::extensions::uds_tool::UdsToolRequest;
+        use crate::application::extension_tool::ToolInvocation;
         use std::time::Duration;
 
         let registry = new_client_tool_registry();
@@ -771,7 +772,7 @@ mod tests {
         let (broadcast_tx, _rx) = tokio::sync::broadcast::channel::<String>(8);
         drop(_rx);
 
-        let (req_tx, req_rx) = tokio::sync::mpsc::channel::<UdsToolRequest>(4);
+        let (req_tx, req_rx) = tokio::sync::mpsc::channel::<ToolInvocation>(4);
         let (_shutdown_tx, shutdown_rx) =
             tokio::sync::oneshot::channel::<&'static str>();
         let forwarder = tokio::spawn(super::forward_tool_requests(
@@ -783,13 +784,13 @@ mod tests {
             Some(broadcast_tx),
         ));
 
-        let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+        let (reply_tx, result_rx) = tokio::sync::oneshot::channel();
         req_tx
-            .send(UdsToolRequest {
+            .send(ToolInvocation {
                 tool_call_id: "uds-test-1".into(),
                 tool_name: "weather".into(),
                 arguments: "{}".into(),
-                result_tx,
+                reply: reply_tx,
             })
             .await
             .unwrap();
@@ -822,13 +823,13 @@ mod tests {
     }
 
     /// N3 — When a client unregisters a tool (or disconnects) while a
-    /// UdsToolRequest is already buffered in the mpsc but not yet
+    /// ToolInvocation is already buffered in the mpsc but not yet
     /// consumed by the forwarder, the request must resolve promptly
     /// with an error carrying the shutdown reason — not sit there
     /// waiting out the 30-second UdsTool timeout.
     #[tokio::test]
     async fn forwarder_drains_buffered_requests_on_shutdown() {
-        use crate::infrastructure::extensions::uds_tool::UdsToolRequest;
+        use crate::application::extension_tool::ToolInvocation;
         use std::time::Duration;
 
         let registry = new_client_tool_registry();
@@ -840,7 +841,7 @@ mod tests {
 
         let (broadcast_tx, _subscriber) =
             tokio::sync::broadcast::channel::<String>(8);
-        let (req_tx, req_rx) = tokio::sync::mpsc::channel::<UdsToolRequest>(8);
+        let (req_tx, req_rx) = tokio::sync::mpsc::channel::<ToolInvocation>(8);
         let (shutdown_tx, shutdown_rx) =
             tokio::sync::oneshot::channel::<&'static str>();
 
@@ -851,20 +852,20 @@ mod tests {
         let (r1_tx, r1_rx) = tokio::sync::oneshot::channel();
         let (r2_tx, r2_rx) = tokio::sync::oneshot::channel();
         req_tx
-            .send(UdsToolRequest {
+            .send(ToolInvocation {
                 tool_call_id: "drain-1".into(),
                 tool_name: "weather".into(),
                 arguments: "{}".into(),
-                result_tx: r1_tx,
+                reply: r1_tx,
             })
             .await
             .unwrap();
         req_tx
-            .send(UdsToolRequest {
+            .send(ToolInvocation {
                 tool_call_id: "drain-2".into(),
                 tool_name: "weather".into(),
                 arguments: "{}".into(),
-                result_tx: r2_tx,
+                reply: r2_tx,
             })
             .await
             .unwrap();
@@ -906,7 +907,7 @@ mod tests {
     /// task will clear it when `tool_result` comes back).
     #[tokio::test]
     async fn forwarder_leaves_pending_when_broadcast_delivered() {
-        use crate::infrastructure::extensions::uds_tool::UdsToolRequest;
+        use crate::application::extension_tool::ToolInvocation;
         use std::time::Duration;
 
         let registry = new_client_tool_registry();
@@ -919,7 +920,7 @@ mod tests {
         let (broadcast_tx, mut broadcast_rx) =
             tokio::sync::broadcast::channel::<String>(8);
 
-        let (req_tx, req_rx) = tokio::sync::mpsc::channel::<UdsToolRequest>(4);
+        let (req_tx, req_rx) = tokio::sync::mpsc::channel::<ToolInvocation>(4);
         let (_shutdown_tx, shutdown_rx) =
             tokio::sync::oneshot::channel::<&'static str>();
         let forwarder = tokio::spawn(super::forward_tool_requests(
@@ -931,13 +932,13 @@ mod tests {
             Some(broadcast_tx),
         ));
 
-        let (result_tx, _result_rx) = tokio::sync::oneshot::channel();
+        let (reply_tx, _result_rx) = tokio::sync::oneshot::channel();
         req_tx
-            .send(UdsToolRequest {
+            .send(ToolInvocation {
                 tool_call_id: "uds-test-2".into(),
                 tool_name: "weather".into(),
                 arguments: "{}".into(),
-                result_tx,
+                reply: reply_tx,
             })
             .await
             .unwrap();

@@ -9,6 +9,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use crate::application::extension_tool::ToolInvocation;
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 
@@ -18,19 +19,11 @@ use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 /// for a `tool_result` response via a oneshot channel.
 pub struct UdsExtensionTool {
     definition: ToolDefinition,
-    /// Sender to deliver execute_tool requests to the client.
-    /// Each request contains (tool_call_id, arguments, result_sender).
-    exec_tx: tokio::sync::mpsc::Sender<UdsToolRequest>,
+    /// Sender delivers `ToolInvocation`s (the application-layer port
+    /// type) to whichever transport is registered for this tool.
+    exec_tx: tokio::sync::mpsc::Sender<ToolInvocation>,
     /// Maximum time to wait for a tool_result response.
     timeout: std::time::Duration,
-}
-
-/// A pending tool execution request.
-pub struct UdsToolRequest {
-    pub tool_call_id: String,
-    pub tool_name: String,
-    pub arguments: String,
-    pub result_tx: tokio::sync::oneshot::Sender<ToolResult>,
 }
 
 impl std::fmt::Debug for UdsExtensionTool {
@@ -45,7 +38,7 @@ impl UdsExtensionTool {
     /// Create a new UDS extension tool.
     pub fn new(
         definition: ToolDefinition,
-        exec_tx: tokio::sync::mpsc::Sender<UdsToolRequest>,
+        exec_tx: tokio::sync::mpsc::Sender<ToolInvocation>,
         timeout: std::time::Duration,
     ) -> Self {
         Self {
@@ -74,11 +67,11 @@ impl Tool for UdsExtensionTool {
             let tool_call_id = format!("uds-{}", uuid_v4());
             let (result_tx, result_rx) = tokio::sync::oneshot::channel();
 
-            let request = UdsToolRequest {
+            let request = ToolInvocation {
                 tool_call_id,
                 tool_name: tool_name.clone(),
                 arguments,
-                result_tx,
+                reply: result_tx,
             };
 
             // Send the execution request to the client handler.
@@ -140,7 +133,7 @@ fn uuid_v4() -> String {
 pub fn create_uds_tool(
     definition: ToolDefinition,
     timeout: std::time::Duration,
-) -> (Arc<dyn Tool>, tokio::sync::mpsc::Receiver<UdsToolRequest>) {
+) -> (Arc<dyn Tool>, tokio::sync::mpsc::Receiver<ToolInvocation>) {
     let (tx, rx) = tokio::sync::mpsc::channel(16);
     let tool = Arc::new(UdsExtensionTool::new(definition, tx, timeout));
     (tool, rx)
@@ -167,7 +160,7 @@ mod tests {
         let handle = tokio::spawn(async move {
             let req = rx.recv().await.unwrap();
             assert_eq!(req.tool_name, "weather");
-            let _ = req.result_tx.send(ToolResult {
+            let _ = req.reply.send(ToolResult {
                 content: "22°C, sunny".into(),
                 is_error: false,
                 image_blocks: vec![],
@@ -210,7 +203,7 @@ mod tests {
         // Receive the request but drop the result_tx without sending.
         let handle = tokio::spawn(async move {
             let req = rx.recv().await.unwrap();
-            drop(req.result_tx);
+            drop(req.reply);
         });
 
         let result = tool.execute("{}").await.unwrap();
