@@ -1,0 +1,194 @@
+# chainlink chain.toml — declared architecture exceptions.
+#
+# This file is part of the committed contract consumed by `chainlink scan`.
+# Every entry here is an intentional opt-out: the noun/port/feature is known
+# to sit outside the feature→noun→port→adapter chain and should not raise
+# warnings. Review these entries whenever the domain changes.
+
+# ────────────────────────────────────────────────────────────────────────────
+# Features that describe engineering concerns rather than domain behaviour.
+# TUI polish, release/build hygiene, sandbox hardening, repo docs and
+# architecture-boundary tests never exercise a domain noun; they describe
+# presentational or meta-level invariants.
+# ────────────────────────────────────────────────────────────────────────────
+non_behavioral_features = [
+  # TUI presentation / polish — no domain noun involved
+  "tests/features/tui_abort_pending_clear.feature",
+  "tests/features/tui_agent_cmd_visibility.feature",
+  "tests/features/tui_autocomplete_enter.feature",
+  "tests/features/tui_autocomplete_nav.feature",
+  "tests/features/tui_border_replication.feature",
+  "tests/features/tui_chat_spacing.feature",
+  "tests/features/tui_context_usage.feature",
+  "tests/features/tui_ctrl_c_clear.feature",
+  "tests/features/tui_ctrl_d_exit.feature",
+  "tests/features/tui_esc_abort_race.feature",
+  "tests/features/tui_esc_abort_recovery.feature",
+  "tests/features/tui_foundation.feature",
+  "tests/features/tui_kitty_ctrl_letter.feature",
+  "tests/features/tui_model_selector.feature",
+  "tests/features/tui_mouse_highlight.feature",
+  "tests/features/tui_mouse_selection.feature",
+  "tests/features/tui_new_reset_context.feature",
+  "tests/features/tui_phase3.feature",
+  "tests/features/tui_phase4.feature",
+  "tests/features/tui_phase7.feature",
+  "tests/features/tui_phase8.feature",
+  "tests/features/tui_pid_safety.feature",
+  "tests/features/tui_pi_style_tools.feature",
+  "tests/features/tui_stdin_buffer_cap.feature",
+  "tests/features/tui_stdin_retry.feature",
+  "tests/features/tui_subagent_bar_expiry.feature",
+  "tests/features/tui_subagent_bar_fixes.feature",
+  "tests/features/tui_table_code_cell.feature",
+  "tests/features/tui_table_safety.feature",
+  "tests/features/tui_terminal_restore.feature",
+  "tests/features/tui_tool_output_cr.feature",
+
+  # Engineering hygiene / meta-features
+  "tests/features/architecture.feature",
+  "tests/features/release_profile.feature",
+  "tests/features/repo_docs.feature",
+  "tests/features/sandbox_hardening.feature",
+
+  # TUI widgets for subagents — presentational
+  "tests/features/subagent_widget.feature",
+
+  # Tool-port features: exercise a Tool trait implementation, not a domain
+  # noun. Tool is a port; its behaviour is contract-tested per adapter.
+  "tests/features/find.feature",
+  "tests/features/grep.feature",
+  "tests/features/ls.feature",
+  "tests/features/spawn_tool.feature",
+  "tests/features/ensure_tool.feature",
+  "tests/features/nsjail_exec.feature",
+  "tests/features/truncate.feature",
+  "tests/features/path_utils.feature",
+
+  # CLI / config / auth plumbing — invoke the system but exercise no single
+  # domain noun directly; their behaviour is driven by composition, not by
+  # a feature-visible aggregate.
+  "tests/features/cli.feature",
+  "tests/features/config.feature",
+  "tests/features/auth.feature",
+  "tests/features/agent_cli.feature",
+  "tests/features/onboard.feature",
+  "tests/features/security.feature",
+  "tests/features/extensions.feature",
+
+  # Subagent orchestration — tracked nouns (AgentInfo, AgentResult,
+  # AgentProgressEvent) are untracked_nouns per the design: internal
+  # orchestration types, not feature-visible aggregates.
+  "tests/features/subagent.feature",
+  "tests/features/subagent_monitor.feature",
+  "tests/features/subagent_protocol.feature",
+  "tests/features/agent_cmd_await.feature",
+  "tests/features/abort_double_fire.feature",
+
+  # E2E harness features — they compose the whole stack; per-noun tags
+  # would be noise. Individual unit-level features already cover the nouns.
+  "tests/features/e2e_agentic_loop.feature",
+  "tests/features/e2e_providers.feature",
+  "tests/features/e2e_real_llm_entrypoints.feature",
+  "tests/features/e2e_real_llm_entrypoints_matrix.feature",
+  "tests/features/e2e_real_llm_workflow_v2.feature",
+  "tests/features/e2e_repl_agents.feature",
+  "tests/features/e2e_safety.feature",
+
+  # quecto-api — HTTP/WS gateway crate. Its domain is the gateway itself;
+  # it does not share the quecto agent's domain nouns.
+  "quecto-api/tests/features/health.feature",
+  "quecto-api/tests/features/prompt.feature",
+  "quecto-api/tests/features/state.feature",
+  "quecto-api/tests/features/websocket.feature",
+]
+
+# ────────────────────────────────────────────────────────────────────────────
+# Domain nouns that are intentionally internal: shared errors, value
+# sub-objects of a tracked aggregate, provider-protocol DTOs, workflow
+# engine internals. They have no business appearing in Gherkin prose.
+# ────────────────────────────────────────────────────────────────────────────
+untracked_nouns = [
+  # Shared error enums
+  "DomainError",
+
+  # Message sub-types — Message itself is the tracked aggregate
+  "CostInfo",
+  "LlmResponse",
+  "ModelPricing",
+  "StopReason",
+  "ThinkingBlock",
+  "UsageInfo",
+  "UserImageBlock",
+
+  # Provider-layer DTOs — carried by LlmProvider port, not user-facing
+  "CancelFlag",
+  "ChatRequest",
+  "EffortLevel",
+  "RequestMetadata",
+  "StreamEvent",
+  "ThinkingLevel",
+  "ToolChoice",
+
+  # Audit sub-types — AuditEvent is the tracked noun
+  "AuditEnvelope",
+  "AuditIssue",
+
+  # Session internals — Session aggregates these
+  "OrphanDiag",
+  "SpillEntry",
+  "SpillIndex",
+
+  # Skill loader plumbing
+  "SkillFrontmatter",
+  "SkillSource",
+
+  # Subagent configuration value object
+  "SubagentConfig",
+
+  # Agent progress/result types — internal to agent orchestration
+  "AgentInfo",
+  "AgentProgressEvent",
+  "AgentResult",
+
+  # Tool plumbing
+  "ImageBlock",
+  "ToolDefinition",
+
+  # Workflow engine — experimental subsystem not yet feature-driven
+  "WorkflowConfig",
+  "WorkflowEngine",
+  "WorkflowError",
+  "WorkflowGuardRule",
+  "WorkflowMode",
+  "WorkflowProgress",
+  "WorkflowRun",
+  "WorkflowRunPersisted",
+  "WorkflowSnapshot",
+  "WorkflowStepStatus",
+  "WorkflowTemplate",
+  "WorkflowTemplateStep",
+  "WorkflowTemplateSummary",
+]
+
+# ────────────────────────────────────────────────────────────────────────────
+# Infrastructure modules that legitimately contain impl blocks without
+# implementing a declared port: configuration, error types, OAuth clients,
+# sandbox helpers, SSE transport plumbing.
+# ────────────────────────────────────────────────────────────────────────────
+support_modules = [
+  "src/infrastructure/auth/credential_store.rs",
+  "src/infrastructure/auth/oauth.rs",
+  "src/infrastructure/config.rs",
+  "src/infrastructure/extensions/registry.rs",
+  "src/infrastructure/persistence/memory_store.rs",
+  "src/infrastructure/providers/anthropic/anthropic_sse.rs",
+  "src/infrastructure/providers/error.rs",
+  "src/infrastructure/providers/mod.rs",
+  "src/infrastructure/providers/openai_sse.rs",
+  "src/infrastructure/security/sandbox.rs",
+  "src/infrastructure/tools/bash/nsjail.rs",
+  "src/infrastructure/tools/subagent_registry.rs",
+]
+
+untracked_ports = []

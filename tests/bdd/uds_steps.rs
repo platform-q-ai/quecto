@@ -1356,6 +1356,12 @@ fn mc_drive_clients(world: &mut QuectoWorld, actions: McClientActions<'_>) {
 
     mc_disconnect_early(&mut streams, disconnected);
     mc_send_commands(&mut streams, connected, disconnected, commands);
+    // Reactive phase: if any client has auto-replies queued (e.g. for
+    // execute_tool events that only exist after the LLM is consulted),
+    // read-and-react on its stream before the final collection step.
+    if !world.mc_auto_replies.is_empty() {
+        mc_reactive_auto_replies(world, &mut streams, connected, disconnected);
+    }
     std::thread::sleep(std::time::Duration::from_secs(2));
     mc_collect_events(world, &mut streams, connected, disconnected);
 
@@ -1447,8 +1453,108 @@ fn mc_collect_events(
                 .filter_map(|l| l.ok())
                 .filter(|l| !l.is_empty())
                 .collect();
-            world.mc_client_events.insert(cid, events);
+            // Append — the reactive phase may already have populated
+            // some events for this client; preserve them.
+            world
+                .mc_client_events
+                .entry(cid)
+                .or_default()
+                .extend(events);
             let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
+    }
+}
+
+/// Reactive auto-replies: watch each client's stream for `execute_tool`
+/// events and send `tool_result` back using the captured `toolCallId`.
+/// Lines read here are saved into `world.mc_client_events` so the final
+/// collection step doesn't lose them.
+///
+/// Deadline is conservative — the LLM roundtrip is mocked and fast, but
+/// the agent's internal event pump introduces a small amount of latency.
+fn mc_reactive_auto_replies(
+    world: &mut QuectoWorld,
+    streams: &mut HashMap<u32, std::os::unix::net::UnixStream>,
+    connected: &[u32],
+    disconnected: &[u32],
+) {
+    use std::io::{BufRead, BufReader, Write};
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+
+    // Snapshot pending replies per client (Vec<(tool_name, content)>).
+    let mut pending: HashMap<u32, Vec<(String, String)>> = world.mc_auto_replies.clone();
+
+    for &cid in connected {
+        if disconnected.contains(&cid) {
+            continue;
+        }
+        let Some(stream) = streams.get_mut(&cid) else {
+            continue;
+        };
+        let Some(replies) = pending.get_mut(&cid) else {
+            continue;
+        };
+        if replies.is_empty() {
+            continue;
+        }
+
+        // Short per-read timeout so the loop can check its deadline.
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_millis(250)))
+            .ok();
+
+        let stream_for_read = match stream.try_clone() {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let mut reader = BufReader::new(stream_for_read);
+
+        while !replies.is_empty() && std::time::Instant::now() < deadline {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => break, // stream closed
+                Ok(_) => {}
+                Err(_) => {
+                    // timed out on this read; loop again
+                    continue;
+                }
+            }
+            let trimmed = line.trim_end_matches('\n').to_string();
+            if trimmed.is_empty() {
+                continue;
+            }
+            // Save every line so mc_collect_events doesn't lose it.
+            world
+                .mc_client_events
+                .entry(cid)
+                .or_default()
+                .push(trimmed.clone());
+
+            // Is this an execute_tool event we should reply to?
+            let Ok(ev) = serde_json::from_str::<serde_json::Value>(&trimmed) else {
+                continue;
+            };
+            if ev["type"].as_str() != Some("execute_tool") {
+                continue;
+            }
+            let Some(tool_name) = ev["toolName"].as_str() else {
+                continue;
+            };
+            let Some(idx) = replies.iter().position(|(t, _)| t == tool_name) else {
+                continue;
+            };
+            let (_, content) = replies.remove(idx);
+            let tool_call_id = ev["toolCallId"].as_str().unwrap_or("").to_string();
+
+            let reply = serde_json::json!({
+                "type": "tool_result",
+                "toolCallId": tool_call_id,
+                "content": content,
+                "isError": false,
+            });
+            let _ = writeln!(stream, "{reply}");
+            let _ = stream.flush();
         }
     }
 }
@@ -2515,5 +2621,178 @@ fn then_client_not_received_workflow(world: &mut QuectoWorld, client_id: u32) {
     assert!(
         wf_events.is_empty(),
         "expected client {client_id} to have received NO workflow_state events, got: {wf_events:#?}",
+    );
+}
+
+// ─── UDS extension execute_tool round-trip (FIX) ─────────────────────────────
+
+/// Parameterised version of "the mock LLM returns a tool call then a text
+/// response": lets us drive the agent into invoking ANY tool, not just bash.
+#[given(
+    expr = "the mock LLM returns a tool call for tool {string} with arguments {string} then text {string}"
+)]
+fn given_mock_llm_tool_call_named(
+    world: &mut QuectoWorld,
+    tool_name: String,
+    arguments_raw: String,
+    text: String,
+) {
+    assert!(
+        world._wiremock_server_uri.is_some(),
+        "mock server URI not set"
+    );
+
+    // Gherkin's {} placeholder gives us the raw argument string — strip any
+    // surrounding quotes so callers can write either  {"city":"X"}  or  "…"
+    let arguments = arguments_raw;
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+
+        let tool_call_body = serde_json::json!({
+            "id": "chatcmpl-tool",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": format!("call_{tool_name}_1"),
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": arguments,
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        });
+        let text_body = serde_json::json!({
+            "id": "chatcmpl-text",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": text },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 15, "completion_tokens": 5, "total_tokens": 20}
+        });
+
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(tool_call_body))
+            .up_to_n_times(1)
+            .with_priority(2)
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(text_body))
+            .mount(&server)
+            .await;
+
+        e2e_steps::rewrite_config_to_uri(world, &new_uri);
+        std::mem::forget(server);
+    });
+    std::mem::forget(rt);
+}
+
+/// Queue a reactive auto-reply: when the harness later observes an
+/// `execute_tool` event with the matching tool name on this client's
+/// stream, it will auto-send a `tool_result` carrying `content`.
+#[when(
+    expr = "client {int} replies to execute_tool for {string} with content {string}"
+)]
+fn when_client_auto_reply(
+    world: &mut QuectoWorld,
+    client_id: u32,
+    tool_name: String,
+    content: String,
+) {
+    world
+        .mc_auto_replies
+        .entry(client_id)
+        .or_default()
+        .push((tool_name, content));
+}
+
+fn find_execute_tool_for(events: &[String], tool_name: &str) -> Option<serde_json::Value> {
+    events.iter().find_map(|line| {
+        let ev: serde_json::Value = serde_json::from_str(line).ok()?;
+        if ev["type"].as_str() == Some("execute_tool")
+            && ev["toolName"].as_str() == Some(tool_name)
+        {
+            Some(ev)
+        } else {
+            None
+        }
+    })
+}
+
+#[then(expr = "client {int} should have received an execute_tool for tool {string}")]
+fn then_client_received_execute_tool(
+    world: &mut QuectoWorld,
+    client_id: u32,
+    tool_name: String,
+) {
+    execute_multi_client_uds(world);
+    let events = world
+        .mc_client_events
+        .get(&client_id)
+        .expect("no events for client");
+    let ev = find_execute_tool_for(events, &tool_name);
+    assert!(
+        ev.is_some(),
+        "expected client {client_id} to receive execute_tool for tool {tool_name:?}\nevents: {events:#?}",
+    );
+}
+
+#[then(expr = "client {int} should not have received an execute_tool for tool {string}")]
+fn then_client_did_not_receive_execute_tool(
+    world: &mut QuectoWorld,
+    client_id: u32,
+    tool_name: String,
+) {
+    execute_multi_client_uds(world);
+    let events = world
+        .mc_client_events
+        .get(&client_id)
+        .cloned()
+        .unwrap_or_default();
+    let leaked = find_execute_tool_for(&events, &tool_name);
+    assert!(
+        leaked.is_none(),
+        "client {client_id} unexpectedly received an execute_tool for tool {tool_name:?}\nevents: {events:#?}",
+    );
+}
+
+#[then(
+    expr = "the execute_tool event for {string} should carry arguments containing {string}"
+)]
+fn then_execute_tool_args_contain(
+    world: &mut QuectoWorld,
+    tool_name: String,
+    needle: String,
+) {
+    execute_multi_client_uds(world);
+    let mut found_args: Option<String> = None;
+    for events in world.mc_client_events.values() {
+        if let Some(ev) = find_execute_tool_for(events, &tool_name) {
+            if let Some(args) = ev["arguments"].as_str() {
+                found_args = Some(args.to_string());
+                break;
+            }
+        }
+    }
+    let args = found_args
+        .unwrap_or_else(|| panic!("no execute_tool for {tool_name:?} observed on any client"));
+    assert!(
+        args.contains(&needle),
+        "execute_tool arguments for {tool_name:?} did not contain {needle:?}\nactual: {args}",
     );
 }

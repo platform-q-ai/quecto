@@ -3,7 +3,7 @@ Feature: TUI Phase 6 — Session Tree, Forking, Compaction, and Auto-Retry
   Advanced session management and resilience features.
 
   Scenario: Session info displays stats
-    Given a session info component with key "cli:default" and 10 messages
+    Given a [session] info component with key "cli:default" and 10 messages
     When the component renders at width 60
     Then the rendered output should contain "cli:default"
     And the rendered output should contain "10"
@@ -35,12 +35,12 @@ Feature: TUI Phase 6 — Session Tree, Forking, Compaction, and Auto-Retry
     Then the retry should be cancelled
 
   Scenario: Compaction indicator shows progress
-    Given a compaction component with message "Auto-compacting..."
+    Given a compaction component with [message] "Auto-compacting..."
     When the component renders at width 60
     Then the rendered output should contain "Auto-compacting"
 
   Scenario: Message queue holds messages during compaction
-    Given a message queue
+    Given a [message] queue
     When messages "first" and "second" are queued
     Then the queue should contain 2 messages
     When the queue is drained

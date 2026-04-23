@@ -15,7 +15,7 @@ Feature: EditTool — Pi parity
       | oldText | hello   |
       | newText | world   |
     Then the file "code.py" should contain "print('world')"
-    And the tool result should not be an error
+    And the [ToolResult] should not be an error
 
   @done
   Scenario: oldText not found returns error
@@ -25,8 +25,8 @@ Feature: EditTool — Pi parity
       | path    | f.txt |
       | oldText | xyz   |
       | newText | abc   |
-    Then the tool result should be an error
-    And the tool result should contain "not found"
+    Then the [ToolResult] should be an error
+    And the [ToolResult] should contain "not found"
 
   @done
   Scenario: Ambiguous match returns error
@@ -36,8 +36,8 @@ Feature: EditTool — Pi parity
       | path    | dup.txt |
       | oldText | x = 1   |
       | newText | x = 2   |
-    Then the tool result should be an error
-    And the tool result should contain "matches"
+    Then the [ToolResult] should be an error
+    And the [ToolResult] should contain "matches"
 
   # --- Fuzzy content matching ---
 
@@ -47,7 +47,7 @@ Feature: EditTool — Pi parity
     And a file "quotes.txt" exists with content "it's a test"
     When the agent executes tool "edit" with smart-single-quote oldText on "quotes.txt"
     Then the file "quotes.txt" should contain "it's replaced"
-    And the tool result should not be an error
+    And the [ToolResult] should not be an error
 
   @done
   Scenario: Fuzzy match normalises smart double quotes in oldText
@@ -55,7 +55,7 @@ Feature: EditTool — Pi parity
     And a file "dquotes.txt" exists with content "say \"hello\" now"
     When the agent executes tool "edit" with smart-double-quote oldText on "dquotes.txt"
     Then the file "dquotes.txt" should contain "say \"goodbye\" now"
-    And the tool result should not be an error
+    And the [ToolResult] should not be an error
 
   @done
   Scenario: Fuzzy match normalises Unicode en-dash in oldText
@@ -63,7 +63,7 @@ Feature: EditTool — Pi parity
     And a file "dash.txt" exists with content "hello - world"
     When the agent executes tool "edit" with en-dash oldText on "dash.txt"
     Then the file "dash.txt" should contain "replaced"
-    And the tool result should not be an error
+    And the [ToolResult] should not be an error
 
   @done
   Scenario: Fuzzy match normalises trailing whitespace per line
@@ -71,7 +71,7 @@ Feature: EditTool — Pi parity
     And a file "spaces.txt" exists with content "hello\nworld"
     When the agent executes tool "edit" with trailing-whitespace oldText on "spaces.txt"
     Then the file "spaces.txt" should contain "replaced"
-    And the tool result should not be an error
+    And the [ToolResult] should not be an error
 
   # --- Line-ending preservation ---
 
@@ -85,7 +85,7 @@ Feature: EditTool — Pi parity
       | newText | EDITED  |
     Then the file "win.txt" should contain CRLF line endings
     And the file "win.txt" should contain "EDITED"
-    And the tool result should not be an error
+    And the [ToolResult] should not be an error
 
   @done
   Scenario: LF line endings preserved after edit
@@ -97,7 +97,7 @@ Feature: EditTool — Pi parity
       | newText | EDITED   |
     Then the file "unix.txt" should not contain CRLF line endings
     And the file "unix.txt" should contain "EDITED"
-    And the tool result should not be an error
+    And the [ToolResult] should not be an error
 
   # --- BOM preservation ---
 
@@ -111,7 +111,7 @@ Feature: EditTool — Pi parity
       | newText | hi      |
     Then the file "bom.txt" should start with a UTF-8 BOM
     And the file "bom.txt" should contain "hi world"
-    And the tool result should not be an error
+    And the [ToolResult] should not be an error
 
   # --- No-op detection ---
 
@@ -123,8 +123,8 @@ Feature: EditTool — Pi parity
       | path    | noop.txt    |
       | oldText | hello world |
       | newText | hello world |
-    Then the tool result should be an error
-    And the tool result should contain "identical"
+    Then the [ToolResult] should be an error
+    And the [ToolResult] should contain "identical"
 
   # --- Improved diff output ---
 
@@ -136,10 +136,10 @@ Feature: EditTool — Pi parity
       | path    | multi.txt |
       | oldText | line3     |
       | newText | CHANGED   |
-    Then the tool result should contain "@@"
-    And the tool result should contain "-line3"
-    And the tool result should contain "+CHANGED"
-    And the tool result should not be an error
+    Then the [ToolResult] should contain "@@"
+    And the [ToolResult] should contain "-line3"
+    And the [ToolResult] should contain "+CHANGED"
+    And the [ToolResult] should not be an error
 
   @done
   Scenario: Diff context includes 4 surrounding lines
@@ -149,8 +149,8 @@ Feature: EditTool — Pi parity
       | path    | ctx.txt |
       | oldText | f       |
       | newText | F       |
-    Then the tool result should contain "b"
-    And the tool result should contain "c"
-    And the tool result should contain "d"
-    And the tool result should contain "e"
-    And the tool result should not be an error
+    Then the [ToolResult] should contain "b"
+    And the [ToolResult] should contain "c"
+    And the [ToolResult] should contain "d"
+    And the [ToolResult] should contain "e"
+    And the [ToolResult] should not be an error

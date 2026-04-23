@@ -32,12 +32,12 @@ Feature: TUI Phase 5 — Overlay System and Settings UI
     Then focus should return to the previous component
 
   Scenario: Confirm dialog blocks on Yes/No
-    Given a confirm dialog with message "Clear history?"
+    Given a confirm dialog with [message] "Clear history?"
     When the user presses Enter (Yes)
     Then the result should be confirmed
 
   Scenario: Confirm dialog cancels on Escape
-    Given a confirm dialog with message "Clear history?"
+    Given a confirm dialog with [message] "Clear history?"
     When the user presses Escape
     Then the result should be cancelled
 

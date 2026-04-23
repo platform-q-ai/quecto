@@ -6,51 +6,51 @@ Feature: E2E Real LLM Agent Matrix
 
   @done @real-llm
   Scenario: Agent sentinel token response A
-    When I run the real LLM agent with message "Reply with the token MATRIX_A1 in your response"
+    When I run the real LLM agent with [message] "Reply with the token MATRIX_A1 in your response"
     Then the exit code should be 0
     And stdout should contain "MATRIX_A1"
 
   @done @real-llm
   Scenario: Agent sentinel token response B
-    When I run the real LLM agent with message "Reply with the token MATRIX_B2 in your response"
+    When I run the real LLM agent with [message] "Reply with the token MATRIX_B2 in your response"
     Then the exit code should be 0
     And stdout should contain "MATRIX_B2"
 
   @done @real-llm
   Scenario: Agent system prompt style marker
-    When I run the real LLM agent with system "Always include STYLE_OK in your response" and message "Say hello"
+    When I run the real LLM agent with system "Always include STYLE_OK in your response" and [message] "Say hello"
     Then the exit code should be 0
     And stdout should contain "STYLE_OK"
 
   @done @real-llm
   Scenario: Agent creates a plain text file
-    When I run the real LLM agent with message "Create file matrix1.txt with content MATRIX_FILE_1"
+    When I run the real LLM agent with [message] "Create file matrix1.txt with content MATRIX_FILE_1"
     Then the exit code should be 0
     And the file "matrix1.txt" should exist in the e2e workspace
 
   @done @real-llm
   Scenario: Agent creates a nested file path
-    When I run the real LLM agent with message "Create file notes/matrix2.txt with content MATRIX_FILE_2"
+    When I run the real LLM agent with [message] "Create file notes/matrix2.txt with content MATRIX_FILE_2"
     Then the exit code should be 0
     And the file "notes/matrix2.txt" should exist in the e2e workspace
 
   @done @real-llm
   Scenario: Agent reads file and returns specific token
     Given a file "facts.txt" in the e2e workspace with content "token=READ_X9"
-    When I run the real LLM agent with message "Read facts.txt and include READ_X9 in your response"
+    When I run the real LLM agent with [message] "Read facts.txt and include READ_X9 in your response"
     Then the exit code should be 0
     And stdout should contain "READ_X9"
 
   @done @real-llm
   Scenario: Agent edits a file value
     Given a file "mode.txt" in the e2e workspace with content "mode=alpha"
-    When I run the real LLM agent with message "Edit mode.txt so alpha becomes beta"
+    When I run the real LLM agent with [message] "Edit mode.txt so alpha becomes beta"
     Then the exit code should be 0
     And the file "mode.txt" in the e2e workspace should contain "mode=beta"
 
   @done @real-llm
   Scenario: Agent quick token response C3
-    When I run the real LLM agent with message "Reply with the token MATRIX_C3"
+    When I run the real LLM agent with [message] "Reply with the token MATRIX_C3"
     Then the exit code should be 0
     And stdout should contain "MATRIX_C3"
 
@@ -58,34 +58,34 @@ Feature: E2E Real LLM Agent Matrix
   Scenario: Agent lists directory containing prepared files
     Given a file "list-a.txt" in the e2e workspace with content "A"
     And a file "list-b.txt" in the e2e workspace with content "B"
-    When I run the real LLM agent with message "List the workspace files and include list-a.txt and list-b.txt"
+    When I run the real LLM agent with [message] "List the workspace files and include list-a.txt and list-b.txt"
     Then the exit code should be 0
     And stdout should contain "list-a.txt"
     And stdout should contain "list-b.txt"
 
   @done @real-llm
   Scenario: Agent runs exec and echoes marker
-    When I run the real LLM agent with message "Run command echo MATRIX_EXEC_1 and include MATRIX_EXEC_1 in your response"
+    When I run the real LLM agent with [message] "Run command echo MATRIX_EXEC_1 and include MATRIX_EXEC_1 in your response"
     Then the exit code should be 0
     And stdout should contain "MATRIX_EXEC_1"
 
   @done @real-llm
   Scenario: Agent chains read and write number extraction
     Given a file "num.txt" in the e2e workspace with content "value=2468"
-    When I run the real LLM agent with message "Read num.txt and create out-num.txt containing 2468"
+    When I run the real LLM agent with [message] "Read num.txt and create out-num.txt containing 2468"
     Then the exit code should be 0
     And the file "out-num.txt" should exist in the e2e workspace
     And the file "out-num.txt" in the e2e workspace should contain "2468"
 
   @done @real-llm
   Scenario: Agent writes JSON-like text file
-    When I run the real LLM agent with message "Create file data.json containing exactly {\"ok\":true,\"id\":7}"
+    When I run the real LLM agent with [message] "Create file data.json containing exactly {\"ok\":true,\"id\":7}"
     Then the exit code should be 0
     And the file "data.json" should exist in the e2e workspace
 
   @done @real-llm
   Scenario: Agent handles missing file with fallback token
-    When I run the real LLM agent with message "Try reading no-such-file-77.txt. If missing, reply with FALLBACK_77"
+    When I run the real LLM agent with [message] "Try reading no-such-file-77.txt. If missing, reply with FALLBACK_77"
     Then the exit code should be 0
     And stdout should contain "FALLBACK_77"
 
@@ -117,14 +117,14 @@ Feature: E2E Real LLM Agent Matrix
 
   @done @real-llm
   Scenario: Agent ephemeral run leaves no session files
-    When I run the real LLM agent with message "Reply with EPHEMERAL_OK"
+    When I run the real LLM agent with [message] "Reply with EPHEMERAL_OK"
     Then the exit code should be 0
     And stdout should contain "EPHEMERAL_OK"
-    And no session files should exist
+    And no [session] files should exist
 
   @done @real-llm
   Scenario: Skill forces marker in agent response
-    Given a workspace skill "agent-marker" with frontmatter:
+    Given a workspace [skill] "agent-marker" with frontmatter:
       """
       ---
       name: agent-marker
@@ -132,13 +132,13 @@ Feature: E2E Real LLM Agent Matrix
       ---
       Include AGENT_SKILL_MARK in every response.
       """
-    When I run the real LLM agent with message "Say hello"
+    When I run the real LLM agent with [message] "Say hello"
     Then the exit code should be 0
     And stdout should contain "AGENT_SKILL_MARK"
 
   @done @real-llm
   Scenario: Two skills combine in agent response
-    Given a workspace skill "agent-prefix" with frontmatter:
+    Given a workspace [skill] "agent-prefix" with frontmatter:
       """
       ---
       name: agent-prefix
@@ -146,7 +146,7 @@ Feature: E2E Real LLM Agent Matrix
       ---
       Include COMBO_PREFIX in responses.
       """
-    And a workspace skill "agent-suffix" with frontmatter:
+    And a workspace [skill] "agent-suffix" with frontmatter:
       """
       ---
       name: agent-suffix
@@ -154,15 +154,15 @@ Feature: E2E Real LLM Agent Matrix
       ---
       Include COMBO_SUFFIX in responses.
       """
-    When I run the real LLM agent with message "Respond briefly"
+    When I run the real LLM agent with [message] "Respond briefly"
     Then the exit code should be 0
     And stdout should contain "COMBO_PREFIX"
     And stdout should contain "COMBO_SUFFIX"
 
   @done @real-llm
   Scenario: Invalid raw skill does not break agent run
-    Given a workspace skill directory "bad-agent-skill" with raw content "missing frontmatter content"
-    When I run the real LLM agent with message "Reply with RAW_SKILL_IGNORED"
+    Given a workspace [skill] directory "bad-agent-skill" with raw content "missing frontmatter content"
+    When I run the real LLM agent with [message] "Reply with RAW_SKILL_IGNORED"
     Then the exit code should be 0
     And stdout should contain "RAW_SKILL_IGNORED"
 
@@ -180,7 +180,7 @@ Feature: E2E Real LLM Agent Matrix
 
   @done @real-llm
   Scenario: Agent can create two files in one request
-    When I run the real LLM agent with message "Create files matrix-a.txt with AVAL and matrix-b.txt with BVAL"
+    When I run the real LLM agent with [message] "Create files matrix-a.txt with AVAL and matrix-b.txt with BVAL"
     Then the exit code should be 0
     And the file "matrix-a.txt" should exist in the e2e workspace
     And the file "matrix-b.txt" should exist in the e2e workspace
@@ -189,7 +189,7 @@ Feature: E2E Real LLM Agent Matrix
   Scenario: Agent reads one file then appends to another
     Given a file "seed.txt" in the e2e workspace with content "SEED42"
     Given a file "collector.txt" in the e2e workspace with content "begin"
-    When I run the real LLM agent with message "Read seed.txt then append SEED42 to collector.txt"
+    When I run the real LLM agent with [message] "Read seed.txt then append SEED42 to collector.txt"
     Then the exit code should be 0
     And the file "collector.txt" in the e2e workspace should contain "begin"
     And the file "collector.txt" in the e2e workspace should contain "SEED42"
@@ -197,6 +197,6 @@ Feature: E2E Real LLM Agent Matrix
   @done @real-llm
   Scenario: Agent file edit keeps surrounding text
     Given a file "phrase.txt" in the e2e workspace with content "alpha middle omega"
-    When I run the real LLM agent with message "In phrase.txt replace middle with center"
+    When I run the real LLM agent with [message] "In phrase.txt replace middle with center"
     Then the exit code should be 0
     And the file "phrase.txt" in the e2e workspace should contain "alpha center omega"

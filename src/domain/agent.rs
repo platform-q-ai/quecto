@@ -17,7 +17,7 @@ pub enum AgentProgressEvent {
         max_context_tokens: usize,
         /// Provider name serving the request (e.g. "openai").
         provider: String,
-        /// Model name serving the request (e.g. "gpt-5.4").
+        /// Model name serving the request (e.g. "gpt-5.5").
         model: String,
     },
     /// A tool call has been dispatched.

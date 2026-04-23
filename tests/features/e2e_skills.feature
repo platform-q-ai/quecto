@@ -13,7 +13,7 @@ Feature: E2E Skill Loading
   # --- CLI skill management ---
 
   Scenario: Skills list shows installed workspace skills
-    Given a workspace skill "weather" with frontmatter:
+    Given a workspace [skill] "weather" with frontmatter:
       """
       ---
       name: weather
@@ -32,7 +32,7 @@ Feature: E2E Skill Loading
     And the output should contain "No skills installed"
 
   Scenario: Skills remove deletes a workspace skill
-    Given a workspace skill "weather" with frontmatter:
+    Given a workspace [skill] "weather" with frontmatter:
       """
       ---
       name: weather
@@ -54,7 +54,7 @@ Feature: E2E Skill Loading
   # --- Skill content injection into agent ---
 
   Scenario: Skill body is prepended to agent system prompt
-    Given a workspace skill "code-review" with frontmatter:
+    Given a workspace [skill] "code-review" with frontmatter:
       """
       ---
       name: code-review
@@ -66,10 +66,10 @@ Feature: E2E Skill Loading
     When I run quecto agent -s - -m "Review my code"
     Then the exit code should be 0
     And the output should contain "I will review your code"
-    And the LLM should have received a system message containing "code review expert"
+    And the LLM should have received a system [message] containing "code review expert"
 
   Scenario: Multiple skills are concatenated into system prompt
-    Given a workspace skill "code-review" with frontmatter:
+    Given a workspace [skill] "code-review" with frontmatter:
       """
       ---
       name: code-review
@@ -77,7 +77,7 @@ Feature: E2E Skill Loading
       ---
       You are a code review expert.
       """
-    And a workspace skill "testing" with frontmatter:
+    And a workspace [skill] "testing" with frontmatter:
       """
       ---
       name: testing
@@ -88,8 +88,8 @@ Feature: E2E Skill Loading
     And a mock LLM that captures requests and returns text "I can help with both"
     When I run quecto agent -s - -m "Help me"
     Then the exit code should be 0
-    And the LLM should have received a system message containing "code review expert"
-    And the LLM should have received a system message containing "testing specialist"
+    And the LLM should have received a system [message] containing "code review expert"
+    And the LLM should have received a system [message] containing "testing specialist"
 
 
   Scenario: Agent works normally with no skills installed
@@ -97,16 +97,16 @@ Feature: E2E Skill Loading
     When I run quecto agent -s - -m "Hi"
     Then the exit code should be 0
     And the output should contain "Hello from the agent"
-    And the LLM system message should only contain the datetime preamble
+    And the LLM system [message] should only contain the datetime preamble
 
 
   Scenario: Skill without valid frontmatter does not add system prompt
-    Given a workspace skill directory "bad-skill" with raw content "Just plain text"
+    Given a workspace [skill] directory "bad-skill" with raw content "Just plain text"
     And a mock LLM that captures requests and returns text "Still works"
     When I run quecto agent -s - -m "Hello"
     Then the exit code should be 0
     And the output should contain "Still works"
-    And the LLM system message should only contain the datetime preamble
+    And the LLM system [message] should only contain the datetime preamble
 
   # Issue #104: The quecto datetime preamble is intentionally richer than
   # any provider-injected "Current date:" metadata. It includes day-of-week,
@@ -116,4 +116,4 @@ Feature: E2E Skill Loading
     Given a mock LLM that captures requests and returns text "I know the time"
     When I run quecto agent -s - -m "What time is it?"
     Then the exit code should be 0
-    And the LLM system message datetime preamble should include day-of-week, time, and timezone
+    And the LLM system [message] datetime preamble should include day-of-week, time, and timezone

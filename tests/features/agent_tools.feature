@@ -8,32 +8,32 @@ Feature: Agent Tool System
     Given a tool workspace
     When the agent executes tool "bash" with args:
       | command | echo hello |
-    Then the tool result should contain "hello"
-    And the tool result should not be an error
+    Then the [ToolResult] should contain "hello"
+    And the [ToolResult] should not be an error
 
   @agent-tools
   Scenario: Execute large output command truncates to tail
     Given a tool workspace with exec timeout 1 second
     When the agent executes tool "bash" with args:
       | command | printf 'x%.0s' {1..100000} |
-    Then the tool result should contain "x"
-    And the tool result should not be an error
+    Then the [ToolResult] should contain "x"
+    And the [ToolResult] should not be an error
 
   Scenario: bash truncates large output and provides temp file hint
     Given a tool workspace
     When the agent executes tool "bash" with args:
       | command | seq 1 3000 |
-    Then the tool result should contain "3000"
-    And the tool result should contain "[Showing lines"
-    And the tool result should not be an error
+    Then the [ToolResult] should contain "3000"
+    And the [ToolResult] should contain "[Showing lines"
+    And the [ToolResult] should not be an error
 
   Scenario: Read a file
     Given a tool workspace
     And a file "notes.txt" exists with content "important notes"
     When the agent executes tool "read" with args:
       | path | notes.txt |
-    Then the tool result should contain "important notes"
-    And the tool result should not be an error
+    Then the [ToolResult] should contain "important notes"
+    And the [ToolResult] should not be an error
 
   Scenario: Read a file with offset pagination
     Given a tool workspace
@@ -41,16 +41,16 @@ Feature: Agent Tool System
     When the agent executes tool "read" with args:
       | path   | multi.txt |
       | offset | 3         |
-    Then the tool result should contain "line3"
-    And the tool result should not be an error
+    Then the [ToolResult] should contain "line3"
+    And the [ToolResult] should not be an error
 
   Scenario: Read a large file truncates with continuation hint
     Given a tool workspace
     And a large file "big.txt" exists with 3000 lines
     When the agent executes tool "read" with args:
       | path | big.txt |
-    Then the tool result should contain "[Showing lines"
-    And the tool result should not be an error
+    Then the [ToolResult] should contain "[Showing lines"
+    And the [ToolResult] should not be an error
 
   Scenario: Write a file
     Given a tool workspace
@@ -68,7 +68,7 @@ Feature: Agent Tool System
       | oldText | hello    |
       | newText | world    |
     Then the file "code.py" should contain "print('world')"
-    And the tool result should contain "@@"
+    And the [ToolResult] should contain "@@"
 
   Scenario: Edit rejects ambiguous match
     Given a tool workspace
@@ -77,8 +77,8 @@ Feature: Agent Tool System
       | path    | dup.py |
       | oldText | x = 1  |
       | newText | x = 2  |
-    Then the tool result should be an error
-    And the tool result should contain "matches 2"
+    Then the [ToolResult] should be an error
+    And the [ToolResult] should contain "matches 2"
 
   Scenario: Edit handles BOM and CRLF normalisation
     Given a tool workspace
@@ -88,7 +88,7 @@ Feature: Agent Tool System
       | oldText | hello   |
       | newText | hi      |
     Then the file "win.txt" should contain "hi"
-    And the tool result should not be an error
+    And the [ToolResult] should not be an error
 
 
   Scenario: List a directory
@@ -97,22 +97,22 @@ Feature: Agent Tool System
     And a file "b.txt" exists with content "b"
     When the agent executes tool "ls" with args:
       | path | . |
-    Then the tool result should contain "a.txt"
-    And the tool result should contain "b.txt"
+    Then the [ToolResult] should contain "a.txt"
+    And the [ToolResult] should contain "b.txt"
 
   Scenario: ls uses current directory when path is omitted
     Given a tool workspace
     And a file "hello.txt" exists with content "hi"
     When the agent executes tool "ls" with empty args
-    Then the tool result should contain "hello.txt"
-    And the tool result should not be an error
+    Then the [ToolResult] should contain "hello.txt"
+    And the [ToolResult] should not be an error
 
   Scenario: ls truncates when entry limit exceeded
     Given a tool workspace with 1100 files
     When the agent executes tool "ls" with args:
       | path | . |
-    Then the tool result should contain "entries limit reached"
-    And the tool result should not be an error
+    Then the [ToolResult] should contain "entries limit reached"
+    And the [ToolResult] should not be an error
 
   Scenario: Tool registry lists core tools
     Given a tool workspace
@@ -142,9 +142,9 @@ Feature: Agent Tool System
       | Rust (programming language)  | https://en.wikipedia.org/wiki/Rust   |
     When the agent executes tool "web_search" with args:
       | query | rust programming |
-    Then the tool result should contain "Rust Programming Language"
-    And the tool result should contain "rust-lang.org"
-    And the tool result should not be an error
+    Then the [ToolResult] should contain "Rust Programming Language"
+    And the [ToolResult] should contain "rust-lang.org"
+    And the [ToolResult] should not be an error
 
   @done
   Scenario: Web search via Brave API returns results
@@ -155,8 +155,8 @@ Feature: Agent Tool System
       | Weather Today   | https://weather.example.com |
     When the agent executes tool "web_search" with args:
       | query | weather today |
-    Then the tool result should contain "Weather Today"
-    And the tool result should not be an error
+    Then the [ToolResult] should contain "Weather Today"
+    And the [ToolResult] should not be an error
 
   @done
   Scenario: Web search falls back to DuckDuckGo when Brave key is missing
@@ -165,7 +165,7 @@ Feature: Agent Tool System
     And a mock DuckDuckGo API that returns results
     When the agent executes tool "web_search" with args:
       | query | test query |
-    Then the tool result should contain search results
+    Then the [ToolResult] should contain search results
     And the search should have used DuckDuckGo
 
   @done
@@ -175,5 +175,5 @@ Feature: Agent Tool System
     And the mock search API returns an HTTP 503 error
     When the agent executes tool "web_search" with args:
       | query | test query |
-    Then the tool result should be an error
-    And the tool result should contain "Search failed"
+    Then the [ToolResult] should be an error
+    And the [ToolResult] should contain "Search failed"

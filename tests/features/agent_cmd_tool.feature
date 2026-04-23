@@ -187,4 +187,4 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
   Scenario: get_messages_tail returns conversation history
     Given a live UDS subagent with conversation history
     When I send get_messages_tail with count 2 via agent_cmd
-    Then the response should contain message data
+    Then the response should contain [message] data

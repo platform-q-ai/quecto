@@ -32,7 +32,7 @@ Feature: Context pruning via sliding window (no tool-result collapse)
   Scenario: System messages are never collapsed
     Given a system prompt in the conversation
     When the agent processes 20 turns
-    Then the system message remains in full context
+    Then the system [message] remains in full context
 
   # --- Spill-to-disk still works at creation time ---
 
@@ -69,7 +69,7 @@ Feature: Context pruning via sliding window (no tool-result collapse)
   Scenario: Spill manifest is injected after first spill
     Given no spill entries exist
     When the agent executes a bash tool on turn 1
-    Then a pinned manifest message appears in context
+    Then a pinned manifest [message] appears in context
     And the manifest contains "1 spilled entries via recall()"
 
   Scenario: Spill manifest shows last 10 entries
@@ -82,17 +82,17 @@ Feature: Context pruning via sliding window (no tool-result collapse)
     Given max_context_tokens is set to 500
     And 20 spilled tool results
     When the sliding window drops messages to fit budget
-    Then the manifest message remains in context
+    Then the manifest [message] remains in context
     And the manifest is pinned
 
   Scenario: Spill manifest is updated in-place
     When the agent executes tools on turns 1 through 5
-    Then only one manifest message exists in context
+    Then only one manifest [message] exists in context
     And it reflects all 5 spill entries
 
   Scenario: No manifest when no spill entries exist
     When the agent processes 3 turns with no tool calls
-    Then no manifest message exists in context
+    Then no manifest [message] exists in context
 
   @done
   Scenario: Spill store caches index in memory after append
@@ -116,13 +116,13 @@ Feature: Context pruning via sliding window (no tool-result collapse)
     Given max_context_tokens is set to 500
     And a system prompt consuming 200 tokens
     When the agent accumulates 800 tokens of messages
-    Then the system message remains in full context
+    Then the system [message] remains in full context
     And non-system messages are dropped to fit
 
   Scenario: First user message is pinned
     Given max_context_tokens is set to 500
     When the agent accumulates 800 tokens across 5 user messages
-    Then the first user message remains in context
+    Then the first user [message] remains in context
     And later user messages may be dropped
 
   # --- #305: Improved token estimation heuristic ---
@@ -139,33 +139,34 @@ Feature: Context pruning via sliding window (no tool-result collapse)
     Given a string of 100 CJK characters
     Then the estimated token count should be 100
 
-  # --- Default max context tokens is 190,000 ---
+  # --- Default max context tokens is 300,000 ---
 
-  Scenario: Default max context tokens is 190000
+  @done
+  Scenario: Default max context tokens is 300000
     Given a default agent configuration
-    Then the max_context_tokens is 190000
+    Then the max_context_tokens is 300000
 
   # --- Session persistence ---
 
   Scenario: Pruning metadata survives session save and load
     When the agent executes a bash tool on turn 1
-    When the session is saved and reloaded from disk
+    When the [session] is saved and reloaded from disk
     Then the tool result from turn 1 still has turn 1
     And the tool result from turn 1 still has tool_name "bash"
     And the tool result from turn 1 still has spill_id "turn1:bash:0"
 
   Scenario: Manifest is not duplicated after session save and reload
     When the agent executes tools on turns 1 through 5
-    Then only one manifest message exists in context
-    When the session is saved and reloaded from disk
+    Then only one manifest [message] exists in context
+    When the [session] is saved and reloaded from disk
     And the spill manifest is updated
-    Then only one manifest message exists in context
-    And exactly one system message contains "spilled entries via recall()"
+    Then only one manifest [message] exists in context
+    And exactly one system [message] contains "spilled entries via recall()"
 
   Scenario: Tool results remain uncollapsed after session round-trip
     When the agent executes a bash tool on turn 1
     And the agent completes turn 4
     Then the tool result from turn 1 is still in full context
-    When the session is saved and reloaded from disk
+    When the [session] is saved and reloaded from disk
     And the agent completes turn 5
     Then the tool result from turn 1 is still in full context

@@ -6,9 +6,9 @@ Feature: TUI Phase 9 — Wire Components and Fix Escape Abort
     Given the agent is running with a spinner active
     When the user presses Escape
     Then the spinner should stop
-    And the streaming message should be finalized
-    And a status message "Operation aborted" should appear
-    And the session should remain alive
+    And the streaming [message] should be finalized
+    And a status [message] "Operation aborted" should appear
+    And the [session] should remain alive
 
   Scenario: Escape abort does not kill session
     Given the agent is running

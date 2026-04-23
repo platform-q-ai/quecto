@@ -140,12 +140,15 @@ pub(super) async fn multi_client_loop(
     let cancel_handle: CancelHandle = std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle));
     let live_clients = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
 
+    let client_tool_registry = super::uds_ext_protocol::new_client_tool_registry();
+
     let accept_task = spawn_accept_loop(AcceptLoopArgs {
         listener,
         broadcast_tx: broadcast_tx.clone(),
         cmd_tx: cmd_tx.clone(),
         cancel_handle: cancel_handle.clone(),
         live_clients: live_clients.clone(),
+        client_tool_registry: client_tool_registry.clone(),
     });
 
     // Drop our clone so cmd_rx closes when all client senders (accept loop)
@@ -155,7 +158,6 @@ pub(super) async fn multi_client_loop(
 
     let mut null_writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin> =
         Box::new(tokio::io::sink());
-    let client_tool_registry = super::uds_ext_protocol::new_client_tool_registry();
     let mut ctx = DispatchCtx {
         agent: &mut agent,
         messages: &mut messages,
@@ -204,6 +206,11 @@ struct AcceptLoopArgs {
     cmd_tx: tokio::sync::mpsc::Sender<ClientMessage>,
     cancel_handle: CancelHandle,
     live_clients: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    /// Shared per-client tool state. Cloned into each ClientHandlerArgs
+    /// so the reader task can resolve `tool_result` commands inline
+    /// without routing them through the single-threaded dispatch loop
+    /// (which is blocked on the agent's in-flight prompt).
+    client_tool_registry: super::uds_ext_protocol::ClientToolRegistry,
 }
 
 /// Spawn the accept loop that listens for new client connections.
@@ -214,6 +221,7 @@ fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
         cmd_tx,
         cancel_handle,
         live_clients,
+        client_tool_registry,
     } = args;
     tokio::spawn(async move {
         loop {
@@ -237,12 +245,30 @@ fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
                         cmd_tx: cmd_tx.clone(),
                         client_id,
                     };
+                    // Per-client targeted event channel (V4): the
+                    // forwarder task for tools this client registers
+                    // will route `execute_tool` events here — NOT on
+                    // the broadcast — so they don't leak across
+                    // clients. 64-slot buffer: any single LLM turn
+                    // issues only a handful of tool calls, so the
+                    // common-case depth is 1–2; the channel fills up
+                    // only if the client stops reading.
+                    let (targeted_tx, targeted_rx) =
+                        tokio::sync::mpsc::channel::<String>(64);
+                    super::uds_ext_protocol::register_client_writer(
+                        &client_tool_registry,
+                        client_id,
+                        targeted_tx,
+                    );
+
                     let args = ClientHandlerArgs {
                         stream,
                         broadcast_rx: broadcast_tx.subscribe(),
+                        targeted_rx,
                         cmd_tx: cmd_tx.clone(),
                         cancel_handle: cancel_handle.clone(),
                         client_id,
+                        client_tool_registry: client_tool_registry.clone(),
                         _guard: guard,
                     };
                     tokio::spawn(async move { handle_client(args).await });
@@ -378,10 +404,18 @@ async fn handle_disconnect(ctx: &mut DispatchCtx<'_>, client_id: u64) {
 struct ClientHandlerArgs {
     stream: tokio::net::UnixStream,
     broadcast_rx: tokio::sync::broadcast::Receiver<String>,
+    /// Per-client targeted event stream — receives events addressed
+    /// to this client only (currently just `execute_tool` from
+    /// forwarder tasks). Writer_task selects over this AND
+    /// broadcast_rx so targeted events aren't visible to other
+    /// clients.
+    targeted_rx: tokio::sync::mpsc::Receiver<String>,
     cmd_tx: tokio::sync::mpsc::Sender<ClientMessage>,
     cancel_handle: CancelHandle,
     /// Unique client identifier (#352).
     client_id: u64,
+    /// For in-reader handling of `tool_result` — see handle_client.
+    client_tool_registry: super::uds_ext_protocol::ClientToolRegistry,
     /// RAII guard — decrements `live_clients` and sends `Disconnected` on drop.
     _guard: ClientGuard,
 }
@@ -390,9 +424,11 @@ async fn handle_client(args: ClientHandlerArgs) {
     let ClientHandlerArgs {
         stream,
         mut broadcast_rx,
+        mut targeted_rx,
         cmd_tx,
         cancel_handle,
         client_id,
+        client_tool_registry,
         _guard,
     } = args;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -400,28 +436,43 @@ async fn handle_client(args: ClientHandlerArgs) {
     let (reader, mut writer) = tokio::io::split(stream);
     let mut lines = BufReader::new(reader).lines();
 
-    // Writer task: drain broadcast → this client.
+    // Writer task: multiplex shared broadcast events AND per-client
+    // targeted events (currently just `execute_tool` from forwarder
+    // tasks) onto the client's socket. Targeted events never fan out
+    // to other clients.
     let writer_task = tokio::spawn(async move {
         loop {
-            match broadcast_rx.recv().await {
-                Ok(line) => {
-                    if writer.write_all(line.as_bytes()).await.is_err() {
-                        break;
+            tokio::select! {
+                b = broadcast_rx.recv() => match b {
+                    Ok(line) => {
+                        if writer.write_all(line.as_bytes()).await.is_err() {
+                            break;
+                        }
                     }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!("client lagged by {n} events");
-                    // Notify the client so it can request a state refresh.
-                    let msg = format!(
-                        "{{\"type\":\"error\",\"message\":\"dropped {} events — use get_messages to re-sync\"}}\n",
-                        n
-                    );
-                    if writer.write_all(msg.as_bytes()).await.is_err() {
-                        break;
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("client lagged by {n} events");
+                        let msg = format!(
+                            "{{\"type\":\"error\",\"message\":\"dropped {} events — use get_messages to re-sync\"}}\n",
+                            n
+                        );
+                        if writer.write_all(msg.as_bytes()).await.is_err() {
+                            break;
+                        }
                     }
-                    continue;
-                }
+                },
+                t = targeted_rx.recv() => match t {
+                    Some(line) => {
+                        if writer.write_all(line.as_bytes()).await.is_err() {
+                            break;
+                        }
+                    }
+                    None => {
+                        // Sender side closed (client registry
+                        // entry dropped). Fall through — broadcast
+                        // may still be delivering.
+                    }
+                },
             }
         }
     });
@@ -439,6 +490,25 @@ async fn handle_client(args: ClientHandlerArgs) {
         }
         if is_cancel_command(line.trim()) {
             fire_cancel(&cancel_handle);
+        }
+        // Intercept `tool_result` inline — the dispatch loop is
+        // single-threaded and is blocked waiting for the agent's
+        // in-flight prompt (which in turn is waiting for *this* very
+        // tool_result). Routing through cmd_tx would deadlock. We
+        // resolve the pending oneshot directly against the shared
+        // tool registry; the agent's UdsTool::execute wakes and the
+        // turn resumes.
+        if let Some(parsed) = try_intercept_tool_result(&line) {
+            super::uds_ext_protocol::handle_tool_result(
+                super::uds_ext_protocol::ToolResultArgs {
+                    client_id,
+                    tool_call_id: &parsed.tool_call_id,
+                    content: &parsed.content,
+                    is_error: parsed.is_error,
+                    registry: &client_tool_registry,
+                },
+            );
+            continue;
         }
         let msg = ClientMessage::Command(ClientCommand { line, client_id });
         if cmd_tx.send(msg).await.is_err() {
@@ -711,5 +781,113 @@ fn forward_progress_event_broadcast(
             );
         }
         _ => {}
+    }
+}
+
+/// Parsed representation of a client-sent `tool_result` command, ready
+/// for `handle_tool_result` to consume.
+struct ParsedToolResult {
+    tool_call_id: String,
+    content: String,
+    is_error: bool,
+}
+
+/// Intercept a raw client line that carries a `tool_result` so it can
+/// be resolved inline against `client_tool_registry`, bypassing the
+/// (blocked-on-prompt) main dispatch loop.  Returns `None` when the
+/// line isn't a tool_result, in which case the caller forwards it to
+/// the dispatcher via the normal channel.
+///
+/// Implementation notes:
+///
+///  * **Cheap gate first.**  Every line the reader observes flows
+///    through here, and the vast majority aren't tool_results.  A
+///    cheap `contains` check short-circuits the full JSON parse for
+///    the common case (prompts, register_tools, set_model, …).  The
+///    needle is tight enough to avoid false positives on, say, a
+///    prompt that literally discusses tool results.
+///
+///  * **Canonical parser reuse.**  Once the gate passes, we defer to
+///    the same `parse_line` → `AgentCommand` path used by the main
+///    dispatcher.  If `AgentCommand::ToolResult` ever gains a field,
+///    the intercept path picks it up automatically and stays in sync
+///    with the rest of the protocol surface — no hand-rolled JSON
+///    extraction to drift.
+fn try_intercept_tool_result(line: &str) -> Option<ParsedToolResult> {
+    if !line.contains(r#""tool_result""#) {
+        return None;
+    }
+    match super::uds::parse_line(line) {
+        super::uds::LineResult::Command(super::protocol::AgentCommand::ToolResult {
+            tool_call_id,
+            content,
+            is_error,
+        }) => Some(ParsedToolResult {
+            tool_call_id,
+            content,
+            is_error,
+        }),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod interception_tests {
+    use super::*;
+
+    #[test]
+    fn intercepts_vanilla_tool_result() {
+        let line = r#"{"type":"tool_result","toolCallId":"uds-abc","content":"ok","isError":false}"#;
+        let got = try_intercept_tool_result(line).expect("should intercept");
+        assert_eq!(got.tool_call_id, "uds-abc");
+        assert_eq!(got.content, "ok");
+        assert!(!got.is_error);
+    }
+
+    #[test]
+    fn intercepts_tool_result_with_error_flag() {
+        let line = r#"{"type":"tool_result","toolCallId":"uds-xyz","content":"oh no","isError":true}"#;
+        let got = try_intercept_tool_result(line).expect("should intercept");
+        assert!(got.is_error);
+    }
+
+    #[test]
+    fn intercepts_tool_result_with_unknown_future_field() {
+        // Future-proofing: if `AgentCommand::ToolResult` gains, say, a
+        // `metadata` field later, deserialisation keeps working; the
+        // bypass path must not be more strict than the canonical one.
+        let line = r#"{"type":"tool_result","toolCallId":"uds-1","content":"","isError":false,"metadata":{"elapsed_ms":42}}"#;
+        let got = try_intercept_tool_result(line).expect("should intercept");
+        assert_eq!(got.tool_call_id, "uds-1");
+    }
+
+    #[test]
+    fn does_not_intercept_prompt_command() {
+        let line = r#"{"type":"prompt","message":"hello"}"#;
+        assert!(try_intercept_tool_result(line).is_none());
+    }
+
+    #[test]
+    fn does_not_intercept_register_tools() {
+        let line = r#"{"type":"register_tools","id":"r1","tools":[{"name":"t","description":"d"}]}"#;
+        assert!(try_intercept_tool_result(line).is_none());
+    }
+
+    #[test]
+    fn does_not_intercept_garbage_or_empty() {
+        assert!(try_intercept_tool_result("not json").is_none());
+        assert!(try_intercept_tool_result("").is_none());
+        assert!(try_intercept_tool_result("{}").is_none());
+    }
+
+    #[test]
+    fn does_not_intercept_line_that_only_mentions_the_literal_in_a_string() {
+        // Cheap gate false-positive guard: a prompt whose message body
+        // contains the substring `tool_result` should not intercept
+        // (the full parse will reject it since the command's `type`
+        // is `prompt`).
+        let line =
+            r#"{"type":"prompt","message":"explain what tool_result means"}"#;
+        assert!(try_intercept_tool_result(line).is_none());
     }
 }

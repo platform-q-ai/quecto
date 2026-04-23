@@ -11,57 +11,57 @@ Feature: Tool Empty Arguments Handling
 
   Scenario: Empty string arguments are normalised to empty JSON object
     When the agent executes tool "ls" with raw arguments ""
-    Then the tool result should not be an error
-    And the tool result should not contain "EOF while parsing"
+    Then the [ToolResult] should not be an error
+    And the [ToolResult] should not contain "EOF while parsing"
 
   Scenario: Whitespace-only arguments are normalised to empty JSON object
     When the agent executes tool "ls" with raw arguments "   "
-    Then the tool result should not be an error
-    And the tool result should not contain "EOF while parsing"
+    Then the [ToolResult] should not be an error
+    And the [ToolResult] should not contain "EOF while parsing"
 
   # --- Fix 2: Actionable missing-parameter errors ---
 
   Scenario: find with empty args returns actionable error mentioning required params
     When the agent executes tool "find" with raw arguments "{}"
-    Then the tool result should be an error
-    And the tool result should contain "pattern"
-    And the tool result should contain "Example"
-    And the tool result should not contain "EOF while parsing"
+    Then the [ToolResult] should be an error
+    And the [ToolResult] should contain "pattern"
+    And the [ToolResult] should contain "Example"
+    And the [ToolResult] should not contain "EOF while parsing"
 
   Scenario: grep with empty args returns actionable error mentioning required params
     When the agent executes tool "grep" with raw arguments "{}"
-    Then the tool result should be an error
-    And the tool result should contain "pattern"
-    And the tool result should contain "Example"
-    And the tool result should not contain "EOF while parsing"
+    Then the [ToolResult] should be an error
+    And the [ToolResult] should contain "pattern"
+    And the [ToolResult] should contain "Example"
+    And the [ToolResult] should not contain "EOF while parsing"
 
   Scenario: read with empty args returns actionable error mentioning required params
     When the agent executes tool "read" with raw arguments "{}"
-    Then the tool result should be an error
-    And the tool result should contain "path"
-    And the tool result should contain "Example"
-    And the tool result should not contain "EOF while parsing"
+    Then the [ToolResult] should be an error
+    And the [ToolResult] should contain "path"
+    And the [ToolResult] should contain "Example"
+    And the [ToolResult] should not contain "EOF while parsing"
 
   Scenario: write with empty args returns actionable error mentioning required params
     When the agent executes tool "write" with raw arguments "{}"
-    Then the tool result should be an error
-    And the tool result should contain "path"
-    And the tool result should contain "Example"
-    And the tool result should not contain "EOF while parsing"
+    Then the [ToolResult] should be an error
+    And the [ToolResult] should contain "path"
+    And the [ToolResult] should contain "Example"
+    And the [ToolResult] should not contain "EOF while parsing"
 
   Scenario: edit with empty args returns actionable error mentioning required params
     When the agent executes tool "edit" with raw arguments "{}"
-    Then the tool result should be an error
-    And the tool result should contain "path"
-    And the tool result should contain "Example"
-    And the tool result should not contain "EOF while parsing"
+    Then the [ToolResult] should be an error
+    And the [ToolResult] should contain "path"
+    And the [ToolResult] should contain "Example"
+    And the [ToolResult] should not contain "EOF while parsing"
 
   Scenario: bash with empty args returns actionable error mentioning required params
     When the agent executes tool "bash" with raw arguments "{}"
-    Then the tool result should be an error
-    And the tool result should contain "command"
-    And the tool result should contain "Example"
-    And the tool result should not contain "EOF while parsing"
+    Then the [ToolResult] should be an error
+    And the [ToolResult] should contain "command"
+    And the [ToolResult] should contain "Example"
+    And the [ToolResult] should not contain "EOF while parsing"
 
   # --- Fix 3: Tool descriptions include usage examples ---
 

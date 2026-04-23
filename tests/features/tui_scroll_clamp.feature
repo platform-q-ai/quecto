@@ -21,5 +21,5 @@ Feature: TUI scroll up reaches full conversation history
 
   Scenario: New content auto-scrolls to bottom
     Given the chat is scrolled up
-    When a new message arrives
+    When a new [message] arrives
     Then the scroll should reset to the bottom

@@ -43,7 +43,17 @@ impl Tool for ReadTool {
         let sandbox = self.sandbox.clone();
 
         Box::pin(async move {
-            let args = args.map_err(|e| DomainError::Tool(e.to_string()))?;
+            // LLM-addressable: malformed JSON → ToolResult { is_error: true }
+            // so the LLM can read the parser's message and retry with valid
+            // input, per the Tool port's error-handling contract.
+            let args = match args {
+                Ok(v) => v,
+                Err(e) => return Ok(ToolResult {
+                    content: format!("invalid JSON arguments: {e}. Example: {{\"path\": \"src/main.rs\"}}"),
+                    is_error: true,
+                    image_blocks: vec![],
+                }),
+            };
             let Some(path) = args["path"].as_str() else {
                 return Ok(ToolResult {
                     content: "missing 'path' argument. Example: {\"path\": \"src/main.rs\"}"

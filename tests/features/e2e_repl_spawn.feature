@@ -83,7 +83,7 @@ Feature: REPL Spawn Command
     And I type "/spawn Quick ephemeral task"
     And I type "/exit"
     Then the session "repl:parent-session" should not contain "Quick ephemeral task" as a user message
-    And no child session files should exist
+    And no child [session] files should exist
 
   # --- Result feeds back into parent conversation ---
 

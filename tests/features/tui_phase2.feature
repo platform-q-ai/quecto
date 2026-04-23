@@ -77,7 +77,7 @@ Feature: TUI Phase 2 — Event Loop, Editor, and Chat Display
 
   Scenario: Chat displays user message
     Given a chat component
-    When a user message "Hello agent" is added
+    When a user [message] "Hello agent" is added
     Then the rendered output should contain "Hello agent"
 
   Scenario: Chat displays streaming tokens
@@ -97,12 +97,12 @@ Feature: TUI Phase 2 — Event Loop, Editor, and Chat Display
   # ---------------------------------------------------------------------------
 
   Scenario: Spinner shows working message during agent processing
-    Given a spinner component with message "Working..."
+    Given a spinner component with [message] "Working..."
     When the spinner renders at width 40
     Then the rendered output should contain "Working..."
 
   Scenario: Spinner cycles through animation frames
-    Given a spinner component with message "Thinking"
+    Given a spinner component with [message] "Thinking"
     When the spinner ticks 3 times
     Then the spinner frame should have advanced
 

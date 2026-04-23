@@ -8,20 +8,20 @@ Feature: Auto-notify parent LLM when subagents complete or error
 
   Scenario: Completed notification includes agent_id and summary
     Given a Completed notification for agent "researcher" with summary "All tests pass"
-    Then the notification message should contain "researcher"
-    And the notification message should contain "completed"
-    And the notification message should contain "All tests pass"
+    Then the notification [message] should contain "researcher"
+    And the notification [message] should contain "completed"
+    And the notification [message] should contain "All tests pass"
 
   Scenario: Errored notification includes agent_id and error
     Given an Errored notification for agent "linter" with error "rate limit exceeded"
-    Then the notification message should contain "linter"
-    And the notification message should contain "errored"
-    And the notification message should contain "rate limit exceeded"
+    Then the notification [message] should contain "linter"
+    And the notification [message] should contain "errored"
+    And the notification [message] should contain "rate limit exceeded"
 
   Scenario: Exited notification includes agent_id
     Given an Exited notification for agent "formatter"
-    Then the notification message should contain "formatter"
-    And the notification message should contain "exited"
+    Then the notification [message] should contain "formatter"
+    And the notification [message] should contain "exited"
 
   # --- Notification formatting ---
 
