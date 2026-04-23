@@ -385,14 +385,24 @@ async fn forward_tool_requests(
             tool_name: tool_name.clone(),
             arguments,
         };
-        if let Some(ref tx) = broadcast_tx {
-            let mut line = ev.to_json_line();
-            line.push('\n');
-            let _ = tx.send(line);
-        } else {
-            // Single-client test mode — nobody to write to.  Remove
-            // the pending entry so the UdsTool times out cleanly
-            // rather than leaking.
+        // Broadcast the event. If it doesn't go out (no subscribers,
+        // closed channel, or no broadcast_tx at all in single-client
+        // test mode) no client can ever send `tool_result` for it, so
+        // the pending entry we just inserted will never be drained.
+        // Proactively remove it — dropping the oneshot sender wakes
+        // `UdsTool::execute` with `Err(RecvError)`, which it maps to
+        // "Extension disconnected during execution". That is
+        // immediate and actionable, rather than a 30-second silent
+        // wait for the UdsTool timeout to elapse.
+        let delivered = match broadcast_tx {
+            Some(ref tx) => {
+                let mut line = ev.to_json_line();
+                line.push('\n');
+                tx.send(line).is_ok()
+            }
+            None => false,
+        };
+        if !delivered {
             let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(state) = reg.get_mut(&client_id) {
                 state.pending_results.remove(&tool_call_id);
@@ -648,5 +658,140 @@ mod tests {
         let locked = r.lock().unwrap();
         assert!(locked[&1].tool_names.contains("weather"));
         assert!(locked[&2].tool_names.contains("translate"));
+    }
+
+    // ─── forward_tool_requests cleanup-on-broadcast-failure (V3) ───────────
+
+    /// When the broadcast channel has no live receivers, every `send`
+    /// returns `Err(SendError)`. Without cleanup the oneshot sender
+    /// would sit in `pending_results` until the 30-second UdsTool
+    /// timeout fired — forever, for repeated calls into a dead
+    /// broadcast. The forwarder must remove the pending entry so the
+    /// oneshot drops and UdsTool::execute returns "Extension
+    /// disconnected during execution" immediately.
+    #[tokio::test]
+    async fn forwarder_cleans_pending_when_broadcast_has_no_subscribers() {
+        use crate::infrastructure::extensions::uds_tool::UdsToolRequest;
+        use std::time::Duration;
+
+        let registry = new_client_tool_registry();
+        let client_id: u64 = 42;
+        {
+            let mut reg = registry.lock().unwrap();
+            reg.insert(client_id, ClientToolState::default());
+        }
+
+        // Broadcast channel with no subscribers — every .send() errs.
+        let (broadcast_tx, _rx) = tokio::sync::broadcast::channel::<String>(8);
+        drop(_rx);
+
+        let (req_tx, req_rx) = tokio::sync::mpsc::channel::<UdsToolRequest>(4);
+        let forwarder = tokio::spawn(super::forward_tool_requests(
+            client_id,
+            "weather".to_string(),
+            req_rx,
+            registry.clone(),
+            Some(broadcast_tx),
+        ));
+
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel();
+        req_tx
+            .send(UdsToolRequest {
+                tool_call_id: "uds-test-1".into(),
+                tool_name: "weather".into(),
+                arguments: "{}".into(),
+                result_tx,
+            })
+            .await
+            .unwrap();
+
+        // Oneshot must resolve (closed by cleanup dropping the sender)
+        // within a tick — NOT wait the full 30s default tool timeout.
+        let awaited =
+            tokio::time::timeout(Duration::from_millis(500), result_rx).await;
+        assert!(
+            awaited.is_ok(),
+            "forwarder failed to resolve oneshot within 500ms — pending leak?"
+        );
+        let recv_result = awaited.unwrap();
+        assert!(
+            recv_result.is_err(),
+            "sender should have been dropped, leading to Err on the receiver"
+        );
+
+        // Pending table for this client is empty again.
+        let reg = registry.lock().unwrap();
+        let state = reg.get(&client_id).expect("client state");
+        assert!(
+            state.pending_results.is_empty(),
+            "pending_results leaked after failed broadcast: {:?}",
+            state.pending_results.keys().collect::<Vec<_>>()
+        );
+
+        drop(req_tx);
+        let _ = forwarder.await;
+    }
+
+    /// Control case: when the broadcast DOES have a live subscriber
+    /// the forwarder leaves the pending entry in place (the reader
+    /// task will clear it when `tool_result` comes back).
+    #[tokio::test]
+    async fn forwarder_leaves_pending_when_broadcast_delivered() {
+        use crate::infrastructure::extensions::uds_tool::UdsToolRequest;
+        use std::time::Duration;
+
+        let registry = new_client_tool_registry();
+        let client_id: u64 = 7;
+        {
+            let mut reg = registry.lock().unwrap();
+            reg.insert(client_id, ClientToolState::default());
+        }
+
+        let (broadcast_tx, mut broadcast_rx) =
+            tokio::sync::broadcast::channel::<String>(8);
+
+        let (req_tx, req_rx) = tokio::sync::mpsc::channel::<UdsToolRequest>(4);
+        let forwarder = tokio::spawn(super::forward_tool_requests(
+            client_id,
+            "weather".to_string(),
+            req_rx,
+            registry.clone(),
+            Some(broadcast_tx),
+        ));
+
+        let (result_tx, _result_rx) = tokio::sync::oneshot::channel();
+        req_tx
+            .send(UdsToolRequest {
+                tool_call_id: "uds-test-2".into(),
+                tool_name: "weather".into(),
+                arguments: "{}".into(),
+                result_tx,
+            })
+            .await
+            .unwrap();
+
+        // Receive the broadcast (proving delivery happened).
+        let line =
+            tokio::time::timeout(Duration::from_millis(500), broadcast_rx.recv())
+                .await
+                .expect("broadcast never arrived")
+                .expect("broadcast channel closed unexpectedly");
+        assert!(line.contains("\"execute_tool\""));
+
+        // Short yield so the forwarder-side insert completes even if
+        // the send path beat it to the broadcast receiver.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let reg = registry.lock().unwrap();
+        let state = reg.get(&client_id).expect("client state");
+        assert_eq!(
+            state.pending_results.len(),
+            1,
+            "pending entry should remain until tool_result arrives"
+        );
+
+        drop(req_tx);
+        drop(reg);
+        let _ = forwarder.await;
     }
 }
