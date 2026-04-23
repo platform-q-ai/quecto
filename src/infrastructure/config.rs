@@ -219,7 +219,7 @@ fn default_workspace() -> String {
     "~/.quecto/workspace".to_string()
 }
 fn default_model() -> String {
-    "gpt-5.4".to_string()
+    "gpt-5.5".to_string()
 }
 fn default_max_tokens() -> u32 {
     8192
@@ -237,17 +237,20 @@ fn default_max_session_messages() -> usize {
     200
 }
 fn default_context_collapse_after_turns() -> u32 {
-    // Disabled by default (u32::MAX) — tool results age naturally and are
-    // dropped by the sliding window. Users can re-enable collapse by setting
-    // a lower value. Safe because max_tool_iterations (999_999) << u32::MAX.
-    u32::MAX
+    // Tool results older than this many turns get collapsed to a
+    // `recall(spill_id)` stub and their full content spilled to disk.
+    // Keeps the hot context small on long sessions; the agent can
+    // retrieve spilled content via the `recall` tool when needed.
+    50
 }
 fn default_max_context_tokens() -> usize {
-    // Application-level budget aligned with OpenAI GPT-5.4's documented ~1.05M
-    // token context window. This remains a local pruning ceiling; QuEcto does
-    // not validate against or auto-detect the provider's actual model limit.
-    // Users on smaller-context models should override this.
-    1_000_000
+    // Application-level pruning ceiling. Sized well below GPT-5.5's
+    // ~1M token window on purpose: a smaller hot-context target
+    // keeps latency and cost predictable on long sessions, with
+    // older tool output already spilled (see
+    // `default_context_collapse_after_turns`) and the hard-drop
+    // window dropping oldest non-pinned messages once we breach it.
+    300_000
 }
 fn default_true() -> bool {
     true
@@ -416,7 +419,7 @@ mod tests {
     #[test]
     fn test_deserialize_empty_uses_defaults() {
         let config: Config = serde_json::from_str("{}").unwrap();
-        assert_eq!(config.agents.defaults.model, "gpt-5.4");
+        assert_eq!(config.agents.defaults.model, "gpt-5.5");
         assert_eq!(config.agents.defaults.max_tokens, 8192);
         assert!((config.agents.defaults.temperature - 0.7).abs() < f32::EPSILON);
         assert_eq!(config.agents.defaults.workspace, "~/.quecto/workspace");
