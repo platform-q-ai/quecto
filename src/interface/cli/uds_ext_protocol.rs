@@ -26,11 +26,23 @@ const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 30;
 pub struct ClientToolState {
     /// Tool names registered by this client.
     pub tool_names: HashSet<String>,
-    /// Pending tool execution results: tool_call_id → result sender.
+    /// Pending tool execution results: tool_call_id → result sender. The
+    /// forwarder task below populates this when it dispatches an
+    /// `execute_tool`; `handle_tool_result` drains it when the client's
+    /// `tool_result` arrives.
     pub pending_results: HashMap<String, tokio::sync::oneshot::Sender<ToolResult>>,
-    /// Receivers for incoming execution requests (one per tool).
-    /// The client handler task drains these to route `execute_tool` events.
+    /// Receivers for incoming execution requests (one per tool). Staged
+    /// here by `handle_register_tools` until `dispatch_register_tools`
+    /// takes ownership and spawns a forwarder task for each — at which
+    /// point the rx is moved out and replaced by an entry in
+    /// `tool_request_tasks`.
     pub tool_request_rxs: HashMap<String, tokio::sync::mpsc::Receiver<UdsToolRequest>>,
+    /// Forwarder tasks that consume `UdsToolRequest`s from the mpsc
+    /// receiver created by `create_uds_tool`, register the oneshot
+    /// result sender into `pending_results`, and emit an `execute_tool`
+    /// event to the wire. Keyed by tool name. Aborted on unregister or
+    /// client disconnect.
+    pub tool_request_tasks: HashMap<String, tokio::task::JoinHandle<()>>,
 }
 
 /// Shared registry of per-client tool state, keyed by client ID.
@@ -128,6 +140,9 @@ pub fn handle_unregister_tools(
         for name in tool_names {
             if state.tool_names.remove(name) {
                 state.tool_request_rxs.remove(name);
+                if let Some(handle) = state.tool_request_tasks.remove(name) {
+                    handle.abort();
+                }
                 removed.push(name.clone());
             }
         }
@@ -190,6 +205,13 @@ pub fn handle_client_disconnect(client_id: u64, registry: &ClientToolRegistry) -
         });
     }
 
+    // Abort any forwarder tasks owned by the disconnecting client —
+    // dropping their mpsc receivers would let them exit naturally, but
+    // explicit abort shaves a small amount of background work.
+    for (_, handle) in state.tool_request_tasks {
+        handle.abort();
+    }
+
     state.tool_names.into_iter().collect()
 }
 
@@ -244,9 +266,125 @@ pub(super) async fn dispatch_register_tools(
         for tool in &new_tools {
             ctx.agent.register_extension_tool(tool.clone());
         }
+        // Spawn a forwarder task for each newly-registered tool. These
+        // drain the mpsc receiver stored in `tool_request_rxs` and are
+        // the reason tool calls from the LLM actually reach the
+        // extension client as `execute_tool` events.
+        for tool_reg in tools {
+            spawn_tool_forwarder_for(ctx, &tool_reg.name);
+        }
         let ext_names = ctx.agent.tool_registry_extension_names();
         let changed = build_extensions_changed_event(&ext_names, ctx.agent);
         super::uds::emit_event_to_broadcast_or_writer(ctx, &changed).await;
+    }
+}
+
+/// Take the just-staged receiver for `tool_name` out of the client's
+/// `tool_request_rxs`, spawn a forwarder task that emits `execute_tool`
+/// events and parks `result_tx` senders into `pending_results`, and
+/// record the task handle for abort on unregister/disconnect.
+fn spawn_tool_forwarder_for(
+    ctx: &mut super::uds::DispatchCtx<'_>,
+    tool_name: &str,
+) {
+    let client_id = ctx.current_client_id;
+    let registry = ctx.client_tool_registry.clone();
+    let broadcast_tx = ctx.broadcast_tx.clone();
+
+    let rx_opt = {
+        let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+        let state = match reg.get_mut(&client_id) {
+            Some(s) => s,
+            None => return,
+        };
+        // Abort any forwarder for the same tool (re-register case).
+        if let Some(old) = state.tool_request_tasks.remove(tool_name) {
+            old.abort();
+        }
+        state.tool_request_rxs.remove(tool_name)
+    };
+    let Some(rx) = rx_opt else {
+        return;
+    };
+
+    let name_for_task = tool_name.to_string();
+    let handle = tokio::spawn(forward_tool_requests(
+        client_id,
+        name_for_task,
+        rx,
+        registry.clone(),
+        broadcast_tx,
+    ));
+
+    let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(state) = reg.get_mut(&client_id) {
+        state.tool_request_tasks.insert(tool_name.to_string(), handle);
+    } else {
+        // Client disappeared between the two locks. Dropping the
+        // handle aborts it; tool exec will surface "Extension
+        // disconnected" via the existing UdsTool path.
+        handle.abort();
+    }
+}
+
+/// Drain `UdsToolRequest`s for a single (client, tool) pair: stash the
+/// oneshot result sender in `pending_results` so `tool_result` handlers
+/// can resolve it, then emit an `execute_tool` event to the wire.
+///
+/// Broadcast-wide event is fine because `execute_tool` is scoped by
+/// `tool_name` — only the client that registered the tool has a
+/// dispatcher for it.  Other connected clients see the event, find no
+/// matching handler, and ignore it.  This avoids adding a per-client
+/// event channel just for one event type.
+async fn forward_tool_requests(
+    client_id: u64,
+    tool_name: String,
+    mut rx: tokio::sync::mpsc::Receiver<UdsToolRequest>,
+    registry: ClientToolRegistry,
+    broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+) {
+    while let Some(req) = rx.recv().await {
+        let UdsToolRequest {
+            tool_call_id,
+            tool_name: _sent_tool,
+            arguments,
+            result_tx,
+        } = req;
+
+        // Stash the oneshot before emitting the event so a fast
+        // response can't race the insert.
+        {
+            let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+            match reg.get_mut(&client_id) {
+                Some(state) => {
+                    state.pending_results.insert(tool_call_id.clone(), result_tx);
+                }
+                None => {
+                    // Client gone — drop the request; the UdsTool
+                    // timeout path surfaces a clean error upstream.
+                    continue;
+                }
+            }
+        }
+
+        let ev = super::protocol::AgentEvent::ExecuteTool {
+            tool_call_id: tool_call_id.clone(),
+            tool_name: tool_name.clone(),
+            arguments,
+        };
+        if let Some(ref tx) = broadcast_tx {
+            let mut line = ev.to_json_line();
+            line.push('\n');
+            let _ = tx.send(line);
+        } else {
+            // Single-client test mode — nobody to write to.  Remove
+            // the pending entry so the UdsTool times out cleanly
+            // rather than leaking.
+            let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(state) = reg.get_mut(&client_id) {
+                state.pending_results.remove(&tool_call_id);
+            }
+        }
     }
 }
 

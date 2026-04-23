@@ -610,6 +610,11 @@ pub struct QuectoWorld {
 
     /// Multi-client UDS: when true, start with --persist flag (#348)
     pub _mc_persist: bool,
+    /// Multi-client UDS: per-client tool_name → reply content for
+    /// `client N replies to execute_tool` reactive step. The harness
+    /// watches the stream for an `execute_tool` event with a matching
+    /// toolName and auto-sends a `tool_result` carrying the content.
+    pub mc_auto_replies: HashMap<u32, Vec<(String, String)>>,
     /// Multi-client UDS: clients to connect after all others have disconnected (#348)
     pub _mc_reconnect_clients: Vec<u32>,
     /// Real-LLM UDS mode: use real credentials and real socket bind with sequential prompts

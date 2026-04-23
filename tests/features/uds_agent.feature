@@ -791,3 +791,39 @@ Feature: UDS mode for headless agent operation
     And I close all UDS clients
     Then the UDS agent exits with code 0
     And client 1 should not have received a workflow_state event
+
+  # UDS extension execute_tool round-trip.
+  # When the LLM calls an extension-registered tool, the agent must emit
+  # an execute_tool event to the registering client carrying tool_call_id,
+  # tool_name, and arguments, then block on that clients tool_result before
+  # resuming the turn.
+  @done @multi-client @uds-ext
+  Scenario: execute_tool round-trip dispatches and completes the turn
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a tool call for tool "weather" with arguments "city=Edinburgh" then text "done"
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And client 1 sends register_tools with tool "weather" described as "Get weather"
+    And client 1 sends prompt "what's the weather in edinburgh?"
+    And client 1 replies to execute_tool for "weather" with content "sunny, 14C"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 1 should have received an execute_tool for tool "weather"
+    And the execute_tool event for "weather" should carry arguments containing "Edinburgh"
+    And client 1 should have received an event of type "agent_end"
+
+  @done @multi-client @uds-ext
+  Scenario: tool_result with isError still unblocks the agent turn
+    Given a temp base directory
+    And a config file with an OpenAI provider pointing at a mock server
+    And the mock LLM returns a tool call for tool "weather" with arguments "city=Edinburgh" then text "recovered"
+    When I start the multi-client UDS agent
+    And client 1 connects
+    And client 1 sends register_tools with tool "weather" described as "Get weather"
+    And client 1 sends prompt "what's the weather in edinburgh?"
+    And client 1 replies to execute_tool for "weather" with content "forecast service unavailable"
+    And I close all UDS clients
+    Then the UDS agent exits with code 0
+    And client 1 should have received an execute_tool for tool "weather"
+    And client 1 should have received an event of type "agent_end"

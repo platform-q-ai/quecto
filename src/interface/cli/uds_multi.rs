@@ -140,12 +140,15 @@ pub(super) async fn multi_client_loop(
     let cancel_handle: CancelHandle = std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle));
     let live_clients = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
 
+    let client_tool_registry = super::uds_ext_protocol::new_client_tool_registry();
+
     let accept_task = spawn_accept_loop(AcceptLoopArgs {
         listener,
         broadcast_tx: broadcast_tx.clone(),
         cmd_tx: cmd_tx.clone(),
         cancel_handle: cancel_handle.clone(),
         live_clients: live_clients.clone(),
+        client_tool_registry: client_tool_registry.clone(),
     });
 
     // Drop our clone so cmd_rx closes when all client senders (accept loop)
@@ -155,7 +158,6 @@ pub(super) async fn multi_client_loop(
 
     let mut null_writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin> =
         Box::new(tokio::io::sink());
-    let client_tool_registry = super::uds_ext_protocol::new_client_tool_registry();
     let mut ctx = DispatchCtx {
         agent: &mut agent,
         messages: &mut messages,
@@ -204,6 +206,11 @@ struct AcceptLoopArgs {
     cmd_tx: tokio::sync::mpsc::Sender<ClientMessage>,
     cancel_handle: CancelHandle,
     live_clients: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    /// Shared per-client tool state. Cloned into each ClientHandlerArgs
+    /// so the reader task can resolve `tool_result` commands inline
+    /// without routing them through the single-threaded dispatch loop
+    /// (which is blocked on the agent's in-flight prompt).
+    client_tool_registry: super::uds_ext_protocol::ClientToolRegistry,
 }
 
 /// Spawn the accept loop that listens for new client connections.
@@ -214,6 +221,7 @@ fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
         cmd_tx,
         cancel_handle,
         live_clients,
+        client_tool_registry,
     } = args;
     tokio::spawn(async move {
         loop {
@@ -243,6 +251,7 @@ fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
                         cmd_tx: cmd_tx.clone(),
                         cancel_handle: cancel_handle.clone(),
                         client_id,
+                        client_tool_registry: client_tool_registry.clone(),
                         _guard: guard,
                     };
                     tokio::spawn(async move { handle_client(args).await });
@@ -382,6 +391,8 @@ struct ClientHandlerArgs {
     cancel_handle: CancelHandle,
     /// Unique client identifier (#352).
     client_id: u64,
+    /// For in-reader handling of `tool_result` — see handle_client.
+    client_tool_registry: super::uds_ext_protocol::ClientToolRegistry,
     /// RAII guard — decrements `live_clients` and sends `Disconnected` on drop.
     _guard: ClientGuard,
 }
@@ -393,6 +404,7 @@ async fn handle_client(args: ClientHandlerArgs) {
         cmd_tx,
         cancel_handle,
         client_id,
+        client_tool_registry,
         _guard,
     } = args;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -439,6 +451,25 @@ async fn handle_client(args: ClientHandlerArgs) {
         }
         if is_cancel_command(line.trim()) {
             fire_cancel(&cancel_handle);
+        }
+        // Intercept `tool_result` inline — the dispatch loop is
+        // single-threaded and is blocked waiting for the agent's
+        // in-flight prompt (which in turn is waiting for *this* very
+        // tool_result). Routing through cmd_tx would deadlock. We
+        // resolve the pending oneshot directly against the shared
+        // tool registry; the agent's UdsTool::execute wakes and the
+        // turn resumes.
+        if let Some(parsed) = try_parse_tool_result(&line) {
+            super::uds_ext_protocol::handle_tool_result(
+                super::uds_ext_protocol::ToolResultArgs {
+                    client_id,
+                    tool_call_id: &parsed.tool_call_id,
+                    content: &parsed.content,
+                    is_error: parsed.is_error,
+                    registry: &client_tool_registry,
+                },
+            );
+            continue;
         }
         let msg = ClientMessage::Command(ClientCommand { line, client_id });
         if cmd_tx.send(msg).await.is_err() {
@@ -712,4 +743,24 @@ fn forward_progress_event_broadcast(
         }
         _ => {}
     }
+}
+
+/// Parse a raw client line as a `tool_result` command. Returns `None`
+/// if the line isn't a tool_result (so the caller passes it through to
+/// normal dispatch).
+struct ParsedToolResult {
+    tool_call_id: String,
+    content: String,
+    is_error: bool,
+}
+
+fn try_parse_tool_result(line: &str) -> Option<ParsedToolResult> {
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    if v.get("type").and_then(|t| t.as_str())? != "tool_result" {
+        return None;
+    }
+    let tool_call_id = v.get("toolCallId")?.as_str()?.to_string();
+    let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+    let is_error = v.get("isError").and_then(|b| b.as_bool()).unwrap_or(false);
+    Some(ParsedToolResult { tool_call_id, content, is_error })
 }
