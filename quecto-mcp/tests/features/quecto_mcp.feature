@@ -27,3 +27,15 @@ Feature: Quecto MCP UDS extension
     Then the Quecto tool name should be "community_feed_list"
     And the Quecto tool description should be "List feed posts"
     And the Quecto tool schema should be "{\"type\":\"object\"}"
+
+  Scenario: Defaults to Perme8 Community tools when no filter is configured
+    Given required quecto-mcp connection arguments
+    When I parse the quecto-mcp configuration
+    Then the configured tool prefixes should be:
+      | prefix     |
+      | community. |
+
+  Scenario: Applies configured Quecto tool name prefix
+    Given an MCP tool named "community.feed.list"
+    When I build a Quecto registration with name prefix "mcp_"
+    Then the Quecto tool name should be "mcp_community_feed_list"

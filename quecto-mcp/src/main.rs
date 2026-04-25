@@ -14,8 +14,19 @@ async fn main() {
         }
     };
 
-    if let Err(err) = run_extension(config).await {
-        eprintln!("quecto-mcp error: {}", quecto_mcp::redact(&err.to_string()));
-        std::process::exit(1);
+    tokio::select! {
+        result = run_extension(config) => {
+            if let Err(err) = result {
+                eprintln!("quecto-mcp error: {}", quecto_mcp::redact(&err.to_string()));
+                std::process::exit(1);
+            }
+        }
+        signal = tokio::signal::ctrl_c() => {
+            if let Err(err) = signal {
+                eprintln!("quecto-mcp signal error: {err}");
+                std::process::exit(1);
+            }
+            tracing::info!("quecto-mcp received shutdown signal");
+        }
     }
 }

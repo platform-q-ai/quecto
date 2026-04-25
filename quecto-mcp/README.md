@@ -18,7 +18,8 @@ quecto-mcp \
   --socket /tmp/quecto-agent-community-1.sock \
   --mcp-url https://perme8.example.com/mcp \
   --mcp-token "$PERME8_MCP_TOKEN" \
-  --tool-prefix community.
+  --tool-prefix community. \
+  --register-timeout 10
 ```
 
 Equivalent environment variables:
@@ -30,6 +31,25 @@ PERME8_MCP_TOKEN=... \
 QUECTO_MCP_TOOL_PREFIXES=community. \
 quecto-mcp
 ```
+
+## Options
+
+Required:
+
+- `--socket` or `QUECTO_SOCKET`
+- `--mcp-url` or `PERME8_MCP_URL`
+- `--mcp-token`, `--mcp-token-file`, `--mcp-token-command`, or `PERME8_MCP_TOKEN`
+
+Optional:
+
+- `--mcp-server-name`, default `perme8-mcp`
+- `--tool-prefix`, repeatable; defaults to `community.` when no allowlist is configured
+- `--tool-allowlist`, comma-separated MCP tool names
+- `--tool-denylist`, comma-separated MCP tool names
+- `--name-prefix`, prefix for registered Quecto tool names
+- `--timeout`, MCP HTTP timeout in seconds
+- `--register-timeout`, Quecto `register_tools` timeout in seconds
+- `--refresh-interval`, parsed for deployment compatibility; currently tool registration happens at startup
 
 ## Tool name mapping
 

@@ -8,6 +8,7 @@ struct McpWorld {
     mapped_name: Option<String>,
     filtered: Vec<McpTool>,
     registration: Option<quecto_mcp::QuectoToolRegistration>,
+    config: Option<quecto_mcp::Config>,
 }
 
 #[given(expr = "an MCP tool named {string}")]
@@ -56,10 +57,36 @@ fn when_filter_prefix(world: &mut McpWorld, prefix: String) {
     world.filtered = filter_tools(&world.tools, &[prefix], &[], &[]).unwrap();
 }
 
+#[given("required quecto-mcp connection arguments")]
+fn given_required_config_args(_world: &mut McpWorld) {}
+
 #[when("I build a Quecto registration")]
 fn when_build_registration(world: &mut McpWorld) {
     let tool = world.tool.as_ref().expect("tool");
     world.registration = Some(build_registration(tool).unwrap());
+}
+
+#[when(expr = "I build a Quecto registration with name prefix {string}")]
+fn when_build_registration_with_prefix(world: &mut McpWorld, prefix: String) {
+    let tool = world.tool.as_ref().expect("tool");
+    world.registration =
+        Some(quecto_mcp::build_registration_with_name_prefix(tool, &prefix).unwrap());
+}
+
+#[when("I parse the quecto-mcp configuration")]
+fn when_parse_config(world: &mut McpWorld) {
+    world.config = Some(
+        quecto_mcp::Config::from_env_and_args([
+            "quecto-mcp".to_string(),
+            "--socket".to_string(),
+            "/tmp/quecto.sock".to_string(),
+            "--mcp-url".to_string(),
+            "https://perme8.example.test/mcp".to_string(),
+            "--mcp-token".to_string(),
+            "agent-token".to_string(),
+        ])
+        .unwrap(),
+    );
 }
 
 #[then(expr = "the Quecto tool name should be {string}")]
@@ -88,6 +115,21 @@ fn then_filtered_names(world: &mut McpWorld, step: &cucumber::gherkin::Step) {
         .map(|tool| tool.name.clone())
         .collect();
     assert_eq!(actual, expected);
+}
+
+#[then("the configured tool prefixes should be:")]
+fn then_configured_prefixes(world: &mut McpWorld, step: &cucumber::gherkin::Step) {
+    let table = step.table.as_ref().expect("table");
+    let expected: Vec<String> = table
+        .rows
+        .iter()
+        .skip(1)
+        .map(|row| row[0].clone())
+        .collect();
+    assert_eq!(
+        world.config.as_ref().expect("config").tool_prefixes,
+        expected
+    );
 }
 
 #[then(expr = "the Quecto tool description should be {string}")]
