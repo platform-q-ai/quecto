@@ -1604,6 +1604,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "quecto-mcp"
+version = "0.1.0"
+dependencies = [
+ "cucumber",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "wiremock",
+]
+
+[[package]]
 name = "quecto-tui"
 version = "0.2.0"
 dependencies = [

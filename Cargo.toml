@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "quecto-tui", "quecto-api"]
+members = [".", "quecto-tui", "quecto-api", "quecto-mcp"]
 
 [package]
 name = "quecto"
