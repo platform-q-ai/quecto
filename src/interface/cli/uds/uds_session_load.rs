@@ -14,4 +14,3 @@ pub(super) async fn load_session(
         .map(|s| s.unwrap_or_else(|| Session::new(key)))
         .map_err(|e| e.to_string())
 }
-

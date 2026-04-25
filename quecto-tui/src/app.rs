@@ -964,9 +964,7 @@ impl App {
                         wf.total, n, title
                     )
                 })
-                .unwrap_or_else(|| {
-                    format!("You have completed all {} workflow steps. ", wf.total)
-                });
+                .unwrap_or_else(|| format!("You have completed all {} workflow steps. ", wf.total));
             let msg = format!(
                 "{issue_part}Now do the following in order:\n\
                  1. Close the issue (if applicable)\n\

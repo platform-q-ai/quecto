@@ -13,7 +13,9 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-struct NoopTool { n: Cow<'static, str> }
+struct NoopTool {
+    n: Cow<'static, str>,
+}
 impl Tool for NoopTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -22,20 +24,34 @@ impl Tool for NoopTool {
             parameters_schema: Cow::Borrowed(r#"{"type":"object"}"#),
         }
     }
-    fn execute(&self, _args: &str) -> Pin<Box<dyn Future<Output = Result<ToolResult, quecto::domain::error::DomainError>> + Send + '_>> {
-        Box::pin(async { Ok(ToolResult { content: String::new(), is_error: false, image_blocks: vec![] }) })
+    fn execute(
+        &self,
+        _args: &str,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<ToolResult, quecto::domain::error::DomainError>> + Send + '_,
+        >,
+    > {
+        Box::pin(async {
+            Ok(ToolResult {
+                content: String::new(),
+                is_error: false,
+                image_blocks: vec![],
+            })
+        })
     }
 }
 
 fn tool(name: &'static str) -> Arc<dyn Tool> {
-    Arc::new(NoopTool { n: Cow::Borrowed(name) })
+    Arc::new(NoopTool {
+        n: Cow::Borrowed(name),
+    })
 }
 
 #[test]
 fn name_is_exposed_verbatim() {
-    let ext: Arc<dyn Extension> = Arc::new(NativeExtension::new(
-        "my-ext", "a description", tool("t"),
-    ));
+    let ext: Arc<dyn Extension> =
+        Arc::new(NativeExtension::new("my-ext", "a description", tool("t")));
     assert_eq!(ext.name(), "my-ext");
     assert_eq!(ext.description(), "a description");
 }
@@ -47,8 +63,15 @@ fn tools_returns_all_tools_the_extension_was_built_with() {
         "many tools",
         vec![tool("a"), tool("b"), tool("c")],
     ));
-    let names: Vec<_> = ext.tools().iter().map(|t| t.definition().name.to_string()).collect();
-    assert_eq!(names, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+    let names: Vec<_> = ext
+        .tools()
+        .iter()
+        .map(|t| t.definition().name.to_string())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["a".to_string(), "b".to_string(), "c".to_string()]
+    );
 }
 
 #[test]

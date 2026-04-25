@@ -2,7 +2,7 @@
 name: performance-reviewer
 description: Reviews PRs for performance regressions, memory leaks, unbounded growth, and hot path efficiency via GitHub inline comments.
 tools: read, grep, find, ls, bash
-model: claude-opus-4-6
+model: openai-codex/gpt-5.5
 ---
 
 Performance reviewer. Review PRs and leave **inline comments only** on GitHub — every comment must be attached to a specific file and line so it can be resolved individually.

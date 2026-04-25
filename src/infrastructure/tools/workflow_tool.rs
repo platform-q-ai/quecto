@@ -18,7 +18,8 @@ pub type WorkflowEngineHandle = Arc<Mutex<WorkflowEngine>>;
 pub fn broadcast_emitter(tx: tokio::sync::broadcast::Sender<String>) -> WorkflowEventEmitter {
     Arc::new(move |event: serde_json::Value| {
         // serde_json::Value → String serialization is infallible.
-        let mut line = serde_json::to_string(&event).expect("serde_json::Value serializes infallibly");
+        let mut line =
+            serde_json::to_string(&event).expect("serde_json::Value serializes infallibly");
         line.push('\n');
         let _ = tx.send(line);
     })

@@ -263,11 +263,15 @@ impl ExecTool {
         // LLM-addressable: malformed JSON → Ok(is_error=true). Tool contract.
         let args: serde_json::Value = match serde_json::from_str(arguments) {
             Ok(v) => v,
-            Err(e) => return Ok(ToolResult {
-                content: format!("invalid JSON arguments: {e}. Example: {{\"command\": \"ls -la\"}}"),
-                is_error: true,
-                image_blocks: vec![],
-            }),
+            Err(e) => {
+                return Ok(ToolResult {
+                    content: format!(
+                        "invalid JSON arguments: {e}. Example: {{\"command\": \"ls -la\"}}"
+                    ),
+                    is_error: true,
+                    image_blocks: vec![],
+                });
+            }
         };
         let Some(command) = args["command"].as_str().map(str::to_string) else {
             return Ok(ToolResult {

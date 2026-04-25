@@ -3,8 +3,8 @@
 use cucumber::{World, given, then, when};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use quecto_api::application::ports::agent_gateway::{AgentCommand, AgentGateway, EventSubscriber};
 use quecto_api::domain::error::ApiError;
@@ -31,7 +31,10 @@ struct MockSubscriber;
 impl EventSubscriber for MockSubscriber {
     fn recv(&mut self) -> Pin<Box<dyn Future<Output = Option<AgentEvent>> + Send + '_>> {
         // Never yields — tests don't exercise long-lived streams here.
-        Box::pin(async { tokio::time::sleep(std::time::Duration::from_secs(3600)).await; None })
+        Box::pin(async {
+            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            None
+        })
     }
 }
 
@@ -139,7 +142,12 @@ async fn request_get(world: &mut ApiWorld, path: String) {
 
 #[when("I POST /prompt with body:")]
 async fn request_post_prompt(world: &mut ApiWorld, step: &cucumber::gherkin::Step) {
-    let body = step.docstring.as_ref().expect("missing docstring").trim().to_string();
+    let body = step
+        .docstring
+        .as_ref()
+        .expect("missing docstring")
+        .trim()
+        .to_string();
     let base = world.ensure_server().await;
     let url = format!("{base}/prompt");
     let client = reqwest::Client::new();
@@ -175,7 +183,9 @@ fn check_body_contains(world: &mut ApiWorld, fragment: String) {
 
 // ── Architecture steps ───────────────────────────────────────────────────────
 
-#[then(regex = r"^the (domain|application) source should not import from (infrastructure|application|domain)$")]
+#[then(
+    regex = r"^the (domain|application) source should not import from (infrastructure|application|domain)$"
+)]
 fn layer_should_not_import(_world: &mut ApiWorld, source_layer: String, forbidden_layer: String) {
     let source_dir = format!("src/{}", source_layer);
     let forbidden_pattern = format!("crate::{}", forbidden_layer);

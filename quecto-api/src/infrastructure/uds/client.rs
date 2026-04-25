@@ -3,11 +3,11 @@
 // Connects to a quecto agent's Unix domain socket, sends JSON-lines commands,
 // and distributes incoming events to subscribers via broadcast channels.
 
+use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::future::Future;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -174,7 +174,10 @@ impl AgentGateway for UdsGateway {
             let id = uuid::Uuid::new_v4().to_string();
 
             let json_value = match cmd {
-                AgentCommand::Prompt { message, streaming_behavior } => {
+                AgentCommand::Prompt {
+                    message,
+                    streaming_behavior,
+                } => {
                     let mut obj = serde_json::json!({
                         "type": "prompt",
                         "id": id,
@@ -206,7 +209,11 @@ impl AgentGateway for UdsGateway {
                     "type": "get_session_stats",
                     "id": id,
                 }),
-                AgentCommand::SetModel { model, provider, model_id } => {
+                AgentCommand::SetModel {
+                    model,
+                    provider,
+                    model_id,
+                } => {
                     let mut obj = serde_json::json!({
                         "type": "set_model",
                         "id": id,
@@ -284,9 +291,9 @@ impl AgentGateway for UdsGateway {
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<Box<dyn EventSubscriber>, ApiError>> + Send + '_>> {
         let rx = self.event_tx.subscribe();
-        Box::pin(async move {
-            Ok(Box::new(BroadcastSubscriber { rx }) as Box<dyn EventSubscriber>)
-        })
+        Box::pin(
+            async move { Ok(Box::new(BroadcastSubscriber { rx }) as Box<dyn EventSubscriber>) },
+        )
     }
 
     fn is_connected(&self) -> bool {

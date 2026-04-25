@@ -414,7 +414,10 @@ async fn test_await_unknown_agent_returns_structured_error() {
         .execute(r#"{"agent_id":"nonexistent","command":"await"}"#)
         .await
         .unwrap();
-    assert!(!result.is_error, "await errors should be in the structured result, not tool errors");
+    assert!(
+        !result.is_error,
+        "await errors should be in the structured result, not tool errors"
+    );
     let parsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
     assert_eq!(parsed["status"], "error");
     assert_eq!(parsed["reason"], "agent_not_found");
@@ -445,10 +448,7 @@ async fn test_await_idle_agent_with_zero_idle_timeout() {
 
     let mut entry = SubagentEntry::new(sock_path, 0);
     entry.status = SubagentStatus::Idle;
-    registry
-        .lock()
-        .unwrap()
-        .insert("w1".to_string(), entry);
+    registry.lock().unwrap().insert("w1".to_string(), entry);
 
     let tool = AgentCmdTool::new(registry);
     let result = tool
@@ -473,10 +473,7 @@ async fn test_await_timeout_when_running() {
 
     let mut entry = SubagentEntry::new(sock_path, 0);
     entry.status = SubagentStatus::Running;
-    registry
-        .lock()
-        .unwrap()
-        .insert("w1".to_string(), entry);
+    registry.lock().unwrap().insert("w1".to_string(), entry);
 
     let tool = AgentCmdTool::new(registry);
     let result = tool
@@ -500,10 +497,7 @@ async fn test_await_duplicate_returns_error() {
 
     let mut entry = SubagentEntry::new(sock_path, 0);
     entry.status = SubagentStatus::Running;
-    registry
-        .lock()
-        .unwrap()
-        .insert("w1".to_string(), entry);
+    registry.lock().unwrap().insert("w1".to_string(), entry);
 
     let active_awaits = new_active_awaits();
     // Pre-register an active await.
@@ -531,10 +525,7 @@ async fn test_await_stale_socket_returns_connection_failed() {
     std::fs::write(&sock_path, b"").unwrap();
 
     let entry = SubagentEntry::new(sock_path, 0);
-    registry
-        .lock()
-        .unwrap()
-        .insert("w1".to_string(), entry);
+    registry.lock().unwrap().insert("w1".to_string(), entry);
 
     let tool = AgentCmdTool::new(registry);
     let result = tool
@@ -558,10 +549,7 @@ async fn test_await_exited_agent_returns_immediately() {
 
     let mut entry = SubagentEntry::new(sock_path, 0);
     entry.status = SubagentStatus::Exited;
-    registry
-        .lock()
-        .unwrap()
-        .insert("w1".to_string(), entry);
+    registry.lock().unwrap().insert("w1".to_string(), entry);
 
     let tool = AgentCmdTool::new(registry);
     let result = tool
@@ -575,7 +563,7 @@ async fn test_await_exited_agent_returns_immediately() {
 
 #[tokio::test]
 async fn test_await_exit_signal_returns_exit_code() {
-    use super::super::subagent_registry::{SubagentStatus, new_exit_signal_channel, ExitSignal};
+    use super::super::subagent_registry::{ExitSignal, SubagentStatus, new_exit_signal_channel};
     let registry = new_registry();
     let dir = tempfile::tempdir().unwrap();
     let sock_path = dir.path().join("test.sock");
@@ -587,10 +575,7 @@ async fn test_await_exit_signal_returns_exit_code() {
     let mut entry = SubagentEntry::new(sock_path, 0);
     entry.status = SubagentStatus::Running;
     entry.exit_signal_tx = Some(exit_tx.clone());
-    registry
-        .lock()
-        .unwrap()
-        .insert("w1".to_string(), entry);
+    registry.lock().unwrap().insert("w1".to_string(), entry);
 
     let tool = AgentCmdTool::new(registry);
 
@@ -624,10 +609,7 @@ async fn test_await_guard_cleanup_on_completion() {
 
     let mut entry = SubagentEntry::new(sock_path, 0);
     entry.status = SubagentStatus::Idle;
-    registry
-        .lock()
-        .unwrap()
-        .insert("w1".to_string(), entry);
+    registry.lock().unwrap().insert("w1".to_string(), entry);
 
     let tool = AgentCmdTool::new(registry);
     let _ = tool
@@ -654,10 +636,7 @@ async fn test_await_idle_timeout_waits_correct_duration() {
 
     let mut entry = SubagentEntry::new(sock_path, 0);
     entry.status = SubagentStatus::Idle;
-    registry
-        .lock()
-        .unwrap()
-        .insert("w1".to_string(), entry);
+    registry.lock().unwrap().insert("w1".to_string(), entry);
 
     let tool = AgentCmdTool::new(registry);
     let start = std::time::Instant::now();
@@ -689,10 +668,7 @@ async fn test_await_idle_resets_on_running() {
 
     let mut entry = SubagentEntry::new(sock_path, 0);
     entry.status = SubagentStatus::Idle;
-    registry
-        .lock()
-        .unwrap()
-        .insert("w1".to_string(), entry);
+    registry.lock().unwrap().insert("w1".to_string(), entry);
 
     let registry_clone = registry.clone();
     // After 200ms, set status to Running, then after 400ms set back to Idle.
@@ -769,10 +745,7 @@ async fn test_await_removed_agent_returns_exited() {
 
     let mut entry = SubagentEntry::new(sock_path, 0);
     entry.status = SubagentStatus::Running;
-    registry
-        .lock()
-        .unwrap()
-        .insert("w1".to_string(), entry);
+    registry.lock().unwrap().insert("w1".to_string(), entry);
 
     let registry_clone = registry.clone();
     // After 200ms, remove the agent from the registry (simulating reaper).

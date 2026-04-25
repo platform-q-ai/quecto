@@ -134,7 +134,8 @@ impl AuditSink for AuditLog {
         &self,
         turn: u32,
         event: AuditEvent,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + '_>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + '_>>
+    {
         Box::pin(AuditLog::emit(self, turn, event))
     }
 }
@@ -356,7 +357,10 @@ mod tests {
         let _log = AuditLog::open(tmp.path(), "cli:my-feature").await.unwrap();
 
         let path = AuditLog::file_path(tmp.path(), "cli:my-feature");
-        assert_eq!(path.file_name().unwrap().to_str().unwrap(), "cli_my-feature.jsonl");
+        assert_eq!(
+            path.file_name().unwrap().to_str().unwrap(),
+            "cli_my-feature.jsonl"
+        );
     }
 
     #[tokio::test]

@@ -50,7 +50,9 @@ pub trait AgentGateway: Send + Sync + 'static {
     /// Subscribe to the agent's broadcast event stream.
     /// Each subscriber gets its own copy of every event.
     #[allow(clippy::type_complexity)]
-    fn subscribe(&self) -> Pin<Box<dyn Future<Output = Result<Box<dyn EventSubscriber>, ApiError>> + Send + '_>>;
+    fn subscribe(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Box<dyn EventSubscriber>, ApiError>> + Send + '_>>;
 
     /// Check if the agent is connected.
     fn is_connected(&self) -> bool;

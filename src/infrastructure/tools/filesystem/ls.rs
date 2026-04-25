@@ -67,11 +67,15 @@ impl Tool for LsTool {
             // LLM-addressable: malformed JSON → Ok(is_error=true). Tool contract.
             let args: serde_json::Value = match serde_json::from_str(&args_str) {
                 Ok(v) => v,
-                Err(e) => return Ok(ToolResult {
-                    content: format!("invalid JSON arguments: {e}. Example: {{\"path\": \".\"}}"),
-                    is_error: true,
-                    image_blocks: vec![],
-                }),
+                Err(e) => {
+                    return Ok(ToolResult {
+                        content: format!(
+                            "invalid JSON arguments: {e}. Example: {{\"path\": \".\"}}"
+                        ),
+                        is_error: true,
+                        image_blocks: vec![],
+                    });
+                }
             };
 
             let path = args["path"].as_str().unwrap_or(".");

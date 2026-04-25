@@ -48,11 +48,15 @@ impl Tool for ReadTool {
             // input, per the Tool port's error-handling contract.
             let args = match args {
                 Ok(v) => v,
-                Err(e) => return Ok(ToolResult {
-                    content: format!("invalid JSON arguments: {e}. Example: {{\"path\": \"src/main.rs\"}}"),
-                    is_error: true,
-                    image_blocks: vec![],
-                }),
+                Err(e) => {
+                    return Ok(ToolResult {
+                        content: format!(
+                            "invalid JSON arguments: {e}. Example: {{\"path\": \"src/main.rs\"}}"
+                        ),
+                        is_error: true,
+                        image_blocks: vec![],
+                    });
+                }
             };
             let Some(path) = args["path"].as_str() else {
                 return Ok(ToolResult {

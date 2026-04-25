@@ -7,8 +7,7 @@ use quecto_api::infrastructure::uds::client::UdsGateway;
 async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
@@ -59,7 +58,9 @@ async fn main() {
 
     tracing::info!("quecto-api listening on http://{addr}");
 
-    let listener = tokio::net::TcpListener::bind(addr).await.expect("bind failed");
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .expect("bind failed");
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await

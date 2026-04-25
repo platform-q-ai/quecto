@@ -24,8 +24,8 @@ async fn emit_appends_one_json_line_per_event() {
     let lines: Vec<&str> = body.lines().collect();
     assert_eq!(lines.len(), 2, "one line per emit, got {body:?}");
     for line in &lines {
-        let _v: serde_json::Value = serde_json::from_str(line)
-            .expect("each line must be valid JSON");
+        let _v: serde_json::Value =
+            serde_json::from_str(line).expect("each line must be valid JSON");
     }
 }
 
@@ -34,16 +34,21 @@ async fn emit_persists_across_sink_reopens() {
     let tmp = tempfile::tempdir().unwrap();
     let path = AuditLog::file_path(tmp.path(), "session-dur");
     {
-        let sink: Arc<dyn AuditSink> = Arc::new(AuditLog::open(tmp.path(), "session-dur").await.unwrap());
+        let sink: Arc<dyn AuditSink> =
+            Arc::new(AuditLog::open(tmp.path(), "session-dur").await.unwrap());
         sink.emit(0, tool_call("first")).await.unwrap();
     }
     {
-        let sink: Arc<dyn AuditSink> = Arc::new(AuditLog::open(tmp.path(), "session-dur").await.unwrap());
+        let sink: Arc<dyn AuditSink> =
+            Arc::new(AuditLog::open(tmp.path(), "session-dur").await.unwrap());
         sink.emit(1, tool_call("second")).await.unwrap();
     }
     let body = std::fs::read_to_string(&path).unwrap();
-    assert_eq!(body.lines().count(), 2,
-        "reopen must preserve prior events and append the new one; got:\n{body}");
+    assert_eq!(
+        body.lines().count(),
+        2,
+        "reopen must preserve prior events and append the new one; got:\n{body}"
+    );
 }
 
 #[tokio::test]

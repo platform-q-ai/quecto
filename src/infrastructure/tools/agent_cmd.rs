@@ -230,7 +230,11 @@ impl AgentCmdTool {
     fn is_await_command(arguments: &str) -> bool {
         serde_json::from_str::<serde_json::Value>(arguments)
             .ok()
-            .and_then(|v| v.get("command").and_then(|c| c.as_str()).map(|s| s == "await"))
+            .and_then(|v| {
+                v.get("command")
+                    .and_then(|c| c.as_str())
+                    .map(|s| s == "await")
+            })
             .unwrap_or(false)
     }
 
@@ -241,20 +245,26 @@ impl AgentCmdTool {
         // so the LLM can see the message and retry. Tool contract.
         let args: serde_json::Value = match serde_json::from_str(arguments) {
             Ok(v) => v,
-            Err(e) => return Ok(ToolResult {
-                content: format!("invalid JSON arguments: {e}. Example: {{\"agent_id\": \"my-agent\"}}"),
-                is_error: true,
-                image_blocks: vec![],
-            }),
+            Err(e) => {
+                return Ok(ToolResult {
+                    content: format!(
+                        "invalid JSON arguments: {e}. Example: {{\"agent_id\": \"my-agent\"}}"
+                    ),
+                    is_error: true,
+                    image_blocks: vec![],
+                });
+            }
         };
 
         let agent_id = match args.get("agent_id").and_then(|v| v.as_str()) {
             Some(s) => s.to_string(),
-            None => return Ok(ToolResult {
-                content: "missing required field: agent_id".to_string(),
-                is_error: true,
-                image_blocks: vec![],
-            }),
+            None => {
+                return Ok(ToolResult {
+                    content: "missing required field: agent_id".to_string(),
+                    is_error: true,
+                    image_blocks: vec![],
+                });
+            }
         };
 
         if let Err(e) = validate_agent_id_format(&agent_id) {
@@ -494,8 +504,7 @@ impl AgentCmdTool {
                         None => {
                             idle_since = Some(now);
                             if idle_timeout_secs == 0 {
-                                let workflow =
-                                    self.fetch_workflow_snapshot(&agent_id).await;
+                                let workflow = self.fetch_workflow_snapshot(&agent_id).await;
                                 let result = AwaitResult {
                                     status: "idle".into(),
                                     reason: Some("completed".into()),
@@ -512,8 +521,7 @@ impl AgentCmdTool {
                         }
                         Some(since) => {
                             if now.duration_since(since) >= Duration::from_secs(idle_timeout_secs) {
-                                let workflow =
-                                    self.fetch_workflow_snapshot(&agent_id).await;
+                                let workflow = self.fetch_workflow_snapshot(&agent_id).await;
                                 let result = AwaitResult {
                                     status: "idle".into(),
                                     reason: Some("completed".into()),
@@ -548,8 +556,7 @@ impl AgentCmdTool {
                         if idle_timeout_secs == 0
                             || elapsed_idle >= Duration::from_secs(idle_timeout_secs)
                         {
-                            let workflow =
-                                self.fetch_workflow_snapshot(&agent_id).await;
+                            let workflow = self.fetch_workflow_snapshot(&agent_id).await;
                             let result = AwaitResult {
                                 status: "idle".into(),
                                 reason: Some("completed".into()),
@@ -566,7 +573,6 @@ impl AgentCmdTool {
                     }
                 }
             }
-
         }
     }
 
@@ -576,13 +582,11 @@ impl AgentCmdTool {
     async fn fetch_workflow_snapshot(&self, agent_id: &str) -> Option<WorkflowSnapshot> {
         let socket_path = self.lookup_socket(agent_id).ok()?;
         let cmd = serde_json::json!({"type": "get_state"}).to_string();
-        let response = tokio::time::timeout(
-            Duration::from_secs(2),
-            send_uds_command(&socket_path, &cmd),
-        )
-        .await
-        .ok()?
-        .ok()?;
+        let response =
+            tokio::time::timeout(Duration::from_secs(2), send_uds_command(&socket_path, &cmd))
+                .await
+                .ok()?
+                .ok()?;
         let parsed: serde_json::Value = serde_json::from_str(&response).ok()?;
         let data = parsed.get("data")?;
 

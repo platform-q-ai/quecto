@@ -37,7 +37,10 @@ async fn append_then_recall_returns_same_entry() {
     let e = entry("sp-1");
     store.append("cli:s", &e).await.unwrap();
 
-    let got = store.recall("cli:s", "sp-1").await.unwrap()
+    let got = store
+        .recall("cli:s", "sp-1")
+        .await
+        .unwrap()
         .expect("recall must return Some after append");
     assert_eq!(got.id, e.id);
     assert_eq!(got.content, e.content);
@@ -54,8 +57,11 @@ async fn list_entries_covers_every_append_in_order() {
 
     let listed = store.list_entries("cli:s").await.unwrap();
     let ids: Vec<&str> = listed.iter().map(|i| i.id.as_str()).collect();
-    assert_eq!(ids, vec!["a", "b", "c"],
-        "list_entries must preserve append order");
+    assert_eq!(
+        ids,
+        vec!["a", "b", "c"],
+        "list_entries must preserve append order"
+    );
 }
 
 #[tokio::test]
@@ -65,10 +71,14 @@ async fn clear_empties_the_session_spill() {
     store.append("cli:s", &entry("x")).await.unwrap();
 
     store.clear("cli:s").await.unwrap();
-    assert!(store.list_entries("cli:s").await.unwrap().is_empty(),
-        "clear must truncate the session spill to empty");
-    assert!(store.recall("cli:s", "x").await.unwrap().is_none(),
-        "recall must not find cleared entries");
+    assert!(
+        store.list_entries("cli:s").await.unwrap().is_empty(),
+        "clear must truncate the session spill to empty"
+    );
+    assert!(
+        store.recall("cli:s", "x").await.unwrap().is_none(),
+        "recall must not find cleared entries"
+    );
 }
 
 #[tokio::test]
@@ -78,6 +88,8 @@ async fn session_keys_are_isolated() {
     store.append("cli:a", &entry("only-a")).await.unwrap();
 
     let other = store.list_entries("cli:b").await.unwrap();
-    assert!(other.is_empty(),
-        "a spill appended to session A must not be visible in session B");
+    assert!(
+        other.is_empty(),
+        "a spill appended to session A must not be visible in session B"
+    );
 }

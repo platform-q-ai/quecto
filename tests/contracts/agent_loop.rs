@@ -22,12 +22,17 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 #[derive(Debug)]
-struct TextProvider { reply: String }
+struct TextProvider {
+    reply: String,
+}
 impl LlmProvider for TextProvider {
-    fn name(&self) -> &str { "text" }
-    fn chat<'a>(&'a self, _req: ChatRequest<'a>)
-        -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>>
-    {
+    fn name(&self) -> &str {
+        "text"
+    }
+    fn chat<'a>(
+        &'a self,
+        _req: ChatRequest<'a>,
+    ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + 'a>> {
         let reply = self.reply.clone();
         Box::pin(async move {
             Ok(LlmResponse {
@@ -43,10 +48,14 @@ impl LlmProvider for TextProvider {
 
 struct EmptyRegistry;
 impl ToolRegistry for EmptyRegistry {
-    fn definitions(&self) -> &[ToolDefinition] { &[] }
-    fn execute(&self, name: &str, _args: &str)
-        -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>>
-    {
+    fn definitions(&self) -> &[ToolDefinition] {
+        &[]
+    }
+    fn execute(
+        &self,
+        name: &str,
+        _args: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
         let n = name.to_string();
         Box::pin(async move { Err(DomainError::Tool(format!("no tool: {n}"))) })
     }
@@ -54,7 +63,9 @@ impl ToolRegistry for EmptyRegistry {
 
 fn agent_loop(reply: &str) -> Arc<dyn AgentLoop> {
     Arc::new(AgentLoopImpl::new(AgentLoopConfig {
-        provider: Arc::new(TextProvider { reply: reply.into() }),
+        provider: Arc::new(TextProvider {
+            reply: reply.into(),
+        }),
         tool_registry: Box::new(EmptyRegistry),
         model: "test-model".into(),
         max_tokens: 1000,
@@ -85,12 +96,16 @@ async fn process_appends_assistant_response_and_reports_zero_tool_iterations() {
     let agent = agent_loop("hello there");
     let mut messages = vec![Message::user("hi")];
 
-    let result = agent.process(&mut messages).await
+    let result = agent
+        .process(&mut messages)
+        .await
         .expect("process must succeed for a simple text reply");
 
     assert_eq!(result.response, "hello there");
-    assert_eq!(result.tool_iterations, 0,
-        "a non-tool reply must run zero tool iterations");
+    assert_eq!(
+        result.tool_iterations, 0,
+        "a non-tool reply must run zero tool iterations"
+    );
     assert!(!result.iteration_limit_reached);
 
     // The loop must have appended the assistant reply to the message history.

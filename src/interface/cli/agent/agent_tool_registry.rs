@@ -13,8 +13,10 @@ pub(super) struct ToolRegistryBuild {
     pub(super) model: String,
     pub(super) ext_registry: ExtensionRegistry,
     pub(super) extension_prompt_snippets: String,
-    pub(super) notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
-    pub(super) subagent_registry: Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
+    pub(super) notification_rx:
+        Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
+    pub(super) subagent_registry:
+        Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     pub(super) workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
 }
 
@@ -85,9 +87,8 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
     let subagent_registry_for_protocol = subagent_registry.clone();
     registry.register(Arc::new(AgentCmdTool::new(subagent_registry)));
     // Build a workflow event emitter from the broadcast channel (#598).
-    let wf_emitter = broadcast_tx.map(|tx| {
-        crate::infrastructure::tools::workflow_tool::broadcast_emitter(tx)
-    });
+    let wf_emitter =
+        broadcast_tx.map(|tx| crate::infrastructure::tools::workflow_tool::broadcast_emitter(tx));
     let wf_state = if flags.workflow {
         match crate::interface::shared::register_workflow_tool(
             &mut registry,
@@ -127,4 +128,3 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
         workflow_state: wf_state,
     }
 }
-

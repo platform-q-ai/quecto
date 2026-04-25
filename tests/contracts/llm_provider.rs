@@ -13,8 +13,8 @@ use quecto::domain::message::{LlmResponse, StopReason};
 use quecto::domain::provider::{ChatRequest, LlmProvider};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Debug)]
 struct CountingProvider {
@@ -23,12 +23,21 @@ struct CountingProvider {
 }
 
 impl CountingProvider {
-    fn new() -> Self { Self { name: "counting".into(), calls: AtomicUsize::new(0) } }
-    fn call_count(&self) -> usize { self.calls.load(Ordering::SeqCst) }
+    fn new() -> Self {
+        Self {
+            name: "counting".into(),
+            calls: AtomicUsize::new(0),
+        }
+    }
+    fn call_count(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
 }
 
 impl LlmProvider for CountingProvider {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
     fn chat<'a>(
         &'a self,
         _request: ChatRequest<'a>,
@@ -85,6 +94,9 @@ async fn chat_stream_default_delegates_to_chat() {
 
     let r = p.chat_stream(request()).await.unwrap();
     assert_eq!(r.content.as_deref(), Some("ok"));
-    assert_eq!(inner.call_count(), 1,
-        "chat_stream must delegate to chat when not overridden");
+    assert_eq!(
+        inner.call_count(),
+        1,
+        "chat_stream must delegate to chat when not overridden"
+    );
 }

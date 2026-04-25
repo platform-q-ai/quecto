@@ -33,7 +33,9 @@ fn list_and_load_agree_on_the_same_skill() {
     assert_eq!(listed.len(), 1);
     let from_list = &listed[0];
 
-    let from_load = loader.load("weather").unwrap()
+    let from_load = loader
+        .load("weather")
+        .unwrap()
         .expect("load must return Some for a listed skill");
 
     assert_eq!(from_list.name, from_load.name);

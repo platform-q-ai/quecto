@@ -895,8 +895,8 @@ mod agent_cmd_await_steps;
 mod agent_cmd_tool_steps;
 mod agent_loop_steps;
 mod agent_tools_steps;
-mod audit_log_steps;
 mod architecture_steps;
+mod audit_log_steps;
 mod auth_steps;
 mod codex_provider_steps;
 mod config_steps;
@@ -960,9 +960,9 @@ fn main() {
     // `chainlink scan` sees the authoritative noun-feature mapping) while
     // cucumber-rs sees the bare-prose form its step-def regexes are written
     // against. Tempdir must outlive the cucumber run, hence the binding here.
-    let (_stripped_dir, stripped_features_path) = feature_preprocess::stripped_features_tempdir(
-        std::path::Path::new("tests/features"),
-    ).expect("failed to preprocess .feature files into tempdir");
+    let (_stripped_dir, stripped_features_path) =
+        feature_preprocess::stripped_features_tempdir(std::path::Path::new("tests/features"))
+            .expect("failed to preprocess .feature files into tempdir");
 
     futures::executor::block_on(
         QuectoWorld::cucumber()

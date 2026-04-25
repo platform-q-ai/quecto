@@ -348,14 +348,7 @@ fn render_tool_execution(
             is_error,
             inner_width,
         ),
-        "workflow" => render_workflow(
-            &mut content,
-            &icon,
-            &dur,
-            args_json,
-            result,
-            inner_width,
-        ),
+        "workflow" => render_workflow(&mut content, &icon, &dur, args_json, result, inner_width),
         _ => render_generic(
             &mut content,
             tool_name,
@@ -706,7 +699,13 @@ fn render_workflow(
     ));
 
     if let Some(text) = result {
-        let preview: String = text.lines().next().unwrap_or("").chars().take(120).collect();
+        let preview: String = text
+            .lines()
+            .next()
+            .unwrap_or("")
+            .chars()
+            .take(120)
+            .collect();
         if !preview.is_empty() {
             lines.push(truncate_to_width(
                 &theme::dim(&format!("  {preview}")),

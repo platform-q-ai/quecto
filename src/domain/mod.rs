@@ -2,6 +2,7 @@ pub mod agent;
 pub mod audit;
 pub mod error;
 pub mod extension;
+pub mod extension_tool;
 pub mod message;
 pub mod provider;
 pub mod session;

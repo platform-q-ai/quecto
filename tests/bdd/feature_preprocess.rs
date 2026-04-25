@@ -49,9 +49,13 @@ fn rewrite_step_tags(line: &str, re: &Regex) -> String {
             continue;
         }
         out.push_str(&line[cursor..mat.start()]);
-        let tag = &line[mat.start() + 1 .. mat.end() - 1];
+        let tag = &line[mat.start() + 1..mat.end() - 1];
         let preceded_by_the = out.trim_end().ends_with(" the") || out.trim_end() == "the";
-        let is_camel_case = tag.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false)
+        let is_camel_case = tag
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_uppercase())
+            .unwrap_or(false)
             && tag.chars().any(|c| c.is_ascii_lowercase());
         if preceded_by_the && is_camel_case {
             out.push_str(&noun_tag_to_prose(tag));
@@ -75,7 +79,9 @@ fn is_inside_quotes(line: &str, pos: usize) -> bool {
             match line[i + 1..].find(c) {
                 Some(rel) => {
                     let close = i + 1 + rel;
-                    if pos > i && pos < close { return true; }
+                    if pos > i && pos < close {
+                        return true;
+                    }
                     i = close + 1;
                     continue;
                 }
@@ -121,9 +127,13 @@ fn noun_tag_to_prose(tag: &str) -> String {
         }
         current.push(c.to_ascii_lowercase());
     }
-    if !current.is_empty() { words.push(current); }
+    if !current.is_empty() {
+        words.push(current);
+    }
 
-    if words.len() <= 1 { return tag.to_ascii_lowercase(); }
+    if words.len() <= 1 {
+        return tag.to_ascii_lowercase();
+    }
     words.join(" ")
 }
 
@@ -138,7 +148,10 @@ fn mirror_dir(src: &Path, dst: &Path, re: &Regex) -> std::io::Result<()> {
         if ty.is_dir() {
             mirror_dir(&src_path, &dst_path, re)?;
         } else if ty.is_file() {
-            let is_feature = src_path.extension().map(|e| e == "feature").unwrap_or(false);
+            let is_feature = src_path
+                .extension()
+                .map(|e| e == "feature")
+                .unwrap_or(false);
             if is_feature {
                 let original = fs::read_to_string(&src_path)?;
                 fs::write(&dst_path, strip_step_tags(&original, re))?;
@@ -215,7 +228,9 @@ mod tests {
     use super::*;
 
     #[allow(dead_code)]
-    fn re() -> Regex { Regex::new(r"\[([\w\-]+)\]").unwrap() }
+    fn re() -> Regex {
+        Regex::new(r"\[([\w\-]+)\]").unwrap()
+    }
 
     #[test]
     fn camelcase_tag_expands_to_spaced_prose() {
@@ -250,8 +265,10 @@ mod tests {
     fn docstring_contents_preserved() {
         let in_ = "  Given a doc\n    \"\"\"\n    the [ToolResult] is inside\n    \"\"\"\n";
         let out = strip_step_tags(in_, &re());
-        assert!(out.contains("[ToolResult] is inside"),
-            "docstring content must not be stripped, got:\n{out}");
+        assert!(
+            out.contains("[ToolResult] is inside"),
+            "docstring content must not be stripped, got:\n{out}"
+        );
     }
 
     #[test]
