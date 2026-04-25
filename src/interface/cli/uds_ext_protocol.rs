@@ -145,9 +145,41 @@ pub fn handle_register_tools(
         }
     }
 
+    let mut seen = HashSet::new();
+    for tool in tools {
+        if !seen.insert(tool.name.as_str()) {
+            let ev = AgentEvent::err(
+                id,
+                "register_tools",
+                format!(
+                    "tool '{}' is registered more than once in this request",
+                    tool.name
+                ),
+            );
+            return (false, ev, vec![]);
+        }
+    }
+
     let timeout = std::time::Duration::from_secs(DEFAULT_TOOL_TIMEOUT_SECS);
     let mut new_tools: Vec<Arc<dyn crate::domain::tool::Tool>> = Vec::new();
     let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+
+    for tool in tools {
+        if let Some((owner, _)) = reg.iter().find(|(owner_id, state)| {
+            **owner_id != client_id && state.tool_names.contains(&tool.name)
+        }) {
+            let ev = AgentEvent::err(
+                id,
+                "register_tools",
+                format!(
+                    "tool '{}' is already registered by client {}",
+                    tool.name, owner
+                ),
+            );
+            return (false, ev, vec![]);
+        }
+    }
+
     let state = reg.entry(client_id).or_default();
 
     for tool_reg in tools {
@@ -476,6 +508,12 @@ async fn handle_one_request(
         match reg.get_mut(&client_id) {
             Some(state) => {
                 state.pending_results.insert(tool_call_id.clone(), reply);
+                spawn_pending_timeout_cleanup(
+                    client_id,
+                    tool_call_id.clone(),
+                    registry.clone(),
+                    std::time::Duration::from_secs(DEFAULT_TOOL_TIMEOUT_SECS),
+                );
             }
             None => {
                 // Client gone — drop the request; the UdsTool's
@@ -513,6 +551,21 @@ async fn handle_one_request(
             state.pending_results.remove(&tool_call_id);
         }
     }
+}
+
+fn spawn_pending_timeout_cleanup(
+    client_id: u64,
+    tool_call_id: String,
+    registry: ClientToolRegistry,
+    timeout: std::time::Duration,
+) {
+    tokio::spawn(async move {
+        tokio::time::sleep(timeout).await;
+        let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = reg.get_mut(&client_id) {
+            state.pending_results.remove(&tool_call_id);
+        }
+    });
 }
 
 /// Handle `unregister_tools` command in dispatch context.
@@ -671,6 +724,22 @@ mod tests {
     }
 
     #[test]
+    fn test_register_tools_rejects_duplicate_owner() {
+        let r = new_client_tool_registry();
+        let c = core_names();
+        let (ok, _, _) = reg(&r, &c, 1, &[tool_reg("weather", "Owned by one")]);
+        assert!(ok);
+
+        let (ok, ev, tools) = reg(&r, &c, 2, &[tool_reg("weather", "Hijack")]);
+        assert!(!ok);
+        assert!(tools.is_empty());
+        let json = ev.to_json_line();
+        assert!(json.contains("already registered by client"));
+        assert!(r.lock().unwrap()[&1].tool_names.contains("weather"));
+        assert!(!r.lock().unwrap().contains_key(&2));
+    }
+
+    #[test]
     fn test_unregister_tools() {
         let r = new_client_tool_registry();
         let c = core_names();
@@ -774,6 +843,29 @@ mod tests {
     /// dead writer. The forwarder must remove the pending entry so
     /// the oneshot drops and UdsTool::execute returns "Extension
     /// disconnected during execution" immediately.
+    #[tokio::test]
+    async fn pending_timeout_cleanup_removes_stale_entry() {
+        let registry = new_client_tool_registry();
+        let client_id = 55;
+        let (reply_tx, _reply_rx) = tokio::sync::oneshot::channel();
+        {
+            let mut reg = registry.lock().unwrap();
+            let state = reg.entry(client_id).or_default();
+            state.pending_results.insert("stale-call".into(), reply_tx);
+        }
+
+        spawn_pending_timeout_cleanup(
+            client_id,
+            "stale-call".into(),
+            registry.clone(),
+            std::time::Duration::from_millis(10),
+        );
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let reg = registry.lock().unwrap();
+        assert!(reg[&client_id].pending_results.is_empty());
+    }
+
     #[tokio::test]
     async fn forwarder_cleans_pending_when_writer_has_no_receiver() {
         use crate::domain::extension_tool::ToolInvocation;

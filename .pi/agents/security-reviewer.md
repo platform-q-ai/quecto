@@ -2,7 +2,7 @@
 name: security-reviewer
 description: Reviews PRs for security vulnerabilities, input validation, auth flaws, and data exposure risks via GitHub inline comments.
 tools: read, grep, find, ls, bash
-model: claude-opus-4-6
+model: openai-codex/gpt-5.5
 ---
 
 Security reviewer. Review PRs and leave **inline comments only** on GitHub — every comment must be attached to a specific file and line so it can be resolved individually.

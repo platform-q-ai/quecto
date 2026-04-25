@@ -1,7 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -26,11 +28,19 @@ pub enum QuectoMcpError {
     Io(#[from] std::io::Error),
     #[error("MCP error: {0}")]
     Mcp(String),
+    #[error("unsupported option: {0}")]
+    UnsupportedOption(String),
+    #[error("response too large: {0} bytes exceeds {1} byte limit")]
+    ResponseTooLarge(u64, usize),
     #[error("Quecto UDS error: {0}")]
     Quecto(String),
 }
 
 pub type Result<T> = std::result::Result<T, QuectoMcpError>;
+
+const MAX_MCP_RESPONSE_BYTES: usize = 1024 * 1024;
+const MAX_UDS_LINE_BYTES: usize = 1024 * 1024;
+const MAX_CONCURRENT_TOOL_CALLS: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct McpTool {
@@ -202,7 +212,7 @@ impl Config {
             .map(Duration::from_secs)
             .unwrap_or_else(|| Duration::from_secs(30));
         let mut register_timeout = Duration::from_secs(10);
-        let mut refresh_interval = None;
+        let refresh_interval = None;
 
         let mut iter = args.into_iter().skip(1);
         while let Some(arg) = iter.next() {
@@ -228,10 +238,10 @@ impl Config {
                 }
                 "--name-prefix" => name_prefix = iter.next().unwrap_or_default(),
                 "--refresh-interval" => {
-                    refresh_interval = iter
-                        .next()
-                        .and_then(|s| s.parse::<u64>().ok())
-                        .map(Duration::from_secs);
+                    let _ = iter.next();
+                    return Err(QuectoMcpError::UnsupportedOption(
+                        "--refresh-interval is not implemented; restart quecto-mcp to refresh tool registrations".into(),
+                    ));
                 }
                 "--register-timeout" => {
                     if let Some(value) = iter.next().and_then(|s| s.parse::<u64>().ok()) {
@@ -293,10 +303,19 @@ fn split_csv(value: &str) -> Vec<String> {
 }
 
 fn run_token_command(command: &str) -> std::io::Result<String> {
-    let output = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(command)
-        .output()?;
+    let argv = shlex::split(command).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "invalid --mcp-token-command quoting",
+        )
+    })?;
+    let Some((program, args)) = argv.split_first() else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "empty --mcp-token-command",
+        ));
+    };
+    let output = std::process::Command::new(program).args(args).output()?;
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
@@ -305,8 +324,8 @@ pub struct McpClient {
     base_url: String,
     token: String,
     client: reqwest::Client,
-    session_id: Option<String>,
-    server_name: Option<String>,
+    session_id: Arc<tokio::sync::Mutex<Option<String>>>,
+    server_name: Arc<tokio::sync::Mutex<Option<String>>>,
 }
 
 impl McpClient {
@@ -322,21 +341,21 @@ impl McpClient {
                 .timeout(timeout)
                 .build()
                 .expect("reqwest client with timeout"),
-            session_id: None,
-            server_name: None,
+            session_id: Arc::new(tokio::sync::Mutex::new(None)),
+            server_name: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
-    pub async fn initialize(&mut self, server_name: &str) -> Result<()> {
+    pub async fn initialize(&self, server_name: &str) -> Result<()> {
         let params = serde_json::json!({
             "protocolVersion": "2025-03-26",
             "capabilities": {},
             "clientInfo": {"name": "quecto-mcp", "version": env!("CARGO_PKG_VERSION"), "targetServer": server_name}
         });
         let (_body, session) = self.post_json_rpc("initialize", params).await?;
-        self.server_name = Some(server_name.to_string());
+        *self.server_name.lock().await = Some(server_name.to_string());
         if let Some(session) = session {
-            self.session_id = Some(session);
+            *self.session_id.lock().await = Some(session);
         }
         let _ = self
             .post_json_rpc("notifications/initialized", serde_json::json!({}))
@@ -377,13 +396,13 @@ impl McpClient {
             .collect())
     }
 
-    pub async fn call_tool(&mut self, name: &str, arguments: Value) -> Result<String> {
+    pub async fn call_tool(&self, name: &str, arguments: Value) -> Result<String> {
         let params = serde_json::json!({"name": name, "arguments": arguments});
         match self.post_json_rpc("tools/call", params.clone()).await {
             Ok((body, _)) => Ok(format_mcp_result(body.get("result").unwrap_or(&body))),
             Err(err) if is_recoverable_session_error(&err) => {
-                if let Some(server_name) = self.server_name.clone() {
-                    self.session_id = None;
+                if let Some(server_name) = self.server_name.lock().await.clone() {
+                    *self.session_id.lock().await = None;
                     self.initialize(&server_name).await?;
                     let (body, _) = self.post_json_rpc("tools/call", params).await?;
                     Ok(format_mcp_result(body.get("result").unwrap_or(&body)))
@@ -401,7 +420,7 @@ impl McpClient {
             .post(&self.base_url)
             .bearer_auth(&self.token)
             .json(&serde_json::json!({"jsonrpc": "2.0", "id": uuid::Uuid::new_v4().to_string(), "method": method, "params": params}));
-        if let Some(session_id) = &self.session_id {
+        if let Some(session_id) = self.session_id.lock().await.clone() {
             req = req.header("mcp-session-id", session_id);
         }
         let resp = req.send().await?;
@@ -411,7 +430,7 @@ impl McpClient {
             .and_then(|v| v.to_str().ok())
             .map(ToOwned::to_owned);
         let status = resp.status();
-        let text = resp.text().await?;
+        let text = read_limited_response_text(resp, MAX_MCP_RESPONSE_BYTES).await?;
         let body: Value = if text.trim().is_empty() {
             serde_json::json!({})
         } else {
@@ -427,6 +446,28 @@ impl McpClient {
         }
         Ok((body, session))
     }
+}
+
+async fn read_limited_response_text(resp: reqwest::Response, max_bytes: usize) -> Result<String> {
+    if let Some(len) = resp.content_length() {
+        if len > max_bytes as u64 {
+            return Err(QuectoMcpError::ResponseTooLarge(len, max_bytes));
+        }
+    }
+
+    let mut body = Vec::new();
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        if body.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(QuectoMcpError::ResponseTooLarge(
+                body.len().saturating_add(chunk.len()) as u64,
+                max_bytes,
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(String::from_utf8_lossy(&body).into_owned())
 }
 
 fn is_recoverable_session_error(err: &QuectoMcpError) -> bool {
@@ -488,7 +529,7 @@ pub async fn run_extension(config: Config) -> Result<()> {
         has_name_prefix = !config.name_prefix.is_empty(),
         "starting quecto-mcp"
     );
-    let mut mcp = McpClient::new_with_timeout(
+    let mcp = McpClient::new_with_timeout(
         config.mcp_url.clone(),
         config.mcp_token.clone(),
         config.timeout,
@@ -525,7 +566,7 @@ pub async fn run_extension(config: Config) -> Result<()> {
 pub async fn serve_uds_extension(
     socket: &Path,
     tools: RegisteredMcpTools,
-    mut mcp: McpClient,
+    mcp: McpClient,
     register_timeout: Duration,
 ) -> Result<()> {
     let stream = tokio::time::timeout(register_timeout, UnixStream::connect(socket))
@@ -533,18 +574,33 @@ pub async fn serve_uds_extension(
         .map_err(|_| {
             QuectoMcpError::Quecto("timed out connecting to Quecto UDS socket".into())
         })??;
-    let (read_half, mut write_half) = stream.into_split();
+    let (read_half, write_half) = stream.into_split();
+    let (result_tx, mut result_rx) = tokio::sync::mpsc::channel::<Value>(64);
+    let writer_task = tokio::spawn(async move {
+        let mut write_half = write_half;
+        while let Some(value) = result_rx.recv().await {
+            if let Err(err) = write_json_line(&mut write_half, &value).await {
+                tracing::warn!(error = %err, "failed to write Quecto tool_result");
+                break;
+            }
+        }
+    });
+
     let register = serde_json::json!({"type": "register_tools", "id": "quecto-mcp-register", "tools": tools.registrations});
-    write_json_line(&mut write_half, &register).await?;
+    result_tx
+        .send(register)
+        .await
+        .map_err(|_| QuectoMcpError::Quecto("UDS writer task stopped".into()))?;
 
     let mut reader = BufReader::new(read_half);
     await_register_response(&mut reader, register_timeout).await?;
-    let mut line = String::new();
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_TOOL_CALLS));
     loop {
-        line.clear();
-        if reader.read_line(&mut line).await? == 0 {
+        let Some(line) = read_limited_line(&mut reader, MAX_UDS_LINE_BYTES).await? else {
+            drop(result_tx);
+            let _ = writer_task.await;
             return Ok(());
-        }
+        };
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -562,30 +618,39 @@ pub async fn serve_uds_extension(
             arguments,
         } = event
         {
-            let (content, is_error) = match tools.mapping.get(&tool_name) {
-                Some(mcp_name) => match serde_json::from_str::<Value>(&arguments) {
-                    Ok(args) => {
-                        let start = std::time::Instant::now();
-                        tracing::info!(quecto_tool = %tool_name, mcp_tool = %mcp_name, "executing MCP-backed tool");
-                        let result = match mcp.call_tool(mcp_name, args).await {
-                            Ok(content) => (content, false),
-                            Err(err) => (redact(&err.to_string()), true),
-                        };
-                        tracing::info!(
-                            quecto_tool = %tool_name,
-                            mcp_tool = %mcp_name,
-                            elapsed_ms = start.elapsed().as_millis() as u64,
-                            is_error = result.1,
-                            "finished MCP-backed tool"
-                        );
-                        result
-                    }
-                    Err(err) => (format!("Invalid JSON arguments: {err}"), true),
-                },
-                None => (format!("Unknown MCP-backed tool: {tool_name}"), true),
-            };
-            let result = serde_json::json!({"type": "tool_result", "toolCallId": tool_call_id, "content": content, "isError": is_error});
-            write_json_line(&mut write_half, &result).await?;
+            let mcp_name = tools.mapping.get(&tool_name).cloned();
+            let mcp = mcp.clone();
+            let result_tx = result_tx.clone();
+            let semaphore = semaphore.clone();
+            tokio::spawn(async move {
+                let Ok(_permit) = semaphore.acquire_owned().await else {
+                    return;
+                };
+                let (content, is_error) = match mcp_name {
+                    Some(mcp_name) => match serde_json::from_str::<Value>(&arguments) {
+                        Ok(args) => {
+                            let start = std::time::Instant::now();
+                            tracing::info!(quecto_tool = %tool_name, mcp_tool = %mcp_name, "executing MCP-backed tool");
+                            let result = match mcp.call_tool(&mcp_name, args).await {
+                                Ok(content) => (content, false),
+                                Err(err) => (redact(&err.to_string()), true),
+                            };
+                            tracing::info!(
+                                quecto_tool = %tool_name,
+                                mcp_tool = %mcp_name,
+                                elapsed_ms = start.elapsed().as_millis() as u64,
+                                is_error = result.1,
+                                "finished MCP-backed tool"
+                            );
+                            result
+                        }
+                        Err(err) => (format!("Invalid JSON arguments: {err}"), true),
+                    },
+                    None => (format!("Unknown MCP-backed tool: {tool_name}"), true),
+                };
+                let result = serde_json::json!({"type": "tool_result", "toolCallId": tool_call_id, "content": content, "isError": is_error});
+                let _ = result_tx.send(result).await;
+            });
         }
     }
 }
@@ -594,19 +659,20 @@ async fn await_register_response(
     reader: &mut BufReader<tokio::net::unix::OwnedReadHalf>,
     register_timeout: Duration,
 ) -> Result<()> {
-    let mut line = String::new();
     loop {
-        line.clear();
-        let bytes = tokio::time::timeout(register_timeout, reader.read_line(&mut line))
-            .await
-            .map_err(|_| {
-                QuectoMcpError::Quecto("timed out waiting for register_tools response".into())
-            })??;
-        if bytes == 0 {
+        let Some(line) = tokio::time::timeout(
+            register_timeout,
+            read_limited_line(reader, MAX_UDS_LINE_BYTES),
+        )
+        .await
+        .map_err(|_| {
+            QuectoMcpError::Quecto("timed out waiting for register_tools response".into())
+        })??
+        else {
             return Err(QuectoMcpError::Quecto(
                 "Quecto UDS disconnected before register_tools response".into(),
             ));
-        }
+        };
         let event: QuectoEvent = serde_json::from_str(line.trim())?;
         if let QuectoEvent::Response {
             id,
@@ -628,6 +694,32 @@ async fn await_register_response(
             }
         }
     }
+}
+
+async fn read_limited_line<R>(reader: &mut R, max_bytes: usize) -> Result<Option<String>>
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    let mut buf = Vec::new();
+    loop {
+        let before = buf.len();
+        let bytes = reader.read_until(b'\n', &mut buf).await?;
+        if bytes == 0 {
+            if buf.is_empty() {
+                return Ok(None);
+            }
+            break;
+        }
+        if buf.len() > max_bytes {
+            return Err(QuectoMcpError::Quecto(format!(
+                "UDS line exceeds {max_bytes} byte limit"
+            )));
+        }
+        if buf[before..].contains(&b'\n') {
+            break;
+        }
+    }
+    Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
 }
 
 async fn write_json_line(
@@ -718,8 +810,6 @@ mod tests {
             "12".to_string(),
             "--register-timeout".to_string(),
             "3".to_string(),
-            "--refresh-interval".to_string(),
-            "60".to_string(),
         ])
         .unwrap();
 
@@ -727,7 +817,27 @@ mod tests {
         assert_eq!(config.name_prefix, "mcp_");
         assert_eq!(config.timeout, Duration::from_secs(12));
         assert_eq!(config.register_timeout, Duration::from_secs(3));
-        assert_eq!(config.refresh_interval, Some(Duration::from_secs(60)));
+        assert_eq!(config.refresh_interval, None);
+    }
+
+    #[test]
+    fn refresh_interval_is_rejected_until_refresh_is_implemented() {
+        let err = Config::from_env_and_args([
+            "quecto-mcp".to_string(),
+            "--socket".to_string(),
+            "/tmp/q.sock".to_string(),
+            "--mcp-url".to_string(),
+            "https://example.test/mcp".to_string(),
+            "--mcp-token".to_string(),
+            "agent-token".to_string(),
+            "--refresh-interval".to_string(),
+            "60".to_string(),
+        ])
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--refresh-interval is not implemented")
+        );
     }
 
     #[test]
@@ -816,7 +926,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let mut client = McpClient::new(server.uri(), "secret-token".into());
+        let client = McpClient::new(server.uri(), "secret-token".into());
         client.initialize("perme8-mcp").await.unwrap();
         let tools = client.list_tools().await.unwrap();
         assert_eq!(tools[0].name, "community.feed.list");
@@ -827,6 +937,28 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result, "feed item");
+    }
+
+    #[tokio::test]
+    async fn mcp_http_response_size_is_capped() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .and(body_partial_json(
+                serde_json::json!({"method": "tools/call"}),
+            ))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string("x".repeat(MAX_MCP_RESPONSE_BYTES + 1)),
+            )
+            .mount(&server)
+            .await;
+
+        let client = McpClient::new(server.uri(), "secret-token".into());
+        let err = client
+            .call_tool("community.feed.list", serde_json::json!({}))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, QuectoMcpError::ResponseTooLarge(_, _)));
     }
 
     #[tokio::test]
@@ -845,7 +977,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let mut client = McpClient::new(server.uri(), "secret-token".into());
+        let client = McpClient::new(server.uri(), "secret-token".into());
         let err = client
             .call_tool("community.feed.list", serde_json::json!({}))
             .await
