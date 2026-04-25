@@ -217,13 +217,19 @@ pub fn parse_workflow_event(data: &serde_json::Value) -> WorkflowBarState {
     let issue_number = data
         .get("activeIssue")
         .or_else(|| data.get("active_issue"))
-        .and_then(|i| i.get("number").or_else(|| i.as_array().and_then(|a| a.first())))
+        .and_then(|i| {
+            i.get("number")
+                .or_else(|| i.as_array().and_then(|a| a.first()))
+        })
         .and_then(|v| v.as_u64())
         .map(|n| n as u32);
     let issue_title = data
         .get("activeIssue")
         .or_else(|| data.get("active_issue"))
-        .and_then(|i| i.get("title").or_else(|| i.as_array().and_then(|a| a.get(1))))
+        .and_then(|i| {
+            i.get("title")
+                .or_else(|| i.as_array().and_then(|a| a.get(1)))
+        })
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
@@ -533,7 +539,11 @@ mod tests {
     fn active_bar_has_blank_line_above_and_below() {
         let state = make_state(Some(42), 3, 14);
         let lines = render(&state, 80);
-        assert_eq!(lines.len(), 3, "expected blank + content + blank, got {lines:?}");
+        assert_eq!(
+            lines.len(),
+            3,
+            "expected blank + content + blank, got {lines:?}"
+        );
         assert!(lines[0].trim().is_empty(), "first line should be blank");
         assert!(!lines[1].trim().is_empty(), "middle line should be content");
         assert!(lines[2].trim().is_empty(), "last line should be blank");
@@ -545,10 +555,13 @@ mod tests {
         state.mode = Some("selecting_template".into());
         state.template_count = 4;
         let lines = render(&state, 80);
-        assert_eq!(lines.len(), 3, "expected blank + content + blank, got {lines:?}");
+        assert_eq!(
+            lines.len(),
+            3,
+            "expected blank + content + blank, got {lines:?}"
+        );
         assert!(lines[0].trim().is_empty(), "first line should be blank");
         assert!(lines[1].contains("SELECT"), "middle line should be content");
         assert!(lines[2].trim().is_empty(), "last line should be blank");
     }
-
 }

@@ -6,8 +6,12 @@
 
 use serde::{Deserialize, Serialize};
 
-fn default_true() -> bool { true }
-fn is_true(v: &bool) -> bool { *v }
+fn default_true() -> bool {
+    true
+}
+fn is_true(v: &bool) -> bool {
+    *v
+}
 
 const MAX_TEMPLATE_COUNT: usize = 32;
 const MAX_STEPS_PER_TEMPLATE: usize = 100;

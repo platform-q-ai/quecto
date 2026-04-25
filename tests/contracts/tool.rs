@@ -26,11 +26,13 @@ fn definition_has_nonempty_name_and_schema() {
     let tool = read_tool(tmp.path().to_path_buf());
     let d = tool.definition();
     assert!(!d.name.is_empty(), "every tool must name itself");
-    assert!(!d.parameters_schema.is_empty(),
-        "every tool must declare a JSON schema so the LLM can call it");
+    assert!(
+        !d.parameters_schema.is_empty(),
+        "every tool must declare a JSON schema so the LLM can call it"
+    );
     // The schema must parse as JSON.
-    let _: serde_json::Value = serde_json::from_str(&d.parameters_schema)
-        .expect("parameters_schema must be valid JSON");
+    let _: serde_json::Value =
+        serde_json::from_str(&d.parameters_schema).expect("parameters_schema must be valid JSON");
 }
 
 #[tokio::test]
@@ -41,10 +43,19 @@ async fn execute_returns_tool_result_for_valid_call() {
     let tool = read_tool(tmp.path().to_path_buf());
 
     let args = serde_json::json!({ "path": file }).to_string();
-    let r = tool.execute(&args).await.expect("execute must not return Err on valid args");
-    assert!(!r.is_error, "a successful read must have is_error=false; got {r:?}");
-    assert!(r.content.contains("greetings"),
-        "the tool's content must include the file's text, got: {}", r.content);
+    let r = tool
+        .execute(&args)
+        .await
+        .expect("execute must not return Err on valid args");
+    assert!(
+        !r.is_error,
+        "a successful read must have is_error=false; got {r:?}"
+    );
+    assert!(
+        r.content.contains("greetings"),
+        "the tool's content must include the file's text, got: {}",
+        r.content
+    );
 }
 
 #[tokio::test]
@@ -56,9 +67,17 @@ async fn invalid_json_arguments_are_llm_addressable_errors() {
     // missing or invalid fields, tool-specific validation — must be returned
     // as Ok(ToolResult { is_error: true, content }). Err is reserved for
     // infrastructure failures the LLM cannot reasonably correct.
-    let r = tool.execute("{ not json").await
+    let r = tool
+        .execute("{ not json")
+        .await
         .expect("LLM-addressable argument errors must not bubble as Err");
-    assert!(r.is_error, "invalid JSON must be reported via is_error=true");
-    assert!(r.content.contains("JSON") || r.content.contains("json"),
-        "content should explain the parse problem so the LLM can retry; got: {}", r.content);
+    assert!(
+        r.is_error,
+        "invalid JSON must be reported via is_error=true"
+    );
+    assert!(
+        r.content.contains("JSON") || r.content.contains("json"),
+        "content should explain the parse problem so the LLM can retry; got: {}",
+        r.content
+    );
 }

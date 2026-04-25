@@ -632,7 +632,9 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
             &session_key,
         ) {
             Ok(log) => {
-                agent.set_audit_log(Some(Arc::new(log) as Arc<dyn crate::domain::audit::AuditSink>));
+                agent.set_audit_log(Some(
+                    Arc::new(log) as Arc<dyn crate::domain::audit::AuditSink>
+                ));
             }
             Err(e) => {
                 stderr.push_str(&format!("WARNING: failed to open audit log: {e}\n"));

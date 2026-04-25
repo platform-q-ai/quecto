@@ -2386,9 +2386,8 @@ fn then_get_state_template_count(world: &mut QuectoWorld, id: String, count: usi
 
 #[then(expr = "the get_state response {string} should have workflow template {string}")]
 fn then_get_state_workflow_template(world: &mut QuectoWorld, id: String, expected: String) {
-    let resp = find_response_by_id(world, &id).unwrap_or_else(|| {
-        panic!("no get_state response with id {id:?}")
-    });
+    let resp = find_response_by_id(world, &id)
+        .unwrap_or_else(|| panic!("no get_state response with id {id:?}"));
     let tpl_id = resp["data"]["workflow"]["active_template"]["id"]
         .as_str()
         .unwrap_or("(missing)");
@@ -2397,20 +2396,21 @@ fn then_get_state_workflow_template(world: &mut QuectoWorld, id: String, expecte
 
 #[then(expr = "the get_state response {string} should have workflow progress done {int}")]
 fn then_get_state_workflow_progress(world: &mut QuectoWorld, id: String, expected: u64) {
-    let resp = find_response_by_id(world, &id).unwrap_or_else(|| {
-        panic!("no get_state response with id {id:?}")
-    });
+    let resp = find_response_by_id(world, &id)
+        .unwrap_or_else(|| panic!("no get_state response with id {id:?}"));
     let done = resp["data"]["workflow"]["progress"]["done"]
         .as_u64()
         .unwrap_or(0);
-    assert_eq!(done, expected, "expected progress.done={expected}, got {done}");
+    assert_eq!(
+        done, expected,
+        "expected progress.done={expected}, got {done}"
+    );
 }
 
 #[then(expr = "the get_state response {string} should not have workflow")]
 fn then_get_state_no_workflow(world: &mut QuectoWorld, id: String) {
-    let resp = find_response_by_id(world, &id).unwrap_or_else(|| {
-        panic!("no get_state response with id {id:?}")
-    });
+    let resp = find_response_by_id(world, &id)
+        .unwrap_or_else(|| panic!("no get_state response with id {id:?}"));
     assert!(
         resp["data"]["workflow"].is_null(),
         "expected no workflow in get_state, got: {}",

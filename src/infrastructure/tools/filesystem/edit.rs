@@ -84,11 +84,15 @@ impl Tool for EditTool {
             // LLM-addressable: malformed JSON → Ok(is_error=true). Tool contract.
             let args = match args {
                 Ok(v) => v,
-                Err(e) => return Ok(ToolResult {
-                    content: format!("invalid JSON arguments: {e}. Example: {{\"path\": \"f.txt\", \"oldText\": \"a\", \"newText\": \"b\"}}"),
-                    is_error: true,
-                    image_blocks: vec![],
-                }),
+                Err(e) => {
+                    return Ok(ToolResult {
+                        content: format!(
+                            "invalid JSON arguments: {e}. Example: {{\"path\": \"f.txt\", \"oldText\": \"a\", \"newText\": \"b\"}}"
+                        ),
+                        is_error: true,
+                        image_blocks: vec![],
+                    });
+                }
             };
             let Some(path) = args["path"].as_str() else {
                 return Ok(missing_edit_arg("path"));

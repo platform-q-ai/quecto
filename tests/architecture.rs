@@ -27,6 +27,15 @@ fn collect_rs_files(dir: &Path, files: &mut Vec<String>) {
         if path.is_dir() {
             collect_rs_files(&path, files);
         } else if path.extension().is_some_and(|ext| ext == "rs") {
+            // Files named `*_tests.rs` are test-only modules included via
+            // `#[cfg(test)]`, not production architecture dependencies.
+            if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with("_tests.rs"))
+            {
+                continue;
+            }
             let content = fs::read_to_string(&path).expect("read file");
             files.push(format!("{}:\n{}", path.display(), content));
         }

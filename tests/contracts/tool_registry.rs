@@ -16,7 +16,9 @@ use std::sync::Arc;
 
 /// A minimal real adapter implementing `Tool`, used to exercise the registry
 /// through the port rather than depending on any specific production tool.
-struct Echo { name: Cow<'static, str> }
+struct Echo {
+    name: Cow<'static, str>,
+}
 impl Tool for Echo {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -25,10 +27,21 @@ impl Tool for Echo {
             parameters_schema: Cow::Borrowed(r#"{"type":"object"}"#),
         }
     }
-    fn execute(&self, arguments: &str) -> Pin<Box<dyn Future<Output = Result<ToolResult, quecto::domain::error::DomainError>> + Send + '_>> {
+    fn execute(
+        &self,
+        arguments: &str,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<ToolResult, quecto::domain::error::DomainError>> + Send + '_,
+        >,
+    > {
         let content = arguments.to_string();
         Box::pin(async move {
-            Ok(ToolResult { content, is_error: false, image_blocks: vec![] })
+            Ok(ToolResult {
+                content,
+                is_error: false,
+                image_blocks: vec![],
+            })
         })
     }
 }
@@ -36,7 +49,9 @@ impl Tool for Echo {
 fn new_registry_with(tools: Vec<(&'static str,)>) -> Arc<dyn ToolRegistry> {
     let mut reg = ToolRegistryImpl::new();
     for (n,) in tools {
-        reg.register(Arc::new(Echo { name: Cow::Borrowed(n) }));
+        reg.register(Arc::new(Echo {
+            name: Cow::Borrowed(n),
+        }));
     }
     Arc::new(reg)
 }
@@ -61,11 +76,15 @@ fn definitions_cover_every_registered_tool() {
 #[tokio::test]
 async fn execute_dispatches_to_the_registered_tool() {
     let reg = new_registry_with(vec![("alpha",)]);
-    let r = reg.execute("alpha", "hello").await
+    let r = reg
+        .execute("alpha", "hello")
+        .await
         .expect("execute must not Err for a registered tool");
     assert!(!r.is_error);
-    assert_eq!(r.content, "hello",
-        "registry must pass the arguments through to the tool unchanged");
+    assert_eq!(
+        r.content, "hello",
+        "registry must pass the arguments through to the tool unchanged"
+    );
 }
 
 #[tokio::test]
@@ -75,6 +94,8 @@ async fn execute_for_unknown_tool_signals_error() {
         Err(_) => true,
         Ok(r) => r.is_error,
     };
-    assert!(signalled_error,
-        "registry must signal an error when the tool is not registered");
+    assert!(
+        signalled_error,
+        "registry must signal an error when the tool is not registered"
+    );
 }

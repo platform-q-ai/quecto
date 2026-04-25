@@ -105,7 +105,13 @@ pub trait AuditSink: Send + Sync {
         &self,
         turn: u32,
         event: AuditEvent,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), crate::domain::error::DomainError>> + Send + '_>>;
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<(), crate::domain::error::DomainError>>
+                + Send
+                + '_,
+        >,
+    >;
 }
 
 /// Generate a content preview capped at `max_chars` characters.
@@ -203,7 +209,10 @@ mod tests {
             from_mode: "selector".into(),
             to_mode: "active".into(),
             template_id: Some("feature".into()),
-            issue: Some(AuditIssue { number: 42, title: "Add auth".into() }),
+            issue: Some(AuditIssue {
+                number: 42,
+                title: "Add auth".into(),
+            }),
         };
         let json = serde_json::to_string(&event).unwrap();
         let back: AuditEvent = serde_json::from_str(&json).unwrap();

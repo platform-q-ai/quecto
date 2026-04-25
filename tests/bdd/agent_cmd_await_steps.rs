@@ -15,8 +15,10 @@ use quecto::infrastructure::tools::subagent_registry::{
 fn given_agent_cmd_await_registry(world: &mut QuectoWorld) {
     let registry = new_registry();
     let active_awaits = new_active_awaits();
-    world.agent_cmd_tool =
-        Some(AgentCmdTool::with_active_awaits(registry.clone(), active_awaits.clone()));
+    world.agent_cmd_tool = Some(AgentCmdTool::with_active_awaits(
+        registry.clone(),
+        active_awaits.clone(),
+    ));
     world.agent_cmd_registry = Some(registry.clone());
     world.await_registry = Some(registry);
     world.await_active_awaits = Some(active_awaits);
@@ -51,10 +53,7 @@ fn given_mock_subagent_status(world: &mut QuectoWorld, agent_id: String, status:
         "exited" => SubagentStatus::Exited,
         other => panic!("unknown status: {other}"),
     };
-    registry
-        .lock()
-        .unwrap()
-        .insert(agent_id, entry);
+    registry.lock().unwrap().insert(agent_id, entry);
 }
 
 #[given(expr = "the mock subagent {string} will exit with code {int} after {int}ms")]
@@ -105,7 +104,9 @@ fn given_mock_subagent_will_exit(
     });
 }
 
-#[given(expr = "the mock subagent {string} will go idle then resume after {int}ms then idle permanently")]
+#[given(
+    expr = "the mock subagent {string} will go idle then resume after {int}ms then idle permanently"
+)]
 fn given_mock_subagent_idle_resume(world: &mut QuectoWorld, agent_id: String, delay_ms: i32) {
     let registry = world
         .await_registry
@@ -234,7 +235,9 @@ fn given_mock_subagent_workflow(
     }
 }
 
-#[given(expr = "a SubagentAwait audit event with agent_id {string} status {string} reason {string} elapsed_ms {int}")]
+#[given(
+    expr = "a SubagentAwait audit event with agent_id {string} status {string} reason {string} elapsed_ms {int}"
+)]
 fn given_subagent_await_audit_event(
     world: &mut QuectoWorld,
     agent_id: String,
@@ -276,8 +279,12 @@ fn then_agent_cmd_not_tool_error(world: &mut QuectoWorld) {
         result.content
     );
     // Parse the JSON content for await result assertions.
-    let parsed: serde_json::Value = serde_json::from_str(&result.content)
-        .unwrap_or_else(|e| panic!("result content is not valid JSON: {} — content: {}", e, result.content));
+    let parsed: serde_json::Value = serde_json::from_str(&result.content).unwrap_or_else(|e| {
+        panic!(
+            "result content is not valid JSON: {} — content: {}",
+            e, result.content
+        )
+    });
     world.await_result = Some(parsed);
 }
 
@@ -436,9 +443,7 @@ fn then_agent_cmd_schema_includes_command(world: &mut QuectoWorld, expected: Str
         .as_array()
         .expect("command enum not found");
     assert!(
-        command_enum
-            .iter()
-            .any(|v| v.as_str() == Some(&expected)),
+        command_enum.iter().any(|v| v.as_str() == Some(&expected)),
         "expected '{}' in command enum: {:?}",
         expected,
         command_enum

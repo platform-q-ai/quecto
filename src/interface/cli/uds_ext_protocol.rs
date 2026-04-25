@@ -13,8 +13,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
+use crate::domain::extension_tool::ToolInvocation;
 use crate::domain::tool::{ToolDefinition, ToolResult};
-use crate::application::extension_tool::ToolInvocation;
 use crate::infrastructure::extensions::uds_tool::create_uds_tool;
 
 use super::protocol::{AgentEvent, ExtensionInfo, ToolRegistration};
@@ -342,10 +342,7 @@ pub(super) async fn dispatch_register_tools(
 /// `tool_request_rxs`, spawn a forwarder task that emits `execute_tool`
 /// events and parks `result_tx` senders into `pending_results`, and
 /// record the task handle for shutdown on unregister/disconnect.
-fn spawn_tool_forwarder_for(
-    ctx: &mut super::uds::DispatchCtx<'_>,
-    tool_name: &str,
-) {
+fn spawn_tool_forwarder_for(ctx: &mut super::uds::DispatchCtx<'_>, tool_name: &str) {
     let client_id = ctx.current_client_id;
     let registry = ctx.client_tool_registry.clone();
 
@@ -386,7 +383,9 @@ fn spawn_tool_forwarder_for(
 
     let mut reg = registry.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(state) = reg.get_mut(&client_id) {
-        state.tool_request_tasks.insert(tool_name.to_string(), handle);
+        state
+            .tool_request_tasks
+            .insert(tool_name.to_string(), handle);
     } else {
         // Client disappeared between the two locks. Signal shutdown
         // so the task drains cleanly instead of hanging.
@@ -777,7 +776,7 @@ mod tests {
     /// disconnected during execution" immediately.
     #[tokio::test]
     async fn forwarder_cleans_pending_when_writer_has_no_receiver() {
-        use crate::application::extension_tool::ToolInvocation;
+        use crate::domain::extension_tool::ToolInvocation;
         use std::time::Duration;
 
         let registry = new_client_tool_registry();
@@ -788,13 +787,11 @@ mod tests {
         }
 
         // Writer channel with no receiver — every .send() errs.
-        let (writer_tx, writer_rx) =
-            tokio::sync::mpsc::channel::<String>(8);
+        let (writer_tx, writer_rx) = tokio::sync::mpsc::channel::<String>(8);
         drop(writer_rx);
 
         let (req_tx, req_rx) = tokio::sync::mpsc::channel::<ToolInvocation>(4);
-        let (_shutdown_tx, shutdown_rx) =
-            tokio::sync::oneshot::channel::<&'static str>();
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<&'static str>();
         let forwarder = tokio::spawn(super::forward_tool_requests(
             client_id,
             "weather".to_string(),
@@ -817,8 +814,7 @@ mod tests {
 
         // Oneshot must resolve (closed by cleanup dropping the sender)
         // within a tick — NOT wait the full 30s default tool timeout.
-        let awaited =
-            tokio::time::timeout(Duration::from_millis(500), result_rx).await;
+        let awaited = tokio::time::timeout(Duration::from_millis(500), result_rx).await;
         assert!(
             awaited.is_ok(),
             "forwarder failed to resolve oneshot within 500ms — pending leak?"
@@ -849,7 +845,7 @@ mod tests {
     /// waiting out the 30-second UdsTool timeout.
     #[tokio::test]
     async fn forwarder_drains_buffered_requests_on_shutdown() {
-        use crate::application::extension_tool::ToolInvocation;
+        use crate::domain::extension_tool::ToolInvocation;
         use std::time::Duration;
 
         let registry = new_client_tool_registry();
@@ -861,8 +857,7 @@ mod tests {
 
         let (writer_tx, _writer_rx) = tokio::sync::mpsc::channel::<String>(8);
         let (req_tx, req_rx) = tokio::sync::mpsc::channel::<ToolInvocation>(8);
-        let (shutdown_tx, shutdown_rx) =
-            tokio::sync::oneshot::channel::<&'static str>();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<&'static str>();
 
         // Queue the requests AND fire shutdown BEFORE spawning the
         // forwarder. When the task starts, `biased; shutdown` wins
@@ -926,7 +921,7 @@ mod tests {
     /// (the reader task will clear it when `tool_result` comes back).
     #[tokio::test]
     async fn forwarder_leaves_pending_when_writer_delivered() {
-        use crate::application::extension_tool::ToolInvocation;
+        use crate::domain::extension_tool::ToolInvocation;
         use std::time::Duration;
 
         let registry = new_client_tool_registry();
@@ -936,12 +931,10 @@ mod tests {
             reg.insert(client_id, ClientToolState::default());
         }
 
-        let (writer_tx, mut writer_rx) =
-            tokio::sync::mpsc::channel::<String>(8);
+        let (writer_tx, mut writer_rx) = tokio::sync::mpsc::channel::<String>(8);
 
         let (req_tx, req_rx) = tokio::sync::mpsc::channel::<ToolInvocation>(4);
-        let (_shutdown_tx, shutdown_rx) =
-            tokio::sync::oneshot::channel::<&'static str>();
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<&'static str>();
         let forwarder = tokio::spawn(super::forward_tool_requests(
             client_id,
             "weather".to_string(),
@@ -963,11 +956,10 @@ mod tests {
             .unwrap();
 
         // Receive the targeted event (proving delivery happened).
-        let line =
-            tokio::time::timeout(Duration::from_millis(500), writer_rx.recv())
-                .await
-                .expect("writer event never arrived")
-                .expect("writer channel closed unexpectedly");
+        let line = tokio::time::timeout(Duration::from_millis(500), writer_rx.recv())
+            .await
+            .expect("writer event never arrived")
+            .expect("writer channel closed unexpectedly");
         assert!(line.contains("\"execute_tool\""));
 
         // Short yield so the forwarder-side insert completes even if

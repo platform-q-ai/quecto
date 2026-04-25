@@ -556,10 +556,8 @@ fn cmd_auth_import_external(ctx: &CliContext, out: &mut Output<'_>) -> i32 {
         return 1;
     }
 
-    out.stdout.push_str(&format!(
-        "Imported {} credential(s)\n",
-        imported
-    ));
+    out.stdout
+        .push_str(&format!("Imported {} credential(s)\n", imported));
     0
 }
 

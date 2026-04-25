@@ -9,8 +9,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use crate::application::extension_tool::ToolInvocation;
 use crate::domain::error::DomainError;
+use crate::domain::extension_tool::ToolInvocation;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 
 /// A tool provided by an external UDS extension client.
@@ -19,8 +19,8 @@ use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 /// for a `tool_result` response via a oneshot channel.
 pub struct UdsExtensionTool {
     definition: ToolDefinition,
-    /// Sender delivers `ToolInvocation`s (the application-layer port
-    /// type) to whichever transport is registered for this tool.
+    /// Sender delivers `ToolInvocation`s to whichever transport is registered
+    /// for this tool.
     exec_tx: tokio::sync::mpsc::Sender<ToolInvocation>,
     /// Maximum time to wait for a tool_result response.
     timeout: std::time::Duration,

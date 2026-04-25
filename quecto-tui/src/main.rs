@@ -325,7 +325,10 @@ mod tests {
     #[test]
     fn parse_config_and_system() {
         let flags = parse_flags(&args("--config ./repo/config.json --system hello"));
-        assert_eq!(flags.config_path.unwrap().to_str().unwrap(), "./repo/config.json");
+        assert_eq!(
+            flags.config_path.unwrap().to_str().unwrap(),
+            "./repo/config.json"
+        );
         assert_eq!(flags.system_prompt.as_deref(), Some("hello"));
     }
 

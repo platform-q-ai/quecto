@@ -487,7 +487,9 @@ async fn emitter_sends_workflow_state_through_broadcast_channel() {
         .await
         .unwrap();
 
-    let line = broadcast_rx.try_recv().expect("expected a broadcast message");
+    let line = broadcast_rx
+        .try_recv()
+        .expect("expected a broadcast message");
     assert!(line.ends_with('\n'), "line should end with newline");
     let parsed: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
     assert_eq!(parsed["type"], "workflow_state");
@@ -515,8 +517,8 @@ async fn emitter_sends_workflow_state_through_broadcast_channel() {
 /// produces a tool that sends events on the channel (#598).
 #[tokio::test]
 async fn register_workflow_tool_with_broadcast_emitter() {
-    use crate::infrastructure::tools::registry::ToolRegistryImpl;
     use crate::infrastructure::security::sandbox::Sandbox;
+    use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
     let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(16);
     let emitter = broadcast_emitter(broadcast_tx.clone());
@@ -535,14 +537,18 @@ async fn register_workflow_tool_with_broadcast_emitter() {
     .expect("register should succeed");
 
     // Find and execute the workflow tool through the registry.
-    let tool = registry.get("workflow").expect("workflow tool should be registered");
+    let tool = registry
+        .get("workflow")
+        .expect("workflow tool should be registered");
     let result = tool
         .execute(r#"{"action":"select_template","template":"chore"}"#)
         .await
         .unwrap();
     assert!(!result.is_error);
 
-    let line = broadcast_rx.try_recv().expect("expected broadcast after select_template");
+    let line = broadcast_rx
+        .try_recv()
+        .expect("expected broadcast after select_template");
     let parsed: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
     assert_eq!(parsed["type"], "workflow_state");
     assert_eq!(parsed["activeTemplate"]["id"], "chore");

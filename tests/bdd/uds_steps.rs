@@ -76,9 +76,9 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
     };
 
     // Build workflow event emitter from broadcast channel (#598).
-    let wf_emitter = broadcast_tx.as_ref().map(|tx| {
-        quecto::infrastructure::tools::workflow_tool::broadcast_emitter(tx.clone())
-    });
+    let wf_emitter = broadcast_tx
+        .as_ref()
+        .map(|tx| quecto::infrastructure::tools::workflow_tool::broadcast_emitter(tx.clone()));
 
     // Register workflow engine when scenario requests it (#568–#577).
     let workflow_state = if world._workflow_enabled {
@@ -2337,9 +2337,7 @@ fn when_start_mc_uds_with_workflow(world: &mut QuectoWorld) {
 }
 
 /// Mock: LLM returns a tool call for `workflow select_template fix`, then a text reply.
-#[given(
-    expr = "the mock LLM returns a tool call for workflow select_template then text {string}"
-)]
+#[given(expr = "the mock LLM returns a tool call for workflow select_template then text {string}")]
 fn given_mock_llm_workflow_select(world: &mut QuectoWorld, text: String) {
     assert!(
         world._wiremock_server_uri.is_some(),
@@ -2402,9 +2400,7 @@ fn given_mock_llm_workflow_select(world: &mut QuectoWorld, text: String) {
 }
 
 /// Mock: LLM returns select_template, then check step 1, then text reply.
-#[given(
-    expr = "the mock LLM returns tool calls for workflow select then check then text {string}"
-)]
+#[given(expr = "the mock LLM returns tool calls for workflow select then check then text {string}")]
 fn given_mock_llm_workflow_select_check(world: &mut QuectoWorld, text: String) {
     assert!(
         world._wiremock_server_uri.is_some(),
@@ -2586,9 +2582,9 @@ fn then_client_received_workflow_mode(
 ) {
     execute_multi_client_uds(world);
     let wf_events = mc_client_workflow_events(world, client_id);
-    let found = wf_events.iter().any(|ev| {
-        ev["mode"].as_str() == Some(expected_mode.as_str())
-    });
+    let found = wf_events
+        .iter()
+        .any(|ev| ev["mode"].as_str() == Some(expected_mode.as_str()));
     assert!(
         found,
         "expected client {client_id} to receive workflow_state with mode={expected_mode:?}\nworkflow events: {wf_events:#?}\nall events: {:#?}",
@@ -2604,9 +2600,9 @@ fn then_client_received_workflow_progress(
 ) {
     execute_multi_client_uds(world);
     let wf_events = mc_client_workflow_events(world, client_id);
-    let found = wf_events.iter().any(|ev| {
-        ev["progress"]["done"].as_u64() == Some(expected_done)
-    });
+    let found = wf_events
+        .iter()
+        .any(|ev| ev["progress"]["done"].as_u64() == Some(expected_done));
     assert!(
         found,
         "expected client {client_id} to receive workflow_state with progress.done={expected_done}\nworkflow events: {wf_events:#?}\nall events: {:#?}",
@@ -2705,9 +2701,7 @@ fn given_mock_llm_tool_call_named(
 /// Queue a reactive auto-reply: when the harness later observes an
 /// `execute_tool` event with the matching tool name on this client's
 /// stream, it will auto-send a `tool_result` carrying `content`.
-#[when(
-    expr = "client {int} replies to execute_tool for {string} with content {string}"
-)]
+#[when(expr = "client {int} replies to execute_tool for {string} with content {string}")]
 fn when_client_auto_reply(
     world: &mut QuectoWorld,
     client_id: u32,
@@ -2724,8 +2718,7 @@ fn when_client_auto_reply(
 fn find_execute_tool_for(events: &[String], tool_name: &str) -> Option<serde_json::Value> {
     events.iter().find_map(|line| {
         let ev: serde_json::Value = serde_json::from_str(line).ok()?;
-        if ev["type"].as_str() == Some("execute_tool")
-            && ev["toolName"].as_str() == Some(tool_name)
+        if ev["type"].as_str() == Some("execute_tool") && ev["toolName"].as_str() == Some(tool_name)
         {
             Some(ev)
         } else {
@@ -2735,11 +2728,7 @@ fn find_execute_tool_for(events: &[String], tool_name: &str) -> Option<serde_jso
 }
 
 #[then(expr = "client {int} should have received an execute_tool for tool {string}")]
-fn then_client_received_execute_tool(
-    world: &mut QuectoWorld,
-    client_id: u32,
-    tool_name: String,
-) {
+fn then_client_received_execute_tool(world: &mut QuectoWorld, client_id: u32, tool_name: String) {
     execute_multi_client_uds(world);
     let events = world
         .mc_client_events
@@ -2771,14 +2760,8 @@ fn then_client_did_not_receive_execute_tool(
     );
 }
 
-#[then(
-    expr = "the execute_tool event for {string} should carry arguments containing {string}"
-)]
-fn then_execute_tool_args_contain(
-    world: &mut QuectoWorld,
-    tool_name: String,
-    needle: String,
-) {
+#[then(expr = "the execute_tool event for {string} should carry arguments containing {string}")]
+fn then_execute_tool_args_contain(world: &mut QuectoWorld, tool_name: String, needle: String) {
     execute_multi_client_uds(world);
     let mut found_args: Option<String> = None;
     for events in world.mc_client_events.values() {

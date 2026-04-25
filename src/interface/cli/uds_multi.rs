@@ -253,8 +253,7 @@ fn spawn_accept_loop(args: AcceptLoopArgs) -> tokio::task::JoinHandle<()> {
                     // issues only a handful of tool calls, so the
                     // common-case depth is 1–2; the channel fills up
                     // only if the client stops reading.
-                    let (targeted_tx, targeted_rx) =
-                        tokio::sync::mpsc::channel::<String>(64);
+                    let (targeted_tx, targeted_rx) = tokio::sync::mpsc::channel::<String>(64);
                     super::uds_ext_protocol::register_client_writer(
                         &client_tool_registry,
                         client_id,
@@ -499,15 +498,13 @@ async fn handle_client(args: ClientHandlerArgs) {
         // tool registry; the agent's UdsTool::execute wakes and the
         // turn resumes.
         if let Some(parsed) = try_intercept_tool_result(&line) {
-            super::uds_ext_protocol::handle_tool_result(
-                super::uds_ext_protocol::ToolResultArgs {
-                    client_id,
-                    tool_call_id: &parsed.tool_call_id,
-                    content: &parsed.content,
-                    is_error: parsed.is_error,
-                    registry: &client_tool_registry,
-                },
-            );
+            super::uds_ext_protocol::handle_tool_result(super::uds_ext_protocol::ToolResultArgs {
+                client_id,
+                tool_call_id: &parsed.tool_call_id,
+                content: &parsed.content,
+                is_error: parsed.is_error,
+                registry: &client_tool_registry,
+            });
             continue;
         }
         let msg = ClientMessage::Command(ClientCommand { line, client_id });
@@ -837,7 +834,8 @@ mod interception_tests {
 
     #[test]
     fn intercepts_vanilla_tool_result() {
-        let line = r#"{"type":"tool_result","toolCallId":"uds-abc","content":"ok","isError":false}"#;
+        let line =
+            r#"{"type":"tool_result","toolCallId":"uds-abc","content":"ok","isError":false}"#;
         let got = try_intercept_tool_result(line).expect("should intercept");
         assert_eq!(got.tool_call_id, "uds-abc");
         assert_eq!(got.content, "ok");
@@ -846,7 +844,8 @@ mod interception_tests {
 
     #[test]
     fn intercepts_tool_result_with_error_flag() {
-        let line = r#"{"type":"tool_result","toolCallId":"uds-xyz","content":"oh no","isError":true}"#;
+        let line =
+            r#"{"type":"tool_result","toolCallId":"uds-xyz","content":"oh no","isError":true}"#;
         let got = try_intercept_tool_result(line).expect("should intercept");
         assert!(got.is_error);
     }
@@ -869,7 +868,8 @@ mod interception_tests {
 
     #[test]
     fn does_not_intercept_register_tools() {
-        let line = r#"{"type":"register_tools","id":"r1","tools":[{"name":"t","description":"d"}]}"#;
+        let line =
+            r#"{"type":"register_tools","id":"r1","tools":[{"name":"t","description":"d"}]}"#;
         assert!(try_intercept_tool_result(line).is_none());
     }
 
@@ -886,8 +886,7 @@ mod interception_tests {
         // contains the substring `tool_result` should not intercept
         // (the full parse will reject it since the command's `type`
         // is `prompt`).
-        let line =
-            r#"{"type":"prompt","message":"explain what tool_result means"}"#;
+        let line = r#"{"type":"prompt","message":"explain what tool_result means"}"#;
         assert!(try_intercept_tool_result(line).is_none());
     }
 }

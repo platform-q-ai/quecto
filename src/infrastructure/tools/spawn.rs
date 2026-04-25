@@ -165,9 +165,7 @@ impl SpawnTool {
         // workflow_guards requires workflow — reject early rather than letting the
         // child process fail with an opaque CLI error.
         if workflow_guards && !workflow {
-            return Err(
-                "workflow_guards requires workflow to also be true".to_string(),
-            );
+            return Err("workflow_guards requires workflow to also be true".to_string());
         }
 
         if let Some(ref id) = agent_id {
@@ -887,7 +885,10 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.contains(".."), "expected '..' in error, got: {err}");
-        assert!(err.contains("not allowed"), "expected 'not allowed' in error, got: {err}");
+        assert!(
+            err.contains("not allowed"),
+            "expected 'not allowed' in error, got: {err}"
+        );
     }
 
     #[test]
@@ -936,7 +937,11 @@ mod tests {
         let tool = SpawnTool::new(vec![], true);
         let result = tool.parse_args(r#"{"task":"work","workflow_guards":true}"#);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("workflow_guards requires workflow"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("workflow_guards requires workflow")
+        );
     }
 
     #[test]

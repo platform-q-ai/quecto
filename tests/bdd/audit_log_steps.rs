@@ -13,7 +13,12 @@ use tempfile::TempDir;
 
 // Helper: get or create the audit temp dir path from the world's tempdir.
 fn audit_base(world: &QuectoWorld) -> PathBuf {
-    world.tempdir.as_ref().expect("tempdir not set").path().to_path_buf()
+    world
+        .tempdir
+        .as_ref()
+        .expect("tempdir not set")
+        .path()
+        .to_path_buf()
 }
 
 // ===========================================================================
@@ -31,55 +36,145 @@ fn given_temp_audit_dir(world: &mut QuectoWorld) {
 
 #[given(expr = r#"an AuditEvent::ToolCall with tool {string} call_id {string} arguments {string}"#)]
 fn given_tool_call(world: &mut QuectoWorld, tool: String, call_id: String, arguments: String) {
-    let event = AuditEvent::ToolCall { tool, call_id, arguments };
-    world.audit_event = Some(event);
-}
-
-#[given(expr = r#"an AuditEvent::ToolResult with call_id {string} tool {string} is_error {word} content_tokens {int} content_preview {string}"#)]
-fn given_tool_result(world: &mut QuectoWorld, call_id: String, tool: String, is_error_str: String, content_tokens: usize, content_preview: String) {
-    let is_error = is_error_str == "true";
-    let event = AuditEvent::ToolResult { call_id, tool, is_error, content_tokens, content_preview };
-    world.audit_event = Some(event);
-}
-
-#[given(expr = r"an AuditEvent::LlmTurnStart with input_tokens_estimate {int} message_count {int}")]
-fn given_llm_turn_start(world: &mut QuectoWorld, input_tokens_estimate: usize, message_count: usize) {
-    let event = AuditEvent::LlmTurnStart { input_tokens_estimate, message_count };
-    world.audit_event = Some(event);
-}
-
-#[given(expr = r#"an AuditEvent::LlmTurnEnd with input_tokens {int} output_tokens {int} stop_reason {string} duration_ms {int}"#)]
-fn given_llm_turn_end(world: &mut QuectoWorld, input_tokens: usize, output_tokens: usize, stop_reason: String, duration_ms: u64) {
-    let event = AuditEvent::LlmTurnEnd { input_tokens, output_tokens, stop_reason, duration_ms };
-    world.audit_event = Some(event);
-}
-
-#[given(expr = r#"an AuditEvent::WorkflowStep with action {string} step_index {int} step_key {string} step_label {string} template_id {string}"#)]
-fn given_workflow_step(world: &mut QuectoWorld, action: String, step_index: usize, step_key: String, step_label: String, template_id: String) {
-    let event = AuditEvent::WorkflowStep { action, step_index, step_key, step_label, template_id };
-    world.audit_event = Some(event);
-}
-
-#[given(expr = r#"an AuditEvent::WorkflowTransition from {string} to {string} template_id {string} issue {int} {string}"#)]
-fn given_workflow_transition(world: &mut QuectoWorld, from_mode: String, to_mode: String, template_id: String, issue_num: u64, issue_title: String) {
-    let event = AuditEvent::WorkflowTransition {
-        from_mode,
-        to_mode,
-        template_id: Some(template_id),
-        issue: Some(AuditIssue { number: issue_num, title: issue_title }),
+    let event = AuditEvent::ToolCall {
+        tool,
+        call_id,
+        arguments,
     };
     world.audit_event = Some(event);
 }
 
-#[given(expr = r"an AuditEvent::ContextPruned with messages_dropped {int} tool_results_collapsed {int} tokens_before {int} tokens_after {int}")]
-fn given_context_pruned(world: &mut QuectoWorld, messages_dropped: usize, tool_results_collapsed: usize, tokens_before: usize, tokens_after: usize) {
-    let event = AuditEvent::ContextPruned { messages_dropped, tool_results_collapsed, tokens_before, tokens_after };
+#[given(
+    expr = r#"an AuditEvent::ToolResult with call_id {string} tool {string} is_error {word} content_tokens {int} content_preview {string}"#
+)]
+fn given_tool_result(
+    world: &mut QuectoWorld,
+    call_id: String,
+    tool: String,
+    is_error_str: String,
+    content_tokens: usize,
+    content_preview: String,
+) {
+    let is_error = is_error_str == "true";
+    let event = AuditEvent::ToolResult {
+        call_id,
+        tool,
+        is_error,
+        content_tokens,
+        content_preview,
+    };
     world.audit_event = Some(event);
 }
 
-#[given(expr = r#"an AuditEvent::SubagentSpawned with agent_id {string} task_preview {string} system_preview {string}"#)]
-fn given_subagent_spawned(world: &mut QuectoWorld, agent_id: String, task_preview: String, system_preview: String) {
-    let event = AuditEvent::SubagentSpawned { agent_id, task_preview, system_preview };
+#[given(expr = r"an AuditEvent::LlmTurnStart with input_tokens_estimate {int} message_count {int}")]
+fn given_llm_turn_start(
+    world: &mut QuectoWorld,
+    input_tokens_estimate: usize,
+    message_count: usize,
+) {
+    let event = AuditEvent::LlmTurnStart {
+        input_tokens_estimate,
+        message_count,
+    };
+    world.audit_event = Some(event);
+}
+
+#[given(
+    expr = r#"an AuditEvent::LlmTurnEnd with input_tokens {int} output_tokens {int} stop_reason {string} duration_ms {int}"#
+)]
+fn given_llm_turn_end(
+    world: &mut QuectoWorld,
+    input_tokens: usize,
+    output_tokens: usize,
+    stop_reason: String,
+    duration_ms: u64,
+) {
+    let event = AuditEvent::LlmTurnEnd {
+        input_tokens,
+        output_tokens,
+        stop_reason,
+        duration_ms,
+    };
+    world.audit_event = Some(event);
+}
+
+#[given(
+    expr = r#"an AuditEvent::WorkflowStep with action {string} step_index {int} step_key {string} step_label {string} template_id {string}"#
+)]
+fn given_workflow_step(
+    world: &mut QuectoWorld,
+    action: String,
+    step_index: usize,
+    step_key: String,
+    step_label: String,
+    template_id: String,
+) {
+    let event = AuditEvent::WorkflowStep {
+        action,
+        step_index,
+        step_key,
+        step_label,
+        template_id,
+    };
+    world.audit_event = Some(event);
+}
+
+#[given(
+    expr = r#"an AuditEvent::WorkflowTransition from {string} to {string} template_id {string} issue {int} {string}"#
+)]
+fn given_workflow_transition(
+    world: &mut QuectoWorld,
+    from_mode: String,
+    to_mode: String,
+    template_id: String,
+    issue_num: u64,
+    issue_title: String,
+) {
+    let event = AuditEvent::WorkflowTransition {
+        from_mode,
+        to_mode,
+        template_id: Some(template_id),
+        issue: Some(AuditIssue {
+            number: issue_num,
+            title: issue_title,
+        }),
+    };
+    world.audit_event = Some(event);
+}
+
+#[given(
+    expr = r"an AuditEvent::ContextPruned with messages_dropped {int} tool_results_collapsed {int} tokens_before {int} tokens_after {int}"
+)]
+fn given_context_pruned(
+    world: &mut QuectoWorld,
+    messages_dropped: usize,
+    tool_results_collapsed: usize,
+    tokens_before: usize,
+    tokens_after: usize,
+) {
+    let event = AuditEvent::ContextPruned {
+        messages_dropped,
+        tool_results_collapsed,
+        tokens_before,
+        tokens_after,
+    };
+    world.audit_event = Some(event);
+}
+
+#[given(
+    expr = r#"an AuditEvent::SubagentSpawned with agent_id {string} task_preview {string} system_preview {string}"#
+)]
+fn given_subagent_spawned(
+    world: &mut QuectoWorld,
+    agent_id: String,
+    task_preview: String,
+    system_preview: String,
+) {
+    let event = AuditEvent::SubagentSpawned {
+        agent_id,
+        task_preview,
+        system_preview,
+    };
     world.audit_event = Some(event);
 }
 
@@ -89,15 +184,30 @@ fn given_subagent_cmd(world: &mut QuectoWorld, agent_id: String, command: String
     world.audit_event = Some(event);
 }
 
-#[given(expr = r#"an AuditEvent::GuardBlocked with command_preview {string} guard_message {string} before_step_key {string}"#)]
-fn given_guard_blocked(world: &mut QuectoWorld, command_preview: String, guard_message: String, before_step_key: String) {
-    let event = AuditEvent::GuardBlocked { command_preview, guard_message, before_step_key };
+#[given(
+    expr = r#"an AuditEvent::GuardBlocked with command_preview {string} guard_message {string} before_step_key {string}"#
+)]
+fn given_guard_blocked(
+    world: &mut QuectoWorld,
+    command_preview: String,
+    guard_message: String,
+    before_step_key: String,
+) {
+    let event = AuditEvent::GuardBlocked {
+        command_preview,
+        guard_message,
+        before_step_key,
+    };
     world.audit_event = Some(event);
 }
 
 #[given(expr = r#"an AuditEvent::Error with source {string} tool {string} message {string}"#)]
 fn given_error_event(world: &mut QuectoWorld, source: String, tool: String, message: String) {
-    let event = AuditEvent::Error { source, tool: Some(tool), message };
+    let event = AuditEvent::Error {
+        source,
+        tool: Some(tool),
+        message,
+    };
     world.audit_event = Some(event);
 }
 
@@ -152,49 +262,81 @@ fn emit_sync(log: &AuditLog, turn: u32, event: AuditEvent) {
 #[when(expr = "a ToolCall event is emitted at turn {int}")]
 fn when_tool_call_emitted(world: &mut QuectoWorld, turn: u32) {
     let log = world.audit_log.as_ref().expect("no audit log");
-    emit_sync(log, turn, AuditEvent::ToolCall {
-        tool: "bash".into(),
-        call_id: "call_default".into(),
-        arguments: "{}".into(),
-    });
+    emit_sync(
+        log,
+        turn,
+        AuditEvent::ToolCall {
+            tool: "bash".into(),
+            call_id: "call_default".into(),
+            arguments: "{}".into(),
+        },
+    );
 }
 
-#[when(expr = r#"a ToolCall event is emitted at turn {int} with tool {string} call_id {string} arguments {string}"#)]
-fn when_tool_call_emitted_specific(world: &mut QuectoWorld, turn: u32, tool: String, call_id: String, arguments: String) {
+#[when(
+    expr = r#"a ToolCall event is emitted at turn {int} with tool {string} call_id {string} arguments {string}"#
+)]
+fn when_tool_call_emitted_specific(
+    world: &mut QuectoWorld,
+    turn: u32,
+    tool: String,
+    call_id: String,
+    arguments: String,
+) {
     let log = world.audit_log.as_ref().expect("no audit log");
-    emit_sync(log, turn, AuditEvent::ToolCall { tool, call_id, arguments });
+    emit_sync(
+        log,
+        turn,
+        AuditEvent::ToolCall {
+            tool,
+            call_id,
+            arguments,
+        },
+    );
 }
 
 #[when(expr = "a ToolResult event is emitted at turn {int}")]
 fn when_tool_result_emitted(world: &mut QuectoWorld, turn: u32) {
     let log = world.audit_log.as_ref().expect("no audit log");
-    emit_sync(log, turn, AuditEvent::ToolResult {
-        call_id: "call_default".into(),
-        tool: "bash".into(),
-        is_error: false,
-        content_tokens: 100,
-        content_preview: "ok".into(),
-    });
+    emit_sync(
+        log,
+        turn,
+        AuditEvent::ToolResult {
+            call_id: "call_default".into(),
+            tool: "bash".into(),
+            is_error: false,
+            content_tokens: 100,
+            content_preview: "ok".into(),
+        },
+    );
 }
 
 #[when(expr = "a LlmTurnStart event is emitted at turn {int}")]
 fn when_llm_start_emitted(world: &mut QuectoWorld, turn: u32) {
     let log = world.audit_log.as_ref().expect("no audit log");
-    emit_sync(log, turn, AuditEvent::LlmTurnStart {
-        input_tokens_estimate: 5000,
-        message_count: 10,
-    });
+    emit_sync(
+        log,
+        turn,
+        AuditEvent::LlmTurnStart {
+            input_tokens_estimate: 5000,
+            message_count: 10,
+        },
+    );
 }
 
 #[when(expr = "a LlmTurnEnd event is emitted at turn {int}")]
 fn when_llm_end_emitted(world: &mut QuectoWorld, turn: u32) {
     let log = world.audit_log.as_ref().expect("no audit log");
-    emit_sync(log, turn, AuditEvent::LlmTurnEnd {
-        input_tokens: 5000,
-        output_tokens: 500,
-        stop_reason: "end_turn".into(),
-        duration_ms: 2000,
-    });
+    emit_sync(
+        log,
+        turn,
+        AuditEvent::LlmTurnEnd {
+            input_tokens: 5000,
+            output_tokens: 500,
+            stop_reason: "end_turn".into(),
+            duration_ms: 2000,
+        },
+    );
 }
 
 #[then("the audit directory exists")]
@@ -206,7 +348,11 @@ fn then_audit_dir_exists(world: &mut QuectoWorld) {
 #[then(expr = r#"the file {string} exists in the audit directory"#)]
 fn then_file_exists_in_audit(world: &mut QuectoWorld, filename: String) {
     let base = audit_base(world);
-    assert!(base.join("audit").join(&filename).exists(), "file {} not found", filename);
+    assert!(
+        base.join("audit").join(&filename).exists(),
+        "file {} not found",
+        filename
+    );
 }
 
 fn read_audit_file(world: &QuectoWorld) -> String {
@@ -219,17 +365,32 @@ fn read_audit_file(world: &QuectoWorld) -> String {
 fn then_audit_file_has_lines(world: &mut QuectoWorld, expected: usize) {
     let content = read_audit_file(world);
     let line_count = content.lines().count();
-    assert_eq!(line_count, expected, "expected {} lines, got {}", expected, line_count);
+    assert_eq!(
+        line_count, expected,
+        "expected {} lines, got {}",
+        expected, line_count
+    );
 }
 
 #[then(expr = r#"line {int} has field {string} equal to {string}"#)]
-fn then_line_field_string(world: &mut QuectoWorld, line_num: usize, field: String, expected: String) {
+fn then_line_field_string(
+    world: &mut QuectoWorld,
+    line_num: usize,
+    field: String,
+    expected: String,
+) {
     let content = read_audit_file(world);
     let line = content.lines().nth(line_num - 1).expect("line not found");
     let val: serde_json::Value = serde_json::from_str(line).expect("JSON parse failed");
-    assert_eq!(val[&field].as_str().unwrap_or_default(), expected,
+    assert_eq!(
+        val[&field].as_str().unwrap_or_default(),
+        expected,
         "field '{}' on line {}: expected '{}', got '{}'",
-        field, line_num, expected, val[&field]);
+        field,
+        line_num,
+        expected,
+        val[&field]
+    );
 }
 
 #[then(expr = "line {int} has field {string} equal to {int}")]
@@ -237,9 +398,15 @@ fn then_line_field_int(world: &mut QuectoWorld, line_num: usize, field: String, 
     let content = read_audit_file(world);
     let line = content.lines().nth(line_num - 1).expect("line not found");
     let val: serde_json::Value = serde_json::from_str(line).expect("JSON parse failed");
-    assert_eq!(val[&field].as_i64().unwrap(), expected,
+    assert_eq!(
+        val[&field].as_i64().unwrap(),
+        expected,
         "field '{}' on line {}: expected {}, got {}",
-        field, line_num, expected, val[&field]);
+        field,
+        line_num,
+        expected,
+        val[&field]
+    );
 }
 
 #[then(expr = "line 1 has field {string} matching ISO 8601")]
@@ -263,7 +430,10 @@ fn then_readable_without_close(world: &mut QuectoWorld) {
 #[then(expr = "it contains {int} complete JSON lines")]
 fn then_contains_json_lines(world: &mut QuectoWorld, expected: usize) {
     let content = read_audit_file(world);
-    let valid_count = content.lines().filter(|l| serde_json::from_str::<serde_json::Value>(l).is_ok()).count();
+    let valid_count = content
+        .lines()
+        .filter(|l| serde_json::from_str::<serde_json::Value>(l).is_ok())
+        .count();
     assert_eq!(valid_count, expected);
 }
 
@@ -305,5 +475,10 @@ fn when_content_preview_generated(world: &mut QuectoWorld) {
 #[then(expr = "the content_preview is at most {int} characters")]
 fn then_preview_capped(world: &mut QuectoWorld, max: usize) {
     let preview = world.audit_content_preview.as_ref().expect("no preview");
-    assert!(preview.chars().count() <= max, "preview has {} chars, max {}", preview.chars().count(), max);
+    assert!(
+        preview.chars().count() <= max,
+        "preview has {} chars, max {}",
+        preview.chars().count(),
+        max
+    );
 }

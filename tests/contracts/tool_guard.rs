@@ -38,10 +38,15 @@ fn bash_is_blocked_when_no_template_is_active() {
     // directing the caller to select a template first.
     let guard = workflow_guard(vec![]);
     let r = guard.check("bash", r#"{"command":"ls"}"#);
-    assert!(r.is_err(), "bash must be blocked when no template is active");
+    assert!(
+        r.is_err(),
+        "bash must be blocked when no template is active"
+    );
     let msg = r.unwrap_err();
-    assert!(msg.contains("template") || msg.contains("BLOCKED"),
-        "blocking message should mention template selection, got: {msg}");
+    assert!(
+        msg.contains("template") || msg.contains("BLOCKED"),
+        "blocking message should mention template selection, got: {msg}"
+    );
 }
 
 #[test]

@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Query, State, WebSocketUpgrade};
 use axum::extract::ws::{Message, WebSocket};
+use axum::extract::{Query, State, WebSocketUpgrade};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -235,7 +235,9 @@ async fn handle_ws<G: AgentGateway + Clone>(state: Arc<AppState<G>>, mut socket:
 
 // ── Error mapping ─────────────────────────────────────────────────────────────
 
-fn api_error_response(err: crate::domain::error::ApiError) -> (StatusCode, Json<serde_json::Value>) {
+fn api_error_response(
+    err: crate::domain::error::ApiError,
+) -> (StatusCode, Json<serde_json::Value>) {
     let (status, message) = match &err {
         crate::domain::error::ApiError::AgentNotConnected => {
             (StatusCode::SERVICE_UNAVAILABLE, err.to_string())
