@@ -1,6 +1,7 @@
-use super::protocol::{SessionState, SessionStats, TokenStats};
 /// UDS session state — in-memory tracker and statistics for an active UDS connection.
 use crate::domain::message::{Message, Role};
+
+use super::protocol::{SessionState, SessionStats, TokenStats};
 
 // ─── Session state tracker ────────────────────────────────────────────────────
 
@@ -10,8 +11,56 @@ pub struct AgentSession {
     session_key: String,
     streaming: bool,
     /// `VecDeque` supports O(1) push_back (enqueue) and push_front (prepend/steer).
-    pending: std::collections::VecDeque<String>,
+    pending: std::collections::VecDeque<PendingMessage>,
     last_subagent_notification: std::collections::HashMap<String, u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PendingMessage {
+    User(String),
+    SubagentNotification {
+        agent_id: String,
+        sequence: u64,
+        content: String,
+    },
+}
+
+impl PendingMessage {
+    pub fn user(content: String) -> Self {
+        Self::User(content)
+    }
+
+    pub fn subagent_notification(agent_id: String, sequence: u64, content: String) -> Self {
+        Self::SubagentNotification {
+            agent_id,
+            sequence,
+            content,
+        }
+    }
+
+    pub fn into_message(self) -> Message {
+        match self {
+            Self::User(content) => Message::user(content),
+            Self::SubagentNotification {
+                agent_id,
+                sequence,
+                content,
+            } => Message::system(format!(
+                "<subagent_notification source=\"spawn_tool\" agent_id=\"{}\" sequence=\"{}\">\n{}\n</subagent_notification>",
+                escape_attr(&agent_id),
+                sequence,
+                content
+            )),
+        }
+    }
+}
+
+fn escape_attr(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 impl AgentSession {
@@ -47,12 +96,12 @@ impl AgentSession {
 
     pub fn enqueue_pending(&mut self, msg: String) {
         if self.pending.len() < Self::MAX_PENDING {
-            self.pending.push_back(msg);
+            self.pending.push_back(PendingMessage::user(msg));
         }
         // Silently drop if the queue is full — caller already got a success ack.
     }
 
-    pub fn enqueue_deduped_pending(
+    pub fn enqueue_deduped_subagent_notification(
         &mut self,
         agent_id: String,
         sequence: u64,
@@ -68,8 +117,12 @@ impl AgentSession {
         {
             return false;
         }
-        self.last_subagent_notification.insert(agent_id, sequence);
-        self.pending.push_back(msg);
+        self.last_subagent_notification
+            .insert(agent_id.clone(), sequence);
+        self.pending
+            .push_back(PendingMessage::subagent_notification(
+                agent_id, sequence, msg,
+            ));
         true
     }
 
@@ -78,11 +131,11 @@ impl AgentSession {
     /// O(1) with `VecDeque`, unlike `Vec::insert(0)`.
     pub fn prepend_pending(&mut self, msg: String) {
         if self.pending.len() < Self::MAX_PENDING {
-            self.pending.push_front(msg);
+            self.pending.push_front(PendingMessage::user(msg));
         }
     }
 
-    pub fn drain_pending(&mut self) -> Vec<String> {
+    pub fn drain_pending(&mut self) -> Vec<PendingMessage> {
         // Vec::from(VecDeque) calls make_contiguous() then ptr::copy when the
         // deque's head != 0 — O(n) in the number of elements, same as the
         // previous .into_iter().collect().  Pending queue is capped at 64
@@ -186,8 +239,8 @@ mod subagent_notification_dedupe_tests {
     fn same_monotonic_subagent_notification_is_enqueued_once() {
         let mut session = AgentSession::new("m".into(), "s".into());
 
-        assert!(session.enqueue_deduped_pending("worker".into(), 1, "done".into()));
-        assert!(!session.enqueue_deduped_pending("worker".into(), 1, "done".into()));
+        assert!(session.enqueue_deduped_subagent_notification("worker".into(), 1, "done".into()));
+        assert!(!session.enqueue_deduped_subagent_notification("worker".into(), 1, "done".into()));
 
         assert_eq!(session.drain_pending().len(), 1);
     }
@@ -196,13 +249,13 @@ mod subagent_notification_dedupe_tests {
     fn later_monotonic_subagent_notification_is_enqueued() {
         let mut session = AgentSession::new("m".into(), "s".into());
 
-        assert!(session.enqueue_deduped_pending("worker".into(), 1, "first".into()));
-        assert!(session.enqueue_deduped_pending("worker".into(), 2, "second".into()));
+        assert!(session.enqueue_deduped_subagent_notification("worker".into(), 1, "first".into()));
+        assert!(session.enqueue_deduped_subagent_notification("worker".into(), 2, "second".into()));
 
         let pending = session.drain_pending();
         assert_eq!(pending.len(), 2);
-        assert!(pending[0].contains("first"));
-        assert!(pending[1].contains("second"));
+        assert!(pending[0].clone().into_message().content.contains("first"));
+        assert!(pending[1].clone().into_message().content.contains("second"));
     }
 
     #[test]
@@ -212,8 +265,29 @@ mod subagent_notification_dedupe_tests {
             session.enqueue_pending(format!("filler-{i}"));
         }
 
-        assert!(!session.enqueue_deduped_pending("worker".into(), 1, "done".into()));
+        assert!(!session.enqueue_deduped_subagent_notification("worker".into(), 1, "done".into()));
         let _ = session.drain_pending();
-        assert!(session.enqueue_deduped_pending("worker".into(), 1, "done".into()));
+        assert!(session.enqueue_deduped_subagent_notification("worker".into(), 1, "done".into()));
+    }
+}
+
+#[cfg(test)]
+mod pending_message_provenance_tests {
+    use super::*;
+
+    #[test]
+    fn subagent_pending_message_renders_as_system_with_provenance() {
+        let pending = PendingMessage::subagent_notification(
+            "worker".into(),
+            7,
+            "[subagent] Agent 'worker' completed. Last output: done".into(),
+        );
+        let msg = pending.into_message();
+
+        assert_eq!(msg.role, Role::System);
+        assert!(msg.content.contains("<subagent_notification"));
+        assert!(msg.content.contains("source=\"spawn_tool\""));
+        assert!(msg.content.contains("agent_id=\"worker\""));
+        assert!(msg.content.contains("sequence=\"7\""));
     }
 }

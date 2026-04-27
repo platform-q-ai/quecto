@@ -313,7 +313,7 @@ async fn run_dispatch_loop(
                 tracing::info!(msg = %message, "injecting subagent notification");
                 let (agent_id, sequence) = notif.dedupe_key();
                 ctx.session
-                    .enqueue_deduped_pending(agent_id, sequence, message);
+                    .enqueue_deduped_subagent_notification(agent_id, sequence, message);
                 // Broadcast state_changed event to all UDS clients (#524).
                 let list = super::protocol::build_subagent_info_list(&ctx.subagent_registry);
                 let ev = AgentEvent::SubagentStateChanged { subagents: list };
@@ -528,7 +528,7 @@ pub(super) struct PromptArgsBroadcast<'a> {
     pub messages: &'a mut Vec<Message>,
     pub session: &'a mut AgentSession,
     pub broadcast_tx: tokio::sync::broadcast::Sender<String>,
-    pub message: String,
+    pub message: Message,
     pub cancel_rx: tokio::sync::oneshot::Receiver<()>,
     /// Subagent notification receiver — drained during prompt execution (#534).
     pub notification_rx:
@@ -559,7 +559,7 @@ pub(super) async fn run_agent_prompt_broadcast(args: PromptArgsBroadcast<'_>) ->
     broadcast_event(&broadcast_tx, &AgentEvent::TurnStart);
 
     let user_msg_idx = messages.len();
-    messages.push(Message::user(message));
+    messages.push(message);
     let before_len = messages.len();
 
     let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<AgentProgressEvent>(256);
@@ -585,7 +585,7 @@ pub(super) async fn run_agent_prompt_broadcast(args: PromptArgsBroadcast<'_>) ->
     // These will be processed as follow-up prompts by drain_and_run_pending.
     for notif in drain_result.notifications {
         let (agent_id, sequence) = notif.dedupe_key();
-        session.enqueue_deduped_pending(agent_id, sequence, notif.to_message());
+        session.enqueue_deduped_subagent_notification(agent_id, sequence, notif.to_message());
     }
 
     match drain_result.result {

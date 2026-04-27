@@ -696,7 +696,7 @@ async fn run_prompt_dispatch(
             messages: ctx.messages,
             session: ctx.session,
             broadcast_tx: tx.clone(),
-            message,
+            message: crate::domain::message::Message::user(message),
             cancel_rx,
             notification_rx: &mut ctx.notification_rx,
             subagent_registry: &ctx.subagent_registry,
@@ -708,7 +708,7 @@ async fn run_prompt_dispatch(
             messages: ctx.messages,
             session: ctx.session,
             stdout: ctx.stdout,
-            message,
+            message: crate::domain::message::Message::user(message),
             cancel_rx,
         })
         .await
@@ -724,7 +724,8 @@ async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
         if pending.is_empty() {
             break;
         }
-        for msg in pending {
+        for pending_msg in pending {
+            let msg = pending_msg.into_message();
             let Some(rx) = arm_cancel(&ctx.cancel_handle) else {
                 emit_pre_cancelled(ctx).await; // Stale abort (#483).
                 continue; // Don't drop remaining messages — Fired consumed, next arm succeeds.

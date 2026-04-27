@@ -104,7 +104,7 @@ pub struct PromptArgs<'a> {
     pub messages: &'a mut Vec<Message>,
     pub session: &'a mut AgentSession,
     pub stdout: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
-    pub message: String,
+    pub message: Message,
     /// Oneshot cancellation receiver.  Resolves when the concurrent reader task
     /// (or `dispatch_command`) fires the cancel handle for this run.
     pub cancel_rx: tokio::sync::oneshot::Receiver<()>,
@@ -131,7 +131,7 @@ pub async fn run_agent_prompt(args: PromptArgs<'_>) -> PromptOutcome {
     emit_event(stdout, &AgentEvent::TurnStart).await;
 
     let user_msg_idx = messages.len();
-    messages.push(Message::user(message));
+    messages.push(message);
     let before_len = messages.len();
 
     // Install a progress callback that forwards events to a bounded channel.
