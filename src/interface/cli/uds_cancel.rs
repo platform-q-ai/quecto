@@ -120,6 +120,35 @@ pub async fn run_agent_prompt(args: PromptArgs<'_>) -> PromptOutcome {
     let PromptArgs {
         agent,
         messages,
+        session,
+        stdout,
+        message,
+        cancel_rx,
+    } = args;
+    run_agent_message(PromptMessageArgs {
+        agent,
+        messages,
+        session,
+        stdout,
+        message: Message::user(message),
+        cancel_rx,
+    })
+    .await
+}
+
+pub(crate) struct PromptMessageArgs<'a> {
+    pub agent: &'a mut AgentLoopImpl,
+    pub messages: &'a mut Vec<Message>,
+    pub session: &'a mut AgentSession,
+    pub stdout: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
+    pub message: Message,
+    pub cancel_rx: tokio::sync::oneshot::Receiver<()>,
+}
+
+pub(crate) async fn run_agent_message(args: PromptMessageArgs<'_>) -> PromptOutcome {
+    let PromptMessageArgs {
+        agent,
+        messages,
         session: agent_session,
         stdout,
         message,
@@ -131,7 +160,7 @@ pub async fn run_agent_prompt(args: PromptArgs<'_>) -> PromptOutcome {
     emit_event(stdout, &AgentEvent::TurnStart).await;
 
     let user_msg_idx = messages.len();
-    messages.push(Message::user(message));
+    messages.push(message);
     let before_len = messages.len();
 
     // Install a progress callback that forwards events to a bounded channel.

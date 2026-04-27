@@ -48,6 +48,10 @@ fn test_drain_pending_messages() {
     session.enqueue_pending("a".to_string());
     session.enqueue_pending("b".to_string());
     let drained = session.drain_pending();
+    let drained: Vec<_> = drained
+        .into_iter()
+        .map(|m| m.into_message().content)
+        .collect();
     assert_eq!(drained, vec!["a".to_string(), "b".to_string()]);
     assert_eq!(session.state_snapshot(0, None).pending_message_count, 0);
 }
