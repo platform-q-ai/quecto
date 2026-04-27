@@ -9,20 +9,35 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
 pub(super) struct MockProvider {
-    responses: Mutex<Vec<LlmResponse>>,
+    responses: Mutex<Vec<Result<LlmResponse, DomainError>>>,
     /// Captured tool definitions from the last chat() call.
     last_tool_defs: Mutex<Vec<ToolDefinition>>,
     /// Captured first system prompts from every chat() call.
     seen_system_prompts: Mutex<Vec<String>>,
+    request_count: Mutex<usize>,
 }
 
 impl MockProvider {
     pub(super) fn new(responses: Vec<LlmResponse>) -> Self {
         Self {
+            responses: Mutex::new(responses.into_iter().map(Ok).collect()),
+            last_tool_defs: Mutex::new(vec![]),
+            seen_system_prompts: Mutex::new(vec![]),
+            request_count: Mutex::new(0),
+        }
+    }
+
+    fn new_results(responses: Vec<Result<LlmResponse, DomainError>>) -> Self {
+        Self {
             responses: Mutex::new(responses),
             last_tool_defs: Mutex::new(vec![]),
             seen_system_prompts: Mutex::new(vec![]),
+            request_count: Mutex::new(0),
         }
+    }
+
+    fn request_count(&self) -> usize {
+        *self.request_count.lock().unwrap()
     }
 
     fn last_tool_defs(&self) -> Vec<ToolDefinition> {
@@ -45,6 +60,7 @@ impl LlmProvider for MockProvider {
     ) -> Pin<Box<dyn std::future::Future<Output = Result<LlmResponse, DomainError>> + Send + '_>>
     {
         // Capture tool defs
+        *self.request_count.lock().unwrap() += 1;
         *self.last_tool_defs.lock().unwrap() = request.tools.to_vec();
         let system_prompt = request
             .messages
@@ -71,7 +87,7 @@ impl LlmProvider for MockProvider {
             responses.remove(0)
         };
 
-        Box::pin(async move { Ok(response) })
+        Box::pin(async move { response })
     }
 }
 
@@ -870,4 +886,72 @@ async fn test_progress_callback_tool_finished_includes_tool_call_id() {
     } else {
         panic!("expected ToolFinished event, got: {:?}", *fired);
     }
+}
+
+#[tokio::test]
+async fn retries_retryable_provider_failures_before_returning_success() {
+    let provider = Arc::new(MockProvider::new_results(vec![
+        Err(DomainError::Provider(
+            "HTTP 503 Service Unavailable".to_string(),
+        )),
+        Ok(text_response("recovered")),
+    ]));
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider: provider.clone(),
+        tool_registry: Box::new(MockRegistry::default()),
+        model: "test".into(),
+        max_tokens: 1024,
+        temperature: 0.0,
+        spill_store: None,
+        session_key: "retry-test".into(),
+        context_collapse_after_turns: context_pruning::COLLAPSE_DISABLED,
+        max_context_tokens: 100_000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        system_prompt_provider: None,
+        audit_log: None,
+    })
+    .with_max_tool_iterations(1);
+
+    let mut messages = vec![Message::user("hello")];
+    let result = agent.process(&mut messages).await.unwrap();
+
+    assert_eq!(result.response, "recovered");
+    assert_eq!(provider.request_count(), 2);
+}
+
+#[tokio::test]
+async fn provider_context_limit_errors_are_actionable() {
+    let provider = Arc::new(MockProvider::new_results(vec![Err(DomainError::Provider(
+        "HTTP 400 from OpenAI: maximum context length is 100000 tokens; requested 100001 tokens"
+            .to_string(),
+    ))]));
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider,
+        tool_registry: Box::new(MockRegistry::default()),
+        model: "test".into(),
+        max_tokens: 8192,
+        temperature: 0.0,
+        spill_store: None,
+        session_key: "limit-test".into(),
+        context_collapse_after_turns: context_pruning::COLLAPSE_DISABLED,
+        max_context_tokens: 100_000,
+        progress_callback: None,
+        streaming: false,
+        effort: None,
+        system_prompt_provider: None,
+        audit_log: None,
+    })
+    .with_max_tool_iterations(1);
+
+    let mut messages = vec![Message::user("hello")];
+    let err = agent.process(&mut messages).await.unwrap_err().to_string();
+
+    assert!(
+        err.to_ascii_lowercase().contains("context/output limit"),
+        "{err}"
+    );
+    assert!(err.contains("reducing prompt history"), "{err}");
+    assert!(err.contains("max output tokens"), "{err}");
 }

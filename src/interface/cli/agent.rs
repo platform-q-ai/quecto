@@ -478,6 +478,10 @@ pub(crate) fn run_agent_session(
         Vec::new()
     };
 
+    if !ephemeral && !messages.is_empty() {
+        rt.block_on(agent.prune_resumed_context(&mut messages));
+    }
+
     // System prompt is injected at call time but not persisted in session history.
     // Track its index so we can remove exactly this message before saving.
     let system_prompt_idx = if flags.system_prompt.is_some() {

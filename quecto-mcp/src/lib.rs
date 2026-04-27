@@ -877,7 +877,10 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/"))
-            .and(header_regex("accept", "application/json.*text/event-stream"))
+            .and(header_regex(
+                "accept",
+                "application/json.*text/event-stream",
+            ))
             .and(body_partial_json(
                 serde_json::json!({"method": "initialize"}),
             ))

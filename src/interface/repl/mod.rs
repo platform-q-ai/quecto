@@ -370,7 +370,10 @@ pub fn run_repl<R: BufRead, W: Write>(
         }
     };
 
-    let messages = load_session_messages_with_rt(&rt, &session_store, &session_key, ephemeral);
+    let mut messages = load_session_messages_with_rt(&rt, &session_store, &session_key, ephemeral);
+    if !ephemeral && !messages.is_empty() {
+        rt.block_on(agent.prune_resumed_context(&mut messages));
+    }
 
     let session = ReplSession {
         agent,
