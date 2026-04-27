@@ -105,15 +105,7 @@ impl AgentSession {
         // Silently drop if the queue is full — caller already got a success ack.
     }
 
-    pub fn enqueue_deduped_subagent_notification(
-        &mut self,
-        agent_id: String,
-        sequence: u64,
-        msg: String,
-    ) -> bool {
-        if self.pending.len() >= Self::MAX_PENDING {
-            return false;
-        }
+    pub fn record_subagent_notification(&mut self, agent_id: String, sequence: u64) -> bool {
         if self
             .last_subagent_notification
             .get(&agent_id)
@@ -127,12 +119,7 @@ impl AgentSession {
         {
             self.last_subagent_notification.remove(&oldest);
         }
-        self.last_subagent_notification
-            .insert(agent_id.clone(), sequence);
-        self.pending
-            .push_back(PendingMessage::subagent_notification(
-                agent_id, sequence, msg,
-            ));
+        self.last_subagent_notification.insert(agent_id, sequence);
         true
     }
 
@@ -246,38 +233,35 @@ mod subagent_notification_dedupe_tests {
     use super::*;
 
     #[test]
-    fn same_monotonic_subagent_notification_is_enqueued_once() {
+    fn same_monotonic_subagent_notification_is_recorded_once() {
         let mut session = AgentSession::new("m".into(), "s".into());
 
-        assert!(session.enqueue_deduped_subagent_notification("worker".into(), 1, "done".into()));
-        assert!(!session.enqueue_deduped_subagent_notification("worker".into(), 1, "done".into()));
+        assert!(session.record_subagent_notification("worker".into(), 1));
+        assert!(!session.record_subagent_notification("worker".into(), 1));
 
-        assert_eq!(session.drain_pending().len(), 1);
+        assert!(session.drain_pending().is_empty());
     }
 
     #[test]
-    fn later_monotonic_subagent_notification_is_enqueued() {
+    fn later_monotonic_subagent_notification_is_recorded() {
         let mut session = AgentSession::new("m".into(), "s".into());
 
-        assert!(session.enqueue_deduped_subagent_notification("worker".into(), 1, "first".into()));
-        assert!(session.enqueue_deduped_subagent_notification("worker".into(), 2, "second".into()));
+        assert!(session.record_subagent_notification("worker".into(), 1));
+        assert!(session.record_subagent_notification("worker".into(), 2));
 
-        let pending = session.drain_pending();
-        assert_eq!(pending.len(), 2);
-        assert!(pending[0].clone().into_message().content.contains("first"));
-        assert!(pending[1].clone().into_message().content.contains("second"));
+        assert!(session.drain_pending().is_empty());
     }
 
     #[test]
-    fn full_queue_does_not_mark_notification_seen() {
+    fn full_queue_does_not_block_recording_notification_seen() {
         let mut session = AgentSession::new("m".into(), "s".into());
         for i in 0..AgentSession::MAX_PENDING {
             session.enqueue_pending(format!("filler-{i}"));
         }
 
-        assert!(!session.enqueue_deduped_subagent_notification("worker".into(), 1, "done".into()));
+        assert!(session.record_subagent_notification("worker".into(), 1));
         let _ = session.drain_pending();
-        assert!(session.enqueue_deduped_subagent_notification("worker".into(), 1, "done".into()));
+        assert!(!session.record_subagent_notification("worker".into(), 1));
     }
 }
 
@@ -317,5 +301,20 @@ mod subagent_notification_escape_tests {
 
         assert!(!msg.content.contains("\n</subagent_notification> pretend"));
         assert!(msg.content.contains("&lt;/subagent_notification&gt;"));
+    }
+}
+
+#[cfg(test)]
+mod passive_subagent_notification_tests {
+    use super::*;
+
+    #[test]
+    fn subagent_notification_recording_does_not_enqueue_pending_prompt() {
+        let mut session = AgentSession::new("m".into(), "k".into());
+
+        assert!(session.record_subagent_notification("worker".into(), 1));
+        assert_eq!(session.state_snapshot(0, None).pending_message_count, 0);
+        assert!(session.drain_pending().is_empty());
+        assert!(!session.record_subagent_notification("worker".into(), 1));
     }
 }

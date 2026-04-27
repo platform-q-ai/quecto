@@ -309,11 +309,19 @@ async fn run_dispatch_loop(
                 }
             }
             DispatchMsg::Notification(notif) => {
-                let message = notif.to_message();
-                tracing::info!(msg = %message, "injecting subagent notification");
                 let (agent_id, sequence) = notif.dedupe_key();
-                ctx.session
-                    .enqueue_deduped_subagent_notification(agent_id, sequence, message);
+                tracing::info!(%agent_id, sequence, "recording passive subagent notification");
+                let is_new = ctx
+                    .session
+                    .record_subagent_notification(agent_id.clone(), sequence);
+                if is_new {
+                    let ev = AgentEvent::SubagentNotification {
+                        agent_id,
+                        sequence,
+                        message: notif.to_message(),
+                    };
+                    emit_event_to_broadcast_or_writer(ctx, &ev).await;
+                }
                 // Broadcast state_changed event to all UDS clients (#524).
                 let list = super::protocol::build_subagent_info_list(&ctx.subagent_registry);
                 let ev = AgentEvent::SubagentStateChanged { subagents: list };
@@ -581,11 +589,12 @@ pub(super) async fn run_agent_prompt_broadcast(args: PromptArgsBroadcast<'_>) ->
     agent.set_progress_callback(None);
     session.set_streaming(false);
 
-    // Enqueue notifications collected during prompt execution (#534).
-    // These will be processed as follow-up prompts by drain_and_run_pending.
+    // Record notifications collected during prompt execution without queuing
+    // follow-up prompts. Subagent completion is a passive UI/state event; the
+    // model should explicitly use agent_cmd await/get_messages to inspect output.
     for notif in drain_result.notifications {
         let (agent_id, sequence) = notif.dedupe_key();
-        session.enqueue_deduped_subagent_notification(agent_id, sequence, notif.to_message());
+        session.record_subagent_notification(agent_id, sequence);
     }
 
     match drain_result.result {
@@ -730,8 +739,14 @@ fn forward_notification_broadcast(
     broadcast_tx: &tokio::sync::broadcast::Sender<String>,
     subagent_registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
 ) {
-    let message = notif.to_message();
-    tracing::info!(msg = %message, "injecting subagent notification during prompt");
+    let (agent_id, sequence) = notif.dedupe_key();
+    tracing::info!(%agent_id, sequence, "broadcasting passive subagent notification during prompt");
+    let ev = AgentEvent::SubagentNotification {
+        agent_id,
+        sequence,
+        message: notif.to_message(),
+    };
+    broadcast_event(broadcast_tx, &ev);
     // Build full subagent info list from registry for the state-changed event.
     let list = super::protocol::build_subagent_info_list(subagent_registry);
     let ev = AgentEvent::SubagentStateChanged { subagents: list };

@@ -255,6 +255,13 @@ pub enum AgentEvent {
         tool_name: String,
         arguments: String,
     },
+    /// Broadcast when a subagent emits a passive notification for human/UI visibility.
+    #[serde(rename_all = "camelCase")]
+    SubagentNotification {
+        agent_id: String,
+        sequence: u64,
+        message: String,
+    },
     /// Broadcast when a subagent's status changes (#524).
     /// Contains the full list of subagents (clients do a simple replace).
     SubagentStateChanged { subagents: Vec<SubagentInfo> },
