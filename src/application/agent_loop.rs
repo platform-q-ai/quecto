@@ -12,9 +12,9 @@ use crate::domain::audit::{AuditEvent, AuditSink};
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
 use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent};
+use crate::domain::provider_error::classify_provider_error;
 use crate::domain::session::{ContextSpillStore, SpillEntry};
 use crate::domain::tool::ToolRegistry;
-use crate::infrastructure::providers::error::classify_error;
 
 /// Default maximum tool iterations before the loop is forcibly stopped.
 const DEFAULT_MAX_TOOL_ITERATIONS: u32 = 999_999;
@@ -547,7 +547,13 @@ impl AgentLoopImpl {
     ) -> Result<LlmResponse, DomainError> {
         for attempt in 1..=MAX_PROVIDER_ATTEMPTS {
             let result = if self.streaming {
-                self.stream_chat_once(request.clone()).await
+                // Do not retry streaming requests: token deltas may already
+                // have been emitted to UDS clients before a terminal error,
+                // and replaying the request would duplicate/corrupt output.
+                return self
+                    .stream_chat_once(request)
+                    .await
+                    .map_err(enhance_provider_error);
             } else {
                 self.provider.chat(request.clone()).await
             };
@@ -555,7 +561,7 @@ impl AgentLoopImpl {
             match result {
                 Ok(response) => return Ok(response),
                 Err(err) => {
-                    let class = classify_error(&err);
+                    let class = classify_provider_error(&err);
                     if attempt == MAX_PROVIDER_ATTEMPTS || !class.is_retryable() {
                         return Err(enhance_provider_error(err));
                     }
@@ -564,7 +570,6 @@ impl AgentLoopImpl {
                         attempt,
                         max_attempts = MAX_PROVIDER_ATTEMPTS,
                         error_class = %class,
-                        error = %err,
                         "retrying provider request after transient failure"
                     );
                     tokio::time::sleep(std::time::Duration::from_millis(
