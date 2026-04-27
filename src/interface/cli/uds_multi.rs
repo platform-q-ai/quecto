@@ -311,7 +311,9 @@ async fn run_dispatch_loop(
             DispatchMsg::Notification(notif) => {
                 let message = notif.to_message();
                 tracing::info!(msg = %message, "injecting subagent notification");
-                ctx.session.enqueue_subagent_notification(&notif);
+                let (agent_id, sequence) = notif.dedupe_key();
+                ctx.session
+                    .enqueue_deduped_pending(agent_id, sequence, message);
                 // Broadcast state_changed event to all UDS clients (#524).
                 let list = super::protocol::build_subagent_info_list(&ctx.subagent_registry);
                 let ev = AgentEvent::SubagentStateChanged { subagents: list };
@@ -323,7 +325,7 @@ async fn run_dispatch_loop(
 
 enum DispatchMsg {
     Client(ClientMessage),
-    Notification(crate::infrastructure::tools::subagent_registry::SubagentNotification),
+    Notification(crate::infrastructure::tools::subagent_registry::SequencedSubagentNotification),
 }
 
 async fn recv_next_message(
@@ -582,7 +584,8 @@ pub(super) async fn run_agent_prompt_broadcast(args: PromptArgsBroadcast<'_>) ->
     // Enqueue notifications collected during prompt execution (#534).
     // These will be processed as follow-up prompts by drain_and_run_pending.
     for notif in drain_result.notifications {
-        session.enqueue_subagent_notification(&notif);
+        let (agent_id, sequence) = notif.dedupe_key();
+        session.enqueue_deduped_pending(agent_id, sequence, notif.to_message());
     }
 
     match drain_result.result {
@@ -656,7 +659,8 @@ struct TokenDrainBroadcastArgs<'a> {
 struct TokenDrainResult {
     result: Option<Result<crate::domain::agent::AgentResult, crate::domain::error::DomainError>>,
     /// Notifications collected during prompt execution, to be enqueued as pending.
-    notifications: Vec<crate::infrastructure::tools::subagent_registry::SubagentNotification>,
+    notifications:
+        Vec<crate::infrastructure::tools::subagent_registry::SequencedSubagentNotification>,
 }
 
 async fn run_with_token_drain_broadcast(args: TokenDrainBroadcastArgs<'_>) -> TokenDrainResult {
@@ -722,7 +726,7 @@ async fn run_with_token_drain_broadcast(args: TokenDrainBroadcastArgs<'_>) -> To
 
 /// Forward a subagent notification as a SubagentStateChanged broadcast event (#534).
 fn forward_notification_broadcast(
-    notif: crate::infrastructure::tools::subagent_registry::SubagentNotification,
+    notif: crate::infrastructure::tools::subagent_registry::SequencedSubagentNotification,
     broadcast_tx: &tokio::sync::broadcast::Sender<String>,
     subagent_registry: &Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
 ) {

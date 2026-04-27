@@ -1,8 +1,6 @@
+use super::protocol::{SessionState, SessionStats, TokenStats};
 /// UDS session state — in-memory tracker and statistics for an active UDS connection.
 use crate::domain::message::{Message, Role};
-use crate::infrastructure::tools::subagent_registry::SubagentNotification;
-
-use super::protocol::{SessionState, SessionStats, TokenStats};
 
 // ─── Session state tracker ────────────────────────────────────────────────────
 
@@ -13,7 +11,7 @@ pub struct AgentSession {
     streaming: bool,
     /// `VecDeque` supports O(1) push_back (enqueue) and push_front (prepend/steer).
     pending: std::collections::VecDeque<String>,
-    seen_subagent_notifications: std::collections::HashSet<(String, u64)>,
+    last_subagent_notification: std::collections::HashMap<String, u64>,
 }
 
 impl AgentSession {
@@ -23,7 +21,7 @@ impl AgentSession {
             session_key,
             streaming: false,
             pending: std::collections::VecDeque::new(),
-            seen_subagent_notifications: std::collections::HashSet::new(),
+            last_subagent_notification: std::collections::HashMap::new(),
         }
     }
 
@@ -54,17 +52,25 @@ impl AgentSession {
         // Silently drop if the queue is full — caller already got a success ack.
     }
 
-    pub fn enqueue_subagent_notification(&mut self, notif: &SubagentNotification) -> bool {
-        let key = notif.dedupe_key();
-        if !self.seen_subagent_notifications.insert(key) {
+    pub fn enqueue_deduped_pending(
+        &mut self,
+        agent_id: String,
+        sequence: u64,
+        msg: String,
+    ) -> bool {
+        if self.pending.len() >= Self::MAX_PENDING {
             return false;
         }
-        if self.pending.len() < Self::MAX_PENDING {
-            self.pending.push_back(notif.to_message());
-            true
-        } else {
-            false
+        if self
+            .last_subagent_notification
+            .get(&agent_id)
+            .is_some_and(|last| sequence <= *last)
+        {
+            return false;
         }
+        self.last_subagent_notification.insert(agent_id, sequence);
+        self.pending.push_back(msg);
+        true
     }
 
     /// Prepend a message to the front of the pending queue so it runs before
@@ -175,19 +181,13 @@ pub fn clear_conversation(messages: &mut Vec<Message>) {
 #[cfg(test)]
 mod subagent_notification_dedupe_tests {
     use super::*;
-    use crate::infrastructure::tools::subagent_registry::SubagentNotification;
 
     #[test]
     fn same_monotonic_subagent_notification_is_enqueued_once() {
         let mut session = AgentSession::new("m".into(), "s".into());
-        let notification = SubagentNotification::Completed {
-            agent_id: "worker".into(),
-            sequence: 1,
-            summary: "done".into(),
-        };
 
-        assert!(session.enqueue_subagent_notification(&notification));
-        assert!(!session.enqueue_subagent_notification(&notification));
+        assert!(session.enqueue_deduped_pending("worker".into(), 1, "done".into()));
+        assert!(!session.enqueue_deduped_pending("worker".into(), 1, "done".into()));
 
         assert_eq!(session.drain_pending().len(), 1);
     }
@@ -195,23 +195,25 @@ mod subagent_notification_dedupe_tests {
     #[test]
     fn later_monotonic_subagent_notification_is_enqueued() {
         let mut session = AgentSession::new("m".into(), "s".into());
-        let first = SubagentNotification::Completed {
-            agent_id: "worker".into(),
-            sequence: 1,
-            summary: "first".into(),
-        };
-        let second = SubagentNotification::Completed {
-            agent_id: "worker".into(),
-            sequence: 2,
-            summary: "second".into(),
-        };
 
-        assert!(session.enqueue_subagent_notification(&first));
-        assert!(session.enqueue_subagent_notification(&second));
+        assert!(session.enqueue_deduped_pending("worker".into(), 1, "first".into()));
+        assert!(session.enqueue_deduped_pending("worker".into(), 2, "second".into()));
 
         let pending = session.drain_pending();
         assert_eq!(pending.len(), 2);
         assert!(pending[0].contains("first"));
         assert!(pending[1].contains("second"));
+    }
+
+    #[test]
+    fn full_queue_does_not_mark_notification_seen() {
+        let mut session = AgentSession::new("m".into(), "s".into());
+        for i in 0..AgentSession::MAX_PENDING {
+            session.enqueue_pending(format!("filler-{i}"));
+        }
+
+        assert!(!session.enqueue_deduped_pending("worker".into(), 1, "done".into()));
+        let _ = session.drain_pending();
+        assert!(session.enqueue_deduped_pending("worker".into(), 1, "done".into()));
     }
 }

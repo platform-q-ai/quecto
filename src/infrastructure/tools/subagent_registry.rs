@@ -158,52 +158,56 @@ const MAX_SUMMARY_LEN: usize = 200;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubagentNotification {
     /// Child agent finished processing a prompt successfully.
-    Completed {
-        agent_id: String,
-        sequence: u64,
-        summary: String,
-    },
+    Completed { agent_id: String, summary: String },
     /// Child agent's last tool execution returned an error.
-    Errored {
-        agent_id: String,
-        sequence: u64,
-        error: String,
-    },
+    Errored { agent_id: String, error: String },
     /// Child agent process exited (connection closed or process reaped).
-    Exited { agent_id: String, sequence: u64 },
+    Exited { agent_id: String },
 }
 
-impl SubagentNotification {
-    pub fn dedupe_key(&self) -> (String, u64) {
-        match self {
-            Self::Completed {
-                agent_id, sequence, ..
-            }
-            | Self::Errored {
-                agent_id, sequence, ..
-            }
-            | Self::Exited { agent_id, sequence } => (agent_id.clone(), *sequence),
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SequencedSubagentNotification {
+    pub sequence: u64,
+    pub notification: SubagentNotification,
+}
+
+impl SequencedSubagentNotification {
+    pub fn new(sequence: u64, notification: SubagentNotification) -> Self {
+        Self {
+            sequence,
+            notification,
         }
     }
 
+    pub fn dedupe_key(&self) -> (String, u64) {
+        let agent_id = match &self.notification {
+            SubagentNotification::Completed { agent_id, .. }
+            | SubagentNotification::Errored { agent_id, .. }
+            | SubagentNotification::Exited { agent_id } => agent_id.clone(),
+        };
+        (agent_id, self.sequence)
+    }
+
+    pub fn to_message(&self) -> String {
+        self.notification.to_message()
+    }
+}
+
+impl SubagentNotification {
     /// Format this notification as a human-readable message suitable for
     /// injection into the parent LLM's conversation.
     pub fn to_message(&self) -> String {
         match self {
-            Self::Completed {
-                agent_id, summary, ..
-            } => {
+            Self::Completed { agent_id, summary } => {
                 format!(
                     "[subagent] Agent '{}' completed. Last output: {}",
                     agent_id, summary
                 )
             }
-            Self::Errored {
-                agent_id, error, ..
-            } => {
+            Self::Errored { agent_id, error } => {
                 format!("[subagent] Agent '{}' errored: {}", agent_id, error)
             }
-            Self::Exited { agent_id, .. } => {
+            Self::Exited { agent_id } => {
                 format!(
                     "[subagent] Agent '{}' exited unexpectedly (process terminated)",
                     agent_id
@@ -214,10 +218,10 @@ impl SubagentNotification {
 }
 
 /// Sender half of the notification channel.
-pub type NotificationTx = tokio::sync::mpsc::Sender<SubagentNotification>;
+pub type NotificationTx = tokio::sync::mpsc::Sender<SequencedSubagentNotification>;
 
 /// Receiver half of the notification channel.
-pub type NotificationRx = tokio::sync::mpsc::Receiver<SubagentNotification>;
+pub type NotificationRx = tokio::sync::mpsc::Receiver<SequencedSubagentNotification>;
 
 /// Default capacity for the bounded notification channel.
 pub const NOTIFICATION_CHANNEL_CAPACITY: usize = 64;
@@ -401,7 +405,6 @@ mod tests {
     fn test_completed_message_format() {
         let n = SubagentNotification::Completed {
             agent_id: "researcher".into(),
-            sequence: 1,
             summary: "All tests pass".into(),
         };
         let msg = n.to_message();
@@ -415,7 +418,6 @@ mod tests {
     fn test_errored_message_format() {
         let n = SubagentNotification::Errored {
             agent_id: "linter".into(),
-            sequence: 1,
             error: "rate limit exceeded".into(),
         };
         let msg = n.to_message();
@@ -429,7 +431,6 @@ mod tests {
     fn test_exited_message_format() {
         let n = SubagentNotification::Exited {
             agent_id: "formatter".into(),
-            sequence: 1,
         };
         let msg = n.to_message();
         assert!(msg.starts_with("[subagent]"));
@@ -508,10 +509,12 @@ mod tests {
         for i in 0..NOTIFICATION_CHANNEL_CAPACITY {
             let n = SubagentNotification::Completed {
                 agent_id: format!("bot-{}", i),
-                sequence: i as u64 + 1,
                 summary: "done".into(),
             };
-            assert!(tx.try_send(n).is_ok());
+            assert!(
+                tx.try_send(SequencedSubagentNotification::new(i as u64 + 1, n))
+                    .is_ok()
+            );
         }
     }
 
@@ -520,10 +523,12 @@ mod tests {
         let (tx, mut rx) = new_notification_channel();
         for i in 0..3 {
             let _ = tx
-                .send(SubagentNotification::Exited {
-                    agent_id: format!("bot-{}", i),
-                    sequence: i as u64 + 1,
-                })
+                .send(SequencedSubagentNotification::new(
+                    i as u64 + 1,
+                    SubagentNotification::Exited {
+                        agent_id: format!("bot-{}", i),
+                    },
+                ))
                 .await;
         }
         drop(tx);
