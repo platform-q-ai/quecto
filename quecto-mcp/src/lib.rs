@@ -419,6 +419,7 @@ impl McpClient {
             .client
             .post(&self.base_url)
             .bearer_auth(&self.token)
+            .header("accept", "application/json, text/event-stream")
             .json(&serde_json::json!({"jsonrpc": "2.0", "id": uuid::Uuid::new_v4().to_string(), "method": method, "params": params}));
         if let Some(session_id) = self.session_id.lock().await.clone() {
             req = req.header("mcp-session-id", session_id);
@@ -763,7 +764,7 @@ fn redact_url(url: &str) -> String {
 mod tests {
     use super::*;
     use tokio::net::UnixListener;
-    use wiremock::matchers::{body_partial_json, method, path};
+    use wiremock::matchers::{body_partial_json, header_regex, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
@@ -876,6 +877,7 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/"))
+            .and(header_regex("accept", "application/json.*text/event-stream"))
             .and(body_partial_json(
                 serde_json::json!({"method": "initialize"}),
             ))
