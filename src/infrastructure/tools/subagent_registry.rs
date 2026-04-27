@@ -66,6 +66,8 @@ pub struct SubagentEntry {
     pub updated_at: Instant,
     /// Abort handle for the monitor task (if running).
     pub monitor_handle: Option<Arc<tokio::task::JoinHandle<()>>>,
+    /// Monotonic notification id for this subagent.
+    pub notification_sequence: u64,
     /// Exit signal sender — the reaper task sends the exit code/signal through
     /// this channel so that a waiting `await` call can return immediately (#612).
     pub exit_signal_tx: Option<ExitSignalTx>,
@@ -82,6 +84,7 @@ impl SubagentEntry {
             last_error: None,
             updated_at: Instant::now(),
             monitor_handle: None,
+            notification_sequence: 0,
             exit_signal_tx: None,
         }
     }
@@ -162,6 +165,34 @@ pub enum SubagentNotification {
     Exited { agent_id: String },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SequencedSubagentNotification {
+    pub sequence: u64,
+    pub notification: SubagentNotification,
+}
+
+impl SequencedSubagentNotification {
+    pub fn new(sequence: u64, notification: SubagentNotification) -> Self {
+        Self {
+            sequence,
+            notification,
+        }
+    }
+
+    pub fn dedupe_key(&self) -> (String, u64) {
+        let agent_id = match &self.notification {
+            SubagentNotification::Completed { agent_id, .. }
+            | SubagentNotification::Errored { agent_id, .. }
+            | SubagentNotification::Exited { agent_id } => agent_id.clone(),
+        };
+        (agent_id, self.sequence)
+    }
+
+    pub fn to_message(&self) -> String {
+        self.notification.to_message()
+    }
+}
+
 impl SubagentNotification {
     /// Format this notification as a human-readable message suitable for
     /// injection into the parent LLM's conversation.
@@ -187,10 +218,10 @@ impl SubagentNotification {
 }
 
 /// Sender half of the notification channel.
-pub type NotificationTx = tokio::sync::mpsc::Sender<SubagentNotification>;
+pub type NotificationTx = tokio::sync::mpsc::Sender<SequencedSubagentNotification>;
 
 /// Receiver half of the notification channel.
-pub type NotificationRx = tokio::sync::mpsc::Receiver<SubagentNotification>;
+pub type NotificationRx = tokio::sync::mpsc::Receiver<SequencedSubagentNotification>;
 
 /// Default capacity for the bounded notification channel.
 pub const NOTIFICATION_CHANNEL_CAPACITY: usize = 64;
@@ -480,7 +511,10 @@ mod tests {
                 agent_id: format!("bot-{}", i),
                 summary: "done".into(),
             };
-            assert!(tx.try_send(n).is_ok());
+            assert!(
+                tx.try_send(SequencedSubagentNotification::new(i as u64 + 1, n))
+                    .is_ok()
+            );
         }
     }
 
@@ -489,9 +523,12 @@ mod tests {
         let (tx, mut rx) = new_notification_channel();
         for i in 0..3 {
             let _ = tx
-                .send(SubagentNotification::Exited {
-                    agent_id: format!("bot-{}", i),
-                })
+                .send(SequencedSubagentNotification::new(
+                    i as u64 + 1,
+                    SubagentNotification::Exited {
+                        agent_id: format!("bot-{}", i),
+                    },
+                ))
                 .await;
         }
         drop(tx);

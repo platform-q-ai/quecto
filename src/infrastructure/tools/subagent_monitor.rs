@@ -143,12 +143,15 @@ async fn monitor_loop(
         Some(s) => s,
         None => {
             tracing::warn!(agent = %agent_id, "monitor: failed to connect to child socket");
-            update_entry(registry, agent_id, mark_exited);
+            let sequence = update_entry_next_sequence(registry, agent_id, mark_exited);
             send_notification(
                 notify_tx,
-                SubagentNotification::Exited {
-                    agent_id: agent_id.to_string(),
-                },
+                super::subagent_registry::SequencedSubagentNotification::new(
+                    sequence,
+                    SubagentNotification::Exited {
+                        agent_id: agent_id.to_string(),
+                    },
+                ),
             );
             return;
         }
@@ -174,31 +177,39 @@ async fn monitor_loop(
                 if STATE_CHANGING_EVENTS.iter().any(|pat| line.contains(pat)) {
                     // Parse once, use for both state update and notification.
                     if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
-                        update_entry(registry, agent_id, |e| apply_event_parsed(e, &value));
-                        notify_from_parsed(notify_tx, agent_id, &value);
+                        let sequence = update_entry_next_sequence(registry, agent_id, |e| {
+                            apply_event_parsed(e, &value)
+                        });
+                        notify_from_parsed(notify_tx, agent_id, sequence, &value);
                     }
                 }
             }
             Ok(None) => {
                 // EOF — child closed the connection.
                 tracing::info!(agent = %agent_id, "monitor: child connection closed (EOF)");
-                update_entry(registry, agent_id, mark_exited);
+                let sequence = update_entry_next_sequence(registry, agent_id, mark_exited);
                 send_notification(
                     notify_tx,
-                    SubagentNotification::Exited {
-                        agent_id: agent_id.to_string(),
-                    },
+                    super::subagent_registry::SequencedSubagentNotification::new(
+                        sequence,
+                        SubagentNotification::Exited {
+                            agent_id: agent_id.to_string(),
+                        },
+                    ),
                 );
                 return;
             }
             Err(e) => {
                 tracing::warn!(agent = %agent_id, error = %e, "monitor: read error");
-                update_entry(registry, agent_id, mark_exited);
+                let sequence = update_entry_next_sequence(registry, agent_id, mark_exited);
                 send_notification(
                     notify_tx,
-                    SubagentNotification::Exited {
-                        agent_id: agent_id.to_string(),
-                    },
+                    super::subagent_registry::SequencedSubagentNotification::new(
+                        sequence,
+                        SubagentNotification::Exited {
+                            agent_id: agent_id.to_string(),
+                        },
+                    ),
                 );
                 return;
             }
@@ -208,18 +219,20 @@ async fn monitor_loop(
 
 /// Check if a JSON-lines event should trigger a notification and send it.
 /// Parses the line from string — use `notify_from_parsed` when you already have a Value.
+#[cfg(test)]
 pub fn maybe_notify(notify_tx: Option<&NotificationTx>, agent_id: &str, line: &str) {
     let Some(tx) = notify_tx else { return };
     let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
         return;
     };
-    notify_from_parsed(Some(tx), agent_id, &value);
+    notify_from_parsed(Some(tx), agent_id, 0, &value);
 }
 
 /// Send a notification from a pre-parsed JSON value (avoids double parse).
 fn notify_from_parsed(
     notify_tx: Option<&NotificationTx>,
     agent_id: &str,
+    sequence: u64,
     value: &serde_json::Value,
 ) {
     let Some(tx) = notify_tx else { return };
@@ -260,12 +273,18 @@ fn notify_from_parsed(
         _ => None,
     };
     if let Some(n) = notification {
-        send_notification(Some(tx), n);
+        send_notification(
+            Some(tx),
+            super::subagent_registry::SequencedSubagentNotification::new(sequence, n),
+        );
     }
 }
 
 /// Best-effort send of a notification (non-blocking, drops if channel is full).
-fn send_notification(tx: Option<&NotificationTx>, notification: SubagentNotification) {
+fn send_notification(
+    tx: Option<&NotificationTx>,
+    notification: super::subagent_registry::SequencedSubagentNotification,
+) {
     if let Some(tx) = tx {
         let _ = tx.try_send(notification);
     }
@@ -287,11 +306,27 @@ async fn connect_with_retry(
     None
 }
 
-/// Update a single entry in the registry by name.
+#[cfg(test)]
 fn update_entry(registry: &SubagentRegistry, agent_id: &str, f: impl FnOnce(&mut SubagentEntry)) {
     let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(entry) = entries.get_mut(agent_id) {
         f(entry);
+    }
+}
+
+/// Update an entry and allocate the next monotonic notification sequence.
+fn update_entry_next_sequence(
+    registry: &SubagentRegistry,
+    agent_id: &str,
+    f: impl FnOnce(&mut SubagentEntry),
+) -> u64 {
+    let mut entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(entry) = entries.get_mut(agent_id) {
+        f(entry);
+        entry.notification_sequence = entry.notification_sequence.saturating_add(1);
+        entry.notification_sequence
+    } else {
+        0
     }
 }
 
@@ -518,8 +553,10 @@ mod tests {
         let line = r#"{"type":"agent_end","messages":[{"role":"assistant","content":"Done"}]}"#;
         maybe_notify(Some(&tx), "worker", line);
         let notif = rx.try_recv().unwrap();
-        match notif {
-            SubagentNotification::Completed { agent_id, summary } => {
+        match notif.notification {
+            SubagentNotification::Completed {
+                agent_id, summary, ..
+            } => {
                 assert_eq!(agent_id, "worker");
                 assert_eq!(summary, "Done");
             }
@@ -533,8 +570,10 @@ mod tests {
         let line = r#"{"type":"tool_execution_end","toolCallId":"c1","toolName":"bash","result":{"content":[]},"isError":true}"#;
         maybe_notify(Some(&tx), "worker", line);
         let notif = rx.try_recv().unwrap();
-        match notif {
-            SubagentNotification::Errored { agent_id, error } => {
+        match notif.notification {
+            SubagentNotification::Errored {
+                agent_id, error, ..
+            } => {
                 assert_eq!(agent_id, "worker");
                 assert!(error.contains("bash"));
             }
@@ -569,16 +608,22 @@ mod tests {
         let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
         send_notification(
             Some(&tx),
-            SubagentNotification::Exited {
-                agent_id: "bot".to_string(),
-            },
+            super::super::subagent_registry::SequencedSubagentNotification::new(
+                1,
+                SubagentNotification::Exited {
+                    agent_id: "bot".to_string(),
+                },
+            ),
         );
         let notif = rx.try_recv().unwrap();
         assert_eq!(
             notif,
-            SubagentNotification::Exited {
-                agent_id: "bot".to_string()
-            }
+            super::super::subagent_registry::SequencedSubagentNotification::new(
+                1,
+                SubagentNotification::Exited {
+                    agent_id: "bot".to_string(),
+                },
+            )
         );
     }
 
@@ -588,8 +633,10 @@ mod tests {
         let line = r#"{"type":"agent_end","messages":[{"role":"assistant","content":"done"}]}"#;
         maybe_notify(Some(&tx), "worker", line);
         let notif = rx.try_recv().unwrap();
-        match notif {
-            SubagentNotification::Completed { agent_id, summary } => {
+        match notif.notification {
+            SubagentNotification::Completed {
+                agent_id, summary, ..
+            } => {
                 assert_eq!(agent_id, "worker");
                 assert!(summary.contains("done"));
             }
@@ -603,8 +650,10 @@ mod tests {
         let line = r#"{"type":"tool_execution_end","toolName":"bash","isError":true}"#;
         maybe_notify(Some(&tx), "worker", line);
         let notif = rx.try_recv().unwrap();
-        match notif {
-            SubagentNotification::Errored { agent_id, error } => {
+        match notif.notification {
+            SubagentNotification::Errored {
+                agent_id, error, ..
+            } => {
                 assert_eq!(agent_id, "worker");
                 assert!(error.contains("bash"));
             }
@@ -645,7 +694,7 @@ mod tests {
     fn test_notify_from_parsed_unknown_event_is_noop() {
         let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
         let value = serde_json::json!({"type": "token", "token": "hi"});
-        notify_from_parsed(Some(&tx), "worker", &value);
+        notify_from_parsed(Some(&tx), "worker", 1, &value);
         assert!(rx.try_recv().is_err());
     }
 
@@ -653,7 +702,7 @@ mod tests {
     fn test_notify_from_parsed_no_type_is_noop() {
         let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
         let value = serde_json::json!({"data": "something"});
-        notify_from_parsed(Some(&tx), "worker", &value);
+        notify_from_parsed(Some(&tx), "worker", 1, &value);
         assert!(rx.try_recv().is_err());
     }
 }
