@@ -80,7 +80,7 @@ A repo-local config that uses OpenAI with custom workflow templates:
   },
   "agents": {
     "defaults": {
-      "model": "openai/gpt-5.4"
+      "model": "openai/gpt-5.5"
     }
   },
   "workflow": {
@@ -330,7 +330,7 @@ When workflow is disabled, no `workflow_state` events are emitted.
     "openai": { "api_key": "" }
   },
   "agents": {
-    "defaults": { "model": "openai/gpt-5.4" }
+    "defaults": { "model": "openai/gpt-5.5" }
   },
   "workflow": {}
 }
@@ -351,7 +351,7 @@ default guard rules. The empty `workflow: {}` uses all defaults.
     "openai": { "api_key": "" }
   },
   "agents": {
-    "defaults": { "model": "openai/gpt-5.4" }
+    "defaults": { "model": "openai/gpt-5.5" }
   },
   "workflow": {
     "auto_continue": true,

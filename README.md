@@ -211,7 +211,7 @@ quecto agent -m "Write a Python script that generates primes"
 | `--no-sandbox` | No | Disable workspace path restriction (DANGEROUS) |
 | `--network` | No | Enable outbound network in bash (disables nsjail net namespace) |
 | `--system` | No | System prompt prepended to conversation |
-| `--model` | No | Override model. Accepts bare id (`gpt-5.3-codex`) or provider-qualified (`openai/gpt-4o`). Default: `gpt-5.2` |
+| `--model` | No | Override model. Accepts bare id (`gpt-5.3-codex`) or provider-qualified (`openai/gpt-4o`). Default: `gpt-5.5` |
 | `--max-iterations` | No | Max tool call rounds before stopping |
 | `--max-time` | No | Wall-clock timeout in seconds (exit code 2 on timeout) |
 | `--mode` | No | Operation mode: default one-shot, or `uds` for UDS event bus |
@@ -419,7 +419,7 @@ Config file: `~/.quecto/config.json`
 {
   "agents": {
     "defaults": {
-      "model": "gpt-5.2",
+      "model": "gpt-5.5",
       "workspace": "~/Documents/quecto-workspace",
       "max_tokens": 8192,
       "max_tool_iterations": 999999,
