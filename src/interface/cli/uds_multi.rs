@@ -311,7 +311,7 @@ async fn run_dispatch_loop(
             DispatchMsg::Notification(notif) => {
                 let message = notif.to_message();
                 tracing::info!(msg = %message, "injecting subagent notification");
-                ctx.session.enqueue_pending(message);
+                ctx.session.enqueue_subagent_notification(&notif);
                 // Broadcast state_changed event to all UDS clients (#524).
                 let list = super::protocol::build_subagent_info_list(&ctx.subagent_registry);
                 let ev = AgentEvent::SubagentStateChanged { subagents: list };
@@ -579,10 +579,10 @@ pub(super) async fn run_agent_prompt_broadcast(args: PromptArgsBroadcast<'_>) ->
     agent.set_progress_callback(None);
     session.set_streaming(false);
 
-    // Enqueue notification messages collected during prompt execution (#534).
+    // Enqueue notifications collected during prompt execution (#534).
     // These will be processed as follow-up prompts by drain_and_run_pending.
-    for msg in drain_result.notification_messages {
-        session.enqueue_pending(msg);
+    for notif in drain_result.notifications {
+        session.enqueue_subagent_notification(&notif);
     }
 
     match drain_result.result {
@@ -655,8 +655,8 @@ struct TokenDrainBroadcastArgs<'a> {
 /// Result of run_with_token_drain_broadcast, including collected notification messages (#534).
 struct TokenDrainResult {
     result: Option<Result<crate::domain::agent::AgentResult, crate::domain::error::DomainError>>,
-    /// Notification messages collected during prompt execution, to be enqueued as pending.
-    notification_messages: Vec<String>,
+    /// Notifications collected during prompt execution, to be enqueued as pending.
+    notifications: Vec<crate::infrastructure::tools::subagent_registry::SubagentNotification>,
 }
 
 async fn run_with_token_drain_broadcast(args: TokenDrainBroadcastArgs<'_>) -> TokenDrainResult {
@@ -674,7 +674,7 @@ async fn run_with_token_drain_broadcast(args: TokenDrainBroadcastArgs<'_>) -> To
 
     tokio::pin!(cancel_rx);
     let mut process_fut = agent.process(messages);
-    let mut notification_messages = Vec::new();
+    let mut notifications = Vec::new();
 
     let result = loop {
         // Build a future that drains notification_rx if present (#534).
@@ -696,7 +696,7 @@ async fn run_with_token_drain_broadcast(args: TokenDrainBroadcastArgs<'_>) -> To
             }
             Some(notif) = notif_recv => {
                 // Broadcast state-changed event to TUI AND collect message for LLM injection.
-                notification_messages.push(notif.to_message());
+                notifications.push(notif.clone());
                 forward_notification_broadcast(notif, broadcast_tx, subagent_registry);
             }
             result = &mut process_fut => {
@@ -705,7 +705,7 @@ async fn run_with_token_drain_broadcast(args: TokenDrainBroadcastArgs<'_>) -> To
                 }
                 if let Some(rx) = notification_rx.as_mut() {
                     while let Ok(notif) = rx.try_recv() {
-                        notification_messages.push(notif.to_message());
+                        notifications.push(notif.clone());
                         forward_notification_broadcast(notif, broadcast_tx, subagent_registry);
                     }
                 }
@@ -716,7 +716,7 @@ async fn run_with_token_drain_broadcast(args: TokenDrainBroadcastArgs<'_>) -> To
 
     TokenDrainResult {
         result,
-        notification_messages,
+        notifications,
     }
 }
 

@@ -66,6 +66,8 @@ pub struct SubagentEntry {
     pub updated_at: Instant,
     /// Abort handle for the monitor task (if running).
     pub monitor_handle: Option<Arc<tokio::task::JoinHandle<()>>>,
+    /// Monotonic notification id for this subagent.
+    pub notification_sequence: u64,
     /// Exit signal sender — the reaper task sends the exit code/signal through
     /// this channel so that a waiting `await` call can return immediately (#612).
     pub exit_signal_tx: Option<ExitSignalTx>,
@@ -82,6 +84,7 @@ impl SubagentEntry {
             last_error: None,
             updated_at: Instant::now(),
             monitor_handle: None,
+            notification_sequence: 0,
             exit_signal_tx: None,
         }
     }
@@ -155,28 +158,52 @@ const MAX_SUMMARY_LEN: usize = 200;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SubagentNotification {
     /// Child agent finished processing a prompt successfully.
-    Completed { agent_id: String, summary: String },
+    Completed {
+        agent_id: String,
+        sequence: u64,
+        summary: String,
+    },
     /// Child agent's last tool execution returned an error.
-    Errored { agent_id: String, error: String },
+    Errored {
+        agent_id: String,
+        sequence: u64,
+        error: String,
+    },
     /// Child agent process exited (connection closed or process reaped).
-    Exited { agent_id: String },
+    Exited { agent_id: String, sequence: u64 },
 }
 
 impl SubagentNotification {
+    pub fn dedupe_key(&self) -> (String, u64) {
+        match self {
+            Self::Completed {
+                agent_id, sequence, ..
+            }
+            | Self::Errored {
+                agent_id, sequence, ..
+            }
+            | Self::Exited { agent_id, sequence } => (agent_id.clone(), *sequence),
+        }
+    }
+
     /// Format this notification as a human-readable message suitable for
     /// injection into the parent LLM's conversation.
     pub fn to_message(&self) -> String {
         match self {
-            Self::Completed { agent_id, summary } => {
+            Self::Completed {
+                agent_id, summary, ..
+            } => {
                 format!(
                     "[subagent] Agent '{}' completed. Last output: {}",
                     agent_id, summary
                 )
             }
-            Self::Errored { agent_id, error } => {
+            Self::Errored {
+                agent_id, error, ..
+            } => {
                 format!("[subagent] Agent '{}' errored: {}", agent_id, error)
             }
-            Self::Exited { agent_id } => {
+            Self::Exited { agent_id, .. } => {
                 format!(
                     "[subagent] Agent '{}' exited unexpectedly (process terminated)",
                     agent_id
@@ -374,6 +401,7 @@ mod tests {
     fn test_completed_message_format() {
         let n = SubagentNotification::Completed {
             agent_id: "researcher".into(),
+            sequence: 1,
             summary: "All tests pass".into(),
         };
         let msg = n.to_message();
@@ -387,6 +415,7 @@ mod tests {
     fn test_errored_message_format() {
         let n = SubagentNotification::Errored {
             agent_id: "linter".into(),
+            sequence: 1,
             error: "rate limit exceeded".into(),
         };
         let msg = n.to_message();
@@ -400,6 +429,7 @@ mod tests {
     fn test_exited_message_format() {
         let n = SubagentNotification::Exited {
             agent_id: "formatter".into(),
+            sequence: 1,
         };
         let msg = n.to_message();
         assert!(msg.starts_with("[subagent]"));
@@ -478,6 +508,7 @@ mod tests {
         for i in 0..NOTIFICATION_CHANNEL_CAPACITY {
             let n = SubagentNotification::Completed {
                 agent_id: format!("bot-{}", i),
+                sequence: i as u64 + 1,
                 summary: "done".into(),
             };
             assert!(tx.try_send(n).is_ok());
@@ -491,6 +522,7 @@ mod tests {
             let _ = tx
                 .send(SubagentNotification::Exited {
                     agent_id: format!("bot-{}", i),
+                    sequence: i as u64 + 1,
                 })
                 .await;
         }
