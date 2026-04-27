@@ -12,11 +12,14 @@ use crate::domain::audit::{AuditEvent, AuditSink};
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
 use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent};
+use crate::domain::provider_error::classify_provider_error;
 use crate::domain::session::{ContextSpillStore, SpillEntry};
 use crate::domain::tool::ToolRegistry;
 
 /// Default maximum tool iterations before the loop is forcibly stopped.
 const DEFAULT_MAX_TOOL_ITERATIONS: u32 = 999_999;
+const MAX_PROVIDER_ATTEMPTS: usize = 3;
+const PROVIDER_RETRY_BACKOFF_MS: u64 = 100;
 
 /// Configuration for building an agent loop.
 pub struct AgentLoopConfig {
@@ -312,6 +315,10 @@ impl AgentLoopImpl {
         total_tokens
     }
 
+    pub async fn prune_resumed_context(&self, messages: &mut Vec<Message>) -> usize {
+        self.apply_context_pruning(messages, 0, true).await
+    }
+
     fn build_chat_request<'a>(
         &'a self,
         messages: &'a Vec<Message>,
@@ -511,7 +518,7 @@ impl AgentLoopImpl {
     /// can forward them as `{"type":"token"}` events.  Falls back gracefully
     /// for providers whose `chat_stream_incremental()` wraps `chat()` (emitting
     /// only a single `Done`).
-    async fn stream_chat(&self, request: ChatRequest<'_>) -> Result<LlmResponse, DomainError> {
+    async fn stream_chat_once(&self, request: ChatRequest<'_>) -> Result<LlmResponse, DomainError> {
         let mut rx = self.provider.chat_stream_incremental(request).await;
         while let Some(event) = rx.recv().await {
             match event {
@@ -531,6 +538,50 @@ impl AgentLoopImpl {
         // Channel closed without Done — shouldn't happen but handle gracefully.
         Err(DomainError::Provider(
             "streaming channel closed without completion".to_string(),
+        ))
+    }
+
+    async fn call_provider_with_retries(
+        &self,
+        request: ChatRequest<'_>,
+    ) -> Result<LlmResponse, DomainError> {
+        for attempt in 1..=MAX_PROVIDER_ATTEMPTS {
+            let result = if self.streaming {
+                // Do not retry streaming requests: token deltas may already
+                // have been emitted to UDS clients before a terminal error,
+                // and replaying the request would duplicate/corrupt output.
+                return self
+                    .stream_chat_once(request)
+                    .await
+                    .map_err(enhance_provider_error);
+            } else {
+                self.provider.chat(request.clone()).await
+            };
+
+            match result {
+                Ok(response) => return Ok(response),
+                Err(err) => {
+                    let class = classify_provider_error(&err);
+                    if attempt == MAX_PROVIDER_ATTEMPTS || !class.is_retryable() {
+                        return Err(enhance_provider_error(err));
+                    }
+                    tracing::warn!(
+                        target: "provider_retry",
+                        attempt,
+                        max_attempts = MAX_PROVIDER_ATTEMPTS,
+                        error_class = %class,
+                        "retrying provider request after transient failure"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        PROVIDER_RETRY_BACKOFF_MS * attempt as u64,
+                    ))
+                    .await;
+                }
+            }
+        }
+
+        Err(DomainError::Provider(
+            "provider request failed without an error".to_string(),
         ))
     }
 
@@ -581,11 +632,7 @@ impl AgentLoopImpl {
             // Use streaming when enabled (UDS mode) so token events are
             // forwarded in real time.  REPL/one-shot use the
             // non-streaming path.
-            let response = if self.streaming {
-                self.stream_chat(request).await
-            } else {
-                self.provider.chat(request).await
-            };
+            let response = self.call_provider_with_retries(request).await;
 
             let llm_duration_ms = llm_start.elapsed().as_millis() as u64;
 
@@ -682,6 +729,36 @@ impl AgentLoopImpl {
             }
         }
     }
+}
+
+fn enhance_provider_error(err: DomainError) -> DomainError {
+    let DomainError::Provider(message) = err else {
+        return err;
+    };
+
+    if is_context_or_output_limit_error(&message)
+        && !message
+            .to_ascii_lowercase()
+            .contains("context/output limit")
+    {
+        return DomainError::Provider(format!(
+            "{message}\n\nContext/output limit: the provider rejected the request because the prompt plus requested output appears to exceed a model limit. Try reducing prompt history, lowering max output tokens, or enabling/prioritizing context pruning before retrying."
+        ));
+    }
+
+    DomainError::Provider(message)
+}
+
+fn is_context_or_output_limit_error(message: &str) -> bool {
+    let lowered = message.to_ascii_lowercase();
+    (lowered.contains("maximum context length")
+        || lowered.contains("context length")
+        || lowered.contains("context window")
+        || lowered.contains("too many tokens")
+        || lowered.contains("max_tokens")
+        || lowered.contains("max output")
+        || lowered.contains("requested") && lowered.contains("tokens"))
+        && (lowered.contains("token") || lowered.contains("context"))
 }
 
 impl AgentLoop for AgentLoopImpl {
