@@ -13,6 +13,7 @@
 //! - infrastructure/ imports domain/ only
 //! - interface/ imports all three (composition root)
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
@@ -165,6 +166,137 @@ fn application_layer_has_no_runtime_io_calls() {
 
     // Extra guard: filesystem existence checks are also I/O and should move to infrastructure ports.
     assert_no_imports("application", Path::new("src/application"), &[".exists("]);
+}
+
+#[test]
+fn domain_layer_has_no_runtime_io_calls() {
+    assert_no_imports(
+        "domain",
+        Path::new("src/domain"),
+        &[
+            "std::fs::",
+            "tokio::fs::",
+            "std::env::",
+            "dirs::",
+            ".exists(",
+        ],
+    );
+}
+
+#[test]
+fn public_ports_have_contract_tests() {
+    let mut files = Vec::new();
+    collect_rs_files(Path::new("src/domain"), &mut files);
+    collect_rs_files(Path::new("src/application"), &mut files);
+
+    let mut ports = BTreeSet::new();
+    for file_content in &files {
+        for line in file_content.lines().skip(1) {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix("pub trait ") {
+                if let Some(name) = rest
+                    .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .find(|part| !part.is_empty())
+                {
+                    ports.insert(name.to_string());
+                }
+            }
+        }
+    }
+
+    let contract_modules = active_contract_modules();
+    let allowlisted: BTreeSet<&str> = BTreeSet::new();
+    let missing: Vec<_> = ports
+        .into_iter()
+        .filter(|port| !allowlisted.contains(port.as_str()))
+        .filter(|port| !contract_modules.contains(&to_snake_case(port)))
+        .collect();
+
+    assert!(
+        missing.is_empty(),
+        "public domain/application ports must have contract coverage in tests/contracts.rs \
+         or an explicit allowlist entry; missing: {missing:?}"
+    );
+}
+
+fn active_contract_modules() -> BTreeSet<String> {
+    let contracts = fs::read_to_string("tests/contracts.rs").expect("read tests/contracts.rs");
+    let path_re = regex::Regex::new(r#"^\s*#\[path\s*=\s*"contracts/([a-z0-9_]+)\.rs"\]\s*$"#)
+        .expect("path regex");
+    let mod_re = regex::Regex::new(r#"^\s*mod\s+([a-z0-9_]+)\s*;\s*$"#).expect("mod regex");
+    let mut modules = BTreeSet::new();
+    let mut pending_path: Option<String> = None;
+
+    for line in contracts.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("//") || trimmed.is_empty() {
+            continue;
+        }
+        if let Some(cap) = path_re.captures(trimmed) {
+            pending_path = Some(cap[1].to_string());
+            continue;
+        }
+        if let Some(cap) = mod_re.captures(trimmed) {
+            let module = cap[1].to_string();
+            if pending_path.as_deref() == Some(module.as_str()) {
+                let path = format!("tests/contracts/{module}.rs");
+                assert!(
+                    Path::new(&path).exists(),
+                    "contract module path must exist: {path}"
+                );
+                modules.insert(module);
+            }
+            pending_path = None;
+            continue;
+        }
+        pending_path = None;
+    }
+
+    modules
+}
+
+fn to_snake_case(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    let mut out = String::new();
+    for (idx, ch) in chars.iter().copied().enumerate() {
+        if ch.is_ascii_uppercase() {
+            let prev_is_lower_or_digit = idx > 0
+                && chars[idx - 1].is_ascii()
+                && (chars[idx - 1].is_ascii_lowercase() || chars[idx - 1].is_ascii_digit());
+            let next_is_lower = chars
+                .get(idx + 1)
+                .is_some_and(|next| next.is_ascii_lowercase());
+            if idx > 0 && (prev_is_lower_or_digit || next_is_lower) {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+#[test]
+fn pre_push_runs_contract_tests() {
+    let content = fs::read_to_string("scripts/pre-push.sh").expect("read pre-push hook");
+    assert!(
+        content.contains("--test contracts"),
+        "pre-push hook must run cargo test --test contracts so port contracts are enforced"
+    );
+}
+
+#[test]
+fn ci_runs_architecture_and_contract_tests() {
+    let content = fs::read_to_string(".github/workflows/ci.yml").expect("read CI workflow");
+    assert!(
+        content.contains("--test architecture"),
+        "CI must run architecture boundary tests"
+    );
+    assert!(
+        content.contains("--test contracts"),
+        "CI must run port contract tests"
+    );
 }
 
 #[test]

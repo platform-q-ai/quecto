@@ -27,5 +27,5 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Unit tests
-        run: cargo test --lib
+      - name: Unit, architecture, and contract tests
+        run: cargo test --lib --test architecture --test contracts

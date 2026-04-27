@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # pre-push.sh — Runs on every git push.
-# Local quality gate: static checks + parallel test wave (lib + architecture + 24-way non-real BDD).
+# Local quality gate: static checks + parallel test wave (lib + architecture + contracts + 24-way non-real BDD).
 # Expensive checks (real-LLM, machete, deny) live in pre-merge-commit.sh.
 set -euo pipefail
 
@@ -57,17 +57,12 @@ cargo clippy --workspace --all-targets --features test-support -- -D warnings \
 
 COV_THRESHOLD="${QUECTO_COV_THRESHOLD:-80}"
 
-step "5/7" "Parallel test wave: unit + architecture + non-real BDD shards"
+step "5/7" "Parallel test wave: unit + architecture + contracts + non-real BDD shards"
 
 (
-    cargo test --no-fail-fast --lib 2>&1 | "$ROOT/scripts/test-filter.sh"
+    cargo test --no-fail-fast --lib --test architecture --test contracts 2>&1 | "$ROOT/scripts/test-filter.sh"
 ) &
-PID_LIB=$!
-
-(
-    cargo test --no-fail-fast --test architecture 2>&1 | "$ROOT/scripts/test-filter.sh"
-) &
-PID_ARCH=$!
+PID_CORE_GUARDS=$!
 
 (
     bash "$ROOT/scripts/run-bdd-shards.sh" \
@@ -78,12 +73,8 @@ PID_ARCH=$!
 PID_BDD=$!
 
 FAIL=0
-if ! wait "$PID_LIB"; then
-    echo -e "${RED}FAIL${NC}: cargo test --lib"
-    FAIL=1
-fi
-if ! wait "$PID_ARCH"; then
-    echo -e "${RED}FAIL${NC}: cargo test --test architecture"
+if ! wait "$PID_CORE_GUARDS"; then
+    echo -e "${RED}FAIL${NC}: cargo test --lib --test architecture --test contracts"
     FAIL=1
 fi
 if ! wait "$PID_BDD"; then
