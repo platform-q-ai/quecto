@@ -436,8 +436,10 @@ impl Tool for SpawnTool {
         ToolDefinition {
             name: "spawn".into(),
             description: "Spawn a subagent as a background UDS-mode process. \
-                Returns immediately. Use agent_cmd to send commands, check status, \
-                read results, steer, or abort the subagent."
+                Returns immediately; completion notifications are passive and do not \
+                automatically provide final output. Use agent_cmd with command=await \
+                to wait for idle/exited/timeout/error, then inspect results with \
+                get_messages_tail or get_messages before summarizing."
                 .into(),
             parameters_schema: r#"{"type":"object","properties":{"task":{"type":"string","description":"Initial task to send to the subagent (optional — starts idle if omitted)"},"agent_id":{"type":"string","description":"Session name for the subagent (used to address it via agent_cmd)"},"system":{"type":"string","description":"System prompt for the subagent"},"config":{"type":"string","description":"Path to a config file to pass to the child agent via --config (optional)"},"workflow":{"type":"boolean","description":"Start the child agent with --workflow (requires --mode uds, always enabled for spawned agents)"},"workflow_guards":{"type":"boolean","description":"Start the child agent with --workflow-guards (requires --workflow)"}}}"#.into(),
         }
