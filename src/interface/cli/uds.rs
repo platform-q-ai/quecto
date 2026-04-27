@@ -1,7 +1,7 @@
 use super::protocol::{AgentCommand, AgentEvent, StreamingBehavior};
 use super::uds_cancel::{
-    CancelHandle, CancelSlot, PromptArgs, PromptOutcome, arm_cancel, disarm_cancel, fire_cancel,
-    run_agent_prompt,
+    CancelHandle, CancelSlot, PromptArgs, PromptMessageArgs, PromptOutcome, arm_cancel,
+    disarm_cancel, fire_cancel, run_agent_message, run_agent_prompt,
 };
 use super::uds_multi::{MultiClientArgs, PromptArgsBroadcast, run_agent_prompt_broadcast};
 use super::uds_session::{
@@ -696,7 +696,7 @@ async fn run_prompt_dispatch(
             messages: ctx.messages,
             session: ctx.session,
             broadcast_tx: tx.clone(),
-            message: crate::domain::message::Message::user(message),
+            message: Message::user(message),
             cancel_rx,
             notification_rx: &mut ctx.notification_rx,
             subagent_registry: &ctx.subagent_registry,
@@ -708,7 +708,7 @@ async fn run_prompt_dispatch(
             messages: ctx.messages,
             session: ctx.session,
             stdout: ctx.stdout,
-            message: crate::domain::message::Message::user(message),
+            message,
             cancel_rx,
         })
         .await
@@ -743,7 +743,7 @@ async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
                 };
                 run_agent_prompt_broadcast(args).await;
             } else {
-                let args = PromptArgs {
+                let args = PromptMessageArgs {
                     agent: ctx.agent,
                     messages: ctx.messages,
                     session: ctx.session,
@@ -751,7 +751,7 @@ async fn drain_and_run_pending(ctx: &mut DispatchCtx<'_>) {
                     message: msg,
                     cancel_rx: rx,
                 };
-                run_agent_prompt(args).await;
+                run_agent_message(args).await;
             }
             disarm_cancel(&ctx.cancel_handle);
         }

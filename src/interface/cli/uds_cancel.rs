@@ -104,7 +104,7 @@ pub struct PromptArgs<'a> {
     pub messages: &'a mut Vec<Message>,
     pub session: &'a mut AgentSession,
     pub stdout: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
-    pub message: Message,
+    pub message: String,
     /// Oneshot cancellation receiver.  Resolves when the concurrent reader task
     /// (or `dispatch_command`) fires the cancel handle for this run.
     pub cancel_rx: tokio::sync::oneshot::Receiver<()>,
@@ -118,6 +118,35 @@ pub struct PromptArgs<'a> {
 /// tokens are emitted in real time (not buffered until completion).
 pub async fn run_agent_prompt(args: PromptArgs<'_>) -> PromptOutcome {
     let PromptArgs {
+        agent,
+        messages,
+        session,
+        stdout,
+        message,
+        cancel_rx,
+    } = args;
+    run_agent_message(PromptMessageArgs {
+        agent,
+        messages,
+        session,
+        stdout,
+        message: Message::user(message),
+        cancel_rx,
+    })
+    .await
+}
+
+pub(crate) struct PromptMessageArgs<'a> {
+    pub agent: &'a mut AgentLoopImpl,
+    pub messages: &'a mut Vec<Message>,
+    pub session: &'a mut AgentSession,
+    pub stdout: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
+    pub message: Message,
+    pub cancel_rx: tokio::sync::oneshot::Receiver<()>,
+}
+
+pub(crate) async fn run_agent_message(args: PromptMessageArgs<'_>) -> PromptOutcome {
+    let PromptMessageArgs {
         agent,
         messages,
         session: agent_session,
