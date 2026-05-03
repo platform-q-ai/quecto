@@ -372,7 +372,15 @@ async fn start_pod_runtime(
     let manifest = runtime_pod_manifest(config, body, runtime_ref, &pod_name);
 
     create_runtime_pod(state, &manifest).await?;
-    let pod_ip = wait_for_runtime_pod_ready(state, &pod_name, Duration::from_secs(90)).await?;
+    let pod_ip = match wait_for_runtime_pod_ready(state, &pod_name, Duration::from_secs(90)).await {
+        Ok(pod_ip) => pod_ip,
+        Err(error) => {
+            if let Err(cleanup_error) = delete_runtime_pod(state, &pod_name).await {
+                warn!(%cleanup_error, %pod_name, "failed to delete unhealthy runtime pod");
+            }
+            return Err(error);
+        }
+    };
 
     Ok(ManagedRuntime {
         runtime_ref: runtime_ref.to_string(),
@@ -453,7 +461,7 @@ fn runtime_pod_manifest(
           {
             "name": "quecto",
             "image": config.pod_image,
-            "imagePullPolicy": "IfNotPresent",
+            "imagePullPolicy": "Always",
             "command": ["/bin/sh", "-c"],
             "args": ["exec quecto agent --mode uds --no-sandbox --network --socket /shared/quecto.sock --session \"$QUECTO_SESSION_NAME\" --persist --system \"$(cat /etc/quecto/system-prompt.txt)\""],
             "env": [
@@ -479,7 +487,7 @@ fn runtime_pod_manifest(
           {
             "name": "quecto-api",
             "image": config.pod_image,
-            "imagePullPolicy": "IfNotPresent",
+            "imagePullPolicy": "Always",
             "command": ["/bin/sh", "-c"],
             "args": ["while [ ! -S /shared/quecto.sock ]; do sleep 0.2; done; exec quecto-api --socket /shared/quecto.sock --host 0.0.0.0 --port 8080"],
             "ports": [{ "containerPort": 8080 }],
@@ -729,7 +737,15 @@ mod tests {
             "ghcr-pull-secret"
         );
         assert_eq!(manifest["spec"]["containers"][0]["name"], "quecto");
+        assert_eq!(
+            manifest["spec"]["containers"][0]["imagePullPolicy"],
+            "Always"
+        );
         assert_eq!(manifest["spec"]["containers"][1]["name"], "quecto-api");
+        assert_eq!(
+            manifest["spec"]["containers"][1]["imagePullPolicy"],
+            "Always"
+        );
         assert_eq!(
             manifest["spec"]["containers"][1]["readinessProbe"]["httpGet"]["path"],
             "/health"
