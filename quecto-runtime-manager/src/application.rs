@@ -21,6 +21,9 @@ pub struct ManagerConfig {
     pub mcp_url: Option<String>,
     pub mcp_allowlist: String,
     pub mcp_token_path: PathBuf,
+    pub kubernetes_namespace: String,
+    pub pod_image: String,
+    pub pod_pull_secret: Option<String>,
 }
 
 #[derive(Debug)]
@@ -34,6 +37,8 @@ pub struct ManagedRuntime {
     pub agent: Option<Child>,
     pub api: Option<Child>,
     pub mcp: Option<Child>,
+    pub pod_name: Option<String>,
+    pub pod_ip: Option<String>,
     pub last_used_at: Instant,
 }
 
@@ -174,6 +179,10 @@ pub enum ManagerError {
     NoAvailablePorts,
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("http error: {0}")]
+    Http(#[from] reqwest::Error),
+    #[error("kubernetes api error: {0}")]
+    KubernetesApi(u16),
     #[error("runtime failed health check")]
     RuntimeUnhealthy,
 }
@@ -197,6 +206,9 @@ mod tests {
             mcp_url: None,
             mcp_allowlist: String::new(),
             mcp_token_path: root.join("mcp-token"),
+            kubernetes_namespace: "apps".to_string(),
+            pod_image: "ghcr.io/platform-q-ai/quecto:latest".to_string(),
+            pod_pull_secret: Some("ghcr-pull-secret".to_string()),
         }
     }
 
@@ -211,6 +223,8 @@ mod tests {
             agent: None,
             api: None,
             mcp: None,
+            pod_name: None,
+            pod_ip: None,
             last_used_at: Instant::now(),
         }
     }

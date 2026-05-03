@@ -2,7 +2,7 @@ use quecto_runtime_manager::{
     application::{ManagerConfig, RuntimeRegistry},
     infrastructure::{AppState, serve},
 };
-use reqwest::Client;
+use reqwest::{Certificate, Client};
 use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 
@@ -36,17 +36,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             mcp_url: std::env::var("MCP_URL").ok(),
             mcp_allowlist: std::env::var("MCP_ALLOWLIST").unwrap_or_default(),
             mcp_token_path: env_path("MCP_TOKEN_PATH", "/etc/quecto/mcp-token"),
+            kubernetes_namespace: std::env::var("KUBERNETES_NAMESPACE")
+                .unwrap_or_else(|_| "apps".to_string()),
+            pod_image: std::env::var("QUECTO_RUNTIME_POD_IMAGE")
+                .unwrap_or_else(|_| "ghcr.io/platform-q-ai/quecto:latest".to_string()),
+            pod_pull_secret: std::env::var("QUECTO_RUNTIME_POD_PULL_SECRET")
+                .ok()
+                .filter(|value| !value.trim().is_empty()),
         }),
         registry: Arc::new(Mutex::new(RuntimeRegistry::default())),
         token: std::env::var("RUNTIME_MANAGER_TOKEN")
             .ok()
             .map(|token| token.trim().replace(['\r', '\n'], ""))
             .filter(|token| !token.is_empty()),
-        http: Client::new(),
+        http: http_client(),
     };
 
     serve(state, addr).await?;
     Ok(())
+}
+
+fn http_client() -> Client {
+    let mut builder = Client::builder();
+
+    if let Ok(ca_pem) = std::fs::read("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt") {
+        if let Ok(cert) = Certificate::from_pem(&ca_pem) {
+            builder = builder.add_root_certificate(cert);
+        }
+    }
+
+    builder.build().unwrap_or_else(|_| Client::new())
 }
 
 fn env_path(key: &str, default: &str) -> PathBuf {

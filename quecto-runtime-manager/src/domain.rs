@@ -10,6 +10,7 @@ pub struct EnsureRuntimeRequest {
     pub chat_id: String,
     pub session_name: String,
     pub session_key: String,
+    pub execution_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -87,6 +88,12 @@ pub fn validate_ensure_request(body: &EnsureRuntimeRequest) -> Result<(), String
         }
     }
 
+    if let Some(execution_model) = body.execution_model.as_deref() {
+        if !matches!(execution_model, "process" | "pod") {
+            return Err(format!("invalid execution_model {execution_model}"));
+        }
+    }
+
     Ok(())
 }
 
@@ -120,6 +127,7 @@ mod tests {
             chat_id: "task-lDLtBzG0ERvp1jjTuVeuiA".to_string(),
             session_name: "session".to_string(),
             session_key: "key".to_string(),
+            execution_model: None,
         }
     }
 
@@ -152,6 +160,25 @@ mod tests {
         assert_eq!(
             validate_ensure_request(&body),
             Err("missing session_name".to_string())
+        );
+    }
+
+    #[test]
+    fn validation_accepts_pod_execution_model_for_background_board_runs() {
+        let mut body = request();
+        body.execution_model = Some("pod".to_string());
+
+        assert_eq!(validate_ensure_request(&body), Ok(()));
+    }
+
+    #[test]
+    fn validation_rejects_unknown_execution_model() {
+        let mut body = request();
+        body.execution_model = Some("docker".to_string());
+
+        assert_eq!(
+            validate_ensure_request(&body),
+            Err("invalid execution_model docker".to_string())
         );
     }
 }

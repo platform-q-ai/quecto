@@ -18,7 +18,7 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Client;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::{
     net::SocketAddr,
     path::{Path as FsPath, PathBuf},
@@ -94,7 +94,7 @@ async fn ensure_runtime(
         }
     };
 
-    match start_runtime(&state.config, &body, &runtime_ref, port).await {
+    match start_runtime(&state, &body, &runtime_ref, port).await {
         Ok(runtime) => {
             state.registry.lock().await.insert(runtime);
             info!(%runtime_ref, "runtime started");
@@ -116,7 +116,22 @@ async fn stop_runtime(
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
     }
 
+    let pod_name = state
+        .registry
+        .lock()
+        .await
+        .get(&runtime_ref)
+        .and_then(|runtime| runtime.pod_name.clone());
     let stopped = state.registry.lock().await.stop(&runtime_ref);
+
+    if stopped {
+        if let Some(pod_name) = pod_name {
+            if let Err(error) = delete_runtime_pod(&state, &pod_name).await {
+                warn!(%error, %pod_name, "failed to delete runtime pod");
+            }
+        }
+    }
+
     Json(StopRuntimeResponse {
         runtime_ref,
         status: "stopped".to_string(),
@@ -137,13 +152,13 @@ async fn proxy_http(
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
     }
 
-    let port = {
+    let target_base = {
         let mut registry = state.registry.lock().await;
         let Some(runtime) = registry.get_mut(&runtime_ref) else {
             return json_error(StatusCode::NOT_FOUND, "runtime_not_found");
         };
         runtime.touch();
-        runtime.port
+        runtime_target_base(runtime)
     };
 
     let body_bytes = match axum::body::to_bytes(body, usize::MAX).await {
@@ -151,7 +166,7 @@ async fn proxy_http(
         Err(error) => return json_error(StatusCode::BAD_GATEWAY, error.to_string()),
     };
 
-    let url = format!("http://127.0.0.1:{port}/{path}");
+    let url = format!("{target_base}/{path}");
     let mut request = state.http.request(method, url).body(body_bytes);
     for (key, value) in headers.iter() {
         if !is_hop_header(key.as_str()) {
@@ -180,17 +195,17 @@ async fn proxy_ws(
         return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
     }
 
-    let port = {
+    let target_ws_url = {
         let mut registry = state.registry.lock().await;
         let Some(runtime) = registry.get_mut(&runtime_ref) else {
             return json_error(StatusCode::NOT_FOUND, "runtime_not_found");
         };
         runtime.touch();
-        runtime.port
+        runtime_target_ws(runtime)
     };
 
     ws.on_upgrade(move |socket| async move {
-        if let Err(error) = bridge_ws(socket, port).await {
+        if let Err(error) = bridge_ws(socket, target_ws_url).await {
             warn!(%error, "websocket proxy failed");
         }
     })
@@ -199,9 +214,9 @@ async fn proxy_ws(
 
 async fn bridge_ws(
     client: WebSocket,
-    port: u16,
+    backend_url: String,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let (backend, _) = connect_async(format!("ws://127.0.0.1:{port}/ws")).await?;
+    let (backend, _) = connect_async(backend_url).await?;
     let (mut client_tx, mut client_rx) = client.split();
     let (mut backend_tx, mut backend_rx) = backend.split();
 
@@ -243,11 +258,16 @@ async fn bridge_ws(
 }
 
 pub async fn start_runtime(
-    config: &ManagerConfig,
+    state: &AppState,
     body: &EnsureRuntimeRequest,
     runtime_ref: &str,
     port: u16,
 ) -> Result<ManagedRuntime, ManagerError> {
+    if body.execution_model.as_deref() == Some("pod") {
+        return start_pod_runtime(state, body, runtime_ref, port).await;
+    }
+
+    let config = &state.config;
     tokio::fs::create_dir_all(&config.runtime_root).await?;
     tokio::fs::create_dir_all(&config.socket_root).await?;
     let base_dir = config.runtime_root.join(runtime_ref);
@@ -335,8 +355,252 @@ pub async fn start_runtime(
         agent: Some(agent),
         api: Some(api),
         mcp,
+        pod_name: None,
+        pod_ip: None,
         last_used_at: Instant::now(),
     })
+}
+
+async fn start_pod_runtime(
+    state: &AppState,
+    body: &EnsureRuntimeRequest,
+    runtime_ref: &str,
+    port: u16,
+) -> Result<ManagedRuntime, ManagerError> {
+    let config = &state.config;
+    let pod_name = runtime_pod_name(runtime_ref);
+    let manifest = runtime_pod_manifest(config, body, runtime_ref, &pod_name);
+
+    create_runtime_pod(state, &manifest).await?;
+    let pod_ip = match wait_for_runtime_pod_ready(state, &pod_name, Duration::from_secs(90)).await {
+        Ok(pod_ip) => pod_ip,
+        Err(error) => {
+            if let Err(cleanup_error) = delete_runtime_pod(state, &pod_name).await {
+                warn!(%cleanup_error, %pod_name, "failed to delete unhealthy runtime pod");
+            }
+            return Err(error);
+        }
+    };
+
+    Ok(ManagedRuntime {
+        runtime_ref: runtime_ref.to_string(),
+        session_name: body.session_name.clone(),
+        session_key: body.session_key.clone(),
+        base_dir: PathBuf::from(format!(
+            "kubernetes://{}/{}",
+            config.kubernetes_namespace, pod_name
+        )),
+        socket_path: PathBuf::from(format!("kubernetes://{pod_name}/shared/quecto.sock")),
+        port,
+        agent: None,
+        api: None,
+        mcp: None,
+        pod_name: Some(pod_name),
+        pod_ip: Some(pod_ip),
+        last_used_at: Instant::now(),
+    })
+}
+
+fn runtime_pod_name(runtime_ref: &str) -> String {
+    format!("quecto-runtime-{}", runtime_ref)
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .take(63)
+        .collect()
+}
+
+fn runtime_target_base(runtime: &ManagedRuntime) -> String {
+    match runtime.pod_ip.as_deref() {
+        Some(pod_ip) => format!("http://{pod_ip}:8080"),
+        None => format!("http://127.0.0.1:{}", runtime.port),
+    }
+}
+
+fn runtime_target_ws(runtime: &ManagedRuntime) -> String {
+    match runtime.pod_ip.as_deref() {
+        Some(pod_ip) => format!("ws://{pod_ip}:8080/ws"),
+        None => format!("ws://127.0.0.1:{}/ws", runtime.port),
+    }
+}
+
+fn runtime_pod_manifest(
+    config: &ManagerConfig,
+    body: &EnsureRuntimeRequest,
+    runtime_ref: &str,
+    pod_name: &str,
+) -> Value {
+    let image_pull_secrets = config
+        .pod_pull_secret
+        .as_ref()
+        .map(|name| json!([{ "name": name }]))
+        .unwrap_or_else(|| json!([]));
+
+    json!({
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": pod_name,
+        "namespace": config.kubernetes_namespace,
+        "labels": {
+          "app": "quecto-runtime",
+          "runtime-ref": runtime_ref,
+          "managed-by": "quecto-runtime-manager"
+        }
+      },
+      "spec": {
+        "restartPolicy": "Never",
+        "securityContext": { "fsGroup": 1000 },
+        "imagePullSecrets": image_pull_secrets,
+        "containers": [
+          {
+            "name": "quecto",
+            "image": config.pod_image,
+            "imagePullPolicy": "Always",
+            "command": ["/bin/sh", "-c"],
+            "args": ["exec quecto agent --mode uds --no-sandbox --network --socket /shared/quecto.sock --session \"$QUECTO_SESSION_NAME\" --persist --system \"$(cat /etc/quecto/system-prompt.txt)\""],
+            "env": [
+              { "name": "QUECTO_BASE_DIR", "value": "/home/appuser/.quecto" },
+              { "name": "QUECTO_AGENTS_DEFAULTS_WORKSPACE", "value": "/home/appuser/.quecto/workspace" },
+              { "name": "QUECTO_SESSION_NAME", "value": body.session_name },
+              { "name": "QUECTO_SESSION_KEY", "value": body.session_key },
+              { "name": "QUECTO_MAX_CONTEXT_TOKENS", "value": "250000" },
+              { "name": "RUST_LOG", "value": "info,quecto=debug" }
+            ],
+            "volumeMounts": [
+              { "name": "shared-socket", "mountPath": "/shared" },
+              { "name": "quecto-data", "mountPath": "/home/appuser/.quecto" },
+              { "name": "config", "mountPath": "/home/appuser/.quecto/config.json", "subPath": "config.json", "readOnly": true },
+              { "name": "credentials", "mountPath": "/home/appuser/.quecto/credentials.json", "subPath": "credentials.json", "readOnly": true },
+              { "name": "prompt", "mountPath": "/etc/quecto/system-prompt.txt", "subPath": "system-prompt.txt", "readOnly": true }
+            ],
+            "resources": {
+              "requests": { "memory": "128Mi", "cpu": "100m" },
+              "limits": { "memory": "1Gi", "cpu": "1000m" }
+            }
+          },
+          {
+            "name": "quecto-api",
+            "image": config.pod_image,
+            "imagePullPolicy": "Always",
+            "command": ["/bin/sh", "-c"],
+            "args": ["while [ ! -S /shared/quecto.sock ]; do sleep 0.2; done; exec quecto-api --socket /shared/quecto.sock --host 0.0.0.0 --port 8080"],
+            "ports": [{ "containerPort": 8080 }],
+            "readinessProbe": { "httpGet": { "path": "/health", "port": 8080 }, "periodSeconds": 1, "failureThreshold": 90 },
+            "volumeMounts": [{ "name": "shared-socket", "mountPath": "/shared" }],
+            "resources": {
+              "requests": { "memory": "32Mi", "cpu": "25m" },
+              "limits": { "memory": "128Mi", "cpu": "250m" }
+            }
+          }
+        ],
+        "volumes": [
+          { "name": "shared-socket", "emptyDir": {} },
+          { "name": "quecto-data", "emptyDir": {} },
+          { "name": "config", "secret": { "secretName": "quecto-secrets", "items": [{ "key": "config.json", "path": "config.json" }] } },
+          { "name": "credentials", "secret": { "secretName": "quecto-secrets", "items": [{ "key": "credentials.json", "path": "credentials.json" }] } },
+          { "name": "prompt", "configMap": { "name": "quecto-config", "items": [{ "key": "system-prompt.txt", "path": "system-prompt.txt" }] } }
+        ]
+      }
+    })
+}
+
+async fn create_runtime_pod(state: &AppState, manifest: &Value) -> Result<(), ManagerError> {
+    let url = kubernetes_url(&state.config, "/pods");
+    let response = state
+        .http
+        .post(url)
+        .bearer_auth(kubernetes_token().await?)
+        .json(manifest)
+        .send()
+        .await?;
+
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(ManagerError::KubernetesApi(response.status().as_u16()))
+    }
+}
+
+async fn delete_runtime_pod(state: &AppState, pod_name: &str) -> Result<(), ManagerError> {
+    let url = kubernetes_url(&state.config, &format!("/pods/{pod_name}"));
+    let response = state
+        .http
+        .delete(url)
+        .bearer_auth(kubernetes_token().await?)
+        .send()
+        .await?;
+
+    if response.status().is_success() || response.status().as_u16() == 404 {
+        Ok(())
+    } else {
+        Err(ManagerError::KubernetesApi(response.status().as_u16()))
+    }
+}
+
+async fn wait_for_runtime_pod_ready(
+    state: &AppState,
+    pod_name: &str,
+    timeout: Duration,
+) -> Result<String, ManagerError> {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        let url = kubernetes_url(&state.config, &format!("/pods/{pod_name}"));
+        let response = state
+            .http
+            .get(url)
+            .bearer_auth(kubernetes_token().await?)
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            let pod: Value = response.json().await?;
+            if pod_ready(&pod) {
+                if let Some(pod_ip) = pod.pointer("/status/podIP").and_then(Value::as_str) {
+                    return Ok(pod_ip.to_string());
+                }
+            }
+        }
+
+        sleep(Duration::from_millis(500)).await;
+    }
+
+    Err(ManagerError::RuntimeUnhealthy)
+}
+
+fn pod_ready(pod: &Value) -> bool {
+    pod.pointer("/status/conditions")
+        .and_then(Value::as_array)
+        .is_some_and(|conditions| {
+            conditions.iter().any(|condition| {
+                condition.get("type").and_then(Value::as_str) == Some("Ready")
+                    && condition.get("status").and_then(Value::as_str) == Some("True")
+            })
+        })
+}
+
+fn kubernetes_url(config: &ManagerConfig, path: &str) -> String {
+    let host = std::env::var("KUBERNETES_SERVICE_HOST")
+        .unwrap_or_else(|_| "kubernetes.default.svc".to_string());
+    let port = std::env::var("KUBERNETES_SERVICE_PORT").unwrap_or_else(|_| "443".to_string());
+    format!(
+        "https://{host}:{port}/api/v1/namespaces/{}{}",
+        config.kubernetes_namespace, path
+    )
+}
+
+async fn kubernetes_token() -> Result<String, ManagerError> {
+    Ok(
+        tokio::fs::read_to_string("/var/run/secrets/kubernetes.io/serviceaccount/token")
+            .await?
+            .trim()
+            .to_string(),
+    )
 }
 
 async fn seed_file(source: &PathBuf, target: &PathBuf) -> Result<(), ManagerError> {
@@ -410,6 +674,9 @@ mod tests {
                 mcp_url: None,
                 mcp_allowlist: String::new(),
                 mcp_token_path: tmp.path().join("mcp-token"),
+                kubernetes_namespace: "apps".to_string(),
+                pod_image: "ghcr.io/platform-q-ai/quecto:latest".to_string(),
+                pod_pull_secret: Some("ghcr-pull-secret".to_string()),
             }),
             registry: Arc::new(Mutex::new(RuntimeRegistry::default())),
             token,
@@ -428,8 +695,61 @@ mod tests {
             agent: None,
             api: None,
             mcp: None,
+            pod_name: None,
+            pod_ip: None,
             last_used_at: Instant::now(),
         }
+    }
+
+    fn board_pod_request() -> EnsureRuntimeRequest {
+        EnsureRuntimeRequest {
+            agent_profile_id: "jarga-boards".to_string(),
+            user_id: None,
+            project_id: "board-123".to_string(),
+            chat_id: "run-456-card-789".to_string(),
+            session_name: "jarga-board-board-123-card-card-789".to_string(),
+            session_key: "jarga-boards:board-123:card-789:run-456".to_string(),
+            execution_model: Some("pod".to_string()),
+        }
+    }
+
+    #[test]
+    fn runtime_pod_manifest_launches_isolated_quecto_api_pod() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = test_state(&tmp, None);
+        let config = state.config.as_ref();
+        let manifest = runtime_pod_manifest(
+            config,
+            &board_pod_request(),
+            "cc-jarga-boards-board-run",
+            "quecto-runtime-cc-jarga-boards-board-run",
+        );
+
+        assert_eq!(manifest["kind"], "Pod");
+        assert_eq!(manifest["metadata"]["namespace"], "apps");
+        assert_eq!(
+            manifest["metadata"]["labels"]["managed-by"],
+            "quecto-runtime-manager"
+        );
+        assert_eq!(manifest["spec"]["restartPolicy"], "Never");
+        assert_eq!(
+            manifest["spec"]["imagePullSecrets"][0]["name"],
+            "ghcr-pull-secret"
+        );
+        assert_eq!(manifest["spec"]["containers"][0]["name"], "quecto");
+        assert_eq!(
+            manifest["spec"]["containers"][0]["imagePullPolicy"],
+            "Always"
+        );
+        assert_eq!(manifest["spec"]["containers"][1]["name"], "quecto-api");
+        assert_eq!(
+            manifest["spec"]["containers"][1]["imagePullPolicy"],
+            "Always"
+        );
+        assert_eq!(
+            manifest["spec"]["containers"][1]["readinessProbe"]["httpGet"]["path"],
+            "/health"
+        );
     }
 
     #[tokio::test]
