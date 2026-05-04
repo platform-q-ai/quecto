@@ -69,6 +69,35 @@ impl AgentGateway for MockGateway {
         })
     }
 
+    fn enqueue(
+        &self,
+        cmd: AgentCommand,
+    ) -> Pin<Box<dyn Future<Output = Result<AgentEvent, ApiError>> + Send + '_>> {
+        let connected = self.connected.load(Ordering::Relaxed);
+        Box::pin(async move {
+            if !connected {
+                return Err(ApiError::AgentNotConnected);
+            }
+            let command_name = match cmd {
+                AgentCommand::Prompt { .. } => "prompt",
+                AgentCommand::Abort => "abort",
+                AgentCommand::GetState => "get_state",
+                AgentCommand::GetMessages => "get_messages",
+                AgentCommand::GetMessagesTail { .. } => "get_messages_tail",
+                AgentCommand::GetSessionStats => "get_session_stats",
+                AgentCommand::SetModel { .. } => "set_model",
+                AgentCommand::ClearHistory => "clear_history",
+            };
+            Ok(AgentEvent::Response {
+                id: Some("mock-enqueued-id".to_string()),
+                command: command_name.to_string(),
+                success: true,
+                data: Some(serde_json::json!({"accepted": true})),
+                error: None,
+            })
+        })
+    }
+
     fn subscribe(
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<Box<dyn EventSubscriber>, ApiError>> + Send + '_>> {

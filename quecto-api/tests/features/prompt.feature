@@ -14,6 +14,15 @@ Feature: Prompt endpoint
     And the response body contains "type":"response"
     And the response body contains "success":true
 
+  Scenario: Send a long-running prompt without waiting for completion
+    Given the agent is connected
+    When I POST /prompt with body:
+      """
+      {"message": "Run a long workflow", "waitForCompletion": false}
+      """
+    Then the response status is 200
+    And the response body contains "accepted":true
+
   Scenario: Prompt when agent is disconnected
     Given the agent is not connected
     When I POST /prompt with body:

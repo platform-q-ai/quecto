@@ -34,6 +34,13 @@ mod tests {
             Box::pin(async { Err(ApiError::AgentNotConnected) })
         }
 
+        fn enqueue(
+            &self,
+            _cmd: AgentCommand,
+        ) -> Pin<Box<dyn Future<Output = Result<AgentEvent, ApiError>> + Send + '_>> {
+            Box::pin(async { Err(ApiError::AgentNotConnected) })
+        }
+
         fn subscribe(
             &self,
         ) -> Pin<Box<dyn Future<Output = Result<Box<dyn EventSubscriber>, ApiError>> + Send + '_>>
