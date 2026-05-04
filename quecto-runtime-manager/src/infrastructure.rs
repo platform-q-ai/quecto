@@ -469,6 +469,27 @@ exec quecto agent --config "$QUECTO_RUNTIME_CONFIG_PATH" --mode uds --no-sandbox
 "#
 }
 
+fn runtime_workflow_config_json(value: &Value) -> String {
+    let mut config = value.clone();
+
+    if let Value::Object(root) = &mut config {
+        let tools = root.entry("tools").or_insert_with(|| json!({}));
+        if let Value::Object(tools_map) = tools {
+            let exec = tools_map.entry("exec").or_insert_with(|| json!({}));
+            if let Value::Object(exec_map) = exec {
+                exec_map
+                    .entry("isolation")
+                    .or_insert_with(|| Value::String("native".to_string()));
+                exec_map
+                    .entry("allow_native_fallback")
+                    .or_insert_with(|| Value::Bool(true));
+            }
+        }
+    }
+
+    config.to_string()
+}
+
 fn runtime_pod_manifest(
     config: &ManagerConfig,
     body: &EnsureRuntimeRequest,
@@ -511,7 +532,7 @@ fn runtime_pod_manifest(
         .workflow
         .as_ref()
         .and_then(|workflow| workflow.config_json.as_ref())
-        .map(|value| value.to_string())
+        .map(runtime_workflow_config_json)
         .unwrap_or_default();
     let workflow_template = body
         .workflow
@@ -906,6 +927,16 @@ mod tests {
         );
         assert_eq!(value_for("QUECTO_WORKFLOW_TEMPLATE"), "feature");
         assert_eq!(value_for("QUECTO_WORKFLOW_STOP_AFTER"), "reviewers");
+        let runtime_config: serde_json::Value =
+            serde_json::from_str(&value_for("QUECTO_WORKFLOW_CONFIG_JSON")).unwrap();
+        assert_eq!(
+            runtime_config["tools"]["exec"]["isolation"],
+            serde_json::Value::String("native".to_string())
+        );
+        assert_eq!(
+            runtime_config["tools"]["exec"]["allow_native_fallback"],
+            serde_json::Value::Bool(true)
+        );
         assert_eq!(
             value_for("QUECTO_RUNTIME_CONFIG_PATH"),
             "/home/appuser/.quecto/runtime-configs/cc-jarga-boards-board-run.json"
