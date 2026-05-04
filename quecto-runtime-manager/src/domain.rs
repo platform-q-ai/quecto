@@ -11,6 +11,47 @@ pub struct EnsureRuntimeRequest {
     pub session_name: String,
     pub session_key: String,
     pub execution_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<RepositoryCheckout>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<RuntimeCapabilities>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<WorkflowExecution>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct RepositoryCheckout {
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ref_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct RuntimeCapabilities {
+    #[serde(default)]
+    pub network: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<String>,
+    #[serde(default)]
+    pub github_cli: bool,
+    #[serde(default)]
+    pub git_write: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct WorkflowExecution {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_json: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_after_step_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -128,6 +169,9 @@ mod tests {
             session_name: "session".to_string(),
             session_key: "key".to_string(),
             execution_model: None,
+            repository: None,
+            runtime: None,
+            workflow: None,
         }
     }
 
