@@ -465,7 +465,7 @@ if [ -n "${QUECTO_WORKFLOW_CONFIG_JSON:-}" ]; then
 else
   cp /home/appuser/.quecto/config.json "$QUECTO_RUNTIME_CONFIG_PATH"
 fi
-exec quecto agent --config "$QUECTO_RUNTIME_CONFIG_PATH" --mode uds --no-sandbox --network --workflow --workflow-guards --socket /shared/quecto.sock --session "$QUECTO_SESSION_NAME" --persist --system "$(cat /etc/quecto/system-prompt.txt)"
+exec quecto agent --config "$QUECTO_RUNTIME_CONFIG_PATH" --mode uds --no-sandbox --network --workflow --workflow-guards --socket /shared/quecto.sock --session "$QUECTO_SESSION_NAME" --persist --system "$(cat /etc/quecto/workflow-agent-system-prompt.txt)"
 "#
 }
 
@@ -571,7 +571,8 @@ fn runtime_pod_manifest(
               { "name": "quecto-data", "mountPath": "/home/appuser/.quecto" },
               { "name": "config", "mountPath": "/home/appuser/.quecto/config.json", "subPath": "config.json", "readOnly": true },
               { "name": "credentials", "mountPath": "/home/appuser/.quecto/credentials.json", "subPath": "credentials.json", "readOnly": true },
-              { "name": "prompt", "mountPath": "/etc/quecto/system-prompt.txt", "subPath": "system-prompt.txt", "readOnly": true }
+              { "name": "prompt", "mountPath": "/etc/quecto/workflow-agent-system-prompt.txt", "subPath": "workflow-agent-system-prompt.txt", "readOnly": true },
+              { "name": "prompt", "mountPath": "/etc/quecto/agent-workflow-tools.md", "subPath": "agent-workflow-tools.md", "readOnly": true }
             ],
             "resources": {
               "requests": { "memory": "128Mi", "cpu": "100m" },
@@ -598,7 +599,10 @@ fn runtime_pod_manifest(
           { "name": "quecto-data", "emptyDir": {} },
           { "name": "config", "secret": { "secretName": "quecto-secrets", "items": [{ "key": "config.json", "path": "config.json" }] } },
           { "name": "credentials", "secret": { "secretName": "quecto-secrets", "items": [{ "key": "credentials.json", "path": "credentials.json" }] } },
-          { "name": "prompt", "configMap": { "name": "quecto-config", "items": [{ "key": "system-prompt.txt", "path": "system-prompt.txt" }] } }
+          { "name": "prompt", "configMap": { "name": "quecto-config", "items": [
+            { "key": "workflow-agent-system-prompt.txt", "path": "workflow-agent-system-prompt.txt" },
+            { "key": "agent-workflow-tools.md", "path": "agent-workflow-tools.md" }
+          ] } }
         ]
       }
     })
@@ -916,6 +920,7 @@ mod tests {
         let bootstrap = quecto["args"][0].as_str().unwrap();
         assert!(bootstrap.contains("--config \"$QUECTO_RUNTIME_CONFIG_PATH\""));
         assert!(bootstrap.contains("--workflow --workflow-guards"));
+        assert!(bootstrap.contains("/etc/quecto/workflow-agent-system-prompt.txt"));
         assert!(bootstrap.contains(
             "printf '%s' \"$QUECTO_WORKFLOW_CONFIG_JSON\" > \"$QUECTO_RUNTIME_CONFIG_PATH\""
         ));
@@ -924,6 +929,34 @@ mod tests {
                 .contains("cp /home/appuser/.quecto/config.json \"$QUECTO_RUNTIME_CONFIG_PATH\"")
         );
         assert!(env.iter().any(|entry| entry["name"] == "GH_TOKEN"));
+
+        let mounts = quecto["volumeMounts"].as_array().expect("mounts");
+        assert!(mounts.iter().any(|mount| {
+            mount["mountPath"] == "/etc/quecto/workflow-agent-system-prompt.txt"
+                && mount["subPath"] == "workflow-agent-system-prompt.txt"
+        }));
+        assert!(mounts.iter().any(|mount| {
+            mount["mountPath"] == "/etc/quecto/agent-workflow-tools.md"
+                && mount["subPath"] == "agent-workflow-tools.md"
+        }));
+
+        let prompt_items = manifest["spec"]["volumes"]
+            .as_array()
+            .expect("volumes")
+            .iter()
+            .find(|volume| volume["name"] == "prompt")
+            .and_then(|volume| volume["configMap"]["items"].as_array())
+            .expect("prompt config map items");
+        assert!(
+            prompt_items
+                .iter()
+                .any(|item| item["key"] == "workflow-agent-system-prompt.txt")
+        );
+        assert!(
+            prompt_items
+                .iter()
+                .any(|item| item["key"] == "agent-workflow-tools.md")
+        );
     }
 
     #[test]
