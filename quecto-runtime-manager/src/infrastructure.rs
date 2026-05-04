@@ -429,6 +429,41 @@ fn runtime_target_ws(runtime: &ManagedRuntime) -> String {
     }
 }
 
+fn runtime_workdir(body: &EnsureRuntimeRequest) -> String {
+    body.repository
+        .as_ref()
+        .and_then(|repo| repo.working_dir.clone())
+        .unwrap_or_else(|| "/home/appuser/workspace/repo".to_string())
+}
+
+fn runtime_bootstrap_command() -> &'static str {
+    r#"set -eu
+mkdir -p /home/appuser/.config/gh /home/appuser/workspace
+if [ -n "${GH_TOKEN:-}" ]; then
+  printf '%s' "$GH_TOKEN" | gh auth login --with-token >/tmp/gh-auth.log 2>&1 || true
+  gh auth setup-git >/tmp/gh-setup-git.log 2>&1 || true
+  git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
+fi
+if [ -n "${QUECTO_REPO_URL:-}" ]; then
+  rm -rf "$QUECTO_WORKDIR"
+  mkdir -p "$(dirname "$QUECTO_WORKDIR")"
+  if [ -n "${QUECTO_REPO_REF:-}" ]; then
+    git clone --branch "$QUECTO_REPO_REF" "$QUECTO_REPO_URL" "$QUECTO_WORKDIR"
+  else
+    git clone "$QUECTO_REPO_URL" "$QUECTO_WORKDIR"
+  fi
+else
+  mkdir -p "$QUECTO_WORKDIR"
+fi
+cd "$QUECTO_WORKDIR"
+if [ -n "${QUECTO_WORKFLOW_CONFIG_JSON:-}" ] && [ -n "${QUECTO_WORKFLOW_CONFIG_PATH:-}" ]; then
+  mkdir -p "$(dirname "$QUECTO_WORKFLOW_CONFIG_PATH")"
+  printf '%s' "$QUECTO_WORKFLOW_CONFIG_JSON" > "$QUECTO_WORKFLOW_CONFIG_PATH"
+fi
+exec quecto agent --config /home/appuser/.quecto/config.json --mode uds --no-sandbox --network --workflow --workflow-guards --socket /shared/quecto.sock --session "$QUECTO_SESSION_NAME" --persist --system "$(cat /etc/quecto/system-prompt.txt)"
+"#
+}
+
 fn runtime_pod_manifest(
     config: &ManagerConfig,
     body: &EnsureRuntimeRequest,
@@ -440,6 +475,38 @@ fn runtime_pod_manifest(
         .as_ref()
         .map(|name| json!([{ "name": name }]))
         .unwrap_or_else(|| json!([]));
+    let workdir = runtime_workdir(body);
+    let repo_url = body
+        .repository
+        .as_ref()
+        .map(|repo| repo.url.clone())
+        .unwrap_or_default();
+    let repo_ref = body
+        .repository
+        .as_ref()
+        .and_then(|repo| repo.ref_name.clone())
+        .unwrap_or_default();
+    let workflow_config_path = body
+        .workflow
+        .as_ref()
+        .and_then(|workflow| workflow.config_path.clone())
+        .unwrap_or_else(|| "workflow-config.json".to_string());
+    let workflow_config_json = body
+        .workflow
+        .as_ref()
+        .and_then(|workflow| workflow.config_json.as_ref())
+        .map(|value| value.to_string())
+        .unwrap_or_default();
+    let workflow_template = body
+        .workflow
+        .as_ref()
+        .and_then(|workflow| workflow.template.clone())
+        .unwrap_or_default();
+    let workflow_stop_after = body
+        .workflow
+        .as_ref()
+        .and_then(|workflow| workflow.stop_after_step_key.clone())
+        .unwrap_or_default();
 
     json!({
       "apiVersion": "v1",
@@ -463,13 +530,23 @@ fn runtime_pod_manifest(
             "image": config.pod_image,
             "imagePullPolicy": "Always",
             "command": ["/bin/sh", "-c"],
-            "args": ["exec quecto agent --mode uds --no-sandbox --network --socket /shared/quecto.sock --session \"$QUECTO_SESSION_NAME\" --persist --system \"$(cat /etc/quecto/system-prompt.txt)\""],
+            "args": [runtime_bootstrap_command()],
             "env": [
               { "name": "QUECTO_BASE_DIR", "value": "/home/appuser/.quecto" },
-              { "name": "QUECTO_AGENTS_DEFAULTS_WORKSPACE", "value": "/home/appuser/.quecto/workspace" },
+              { "name": "QUECTO_AGENTS_DEFAULTS_WORKSPACE", "value": workdir },
               { "name": "QUECTO_SESSION_NAME", "value": body.session_name },
               { "name": "QUECTO_SESSION_KEY", "value": body.session_key },
               { "name": "QUECTO_MAX_CONTEXT_TOKENS", "value": "250000" },
+              { "name": "QUECTO_REPO_URL", "value": repo_url },
+              { "name": "QUECTO_REPO_REF", "value": repo_ref },
+              { "name": "QUECTO_WORKDIR", "value": workdir },
+              { "name": "QUECTO_WORKFLOW_CONFIG_PATH", "value": workflow_config_path },
+              { "name": "QUECTO_WORKFLOW_CONFIG_JSON", "value": workflow_config_json },
+              { "name": "QUECTO_WORKFLOW_TEMPLATE", "value": workflow_template },
+              { "name": "QUECTO_WORKFLOW_STOP_AFTER", "value": workflow_stop_after },
+              { "name": "GH_CONFIG_DIR", "value": "/home/appuser/.config/gh" },
+              { "name": "GH_TOKEN", "valueFrom": { "secretKeyRef": { "name": "quecto-github-app-token", "key": "token", "optional": true } } },
+              { "name": "GITHUB_TOKEN", "valueFrom": { "secretKeyRef": { "name": "quecto-github-app-token", "key": "token", "optional": true } } },
               { "name": "RUST_LOG", "value": "info,quecto=debug" }
             ],
             "volumeMounts": [
@@ -653,6 +730,7 @@ fn json_error(status: StatusCode, error: impl ToString) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::{RepositoryCheckout, RuntimeCapabilities, WorkflowExecution};
     use axum::{
         body::{Body, to_bytes},
         http::Request,
@@ -710,6 +788,9 @@ mod tests {
             session_name: "jarga-board-board-123-card-card-789".to_string(),
             session_key: "jarga-boards:board-123:card-789:run-456".to_string(),
             execution_model: Some("pod".to_string()),
+            repository: None,
+            runtime: None,
+            workflow: None,
         }
     }
 
@@ -750,6 +831,74 @@ mod tests {
             manifest["spec"]["containers"][1]["readinessProbe"]["httpGet"]["path"],
             "/health"
         );
+    }
+
+    #[test]
+    fn runtime_pod_manifest_bootstraps_autonomous_board_workflow_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = test_state(&tmp, None);
+        let config = state.config.as_ref();
+        let mut request = board_pod_request();
+        request.repository = Some(RepositoryCheckout {
+            url: "https://github.com/platform-q-ai/quecto.git".to_string(),
+            ref_name: Some("master".to_string()),
+            working_dir: Some("/home/appuser/workspace/quecto".to_string()),
+            auth: Some("github_app".to_string()),
+        });
+        request.runtime = Some(RuntimeCapabilities {
+            network: true,
+            sandbox: Some("none".to_string()),
+            github_cli: true,
+            git_write: true,
+        });
+        request.workflow = Some(WorkflowExecution {
+            config_path: Some("workflow-config.json".to_string()),
+            config_json: Some(json!({"workflow": {"templates": []}})),
+            template: Some("feature".to_string()),
+            stop_after_step_key: Some("reviewers".to_string()),
+        });
+
+        let manifest = runtime_pod_manifest(
+            config,
+            &request,
+            "cc-jarga-boards-board-run",
+            "quecto-runtime-cc-jarga-boards-board-run",
+        );
+        let quecto = &manifest["spec"]["containers"][0];
+        let env = quecto["env"].as_array().expect("env should be an array");
+        let value_for = |name: &str| {
+            env.iter()
+                .find(|entry| entry["name"] == name)
+                .and_then(|entry| entry["value"].as_str())
+                .unwrap_or_default()
+                .to_string()
+        };
+
+        assert_eq!(
+            value_for("QUECTO_REPO_URL"),
+            "https://github.com/platform-q-ai/quecto.git"
+        );
+        assert_eq!(value_for("QUECTO_REPO_REF"), "master");
+        assert_eq!(
+            value_for("QUECTO_WORKDIR"),
+            "/home/appuser/workspace/quecto"
+        );
+        assert_eq!(value_for("QUECTO_WORKFLOW_TEMPLATE"), "feature");
+        assert_eq!(value_for("QUECTO_WORKFLOW_STOP_AFTER"), "reviewers");
+        assert!(quecto["args"][0].as_str().unwrap().contains("git clone"));
+        assert!(
+            quecto["args"][0]
+                .as_str()
+                .unwrap()
+                .contains("gh auth login")
+        );
+        assert!(
+            quecto["args"][0]
+                .as_str()
+                .unwrap()
+                .contains("--workflow --workflow-guards")
+        );
+        assert!(env.iter().any(|entry| entry["name"] == "GH_TOKEN"));
     }
 
     #[tokio::test]
