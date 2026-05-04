@@ -67,6 +67,12 @@ struct PromptRequest {
     message: String,
     #[serde(rename = "streamingBehavior")]
     streaming_behavior: Option<String>,
+    #[serde(rename = "waitForCompletion", default = "default_wait_for_completion")]
+    wait_for_completion: bool,
+}
+
+fn default_wait_for_completion() -> bool {
+    true
 }
 
 async fn prompt_handler<G: AgentGateway>(
@@ -84,6 +90,7 @@ async fn prompt_handler<G: AgentGateway>(
     let input = use_cases::send_prompt::SendPromptInput {
         message: body.message,
         streaming_behavior: body.streaming_behavior,
+        wait_for_completion: body.wait_for_completion,
     };
 
     match use_cases::send_prompt::execute(&state.gateway, input).await {

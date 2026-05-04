@@ -16,6 +16,7 @@ use tokio::sync::{broadcast, mpsc};
 use crate::application::ports::agent_gateway::{AgentCommand, AgentGateway, EventSubscriber};
 use crate::domain::error::ApiError;
 use crate::domain::event::AgentEvent;
+use uuid::Uuid;
 
 /// Maximum line size (1 MiB, matching quecto's protocol limit).
 const MAX_LINE_BYTES: usize = 1_048_576;
@@ -160,6 +161,52 @@ impl EventSubscriber for BroadcastSubscriber {
     }
 }
 
+fn command_to_json(cmd: AgentCommand, id: &str) -> serde_json::Value {
+    match cmd {
+        AgentCommand::Prompt {
+            message,
+            streaming_behavior,
+        } => {
+            let mut obj = serde_json::json!({
+                "type": "prompt",
+                "id": id,
+                "message": message,
+            });
+            if let Some(sb) = streaming_behavior {
+                obj["streamingBehavior"] = serde_json::Value::String(sb);
+            }
+            obj
+        }
+        AgentCommand::Abort => serde_json::json!({"type": "abort", "id": id}),
+        AgentCommand::GetState => serde_json::json!({"type": "get_state", "id": id}),
+        AgentCommand::GetMessages => serde_json::json!({"type": "get_messages", "id": id}),
+        AgentCommand::GetMessagesTail { count } => {
+            serde_json::json!({"type": "get_messages_tail", "id": id, "count": count})
+        }
+        AgentCommand::GetSessionStats => {
+            serde_json::json!({"type": "get_session_stats", "id": id})
+        }
+        AgentCommand::SetModel {
+            model,
+            provider,
+            model_id,
+        } => {
+            let mut obj = serde_json::json!({"type": "set_model", "id": id});
+            if let Some(m) = model {
+                obj["model"] = serde_json::Value::String(m);
+            }
+            if let Some(p) = provider {
+                obj["provider"] = serde_json::Value::String(p);
+            }
+            if let Some(mi) = model_id {
+                obj["modelId"] = serde_json::Value::String(mi);
+            }
+            obj
+        }
+        AgentCommand::ClearHistory => serde_json::json!({"type": "clear_history", "id": id}),
+    }
+}
+
 impl AgentGateway for UdsGateway {
     fn send(
         &self,
@@ -171,69 +218,8 @@ impl AgentGateway for UdsGateway {
                 return Err(ApiError::AgentNotConnected);
             }
 
-            let id = uuid::Uuid::new_v4().to_string();
-
-            let json_value = match cmd {
-                AgentCommand::Prompt {
-                    message,
-                    streaming_behavior,
-                } => {
-                    let mut obj = serde_json::json!({
-                        "type": "prompt",
-                        "id": id,
-                        "message": message,
-                    });
-                    if let Some(sb) = streaming_behavior {
-                        obj["streamingBehavior"] = serde_json::Value::String(sb);
-                    }
-                    obj
-                }
-                AgentCommand::Abort => serde_json::json!({
-                    "type": "abort",
-                    "id": id,
-                }),
-                AgentCommand::GetState => serde_json::json!({
-                    "type": "get_state",
-                    "id": id,
-                }),
-                AgentCommand::GetMessages => serde_json::json!({
-                    "type": "get_messages",
-                    "id": id,
-                }),
-                AgentCommand::GetMessagesTail { count } => serde_json::json!({
-                    "type": "get_messages_tail",
-                    "id": id,
-                    "count": count,
-                }),
-                AgentCommand::GetSessionStats => serde_json::json!({
-                    "type": "get_session_stats",
-                    "id": id,
-                }),
-                AgentCommand::SetModel {
-                    model,
-                    provider,
-                    model_id,
-                } => {
-                    let mut obj = serde_json::json!({
-                        "type": "set_model",
-                        "id": id,
-                    });
-                    if let Some(m) = model {
-                        obj["model"] = serde_json::Value::String(m);
-                    }
-                    if let Some(p) = provider {
-                        obj["provider"] = serde_json::Value::String(p);
-                    }
-                    if let Some(mi) = model_id {
-                        obj["modelId"] = serde_json::Value::String(mi);
-                    }
-                    obj
-                }
-                AgentCommand::ClearHistory => serde_json::json!({
-                    "type": "clear_history",
-                    "id": id,
-                }),
-            };
+            let id = Uuid::new_v4().to_string();
+            let json_value = command_to_json(cmd, &id);
 
             let mut line = serde_json::to_string(&json_value)
                 .map_err(|e| ApiError::Internal(format!("serialization error: {e}")))?;
@@ -284,6 +270,34 @@ impl AgentGateway for UdsGateway {
                     Err(_) => return Err(ApiError::Timeout(timeout.as_secs())),
                 }
             }
+        })
+    }
+
+    fn enqueue(
+        &self,
+        cmd: AgentCommand,
+    ) -> Pin<Box<dyn Future<Output = Result<AgentEvent, ApiError>> + Send + '_>> {
+        let this = self.clone();
+        Box::pin(async move {
+            if !this.is_connected() {
+                return Err(ApiError::AgentNotConnected);
+            }
+
+            let id = Uuid::new_v4().to_string();
+            let json_value = command_to_json(cmd, &id);
+            let command_name = json_value["type"].as_str().unwrap_or("command").to_string();
+            let mut line = serde_json::to_string(&json_value)
+                .map_err(|e| ApiError::Internal(format!("serialization error: {e}")))?;
+            line.push('\n');
+            this.send_raw(line).await?;
+
+            Ok(AgentEvent::Response {
+                id: Some(id),
+                command: command_name,
+                success: true,
+                data: Some(serde_json::json!({"accepted": true})),
+                error: None,
+            })
         })
     }
 

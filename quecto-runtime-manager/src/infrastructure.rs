@@ -438,7 +438,7 @@ fn runtime_workdir(body: &EnsureRuntimeRequest) -> String {
 
 fn runtime_bootstrap_command() -> &'static str {
     r#"set -eu
-mkdir -p /home/appuser/.config/gh /home/appuser/workspace
+mkdir -p /home/appuser/.config/gh /home/appuser/workspace /home/appuser/.quecto/runtime-configs
 if [ -n "${GH_TOKEN:-}" ]; then
   printf '%s' "$GH_TOKEN" | gh auth login --with-token >/tmp/gh-auth.log 2>&1 || true
   gh auth setup-git >/tmp/gh-setup-git.log 2>&1 || true
@@ -456,11 +456,16 @@ else
   mkdir -p "$QUECTO_WORKDIR"
 fi
 cd "$QUECTO_WORKDIR"
-if [ -n "${QUECTO_WORKFLOW_CONFIG_JSON:-}" ] && [ -n "${QUECTO_WORKFLOW_CONFIG_PATH:-}" ]; then
-  mkdir -p "$(dirname "$QUECTO_WORKFLOW_CONFIG_PATH")"
-  printf '%s' "$QUECTO_WORKFLOW_CONFIG_JSON" > "$QUECTO_WORKFLOW_CONFIG_PATH"
+if [ -n "${QUECTO_WORKFLOW_CONFIG_JSON:-}" ]; then
+  printf '%s' "$QUECTO_WORKFLOW_CONFIG_JSON" > "$QUECTO_RUNTIME_CONFIG_PATH"
+  if [ -n "${QUECTO_WORKFLOW_CONFIG_PATH:-}" ]; then
+    mkdir -p "$(dirname "$QUECTO_WORKFLOW_CONFIG_PATH")"
+    cp "$QUECTO_RUNTIME_CONFIG_PATH" "$QUECTO_WORKFLOW_CONFIG_PATH"
+  fi
+else
+  cp /home/appuser/.quecto/config.json "$QUECTO_RUNTIME_CONFIG_PATH"
 fi
-exec quecto agent --config /home/appuser/.quecto/config.json --mode uds --no-sandbox --network --workflow --workflow-guards --socket /shared/quecto.sock --session "$QUECTO_SESSION_NAME" --persist --system "$(cat /etc/quecto/system-prompt.txt)"
+exec quecto agent --config "$QUECTO_RUNTIME_CONFIG_PATH" --mode uds --no-sandbox --network --workflow --workflow-guards --socket /shared/quecto.sock --session "$QUECTO_SESSION_NAME" --persist --system "$(cat /etc/quecto/system-prompt.txt)"
 "#
 }
 
@@ -491,6 +496,17 @@ fn runtime_pod_manifest(
         .as_ref()
         .and_then(|workflow| workflow.config_path.clone())
         .unwrap_or_else(|| "workflow-config.json".to_string());
+    let runtime_config_path = format!(
+        "/home/appuser/.quecto/runtime-configs/{}.json",
+        runtime_ref
+            .chars()
+            .map(|ch| if ch.is_ascii_alphanumeric() || ch == '-' {
+                ch
+            } else {
+                '-'
+            })
+            .collect::<String>()
+    );
     let workflow_config_json = body
         .workflow
         .as_ref()
@@ -540,6 +556,7 @@ fn runtime_pod_manifest(
               { "name": "QUECTO_REPO_URL", "value": repo_url },
               { "name": "QUECTO_REPO_REF", "value": repo_ref },
               { "name": "QUECTO_WORKDIR", "value": workdir },
+              { "name": "QUECTO_RUNTIME_CONFIG_PATH", "value": runtime_config_path },
               { "name": "QUECTO_WORKFLOW_CONFIG_PATH", "value": workflow_config_path },
               { "name": "QUECTO_WORKFLOW_CONFIG_JSON", "value": workflow_config_json },
               { "name": "QUECTO_WORKFLOW_TEMPLATE", "value": workflow_template },
@@ -885,6 +902,10 @@ mod tests {
         );
         assert_eq!(value_for("QUECTO_WORKFLOW_TEMPLATE"), "feature");
         assert_eq!(value_for("QUECTO_WORKFLOW_STOP_AFTER"), "reviewers");
+        assert_eq!(
+            value_for("QUECTO_RUNTIME_CONFIG_PATH"),
+            "/home/appuser/.quecto/runtime-configs/cc-jarga-boards-board-run.json"
+        );
         assert!(quecto["args"][0].as_str().unwrap().contains("git clone"));
         assert!(
             quecto["args"][0]
@@ -892,13 +913,49 @@ mod tests {
                 .unwrap()
                 .contains("gh auth login")
         );
+        let bootstrap = quecto["args"][0].as_str().unwrap();
+        assert!(bootstrap.contains("--config \"$QUECTO_RUNTIME_CONFIG_PATH\""));
+        assert!(bootstrap.contains("--workflow --workflow-guards"));
+        assert!(bootstrap.contains(
+            "printf '%s' \"$QUECTO_WORKFLOW_CONFIG_JSON\" > \"$QUECTO_RUNTIME_CONFIG_PATH\""
+        ));
         assert!(
-            quecto["args"][0]
-                .as_str()
-                .unwrap()
-                .contains("--workflow --workflow-guards")
+            bootstrap
+                .contains("cp /home/appuser/.quecto/config.json \"$QUECTO_RUNTIME_CONFIG_PATH\"")
         );
         assert!(env.iter().any(|entry| entry["name"] == "GH_TOKEN"));
+    }
+
+    #[test]
+    fn runtime_pod_manifest_uses_distinct_runtime_config_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = test_state(&tmp, None);
+        let config = state.config.as_ref();
+        let request = board_pod_request();
+
+        let first = runtime_pod_manifest(config, &request, "runtime-one", "pod-one");
+        let second = runtime_pod_manifest(config, &request, "runtime-two", "pod-two");
+
+        let runtime_config_path = |manifest: &Value| {
+            manifest["spec"]["containers"][0]["env"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["name"] == "QUECTO_RUNTIME_CONFIG_PATH")
+                .and_then(|entry| entry["value"].as_str())
+                .unwrap()
+                .to_string()
+        };
+
+        assert_eq!(
+            runtime_config_path(&first),
+            "/home/appuser/.quecto/runtime-configs/runtime-one.json"
+        );
+        assert_eq!(
+            runtime_config_path(&second),
+            "/home/appuser/.quecto/runtime-configs/runtime-two.json"
+        );
+        assert_ne!(runtime_config_path(&first), runtime_config_path(&second));
     }
 
     #[tokio::test]

@@ -47,6 +47,12 @@ pub trait AgentGateway: Send + Sync + 'static {
         cmd: AgentCommand,
     ) -> Pin<Box<dyn Future<Output = Result<AgentEvent, ApiError>> + Send + '_>>;
 
+    /// Send a command to the agent without waiting for command completion.
+    fn enqueue(
+        &self,
+        cmd: AgentCommand,
+    ) -> Pin<Box<dyn Future<Output = Result<AgentEvent, ApiError>> + Send + '_>>;
+
     /// Subscribe to the agent's broadcast event stream.
     /// Each subscriber gets its own copy of every event.
     #[allow(clippy::type_complexity)]
