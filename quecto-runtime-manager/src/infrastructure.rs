@@ -519,7 +519,7 @@ setup_project_dependencies() {
     mix deps.get
   fi
 
-  find . -maxdepth 4 -name package.json \
+  find . -maxdepth 5 -name package.json \
     -not -path '*/node_modules/*' \
     -not -path './deps/*' \
     -not -path './_build/*' \
@@ -1040,6 +1040,7 @@ mod tests {
         assert!(bootstrap.contains("psql \"$DATABASE_URL\""));
         assert!(bootstrap.contains("setup_project_dependencies"));
         assert!(bootstrap.contains("mix deps.get"));
+        assert!(bootstrap.contains("find . -maxdepth 5 -name package.json"));
         assert!(bootstrap.contains("bun install"));
         assert!(bootstrap.contains("npm ci"));
         assert!(bootstrap.contains("npm install"));
