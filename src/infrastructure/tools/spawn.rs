@@ -25,6 +25,20 @@ use super::subagent_registry::{ExitSignal, NotificationTx, new_exit_signal_chann
 /// traversal are accepted — the config file may legitimately live anywhere the
 /// user chooses, but the LLM must not be able to escape to arbitrary system paths
 /// via traversal sequences.
+fn inherited_runtime_config_path() -> Option<PathBuf> {
+    std::env::var("QUECTO_RUNTIME_CONFIG_PATH")
+        .ok()
+        .filter(|path| !path.trim().is_empty())
+        .map(PathBuf::from)
+}
+
+fn effective_config_path(
+    explicit_config_path: Option<&PathBuf>,
+    inherited_config_path: Option<PathBuf>,
+) -> Option<PathBuf> {
+    explicit_config_path.cloned().or(inherited_config_path)
+}
+
 fn validate_config_path(s: &str) -> Result<PathBuf, String> {
     let p = PathBuf::from(s);
     for component in p.components() {
@@ -227,8 +241,12 @@ impl SpawnTool {
             cmd.arg("--system").arg(system);
         }
 
-        // Forward --config if the caller specified a custom config path.
-        if let Some(ref cfg_path) = config.config_path {
+        // Forward --config if the caller specified a custom config path. In
+        // managed runtime pods, inherit the active runtime config for spawned
+        // subagents so they use the same tool isolation defaults as the parent.
+        if let Some(cfg_path) =
+            effective_config_path(config.config_path.as_ref(), inherited_runtime_config_path())
+        {
             cmd.arg("--config").arg(cfg_path);
         }
 
@@ -858,6 +876,27 @@ mod tests {
     }
 
     // --- config_path validation ---
+
+    #[test]
+    fn test_effective_config_path_prefers_explicit_config() {
+        let explicit = PathBuf::from("/tmp/explicit.json");
+        let inherited = PathBuf::from("/tmp/inherited.json");
+
+        assert_eq!(
+            effective_config_path(Some(&explicit), Some(inherited)),
+            Some(explicit)
+        );
+    }
+
+    #[test]
+    fn test_effective_config_path_inherits_runtime_config_when_explicit_absent() {
+        let inherited = PathBuf::from("/home/appuser/.quecto/runtime-configs/run.json");
+
+        assert_eq!(
+            effective_config_path(None, Some(inherited.clone())),
+            Some(inherited)
+        );
+    }
 
     #[test]
     fn test_parse_config_path_valid_absolute() {
