@@ -1,6 +1,6 @@
 // HTTP router — maps HTTP/WebSocket endpoints to application use cases.
 
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{Query, State, WebSocketUpgrade};
@@ -28,6 +28,7 @@ pub fn build_router<G: AgentGateway + Clone + 'static>(gateway: G) -> Router {
         .route("/state", get(state_handler::<G>))
         .route("/messages", get(messages_handler::<G>))
         .route("/messages/tail", get(messages_tail_handler::<G>))
+        .route("/audit/events", get(audit_events_handler::<G>))
         .route("/stats", get(stats_handler::<G>))
         .route("/ws", get(ws_handler::<G>))
         .layer(CorsLayer::permissive())
@@ -147,6 +148,92 @@ async fn messages_tail_handler<G: AgentGateway>(
         Ok(event) => (StatusCode::OK, Json(serde_json::to_value(event).unwrap())).into_response(),
         Err(e) => api_error_response(e).into_response(),
     }
+}
+
+// ── Audit events ──────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct AuditEventsQuery {
+    after: Option<usize>,
+    limit: Option<usize>,
+}
+
+async fn audit_events_handler<G: AgentGateway>(
+    Query(params): Query<AuditEventsQuery>,
+) -> impl IntoResponse {
+    let after = params.after.unwrap_or(0);
+    let limit = params.limit.unwrap_or(500).min(2_000);
+
+    match read_audit_events(after, limit).await {
+        Ok((events, next_offset)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"data": {"events": events, "next_offset": next_offset}})),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": error.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn read_audit_events(
+    after: usize,
+    limit: usize,
+) -> Result<(Vec<serde_json::Value>, usize), std::io::Error> {
+    let path = audit_log_path();
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error),
+    };
+
+    let mut next_offset = 0;
+    let events = content
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            next_offset = index + 1;
+            if index < after || index >= after.saturating_add(limit) {
+                return None;
+            }
+            serde_json::from_str::<serde_json::Value>(line).ok()
+        })
+        .collect();
+
+    Ok((events, next_offset))
+}
+
+fn audit_log_path() -> PathBuf {
+    let base_dir =
+        std::env::var("QUECTO_BASE_DIR").unwrap_or_else(|_| "/home/appuser/.quecto".to_string());
+    let session_key = std::env::var("QUECTO_SESSION_KEY").unwrap_or_else(|_| "default".to_string());
+    PathBuf::from(base_dir)
+        .join("audit")
+        .join(format!("{}.jsonl", sanitize_session_key(&session_key)))
+}
+
+fn sanitize_session_key(key: &str) -> String {
+    if key.is_empty() || key.starts_with('.') || key.chars().all(|c| c == '.') {
+        return hex_encode(key);
+    }
+    if key
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, ':' | '_' | '-' | '.'))
+    {
+        return key.replace(':', "_");
+    }
+    hex_encode(key)
+}
+
+fn hex_encode(key: &str) -> String {
+    let mut encoded = String::with_capacity(key.len() * 2 + 4);
+    encoded.push_str("key_");
+    for byte in key.as_bytes() {
+        encoded.push_str(&format!("{byte:02x}"));
+    }
+    encoded
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
