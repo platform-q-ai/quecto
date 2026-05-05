@@ -439,6 +439,29 @@ fn runtime_workdir(body: &EnsureRuntimeRequest) -> String {
 fn runtime_bootstrap_command() -> &'static str {
     r#"set -eu
 mkdir -p /home/appuser/.config/gh /home/appuser/workspace /home/appuser/.quecto/runtime-configs
+start_postgres_if_available() {
+  if ! command -v initdb >/dev/null 2>&1 || ! command -v pg_ctl >/dev/null 2>&1; then
+    return 0
+  fi
+
+  export PGDATA="${PGDATA:-/home/appuser/.quecto/postgres}"
+  export PGHOST="${PGHOST:-127.0.0.1}"
+  export PGPORT="${PGPORT:-5432}"
+  export DATABASE_URL="${DATABASE_URL:-postgres://jarga:jarga@localhost/jarga_test}"
+
+  if [ ! -s "$PGDATA/PG_VERSION" ]; then
+    mkdir -p "$PGDATA"
+    initdb -D "$PGDATA" --auth=trust >/tmp/quecto-postgres-initdb.log 2>&1
+    printf "listen_addresses = '127.0.0.1'\nmax_connections = 400\n" >> "$PGDATA/postgresql.conf"
+  fi
+
+  pg_ctl -D "$PGDATA" -l /tmp/quecto-postgres.log -o "-c listen_addresses=127.0.0.1 -c port=$PGPORT -c unix_socket_directories=/tmp" start >/tmp/quecto-postgres-start.log 2>&1 || true
+  until pg_isready -h "$PGHOST" -p "$PGPORT" >/dev/null 2>&1; do sleep 0.2; done
+  createuser -h "$PGHOST" -p "$PGPORT" jarga >/dev/null 2>&1 || true
+  psql -h "$PGHOST" -p "$PGPORT" -d postgres -v ON_ERROR_STOP=1 -q -c "alter user jarga with password 'jarga';" >/dev/null 2>&1 || true
+  createdb -h "$PGHOST" -p "$PGPORT" -O jarga jarga_test >/dev/null 2>&1 || true
+}
+start_postgres_if_available
 if [ -n "${GH_TOKEN:-}" ]; then
   printf '%s' "$GH_TOKEN" | gh auth login --with-token >/tmp/gh-auth.log 2>&1 || true
   gh auth setup-git >/tmp/gh-setup-git.log 2>&1 || true
@@ -577,6 +600,7 @@ fn runtime_pod_manifest(
               { "name": "QUECTO_REPO_URL", "value": repo_url },
               { "name": "QUECTO_REPO_REF", "value": repo_ref },
               { "name": "QUECTO_WORKDIR", "value": workdir },
+              { "name": "DATABASE_URL", "value": "postgres://jarga:jarga@localhost/jarga_test" },
               { "name": "QUECTO_RUNTIME_CONFIG_PATH", "value": runtime_config_path },
               { "name": "QUECTO_WORKFLOW_CONFIG_PATH", "value": workflow_config_path },
               { "name": "QUECTO_WORKFLOW_CONFIG_JSON", "value": workflow_config_json },
