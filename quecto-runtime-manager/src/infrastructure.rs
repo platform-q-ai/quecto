@@ -475,6 +475,17 @@ fn runtime_workdir(body: &EnsureRuntimeRequest) -> String {
 fn runtime_bootstrap_command() -> &'static str {
     r#"set -eu
 mkdir -p /home/appuser/.config/gh /home/appuser/workspace /home/appuser/.quecto/runtime-configs
+verify_runtime_toolchain() {
+  command -v elixir >/dev/null 2>&1
+  command -v mix >/dev/null 2>&1
+  command -v node >/dev/null 2>&1
+  command -v npm >/dev/null 2>&1
+  command -v bun >/dev/null 2>&1
+  command -v git >/dev/null 2>&1
+  command -v gh >/dev/null 2>&1 || true
+  command -v psql >/dev/null 2>&1
+}
+
 start_postgres_if_available() {
   if ! command -v initdb >/dev/null 2>&1 || ! command -v pg_ctl >/dev/null 2>&1; then
     return 0
@@ -496,7 +507,38 @@ start_postgres_if_available() {
   createuser -h "$PGHOST" -p "$PGPORT" jarga >/dev/null 2>&1 || true
   psql -h "$PGHOST" -p "$PGPORT" -d postgres -v ON_ERROR_STOP=1 -q -c "alter user jarga with password 'jarga';" >/dev/null 2>&1 || true
   createdb -h "$PGHOST" -p "$PGPORT" -O jarga jarga_test >/dev/null 2>&1 || true
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -c "select 1;" >/tmp/quecto-postgres-ready.log 2>&1
 }
+
+setup_project_dependencies() {
+  if [ "${QUECTO_SKIP_PROJECT_BOOTSTRAP:-false}" = "true" ]; then
+    return 0
+  fi
+
+  if [ -f mix.exs ]; then
+    mix deps.get
+  fi
+
+  find . -maxdepth 4 -name package.json \
+    -not -path '*/node_modules/*' \
+    -not -path './deps/*' \
+    -not -path './_build/*' \
+    -print | while IFS= read -r package_json; do
+      package_dir="$(dirname "$package_json")"
+      (
+        cd "$package_dir"
+        if [ -f bun.lock ] || [ -f bun.lockb ]; then
+          bun install
+        elif [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+          npm ci
+        else
+          npm install
+        fi
+      )
+    done
+}
+
+verify_runtime_toolchain
 start_postgres_if_available
 if [ -n "${GH_TOKEN:-}" ]; then
   printf '%s' "$GH_TOKEN" | gh auth login --with-token >/tmp/gh-auth.log 2>&1 || true
@@ -515,6 +557,7 @@ else
   mkdir -p "$QUECTO_WORKDIR"
 fi
 cd "$QUECTO_WORKDIR"
+setup_project_dependencies
 if [ -n "${QUECTO_WORKFLOW_CONFIG_JSON:-}" ]; then
   printf '%s' "$QUECTO_WORKFLOW_CONFIG_JSON" > "$QUECTO_RUNTIME_CONFIG_PATH"
   if [ -n "${QUECTO_WORKFLOW_CONFIG_PATH:-}" ]; then
@@ -987,6 +1030,23 @@ mod tests {
             manifest["spec"]["containers"][1]["readinessProbe"]["httpGet"]["path"],
             "/health"
         );
+    }
+
+    #[test]
+    fn runtime_bootstrap_verifies_toolchain_database_and_project_dependencies_before_agent() {
+        let bootstrap = runtime_bootstrap_command();
+
+        assert!(bootstrap.contains("verify_runtime_toolchain"));
+        assert!(bootstrap.contains("psql \"$DATABASE_URL\""));
+        assert!(bootstrap.contains("setup_project_dependencies"));
+        assert!(bootstrap.contains("mix deps.get"));
+        assert!(bootstrap.contains("bun install"));
+        assert!(bootstrap.contains("npm ci"));
+        assert!(bootstrap.contains("npm install"));
+        assert!(bootstrap.contains(
+            "setup_project_dependencies\nif [ -n \"${QUECTO_WORKFLOW_CONFIG_JSON:-}\" ]"
+        ));
+        assert!(bootstrap.contains("exec quecto agent"));
     }
 
     #[test]
