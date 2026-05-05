@@ -42,6 +42,7 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/runtimes/ensure", post(ensure_runtime))
         .route("/runtimes/:runtime_ref", delete(stop_runtime))
+        .route("/runtimes/:runtime_ref/status", get(runtime_status))
         .route("/runtimes/:runtime_ref/ws", get(proxy_ws))
         .route("/runtimes/:runtime_ref/*path", any(proxy_http))
         .with_state(state)
@@ -141,6 +142,27 @@ async fn stop_runtime(
 }
 
 #[allow(clippy::too_many_arguments)]
+async fn runtime_status(
+    State(state): State<AppState>,
+    Path(runtime_ref): Path<String>,
+) -> Response {
+    let pod_name = {
+        let registry = state.registry.lock().await;
+        registry
+            .get(&runtime_ref)
+            .and_then(|runtime| runtime.pod_name.clone())
+    };
+
+    let Some(pod_name) = pod_name else {
+        return json_error(StatusCode::NOT_FOUND, "runtime_not_found");
+    };
+
+    match runtime_pod_status(&state, &pod_name).await {
+        Ok(status) => (StatusCode::OK, Json(status)).into_response(),
+        Err(error) => json_error(StatusCode::BAD_GATEWAY, error),
+    }
+}
+
 async fn proxy_http(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -620,8 +642,8 @@ fn runtime_pod_manifest(
               { "name": "prompt", "mountPath": "/etc/quecto/agent-workflow-tools.md", "subPath": "agent-workflow-tools.md", "readOnly": true }
             ],
             "resources": {
-              "requests": { "memory": "128Mi", "cpu": "100m" },
-              "limits": { "memory": "1Gi", "cpu": "1000m" }
+              "requests": { "memory": "1Gi", "cpu": "500m" },
+              "limits": { "memory": "4Gi", "cpu": "2000m" }
             }
           },
           {
@@ -632,7 +654,14 @@ fn runtime_pod_manifest(
             "args": ["while [ ! -S /shared/quecto.sock ]; do sleep 0.2; done; exec quecto-api --socket /shared/quecto.sock --host 0.0.0.0 --port 8080"],
             "ports": [{ "containerPort": 8080 }],
             "readinessProbe": { "httpGet": { "path": "/health", "port": 8080 }, "periodSeconds": 1, "failureThreshold": 90 },
-            "volumeMounts": [{ "name": "shared-socket", "mountPath": "/shared" }],
+            "env": [
+              { "name": "QUECTO_BASE_DIR", "value": "/home/appuser/.quecto" },
+              { "name": "QUECTO_SESSION_KEY", "value": body.session_key }
+            ],
+            "volumeMounts": [
+              { "name": "shared-socket", "mountPath": "/shared" },
+              { "name": "quecto-data", "mountPath": "/home/appuser/.quecto", "readOnly": true }
+            ],
             "resources": {
               "requests": { "memory": "32Mi", "cpu": "25m" },
               "limits": { "memory": "128Mi", "cpu": "250m" }
@@ -668,6 +697,53 @@ async fn create_runtime_pod(state: &AppState, manifest: &Value) -> Result<(), Ma
     } else {
         Err(ManagerError::KubernetesApi(response.status().as_u16()))
     }
+}
+
+async fn runtime_pod_status(state: &AppState, pod_name: &str) -> Result<Value, ManagerError> {
+    let url = kubernetes_url(&state.config, &format!("/pods/{pod_name}"));
+    let response = state
+        .http
+        .get(url)
+        .bearer_auth(kubernetes_token().await?)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        return Err(ManagerError::KubernetesApi(response.status().as_u16()));
+    }
+
+    let pod: Value = response.json().await?;
+    let phase = pod
+        .pointer("/status/phase")
+        .and_then(Value::as_str)
+        .unwrap_or("Unknown");
+    let containers = pod
+        .pointer("/status/containerStatuses")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let terminated = containers.iter().find_map(|container| {
+        let state = container.get("state")?;
+        let terminated = state.get("terminated")?;
+        Some(json!({
+            "container": container.get("name").and_then(Value::as_str).unwrap_or("unknown"),
+            "reason": terminated.get("reason").and_then(Value::as_str).unwrap_or("terminated"),
+            "exit_code": terminated.get("exitCode").and_then(Value::as_i64).unwrap_or_default(),
+            "message": terminated.get("message").and_then(Value::as_str).unwrap_or(""),
+            "started_at": terminated.get("startedAt").cloned().unwrap_or(Value::Null),
+            "finished_at": terminated.get("finishedAt").cloned().unwrap_or(Value::Null)
+        }))
+    });
+    let healthy = phase == "Running" && terminated.is_none();
+
+    Ok(json!({
+        "data": {
+            "healthy": healthy,
+            "phase": phase,
+            "terminated": terminated,
+            "containers": containers
+        }
+    }))
 }
 
 async fn delete_runtime_pod(state: &AppState, pod_name: &str) -> Result<(), ManagerError> {
