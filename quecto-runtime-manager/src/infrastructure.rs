@@ -9,7 +9,7 @@ use axum::{
     Json, Router,
     body::Body,
     extract::{
-        Path, State, WebSocketUpgrade,
+        OriginalUri, Path, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
     http::{HeaderMap, Method, StatusCode},
@@ -167,6 +167,7 @@ async fn proxy_http(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path((runtime_ref, path)): Path<(String, String)>,
+    OriginalUri(original_uri): OriginalUri,
     method: Method,
     body: Body,
 ) -> Response {
@@ -188,7 +189,7 @@ async fn proxy_http(
         Err(error) => return json_error(StatusCode::BAD_GATEWAY, error.to_string()),
     };
 
-    let url = format!("{target_base}/{path}");
+    let url = runtime_target_url(&target_base, &path, original_uri.query());
     let mut request = state.http.request(method, url).body(body_bytes);
     for (key, value) in headers.iter() {
         if !is_hop_header(key.as_str()) {
@@ -437,6 +438,13 @@ fn runtime_pod_name(runtime_ref: &str) -> String {
         })
         .take(63)
         .collect()
+}
+
+fn runtime_target_url(target_base: &str, path: &str, query: Option<&str>) -> String {
+    match query {
+        Some(query) if !query.is_empty() => format!("{target_base}/{path}?{query}"),
+        _ => format!("{target_base}/{path}"),
+    }
 }
 
 fn runtime_target_base(runtime: &ManagedRuntime) -> String {
@@ -978,6 +986,30 @@ mod tests {
         assert_eq!(
             manifest["spec"]["containers"][1]["readinessProbe"]["httpGet"]["path"],
             "/health"
+        );
+    }
+
+    #[test]
+    fn runtime_target_url_preserves_query_string_for_incremental_audit_polling() {
+        assert_eq!(
+            runtime_target_url(
+                "http://10.42.0.10:8080",
+                "audit/events",
+                Some("after=491&limit=500")
+            ),
+            "http://10.42.0.10:8080/audit/events?after=491&limit=500"
+        );
+    }
+
+    #[test]
+    fn runtime_target_url_omits_empty_query_string() {
+        assert_eq!(
+            runtime_target_url("http://10.42.0.10:8080", "state", None),
+            "http://10.42.0.10:8080/state"
+        );
+        assert_eq!(
+            runtime_target_url("http://10.42.0.10:8080", "state", Some("")),
+            "http://10.42.0.10:8080/state"
         );
     }
 
