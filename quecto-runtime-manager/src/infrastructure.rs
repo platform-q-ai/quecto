@@ -338,6 +338,8 @@ pub async fn start_runtime(
             "--port",
             &port.to_string(),
         ])
+        .env("QUECTO_BASE_DIR", &base_dir)
+        .env("QUECTO_SESSION_KEY", agent_session_key(&body.session_name))
         .spawn()?;
 
     let mcp = if config.mcp_url.as_deref().is_some_and(|url| !url.is_empty())
@@ -449,6 +451,10 @@ fn runtime_target_ws(runtime: &ManagedRuntime) -> String {
         Some(pod_ip) => format!("ws://{pod_ip}:8080/ws"),
         None => format!("ws://127.0.0.1:{}/ws", runtime.port),
     }
+}
+
+fn agent_session_key(session_name: &str) -> String {
+    format!("cli:{session_name}")
 }
 
 fn runtime_workdir(body: &EnsureRuntimeRequest) -> String {
@@ -656,7 +662,7 @@ fn runtime_pod_manifest(
             "readinessProbe": { "httpGet": { "path": "/health", "port": 8080 }, "periodSeconds": 1, "failureThreshold": 90 },
             "env": [
               { "name": "QUECTO_BASE_DIR", "value": "/home/appuser/.quecto" },
-              { "name": "QUECTO_SESSION_KEY", "value": body.session_key }
+              { "name": "QUECTO_SESSION_KEY", "value": agent_session_key(&body.session_name) }
             ],
             "volumeMounts": [
               { "name": "shared-socket", "mountPath": "/shared" },
@@ -973,6 +979,36 @@ mod tests {
             manifest["spec"]["containers"][1]["readinessProbe"]["httpGet"]["path"],
             "/health"
         );
+    }
+
+    #[test]
+    fn runtime_pod_manifest_points_api_audit_reader_at_agent_session_log() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = test_state(&tmp, None);
+        let config = state.config.as_ref();
+        let request = board_pod_request();
+
+        let manifest = runtime_pod_manifest(
+            config,
+            &request,
+            "cc-jarga-boards-board-run",
+            "quecto-runtime-cc-jarga-boards-board-run",
+        );
+        let quecto_api = &manifest["spec"]["containers"][1];
+        let env = quecto_api["env"]
+            .as_array()
+            .expect("env should be an array");
+        let session_key = env
+            .iter()
+            .find(|entry| entry["name"] == "QUECTO_SESSION_KEY")
+            .and_then(|entry| entry["value"].as_str())
+            .expect("api session key env");
+
+        assert_eq!(
+            session_key, "cli:jarga-board-board-123-card-card-789",
+            "quecto-api must read the audit JSONL file written by the agent session, not the Boards correlation key"
+        );
+        assert_ne!(session_key, request.session_key);
     }
 
     #[test]
