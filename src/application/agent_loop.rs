@@ -96,6 +96,11 @@ struct ToolMessageArgs<'a> {
     is_error: bool,
 }
 
+struct StreamProviderError {
+    error: DomainError,
+    emitted_event: bool,
+}
+
 impl AgentLoopImpl {
     pub fn new(config: AgentLoopConfig) -> Self {
         Self {
@@ -518,27 +523,38 @@ impl AgentLoopImpl {
     /// can forward them as `{"type":"token"}` events.  Falls back gracefully
     /// for providers whose `chat_stream_incremental()` wraps `chat()` (emitting
     /// only a single `Done`).
-    async fn stream_chat_once(&self, request: ChatRequest<'_>) -> Result<LlmResponse, DomainError> {
+    async fn stream_chat_once(
+        &self,
+        request: ChatRequest<'_>,
+    ) -> Result<LlmResponse, StreamProviderError> {
+        let mut emitted_event = false;
         let mut rx = self.provider.chat_stream_incremental(request).await;
         while let Some(event) = rx.recv().await {
             match event {
                 StreamEvent::TextDelta(t) => {
+                    emitted_event = true;
                     self.notify(|| AgentProgressEvent::Token(t));
                 }
                 StreamEvent::Done(response) => return Ok(response),
                 StreamEvent::Error(e) => {
-                    return Err(DomainError::Provider(e));
+                    return Err(StreamProviderError {
+                        error: DomainError::Provider(e),
+                        emitted_event,
+                    });
                 }
                 // Tool call streaming events are handled by the provider's
                 // accumulator — they assemble into LlmResponse.tool_calls
                 // and are delivered via StreamEvent::Done.
-                _ => {}
+                _ => {
+                    emitted_event = true;
+                }
             }
         }
         // Channel closed without Done — shouldn't happen but handle gracefully.
-        Err(DomainError::Provider(
-            "streaming channel closed without completion".to_string(),
-        ))
+        Err(StreamProviderError {
+            error: DomainError::Provider("streaming channel closed without completion".to_string()),
+            emitted_event,
+        })
     }
 
     async fn call_provider_with_retries(
@@ -547,13 +563,15 @@ impl AgentLoopImpl {
     ) -> Result<LlmResponse, DomainError> {
         for attempt in 1..=MAX_PROVIDER_ATTEMPTS {
             let result = if self.streaming {
-                // Do not retry streaming requests: token deltas may already
-                // have been emitted to UDS clients before a terminal error,
-                // and replaying the request would duplicate/corrupt output.
-                return self
-                    .stream_chat_once(request)
-                    .await
-                    .map_err(enhance_provider_error);
+                match self.stream_chat_once(request.clone()).await {
+                    Ok(response) => Ok(response),
+                    Err(stream_error) if stream_error.emitted_event => {
+                        // Once the provider has emitted any stream content,
+                        // replaying the request would duplicate/corrupt output.
+                        return Err(enhance_provider_error(stream_error.error));
+                    }
+                    Err(stream_error) => Err(stream_error.error),
+                }
             } else {
                 self.provider.chat(request.clone()).await
             };
