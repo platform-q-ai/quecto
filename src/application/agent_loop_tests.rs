@@ -49,6 +49,63 @@ impl MockProvider {
     }
 }
 
+#[derive(Debug)]
+struct MockStreamingProvider {
+    responses: Mutex<Vec<Vec<crate::domain::provider::StreamEvent>>>,
+    request_count: Mutex<usize>,
+}
+
+impl MockStreamingProvider {
+    fn new(responses: Vec<Vec<crate::domain::provider::StreamEvent>>) -> Self {
+        Self {
+            responses: Mutex::new(responses),
+            request_count: Mutex::new(0),
+        }
+    }
+
+    fn request_count(&self) -> usize {
+        *self.request_count.lock().unwrap()
+    }
+}
+
+impl LlmProvider for MockStreamingProvider {
+    fn name(&self) -> &str {
+        "mock-streaming"
+    }
+
+    fn chat(
+        &self,
+        _request: ChatRequest<'_>,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<LlmResponse, DomainError>> + Send + '_>>
+    {
+        Box::pin(async { unreachable!("streaming test should use chat_stream_incremental") })
+    }
+
+    fn chat_stream_incremental(
+        &self,
+        _request: ChatRequest<'_>,
+    ) -> Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = tokio::sync::mpsc::Receiver<crate::domain::provider::StreamEvent>,
+                > + Send
+                + '_,
+        >,
+    > {
+        *self.request_count.lock().unwrap() += 1;
+        let events = self.responses.lock().unwrap().remove(0);
+        Box::pin(async move {
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            tokio::spawn(async move {
+                for event in events {
+                    let _ = tx.send(event).await;
+                }
+            });
+            rx
+        })
+    }
+}
+
 impl LlmProvider for MockProvider {
     fn name(&self) -> &str {
         "mock"
@@ -919,6 +976,72 @@ async fn retries_retryable_provider_failures_before_returning_success() {
 
     assert_eq!(result.response, "recovered");
     assert_eq!(provider.request_count(), 2);
+}
+
+#[tokio::test]
+async fn retries_streaming_provider_failures_before_any_output() {
+    let provider = Arc::new(MockStreamingProvider::new(vec![
+        vec![crate::domain::provider::StreamEvent::Error(
+            "HTTP 503 from Codex: connection refused".to_string(),
+        )],
+        vec![crate::domain::provider::StreamEvent::Done(text_response(
+            "stream recovered",
+        ))],
+    ]));
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider: provider.clone(),
+        tool_registry: Box::new(MockRegistry::default()),
+        model: "test".into(),
+        max_tokens: 1024,
+        temperature: 0.0,
+        spill_store: None,
+        session_key: "stream-retry-test".into(),
+        context_collapse_after_turns: context_pruning::COLLAPSE_DISABLED,
+        max_context_tokens: 100_000,
+        progress_callback: None,
+        streaming: true,
+        effort: None,
+        system_prompt_provider: None,
+        audit_log: None,
+    })
+    .with_max_tool_iterations(1);
+
+    let mut messages = vec![Message::user("hello")];
+    let result = agent.process(&mut messages).await.unwrap();
+
+    assert_eq!(result.response, "stream recovered");
+    assert_eq!(provider.request_count(), 2);
+}
+
+#[tokio::test]
+async fn does_not_retry_streaming_provider_failures_after_output() {
+    let provider = Arc::new(MockStreamingProvider::new(vec![vec![
+        crate::domain::provider::StreamEvent::TextDelta("partial".to_string()),
+        crate::domain::provider::StreamEvent::Error("HTTP 503 from Codex".to_string()),
+    ]]));
+    let agent = AgentLoopImpl::new(AgentLoopConfig {
+        provider: provider.clone(),
+        tool_registry: Box::new(MockRegistry::default()),
+        model: "test".into(),
+        max_tokens: 1024,
+        temperature: 0.0,
+        spill_store: None,
+        session_key: "stream-no-retry-test".into(),
+        context_collapse_after_turns: context_pruning::COLLAPSE_DISABLED,
+        max_context_tokens: 100_000,
+        progress_callback: None,
+        streaming: true,
+        effort: None,
+        system_prompt_provider: None,
+        audit_log: None,
+    })
+    .with_max_tool_iterations(1);
+
+    let mut messages = vec![Message::user("hello")];
+    let err = agent.process(&mut messages).await.unwrap_err().to_string();
+
+    assert!(err.contains("HTTP 503 from Codex"), "{err}");
+    assert_eq!(provider.request_count(), 1);
 }
 
 #[tokio::test]
