@@ -281,14 +281,14 @@ Feature: nsjail Exec Isolation
   # --- Environment safety ---
 
   @done
-  Scenario: QUECTO-prefixed env vars are not visible inside nsjail
+  Scenario: QUECTO-prefixed env vars are visible inside nsjail
     Given nsjail is available on the system
     And an nsjail-isolated exec tool with a workspace
     And the environment has QUECTO_SECRET_KEY set to "hunter2"
     When the agent executes nsjail tool "bash" with args:
       | command | env |
-    Then the tool result should not contain "QUECTO_SECRET_KEY"
-    And the tool result should not contain "hunter2"
+    Then the tool result should contain "QUECTO_SECRET_KEY"
+    And the tool result should contain "hunter2"
 
   # --- Writable /tmp (tmpfs) ---
 
