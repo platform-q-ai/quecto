@@ -14,7 +14,6 @@ use std::os::unix::fs::PermissionsExt;
 /// Tokio-side timeout grace period beyond nsjail's wall limit.
 /// Set to 0 (no default timeout) — operators configure via config.json.
 pub(super) const DEFAULT_EXEC_TIMEOUT: Duration = Duration::from_secs(0);
-pub(super) const SECRET_ENV_PREFIX: &str = "QUECTO_";
 /// Maximum bytes captured per stream before the stream reader stops collecting.
 /// Raised to 10 MiB so the tail-truncation window (50 KB) always sees the true
 /// tail of the output, not a head-truncated proxy.
@@ -66,10 +65,6 @@ pub const DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS: u64 = 0;
 const DEFAULT_NSJAIL_TMP_SIZE_MB: u64 = 512;
 
 const TRUSTED_NSJAIL_PATHS: &[&str] = &["/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin"];
-
-pub(super) const EXEC_ENV_ALLOWLIST: &[&str] = &[
-    "HOME", "PATH", "LANG", "TZ", "TERM", "SHELL", "USER", "LOGNAME", "TMPDIR",
-];
 
 /// System paths to mount read-only inside the nsjail container.
 const NSJAIL_RO_BINDMOUNTS: &[&str] = &["/bin", "/usr", "/lib", "/lib64"];
@@ -297,12 +292,10 @@ fn apply_nsjail_shell_command(cmd: &mut tokio::process::Command, workspace: &Pat
         .env_clear();
 }
 
-/// Propagate safe environment variables into the nsjail process.
+/// Propagate environment variables into the nsjail process.
 fn apply_nsjail_env(cmd: &mut tokio::process::Command, source_env: &HashMap<String, String>) {
     for (k, v) in source_env {
-        if !k.starts_with(SECRET_ENV_PREFIX) {
-            cmd.env(k, v);
-        }
+        cmd.env(k, v);
     }
     if !source_env.contains_key("PATH")
         && let Ok(path) = std::env::var("PATH")

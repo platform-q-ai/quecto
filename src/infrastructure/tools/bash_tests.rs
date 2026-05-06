@@ -55,7 +55,7 @@ async fn test_exec_timeout_kills_long_command() {
 }
 
 #[tokio::test]
-async fn test_exec_strips_quecto_env_vars() {
+async fn test_exec_inherits_quecto_env_vars() {
     let tmp = TempDir::new().unwrap();
     let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
     let tool = ExecTool::new(Arc::new(tmp.path().to_path_buf()), Arc::new(sandbox));
@@ -74,7 +74,7 @@ async fn test_exec_strips_quecto_env_vars() {
         )
         .await
         .unwrap();
-    assert!(!result.content.contains("sk-secret"));
+    assert!(result.content.contains("sk-secret"));
 }
 
 #[test]
@@ -317,43 +317,21 @@ fn test_parse_timeout_string_ignored() {
     assert_eq!(super::parse_timeout(&args), None);
 }
 
-// --- is_allowed_exec_env_key tests ---
-
-#[test]
-fn test_allowed_env_keys() {
-    assert!(super::is_allowed_exec_env_key("HOME"));
-    assert!(super::is_allowed_exec_env_key("PATH"));
-    assert!(super::is_allowed_exec_env_key("SHELL"));
-    assert!(super::is_allowed_exec_env_key("LANG"));
-    assert!(super::is_allowed_exec_env_key("TERM"));
-}
-
-#[test]
-fn test_lc_prefix_allowed() {
-    assert!(super::is_allowed_exec_env_key("LC_ALL"));
-    assert!(super::is_allowed_exec_env_key("LC_CTYPE"));
-}
-
-#[test]
-fn test_secret_prefix_blocked() {
-    assert!(!super::is_allowed_exec_env_key("QUECTO_SECRET_KEY"));
-}
-
-#[test]
-fn test_random_key_blocked() {
-    assert!(!super::is_allowed_exec_env_key("MY_CUSTOM_VAR"));
-}
-
 // --- build_source_env tests ---
 
 #[test]
-fn test_build_source_env_with_overrides() {
+fn test_build_source_env_with_overrides_inherits_all_vars() {
     let mut overrides = HashMap::new();
     overrides.insert("HOME".to_string(), "/tmp".to_string());
-    overrides.insert("SECRET_VAR".to_string(), "nope".to_string());
+    overrides.insert("SECRET_VAR".to_string(), "yes".to_string());
+    overrides.insert("QUECTO_SECRET_KEY".to_string(), "hunter2".to_string());
     let env = super::build_source_env(Some(&overrides));
     assert_eq!(env.get("HOME").map(|s| s.as_str()), Some("/tmp"));
-    assert!(!env.contains_key("SECRET_VAR"));
+    assert_eq!(env.get("SECRET_VAR").map(|s| s.as_str()), Some("yes"));
+    assert_eq!(
+        env.get("QUECTO_SECRET_KEY").map(|s| s.as_str()),
+        Some("hunter2")
+    );
 }
 
 #[test]

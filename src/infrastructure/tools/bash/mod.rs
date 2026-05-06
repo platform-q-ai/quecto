@@ -21,9 +21,9 @@ use crate::infrastructure::security::sandbox::Sandbox;
 use crate::infrastructure::tools::truncate::{TruncatedBy, truncate_tail};
 
 use nsjail::{
-    DEFAULT_EXEC_TIMEOUT, EXEC_ENV_ALLOWLIST, ExecIsolationMode as Mode, MAX_CAPTURE_BYTES,
-    NsjailConfig, SECRET_ENV_PREFIX, STREAM_DRAIN_TIMEOUT_ON_KILL, build_nsjail_command,
-    resolve_nsjail_binary, resolve_ro_bindmounts, resolve_ro_dev_files, resolve_ro_etc_files,
+    DEFAULT_EXEC_TIMEOUT, ExecIsolationMode as Mode, MAX_CAPTURE_BYTES, NsjailConfig,
+    STREAM_DRAIN_TIMEOUT_ON_KILL, build_nsjail_command, resolve_nsjail_binary,
+    resolve_ro_bindmounts, resolve_ro_dev_files, resolve_ro_etc_files,
 };
 
 #[derive(Debug, Clone)]
@@ -373,12 +373,7 @@ fn build_source_env(env_overrides: Option<&HashMap<String, String>>) -> HashMap<
         Some(overrides) => Box::new(overrides.clone().into_iter()),
         None => Box::new(std::env::vars()),
     };
-    source.filter(|(k, _)| is_allowed_exec_env_key(k)).collect()
-}
-
-fn is_allowed_exec_env_key(key: &str) -> bool {
-    !key.starts_with(SECRET_ENV_PREFIX)
-        && (EXEC_ENV_ALLOWLIST.contains(&key) || key.starts_with("LC_"))
+    source.collect()
 }
 
 /// Shells that may be selected via the \`SHELL\` environment variable.
@@ -418,9 +413,7 @@ fn build_shell_command(
         .env_clear();
 
     for (k, v) in source_env {
-        if !k.starts_with(SECRET_ENV_PREFIX) {
-            cmd.env(k, v);
-        }
+        cmd.env(k, v);
     }
 
     if !source_env.contains_key("PATH") {
