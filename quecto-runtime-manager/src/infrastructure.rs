@@ -357,6 +357,8 @@ pub async fn start_runtime(
                     &config.mcp_token_path.to_string_lossy(),
                     "--tool-prefix",
                     "community.",
+                    "--tool-prefix",
+                    "boards.",
                     "--tool-allowlist",
                     &config.mcp_allowlist,
                     "--register-timeout",
@@ -991,6 +993,14 @@ mod tests {
             runtime: None,
             workflow: None,
         }
+    }
+
+    #[test]
+    fn process_runtime_mcp_registers_community_and_boards_tools() {
+        let source = include_str!("infrastructure.rs");
+
+        assert!(source.contains("\"--tool-prefix\",\n                    \"community.\""));
+        assert!(source.contains("\"--tool-prefix\",\n                    \"boards.\""));
     }
 
     #[test]
