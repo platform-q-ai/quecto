@@ -24,6 +24,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             api_port_span: env_u16("QUECTO_API_PORT_SPAN", 2000),
             idle: Duration::from_millis(env_u64("QUECTO_RUNTIME_IDLE_MS", 1_800_000)),
             max_runtimes: env_usize("QUECTO_MAX_RUNTIMES", 24),
+            max_context_tokens: env_usize("QUECTO_MAX_CONTEXT_TOKENS", 250_000),
+            disable_default_workflows: env_bool("QUECTO_DISABLE_DEFAULT_WORKFLOWS", false),
             system_prompt_path: env_path(
                 "QUECTO_SYSTEM_PROMPT_PATH",
                 "/etc/quecto/system-prompt.txt",
@@ -90,5 +92,17 @@ fn env_usize(key: &str, default: usize) -> usize {
     std::env::var(key)
         .ok()
         .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
+}
+
+fn env_bool(key: &str, default: bool) -> bool {
+    std::env::var(key)
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
         .unwrap_or(default)
 }

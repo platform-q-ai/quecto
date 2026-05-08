@@ -2,7 +2,7 @@ use super::*;
 
 impl WorkflowEngine {
     pub fn new(config: WorkflowConfig, guards_enabled: bool) -> Result<Self, WorkflowError> {
-        let templates = if config.templates.is_empty() {
+        let templates = if config.templates.is_empty() && default_templates_enabled() {
             default_templates()
         } else {
             config.templates
@@ -540,6 +540,17 @@ fn truncate_issue_title(title: String) -> String {
         end -= 1;
     }
     title[..end].to_string()
+}
+
+fn default_templates_enabled() -> bool {
+    !std::env::var("QUECTO_DISABLE_DEFAULT_WORKFLOWS")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
 }
 
 pub fn default_templates() -> Vec<WorkflowTemplate> {
