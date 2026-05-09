@@ -702,8 +702,8 @@ fn runtime_pod_manifest(
               { "name": "prompt", "mountPath": "/etc/quecto/agent-workflow-tools.md", "subPath": "agent-workflow-tools.md", "readOnly": true }
             ],
             "resources": {
-              "requests": { "memory": "1Gi", "cpu": "500m" },
-              "limits": { "memory": "4Gi", "cpu": "2000m" }
+              "requests": { "memory": "1Gi", "cpu": "750m" },
+              "limits": { "memory": "6Gi", "cpu": "3000m" }
             }
           },
           {
