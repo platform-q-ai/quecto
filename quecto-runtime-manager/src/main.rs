@@ -16,6 +16,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let port = env_u16("RUNTIME_MANAGER_PORT", 8080);
     let addr: SocketAddr = format!("{host}:{port}").parse()?;
 
+    let manager_token = std::env::var("RUNTIME_MANAGER_TOKEN")
+        .ok()
+        .map(|token| token.trim().replace(['\r', '\n'], ""))
+        .filter(|token| !token.is_empty());
+
     let state = AppState {
         config: Arc::new(ManagerConfig {
             runtime_root: env_path("QUECTO_RUNTIME_ROOT", "/data/runtimes"),
@@ -43,12 +48,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             pod_pull_secret: std::env::var("QUECTO_RUNTIME_POD_PULL_SECRET")
                 .ok()
                 .filter(|value| !value.trim().is_empty()),
+            credentials_secret_name: std::env::var("QUECTO_CREDENTIALS_SECRET_NAME")
+                .unwrap_or_else(|_| "quecto-secrets".to_string()),
+            manager_self_url: std::env::var("RUNTIME_MANAGER_SELF_URL")
+                .unwrap_or_else(|_| "http://quecto-runtime-manager:8080".to_string()),
+            manager_token: manager_token.clone(),
         }),
         registry: Arc::new(Mutex::new(RuntimeRegistry::default())),
-        token: std::env::var("RUNTIME_MANAGER_TOKEN")
-            .ok()
-            .map(|token| token.trim().replace(['\r', '\n'], ""))
-            .filter(|token| !token.is_empty()),
+        token: manager_token,
         http: http_client(),
     };
 

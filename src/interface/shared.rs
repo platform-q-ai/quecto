@@ -400,15 +400,73 @@ pub fn make_oauth_refresh_fn() -> crate::infrastructure::providers::refreshable:
                 }
             };
 
-            persist_refreshed_token(&store, &provider_name, refresh_token, refresh_result)
-                .ok_or_else(|| {
-                    crate::domain::error::DomainError::Provider(format!(
-                        "failed to refresh token for {}",
-                        provider_name
-                    ))
-                })
+            let token = persist_refreshed_token(
+                &store,
+                &provider_name,
+                refresh_token,
+                refresh_result,
+            )
+            .ok_or_else(|| {
+                crate::domain::error::DomainError::Provider(format!(
+                    "failed to refresh token for {}",
+                    provider_name
+                ))
+            })?;
+
+            // Best-effort: push the refreshed credentials back to the runtime
+            // manager so the shared Secret (and therefore newly spawned pods)
+            // start from a fresh, non-expired token. Failure here must not fail
+            // the refresh — the in-process token is already valid.
+            sync_credentials_to_manager(store.path()).await;
+
+            Ok(token)
         })
     })
+}
+
+/// Push the local `credentials.json` to the runtime manager's credential sync
+/// endpoint, if configured via `QUECTO_CREDENTIAL_SYNC_URL`.
+///
+/// Best-effort and non-fatal: any failure is logged and swallowed. When the env
+/// var is unset (e.g. local CLI use, no cluster manager), this is a no-op.
+async fn sync_credentials_to_manager(credentials_path: &std::path::Path) {
+    let Ok(url) = std::env::var("QUECTO_CREDENTIAL_SYNC_URL") else {
+        return;
+    };
+    if url.trim().is_empty() {
+        return;
+    }
+
+    let credentials_json = match tokio::fs::read_to_string(credentials_path).await {
+        Ok(contents) => contents,
+        Err(e) => {
+            tracing::warn!(error = %e, "credential sync: failed to read credentials file");
+            return;
+        }
+    };
+
+    let mut request = reqwest::Client::new()
+        .put(&url)
+        .json(&serde_json::json!({ "credentials_json": credentials_json }));
+
+    if let Ok(token) = std::env::var("QUECTO_CREDENTIAL_SYNC_TOKEN") {
+        let token = token.trim();
+        if !token.is_empty() {
+            request = request.bearer_auth(token);
+        }
+    }
+
+    match request.send().await {
+        Ok(resp) if resp.status().is_success() => {
+            tracing::info!("credential sync: pushed refreshed credentials to runtime manager");
+        }
+        Ok(resp) => {
+            tracing::warn!(status = %resp.status(), "credential sync: manager rejected update");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "credential sync: request to manager failed");
+        }
+    }
 }
 
 /// Build a [`ProviderFactory`] that re-creates a provider with a new API key.

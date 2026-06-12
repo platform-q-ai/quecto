@@ -97,6 +97,57 @@ impl RefreshableProvider {
             false
         }
     }
+
+    /// Check if the provider has a refreshable OAuth credential that is
+    /// expired (or within the persisted expiry margin).
+    fn credential_needs_refresh(&self) -> bool {
+        let creds = self.store.load_snapshot().unwrap_or_default();
+        if let Some(cred) = creds.get(&self.provider_name) {
+            cred.method == AuthMethod::OAuth && cred.refresh_token.is_some() && cred.is_expired()
+        } else {
+            false
+        }
+    }
+
+    /// Pre-emptively refresh the token and rebuild the inner provider when the
+    /// stored credential is expired.
+    ///
+    /// Used by the streaming path, which cannot retry mid-stream: a 401 surfaces
+    /// as a `StreamEvent` error after the stream is already open, so there is no
+    /// reactive retry like [`try_with_refresh`] performs. Instead we refresh
+    /// ahead of time when the credential is known to be expired.
+    ///
+    /// Best-effort: if the refresh fails, the inner provider is left unchanged
+    /// and the stream proceeds with the existing token (which will surface the
+    /// underlying auth error to the caller, preserving prior behaviour).
+    async fn refresh_if_expired(&self) {
+        if !self.credential_needs_refresh() {
+            return;
+        }
+
+        tracing::info!(
+            provider = self.provider_name.as_str(),
+            "stored OAuth token expired before stream — attempting pre-emptive refresh"
+        );
+
+        match (self.refresh_fn)(self.store.clone(), &self.provider_name).await {
+            Ok(new_token) => {
+                tracing::info!(
+                    provider = self.provider_name.as_str(),
+                    "token refreshed — rebuilding provider for stream"
+                );
+                let new_inner = (self.factory)(&new_token);
+                *self.inner.write().await = new_inner;
+            }
+            Err(refresh_err) => {
+                tracing::warn!(
+                    provider = self.provider_name.as_str(),
+                    error = %refresh_err,
+                    "pre-emptive token refresh failed — proceeding with existing token"
+                );
+            }
+        }
+    }
 }
 
 impl LlmProvider for RefreshableProvider {
@@ -134,9 +185,12 @@ impl LlmProvider for RefreshableProvider {
                 + 'a,
         >,
     > {
-        // Delegate to the inner provider.  Token refresh is not attempted
-        // here — auth errors come through the StreamEvent channel.
+        // The streaming path cannot retry mid-stream — a 401 surfaces as a
+        // StreamEvent error after the stream is already open. So instead of the
+        // reactive retry used by the non-streaming paths, refresh pre-emptively
+        // when the stored token is already expired before opening the stream.
         Box::pin(async move {
+            self.refresh_if_expired().await;
             let inner = self.inner.read().await.clone();
             inner.chat_stream_incremental(request).await
         })

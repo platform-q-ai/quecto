@@ -7,6 +7,7 @@ license = "LicenseRef-Proprietary"
 
 [dependencies]
 axum = { version = "0.7", features = ["ws"] }
+base64 = "0.22"
 futures-util = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 serde = { version = "1", features = ["derive"] }

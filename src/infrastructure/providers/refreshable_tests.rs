@@ -356,3 +356,102 @@ async fn test_refreshable_forwards_without_cloning_on_happy_path() {
         original_ptr, captured
     );
 }
+
+// --- Streaming pre-emptive refresh tests ---
+
+/// Drain a StreamEvent channel and return the terminal event variant name.
+async fn terminal_event(
+    mut rx: tokio::sync::mpsc::Receiver<crate::domain::provider::StreamEvent>,
+) -> String {
+    use crate::domain::provider::StreamEvent;
+    let mut last = "none".to_string();
+    while let Some(ev) = rx.recv().await {
+        last = match ev {
+            StreamEvent::Done(_) => "done".to_string(),
+            StreamEvent::Error(_) => "error".to_string(),
+            _ => continue,
+        };
+    }
+    last
+}
+
+#[tokio::test]
+async fn test_streaming_preemptively_refreshes_expired_token() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = Arc::new(CredentialStore::new(tmp.path()));
+
+    // Expired OAuth credential with a refresh token.
+    store
+        .store(Credential {
+            provider: "anthropic".to_string(),
+            token: "sk-ant-oat01-expired".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(0),
+            refresh_token: Some("rt-old".to_string()),
+            account_id: None,
+        })
+        .unwrap();
+
+    // Inner always 401s; the refresh swaps in a provider that succeeds.
+    let call_count = Arc::new(AtomicU32::new(0));
+    let inner = Arc::new(MockRetryProvider::new(call_count, 999));
+    let refreshable = RefreshableProvider::new(RefreshableConfig {
+        inner,
+        store: store.clone(),
+        provider_name: "anthropic".to_string(),
+        refresh_fn: make_mock_refresh("sk-ant-oat01-fresh"),
+        factory: noop_factory(),
+    });
+
+    let rx = refreshable.chat_stream_incremental(test_request()).await;
+    assert_eq!(
+        terminal_event(rx).await,
+        "done",
+        "stream should succeed after pre-emptive refresh swapped in a fresh provider"
+    );
+
+    // The refreshed token was persisted to the store.
+    let cred = store.load_snapshot().unwrap();
+    assert_eq!(cred.get("anthropic").unwrap().token, "sk-ant-oat01-fresh");
+}
+
+#[tokio::test]
+async fn test_streaming_does_not_refresh_when_token_valid() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = Arc::new(CredentialStore::new(tmp.path()));
+
+    // Valid (far-future) OAuth credential — no refresh should occur.
+    store
+        .store(Credential {
+            provider: "anthropic".to_string(),
+            token: "sk-ant-oat01-valid".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(i64::MAX),
+            refresh_token: Some("rt".to_string()),
+            account_id: None,
+        })
+        .unwrap();
+
+    let refresh_calls = Arc::new(AtomicU32::new(0));
+    let counter = refresh_calls.clone();
+    let refresh_fn: RefreshFn = Arc::new(move |_store, _provider| {
+        counter.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { Ok("should-not-be-used".to_string()) })
+    });
+
+    let refreshable = RefreshableProvider::new(RefreshableConfig {
+        inner: Arc::new(MockSuccessProvider),
+        store,
+        provider_name: "anthropic".to_string(),
+        refresh_fn,
+        factory: noop_factory(),
+    });
+
+    let rx = refreshable.chat_stream_incremental(test_request()).await;
+    assert_eq!(terminal_event(rx).await, "done");
+    assert_eq!(
+        refresh_calls.load(Ordering::SeqCst),
+        0,
+        "no refresh should be attempted when the token is still valid"
+    );
+}
