@@ -1707,6 +1707,7 @@ name = "quecto-runtime-manager"
 version = "0.1.0"
 dependencies = [
  "axum 0.7.9",
+ "base64",
  "futures-util",
  "reqwest",
  "serde",

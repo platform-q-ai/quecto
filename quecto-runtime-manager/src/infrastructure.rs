@@ -14,7 +14,7 @@ use axum::{
     },
     http::{HeaderMap, Method, StatusCode},
     response::{IntoResponse, Response},
-    routing::{any, delete, get, post},
+    routing::{any, delete, get, post, put},
 };
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Client;
@@ -41,6 +41,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/runtimes/ensure", post(ensure_runtime))
+        .route("/credentials", put(sync_credentials))
         .route("/runtimes/:runtime_ref", delete(stop_runtime))
         .route("/runtimes/:runtime_ref/status", get(runtime_status))
         .route("/runtimes/:runtime_ref/ws", get(proxy_ws))
@@ -105,6 +106,78 @@ async fn ensure_runtime(
             state.registry.lock().await.release_port(port);
             json_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
         }
+    }
+}
+
+/// Sync a refreshed `credentials.json` from a runtime pod back into the shared
+/// Kubernetes Secret.
+///
+/// A runtime pod refreshes its OAuth access token in-process and persists it to
+/// its (now writable) local `credentials.json`, but that copy is lost when the
+/// pod exits. Without writing the fresh token back to the Secret, every newly
+/// spawned pod would start from the stale (expired) token baked into the Secret
+/// and report "token expired" until the Secret is manually rotated. This endpoint
+/// lets the pod push the refreshed credentials back so the next pod starts fresh.
+async fn sync_credentials(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    if !authorized(&state, &headers) {
+        return json_error(StatusCode::UNAUTHORIZED, "unauthorized");
+    }
+
+    let Some(credentials_json) = body.get("credentials_json").and_then(Value::as_str) else {
+        return json_error(StatusCode::BAD_REQUEST, "missing credentials_json");
+    };
+
+    // Validate it parses as JSON before persisting — never write a malformed
+    // blob into the shared Secret.
+    if serde_json::from_str::<Value>(credentials_json).is_err() {
+        return json_error(StatusCode::BAD_REQUEST, "credentials_json is not valid JSON");
+    }
+
+    match patch_credentials_secret(&state, credentials_json).await {
+        Ok(()) => {
+            info!("synced refreshed credentials into secret");
+            (StatusCode::NO_CONTENT, ()).into_response()
+        }
+        Err(error) => {
+            warn!(%error, "failed to sync credentials into secret");
+            json_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
+        }
+    }
+}
+
+/// PATCH the `credentials.json` key of the shared credentials Secret with a
+/// `application/merge-patch+json` request, leaving other keys untouched.
+async fn patch_credentials_secret(
+    state: &AppState,
+    credentials_json: &str,
+) -> Result<(), ManagerError> {
+    use base64::Engine;
+
+    let encoded = base64::engine::general_purpose::STANDARD.encode(credentials_json.as_bytes());
+    let secret = &state.config.credentials_secret_name;
+    let url = kubernetes_url(&state.config, &format!("/secrets/{secret}"));
+    let patch = json!({ "data": { "credentials.json": encoded } });
+
+    let response = state
+        .http
+        .patch(url)
+        .bearer_auth(kubernetes_token().await?)
+        .header("content-type", "application/merge-patch+json")
+        .json(&patch)
+        .send()
+        .await?;
+
+    let status = response.status();
+    if status.is_success() {
+        Ok(())
+    } else {
+        let body = response.text().await.unwrap_or_default();
+        warn!(%status, %body, "kubernetes secret patch rejected");
+        Err(ManagerError::KubernetesApi(status.as_u16()))
     }
 }
 
@@ -665,6 +738,25 @@ fn runtime_pod_manifest(
         "restartPolicy": "Never",
         "securityContext": { "fsGroup": 1000 },
         "imagePullSecrets": image_pull_secrets,
+        "initContainers": [
+          {
+            // Seed credentials.json from the read-only Secret into the writable
+            // quecto-data volume. The runtime refreshes expired OAuth tokens and
+            // persists them back to this file; mounting the Secret directly would
+            // make it read-only and silently drop refreshed tokens, so the agent
+            // would keep reading the stale (expired) token and report "token
+            // expired" on every subsequent request.
+            "name": "seed-credentials",
+            "image": config.pod_image,
+            "imagePullPolicy": "Always",
+            "command": ["/bin/sh", "-c"],
+            "args": ["cp /etc/quecto/seed/credentials.json /home/appuser/.quecto/credentials.json && chmod 600 /home/appuser/.quecto/credentials.json"],
+            "volumeMounts": [
+              { "name": "quecto-data", "mountPath": "/home/appuser/.quecto" },
+              { "name": "credentials", "mountPath": "/etc/quecto/seed", "readOnly": true }
+            ]
+          }
+        ],
         "containers": [
           {
             "name": "quecto",
@@ -690,13 +782,14 @@ fn runtime_pod_manifest(
               { "name": "GH_CONFIG_DIR", "value": "/home/appuser/.config/gh" },
               { "name": "GH_TOKEN", "valueFrom": { "secretKeyRef": { "name": "quecto-github-app-token", "key": "token", "optional": true } } },
               { "name": "GITHUB_TOKEN", "valueFrom": { "secretKeyRef": { "name": "quecto-github-app-token", "key": "token", "optional": true } } },
+              { "name": "QUECTO_CREDENTIAL_SYNC_URL", "value": format!("{}/credentials", config.manager_self_url.trim_end_matches('/')) },
+              { "name": "QUECTO_CREDENTIAL_SYNC_TOKEN", "value": config.manager_token.clone().unwrap_or_default() },
               { "name": "RUST_LOG", "value": "info,quecto=debug" }
             ],
             "volumeMounts": [
               { "name": "shared-socket", "mountPath": "/shared" },
               { "name": "quecto-data", "mountPath": "/home/appuser/.quecto" },
               { "name": "config", "mountPath": "/home/appuser/.quecto/config.json", "subPath": "config.json", "readOnly": true },
-              { "name": "credentials", "mountPath": "/home/appuser/.quecto/credentials.json", "subPath": "credentials.json", "readOnly": true },
               { "name": "prompt", "mountPath": "/etc/quecto/workflow-agent-system-prompt.txt", "subPath": "workflow-agent-system-prompt.txt", "readOnly": true },
               { "name": "prompt", "mountPath": "/etc/quecto/agent-workflow-tools.md", "subPath": "agent-workflow-tools.md", "readOnly": true }
             ],
@@ -956,6 +1049,9 @@ mod tests {
                 kubernetes_namespace: "apps".to_string(),
                 pod_image: "ghcr.io/platform-q-ai/quecto:latest".to_string(),
                 pod_pull_secret: Some("ghcr-pull-secret".to_string()),
+                credentials_secret_name: "quecto-secrets".to_string(),
+                manager_self_url: "http://quecto-runtime-manager:8080".to_string(),
+                manager_token: token.clone(),
             }),
             registry: Arc::new(Mutex::new(RuntimeRegistry::default())),
             token,
@@ -1288,6 +1384,126 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn sync_credentials_requires_auth() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = test_state(&tmp, Some("secret".to_string()));
+        let app = router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/credentials")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"credentials_json":"{}"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn sync_credentials_rejects_invalid_json_payload() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = test_state(&tmp, Some("secret".to_string()));
+        let app = router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/credentials")
+                    .header("authorization", "Bearer secret")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"credentials_json":"not json"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn sync_credentials_requires_credentials_field() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = test_state(&tmp, Some("secret".to_string()));
+        let app = router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/credentials")
+                    .header("authorization", "Bearer secret")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"other":"field"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn runtime_pod_manifest_seeds_credentials_into_writable_volume() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = test_state(&tmp, Some("secret".to_string()));
+        let config = state.config.as_ref();
+        let request = board_pod_request();
+
+        let manifest = runtime_pod_manifest(config, &request, "runtime-one", "pod-one");
+
+        // An init container seeds credentials.json into the writable volume.
+        let init = manifest["spec"]["initContainers"]
+            .as_array()
+            .expect("initContainers")
+            .iter()
+            .find(|c| c["name"] == "seed-credentials")
+            .expect("seed-credentials init container");
+        assert!(
+            init["args"][0]
+                .as_str()
+                .unwrap()
+                .contains("/home/appuser/.quecto/credentials.json")
+        );
+
+        // The main container must NOT mount credentials.json read-only, or the
+        // refreshed token could not be persisted.
+        let mounts = manifest["spec"]["containers"][0]["volumeMounts"]
+            .as_array()
+            .expect("volumeMounts");
+        assert!(
+            !mounts
+                .iter()
+                .any(|m| m["mountPath"] == "/home/appuser/.quecto/credentials.json"),
+            "main container should not mount credentials.json directly (read-only)"
+        );
+
+        // The sync callback env is wired with the manager URL and token.
+        let env = manifest["spec"]["containers"][0]["env"]
+            .as_array()
+            .expect("env");
+        let env_val = |name: &str| {
+            env.iter()
+                .find(|e| e["name"] == name)
+                .and_then(|e| e["value"].as_str())
+                .map(str::to_string)
+        };
+        assert_eq!(
+            env_val("QUECTO_CREDENTIAL_SYNC_URL").as_deref(),
+            Some("http://quecto-runtime-manager:8080/credentials")
+        );
+        assert_eq!(
+            env_val("QUECTO_CREDENTIAL_SYNC_TOKEN").as_deref(),
+            Some("secret")
+        );
     }
 
     #[tokio::test]

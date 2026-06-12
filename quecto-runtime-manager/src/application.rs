@@ -24,6 +24,17 @@ pub struct ManagerConfig {
     pub kubernetes_namespace: String,
     pub pod_image: String,
     pub pod_pull_secret: Option<String>,
+    /// Name of the Kubernetes Secret holding the shared `credentials.json`.
+    /// Runtime pods sync refreshed OAuth tokens back into this Secret so newly
+    /// spawned pods start from a fresh, non-expired token.
+    pub credentials_secret_name: String,
+    /// In-cluster URL at which this manager is reachable by runtime pods (used
+    /// as the credential sync callback target). E.g. `http://quecto-runtime-manager:8080`.
+    pub manager_self_url: String,
+    /// Bearer token runtime pods present when calling the credential sync
+    /// endpoint. Same value as [`AppState::token`]; mirrored here so it can be
+    /// injected into the pod manifest.
+    pub manager_token: Option<String>,
 }
 
 #[derive(Debug)]
@@ -209,6 +220,9 @@ mod tests {
             kubernetes_namespace: "apps".to_string(),
             pod_image: "ghcr.io/platform-q-ai/quecto:latest".to_string(),
             pod_pull_secret: Some("ghcr-pull-secret".to_string()),
+            credentials_secret_name: "quecto-secrets".to_string(),
+            manager_self_url: "http://quecto-runtime-manager:8080".to_string(),
+            manager_token: None,
         }
     }
 
