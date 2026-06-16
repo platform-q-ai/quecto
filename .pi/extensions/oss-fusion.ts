@@ -293,7 +293,7 @@ async function collectSandboxDiff(sourceCwd: string, sandboxCwd: string): Promis
 	].flatMap((name) => ["--exclude", name]);
 	const diff = await collectCommandOutput(
 		"diff",
-		["-ruN", ...excludeArgs, sourceCwd, sandboxCwd],
+		["-ruN", "--no-dereference", ...excludeArgs, sourceCwd, sandboxCwd],
 		path.dirname(sourceCwd),
 		MAX_SANDBOX_DIFF_CHARS,
 	);

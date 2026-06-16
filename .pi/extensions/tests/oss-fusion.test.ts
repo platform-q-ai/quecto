@@ -43,5 +43,6 @@ assertContains(source, "redactSecrets");
 assertContains(source, "appendBoundedTrace");
 assertContains(source, "SANDBOX_EXCLUDE_GLOBS");
 assertContains(source, "if (stat.isSymbolicLink()) return true");
+assertContains(source, '"--no-dereference"');
 
 console.log("✓ oss-fusion extension is installed with tool, command, renderer, bounded execution, and UI progress");
