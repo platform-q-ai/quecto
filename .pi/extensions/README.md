@@ -143,9 +143,17 @@ It registers:
 - an `oss-fusion` message renderer for synthesized results
 
 Supported modes are `readonly`, `full`, `sandbox`, and `patch-chain`. The
-extension defaults to readonly mode and can be configured with environment
-variables such as `OSS_FUSION_MODELS`, `OSS_FUSION_JUDGE_MODEL`,
-`OSS_FUSION_SYNTHESIZER_MODEL`, and `OSS_FUSION_MODE`.
+extension defaults to readonly mode. Mutation-capable modes are rejected for LLM
+tool calls unless `OSS_FUSION_ALLOW_TOOL_MUTATION=1` is set, and the interactive
+`/fusion` command asks for confirmation before running them. `sandbox` and
+`patch-chain` use best-effort scratch copies, not OS-level isolation; mutation
+inside those scratch copies stays disabled unless `OSS_FUSION_ALLOW_SCRATCH_MUTATION=1`
+is set.
+
+Configuration environment variables include `OSS_FUSION_MODELS`,
+`OSS_FUSION_MAX_PANEL_MODELS`, `OSS_FUSION_CONCURRENCY`,
+`OSS_FUSION_JUDGE_MODEL`, `OSS_FUSION_SYNTHESIZER_MODEL`, and
+`OSS_FUSION_MODE`.
 
 ## Relationship to Quecto's native workflow engine
 

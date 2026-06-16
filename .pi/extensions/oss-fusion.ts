@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getMarkdownTheme, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
@@ -69,7 +70,7 @@ type FusionProgress = {
 	synthesizer: FusionProgressItem;
 };
 
-const PANEL_MODELS: PanelModel[] = parsePanelModels(process.env.OSS_FUSION_MODELS) ?? [
+const DEFAULT_PANEL_MODELS: PanelModel[] = [
 	{ name: "minimax-m3", model: process.env.OSS_FUSION_MINIMAX_MODEL ?? "minimax/MiniMax-M3" },
 	{
 		name: "kimi-k2.7-fast",
@@ -82,6 +83,11 @@ const PANEL_MODELS: PanelModel[] = parsePanelModels(process.env.OSS_FUSION_MODEL
 			"llama-cpp-qwen36-mtp/qwen3.6-35b-a3b-mtp-iq4xs-q8nextn",
 	},
 ];
+const MAX_PANEL_MODELS = positiveInt(process.env.OSS_FUSION_MAX_PANEL_MODELS, 5);
+const PANEL_CONCURRENCY = positiveInt(process.env.OSS_FUSION_CONCURRENCY, 2);
+const PANEL_MODELS: PanelModel[] = enforcePanelModelLimit(
+	parsePanelModels(process.env.OSS_FUSION_MODELS) ?? DEFAULT_PANEL_MODELS,
+);
 
 const KIMI_K2P7_FAST_MODEL = "fireworks/accounts/fireworks/routers/kimi-k2p7-code-fast";
 const JUDGE_MODEL = process.env.OSS_FUSION_JUDGE_MODEL ?? KIMI_K2P7_FAST_MODEL;
@@ -90,6 +96,7 @@ const THINKING_LEVEL = process.env.OSS_FUSION_THINKING ?? "high";
 const CHILD_TIMEOUT_MS = Number(process.env.OSS_FUSION_TIMEOUT_MS ?? 30 * 60 * 1000);
 const MAX_PANEL_OUTPUT_CHARS = Number(process.env.OSS_FUSION_MAX_PANEL_OUTPUT_CHARS ?? 80_000);
 const MAX_SANDBOX_DIFF_CHARS = Number(process.env.OSS_FUSION_MAX_SANDBOX_DIFF_CHARS ?? 120_000);
+const MAX_TOOL_TRACE_CHARS = Number(process.env.OSS_FUSION_MAX_TOOL_TRACE_CHARS ?? 120_000);
 const DEFAULT_FUSION_MODE = parseFusionMode(process.env.OSS_FUSION_MODE) ?? "readonly";
 const READONLY_PANEL_TOOLS = ["read", "grep", "find", "ls", "webfetch", "brave_search"];
 const FULL_PANEL_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "webfetch", "brave_search"];
@@ -105,7 +112,37 @@ const SANDBOX_EXCLUDE_NAMES = new Set([
 	"__pycache__",
 	".cache",
 	".turbo",
+	".env",
+	".env.local",
+	".envrc",
+	".npmrc",
+	".pypirc",
+	"credentials.json",
 ]);
+const SANDBOX_SECRET_EXTENSIONS = new Set([".pem", ".key", ".p12", ".pfx"]);
+
+function positiveInt(raw: string | undefined, fallback: number): number {
+	const parsed = Number(raw);
+	if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+	return Math.floor(parsed);
+}
+
+function enforcePanelModelLimit(models: PanelModel[]): PanelModel[] {
+	if (models.length > MAX_PANEL_MODELS) {
+		throw new Error(
+			`OSS_FUSION_MODELS configures ${models.length} panel models, exceeding OSS_FUSION_MAX_PANEL_MODELS=${MAX_PANEL_MODELS}`,
+		);
+	}
+	return models;
+}
+
+function mutationModesAllowedFromTool(): boolean {
+	return process.env.OSS_FUSION_ALLOW_TOOL_MUTATION === "1";
+}
+
+function scratchMutationAllowed(): boolean {
+	return process.env.OSS_FUSION_ALLOW_SCRATCH_MUTATION === "1";
+}
 
 function parseFusionMode(raw: string | undefined): FusionMode | undefined {
 	const value = raw?.trim().toLowerCase();
@@ -114,7 +151,9 @@ function parseFusionMode(raw: string | undefined): FusionMode | undefined {
 }
 
 function getToolsForMode(mode: FusionMode): string[] {
-	return mode === "readonly" ? READONLY_PANEL_TOOLS : FULL_PANEL_TOOLS;
+	if (mode === "readonly") return READONLY_PANEL_TOOLS;
+	if (isSandboxLikeMode(mode) && !scratchMutationAllowed()) return READONLY_PANEL_TOOLS;
+	return FULL_PANEL_TOOLS;
 }
 
 function isSandboxLikeMode(mode: FusionMode): boolean {
@@ -177,8 +216,21 @@ function emptyUsage(): UsageStats {
 	return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
 }
 
-function shouldExcludeFromSandbox(src: string): boolean {
-	return SANDBOX_EXCLUDE_NAMES.has(path.basename(src));
+function shouldExcludeFromSandbox(sourceCwd: string, src: string): boolean {
+	const base = path.basename(src);
+	if (SANDBOX_EXCLUDE_NAMES.has(base)) return true;
+	if (base.startsWith(".env.")) return true;
+	if (SANDBOX_SECRET_EXTENSIONS.has(path.extname(base).toLowerCase())) return true;
+	try {
+		const stat = fs.lstatSync(src);
+		if (stat.isSymbolicLink()) {
+			const real = fs.realpathSync(src);
+			if (!real.startsWith(fs.realpathSync(sourceCwd) + path.sep)) return true;
+		}
+	} catch {
+		return true;
+	}
+	return false;
 }
 
 async function createSandbox(sourceCwd: string, panelName: string): Promise<string> {
@@ -186,7 +238,7 @@ async function createSandbox(sourceCwd: string, panelName: string): Promise<stri
 	await fs.promises.cp(sourceCwd, root, {
 		recursive: true,
 		force: true,
-		filter: (src) => !shouldExcludeFromSandbox(src),
+		filter: (src) => !shouldExcludeFromSandbox(sourceCwd, src),
 	});
 	return root;
 }
@@ -203,7 +255,10 @@ async function collectCommandOutput(command: string, args: string[], cwd: string
 			}
 			const remaining = maxChars - output.length;
 			output += text.slice(0, remaining);
-			if (text.length > remaining) truncated = true;
+			if (text.length > remaining) {
+				truncated = true;
+				proc.kill("SIGTERM");
+			}
 		};
 		const timeout = setTimeout(() => {
 			truncated = true;
@@ -223,6 +278,14 @@ async function collectCommandOutput(command: string, args: string[], cwd: string
 	});
 }
 
+function redactSecrets(text: string): string {
+	return text
+		.replace(/(api[_-]?key|token|secret|password|credential)(\s*[:=]\s*)[^\s"']+/gi, "$1$2[REDACTED]")
+		.replace(/sk-[A-Za-z0-9_-]{20,}/g, "[REDACTED_OPENAI_KEY]")
+		.replace(/gh[pousr]_[A-Za-z0-9_]{20,}/g, "[REDACTED_GITHUB_TOKEN]")
+		.replace(/-----BEGIN [^-]+ PRIVATE KEY-----[\s\S]*?-----END [^-]+ PRIVATE KEY-----/g, "[REDACTED_PRIVATE_KEY]");
+}
+
 async function collectSandboxDiff(sourceCwd: string, sandboxCwd: string): Promise<string> {
 	const excludeArgs = Array.from(SANDBOX_EXCLUDE_NAMES).flatMap((name) => ["--exclude", name]);
 	const diff = await collectCommandOutput(
@@ -231,7 +294,47 @@ async function collectSandboxDiff(sourceCwd: string, sandboxCwd: string): Promis
 		path.dirname(sourceCwd),
 		MAX_SANDBOX_DIFF_CHARS,
 	);
-	return diff.trim();
+	return redactSecrets(diff.trim());
+}
+
+function buildChildEnv(): NodeJS.ProcessEnv {
+	const allow = new Set([
+		"PATH",
+		"HOME",
+		"USER",
+		"SHELL",
+		"TMPDIR",
+		"TERM",
+		"PI_SKIP_VERSION_CHECK",
+		"OPENAI_API_KEY",
+		"OPENAI_BASE_URL",
+		"ANTHROPIC_API_KEY",
+		"GOOGLE_API_KEY",
+		"GEMINI_API_KEY",
+		"FIREWORKS_API_KEY",
+		"GROQ_API_KEY",
+		"OPENROUTER_API_KEY",
+		"MISTRAL_API_KEY",
+		"MINIMAX_API_KEY",
+		"XAI_API_KEY",
+	]);
+	for (const name of (process.env.OSS_FUSION_CHILD_ENV ?? "").split(",")) {
+		const trimmed = name.trim();
+		if (trimmed) allow.add(trimmed);
+	}
+	const env: NodeJS.ProcessEnv = {};
+	for (const key of allow) {
+		if (process.env[key] !== undefined) env[key] = process.env[key];
+	}
+	env.PI_SKIP_VERSION_CHECK = env.PI_SKIP_VERSION_CHECK ?? "1";
+	return env;
+}
+
+function appendBoundedTrace(current: string, entry: string): string {
+	if (current.length >= MAX_TOOL_TRACE_CHARS) return current;
+	const remaining = MAX_TOOL_TRACE_CHARS - current.length;
+	const next = entry.length > remaining ? `${entry.slice(0, remaining)}\n\n[tool trace truncated]` : entry;
+	return `${current}${next}`;
 }
 
 async function runPiPrompt(options: {
@@ -246,7 +349,7 @@ async function runPiPrompt(options: {
 	const started = Date.now();
 	const usage = emptyUsage();
 	const tmp = await writePromptToTempFile(options.name, options.prompt);
-	const args = ["--mode", "json", "-p", "--no-session", "--model", options.model];
+	const args = ["--mode", "json", "-p", "--no-session", "--no-extensions", "--model", options.model];
 
 	if (options.thinking) args.push("--thinking", options.thinking);
 	if (options.tools?.length) args.push("--tools", options.tools.join(","));
@@ -267,7 +370,7 @@ async function runPiPrompt(options: {
 				cwd: options.cwd,
 				shell: false,
 				stdio: ["ignore", "pipe", "pipe"],
-				env: { ...process.env, PI_SKIP_VERSION_CHECK: process.env.PI_SKIP_VERSION_CHECK ?? "1" },
+				env: buildChildEnv(),
 			});
 
 			let stdoutBuffer = "";
@@ -296,7 +399,10 @@ async function runPiPrompt(options: {
 					if (Array.isArray(content)) {
 						for (const part of content) {
 							if (part?.type === "toolCall") {
-								toolTrace += `\n\n[assistant tool_call] ${part.name} ${truncate(JSON.stringify(part.arguments ?? {}), 4000)}`;
+								toolTrace = appendBoundedTrace(
+									toolTrace,
+									`\n\n[assistant tool_call] ${part.name} ${truncate(JSON.stringify(part.arguments ?? {}), 4000)}`,
+								);
 							}
 						}
 					}
@@ -317,7 +423,7 @@ async function runPiPrompt(options: {
 				if (event.type === "message_end" && event.message?.role === "toolResult") {
 					const text = extractText(event.message);
 					const toolName = event.message.toolName ?? "tool";
-					if (text) toolTrace += `\n\n[tool_result:${toolName}] ${truncate(text, 12000)}`;
+					if (text) toolTrace = appendBoundedTrace(toolTrace, `\n\n[tool_result:${toolName}] ${truncate(text, 12000)}`);
 				}
 			};
 
@@ -379,9 +485,13 @@ function buildPanelPrompt(userPrompt: string, mode: FusionMode): string {
 		mode === "readonly"
 			? "Mode: readonly. Inspect and research only. You do not have mutation tools; propose changes but do not edit files."
 			: mode === "sandbox"
-				? "Mode: sandbox. You may edit files and run commands, but only inside this temporary sandbox working directory. Do not write outside the current working directory. Summarize any changes you made."
+				? scratchMutationAllowed()
+					? "Mode: sandbox. This is a best-effort scratch copy, not a security boundary. You may edit files and run commands inside the temporary working directory, but do not access absolute paths outside it. Summarize any changes you made."
+					: "Mode: sandbox. This is a best-effort scratch copy, not a security boundary. Mutation tools are disabled by default; inspect and propose the patch you would apply."
 				: mode === "patch-chain"
-					? "Mode: patch-chain. You are one step in a sequential patch-refinement chain running in a temporary sandbox. Review the current sandbox state, preserve good prior changes, improve the implementation, and leave a coherent final patch. Do not write outside the current working directory."
+					? scratchMutationAllowed()
+						? "Mode: patch-chain. You are one step in a sequential best-effort scratch-copy refinement chain, not a security sandbox. Review the current working tree, preserve good prior changes, improve the implementation, and do not access absolute paths outside the current directory."
+						: "Mode: patch-chain. Mutation tools are disabled by default because the scratch copy is not a security sandbox; inspect the current state and propose the refinement you would apply."
 					: "Mode: full. You may edit the real working tree and run commands. Use this power carefully and avoid unnecessary changes.";
 	return [
 		"You are one participant in an OSS Fusion panel running inside pi.",
@@ -409,7 +519,9 @@ function buildPatchChainPrompt(userPrompt: string, stepIndex: number, previousRe
 				"Previous chain steps already ran in this same sandbox. Their summaries and cumulative diffs follow.",
 				formatPanelForPrompt(previousResults),
 			].join("\n\n")
-		: "This is the first patch-chain step. Create the initial implementation in the sandbox.";
+		: scratchMutationAllowed()
+			? "This is the first patch-chain step. Create the initial implementation in the scratch copy."
+			: "This is the first patch-chain step. Propose the initial implementation; mutation tools are disabled by default.";
 	return [
 		buildPanelPrompt(userPrompt, "patch-chain"),
 		"",
@@ -417,10 +529,10 @@ function buildPatchChainPrompt(userPrompt: string, stepIndex: number, previousRe
 		previousSummary,
 		"",
 		"Instructions for this step:",
-		"- Inspect the current sandbox before editing.",
-		"- If prior changes are good, keep them; if they are flawed, improve or replace them.",
-		"- Run feasible checks.",
-		"- End with a concise summary of what you changed and remaining risks.",
+		"- Inspect the current scratch copy before proposing or applying changes.",
+		"- If prior changes are good, keep or endorse them; if they are flawed, improve or replace them.",
+		"- Run feasible checks when tools allow it.",
+		"- End with a concise summary of what changed or should change and remaining risks.",
 	].join("\n");
 }
 
@@ -555,6 +667,25 @@ function compactProgressStatus(progress: FusionProgress): string {
 	return `Fusion: ${progress.stage} (${done}/${progress.panel.length} panel)`;
 }
 
+async function mapWithConcurrency<T, R>(
+	items: T[],
+	concurrency: number,
+	worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+	const results = new Array<R>(items.length);
+	let nextIndex = 0;
+	const workerCount = Math.min(Math.max(1, concurrency), items.length);
+	await Promise.all(
+		Array.from({ length: workerCount }, async () => {
+			while (nextIndex < items.length) {
+				const index = nextIndex++;
+				results[index] = await worker(items[index], index);
+			}
+		}),
+	);
+	return results;
+}
+
 async function runFusion(
 	prompt: string,
 	cwd: string,
@@ -609,8 +740,8 @@ async function runFusion(
 			}
 		}
 	} else {
-		panel = await Promise.all(
-			PANEL_MODELS.map(async (panelModel, index) => {
+		const concurrency = mode === "readonly" ? Math.min(PANEL_CONCURRENCY, MAX_PANEL_MODELS) : 1;
+		panel = await mapWithConcurrency(PANEL_MODELS, concurrency, async (panelModel, index) => {
 				progress.panel[index].status = "running";
 				progress.message = `running ${mode} panel ${progress.panel.filter((item) => item.status === "done" || item.status === "failed").length}/${PANEL_MODELS.length}`;
 				emit();
@@ -671,8 +802,7 @@ async function runFusion(
 					emit(`${panelModel.name} failed`);
 					return result;
 				}
-			}),
-		);
+		});
 	}
 
 	const usablePanel = panel.filter((r) => r.exitCode === 0 && r.stopReason !== "error" && r.output.trim());
@@ -761,8 +891,8 @@ async function runFusion(
 const FusionParams = Type.Object({
 	prompt: Type.String({ description: "The task/question to send to the OSS Fusion panel." }),
 	mode: Type.Optional(
-		Type.Union([Type.Literal("readonly"), Type.Literal("full"), Type.Literal("sandbox"), Type.Literal("patch-chain")], {
-			description: "Tool/safety mode. readonly inspects only, full can edit the real tree, sandbox creates independent temporary copies, patch-chain sequentially refines one temporary copy. Default: readonly.",
+		StringEnum(["readonly", "full", "sandbox", "patch-chain"], {
+			description: "Tool/safety mode. readonly inspects only, full can edit the real tree, sandbox creates best-effort temporary copies, patch-chain sequentially refines one temporary copy. Default: readonly. Mutation-capable tool invocations require OSS_FUSION_ALLOW_TOOL_MUTATION=1.",
 		}),
 	),
 });
@@ -825,12 +955,23 @@ export default function ossFusionExtension(pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use oss_fusion for complex questions where independent model diversity and synthesis are likely to improve reliability.",
 			"Do not use oss_fusion for trivial edits or simple file reads; it is slower and runs multiple model calls.",
-			"Use oss_fusion mode=readonly for investigation/review, mode=sandbox for independent implementation experiments, mode=patch-chain for sequential patch refinement in one temporary copy, and mode=full only when the user explicitly wants panel agents to edit the real working tree.",
+			"Use oss_fusion mode=readonly for investigation/review. Mutation-capable modes are rejected from tool calls unless OSS_FUSION_ALLOW_TOOL_MUTATION=1 is explicitly set; prefer the interactive /fusion command for sandbox, patch-chain, or full runs.",
 		],
 		parameters: FusionParams,
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			try {
 				const mode = parseFusionMode(params.mode) ?? DEFAULT_FUSION_MODE;
+				if (mode !== "readonly" && !mutationModesAllowedFromTool()) {
+					return {
+						content: [
+							{
+								type: "text",
+								text: `oss_fusion mode=${mode} is mutation-capable and is disabled for LLM tool calls. Use /fusion interactively or set OSS_FUSION_ALLOW_TOOL_MUTATION=1 to opt in.`,
+							},
+						],
+						isError: true,
+					};
+				}
 				const result = await runFusion(params.prompt, ctx.cwd, mode, signal, (progress) => {
 					const lines = formatProgressLines(progress);
 					onUpdate?.({ content: [{ type: "text", text: lines.join("\n") }] });
@@ -863,6 +1004,17 @@ export default function ossFusionExtension(pi: ExtensionAPI) {
 			}
 
 			try {
+				if (mode !== "readonly") {
+					const ok = await ctx.ui.confirm(
+						"Run mutation-capable Fusion mode?",
+						mode === "full"
+							? "Full mode lets child agents edit the real working tree. Continue?"
+							: scratchMutationAllowed()
+								? `${mode} uses a best-effort scratch copy, not a security sandbox. Continue?`
+								: `${mode} uses a scratch copy with mutation tools disabled by default. Continue?`,
+					);
+					if (!ok) return;
+				}
 				const result = await runFusion(prompt, ctx.cwd, mode, undefined, (progress) => {
 					const lines = formatProgressLines(progress);
 					ctx.ui.setStatus("oss-fusion", compactProgressStatus(progress));
