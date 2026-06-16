@@ -123,3 +123,45 @@ Feature: Configuration
       """
     When I load the config and validate effort
     Then the effort validation should fail with "invalid effort level"
+
+  # --- #629: OpenAI-compatible custom endpoints alongside OpenAI OAuth ---
+
+  @issue-629
+  Scenario: OpenAI-compatible provider endpoints are loaded from config
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {
+        "providers": {
+          "openai_compatible": {
+            "endpoints": [
+              {
+                "prefix": "spark",
+                "api_base": "http://127.0.0.1:8000/v1",
+                "api_key": "sk-spark",
+                "allow_remote_http": true
+              }
+            ]
+          }
+        }
+      }
+      """
+    When I load the config
+    Then the OpenAI-compatible provider should have endpoint "spark" with api_base "http://127.0.0.1:8000/v1"
+
+  @issue-629
+  Scenario: OpenAI provider disable_codex_routing flag is loaded from config
+    Given a config file at "~/.quecto/config.json" with content:
+      """
+      {
+        "providers": {
+          "openai": {
+            "api_key": "sk-custom",
+            "api_base": "http://127.0.0.1:8000/v1",
+            "auth_method": "api_key",
+            "disable_codex_routing": true
+          }
+        }
+      }
+      """
+    When I load the config
+    Then the OpenAI provider should have disable_codex_routing enabled

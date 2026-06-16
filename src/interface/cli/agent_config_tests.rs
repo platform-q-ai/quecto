@@ -1,6 +1,8 @@
 // Issue #300: --config flag tests + build_agent_provider tests
 
 use super::*;
+use crate::domain::message::Message;
+use crate::domain::provider::ChatRequest;
 use crate::infrastructure::auth::credential_store::{AuthMethod, Credential, CredentialStore};
 use crate::infrastructure::config::Config;
 use crate::interface::cli::run_with_output;
@@ -10,6 +12,32 @@ fn config_from_str(json: &str) -> Config {
     let tmp = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(tmp.path(), json).unwrap();
     Config::load(tmp.path().to_str().unwrap()).unwrap()
+}
+
+fn openai_oauth_jwt(account_id: &str) -> String {
+    use base64::Engine;
+    let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"alg":"none"}"#);
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(format!(
+        r#"{{"https://api.openai.com/auth":{{"chatgpt_account_id":"{}"}}}}"#,
+        account_id
+    ));
+    format!("{}.{}.sig", header, payload)
+}
+
+fn chat_request<'a>(messages: &'a [Message], model: &'a str) -> ChatRequest<'a> {
+    ChatRequest {
+        messages,
+        tools: &[],
+        model,
+        max_tokens: 128,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    }
 }
 
 // ===================================================================
@@ -85,6 +113,126 @@ fn test_build_agent_provider_with_credential_store() {
     let config = config_from_str(r#"{"providers":{"openai":{"api_key":""}}}"#);
     let result = build_agent_provider(&config, tmp.path(), &reqwest::Client::new());
     assert!(result.is_ok());
+}
+
+#[test]
+fn test_build_agent_provider_openai_compatible_ignores_openai_oauth() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let server = rt.block_on(wiremock::MockServer::start());
+    rt.block_on(async {
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/v1/chat/completions"))
+            .and(wiremock::matchers::header(
+                "authorization",
+                "Bearer sk-spark",
+            ))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "id": "chatcmpl-test",
+                    "object": "chat.completion",
+                    "choices": [{
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "Spark endpoint used"},
+                        "finish_reason": "stop"
+                    }],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+                })),
+            )
+            .mount(&server)
+            .await;
+    });
+
+    let store = CredentialStore::new(tmp.path());
+    store
+        .store(Credential {
+            provider: "openai".to_string(),
+            token: openai_oauth_jwt("acct_test"),
+            method: AuthMethod::OAuth,
+            expires_at: Some(4_102_444_800),
+            refresh_token: Some("refresh".to_string()),
+            account_id: Some("acct_test".to_string()),
+        })
+        .unwrap();
+
+    let config = config_from_str(&format!(
+        r#"{{"providers":{{"openai":{{"api_key":"sk-openai-config"}},"openai_compatible":{{"endpoints":[{{"prefix":"spark","api_key":"sk-spark","api_base":"{}/v1"}}]}}}}}}"#,
+        server.uri()
+    ));
+    let provider = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap();
+    let messages = vec![Message::user("Hi")];
+    let response = rt
+        .block_on(provider.chat(chat_request(&messages, "spark/qwen3")))
+        .unwrap();
+    assert_eq!(response.content.as_deref(), Some("Spark endpoint used"));
+}
+
+#[test]
+fn test_build_agent_provider_disable_codex_routing_prefers_config_key() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let server = rt.block_on(wiremock::MockServer::start());
+    rt.block_on(async {
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/v1/chat/completions"))
+            .and(wiremock::matchers::header(
+                "authorization",
+                "Bearer sk-from-config",
+            ))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "id": "chatcmpl-test",
+                    "object": "chat.completion",
+                    "choices": [{
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "OpenAI slot used config key"},
+                        "finish_reason": "stop"
+                    }],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+                })),
+            )
+            .mount(&server)
+            .await;
+    });
+
+    let store = CredentialStore::new(tmp.path());
+    store
+        .store(Credential {
+            provider: "openai".to_string(),
+            token: openai_oauth_jwt("acct_test"),
+            method: AuthMethod::OAuth,
+            expires_at: Some(4_102_444_800),
+            refresh_token: Some("refresh".to_string()),
+            account_id: Some("acct_test".to_string()),
+        })
+        .unwrap();
+
+    let config = config_from_str(&format!(
+        r#"{{"providers":{{"openai":{{"api_key":"sk-from-config","api_base":"{}/v1","disable_codex_routing":true}}}}}}"#,
+        server.uri()
+    ));
+    let provider = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap();
+    let messages = vec![Message::user("Hi")];
+    let response = rt
+        .block_on(provider.chat(chat_request(&messages, "openai/custom-model")))
+        .unwrap();
+    assert_eq!(
+        response.content.as_deref(),
+        Some("OpenAI slot used config key")
+    );
+}
+
+#[test]
+fn test_build_agent_provider_rejects_duplicate_openai_compatible_prefixes() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let config = config_from_str(
+        r#"{"providers":{"openai_compatible":{"endpoints":[
+            {"prefix":"spark","api_key":"sk-one","api_base":"http://127.0.0.1:8000/v1"},
+            {"prefix":"SPARK","api_key":"sk-two","api_base":"http://127.0.0.1:8001/v1"}
+        ]}}}"#,
+    );
+    let result = build_agent_provider(&config, tmp.path(), &reqwest::Client::new());
+    assert!(result.unwrap_err().contains("duplicate openai_compatible"));
 }
 
 #[test]

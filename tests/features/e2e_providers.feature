@@ -62,6 +62,28 @@ Feature: End-to-End Provider Wiring
     Then the exit code should be 0
     And stdout should contain "Config key used"
 
+  # --- OpenAI-compatible custom endpoints (#629) ---
+
+  @issue-629
+  Scenario: OpenAI-compatible endpoint ignores OpenAI OAuth credential
+    Given a temp base directory
+    And a config file with OpenAI OAuth and an OpenAI-compatible provider "spark" pointing at a mock server
+    And the credential store has a valid OpenAI OAuth token with ChatGPT account id "acct_test"
+    And the mock expects Authorization header "Bearer sk-spark" and returns "Spark endpoint used"
+    When I run quecto agent --model spark/qwen3 -m "Hi"
+    Then the exit code should be 0
+    And stdout should contain "Spark endpoint used"
+
+  @issue-629
+  Scenario: OpenAI slot can opt out of Codex routing when OAuth exists
+    Given a temp base directory
+    And a config file with OpenAI api_key "sk-from-config", disable_codex_routing true, and a mock server
+    And the credential store has a valid OpenAI OAuth token with ChatGPT account id "acct_test"
+    And the mock expects Authorization header "Bearer sk-from-config" and returns "OpenAI slot used config key"
+    When I run quecto agent --model openai/custom-model -m "Hi"
+    Then the exit code should be 0
+    And stdout should contain "OpenAI slot used config key"
+
   # --- Auth errors ---
 
   Scenario: Auth error from provider is not retried on same provider

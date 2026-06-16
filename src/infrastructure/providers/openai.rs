@@ -10,6 +10,7 @@ use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
 /// OpenAI-compatible LLM provider.
 #[derive(Debug)]
 pub struct OpenAiProvider {
+    provider_name: String,
     api_key: String,
     api_base: String,
     client: reqwest::Client,
@@ -24,8 +25,32 @@ impl OpenAiProvider {
 
     /// Create with a shared `reqwest::Client` (avoids duplicate connection pools).
     pub fn with_client(api_key: String, api_base: Option<String>, client: reqwest::Client) -> Self {
-        let account_id = crate::infrastructure::auth::oauth::extract_openai_account_id(&api_key);
+        Self::with_client_and_name("openai", api_key, api_base, client)
+    }
+
+    /// Create an OpenAI-compatible provider with a custom router prefix.
+    pub fn with_client_and_name(
+        provider_name: &str,
+        api_key: String,
+        api_base: Option<String>,
+        client: reqwest::Client,
+    ) -> Self {
+        Self::with_client_and_name_and_oauth_headers(provider_name, api_key, api_base, client, true)
+    }
+
+    /// Create a provider while explicitly controlling OpenAI OAuth-specific headers.
+    pub fn with_client_and_name_and_oauth_headers(
+        provider_name: &str,
+        api_key: String,
+        api_base: Option<String>,
+        client: reqwest::Client,
+        include_oauth_headers: bool,
+    ) -> Self {
+        let account_id = include_oauth_headers
+            .then(|| crate::infrastructure::auth::oauth::extract_openai_account_id(&api_key))
+            .flatten();
         Self {
+            provider_name: provider_name.to_string(),
             api_key,
             api_base: api_base.unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
             client,
@@ -318,7 +343,7 @@ impl OpenAiProvider {
 
 impl LlmProvider for OpenAiProvider {
     fn name(&self) -> &str {
-        "openai"
+        &self.provider_name
     }
 
     fn chat(
@@ -380,6 +405,7 @@ impl LlmProvider for OpenAiProvider {
         let mut body = Self::build_request_body(&request);
         body["stream"] = serde_json::Value::Bool(true);
         let url = format!("{}/chat/completions", self.api_base);
+        let provider_name = self.provider_name.clone();
         let api_key = self.api_key.clone();
         let api_base = self.api_base.clone();
         let account_id = self.account_id.clone();
@@ -388,6 +414,7 @@ impl LlmProvider for OpenAiProvider {
             let (tx, rx) = tokio::sync::mpsc::channel(64);
             tokio::spawn(async move {
                 let provider = OpenAiProvider {
+                    provider_name,
                     api_key,
                     api_base,
                     client,
@@ -412,10 +439,33 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    fn test_openai_oauth_jwt(account_id: &str) -> String {
+        use base64::Engine;
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"alg":"none"}"#);
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(format!(
+            r#"{{"https://api.openai.com/auth":{{"chatgpt_account_id":"{}"}}}}"#,
+            account_id
+        ));
+        format!("{}.{}.sig", header, payload)
+    }
+
     #[test]
     fn test_openai_provider_name() {
         let provider = OpenAiProvider::new("sk-test".to_string(), None);
         assert_eq!(provider.name(), "openai");
+    }
+
+    #[test]
+    fn test_custom_openai_compatible_provider_disables_oauth_headers() {
+        let provider = OpenAiProvider::with_client_and_name_and_oauth_headers(
+            "spark",
+            test_openai_oauth_jwt("acct_test"),
+            None,
+            reqwest::Client::new(),
+            false,
+        );
+        assert_eq!(provider.name(), "spark");
+        assert!(provider.account_id.is_none());
     }
 
     #[test]

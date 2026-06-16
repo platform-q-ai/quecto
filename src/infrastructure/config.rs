@@ -73,6 +73,8 @@ pub struct ProvidersConfig {
     pub openai: ProviderEntry,
     #[serde(default)]
     pub anthropic: ProviderEntry,
+    #[serde(default)]
+    pub openai_compatible: OpenAiCompatibleConfig,
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -83,6 +85,30 @@ pub struct ProviderEntry {
     pub api_base: String,
     #[serde(default)]
     pub auth_method: String,
+    /// When true for the `openai` slot, use the config `api_key` directly and
+    /// do not convert ChatGPT OAuth JWTs from the credential store into Codex.
+    #[serde(default)]
+    pub disable_codex_routing: bool,
+}
+
+#[derive(Clone, Serialize, Deserialize, Default)]
+pub struct OpenAiCompatibleConfig {
+    #[serde(default)]
+    pub endpoints: Vec<OpenAiCompatibleEndpoint>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Default)]
+pub struct OpenAiCompatibleEndpoint {
+    #[serde(default)]
+    pub prefix: String,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub api_base: String,
+    #[serde(default)]
+    pub auth_method: String,
+    #[serde(default)]
+    pub allow_remote_http: bool,
 }
 
 impl std::fmt::Debug for ProviderEntry {
@@ -91,6 +117,27 @@ impl std::fmt::Debug for ProviderEntry {
             .field("api_key", &"[REDACTED]")
             .field("api_base", &self.api_base)
             .field("auth_method", &self.auth_method)
+            .field("disable_codex_routing", &self.disable_codex_routing)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for OpenAiCompatibleConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenAiCompatibleConfig")
+            .field("endpoints", &self.endpoints)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for OpenAiCompatibleEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenAiCompatibleEndpoint")
+            .field("prefix", &self.prefix)
+            .field("api_key", &"[REDACTED]")
+            .field("api_base", &self.api_base)
+            .field("auth_method", &self.auth_method)
+            .field("allow_remote_http", &self.allow_remote_http)
             .finish()
     }
 }
@@ -596,6 +643,7 @@ mod tests {
             api_key: "sk-secret-key-12345".to_string(),
             api_base: "https://api.openai.com/v1".to_string(),
             auth_method: "token".to_string(),
+            disable_codex_routing: false,
         };
         let debug = format!("{:?}", entry);
         assert!(!debug.contains("sk-secret-key-12345"));
@@ -614,6 +662,45 @@ mod tests {
         }"#;
         let config: Config = serde_json::from_str(json).unwrap();
         assert_eq!(config.agents.defaults.max_session_messages, 12);
+    }
+
+    #[test]
+    fn test_openai_compatible_endpoints_deserialize() {
+        let json = r#"{
+            "providers": {
+                "openai_compatible": {
+                    "endpoints": [
+                        {
+                            "prefix": "spark",
+                            "api_base": "http://127.0.0.1:8000/v1",
+                            "api_key": "sk-spark",
+                            "allow_remote_http": true
+                        }
+                    ]
+                }
+            }
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        let endpoint = &config.providers.openai_compatible.endpoints[0];
+        assert_eq!(endpoint.prefix, "spark");
+        assert_eq!(endpoint.api_base, "http://127.0.0.1:8000/v1");
+        assert_eq!(endpoint.api_key, "sk-spark");
+        assert!(endpoint.allow_remote_http);
+    }
+
+    #[test]
+    fn test_openai_disable_codex_routing_deserializes() {
+        let json = r#"{
+            "providers": {
+                "openai": {
+                    "api_key": "sk-custom",
+                    "api_base": "http://127.0.0.1:8000/v1",
+                    "disable_codex_routing": true
+                }
+            }
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert!(config.providers.openai.disable_codex_routing);
     }
 
     #[test]

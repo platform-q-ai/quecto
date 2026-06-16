@@ -11,6 +11,8 @@ use std::sync::Arc;
 use crate::domain::provider::LlmProvider;
 
 const ALLOW_CUSTOM_HOSTS_ENV: &str = "QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS";
+const RESERVED_PROVIDER_PREFIXES: &[&str] =
+    &["openai", "openai-codex", "codex", "anthropic", "router"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProviderFactoryError {
@@ -62,6 +64,15 @@ fn allowed_https_host(provider: &str, host: &str) -> bool {
 }
 
 fn validate_provider_api_base(provider: &str, api_base: &str) -> Result<(), ProviderFactoryError> {
+    validate_provider_api_base_with_options(provider, api_base, false, false)
+}
+
+fn validate_provider_api_base_with_options(
+    provider: &str,
+    api_base: &str,
+    allow_remote_http: bool,
+    allow_any_https_host: bool,
+) -> Result<(), ProviderFactoryError> {
     let invalid = |reason: String| ProviderFactoryError::InvalidApiBase {
         provider: provider.to_string(),
         api_base: api_base.to_string(),
@@ -86,7 +97,8 @@ fn validate_provider_api_base(provider: &str, api_base: &str) -> Result<(), Prov
 
     match url.scheme() {
         "https" => {
-            if allowed_https_host(provider, host) || is_loopback_host(host) {
+            if allow_any_https_host || allowed_https_host(provider, host) || is_loopback_host(host)
+            {
                 Ok(())
             } else {
                 Err(invalid(format!(
@@ -96,12 +108,13 @@ fn validate_provider_api_base(provider: &str, api_base: &str) -> Result<(), Prov
             }
         }
         "http" => {
-            if is_loopback_host(host) {
+            if is_loopback_host(host) || allow_remote_http {
                 Ok(())
             } else {
-                Err(invalid(
-                    "http is allowed only for loopback hosts".to_string(),
-                ))
+                Err(invalid(format!(
+                    "http is allowed only for loopback hosts (set {}=1 or allow_remote_http=true on an explicit custom endpoint to allow custom hosts)",
+                    ALLOW_CUSTOM_HOSTS_ENV
+                )))
             }
         }
         scheme => Err(invalid(format!(
@@ -145,6 +158,60 @@ pub fn create_provider_with_client(
         ))),
         _ => unreachable!("provider name validated above"),
     }
+}
+
+/// Create the built-in OpenAI provider with explicit OAuth-header control.
+pub fn create_openai_provider_with_client(
+    api_key: String,
+    api_base: Option<String>,
+    client: reqwest::Client,
+    include_oauth_headers: bool,
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    if let Some(ref base) = api_base {
+        validate_provider_api_base("openai", base)?;
+    }
+    Ok(Arc::new(
+        openai::OpenAiProvider::with_client_and_name_and_oauth_headers(
+            "openai",
+            api_key,
+            api_base,
+            client,
+            include_oauth_headers,
+        ),
+    ))
+}
+
+/// Create an OpenAI-compatible provider with a custom router prefix.
+///
+/// Unlike the built-in `openai` slot, this never performs Codex/OAuth routing;
+/// it always sends `Authorization: Bearer <api_key>` to the configured base URL.
+pub fn create_openai_compatible_provider(
+    prefix: &str,
+    api_key: String,
+    api_base: String,
+    allow_remote_http: bool,
+    client: reqwest::Client,
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    let prefix = prefix.trim();
+    if prefix.is_empty()
+        || prefix.contains('/')
+        || RESERVED_PROVIDER_PREFIXES
+            .iter()
+            .any(|reserved| prefix.eq_ignore_ascii_case(reserved))
+    {
+        return Err(ProviderFactoryError::UnknownProvider(prefix.to_string()));
+    }
+    let allow_remote_http = allow_remote_http || allow_custom_provider_hosts();
+    validate_provider_api_base_with_options(prefix, &api_base, allow_remote_http, true)?;
+    Ok(Arc::new(
+        openai::OpenAiProvider::with_client_and_name_and_oauth_headers(
+            prefix,
+            api_key,
+            Some(api_base),
+            client,
+            false,
+        ),
+    ))
 }
 
 /// Create a Codex provider with a shared `reqwest::Client`.
@@ -197,6 +264,58 @@ mod tests {
             Some("http://localhost:8080".to_string()),
         );
         assert!(provider.is_ok());
+    }
+
+    #[test]
+    fn test_create_openai_compatible_provider_with_custom_prefix() {
+        let provider = create_openai_compatible_provider(
+            "spark",
+            "sk-spark".to_string(),
+            "http://127.0.0.1:8000/v1".to_string(),
+            false,
+            reqwest::Client::new(),
+        );
+        assert!(provider.is_ok());
+        assert_eq!(provider.unwrap().name(), "spark");
+    }
+
+    #[test]
+    fn test_create_openai_compatible_rejects_reserved_prefix() {
+        let provider = create_openai_compatible_provider(
+            "openai",
+            "sk-spark".to_string(),
+            "http://127.0.0.1:8000/v1".to_string(),
+            false,
+            reqwest::Client::new(),
+        );
+        assert!(matches!(
+            provider,
+            Err(ProviderFactoryError::UnknownProvider(_))
+        ));
+    }
+
+    #[test]
+    fn test_create_openai_compatible_remote_http_requires_opt_in() {
+        let rejected = create_openai_compatible_provider(
+            "spark",
+            "sk-spark".to_string(),
+            "http://tailnet-host:8000/v1".to_string(),
+            false,
+            reqwest::Client::new(),
+        );
+        assert!(matches!(
+            rejected,
+            Err(ProviderFactoryError::InvalidApiBase { .. })
+        ));
+
+        let allowed = create_openai_compatible_provider(
+            "spark",
+            "sk-spark".to_string(),
+            "http://tailnet-host:8000/v1".to_string(),
+            true,
+            reqwest::Client::new(),
+        );
+        assert!(allowed.is_ok());
     }
 
     #[test]

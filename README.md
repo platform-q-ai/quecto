@@ -453,6 +453,16 @@ Config file: `~/.quecto/config.json`
     "anthropic": {
       "api_key": "sk-ant-...",
       "api_base": "https://api.anthropic.com"
+    },
+    "openai_compatible": {
+      "endpoints": [
+        {
+          "prefix": "spark",
+          "api_key": "sk-local-or-bearer-token",
+          "api_base": "http://127.0.0.1:8000/v1",
+          "allow_remote_http": false
+        }
+      ]
     }
   },
   "tools": {
@@ -498,9 +508,42 @@ All fields are optional. An empty `{}` is valid — everything uses sensible def
 Set `providers.<name>.api_base` only when you need a non-default endpoint (for example, a local mock server).
 
 - URLs must be valid and must not include username/password, query params, or fragments.
-- `https://` is required for non-local hosts (override with `QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS=1`).
+- `https://` is required for non-local built-in provider hosts (override with `QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS=1`).
 - `http://` is allowed only for loopback hosts: `localhost`, `127.0.0.1`, or `::1`.
 - Invalid `api_base` values cause that provider to be rejected during startup.
+
+### OpenAI-compatible custom endpoints
+
+Use `providers.openai_compatible.endpoints` when you need one or more OpenAI-compatible endpoints alongside a normal OpenAI/ChatGPT OAuth credential:
+
+```json
+{
+  "providers": {
+    "openai": { "api_key": "" },
+    "openai_compatible": {
+      "endpoints": [
+        {
+          "prefix": "spark",
+          "api_key": "sk-local-or-bearer-token",
+          "api_base": "http://127.0.0.1:8000/v1",
+          "allow_remote_http": false
+        }
+      ]
+    }
+  },
+  "agents": {
+    "defaults": { "model": "spark/qwen3" }
+  }
+}
+```
+
+Each endpoint registers an OpenAI-compatible provider named by `prefix`, so `spark/qwen3` routes to that endpoint and sends `Authorization: Bearer <api_key>`. These endpoints do not read the credential store and never switch to Codex routing.
+
+For tailnet/LAN HTTP endpoints, set `allow_remote_http: true` on that endpoint or set `QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS=1`. HTTPS custom hosts are allowed for `openai_compatible` endpoints.
+
+If you intentionally want to use the built-in `openai` slot for a custom endpoint while an OpenAI OAuth credential exists, set `providers.openai.disable_codex_routing: true`; this makes the config `api_key` win for that slot and suppresses ChatGPT Codex routing.
+
+Credential precedence for built-in providers is otherwise: credential store (`quecto auth login`) > environment variable > config file. Environment overrides are applied while loading config, so `disable_codex_routing` uses the post-env config value. An existing valid `openai` OAuth credential overrides `providers.openai.api_key` unless `disable_codex_routing` is enabled.
 
 ### Exec isolation settings
 
@@ -536,7 +579,7 @@ nsjail mounts `/bin`, `/usr`, `/lib`, `/lib64` read-only inside the jail, plus i
 | `QUECTO_PROVIDERS_OPENAI_API_KEY` | `providers.openai.api_key` |
 | `QUECTO_PROVIDERS_ANTHROPIC_API_KEY` | `providers.anthropic.api_key` |
 | `QUECTO_OFFLINE` | Set to `1`/`true`/`yes` to disable auto-download of tool binaries (rg, fd) |
-| `QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS` | Set to `1` to allow non-default HTTPS hosts for provider API bases |
+| `QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS` | Set to `1` to allow custom provider hosts, including remote HTTP for explicit OpenAI-compatible endpoints |
 
 ## Tools
 
@@ -601,7 +644,7 @@ OAuth tokens from `auth.openai.com` (obtained via `quecto auth login --provider 
 
 OAuth-backed providers are wrapped in `RefreshableProvider` so that expired tokens are automatically refreshed mid-session on 401. The decorator intercepts auth errors, refreshes the token via the credential store, rebuilds the inner provider with the new token, and retries the request once.
 
-API key resolution order: credential store (`quecto auth login`) > config file > environment variable.
+API key resolution order: credential store (`quecto auth login`) > environment variable > config file.
 
 ## Development workflow
 
