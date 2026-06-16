@@ -3,7 +3,7 @@
 //! Provides checked PID conversion (u32 → i32) and process-group signal
 //! helpers so that wrapping casts cannot accidentally target PID 1 (init).
 //!
-//! For incoming signal handling (SIGTSTP, SIGWINCH), see the [`crate::signals`] module.
+//! For incoming signal handling (SIGTSTP, SIGWINCH), see the [`crate::infrastructure::signals`] module.
 
 /// Grace period between SIGTERM and SIGKILL (milliseconds).
 pub const TERMINATE_GRACE_MS: u64 = 200;

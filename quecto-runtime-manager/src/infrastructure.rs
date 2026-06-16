@@ -134,7 +134,10 @@ async fn sync_credentials(
     // Validate it parses as JSON before persisting — never write a malformed
     // blob into the shared Secret.
     if serde_json::from_str::<Value>(credentials_json).is_err() {
-        return json_error(StatusCode::BAD_REQUEST, "credentials_json is not valid JSON");
+        return json_error(
+            StatusCode::BAD_REQUEST,
+            "credentials_json is not valid JSON",
+        );
     }
 
     match patch_credentials_secret(&state, credentials_json).await {

@@ -171,7 +171,7 @@ fn guards_block_until_before_step_key_threshold() {
     engine.select_template("feature", None).unwrap();
     let err = engine.check_guards().unwrap_err();
     assert!(err.to_string().contains("Complete step 1"));
-    for step in 1..=6 {
+    for step in 1..=14 {
         engine.check(step).unwrap();
     }
     assert!(engine.check_guards().is_ok());
@@ -252,4 +252,72 @@ fn validate_guard_unknown_step_key() {
         ..Default::default()
     };
     assert!(WorkflowEngine::new(cfg, false).is_err());
+}
+
+#[test]
+fn default_feature_template_matches_config_file_sixteen_step_workflow() {
+    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    engine.select_template("feature", None).unwrap();
+    let snap = engine.snapshot(true);
+
+    let keys: Vec<&str> = snap.steps.iter().map(|s| s.key.as_str()).collect();
+    assert_eq!(
+        keys,
+        vec![
+            "scenarios",
+            "tests",
+            "red",
+            "green",
+            "refactor",
+            "verify",
+            "commit",
+            "push",
+            "pr",
+            "reviewers",
+            "fix_reviews",
+            "push_fixes",
+            "resolve_threads",
+            "pre_merge",
+            "merge",
+            "pull",
+        ]
+    );
+    assert_eq!(snap.progress.total, 16);
+    assert_eq!(snap.steps[0].label, "Update Scenarios / Add new features");
+    assert_eq!(
+        snap.steps[7].label,
+        "Push (pre-push hook will run tests and linting)"
+    );
+    assert_eq!(
+        snap.steps[9].label,
+        "Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)"
+    );
+    assert_eq!(snap.steps[15].label, "Move to local master and pull");
+}
+
+#[test]
+fn feature_template_guards_commit_push_and_merge_like_config_file() {
+    let templates = default_templates();
+    let feature = templates
+        .iter()
+        .find(|template| template.id == "feature")
+        .expect("feature template exists");
+
+    assert_eq!(feature.guards.len(), 2);
+    assert_eq!(
+        feature.guards[0].commands,
+        vec!["git commit".to_string(), "git push".to_string()]
+    );
+    assert_eq!(feature.guards[0].before_step_key, "commit");
+    assert!(
+        feature.guards[0]
+            .message
+            .contains("Complete RED-GREEN-REFACTOR")
+    );
+    assert_eq!(
+        feature.guards[1].commands,
+        vec!["git merge".to_string(), "gh pr merge".to_string()]
+    );
+    assert_eq!(feature.guards[1].before_step_key, "merge");
+    assert!(feature.guards[1].message.contains("Complete code review"));
 }

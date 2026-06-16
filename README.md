@@ -560,7 +560,7 @@ External tool binaries (`rg`, `fd`) are resolved via `ensure_tool`: system PATH 
 | `agent_cmd` | Send commands to spawned UDS subagents: `prompt`, `steer`, `follow_up`, `abort`, `kill`, `get_state`, `get_messages`, `get_messages_tail`, `get_session_stats`, `get_subagents`, `get_extensions`, `set_model`, `clear_history`, `reload_extensions` |
 | `web_search` | Optional: search the web via Brave Search or DuckDuckGo when `tools.web.brave.enabled` or `tools.web.duckduckgo.enabled` is true |
 | `web_fetch` | Optional: fetch a URL and return readable text when `tools.web.fetch.enabled` is true (HTML stripped by default; `raw: true` returns the original body) |
-| `workflow` | UDS-only template-based development workflow (status, list_templates, select_template, check, uncheck, skip, reset, set_issue, clear_issue, check_guards). Enabled via `--workflow` flag. See [Workflow docs](docs/workflow.md) |
+| `workflow` | UDS-only template-based development workflow (status, list_templates, select_template, check, uncheck, skip, reset, set_issue, clear_issue, check_guards with command). Enabled via `--workflow` flag. See [Workflow docs](docs/workflow.md) |
 
 Filesystem tools (`read`, `write`, `edit`, `ls`) run on async `tokio::fs` adapters.
 
@@ -611,18 +611,18 @@ Quecto development uses the repository-local Pi workflow checklist:
 2 - Write/update unit tests (run a quick smoke check; full suite runs on push)
 3 - Ensure new/modified tests FAIL (RED) — quick targeted run only, not full suite
 4 - Implement code (GREEN)
-   - Refactor as needed for performance, security, and clean architecture before committing
-   - Re-run the relevant safety checks and ensure tests still pass
-5 - Commit
-6 - Push (pre-push hook will run tests and linting)
-7 - Create PR
-8 - Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)
-9 - Fix all valid review concerns
-10 - Push changes to remote
-11 - Reply to the reviewers comments on the PR and mark resolved (use graphql)
-12 - Run pre-merge hooks (real-LLM, machete, deny)
-13 - Merge
-14 - Move to local master and pull
+5 - Refactor (perf, security, clean arch)
+6 - Ensure tests still pass (GREEN)
+7 - Commit
+8 - Push (pre-push hook will run tests and linting)
+9 - Create PR
+10 - Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)
+11 - Fix all valid review concerns
+12 - Push changes to remote
+13 - Reply to the reviewers comments on the PR and mark resolved (use graphql)
+14 - Run pre-merge hooks (real-LLM, machete, deny)
+15 - Merge
+16 - Move to local master and pull
 
 ## Quality gates
 

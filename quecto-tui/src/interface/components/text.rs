@@ -1,7 +1,7 @@
 //! Simple text component with word wrapping.
 
-use crate::component::Component;
-use crate::utils::{self, visible_width};
+use crate::interface::component::Component;
+use crate::interface::utils::{self, visible_width};
 
 /// A text component that word-wraps its content to fit the given width.
 pub struct Text {

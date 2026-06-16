@@ -4,11 +4,11 @@
 //! models with fuzzy filtering. The currently active model is marked.
 //! Selecting a model sends a `set_model` command to the agent.
 
-use crate::component::Component;
-use crate::fuzzy::fuzzy_filter;
-use crate::keys::Key;
-use crate::theme;
-use crate::utils::{truncate_to_width, visible_width};
+use crate::interface::component::Component;
+use crate::interface::fuzzy::fuzzy_filter;
+use crate::interface::keys::Key;
+use crate::interface::theme;
+use crate::interface::utils::{truncate_to_width, visible_width};
 
 /// Well-known model identifiers, used as fallback when the caller
 /// doesn't supply a model list.

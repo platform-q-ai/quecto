@@ -183,7 +183,7 @@ fn apply_bg_code(text: &str, width: usize, bg_code: &str) -> String {
     let patched = text.replace("\x1b[0m", &reset_and_reapply);
 
     // Pad to full width.
-    let vis = crate::utils::visible_width(text);
+    let vis = crate::interface::utils::visible_width(text);
     let pad = width.saturating_sub(vis);
 
     format!("{}{}{}\x1b[0m", bg_code, patched, " ".repeat(pad))
@@ -246,7 +246,7 @@ mod tests {
     fn apply_bg_plain_text_pads_to_width() {
         let result = apply_bg("hello", 20, tool_success_bg);
         assert!(result.contains(BG_SUCCESS));
-        let vis = crate::utils::visible_width(&result);
+        let vis = crate::interface::utils::visible_width(&result);
         assert_eq!(vis, 20);
     }
 
@@ -263,7 +263,7 @@ mod tests {
     fn apply_bg_with_multiple_styled_elements() {
         let content = format!(" {} {} {} ", green("✓"), bold("$ cargo test"), dim("42ms"));
         let result = apply_bg(&content, 60, tool_success_bg);
-        let vis = crate::utils::visible_width(&result);
+        let vis = crate::interface::utils::visible_width(&result);
         assert_eq!(vis, 60);
         let occurrences = result.matches(BG_SUCCESS).count();
         assert!(occurrences >= 2);
@@ -273,20 +273,20 @@ mod tests {
     fn apply_bg_no_resets_in_plain_text() {
         let result = apply_bg("plain text", 30, tool_pending_bg);
         assert!(result.starts_with(BG_PENDING));
-        assert_eq!(crate::utils::visible_width(&result), 30);
+        assert_eq!(crate::interface::utils::visible_width(&result), 30);
     }
 
     #[test]
     fn apply_bg_error_bg_works() {
         let result = apply_bg("error!", 20, tool_error_bg);
         assert!(result.contains(BG_ERROR));
-        assert_eq!(crate::utils::visible_width(&result), 20);
+        assert_eq!(crate::interface::utils::visible_width(&result), 20);
     }
 
     #[test]
     fn apply_bg_empty_text_fills_width() {
         let result = apply_bg("", 10, tool_success_bg);
-        assert_eq!(crate::utils::visible_width(&result), 10);
+        assert_eq!(crate::interface::utils::visible_width(&result), 10);
     }
 
     #[test]

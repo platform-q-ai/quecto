@@ -248,7 +248,7 @@ Available actions:
 | `reset` | Return to selector mode |
 | `set_issue` | Record the active GitHub issue |
 | `clear_issue` | Clear the active issue |
-| `check_guards` | Evaluate all active-template guards |
+| `check_guards` | Evaluate active-template guards that match a supplied `command` |
 
 ### Template selection
 

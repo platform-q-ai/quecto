@@ -198,7 +198,7 @@ async fn step_actions_fail_clearly_without_selected_template() {
         r#"{"action":"check","step":1}"#,
         r#"{"action":"uncheck","step":1}"#,
         r#"{"action":"skip","step":1}"#,
-        r#"{"action":"check_guards"}"#,
+        r#"{"action":"check_guards","command":"git commit"}"#,
     ];
 
     for args in actions {
@@ -451,20 +451,52 @@ fn definition_exposes_only_v2_actions() {
 }
 
 #[tokio::test]
+async fn check_guards_is_command_scoped_for_multi_guard_templates() {
+    let tool = default_tool();
+    tool.execute(r#"{"action":"select_template","template":"feature"}"#)
+        .await
+        .unwrap();
+    for step in 1..=6 {
+        tool.execute(&format!(r#"{{"action":"check","step":{step}}}"#))
+            .await
+            .unwrap();
+    }
+
+    let commit_result = tool
+        .execute(r#"{"action":"check_guards","command":"git commit -m test"}"#)
+        .await
+        .unwrap();
+    assert!(!commit_result.is_error, "commit guard should be satisfied");
+
+    let merge_result = tool
+        .execute(r#"{"action":"check_guards","command":"git merge master"}"#)
+        .await
+        .unwrap();
+    assert!(merge_result.is_error, "merge guard should remain active");
+    assert!(merge_result.content.contains("Complete code review"));
+}
+
+#[tokio::test]
 async fn check_guards_only_uses_the_selected_template() {
     let tool = tool_with_config(guarded_config(), true);
 
     tool.execute(r#"{"action":"select_template","template":"open"}"#)
         .await
         .unwrap();
-    let open_result = tool.execute(r#"{"action":"check_guards"}"#).await.unwrap();
+    let open_result = tool
+        .execute(r#"{"action":"check_guards","command":"git commit"}"#)
+        .await
+        .unwrap();
     assert!(!open_result.is_error);
     assert!(open_result.content.contains("satisfied"));
 
     tool.execute(r#"{"action":"select_template","template":"guarded"}"#)
         .await
         .unwrap();
-    let guarded_result = tool.execute(r#"{"action":"check_guards"}"#).await.unwrap();
+    let guarded_result = tool
+        .execute(r#"{"action":"check_guards","command":"git commit"}"#)
+        .await
+        .unwrap();
     assert!(guarded_result.is_error);
     assert!(
         guarded_result

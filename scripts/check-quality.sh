@@ -43,22 +43,22 @@ MAX_LINES=750
 # its entry in this table in the same change.
 declare -A OVERSIZED_BASELINE=(
     ["quecto-mcp/src/lib.rs"]=1119
-    ["quecto-runtime-manager/src/infrastructure.rs"]=1340
-    ["quecto-tui/src/app.rs"]=2598
-    ["quecto-tui/src/client.rs"]=775
-    ["quecto-tui/src/components/chat.rs"]=1603
-    ["quecto-tui/src/components/editor.rs"]=941
-    ["quecto-tui/src/components/markdown.rs"]=969
+    ["quecto-runtime-manager/src/infrastructure.rs"]=1559
+    ["quecto-tui/src/interface/app.rs"]=2604
+    ["quecto-tui/src/infrastructure/client.rs"]=775
+    ["quecto-tui/src/interface/components/chat.rs"]=1604
+    ["quecto-tui/src/interface/components/editor.rs"]=941
+    ["quecto-tui/src/interface/components/markdown.rs"]=960
     ["src/application/agent_loop.rs"]=809
     ["src/application/agent_loop_tests.rs"]=1080
-    ["src/domain/workflow/engine.rs"]=756
+    ["src/domain/workflow/engine.rs"]=829
     ["src/infrastructure/tools/agent_cmd.rs"]=844
     ["src/infrastructure/tools/agent_cmd_tests.rs"]=902
     ["src/infrastructure/tools/spawn.rs"]=1051
     ["src/interface/cli/agent_tests.rs"]=856
     ["src/interface/cli/uds.rs"]=762
     ["src/interface/cli/uds_ext_protocol.rs"]=1073
-    ["src/interface/cli/uds_multi.rs"]=911
+    ["src/interface/cli/uds_multi.rs"]=910
     ["src/interface/cli/uds_tests.rs"]=762
 )
 

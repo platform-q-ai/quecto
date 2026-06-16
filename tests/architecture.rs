@@ -277,6 +277,228 @@ fn to_snake_case(name: &str) -> String {
     out
 }
 
+const TUI_SRC: &str = "quecto-tui/src";
+const TUI_DOMAIN: &str = "quecto-tui/src/domain";
+const TUI_APPLICATION: &str = "quecto-tui/src/application";
+const TUI_INFRASTRUCTURE: &str = "quecto-tui/src/infrastructure";
+const TUI_INTERFACE: &str = "quecto-tui/src/interface";
+const TUI_ALLOWED_ROOT_RS: &[&str] = &["lib.rs", "main.rs"];
+
+#[test]
+fn tui_architecture_layers_exist() {
+    assert!(
+        Path::new(TUI_DOMAIN).exists(),
+        "quecto-tui/src/domain/ must exist"
+    );
+    assert!(
+        Path::new(TUI_APPLICATION).exists(),
+        "quecto-tui/src/application/ must exist"
+    );
+    assert!(
+        Path::new(TUI_INFRASTRUCTURE).exists(),
+        "quecto-tui/src/infrastructure/ must exist"
+    );
+    assert!(
+        Path::new(TUI_INTERFACE).exists(),
+        "quecto-tui/src/interface/ must exist"
+    );
+}
+
+#[test]
+fn tui_domain_has_no_outer_layer_imports() {
+    assert_no_imports(
+        "quecto-tui domain",
+        Path::new(TUI_DOMAIN),
+        &[
+            "crate::application",
+            "crate::infrastructure",
+            "crate::interface",
+            "super::application",
+            "super::infrastructure",
+            "super::interface",
+        ],
+    );
+}
+
+#[test]
+fn tui_application_has_no_infrastructure_or_interface_imports() {
+    assert_no_imports(
+        "quecto-tui application",
+        Path::new(TUI_APPLICATION),
+        &[
+            "crate::infrastructure",
+            "crate::interface",
+            "super::infrastructure",
+            "super::interface",
+        ],
+    );
+}
+
+#[test]
+fn tui_infrastructure_has_no_application_or_interface_imports() {
+    assert_no_imports(
+        "quecto-tui infrastructure",
+        Path::new(TUI_INFRASTRUCTURE),
+        &[
+            "crate::application",
+            "crate::interface",
+            "super::application",
+            "super::interface",
+        ],
+    );
+}
+
+#[test]
+fn tui_inner_layers_have_no_runtime_io_calls() {
+    let runtime_io = [
+        "std::fs::",
+        "tokio::fs::",
+        "std::env::",
+        "dirs::",
+        ".exists(",
+    ];
+    assert_no_imports("quecto-tui domain", Path::new(TUI_DOMAIN), &runtime_io);
+    assert_no_imports(
+        "quecto-tui application",
+        Path::new(TUI_APPLICATION),
+        &runtime_io,
+    );
+}
+
+#[test]
+fn tui_runtime_adapters_live_in_infrastructure() {
+    for adapter in ["client", "process", "render", "signals", "terminal"] {
+        let infrastructure_path = format!("{TUI_INFRASTRUCTURE}/{adapter}.rs");
+        let interface_path = format!("{TUI_INTERFACE}/{adapter}.rs");
+        assert!(
+            Path::new(&infrastructure_path).is_file(),
+            "TUI runtime adapter must live in infrastructure: {infrastructure_path}"
+        );
+        assert!(
+            !Path::new(&interface_path).exists(),
+            "TUI runtime adapter must not live in interface: {interface_path}"
+        );
+    }
+}
+
+#[test]
+fn tui_production_files_live_inside_architecture_layers() {
+    let mut misplaced = Vec::new();
+    collect_misplaced_tui_rs_files(Path::new(TUI_SRC), &mut misplaced);
+    assert!(
+        misplaced.is_empty(),
+        "quecto-tui production Rust files must live under domain/, application/, infrastructure/, or interface/; misplaced: {misplaced:?}"
+    );
+}
+
+fn collect_misplaced_tui_rs_files(dir: &Path, misplaced: &mut Vec<String>) {
+    if !dir.exists() {
+        return;
+    }
+    for entry in fs::read_dir(dir).expect("read quecto-tui src dir") {
+        let entry = entry.expect("dir entry");
+        let path = entry.path();
+        if path.is_dir() {
+            collect_misplaced_tui_rs_files(&path, misplaced);
+            continue;
+        }
+        if !path.extension().is_some_and(|ext| ext == "rs") {
+            continue;
+        }
+        let rel = path
+            .strip_prefix(TUI_SRC)
+            .expect("strip quecto-tui src prefix")
+            .to_string_lossy()
+            .replace('\\', "/");
+        let top = rel.split('/').next().unwrap_or_default();
+        let in_layer = matches!(
+            top,
+            "domain" | "application" | "infrastructure" | "interface"
+        );
+        let allowed_root = !rel.contains('/') && TUI_ALLOWED_ROOT_RS.contains(&rel.as_str());
+        if !in_layer && !allowed_root {
+            misplaced.push(rel);
+        }
+    }
+}
+
+#[test]
+fn tui_public_ports_have_contract_tests() {
+    let mut files = Vec::new();
+    collect_rs_files(Path::new(TUI_DOMAIN), &mut files);
+    collect_rs_files(Path::new(TUI_APPLICATION), &mut files);
+
+    let mut ports = BTreeSet::new();
+    for file_content in &files {
+        for line in file_content.lines().skip(1) {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix("pub trait ") {
+                if let Some(name) = rest
+                    .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .find(|part| !part.is_empty())
+                {
+                    ports.insert(name.to_string());
+                }
+            }
+        }
+    }
+
+    let contract_modules = active_contract_modules();
+    let allowlisted: BTreeSet<&str> = BTreeSet::new();
+    let missing: Vec<_> = ports
+        .into_iter()
+        .filter(|port| !allowlisted.contains(port.as_str()))
+        .filter(|port| !contract_modules.contains(&format!("tui_{}", to_snake_case(port))))
+        .collect();
+
+    assert!(
+        missing.is_empty(),
+        "public quecto-tui domain/application ports must have contract coverage in tests/contracts.rs with a tui_ prefix or an explicit allowlist entry; missing: {missing:?}"
+    );
+}
+
+#[test]
+fn tui_lib_rs_exposes_only_architecture_layers() {
+    let content = fs::read_to_string("quecto-tui/src/lib.rs").expect("read quecto-tui lib.rs");
+    let public_modules: Vec<_> = content
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| line.strip_prefix("pub mod "))
+        .map(|rest| rest.trim_end_matches(';'))
+        .collect();
+    assert_eq!(
+        public_modules,
+        ["application", "domain", "infrastructure", "interface"],
+        "quecto-tui/src/lib.rs must expose only Clean Architecture layer modules"
+    );
+    assert!(
+        !content.contains("#[path ="),
+        "quecto-tui/src/lib.rs must not re-export interface internals with #[path] shims"
+    );
+}
+
+#[test]
+fn tui_main_rs_is_thin_interface_entrypoint() {
+    let content = fs::read_to_string("quecto-tui/src/main.rs").expect("read quecto-tui main.rs");
+    assert!(
+        content.contains("quecto_tui::interface::cli") && content.lines().count() <= 10,
+        "quecto-tui/src/main.rs must stay thin and delegate to quecto_tui::interface::cli"
+    );
+}
+
+#[test]
+fn tui_lib_rs_has_deny_attributes() {
+    let content = fs::read_to_string("quecto-tui/src/lib.rs").expect("read quecto-tui lib.rs");
+    assert!(
+        content.contains("#![deny(dead_code)]"),
+        "quecto-tui/src/lib.rs must contain #![deny(dead_code)]"
+    );
+    assert!(
+        content.contains("#![deny(unused_imports)]"),
+        "quecto-tui/src/lib.rs must contain #![deny(unused_imports)]"
+    );
+}
+
 #[test]
 fn pre_push_runs_contract_tests() {
     let content = fs::read_to_string("scripts/pre-push.sh").expect("read pre-push hook");

@@ -40,6 +40,12 @@ If you pass `--workflow` without `--system`, `quecto-tui` injects a default
 coding-assistant system prompt that tells the agent to use the workflow tool.
 An explicit `--system` value overrides that default.
 
+## Startup errors
+
+If the spawned agent exits before announcing its UDS socket, `quecto-tui`
+prints a redacted snippet of the agent's stderr context (for example, missing
+provider credentials) instead of only reporting that startup failed.
+
 ## Keyboard shortcuts
 
 | Shortcut | Action |
@@ -74,7 +80,12 @@ alias for `/help`.
 
 ## Notes
 
-- Auto-discovered socket paths are validated and must live under `/tmp`,
-  `$TMPDIR`, `$XDG_RUNTIME_DIR`, or `$HOME`.
+- The library crate exposes only Clean Architecture layer modules
+  (`application`, `domain`, `infrastructure`, `interface`). Internal TUI modules
+  are reached through those layers, e.g. `quecto_tui::infrastructure::client` or
+  `quecto_tui::interface::app`; root-level `quecto_tui::client`-style shims are
+  intentionally not part of the public API.
+- Auto-discovered socket paths are validated and must be real Unix sockets under
+  canonical `/tmp`, `$TMPDIR`, `$XDG_RUNTIME_DIR`, or `$HOME` roots.
 - On exit, `quecto-tui` terminates the spawned agent process group so child
   agents are cleaned up too.

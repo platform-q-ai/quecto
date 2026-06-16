@@ -4,7 +4,7 @@ Feature: Subagent status bar widget (#525)
   So that I can monitor child agent activity without polling
 
   # These scenarios verify the SubagentBar component rendering logic.
-  # The actual component tests are in quecto-tui/src/components/subagent_bar.rs.
+  # The actual component tests are in quecto-tui/src/interface/components/subagent_bar.rs.
 
   @wip
   Scenario: SubagentBar renders nothing when empty

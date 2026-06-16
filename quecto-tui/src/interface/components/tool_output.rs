@@ -3,11 +3,11 @@
 //! Shows tool name + args as a header, with expandable result body.
 //! Edit tool results show colored diff (+/- lines).
 
-use crate::component::Component;
-use crate::theme;
-use crate::utils::truncate_to_width;
+use crate::interface::component::Component;
+use crate::interface::theme;
+use crate::interface::utils::truncate_to_width;
 #[cfg(test)]
-use crate::utils::visible_width;
+use crate::interface::utils::visible_width;
 
 /// A rendered tool execution block.
 pub struct ToolOutput {

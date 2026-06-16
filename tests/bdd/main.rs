@@ -932,6 +932,7 @@ mod subagent_widget_steps;
 mod tool_empty_args_steps;
 mod tool_output_cr_steps;
 mod truncate_steps;
+mod tui_architecture_steps;
 mod uds_steps;
 mod web_fetch_steps;
 

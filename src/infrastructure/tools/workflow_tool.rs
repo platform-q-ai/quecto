@@ -91,8 +91,12 @@ impl WorkflowTool {
                 Ok("Active issue cleared.".into())
             }
             "check_guards" => {
-                engine.check_guards().map_err(|e| e.to_string())?;
-                Ok("All workflow guards satisfied.".into())
+                let command = args
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .ok_or("missing field: command")?;
+                check_matching_guards_for_command(&engine, command)?;
+                Ok("All workflow guards for command are satisfied.".into())
             }
             _ => Err(format!("unknown action: {}", action)),
         };
@@ -260,7 +264,7 @@ impl Tool for WorkflowTool {
         ToolDefinition {
             name: "workflow".into(),
             description: "Manage the active UDS workflow template and step progression.".into(),
-            parameters_schema: r#"{"type":"object","properties":{"action":{"type":"string","enum":["status","list_templates","select_template","check","uncheck","skip","reset","set_issue","clear_issue","check_guards"]},"template":{"type":"string"},"step":{"type":"integer"},"issueNumber":{"type":"integer"},"issueTitle":{"type":"string"}},"required":["action"]}"#.into(),
+            parameters_schema: r#"{"type":"object","properties":{"action":{"type":"string","enum":["status","list_templates","select_template","check","uncheck","skip","reset","set_issue","clear_issue","check_guards"]},"template":{"type":"string"},"step":{"type":"integer"},"issueNumber":{"type":"integer"},"issueTitle":{"type":"string"},"command":{"type":"string"}},"required":["action"]}"#.into(),
         }
     }
 
@@ -302,6 +306,24 @@ impl WorkflowGuard {
     pub fn new(engine: WorkflowEngineHandle) -> Self {
         Self { engine }
     }
+}
+
+fn check_matching_guards_for_command(engine: &WorkflowEngine, command: &str) -> Result<(), String> {
+    let template = engine
+        .active_template()
+        .ok_or_else(|| "select_template before checking workflow guards".to_string())?;
+    let parsed_rules: Vec<_> = template
+        .guards
+        .iter()
+        .map(|rule| (rule, parse_patterns(&rule.commands)))
+        .collect();
+    engine
+        .check_matching_guards(|guard| {
+            parsed_rules.iter().any(|(rule, parsed_commands)| {
+                std::ptr::eq(*rule, guard) && command_matches_parsed(command, parsed_commands)
+            })
+        })
+        .map_err(|e| e.to_string())
 }
 
 impl ToolGuard for WorkflowGuard {

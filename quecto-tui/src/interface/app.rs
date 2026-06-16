@@ -9,24 +9,24 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 
-use crate::client::{Client, Command, Event};
-use crate::component::Component;
-use crate::components::autocomplete::{Autocomplete, AutocompleteResult, SlashCommand};
-use crate::components::chat::Chat;
-use crate::components::chat::ChatEntry;
-use crate::components::editor::Editor;
-use crate::components::footer::Footer;
-use crate::components::model_selector::{ModelSelector, ModelSelectorResult};
-use crate::components::notification::{Notification, NotificationStack, NotifyLevel};
-use crate::components::spinner::Spinner;
-use crate::components::subagent_bar::SubagentBar;
-use crate::components::widget::WidgetContainer;
-use crate::components::workflow_bar;
-use crate::keys::{self, Key};
-use crate::kitty::KittyProtocol;
-use crate::overlay::OverlayStack;
-use crate::terminal::Terminal;
-use crate::theme;
+use crate::infrastructure::client::{Client, Command, Event};
+use crate::infrastructure::terminal::Terminal;
+use crate::interface::component::Component;
+use crate::interface::components::autocomplete::{Autocomplete, AutocompleteResult, SlashCommand};
+use crate::interface::components::chat::Chat;
+use crate::interface::components::chat::ChatEntry;
+use crate::interface::components::editor::Editor;
+use crate::interface::components::footer::Footer;
+use crate::interface::components::model_selector::{ModelSelector, ModelSelectorResult};
+use crate::interface::components::notification::{Notification, NotificationStack, NotifyLevel};
+use crate::interface::components::spinner::Spinner;
+use crate::interface::components::subagent_bar::SubagentBar;
+use crate::interface::components::widget::WidgetContainer;
+use crate::interface::components::workflow_bar;
+use crate::interface::keys::{self, Key};
+use crate::interface::kitty::KittyProtocol;
+use crate::interface::overlay::OverlayStack;
+use crate::interface::theme;
 
 /// Tick interval for spinner animation (~12fps).
 const SPINNER_TICK: Duration = Duration::from_millis(80);
@@ -121,7 +121,7 @@ pub struct App {
     /// Whether the app should exit.
     should_exit: bool,
     /// Proper stdin buffer for escape sequence parsing.
-    stdin_buffer: crate::stdin_buffer::StdinBuffer,
+    stdin_buffer: crate::interface::stdin_buffer::StdinBuffer,
     /// Whether the agent connection is still alive.
     agent_connected: bool,
     /// Current model name (from get_state), sanitized.
@@ -169,7 +169,7 @@ impl App {
             kitty: KittyProtocol::new(),
             agent_state: AgentRunState::new(),
             should_exit: false,
-            stdin_buffer: crate::stdin_buffer::StdinBuffer::new(),
+            stdin_buffer: crate::interface::stdin_buffer::StdinBuffer::new(),
             agent_connected: true,
             current_model: None,
             model_selector: None,
@@ -208,7 +208,7 @@ impl App {
             .await;
 
         // Set up SIGWINCH handler.
-        let mut resize_rx = crate::signals::sigwinch_stream().await;
+        let mut resize_rx = crate::infrastructure::signals::sigwinch_stream().await;
 
         // Set up stdin reader (async, byte-level).
         let (stdin_tx, mut stdin_rx) = mpsc::channel::<Vec<u8>>(64);
@@ -261,7 +261,7 @@ impl App {
                         }
                     }
                     // Filter Kitty key release events.
-                    if self.kitty.active && crate::kitty::is_key_release(&bytes) {
+                    if self.kitty.active && crate::interface::kitty::is_key_release(&bytes) {
                         continue;
                     }
                     // Feed bytes into the proper StdinBuffer.
@@ -475,7 +475,7 @@ impl App {
                 // Suspend (Ctrl+Z).
                 self.kitty.cleanup();
                 self.terminal.show_cursor();
-                crate::signals::suspend();
+                crate::infrastructure::signals::suspend();
                 // Resumed — re-enter raw mode.
                 self.terminal.enter_raw_mode();
                 self.terminal.hide_cursor();
@@ -777,13 +777,15 @@ impl App {
                             agent_id.chars().filter(|c| !c.is_control()).collect();
                         self.subagent_local.insert(
                             sanitized.clone(),
-                            TrackedSubagent::new(crate::client::SubagentInfoEvent {
-                                agent_id: sanitized,
-                                status: "starting".to_string(),
-                                last_tool: None,
-                                last_error: None,
-                                pid: 0,
-                            }),
+                            TrackedSubagent::new(
+                                crate::infrastructure::client::SubagentInfoEvent {
+                                    agent_id: sanitized,
+                                    status: "starting".to_string(),
+                                    last_tool: None,
+                                    last_error: None,
+                                    pid: 0,
+                                },
+                            ),
                         );
                         self.rebuild_subagent_bar();
                     }
@@ -797,13 +799,13 @@ impl App {
             } => {
                 // Always call complete_tool — it's a no-op if start was
                 // suppressed (no matching tool_call_id in chat entries).
-                let result_text = crate::client::extract_result_text(&result);
+                let result_text = crate::infrastructure::client::extract_result_text(&result);
                 self.chat
                     .complete_tool(&tool_call_id, &result_text, is_error, None);
                 // Update local subagent state on spawn completion.
                 if tool_name == "spawn" && !is_error {
                     // Extract agent_id from the result text ("Subagent 'X' is running...")
-                    let result_text = crate::client::extract_result_text(&result);
+                    let result_text = crate::infrastructure::client::extract_result_text(&result);
                     if let Some(start) = result_text.find('\'') {
                         if let Some(end) = result_text[start + 1..].find('\'') {
                             let agent_id = &result_text[start + 1..start + 1 + end];
@@ -824,18 +826,17 @@ impl App {
                     spinner.set_message("Working... (Esc to interrupt)");
                 }
             }
-            Event::AgentEnd { .. } => {
-                // Abort-aware end: if there are pending aborts, this AgentEnd
-                // is from an aborted run and should be ignored (#502).
-                if self.agent_state.end() {
-                    self.footer.set_streaming(false);
-                    self.spinner = None;
-                    self.chat.finalize_assistant();
+            // Abort-aware end: if there are pending aborts, this AgentEnd
+            // is from an aborted run and should be ignored (#502).
+            Event::AgentEnd { .. } if self.agent_state.end() => {
+                self.footer.set_streaming(false);
+                self.spinner = None;
+                self.chat.finalize_assistant();
 
-                    // Workflow auto-continue / completion nudge (#590).
-                    self.maybe_send_workflow_followup();
-                }
+                // Workflow auto-continue / completion nudge (#590).
+                self.maybe_send_workflow_followup();
             }
+            Event::AgentEnd { .. } => {}
             Event::Response {
                 command,
                 success,
@@ -880,7 +881,7 @@ impl App {
                     if let Some(data) = &data {
                         if let Some(arr) = data.get("subagents") {
                             if let Ok(infos) = serde_json::from_value::<
-                                Vec<crate::client::SubagentInfoEvent>,
+                                Vec<crate::infrastructure::client::SubagentInfoEvent>,
                             >(arr.clone())
                             {
                                 self.update_subagent_bar(infos);
@@ -980,7 +981,10 @@ impl App {
         }
     }
 
-    fn update_subagent_bar(&mut self, subagents: Vec<crate::client::SubagentInfoEvent>) {
+    fn update_subagent_bar(
+        &mut self,
+        subagents: Vec<crate::infrastructure::client::SubagentInfoEvent>,
+    ) {
         // Merge server data with existing local state to preserve exited_at
         // timestamps. New entries are inserted; entries absent from the
         // server push are removed unless they have an active grace period.
@@ -1013,7 +1017,7 @@ impl App {
         if self.subagent_local.is_empty() {
             self.widgets_above.clear("subagents");
         } else {
-            let infos: Vec<crate::client::SubagentInfoEvent> = self
+            let infos: Vec<crate::infrastructure::client::SubagentInfoEvent> = self
                 .subagent_local
                 .values()
                 .map(|t| t.info.clone())
@@ -1261,7 +1265,7 @@ impl App {
             for i in 0..overlay_height {
                 let row = start_row + i;
                 if row < lines.len() && i < selector_lines.len() {
-                    lines[row] = crate::overlay::splice_line(
+                    lines[row] = crate::interface::overlay::splice_line(
                         &lines[row],
                         &selector_lines[i],
                         start_col,
@@ -1274,8 +1278,8 @@ impl App {
 
         // Enforce width on every line.
         for line in &mut lines {
-            if crate::utils::visible_width(line) > width {
-                *line = crate::utils::truncate_to_width(line, width, None);
+            if crate::interface::utils::visible_width(line) > width {
+                *line = crate::interface::utils::truncate_to_width(line, width, None);
             }
         }
 
@@ -1463,7 +1467,7 @@ fn apply_selection_highlight(selection: &Option<TextSelection>, lines: &mut [Str
             let line_end = if row_idx == er {
                 ec
             } else {
-                crate::utils::visible_width(&lines[row_idx as usize]) as u16
+                crate::interface::utils::visible_width(&lines[row_idx as usize]) as u16
             };
             lines[row_idx as usize] =
                 apply_line_highlight(&lines[row_idx as usize], line_start, line_end);
@@ -1741,13 +1745,13 @@ fn sanitize_agent_id(id: &str) -> String {
 /// Subagent entry with optional expiry timestamp (#540).
 #[derive(Debug, Clone)]
 struct TrackedSubagent {
-    info: crate::client::SubagentInfoEvent,
+    info: crate::infrastructure::client::SubagentInfoEvent,
     /// When the subagent entered the "exited" state. `None` if still active.
     exited_at: Option<tokio::time::Instant>,
 }
 
 impl TrackedSubagent {
-    fn new(info: crate::client::SubagentInfoEvent) -> Self {
+    fn new(info: crate::infrastructure::client::SubagentInfoEvent) -> Self {
         let exited_at = if info.status == STATUS_EXITED {
             Some(tokio::time::Instant::now())
         } else {
@@ -1757,7 +1761,7 @@ impl TrackedSubagent {
     }
 
     /// Update the info, recording exited_at on transition to "exited".
-    fn update_info(&mut self, new_info: crate::client::SubagentInfoEvent) {
+    fn update_info(&mut self, new_info: crate::infrastructure::client::SubagentInfoEvent) {
         if new_info.status == STATUS_EXITED && self.exited_at.is_none() {
             self.exited_at = Some(tokio::time::Instant::now());
         } else if new_info.status != STATUS_EXITED {
@@ -2359,7 +2363,7 @@ mod tests {
     fn make_tracked(id: &str, status: &str) -> (String, super::TrackedSubagent) {
         (
             id.to_string(),
-            super::TrackedSubagent::new(crate::client::SubagentInfoEvent {
+            super::TrackedSubagent::new(crate::infrastructure::client::SubagentInfoEvent {
                 agent_id: id.to_string(),
                 status: status.to_string(),
                 last_tool: None,
@@ -2445,7 +2449,7 @@ mod tests {
 
     #[test]
     fn tracked_subagent_new_sets_exited_at_for_exited() {
-        let entry = super::TrackedSubagent::new(crate::client::SubagentInfoEvent {
+        let entry = super::TrackedSubagent::new(crate::infrastructure::client::SubagentInfoEvent {
             agent_id: "w1".into(),
             status: "exited".into(),
             last_tool: None,
@@ -2457,7 +2461,7 @@ mod tests {
 
     #[test]
     fn tracked_subagent_new_no_exited_at_for_running() {
-        let entry = super::TrackedSubagent::new(crate::client::SubagentInfoEvent {
+        let entry = super::TrackedSubagent::new(crate::infrastructure::client::SubagentInfoEvent {
             agent_id: "w1".into(),
             status: "running".into(),
             last_tool: None,
@@ -2469,16 +2473,17 @@ mod tests {
 
     #[test]
     fn tracked_subagent_update_sets_exited_at_on_transition() {
-        let mut entry = super::TrackedSubagent::new(crate::client::SubagentInfoEvent {
-            agent_id: "w1".into(),
-            status: "running".into(),
-            last_tool: None,
-            last_error: None,
-            pid: 0,
-        });
+        let mut entry =
+            super::TrackedSubagent::new(crate::infrastructure::client::SubagentInfoEvent {
+                agent_id: "w1".into(),
+                status: "running".into(),
+                last_tool: None,
+                last_error: None,
+                pid: 0,
+            });
         assert!(entry.exited_at.is_none());
 
-        entry.update_info(crate::client::SubagentInfoEvent {
+        entry.update_info(crate::infrastructure::client::SubagentInfoEvent {
             agent_id: "w1".into(),
             status: "exited".into(),
             last_tool: None,
@@ -2490,16 +2495,17 @@ mod tests {
 
     #[test]
     fn tracked_subagent_update_clears_exited_at_on_revival() {
-        let mut entry = super::TrackedSubagent::new(crate::client::SubagentInfoEvent {
-            agent_id: "w1".into(),
-            status: "exited".into(),
-            last_tool: None,
-            last_error: None,
-            pid: 0,
-        });
+        let mut entry =
+            super::TrackedSubagent::new(crate::infrastructure::client::SubagentInfoEvent {
+                agent_id: "w1".into(),
+                status: "exited".into(),
+                last_tool: None,
+                last_error: None,
+                pid: 0,
+            });
         assert!(entry.exited_at.is_some());
 
-        entry.update_info(crate::client::SubagentInfoEvent {
+        entry.update_info(crate::infrastructure::client::SubagentInfoEvent {
             agent_id: "w1".into(),
             status: "running".into(),
             last_tool: None,

@@ -471,11 +471,10 @@ async fn handle_client(args: ClientHandlerArgs) {
                     }
                 },
                 t = targeted_rx.recv() => match t {
-                    Some(line) => {
-                        if writer.write_all(line.as_bytes()).await.is_err() {
-                            break;
-                        }
+                    Some(line) if writer.write_all(line.as_bytes()).await.is_err() => {
+                        break;
                     }
+                    Some(_) => {}
                     None => {
                         // Sender side closed (client registry
                         // entry dropped). Fall through — broadcast

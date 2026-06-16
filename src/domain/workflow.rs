@@ -83,23 +83,12 @@ pub enum WorkflowMode {
     Complete,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WorkflowRun {
     pub template_id: Option<String>,
     pub template_index: Option<usize>,
     pub done: Vec<bool>,
     pub active_issue: Option<(u32, String)>,
-}
-
-impl Default for WorkflowRun {
-    fn default() -> Self {
-        Self {
-            template_id: None,
-            template_index: None,
-            done: vec![],
-            active_issue: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -3,8 +3,8 @@
 //! Widgets are keyed by name and can be set, updated, or cleared.
 //! The widget container renders all active widgets in insertion order.
 
-use crate::component::Component;
-use crate::components::text::Text;
+use crate::interface::component::Component;
+use crate::interface::components::text::Text;
 use std::collections::BTreeMap;
 
 /// A single widget entry.
@@ -121,7 +121,7 @@ impl Component for ReplaceableSlot {
         }
     }
 
-    fn handle_input(&mut self, key: &crate::keys::Key) -> bool {
+    fn handle_input(&mut self, key: &crate::interface::keys::Key) -> bool {
         if let Some(custom) = &mut self.custom_component {
             custom.handle_input(key)
         } else {

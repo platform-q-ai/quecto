@@ -4,8 +4,8 @@
 //! content at a specific row/col position. Multiple overlays stack; the
 //! topmost visible overlay captures keyboard focus.
 
-use crate::component::Component;
-use crate::utils::visible_width;
+use crate::interface::component::Component;
+use crate::interface::utils::visible_width;
 
 /// Anchor position for overlay placement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -345,7 +345,7 @@ fn skip_visible_chars(s: &str, n: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::text::Text;
+    use crate::interface::components::text::Text;
 
     #[test]
     fn overlay_composites_at_position() {
