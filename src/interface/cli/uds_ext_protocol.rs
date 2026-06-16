@@ -48,7 +48,7 @@ impl ForwarderHandle {
             let _ = tx.send(reason);
         }
         // Drop self — JoinHandle detaches, task completes on its own.
-        let _ = self.join_handle;
+        std::mem::drop(self.join_handle);
     }
 }
 

@@ -3,7 +3,8 @@
 //! Spawns (or connects to) a `quecto agent --mode uds` process and provides
 //! a rich interactive terminal interface over the UDS JSON-lines protocol.
 
-use std::path::PathBuf;
+use std::os::unix::fs::FileTypeExt;
+use std::path::{Component, Path, PathBuf};
 
 /// Parsed CLI flags for quecto-tui.
 struct CliFlags {
@@ -25,7 +26,9 @@ pub fn run(args: Vec<String>) -> i32 {
         .build()
         .expect("failed to create tokio runtime");
 
-    rt.block_on(async move { run_tui(flags).await })
+    let exit_code = rt.block_on(async move { run_tui(flags).await });
+    rt.shutdown_timeout(std::time::Duration::from_millis(100));
+    exit_code
 }
 
 /// Parse CLI flags from command-line arguments.
@@ -137,14 +140,14 @@ async fn run_tui(flags: CliFlags) -> i32 {
     }));
 
     // Connect to the agent.
-    let client = match crate::interface::client::Client::connect(&socket).await {
+    let client = match crate::infrastructure::client::Client::connect(&socket).await {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Failed to connect to agent: {e}");
             if let Some(ref mut child) = _child {
-                crate::interface::process::terminate_child(
+                crate::infrastructure::process::terminate_child(
                     child,
-                    crate::interface::process::TERMINATE_GRACE_MS,
+                    crate::infrastructure::process::TERMINATE_GRACE_MS,
                 )
                 .await;
             }
@@ -153,16 +156,16 @@ async fn run_tui(flags: CliFlags) -> i32 {
     };
 
     // Run the TUI.
-    let terminal = crate::interface::terminal::Terminal::new();
+    let terminal = crate::infrastructure::terminal::Terminal::new();
     let mut app = crate::interface::app::App::new(terminal, client);
     let exit_code = app.run().await;
 
     // Kill the child agent process group on TUI exit (catches subagents too).
     // Uses checked PID conversion to prevent u32→i32 wrapping (see #464).
     if let Some(ref mut child) = _child {
-        crate::interface::process::terminate_child(
+        crate::infrastructure::process::terminate_child(
             child,
-            crate::interface::process::TERMINATE_GRACE_MS,
+            crate::infrastructure::process::TERMINATE_GRACE_MS,
         )
         .await;
     }
@@ -232,7 +235,7 @@ async fn spawn_agent(flags: &CliFlags) -> Result<(PathBuf, tokio::process::Child
 
         match result {
             Ok(Ok(0)) => {
-                let _ = child.kill().await;
+                terminate_spawned_agent(&mut child).await;
                 return Err(format_agent_startup_failure(
                     "agent exited before announcing socket",
                     &stderr_context,
@@ -245,20 +248,23 @@ async fn spawn_agent(flags: &CliFlags) -> Result<(PathBuf, tokio::process::Child
                 }
                 if let Some(path_str) = trimmed.strip_prefix(socket_prefix) {
                     let path = PathBuf::from(path_str.trim());
-                    // Validate the socket path is under a safe directory
-                    validate_socket_path(&path)?;
+                    // Validate the socket path is under a safe directory.
+                    if let Err(e) = validate_socket_path(&path) {
+                        terminate_spawned_agent(&mut child).await;
+                        return Err(e);
+                    }
                     return Ok((path, child));
                 }
             }
             Ok(Err(e)) => {
-                let _ = child.kill().await;
+                terminate_spawned_agent(&mut child).await;
                 return Err(format_agent_startup_failure(
                     &format!("error reading agent stderr: {e}"),
                     &stderr_context,
                 ));
             }
             Err(_) => {
-                let _ = child.kill().await;
+                terminate_spawned_agent(&mut child).await;
                 return Err(format_agent_startup_failure(
                     "timeout waiting for agent socket path",
                     &stderr_context,
@@ -268,6 +274,14 @@ async fn spawn_agent(flags: &CliFlags) -> Result<(PathBuf, tokio::process::Child
     }
 }
 
+async fn terminate_spawned_agent(child: &mut tokio::process::Child) {
+    crate::infrastructure::process::terminate_child(
+        child,
+        crate::infrastructure::process::TERMINATE_GRACE_MS,
+    )
+    .await;
+}
+
 const MAX_STARTUP_STDERR_LINES: usize = 20;
 const MAX_STARTUP_STDERR_LINE_CHARS: usize = 1_000;
 
@@ -275,15 +289,140 @@ fn remember_stderr_line(lines: &mut Vec<String>, line: &str) {
     if lines.len() == MAX_STARTUP_STDERR_LINES {
         lines.remove(0);
     }
-    lines.push(truncate_stderr_line(line));
+    lines.push(truncate_stderr_line(&redact_stderr_line(line)));
 }
 
 fn truncate_stderr_line(line: &str) -> String {
     let mut truncated: String = line.chars().take(MAX_STARTUP_STDERR_LINE_CHARS).collect();
     if truncated.len() < line.len() {
-        truncated.push_str("…");
+        truncated.push('…');
     }
     truncated
+}
+
+fn redact_stderr_line(line: &str) -> String {
+    let mut redacted = redact_named_secret_values(line);
+    redacted = redact_bearer_tokens(&redacted);
+    redact_secret_tokens(&redacted)
+}
+
+fn redact_named_secret_values(line: &str) -> String {
+    let names = [
+        "api_key",
+        "apikey",
+        "apiKey",
+        "access_token",
+        "refresh_token",
+        "id_token",
+        "authorization",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GOOGLE_API_KEY",
+    ];
+    let mut out = line.to_string();
+    for name in names {
+        out = redact_value_after_name(&out, name);
+    }
+    out
+}
+
+fn redact_value_after_name(input: &str, name: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let lower = input.to_ascii_lowercase();
+    let needle = name.to_ascii_lowercase();
+    let mut cursor = 0;
+
+    while let Some(rel) = lower[cursor..].find(&needle) {
+        let start = cursor + rel;
+        let after_name = start + needle.len();
+        let Some(sep_rel) = input[after_name..].find([':', '=']) else {
+            break;
+        };
+        let sep = after_name + sep_rel;
+        out.push_str(&input[cursor..=sep]);
+        let mut value_start = sep + 1;
+        while input[value_start..].starts_with(char::is_whitespace) {
+            out.push(input[value_start..].chars().next().unwrap());
+            value_start += input[value_start..].chars().next().unwrap().len_utf8();
+        }
+        let quote = input[value_start..]
+            .chars()
+            .next()
+            .filter(|c| *c == '"' || *c == '\'');
+        if let Some(q) = quote {
+            out.push(q);
+            value_start += q.len_utf8();
+        }
+        out.push_str("[REDACTED]");
+        let mut value_end = value_start;
+        for (idx, ch) in input[value_start..].char_indices() {
+            let end = value_start + idx;
+            let stop = if quote.is_some() {
+                Some(ch) == quote
+            } else {
+                ch.is_whitespace() || ch == ',' || ch == '}'
+            };
+            if stop {
+                value_end = end;
+                break;
+            }
+            value_end = end + ch.len_utf8();
+        }
+        if let Some(q) = quote {
+            if input[value_end..].starts_with(q) {
+                out.push(q);
+                value_end += q.len_utf8();
+            }
+        }
+        cursor = value_end;
+    }
+    out.push_str(&input[cursor..]);
+    out
+}
+
+fn redact_bearer_tokens(input: &str) -> String {
+    input
+        .split_whitespace()
+        .scan(false, |previous_was_bearer, token| {
+            let current = if *previous_was_bearer {
+                "[REDACTED]".to_string()
+            } else {
+                token.to_string()
+            };
+            *previous_was_bearer = token.eq_ignore_ascii_case("bearer");
+            Some(current)
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn redact_secret_tokens(input: &str) -> String {
+    input
+        .split_whitespace()
+        .map(|token| {
+            let trimmed =
+                token.trim_matches(|c: char| c == '"' || c == '\'' || c == ',' || c == ';');
+            if looks_like_secret_token(trimmed) {
+                token.replace(trimmed, "[REDACTED]")
+            } else {
+                token.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn looks_like_secret_token(token: &str) -> bool {
+    let prefixes = [
+        "sk-",
+        "sk_ant_",
+        "sk-ant-",
+        "AIza",
+        "ghp_",
+        "github_pat_",
+        "xoxb-",
+    ];
+    token.len() >= 16 && prefixes.iter().any(|prefix| token.starts_with(prefix))
 }
 
 fn format_agent_startup_failure(reason: &str, stderr_lines: &[String]) -> String {
@@ -299,39 +438,69 @@ fn format_agent_startup_failure(reason: &str, stderr_lines: &[String]) -> String
 /// Accepts paths under /tmp, $TMPDIR, $XDG_RUNTIME_DIR, or the user's home.
 /// Rejects absolute paths under system directories to prevent the TUI from
 /// connecting to arbitrary sockets if the agent binary is compromised.
-fn validate_socket_path(path: &std::path::Path) -> Result<(), String> {
+fn validate_socket_path(path: &Path) -> Result<(), String> {
     let path_str = path.to_string_lossy();
 
-    // Must be absolute
     if !path.is_absolute() {
         return Err(format!("socket path is not absolute: {path_str}"));
     }
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(format!("socket path must not contain '..': {path_str}"));
+    }
 
-    // Allow /tmp, /run/user/*, or any path under user's home
-    let allowed_prefixes: Vec<PathBuf> = {
-        let mut v = vec![PathBuf::from("/tmp")];
-        if let Ok(tmpdir) = std::env::var("TMPDIR") {
-            v.push(PathBuf::from(tmpdir));
-        }
-        if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
-            v.push(PathBuf::from(xdg));
-        }
-        if let Some(home) = std::env::var_os("HOME") {
-            v.push(PathBuf::from(home));
-        }
-        v
-    };
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|e| format!("socket path '{}' is not accessible: {e}", path_str))?;
+    if metadata.file_type().is_symlink() {
+        return Err(format!("socket path must not be a symlink: {path_str}"));
+    }
+    if !metadata.file_type().is_socket() {
+        return Err(format!("socket path is not a Unix socket: {path_str}"));
+    }
 
-    for prefix in &allowed_prefixes {
-        if path.starts_with(prefix) {
-            return Ok(());
-        }
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("socket path has no parent directory: {path_str}"))?;
+    let canonical_parent = std::fs::canonicalize(parent).map_err(|e| {
+        format!(
+            "socket parent '{}' is not accessible: {e}",
+            parent.display()
+        )
+    })?;
+    let allowed_roots = canonical_allowed_socket_roots();
+
+    if allowed_roots
+        .iter()
+        .any(|prefix| canonical_parent.starts_with(prefix))
+    {
+        return Ok(());
     }
 
     Err(format!(
         "socket path '{}' is not under an expected directory (/tmp, $TMPDIR, $XDG_RUNTIME_DIR, $HOME)",
         path_str
     ))
+}
+
+fn canonical_allowed_socket_roots() -> Vec<PathBuf> {
+    let mut roots = vec![PathBuf::from("/tmp")];
+    if let Ok(tmpdir) = std::env::var("TMPDIR") {
+        roots.push(PathBuf::from(tmpdir));
+    }
+    if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
+        roots.push(PathBuf::from(xdg));
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        roots.push(PathBuf::from(home));
+    }
+
+    roots
+        .into_iter()
+        .filter(|root| root.is_absolute())
+        .filter_map(|root| std::fs::canonicalize(root).ok())
+        .collect()
 }
 
 #[cfg(test)]
@@ -411,5 +580,55 @@ mod tests {
     fn startup_failure_without_stderr_keeps_original_reason() {
         let message = format_agent_startup_failure("timeout waiting for agent socket path", &[]);
         assert_eq!(message, "timeout waiting for agent socket path");
+    }
+
+    #[test]
+    fn stderr_context_redacts_common_secret_shapes() {
+        let mut lines = Vec::new();
+        remember_stderr_line(
+            &mut lines,
+            "Authorization: Bearer sk-ant-secret-token api_key=sk-test-secret-token",
+        );
+
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("[REDACTED]"));
+        assert!(!lines[0].contains("sk-ant-secret-token"));
+        assert!(!lines[0].contains("sk-test-secret-token"));
+    }
+
+    #[test]
+    fn socket_path_rejects_parent_dir_components() {
+        let path = PathBuf::from("/tmp/../var/run/quecto.sock");
+        let err = validate_socket_path(&path).unwrap_err();
+        assert!(err.contains("must not contain '..'"));
+    }
+
+    #[test]
+    fn socket_path_accepts_real_socket_under_tmp() {
+        let dir = std::env::temp_dir().join(format!(
+            "quecto-tui-cli-test-{}-{}",
+            std::process::id(),
+            unique_test_suffix()
+        ));
+        std::fs::create_dir(&dir).expect("create temp socket dir");
+        let socket = dir.join("agent.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket).expect("bind test socket");
+
+        let result = validate_socket_path(&socket);
+
+        drop(listener);
+        let _ = std::fs::remove_file(&socket);
+        let _ = std::fs::remove_dir(&dir);
+        assert!(
+            result.is_ok(),
+            "expected socket path to validate: {result:?}"
+        );
+    }
+
+    fn unique_test_suffix() -> u128 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time after epoch")
+            .as_nanos()
     }
 }

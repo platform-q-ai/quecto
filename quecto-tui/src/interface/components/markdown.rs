@@ -147,11 +147,10 @@ impl Markdown {
                         in_table = false;
                         table_rows.clear();
                     }
-                    TagEnd::TableHead | TagEnd::TableRow => {
-                        if !current_row.is_empty() {
-                            table_rows.push(std::mem::take(&mut current_row));
-                        }
+                    TagEnd::TableHead | TagEnd::TableRow if !current_row.is_empty() => {
+                        table_rows.push(std::mem::take(&mut current_row));
                     }
+                    TagEnd::TableHead | TagEnd::TableRow => {}
                     TagEnd::TableCell => {
                         let sanitized = sanitize_for_display(&current_cell);
                         current_cell.clear();
@@ -388,11 +387,7 @@ fn shrink_columns(widths: &mut [usize], avail: usize) {
             .map(|(&w, _)| w)
             .sum();
         let remaining = avail.saturating_sub(frozen_total);
-        let fair = if unfrozen_count > 0 {
-            remaining / unfrozen_count
-        } else {
-            0
-        };
+        let fair = remaining / unfrozen_count;
 
         let mut changed = false;
         for i in 0..n {
@@ -451,11 +446,7 @@ fn render_table(rows: &[Vec<String>], max_width: usize) -> Vec<String> {
         if sum > 0 {
             shrink_columns(&mut col_widths, avail);
         } else {
-            let min_per_col = if num_cols > 0 {
-                (avail / num_cols).max(1)
-            } else {
-                3
-            };
+            let min_per_col = (avail / num_cols).max(1);
             col_widths.fill(min_per_col);
         }
     }

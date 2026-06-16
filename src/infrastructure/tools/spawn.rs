@@ -163,7 +163,7 @@ impl SpawnTool {
         let config_path = args
             .get("config")
             .and_then(|v| v.as_str())
-            .map(|s| validate_config_path(s))
+            .map(validate_config_path)
             .transpose()?;
 
         let workflow = args

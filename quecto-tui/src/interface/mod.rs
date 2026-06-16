@@ -5,7 +5,6 @@
 
 pub mod app;
 pub mod cli;
-pub mod client;
 pub mod component;
 pub mod components;
 pub mod extension;
@@ -13,11 +12,7 @@ pub mod fuzzy;
 pub mod keys;
 pub mod kitty;
 pub mod overlay;
-pub mod process;
-pub mod render;
-pub mod signals;
 pub mod stdin_buffer;
-pub mod terminal;
 pub mod theme;
 pub mod themes;
 pub mod utils;

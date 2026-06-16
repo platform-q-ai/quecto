@@ -28,7 +28,7 @@ pub fn build_router<G: AgentGateway + Clone + 'static>(gateway: G) -> Router {
         .route("/state", get(state_handler::<G>))
         .route("/messages", get(messages_handler::<G>))
         .route("/messages/tail", get(messages_tail_handler::<G>))
-        .route("/audit/events", get(audit_events_handler::<G>))
+        .route("/audit/events", get(audit_events_handler))
         .route("/stats", get(stats_handler::<G>))
         .route("/ws", get(ws_handler::<G>))
         .layer(CorsLayer::permissive())
@@ -158,9 +158,7 @@ struct AuditEventsQuery {
     limit: Option<usize>,
 }
 
-async fn audit_events_handler<G: AgentGateway>(
-    Query(params): Query<AuditEventsQuery>,
-) -> impl IntoResponse {
+async fn audit_events_handler(Query(params): Query<AuditEventsQuery>) -> impl IntoResponse {
     let after = params.after.unwrap_or(0);
     let limit = params.limit.unwrap_or(500).min(2_000);
 

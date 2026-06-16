@@ -3,7 +3,7 @@
 //! Renders one line per spawned subagent with a progress-bar style indicator.
 //! Hidden when no subagents exist.
 
-use crate::interface::client::SubagentInfoEvent;
+use crate::infrastructure::client::SubagentInfoEvent;
 use crate::interface::component::Component;
 use crate::interface::theme;
 

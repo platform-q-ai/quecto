@@ -19,6 +19,7 @@ Feature: TUI Clean Architecture and executable BDD enforcement
     Then the quecto-tui domain source should not import outer layers
     And the quecto-tui application source should not import infrastructure or interface layers
     And the quecto-tui infrastructure source should not import application or interface layers
+    And the quecto-tui infrastructure layer should own runtime adapters
 
   Scenario: quecto-tui production files live inside Clean Architecture layers
     Then every quecto-tui production Rust file should be under a Clean Architecture layer

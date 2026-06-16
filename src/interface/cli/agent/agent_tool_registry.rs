@@ -88,7 +88,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
     registry.register(Arc::new(AgentCmdTool::new(subagent_registry)));
     // Build a workflow event emitter from the broadcast channel (#598).
     let wf_emitter =
-        broadcast_tx.map(|tx| crate::infrastructure::tools::workflow_tool::broadcast_emitter(tx));
+        broadcast_tx.map(crate::infrastructure::tools::workflow_tool::broadcast_emitter);
     let wf_state = if flags.workflow {
         match crate::interface::shared::register_workflow_tool(
             &mut registry,

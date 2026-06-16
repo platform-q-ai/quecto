@@ -560,7 +560,7 @@ External tool binaries (`rg`, `fd`) are resolved via `ensure_tool`: system PATH 
 | `agent_cmd` | Send commands to spawned UDS subagents: `prompt`, `steer`, `follow_up`, `abort`, `kill`, `get_state`, `get_messages`, `get_messages_tail`, `get_session_stats`, `get_subagents`, `get_extensions`, `set_model`, `clear_history`, `reload_extensions` |
 | `web_search` | Optional: search the web via Brave Search or DuckDuckGo when `tools.web.brave.enabled` or `tools.web.duckduckgo.enabled` is true |
 | `web_fetch` | Optional: fetch a URL and return readable text when `tools.web.fetch.enabled` is true (HTML stripped by default; `raw: true` returns the original body) |
-| `workflow` | UDS-only template-based development workflow (status, list_templates, select_template, check, uncheck, skip, reset, set_issue, clear_issue, check_guards). Enabled via `--workflow` flag. See [Workflow docs](docs/workflow.md) |
+| `workflow` | UDS-only template-based development workflow (status, list_templates, select_template, check, uncheck, skip, reset, set_issue, clear_issue, check_guards with command). Enabled via `--workflow` flag. See [Workflow docs](docs/workflow.md) |
 
 Filesystem tools (`read`, `write`, `edit`, `ls`) run on async `tokio::fs` adapters.
 

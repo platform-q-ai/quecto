@@ -123,7 +123,7 @@ Feature: E2E Real LLM Workflow V2 UDS Tests
   @done @real-llm
   Scenario: Guard blocks git commit before prerequisite steps
     When I start the real LLM UDS workflow agent
-    And I send prompt "Using the workflow tool: 1) select_template fix 2) check_guards. If you get a guard error about completing steps, reply GUARD_BLOCKED. If guards pass, reply GUARD_FAIL."
+    And I send prompt "Using the workflow tool: 1) select_template fix 2) check_guards for command git commit. If you get a guard error about completing steps, reply GUARD_BLOCKED. If guards pass, reply GUARD_FAIL."
     And I close the UDS connection
     Then the UDS agent exits with code 0
     And the agent_end messages should contain "GUARD_BLOCKED"
@@ -131,7 +131,7 @@ Feature: E2E Real LLM Workflow V2 UDS Tests
   @done @real-llm
   Scenario: Guard passes after prerequisite steps are completed
     When I start the real LLM UDS workflow agent
-    And I send prompt "Using the workflow tool: 1) select_template chore 2) check step 1 3) check step 2 4) check step 3 5) check_guards. If guards pass with 'satisfied', reply GUARD_PASS. Otherwise reply GUARD_STILL_BLOCKED."
+    And I send prompt "Using the workflow tool: 1) select_template chore 2) check step 1 3) check step 2 4) check step 3 5) check_guards for command git commit. If guards pass with 'satisfied', reply GUARD_PASS. Otherwise reply GUARD_STILL_BLOCKED."
     And I close the UDS connection
     Then the UDS agent exits with code 0
     And the agent_end messages should contain "GUARD_PASS"

@@ -366,6 +366,22 @@ fn tui_inner_layers_have_no_runtime_io_calls() {
 }
 
 #[test]
+fn tui_runtime_adapters_live_in_infrastructure() {
+    for adapter in ["client", "process", "render", "signals", "terminal"] {
+        let infrastructure_path = format!("{TUI_INFRASTRUCTURE}/{adapter}.rs");
+        let interface_path = format!("{TUI_INTERFACE}/{adapter}.rs");
+        assert!(
+            Path::new(&infrastructure_path).is_file(),
+            "TUI runtime adapter must live in infrastructure: {infrastructure_path}"
+        );
+        assert!(
+            !Path::new(&interface_path).exists(),
+            "TUI runtime adapter must not live in interface: {interface_path}"
+        );
+    }
+}
+
+#[test]
 fn tui_production_files_live_inside_architecture_layers() {
     let mut misplaced = Vec::new();
     collect_misplaced_tui_rs_files(Path::new(TUI_SRC), &mut misplaced);

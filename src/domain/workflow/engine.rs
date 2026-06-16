@@ -172,7 +172,10 @@ impl WorkflowEngine {
         WorkflowProgress {
             done,
             total,
-            percent: if total == 0 { 0 } else { (done * 100) / total },
+            percent: done
+                .checked_mul(100)
+                .and_then(|value| value.checked_div(total))
+                .unwrap_or(0),
         }
     }
 
@@ -202,9 +205,7 @@ impl WorkflowEngine {
         if !self.auto_continue || self.mode() != WorkflowMode::Active {
             return None;
         }
-        if self.current_step().is_none() {
-            return None;
-        }
+        self.current_step()?;
         Some(AUTO_CONTINUE_NUDGE.to_owned())
     }
 
@@ -221,30 +222,46 @@ impl WorkflowEngine {
     }
 
     pub fn check_guards(&self) -> Result<(), WorkflowError> {
+        self.check_matching_guards(|_| true)
+    }
+
+    pub fn check_matching_guards<F>(&self, mut applies: F) -> Result<(), WorkflowError>
+    where
+        F: FnMut(&WorkflowGuardRule) -> bool,
+    {
         if !self.guards_enabled {
             return Ok(());
         }
         let template = self.require_active_template()?;
-        for guard in &template.guards {
-            let idx = template
-                .steps
-                .iter()
-                .position(|s| s.key == guard.before_step_key)
-                .ok_or_else(|| {
-                    WorkflowError::InvalidConfig(format!(
-                        "guard references unknown step key '{}' in template '{}'",
-                        guard.before_step_key, template.id
-                    ))
-                })?;
-            for prior_idx in 0..idx {
-                if !self.run.done[prior_idx] {
-                    return Err(WorkflowError::GuardBlocked(format!(
-                        "{} Complete step {} ({}) first.",
-                        guard.message,
-                        prior_idx + 1,
-                        template.steps[prior_idx].label
-                    )));
-                }
+        for guard in template.guards.iter().filter(|guard| applies(guard)) {
+            self.check_guard_rule(template, guard)?;
+        }
+        Ok(())
+    }
+
+    fn check_guard_rule(
+        &self,
+        template: &WorkflowTemplate,
+        guard: &WorkflowGuardRule,
+    ) -> Result<(), WorkflowError> {
+        let idx = template
+            .steps
+            .iter()
+            .position(|s| s.key == guard.before_step_key)
+            .ok_or_else(|| {
+                WorkflowError::InvalidConfig(format!(
+                    "guard references unknown step key '{}' in template '{}'",
+                    guard.before_step_key, template.id
+                ))
+            })?;
+        for prior_idx in 0..idx {
+            if !self.run.done[prior_idx] {
+                return Err(WorkflowError::GuardBlocked(format!(
+                    "{} Complete step {} ({}) first.",
+                    guard.message,
+                    prior_idx + 1,
+                    template.steps[prior_idx].label
+                )));
             }
         }
         Ok(())

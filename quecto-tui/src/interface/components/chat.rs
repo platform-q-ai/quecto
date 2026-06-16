@@ -716,6 +716,7 @@ fn render_workflow(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_generic(
     lines: &mut Vec<String>,
     tool_name: &str,
@@ -1331,7 +1332,7 @@ mod tests {
 
     /// Use the shared extraction function from client.rs.
     fn extract_result_text(result: &serde_json::Value) -> String {
-        crate::interface::client::extract_result_text(result)
+        crate::infrastructure::client::extract_result_text(result)
     }
 
     /// Check that bg-colored lines (lines containing the bg ANSI code)

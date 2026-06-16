@@ -86,6 +86,28 @@ fn then_tui_infrastructure_no_application_or_interface(_world: &mut QuectoWorld)
     );
 }
 
+#[then("the quecto-tui infrastructure layer should own runtime adapters")]
+fn then_tui_infrastructure_owns_runtime_adapters(_world: &mut QuectoWorld) {
+    for adapter in ["client", "process", "render", "signals", "terminal"] {
+        let infrastructure_path = Path::new(TUI_ROOT)
+            .join("infrastructure")
+            .join(format!("{adapter}.rs"));
+        let interface_path = Path::new(TUI_ROOT)
+            .join("interface")
+            .join(format!("{adapter}.rs"));
+        assert!(
+            infrastructure_path.is_file(),
+            "runtime adapter must live in infrastructure: {}",
+            infrastructure_path.display()
+        );
+        assert!(
+            !interface_path.exists(),
+            "runtime adapter must not live in interface: {}",
+            interface_path.display()
+        );
+    }
+}
+
 #[then("every quecto-tui production Rust file should be under a Clean Architecture layer")]
 fn then_every_tui_production_file_is_layered(_world: &mut QuectoWorld) {
     let misplaced = misplaced_tui_production_files();
@@ -133,7 +155,8 @@ fn then_architecture_test_enforces_tui_layers(_world: &mut QuectoWorld) {
         content.contains("fn tui_architecture_layers_exist")
             && content.contains("fn tui_domain_has_no_outer_layer_imports")
             && content.contains("fn tui_application_has_no_infrastructure_or_interface_imports")
-            && content.contains("fn tui_infrastructure_has_no_application_or_interface_imports"),
+            && content.contains("fn tui_infrastructure_has_no_application_or_interface_imports")
+            && content.contains("fn tui_runtime_adapters_live_in_infrastructure"),
         "tests/architecture.rs must enforce quecto-tui layer existence and dependency direction"
     );
 }
