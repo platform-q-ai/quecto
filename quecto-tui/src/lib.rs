@@ -1,21 +1,41 @@
+#![deny(dead_code)]
+#![deny(unused_imports)]
+
+#[path = "interface/app.rs"]
 pub mod app;
 pub mod application;
+#[path = "interface/client.rs"]
 pub mod client;
+#[path = "interface/component.rs"]
 pub mod component;
+#[path = "interface/components/mod.rs"]
 pub mod components;
 pub mod domain;
+#[path = "interface/extension.rs"]
 pub mod extension;
+#[path = "interface/fuzzy.rs"]
 pub mod fuzzy;
 pub mod infrastructure;
 pub mod interface;
+#[path = "interface/keys.rs"]
 pub mod keys;
+#[path = "interface/kitty.rs"]
 pub mod kitty;
+#[path = "interface/overlay.rs"]
 pub mod overlay;
+#[path = "interface/process.rs"]
 pub mod process;
+#[path = "interface/render.rs"]
 pub mod render;
+#[path = "interface/signals.rs"]
 pub mod signals;
+#[path = "interface/stdin_buffer.rs"]
 pub mod stdin_buffer;
+#[path = "interface/terminal.rs"]
 pub mod terminal;
+#[path = "interface/theme.rs"]
 pub mod theme;
+#[path = "interface/themes.rs"]
 pub mod themes;
+#[path = "interface/utils.rs"]
 pub mod utils;

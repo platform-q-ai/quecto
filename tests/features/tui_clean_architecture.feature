@@ -18,7 +18,15 @@ Feature: TUI Clean Architecture and executable BDD enforcement
   Scenario: quecto-tui layer dependencies point inward
     Then the quecto-tui domain source should not import outer layers
     And the quecto-tui application source should not import infrastructure or interface layers
-    And the quecto-tui infrastructure source should not import interface layers
+    And the quecto-tui infrastructure source should not import application or interface layers
+
+  Scenario: quecto-tui production files live inside Clean Architecture layers
+    Then every quecto-tui production Rust file should be under a Clean Architecture layer
+
+  Scenario: quecto-tui architecture is enforced by the same architecture test target as quecto
+    Then the architecture test target should enforce quecto-tui Clean Architecture layers
+    And the architecture test target should enforce quecto-tui runtime I/O boundaries
+    And the architecture test target should enforce quecto-tui root file placement
 
   Scenario: TUI standards are executable through BDD
     Then the BDD runner should execute TUI scenarios tagged wip or done

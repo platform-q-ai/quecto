@@ -73,9 +73,99 @@ fn then_tui_application_imports_only_inward(_world: &mut QuectoWorld) {
     );
 }
 
-#[then("the quecto-tui infrastructure source should not import interface layers")]
-fn then_tui_infrastructure_no_interface(_world: &mut QuectoWorld) {
-    assert_no_tui_patterns("infrastructure", &["crate::interface", "super::interface"]);
+#[then("the quecto-tui infrastructure source should not import application or interface layers")]
+fn then_tui_infrastructure_no_application_or_interface(_world: &mut QuectoWorld) {
+    assert_no_tui_patterns(
+        "infrastructure",
+        &[
+            "crate::application",
+            "crate::interface",
+            "super::application",
+            "super::interface",
+        ],
+    );
+}
+
+#[then("every quecto-tui production Rust file should be under a Clean Architecture layer")]
+fn then_every_tui_production_file_is_layered(_world: &mut QuectoWorld) {
+    let misplaced = misplaced_tui_production_files();
+    assert!(
+        misplaced.is_empty(),
+        "quecto-tui production Rust files must live under domain/, application/, infrastructure/, or interface/; misplaced: {misplaced:?}"
+    );
+}
+
+#[then("the architecture test target should enforce quecto-tui Clean Architecture layers")]
+fn then_architecture_test_enforces_tui_layers(_world: &mut QuectoWorld) {
+    let content =
+        std::fs::read_to_string("tests/architecture.rs").expect("read architecture tests");
+    assert!(
+        content.contains("fn tui_architecture_layers_exist")
+            && content.contains("fn tui_domain_has_no_outer_layer_imports")
+            && content.contains("fn tui_application_has_no_infrastructure_or_interface_imports")
+            && content.contains("fn tui_infrastructure_has_no_application_or_interface_imports"),
+        "tests/architecture.rs must enforce quecto-tui layer existence and dependency direction"
+    );
+}
+
+#[then("the architecture test target should enforce quecto-tui runtime I/O boundaries")]
+fn then_architecture_test_enforces_tui_runtime_io(_world: &mut QuectoWorld) {
+    let content =
+        std::fs::read_to_string("tests/architecture.rs").expect("read architecture tests");
+    assert!(
+        content.contains("fn tui_inner_layers_have_no_runtime_io_calls")
+            && content.contains("quecto-tui domain")
+            && content.contains("quecto-tui application"),
+        "tests/architecture.rs must enforce runtime I/O boundaries for quecto-tui inner layers"
+    );
+}
+
+#[then("the architecture test target should enforce quecto-tui root file placement")]
+fn then_architecture_test_enforces_tui_root_file_placement(_world: &mut QuectoWorld) {
+    let content =
+        std::fs::read_to_string("tests/architecture.rs").expect("read architecture tests");
+    assert!(
+        content.contains("fn tui_production_files_live_inside_architecture_layers")
+            && content.contains("TUI_ALLOWED_ROOT_RS"),
+        "tests/architecture.rs must reject unlayered quecto-tui production source files"
+    );
+}
+
+fn misplaced_tui_production_files() -> Vec<String> {
+    let mut misplaced = Vec::new();
+    collect_misplaced_tui_rs_files(Path::new(TUI_ROOT), &mut misplaced);
+    misplaced
+}
+
+fn collect_misplaced_tui_rs_files(dir: &Path, misplaced: &mut Vec<String>) {
+    if !dir.exists() {
+        return;
+    }
+    for entry in std::fs::read_dir(dir).expect("read quecto-tui src dir") {
+        let entry = entry.expect("dir entry");
+        let path = entry.path();
+        if path.is_dir() {
+            collect_misplaced_tui_rs_files(&path, misplaced);
+            continue;
+        }
+        if !path.extension().is_some_and(|ext| ext == "rs") {
+            continue;
+        }
+        let rel = path
+            .strip_prefix(TUI_ROOT)
+            .expect("strip quecto-tui src prefix")
+            .to_string_lossy()
+            .replace('\\', "/");
+        let top = rel.split('/').next().unwrap_or_default();
+        let in_layer = matches!(
+            top,
+            "domain" | "application" | "infrastructure" | "interface"
+        );
+        let allowed_root = !rel.contains('/') && matches!(rel.as_str(), "lib.rs" | "main.rs");
+        if !in_layer && !allowed_root {
+            misplaced.push(rel);
+        }
+    }
 }
 
 #[then("the BDD runner should execute TUI scenarios tagged wip or done")]
