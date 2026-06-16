@@ -82,28 +82,32 @@ As conversations grow, the agent manages context automatically:
 
 ### Context window
 
-The agent tracks token usage against the model's context window. When the
-conversation exceeds `max_context_tokens` (configurable, default varies by
-model), the agent applies context pruning:
+The agent tracks estimated token usage against an application-level context
+budget. When the conversation exceeds `max_context_tokens` (configurable,
+default `300000`), the agent applies context pruning:
 
-1. **Sliding window**: Older messages are dropped (system prompt and pinned
-   messages are preserved)
-2. **Tool output collapsing**: Long tool outputs are replaced with compact
-   summaries (collapse stubs)
-3. **Spilling**: Collapsed tool outputs are saved to a spill file for
-   later retrieval via the `recall` tool
+1. **Sliding window**: Older non-pinned messages are dropped until the session
+   is under budget (system prompt, first user message, and spill manifest are
+   preserved)
+2. **Spilling**: Tool outputs are written to a spill file when they are created,
+   so dropped outputs can still be recovered with the `recall` tool
+3. **Optional tool output collapsing**: Tool outputs older than
+   `context_collapse_after_turns` turns are replaced with compact recall stubs
+   before the sliding window drops them. Current config default: `50`. Set it
+   to `4294967295` (`u32::MAX`) to disable collapse.
 
 ### Spill and recall
 
-When a tool output is collapsed, the original content is spilled to
-`<base_dir>/spills/<session_key>.jsonl`. The collapse stub looks like:
+Tool outputs are spilled to `<base_dir>/spills/<session_key>.jsonl`. When a
+message is collapsed, the compact stub looks like:
 
 ```
-[collapsed: turn5:bash:0 — bash("ls -la") → 2,450 tokens. Use recall("turn5:bash:0") to retrieve.]
+[bash: ls -la (2450 tokens) — recall("turn5:bash:0")]
 ```
 
-The agent can call `recall("turn5:bash:0")` to retrieve the original
-content from the spill file.
+The agent can call `recall("turn5:bash:0")` to retrieve the original content
+from the spill file, even after the original message has been collapsed or
+dropped by the sliding window.
 
 ## Inspecting sessions
 
@@ -160,8 +164,8 @@ Session behavior is configured in `config.json` under `agents.defaults`:
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `max_context_tokens` | `1000000` | Maximum tokens before context pruning |
-| `context_collapse_after_turns` | `u32::MAX` (disabled) | Collapse tool outputs older than N turns. Set to a lower value (e.g. `3`) to enable |
+| `max_context_tokens` | `300000` | Application-level token budget before context pruning |
+| `context_collapse_after_turns` | `50` | Collapse tool outputs older than N turns. Set to `4294967295` (`u32::MAX`) to disable |
 
 ## See also
 

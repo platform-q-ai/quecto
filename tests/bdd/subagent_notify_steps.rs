@@ -1,12 +1,58 @@
 use super::*;
-use quecto::infrastructure::tools::subagent_monitor::maybe_notify;
+use quecto::infrastructure::tools::subagent_monitor::spawn_monitor_task;
 use quecto::infrastructure::tools::subagent_registry::{
-    SubagentNotification, extract_summary, new_notification_channel,
+    SequencedSubagentNotification, SubagentEntry, SubagentNotification, extract_summary,
+    new_notification_channel, new_registry,
 };
+use tokio::io::AsyncWriteExt;
 
 // ===========================================================================
 // Subagent Notify BDD Steps (#523)
 // ===========================================================================
+
+fn sequenced(sequence: u64, notification: SubagentNotification) -> SequencedSubagentNotification {
+    SequencedSubagentNotification::new(sequence, notification)
+}
+
+fn drive_monitor_with_lines(
+    world: &mut QuectoWorld,
+    agent_id: &str,
+    lines: &[&str],
+    close_after: bool,
+) {
+    let tx = world.notify_tx.as_ref().expect("no notify tx").clone();
+    let temp = tempfile::TempDir::new().expect("monitor socket temp dir");
+    let socket_path = temp.path().join("child.sock");
+    let registry = new_registry();
+    registry.lock().unwrap().insert(
+        agent_id.to_string(),
+        SubagentEntry::new(socket_path.clone(), 0),
+    );
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let listener = tokio::net::UnixListener::bind(&socket_path).expect("bind monitor socket");
+        let handle = spawn_monitor_task(
+            agent_id.to_string(),
+            socket_path.clone(),
+            registry,
+            Some(tx),
+        );
+        let (mut stream, _) = listener.accept().await.expect("accept monitor connection");
+        for line in lines {
+            stream
+                .write_all(line.as_bytes())
+                .await
+                .expect("write event");
+            stream.write_all(b"\n").await.expect("write newline");
+        }
+        if close_after {
+            stream.shutdown().await.expect("shutdown monitor stream");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        handle.abort();
+    });
+}
 
 // --- Given ---
 
@@ -66,9 +112,12 @@ fn given_channel_with_capacity(world: &mut QuectoWorld, _capacity: i32) {
 fn given_channel_with_pending(world: &mut QuectoWorld, count: i32) {
     let (tx, rx) = new_notification_channel();
     for i in 0..count {
-        let _ = tx.try_send(SubagentNotification::Exited {
-            agent_id: format!("bot-{}", i),
-        });
+        let _ = tx.try_send(sequenced(
+            i as u64,
+            SubagentNotification::Exited {
+                agent_id: format!("bot-{}", i),
+            },
+        ));
     }
     world.notify_tx = Some(tx);
     world.notify_rx = Some(rx);
@@ -108,30 +157,25 @@ fn when_drain_notifications(world: &mut QuectoWorld) {
 
 #[when("the monitor processes an agent_end event with messages")]
 fn when_monitor_agent_end(world: &mut QuectoWorld) {
-    let tx = world.notify_tx.as_ref().expect("no notify tx");
     let line = r#"{"type":"agent_end","messages":[{"role":"assistant","content":"Done"}]}"#;
-    maybe_notify(Some(tx), "child-1", line);
+    drive_monitor_with_lines(world, "child-1", &[line], false);
 }
 
 #[when("the monitor processes a tool_execution_end event with is_error true")]
 fn when_monitor_tool_error(world: &mut QuectoWorld) {
-    let tx = world.notify_tx.as_ref().expect("no notify tx");
     let line = r#"{"type":"tool_execution_end","toolCallId":"c1","toolName":"bash","result":{"content":[]},"isError":true}"#;
-    maybe_notify(Some(tx), "child-1", line);
+    drive_monitor_with_lines(world, "child-1", &[line], false);
 }
 
 #[when(expr = "the monitor detects connection closed for agent {string}")]
 fn when_monitor_connection_closed_for(world: &mut QuectoWorld, agent_id: String) {
-    let tx = world.notify_tx.as_ref().expect("no notify tx");
-    use quecto::infrastructure::tools::subagent_registry::SubagentNotification;
-    let _ = tx.try_send(SubagentNotification::Exited { agent_id });
+    drive_monitor_with_lines(world, &agent_id, &[], true);
 }
 
 #[when("the monitor processes an agent_start event")]
 fn when_monitor_agent_start(world: &mut QuectoWorld) {
-    let tx = world.notify_tx.as_ref().expect("no notify tx");
     let line = r#"{"type":"agent_start"}"#;
-    maybe_notify(Some(tx), "child-1", line);
+    drive_monitor_with_lines(world, "child-1", &[line], false);
 }
 
 // --- Then ---
@@ -186,10 +230,13 @@ fn then_extracted_summary_max_len(world: &mut QuectoWorld, max_len: i32) {
 fn then_sending_n_notifications(world: &mut QuectoWorld, count: i32) {
     let tx = world.notify_tx.as_ref().expect("no notify tx");
     for i in 0..count {
-        let result = tx.try_send(SubagentNotification::Completed {
-            agent_id: format!("bot-{}", i),
-            summary: "done".into(),
-        });
+        let result = tx.try_send(sequenced(
+            i as u64,
+            SubagentNotification::Completed {
+                agent_id: format!("bot-{}", i),
+                summary: "done".into(),
+            },
+        ));
         assert!(result.is_ok(), "send {} failed: {:?}", i, result);
     }
 }
@@ -199,9 +246,12 @@ fn then_channel_bounded(world: &mut QuectoWorld) {
     // The previous step verified all 64 sends succeeded. A 65th send should
     // fail (channel is full), proving it is bounded.
     let tx = world.notify_tx.as_ref().expect("no notify tx");
-    let result = tx.try_send(SubagentNotification::Exited {
-        agent_id: "overflow".into(),
-    });
+    let result = tx.try_send(sequenced(
+        65,
+        SubagentNotification::Exited {
+            agent_id: "overflow".into(),
+        },
+    ));
     assert!(result.is_err(), "expected channel full, but send succeeded");
 }
 
@@ -215,7 +265,7 @@ fn then_receive_n_notifications(world: &mut QuectoWorld, expected: i32) {
 fn then_completed_notification(world: &mut QuectoWorld) {
     let mut rx = world.notify_rx.take().expect("no notify rx");
     let notif = rx.try_recv().expect("no notification received");
-    match notif {
+    match notif.notification {
         SubagentNotification::Completed { .. } => {}
         other => panic!("expected Completed, got: {:?}", other),
     }
@@ -226,7 +276,7 @@ fn then_completed_notification(world: &mut QuectoWorld) {
 fn then_errored_notification(world: &mut QuectoWorld) {
     let mut rx = world.notify_rx.take().expect("no notify rx");
     let notif = rx.try_recv().expect("no notification received");
-    match notif {
+    match notif.notification {
         SubagentNotification::Errored { .. } => {}
         other => panic!("expected Errored, got: {:?}", other),
     }
@@ -237,7 +287,7 @@ fn then_errored_notification(world: &mut QuectoWorld) {
 fn then_exited_notification(world: &mut QuectoWorld, expected_id: String) {
     let mut rx = world.notify_rx.take().expect("no notify rx");
     let notif = rx.try_recv().expect("no notification received");
-    match notif {
+    match notif.notification {
         SubagentNotification::Exited { agent_id } => {
             assert_eq!(agent_id, expected_id);
         }

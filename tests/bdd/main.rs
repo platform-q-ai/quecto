@@ -917,6 +917,7 @@ mod provider_steps;
 mod read_tool_steps;
 mod release_profile_steps;
 mod repl_steps;
+mod repo_docs_steps;
 mod sandbox_steps;
 mod security_steps;
 mod session_steps;

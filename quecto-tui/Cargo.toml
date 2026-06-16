@@ -21,6 +21,3 @@ pulldown-cmark = { version = "0.13", default-features = false }
 
 # Low-level terminal control (termios, ioctl) — no higher-level crate needed
 libc = "0.2"
-
-[dev-dependencies]
-tempfile = "3"

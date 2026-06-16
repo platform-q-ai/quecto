@@ -109,7 +109,7 @@ Feature: Append-only audit log
 
   Scenario: None audit log produces no file I/O
     Given no audit log is configured
-    When the agent processes a prompt
+    When the disabled audit path is exercised
     Then no audit directory is created
 
   Scenario: Content preview in ToolResult is capped at 200 chars
