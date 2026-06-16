@@ -220,6 +220,7 @@ async fn spawn_agent(flags: &CliFlags) -> Result<(PathBuf, tokio::process::Child
 
     let mut reader = tokio::io::BufReader::new(stderr);
     let mut line = String::new();
+    let mut stderr_context = Vec::new();
 
     // Read stderr lines looking for the socket path announcement
     let socket_prefix = "quecto-agent-socket: ";
@@ -233,10 +234,16 @@ async fn spawn_agent(flags: &CliFlags) -> Result<(PathBuf, tokio::process::Child
         match result {
             Ok(Ok(0)) => {
                 let _ = child.kill().await;
-                return Err("agent exited before announcing socket".to_string());
+                return Err(format_agent_startup_failure(
+                    "agent exited before announcing socket",
+                    &stderr_context,
+                ));
             }
             Ok(Ok(_)) => {
                 let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    remember_stderr_line(&mut stderr_context, trimmed);
+                }
                 if let Some(path_str) = trimmed.strip_prefix(socket_prefix) {
                     let path = PathBuf::from(path_str.trim());
                     // Validate the socket path is under a safe directory
@@ -246,14 +253,46 @@ async fn spawn_agent(flags: &CliFlags) -> Result<(PathBuf, tokio::process::Child
             }
             Ok(Err(e)) => {
                 let _ = child.kill().await;
-                return Err(format!("error reading agent stderr: {e}"));
+                return Err(format_agent_startup_failure(
+                    &format!("error reading agent stderr: {e}"),
+                    &stderr_context,
+                ));
             }
             Err(_) => {
                 let _ = child.kill().await;
-                return Err("timeout waiting for agent socket path".to_string());
+                return Err(format_agent_startup_failure(
+                    "timeout waiting for agent socket path",
+                    &stderr_context,
+                ));
             }
         }
     }
+}
+
+const MAX_STARTUP_STDERR_LINES: usize = 20;
+const MAX_STARTUP_STDERR_LINE_CHARS: usize = 1_000;
+
+fn remember_stderr_line(lines: &mut Vec<String>, line: &str) {
+    if lines.len() == MAX_STARTUP_STDERR_LINES {
+        lines.remove(0);
+    }
+    lines.push(truncate_stderr_line(line));
+}
+
+fn truncate_stderr_line(line: &str) -> String {
+    let mut truncated: String = line.chars().take(MAX_STARTUP_STDERR_LINE_CHARS).collect();
+    if truncated.len() < line.len() {
+        truncated.push_str("…");
+    }
+    truncated
+}
+
+fn format_agent_startup_failure(reason: &str, stderr_lines: &[String]) -> String {
+    if stderr_lines.is_empty() {
+        return reason.to_string();
+    }
+
+    format!("{}\nAgent stderr:\n{}", reason, stderr_lines.join("\n"))
 }
 
 /// Validate that a socket path is under a safe, expected directory.
@@ -352,5 +391,26 @@ mod tests {
         let mut flags = parse_flags(&args(""));
         apply_workflow_defaults(&mut flags);
         assert!(flags.system_prompt.is_none());
+    }
+
+    #[test]
+    fn startup_failure_includes_agent_stderr_context() {
+        let message = format_agent_startup_failure(
+            "agent exited before announcing socket",
+            &[
+                "no LLM providers configured (set an API key or run 'quecto auth login')"
+                    .to_string(),
+            ],
+        );
+
+        assert!(message.contains("agent exited before announcing socket"));
+        assert!(message.contains("Agent stderr:"));
+        assert!(message.contains("no LLM providers configured"));
+    }
+
+    #[test]
+    fn startup_failure_without_stderr_keeps_original_reason() {
+        let message = format_agent_startup_failure("timeout waiting for agent socket path", &[]);
+        assert_eq!(message, "timeout waiting for agent socket path");
     }
 }

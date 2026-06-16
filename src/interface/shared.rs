@@ -400,18 +400,14 @@ pub fn make_oauth_refresh_fn() -> crate::infrastructure::providers::refreshable:
                 }
             };
 
-            let token = persist_refreshed_token(
-                &store,
-                &provider_name,
-                refresh_token,
-                refresh_result,
-            )
-            .ok_or_else(|| {
-                crate::domain::error::DomainError::Provider(format!(
-                    "failed to refresh token for {}",
-                    provider_name
-                ))
-            })?;
+            let token =
+                persist_refreshed_token(&store, &provider_name, refresh_token, refresh_result)
+                    .ok_or_else(|| {
+                        crate::domain::error::DomainError::Provider(format!(
+                            "failed to refresh token for {}",
+                            provider_name
+                        ))
+                    })?;
 
             // Best-effort: push the refreshed credentials back to the runtime
             // manager so the shared Secret (and therefore newly spawned pods)

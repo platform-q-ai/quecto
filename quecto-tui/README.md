@@ -40,6 +40,12 @@ If you pass `--workflow` without `--system`, `quecto-tui` injects a default
 coding-assistant system prompt that tells the agent to use the workflow tool.
 An explicit `--system` value overrides that default.
 
+## Startup errors
+
+If the spawned agent exits before announcing its UDS socket, `quecto-tui`
+prints the agent's stderr context (for example, missing provider credentials)
+instead of only reporting that startup failed.
+
 ## Keyboard shortcuts
 
 | Shortcut | Action |
