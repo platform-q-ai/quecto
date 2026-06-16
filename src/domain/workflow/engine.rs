@@ -547,36 +547,32 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
         WorkflowTemplate {
             id: "feature".into(),
             label: "Feature".into(),
-            description: "New capability or substantial behavior expansion.".into(),
-            when_to_use: Some("Use for new user-facing or system-facing behavior.".into()),
+            description: "New capability with full BDD/TDD Red-Green-Refactor cycle, code review, and merge.".into(),
+            when_to_use: Some("Use for any new user-facing or system-facing behavior, new commands, new tools, or substantial extensions.".into()),
             steps: vec![
                 WorkflowTemplateStep {
                     key: "scenarios".into(),
-                    label: "Update scenarios / add feature coverage".into(),
+                    label: "Update Scenarios / Add new features".into(),
                     phase: "red".into(),
-                    guidance: Some(
-                        "Start by updating feature coverage and task-facing scenarios.".into(),
-                    ),
+                    guidance: Some("Start by updating feature coverage and task-facing scenarios. Identify acceptance criteria.".into()),
                 },
                 WorkflowTemplateStep {
                     key: "tests".into(),
-                    label: "Write/update tests".into(),
+                    label: "Write/update unit tests (run a quick smoke check; full suite runs on push)".into(),
                     phase: "red".into(),
-                    guidance: None,
+                    guidance: Some("Write or update the unit tests for the change. Run a quick targeted smoke check to confirm they compile.".into()),
                 },
                 WorkflowTemplateStep {
                     key: "red".into(),
-                    label: "Ensure tests fail (RED)".into(),
+                    label: "Ensure new/modified tests FAIL (RED) — quick targeted run only, not full suite".into(),
                     phase: "red".into(),
-                    guidance: None,
+                    guidance: Some("Run only the new/modified tests to confirm they fail before any implementation.".into()),
                 },
                 WorkflowTemplateStep {
                     key: "green".into(),
                     label: "Implement code (GREEN)".into(),
                     phase: "green".into(),
-                    guidance: Some(
-                        "Write the minimum code needed to satisfy the failing tests.".into(),
-                    ),
+                    guidance: Some("Write the minimum code needed to satisfy the failing tests. Do NOT worry about the size of a change — implement it in full.".into()),
                 },
                 WorkflowTemplateStep {
                     key: "refactor".into(),
@@ -592,17 +588,77 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
                 },
                 WorkflowTemplateStep {
                     key: "commit".into(),
-                    label: "Commit changes".into(),
+                    label: "Commit".into(),
+                    phase: "ci_cd".into(),
+                    guidance: None,
+                },
+                WorkflowTemplateStep {
+                    key: "push".into(),
+                    label: "Push (pre-push hook will run tests and linting)".into(),
+                    phase: "ci_cd".into(),
+                    guidance: None,
+                },
+                WorkflowTemplateStep {
+                    key: "pr".into(),
+                    label: "Create PR".into(),
+                    phase: "ci_cd".into(),
+                    guidance: None,
+                },
+                WorkflowTemplateStep {
+                    key: "reviewers".into(),
+                    label: "Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)".into(),
+                    phase: "review".into(),
+                    guidance: Some("Use the subagent tool in parallel mode to dispatch architecture-reviewer, security-reviewer, and performance-reviewer.".into()),
+                },
+                WorkflowTemplateStep {
+                    key: "fix_reviews".into(),
+                    label: "Fix all valid review concerns".into(),
+                    phase: "review".into(),
+                    guidance: None,
+                },
+                WorkflowTemplateStep {
+                    key: "push_fixes".into(),
+                    label: "Push changes to remote".into(),
+                    phase: "review".into(),
+                    guidance: None,
+                },
+                WorkflowTemplateStep {
+                    key: "resolve_threads".into(),
+                    label: "Reply to the reviewers comments on the PR and mark resolved (use graphql)".into(),
+                    phase: "review".into(),
+                    guidance: Some("Reply to every review comment on the PR, then resolve the threads using GraphQL mutations.".into()),
+                },
+                WorkflowTemplateStep {
+                    key: "pre_merge".into(),
+                    label: "Run pre-merge hooks (real-LLM, machete, deny)".into(),
+                    phase: "ci_cd".into(),
+                    guidance: None,
+                },
+                WorkflowTemplateStep {
+                    key: "merge".into(),
+                    label: "Merge".into(),
+                    phase: "ci_cd".into(),
+                    guidance: None,
+                },
+                WorkflowTemplateStep {
+                    key: "pull".into(),
+                    label: "Move to local master and pull".into(),
                     phase: "ci_cd".into(),
                     guidance: None,
                 },
             ],
-            guards: vec![WorkflowGuardRule {
-                commands: vec!["git commit".into(), "git push".into()],
-                before_step_key: "commit".into(),
-                message: "Complete implementation and verification steps before commit/push."
-                    .into(),
-            }],
+            guards: vec![
+                WorkflowGuardRule {
+                    commands: vec!["git commit".into(), "git push".into()],
+                    before_step_key: "commit".into(),
+                    message: "Complete RED-GREEN-REFACTOR (steps 1-6) before committing.".into(),
+                },
+                WorkflowGuardRule {
+                    commands: vec!["git merge".into(), "gh pr merge".into()],
+                    before_step_key: "merge".into(),
+                    message: "Complete code review (steps 10-14) before merging.".into(),
+                },
+            ],
         },
         WorkflowTemplate {
             id: "fix".into(),

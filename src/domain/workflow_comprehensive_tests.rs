@@ -29,9 +29,9 @@ fn snapshot_in_active_mode_has_steps_and_current_step() {
         .unwrap();
     let snap = engine.snapshot(true);
     assert_eq!(snap.mode, WorkflowMode::Active);
-    assert_eq!(snap.progress.total, 7);
+    assert_eq!(snap.progress.total, 16);
     assert_eq!(snap.current_step.unwrap().key, "scenarios");
-    assert_eq!(snap.steps.len(), 7);
+    assert_eq!(snap.steps.len(), 16);
     assert!(snap.guards_enabled);
 }
 
