@@ -118,8 +118,11 @@ const SANDBOX_EXCLUDE_NAMES = new Set([
 	".npmrc",
 	".pypirc",
 	"credentials.json",
+	"id_rsa",
+	"id_ed25519",
 ]);
 const SANDBOX_SECRET_EXTENSIONS = new Set([".pem", ".key", ".p12", ".pfx"]);
+const SANDBOX_EXCLUDE_GLOBS = [".env*", "*.pem", "*.key", "*.p12", "*.pfx", "*.npmrc", "*.pypirc"];
 
 function positiveInt(raw: string | undefined, fallback: number): number {
 	const parsed = Number(raw);
@@ -223,10 +226,7 @@ function shouldExcludeFromSandbox(sourceCwd: string, src: string): boolean {
 	if (SANDBOX_SECRET_EXTENSIONS.has(path.extname(base).toLowerCase())) return true;
 	try {
 		const stat = fs.lstatSync(src);
-		if (stat.isSymbolicLink()) {
-			const real = fs.realpathSync(src);
-			if (!real.startsWith(fs.realpathSync(sourceCwd) + path.sep)) return true;
-		}
+		if (stat.isSymbolicLink()) return true;
 	} catch {
 		return true;
 	}
@@ -287,7 +287,10 @@ function redactSecrets(text: string): string {
 }
 
 async function collectSandboxDiff(sourceCwd: string, sandboxCwd: string): Promise<string> {
-	const excludeArgs = Array.from(SANDBOX_EXCLUDE_NAMES).flatMap((name) => ["--exclude", name]);
+	const excludeArgs = [
+		...Array.from(SANDBOX_EXCLUDE_NAMES),
+		...SANDBOX_EXCLUDE_GLOBS,
+	].flatMap((name) => ["--exclude", name]);
 	const diff = await collectCommandOutput(
 		"diff",
 		["-ruN", ...excludeArgs, sourceCwd, sandboxCwd],

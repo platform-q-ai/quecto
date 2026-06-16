@@ -41,5 +41,7 @@ assertContains(source, '"--no-extensions"');
 assertContains(source, "StringEnum([\"readonly\", \"full\", \"sandbox\", \"patch-chain\"]");
 assertContains(source, "redactSecrets");
 assertContains(source, "appendBoundedTrace");
+assertContains(source, "SANDBOX_EXCLUDE_GLOBS");
+assertContains(source, "if (stat.isSymbolicLink()) return true");
 
 console.log("✓ oss-fusion extension is installed with tool, command, renderer, bounded execution, and UI progress");
