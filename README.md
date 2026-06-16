@@ -1,15 +1,12 @@
 # Quecto
 
-A single-binary personal AI assistant that runs on minimal Linux systems. Quecto receives messages via the command line or a UDS event bus, routes them through an LLM (OpenAI, Anthropic, or ChatGPT Codex), executes tools (shell commands, file operations, search), and persists conversations to disk.
+Quecto is a Rust workspace centred on a lightweight personal AI assistant. The main `quecto` binary receives messages via the command line or a UDS event bus, routes them through an LLM (OpenAI, Anthropic, or ChatGPT Codex), executes tools (shell commands, file operations, search), and persists conversations to disk.
 
-Built in Rust. No runtime dependencies. Runs on a VPS, Raspberry Pi, or container.
-
-**ALWAYS FOLLOW BDD/TDD RED, GREEN, REFACTOR PROCESS WHEN MAKING CHANGES**
-**ALWAYS USE FULL DEVELOPMENT WORKFLOW**
+The workspace also includes companion binaries for terminal UI access (`quecto-tui`), HTTP/WebSocket gateway access (`quecto-api`), MCP tool bridging (`quecto-mcp`), and managed runtime orchestration (`quecto-runtime-manager`). Quecto runs on a VPS, Raspberry Pi, or container with no non-Rust application runtime.
 
 ## Release Notes
 
-Current version: **0.24.0** — see [`CHANGELOG.md`](CHANGELOG.md) for full history.
+Current version: **0.26.0**.
 
 ## Quick Start
 
@@ -59,6 +56,16 @@ selector, and `Ctrl+O` toggles tool output expansion. Slash commands include
 `/help` (also `/hotkeys`), and `/quit` (also `/exit`). See
 [`quecto-tui/README.md`](quecto-tui/README.md) for a dedicated TUI reference.
 
+## Workspace binaries
+
+| Binary | Package | Purpose |
+|---|---|---|
+| `quecto` | root package | Main CLI, REPL, one-shot agent, and persistent UDS event bus |
+| `quecto-tui` | `quecto-tui` | Lightweight terminal UI client that spawns or connects to a UDS agent |
+| `quecto-api` | `quecto-api` | HTTP/WebSocket gateway for a running UDS agent; see [`quecto-api/README.md`](quecto-api/README.md) |
+| `quecto-mcp` | `quecto-mcp` | UDS extension that discovers MCP tools, registers them with Quecto, and proxies tool calls; see [`quecto-mcp/README.md`](quecto-mcp/README.md) |
+| `quecto-runtime-manager` | `quecto-runtime-manager` | HTTP runtime manager for provisioning and supervising isolated Quecto runtimes |
+
 ## Architecture
 
 Four layers, strict dependency direction. Inner layers never import outer.
@@ -94,7 +101,7 @@ Depends only on `domain/`. Orchestration logic, no I/O.
 | File | Purpose |
 |---|---|
 | `agent_loop.rs` | Core LLM-tool loop: send → execute tools → repeat. Traces `tool_name`, `duration_ms`, `is_error`. Progress callbacks for REPL spinner. Supports incremental streaming via `chat_stream_incremental()`. Passes configured `effort` level through to every `ChatRequest` |
-| `context_pruning.rs` | Token estimation, sliding window, pinned manifest. Collapse disabled by default (`context_collapse_after_turns = u32::MAX`); spill-to-disk when enabled |
+| `context_pruning.rs` | Token estimation, sliding-window pruning, pinned spill manifest, and optional tool-result collapse. Current config defaults: `max_context_tokens = 300000`, `context_collapse_after_turns = 50`; set `context_collapse_after_turns` to `4294967295` (`u32::MAX`) to disable collapse |
 | `onboard.rs` | Onboarding orchestration via `OnboardStore` |
 | `reload.rs` | `/reload` use case: strips stale tool history via `strip_tool_history()`, clears spill index, coordinates `SessionStore` + `ContextSpillStore` |
 | `subagent.rs` | `SubagentContext` — child agent contexts with inherited sandbox |
@@ -117,7 +124,7 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 
 **Filesystem tools** (`read`, `write`, `edit`, `ls`): `Sandbox::validate_path` — canonicalises the path, follows symlinks at every component, and rejects anything outside `canonical_workspace`. Called before any I/O.
 
-**bash** (exec only): nsjail for process isolation via Linux kernel namespaces + rlimits. Workspace RW, toolchain RO, memory/PID/CPU limits via `--rlimit_as`/`--rlimit_nproc`/`--rlimit_cpu` (no cgroup access required). Defaults: 4 GB AS, 256 PIDs, no timeout (configure CPU/wall limits via config), 512 MB tmpfs. Configure via `tools.exec.isolation`, `tools.exec.nsjail_binary`, `tools.exec.allow_native_fallback`. Network namespace isolation disabled with `--network` flag or `tools.exec.network_passthrough` config.
+**bash** (exec only): nsjail for process isolation via Linux kernel namespaces + rlimits. Workspace RW, toolchain RO, memory/PID/CPU limits via `--rlimit_as`/`--rlimit_nproc`/`--rlimit_cpu` (no cgroup access required). Agent config defaults: 4 GB AS, 256 PIDs, 28,800 CPU-seconds, 14,400 wall-clock seconds, 512 MB tmpfs. Configure via `tools.exec.isolation`, `tools.exec.nsjail_binary`, and `tools.exec.allow_native_fallback`. Network namespace isolation is disabled with `--network` or `tools.exec.network_passthrough`.
 
 **Tool binary resolution** (`rg`, `fd`): `ensure_tool` resolves via system PATH → cache dir (`~/.local/share/quecto/tools/`) → auto-download from GitHub releases. Set `QUECTO_OFFLINE=1` to disable downloads.
 
@@ -126,9 +133,9 @@ Manual arg parsing (no clap). Entry point: `cli::run(args) -> i32`.
 
 | Command | Description |
 |---|---|
-| `quecto` | Interactive REPL (`-s` session, `--system` prompt, `--model` override, `--no-sandbox`, `--network`) with live progress spinner |
-| `quecto agent -m <msg>` | Headless one-shot (`-s`, `--no-session`, `--system`, `--model`, `--max-iterations`, `--max-time`, `--no-sandbox`, `--network`) |
-| `quecto agent --mode uds` | Persistent UDS event bus: multi-client JSON-lines protocol over Unix domain socket (`--socket <path>` for explicit path, auto-generated otherwise) |
+| `quecto` | Interactive REPL (`-s` session, `--system` prompt, `--model` override, `--no-sandbox`, `--network`; global `--config <path>`) with live progress spinner |
+| `quecto agent -m <msg>` | Headless one-shot (`-s`, `--no-session`, `--system`, `--model`, `--max-iterations`, `--max-time`, `--effort`, `--disable-tool`, `--no-sandbox`, `--network`; global `--config <path>`) |
+| `quecto agent --mode uds` | Persistent UDS event bus: multi-client JSON-lines protocol over Unix domain socket (`--socket <path>` for explicit path, auto-generated otherwise; `--persist`, `--workflow`, `--workflow-guards`, `--no-workflow` supported) |
 | `quecto onboard` | Creates workspace + default config |
 | `quecto skills list\|remove\|install` | Skill management |
 | `quecto status` | Config summary, provider availability |
@@ -149,7 +156,7 @@ The UDS agent is the sole integration point for external consumers (TUIs, IDE pl
 
 | Module | Responsibility |
 |---|---|
-| `protocol.rs` | `AgentCommand` enum (15 variants: `prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_messages`, `get_messages_tail`, `get_session_stats`, `set_model`, `get_extensions`, `reload_extensions`, `register_tools`, `unregister_tools`, `tool_result`, `clear_history`), `AgentEvent` enum (events: `agent_start`, `agent_end`, `token`, `turn_start`, `turn_end`, `tool_execution_start`, `tool_execution_end`, `response`, `execute_tool`, `extensions_changed`), `StreamingBehavior`, `SessionState`, `SessionStats`. All commands carry optional `id` for request/response correlation |
+| `protocol.rs` | `AgentCommand` enum (16 variants: `prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_messages`, `get_messages_tail`, `get_session_stats`, `set_model`, `get_extensions`, `reload_extensions`, `register_tools`, `unregister_tools`, `tool_result`, `clear_history`, `get_subagents`), `AgentEvent` enum (events: `agent_start`, `agent_end`, `token`, `turn_start`, `turn_end`, `tool_execution_start`, `tool_execution_end`, `response`, `execute_tool`, `extensions_changed`, `subagent_notification`, `subagent_state_changed`, `workflow_state`), `StreamingBehavior`, `SessionState`, `SessionStats`. All commands except `tool_result` carry optional `id` for request/response correlation |
 | `uds.rs` | Entry point (`run_uds_loop`), socket binding (`chmod 0600`), stale socket reaping, single-client backward-compatible path, shared dispatch loop (`dispatch_command`), system prompt injection/removal |
 | `uds_multi.rs` | Multi-client accept loop (Docker-style event bus). `tokio::sync::broadcast` delivers events to all connected clients. `tokio::sync::mpsc` merges commands from all clients into a single dispatch loop (no concurrent session mutation). Max 64 clients. Agent shuts down when all clients disconnect. RAII `ClientGuard` tracks client count. Lagged clients receive a re-sync notification |
 | `uds_session.rs` | `AgentSession` — in-memory state tracker (model, streaming flag, pending message queue with `VecDeque`, max 64 pending). `compute_session_stats()`, `message_to_json()`, `messages_tail_json()` |
@@ -182,6 +189,7 @@ The REPL reads input line by line, sends each to the LLM agent, prints the respo
 | `--model` | Override the default model from config |
 | `--no-sandbox` | Disable workspace path restriction (DANGEROUS) |
 | `--network` | Enable outbound network in bash (disables nsjail net namespace) |
+| `--config <path>` | Override config file path (global option) |
 
 REPL commands:
 
@@ -217,6 +225,9 @@ quecto agent -m "Write a Python script that generates primes"
 | `--mode` | No | Operation mode: default one-shot, or `uds` for UDS event bus |
 | `--socket` | No | Explicit socket path for `--mode uds` (default: auto-generated in tmpdir) |
 | `--persist` | No | UDS mode only — keep agent alive when all clients disconnect (default: exit on last disconnect) |
+| `--workflow` | No | UDS mode only — enable native workflow state/tool/prompt injection |
+| `--workflow-guards` | No | UDS mode only — enable workflow bash command guards (requires `--workflow`) |
+| `--no-workflow` | No | UDS mode only — explicitly disable workflow flags; last workflow flag wins |
 | `--effort` | No | Effort level for 4.6 models (`low`/`medium`/`high`/`max`). Overrides config and env var |
 | `--disable-tool` | No | Remove a tool from the registry (repeatable). See [Disabling Tools](docs/disable-tools.md) |
 | `--config` | No | Override config file path |
@@ -248,7 +259,7 @@ Connect with any Unix socket client (e.g. `socat`) and send one JSON command per
 
 ```bash
 socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
-{"type":"prompt","id":"msg-1","message":"Summarize the CHANGELOG.md file"}
+{"type":"prompt","id":"msg-1","message":"Summarize the README.md file"}
 ```
 
 **Commands:**
@@ -259,7 +270,7 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 | `steer` | `message`, optional `id` | Interrupt after current tool, deliver this message next |
 | `follow_up` | `message`, optional `id` | Queue message for after current run completes |
 | `abort` | optional `id` | Cancel the current agent run |
-| `get_state` | optional `id` | Return session state (model, streaming, message count) |
+| `get_state` | optional `id` | Return session state (model, streaming, message count, and workflow snapshot when enabled) |
 | `get_messages` | optional `id` | Return full conversation history |
 | `get_messages_tail` | `count`, optional `id` | Return last N messages |
 | `get_session_stats` | optional `id` | Return token usage and cost statistics |
@@ -270,6 +281,7 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 | `unregister_tools` | `tools` array (names), optional `id` | Remove previously registered extension tools |
 | `tool_result` | `toolCallId`, `content`, optional `isError` | Return result of an `execute_tool` request |
 | `clear_history` | optional `id` | Clear conversation history, preserve system prompt |
+| `get_subagents` | optional `id` | Return spawned subagents and live status |
 
 **Events** (emitted as JSON lines):
 
@@ -284,6 +296,9 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 | `tool_execution_end` | Tool finished (with `toolCallId`, `toolName`, `result`, `isError`) |
 | `execute_tool` | Routed to extension client that registered the tool (not broadcast) |
 | `extensions_changed` | Broadcast when extension list changes |
+| `subagent_notification` | Passive child-agent completion/error/exit notification for UI visibility |
+| `subagent_state_changed` | Broadcast replacement snapshot of spawned subagent statuses |
+| `workflow_state` | Broadcast when workflow mode/progress/template state changes |
 | `response` | Response to a command (with `id`, `command`, `success`, optional `data`/`error`) |
 
 ### `quecto auth` — Manage API keys
@@ -424,7 +439,8 @@ Config file: `~/.quecto/config.json`
       "max_tokens": 8192,
       "max_tool_iterations": 999999,
       "max_session_messages": 200,
-      "max_context_tokens": 1000000,
+      "context_collapse_after_turns": 50,
+      "max_context_tokens": 300000,
       "restrict_to_workspace": true,
       "effort": "low"
     }
@@ -460,6 +476,10 @@ Config file: `~/.quecto/config.json`
       "duckduckgo": {
         "enabled": true,
         "max_results": 5
+      },
+      "fetch": {
+        "enabled": false,
+        "max_response_kb": 32
       }
     }
   },
@@ -471,7 +491,7 @@ Config file: `~/.quecto/config.json`
 }
 ```
 
-All fields are optional. An empty `{}` is valid — everything uses sensible defaults. For a full reference workflow config, see [`examples/config.json`](examples/config.json).
+All fields are optional. An empty `{}` is valid — everything uses sensible defaults. `effort` is optional and is unset by default; Anthropic 4.6 requests default to `low` effort when unset. For a workflow template example, see [`examples/config.json`](examples/config.json).
 
 ### Provider API base overrides
 
@@ -493,8 +513,8 @@ Set `providers.<name>.api_base` only when you need a non-default endpoint (for e
 - `tools.exec.cpu_time_limit_secs`: CPU time limit via `--rlimit_cpu` (default `28800` — 8 hours across 2 cores)
 - `tools.exec.wall_time_limit_secs`: wall-clock timeout via `--time_limit` (default `14400` — 4 hours)
 - `tools.exec.tmp_size_mb`: size of writable `/tmp` tmpfs inside the jail in MB (default `512`). Each concurrent jail gets its own tmpfs, so N jails consume N × `tmp_size_mb` of RAM
-- `tools.exec.nsjail_binary`: must resolve to an executable under trusted system paths (`/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`, `/usr/local/bin`); relative paths are rejected
-- exec child environment is allowlisted by default (`PATH`, locale vars, and basic shell/runtime vars), preventing broad secret env leakage
+- `tools.exec.nsjail_binary`: must resolve to an executable under trusted system paths (`/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`, `/usr/local/bin`); relative paths are resolved through trusted PATH directories only
+- exec child processes clear the ambient environment and then explicitly receive the current process environment (or test-provided overrides); `$SHELL` is restricted to known system shells in native mode, while nsjail mode always uses `/bin/sh`
 
 nsjail resource limits use rlimits (`--rlimit_as`, `--rlimit_nproc`, `--rlimit_cpu`) instead of cgroups, so no root access or cgroup write permissions are required. The cgroup namespace is always disabled (`--disable_clone_newcgroup`). This means nsjail works in containers, on unprivileged users, and in any environment without `/sys/fs/cgroup/` access.
 
@@ -512,6 +532,7 @@ nsjail mounts `/bin`, `/usr`, `/lib`, `/lib64` read-only inside the jail, plus i
 | `QUECTO_AGENTS_DEFAULTS_MAX_SESSION_MESSAGES` | `agents.defaults.max_session_messages` |
 | `QUECTO_MAX_CONTEXT_TOKENS` | `agents.defaults.max_context_tokens` |
 | `QUECTO_AGENTS_DEFAULTS_EFFORT` | `agents.defaults.effort` (`low`/`medium`/`high`/`max`; invalid values ignored) |
+| `QUECTO_TOOLS_WEB_BRAVE_API_KEY` | `tools.web.brave.api_key` |
 | `QUECTO_PROVIDERS_OPENAI_API_KEY` | `providers.openai.api_key` |
 | `QUECTO_PROVIDERS_ANTHROPIC_API_KEY` | `providers.anthropic.api_key` |
 | `QUECTO_OFFLINE` | Set to `1`/`true`/`yes` to disable auto-download of tool binaries (rg, fd) |
@@ -519,7 +540,7 @@ nsjail mounts `/bin`, `/usr`, `/lib`, `/lib64` read-only inside the jail, plus i
 
 ## Tools
 
-The agent has access to tools it can call autonomously to accomplish tasks.
+The agent has access to core tools plus optional config-gated tools and UDS extension tools it can call autonomously to accomplish tasks.
 
 Tool definitions are cached in the registry at registration time (sorted once, reused for subsequent definition lookups).
 
@@ -534,11 +555,11 @@ External tool binaries (`rg`, `fd`) are resolved via `ensure_tool`: system PATH 
 | `ls` | List directory contents. Case-insensitive sort, `/` suffix for directories, configurable limit (default 500, max 5000), 50KB output cap |
 | `grep` | Search file contents with ripgrep (`rg --json`). Regex or literal, case-insensitive option, context lines from file cache, 100-match / 50KB limit, 500-char line truncation |
 | `find` | Find files by glob pattern with fd. Respects nested `.gitignore` files, path-segment patterns via `--full-path`, configurable limit (default 1000), 50KB output cap |
-| `recall` | Retrieve a previously collapsed tool output by its spill ID (e.g. `turn20:bash:0`). Use `recall("list")` for the full index |
+| `recall` | Retrieve a spilled tool output by its spill ID (e.g. `turn20:bash:0`). Use `recall("list")` for the full index |
 | `spawn` | Spawn a background UDS-mode subagent for long-running tasks |
 | `agent_cmd` | Send commands to spawned UDS subagents: `prompt`, `steer`, `follow_up`, `abort`, `kill`, `get_state`, `get_messages`, `get_messages_tail`, `get_session_stats`, `get_subagents`, `get_extensions`, `set_model`, `clear_history`, `reload_extensions` |
-| `web_search` | Search the web via Brave Search or DuckDuckGo |
-| `web_fetch` | Fetch a URL and return its content as readable text (HTML stripped by default) |
+| `web_search` | Optional: search the web via Brave Search or DuckDuckGo when `tools.web.brave.enabled` or `tools.web.duckduckgo.enabled` is true |
+| `web_fetch` | Optional: fetch a URL and return readable text when `tools.web.fetch.enabled` is true (HTML stripped by default; `raw: true` returns the original body) |
 | `workflow` | UDS-only template-based development workflow (status, list_templates, select_template, check, uncheck, skip, reset, set_issue, clear_issue, check_guards). Enabled via `--workflow` flag. See [Workflow docs](docs/workflow.md) |
 
 Filesystem tools (`read`, `write`, `edit`, `ls`) run on async `tokio::fs` adapters.
@@ -550,7 +571,7 @@ The agent operates inside a sandbox:
 - **Workspace restriction**: When `restrict_to_workspace` is `true` (default), all file operations are confined to the workspace directory. Symlinks pointing outside are blocked. Path traversal (`../`) is caught.
 - **Dangerous commands blocked**: `rm -rf /`, `rm -r -f /`, `mkfs`, `dd`, `shutdown`, `reboot`, `chmod -R 777 /`, fork bombs, and pipe-to-shell patterns (`curl|sh`) are always blocked regardless of other settings. Command checks normalize whitespace/casing, so equivalent variants like `rm  -rf /` are also blocked.
 - **Exec runtime isolation**: The `bash` tool runs in `nsjail` mode by default with rlimit-based resource bounds (no cgroup access required); `native` remains available as an explicit opt-in via `tools.exec.isolation`.
-- **Environment isolation**: `QUECTO_*` environment variables (including API keys) are stripped from child processes spawned by the `bash` tool.
+- **Environment handling**: `bash` children are launched with `env_clear()` and then receive the current process environment (or explicit test overrides). Do not place secrets in the Quecto process environment if the agent should not be able to read them with shell commands.
 - **Secret redaction**: Log/status output redacts OpenAI/Anthropic (`sk-*`), Groq (`gsk_*`/`gsk-*`), and Telegram bot token values.
 - **UDS socket security**: Socket files are created with `chmod 0600` (owner-only). Stale sockets older than 24h are reaped on startup.
 
@@ -584,22 +605,24 @@ API key resolution order: credential store (`quecto auth login`) > config file >
 
 ## Development workflow
 
+Quecto development uses the repository-local Pi workflow checklist:
+
 1 - Update Scenarios / Add new features
 2 - Write/update unit tests (run a quick smoke check; full suite runs on push)
 3 - Ensure new/modified tests FAIL (RED) — quick targeted run only, not full suite
 4 - Implement code (GREEN)
-5 - Refactor (perf, security, clean arch)
-6 - Ensure tests still pass (GREEN)
-7 - Commit
-8 - Push (pre-push hook will run tests and linting)
-9 - Create PR
-10 - Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)
-11 - Fix all valid review concerns
-12 - Push changes to remote
-13 - Reply to the reviewers comments on the PR and mark resolved (use graphql)
-14 - Run pre-merge hooks (real-LLM, machete, deny)
-15 - Merge
-16 - Move to local master and pull
+   - Refactor as needed for performance, security, and clean architecture before committing
+   - Re-run the relevant safety checks and ensure tests still pass
+5 - Commit
+6 - Push (pre-push hook will run tests and linting)
+7 - Create PR
+8 - Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)
+9 - Fix all valid review concerns
+10 - Push changes to remote
+11 - Reply to the reviewers comments on the PR and mark resolved (use graphql)
+12 - Run pre-merge hooks (real-LLM, machete, deny)
+13 - Merge
+14 - Move to local master and pull
 
 ## Quality gates
 
@@ -665,7 +688,7 @@ bash scripts/run-bdd-shards.sh --suite real-llm-smoke --shards 24 --timeout 12m 
 bash scripts/run-bdd-shards.sh --suite real-llm-bdd --shards 24 --timeout 12m --tag real-llm --real-llm
 ```
 
-`scripts/pre-push.sh` runs quality checks plus a parallel test wave (`cargo test --lib`, `cargo test --test architecture`, and 24-way sharded non-real BDD), caches successful runs per `HEAD` commit + script hash, and writes a full log to `.git/pre-push.last.log`.
+`scripts/pre-push.sh` runs quality checks plus a parallel test wave (`cargo test --lib`, `cargo test --test architecture`, `cargo test --test contracts`, `cargo test --test repo_docs`, and 24-way sharded non-real BDD), caches successful runs per `HEAD` commit + script hash, and writes a full log to `.git/pre-push.last.log`.
 
 Pre-push controls:
 - `QUECTO_E2E_TIMEOUT` timeout per BDD shard (default `12m`)

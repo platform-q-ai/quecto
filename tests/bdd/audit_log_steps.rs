@@ -449,9 +449,11 @@ fn given_no_audit_log(world: &mut QuectoWorld) {
     world.audit_log = None;
 }
 
-#[when("the agent processes a prompt")]
-fn when_agent_processes_prompt(_world: &mut QuectoWorld) {
-    // No-op — we just verify no audit dir is created
+#[when("the disabled audit path is exercised")]
+fn when_disabled_audit_path_exercised(world: &mut QuectoWorld) {
+    world.audit_session_key = Some("prompt".to_string());
+    world.audit_json = None;
+    world.stdout = "processed prompt without audit logging".to_string();
 }
 
 #[then("no audit directory is created")]
