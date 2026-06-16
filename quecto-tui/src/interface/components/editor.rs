@@ -3,10 +3,10 @@
 //! Modelled on Pi TUI's Editor: bordered input area with word wrap,
 //! cursor movement, line editing, and input history.
 
-use crate::component::Component;
-use crate::keys::Key;
-use crate::theme;
-use crate::utils::{truncate_to_width, visible_width, wrap_text};
+use crate::interface::component::Component;
+use crate::interface::keys::Key;
+use crate::interface::theme;
+use crate::interface::utils::{truncate_to_width, visible_width, wrap_text};
 
 /// Multi-line text editor with borders and input history.
 pub struct Editor {

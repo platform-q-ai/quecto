@@ -5,7 +5,7 @@ Feature: Subagent status bar fixes (#534)
   So that the TUI provides accurate real-time feedback
 
   # ── Fix 1: Spinner renders below widgets_above ─────────────────────
-  # Verified by unit tests in quecto-tui/src/app.rs and code structure.
+  # Verified by unit tests in quecto-tui/src/interface/app.rs and code structure.
 
   @wip
   Scenario: Render order places widgets_above before spinner

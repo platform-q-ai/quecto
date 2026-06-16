@@ -4,7 +4,7 @@ Feature: Tool output carriage return stripping (#529)
   So that the display renders cleanly without black line artefacts
 
   # All rendering verification is done via unit tests in
-  # quecto-tui/src/components/tool_output.rs (strip_carriage_returns tests).
+  # quecto-tui/src/interface/components/tool_output.rs (strip_carriage_returns tests).
   # These BDD scenarios verify the protocol-level content handling.
 
   @wip

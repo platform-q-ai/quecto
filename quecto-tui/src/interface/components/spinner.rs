@@ -1,8 +1,8 @@
 //! Spinner component — animated activity indicator.
 
-use crate::component::Component;
-use crate::theme;
-use crate::utils::truncate_to_width;
+use crate::interface::component::Component;
+use crate::interface::theme;
+use crate::interface::utils::truncate_to_width;
 
 /// Braille spinner frames.
 const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -151,7 +151,7 @@ mod tests {
         let mut s = Spinner::new("a very long spinner message that exceeds the width");
         let lines = s.render(20);
         for line in &lines {
-            assert!(crate::utils::visible_width(line) <= 20);
+            assert!(crate::interface::utils::visible_width(line) <= 20);
         }
     }
 }

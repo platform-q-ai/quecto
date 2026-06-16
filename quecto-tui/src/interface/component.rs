@@ -16,7 +16,7 @@ pub trait Component: Send {
     fn render(&mut self, width: usize) -> Vec<String>;
 
     /// Handle a keyboard input event. Return `true` if the input was consumed.
-    fn handle_input(&mut self, _key: &crate::keys::Key) -> bool {
+    fn handle_input(&mut self, _key: &crate::interface::keys::Key) -> bool {
         false
     }
 
@@ -72,7 +72,7 @@ impl Component for Container {
         lines
     }
 
-    fn handle_input(&mut self, key: &crate::keys::Key) -> bool {
+    fn handle_input(&mut self, key: &crate::interface::keys::Key) -> bool {
         // Forward input to children; first consumer wins.
         for child in &mut self.children {
             if child.handle_input(key) {
@@ -92,7 +92,7 @@ impl Component for Container {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::text::Text;
+    use crate::interface::components::text::Text;
 
     #[test]
     fn container_renders_children_in_order() {
@@ -151,7 +151,7 @@ mod tests {
     #[test]
     fn container_handle_input_no_children() {
         let mut c = Container::new();
-        assert!(!c.handle_input(&crate::keys::Key::Enter));
+        assert!(!c.handle_input(&crate::interface::keys::Key::Enter));
     }
 
     #[test]
@@ -169,8 +169,8 @@ mod tests {
         fn render(&mut self, _width: usize) -> Vec<String> {
             vec!["enter-consumer".to_string()]
         }
-        fn handle_input(&mut self, key: &crate::keys::Key) -> bool {
-            matches!(key, crate::keys::Key::Enter)
+        fn handle_input(&mut self, key: &crate::interface::keys::Key) -> bool {
+            matches!(key, crate::interface::keys::Key::Enter)
         }
     }
 
@@ -179,7 +179,7 @@ mod tests {
         let mut c = Container::new();
         c.add_child(Box::new(EnterConsumer));
         c.add_child(Box::new(Text::new("text")));
-        assert!(c.handle_input(&crate::keys::Key::Enter));
-        assert!(!c.handle_input(&crate::keys::Key::Escape));
+        assert!(c.handle_input(&crate::interface::keys::Key::Enter));
+        assert!(!c.handle_input(&crate::interface::keys::Key::Escape));
     }
 }

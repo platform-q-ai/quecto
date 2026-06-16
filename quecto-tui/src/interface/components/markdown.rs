@@ -6,9 +6,9 @@
 
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
-use crate::component::Component;
-use crate::theme;
-use crate::utils::{truncate_to_width, visible_width, wrap_text};
+use crate::interface::component::Component;
+use crate::interface::theme;
+use crate::interface::utils::{truncate_to_width, visible_width, wrap_text};
 
 /// Markdown rendering component.
 pub struct Markdown {

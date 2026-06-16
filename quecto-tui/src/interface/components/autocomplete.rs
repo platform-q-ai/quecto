@@ -2,11 +2,11 @@
 //!
 //! Provides fuzzy-matched suggestions for slash commands and model names.
 
-use crate::component::Component;
-use crate::fuzzy::fuzzy_filter;
-use crate::keys::Key;
-use crate::theme;
-use crate::utils::truncate_to_width;
+use crate::interface::component::Component;
+use crate::interface::fuzzy::fuzzy_filter;
+use crate::interface::keys::Key;
+use crate::interface::theme;
+use crate::interface::utils::truncate_to_width;
 
 /// A slash command definition.
 #[derive(Debug, Clone)]

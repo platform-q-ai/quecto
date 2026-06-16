@@ -611,18 +611,18 @@ Quecto development uses the repository-local Pi workflow checklist:
 2 - Write/update unit tests (run a quick smoke check; full suite runs on push)
 3 - Ensure new/modified tests FAIL (RED) — quick targeted run only, not full suite
 4 - Implement code (GREEN)
-   - Refactor as needed for performance, security, and clean architecture before committing
-   - Re-run the relevant safety checks and ensure tests still pass
-5 - Commit
-6 - Push (pre-push hook will run tests and linting)
-7 - Create PR
-8 - Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)
-9 - Fix all valid review concerns
-10 - Push changes to remote
-11 - Reply to the reviewers comments on the PR and mark resolved (use graphql)
-12 - Run pre-merge hooks (real-LLM, machete, deny)
-13 - Merge
-14 - Move to local master and pull
+5 - Refactor (perf, security, clean arch)
+6 - Ensure tests still pass (GREEN)
+7 - Commit
+8 - Push (pre-push hook will run tests and linting)
+9 - Create PR
+10 - Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)
+11 - Fix all valid review concerns
+12 - Push changes to remote
+13 - Reply to the reviewers comments on the PR and mark resolved (use graphql)
+14 - Run pre-merge hooks (real-LLM, machete, deny)
+15 - Merge
+16 - Move to local master and pull
 
 ## Quality gates
 

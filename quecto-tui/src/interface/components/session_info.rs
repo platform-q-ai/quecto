@@ -1,8 +1,8 @@
 //! Session info component — displays session stats and token usage.
 
-use crate::component::Component;
-use crate::theme;
-use crate::utils::truncate_to_width;
+use crate::interface::component::Component;
+use crate::interface::theme;
+use crate::interface::utils::truncate_to_width;
 
 /// Accumulated token usage statistics.
 #[derive(Debug, Clone, Default)]

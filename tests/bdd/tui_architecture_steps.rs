@@ -95,6 +95,36 @@ fn then_every_tui_production_file_is_layered(_world: &mut QuectoWorld) {
     );
 }
 
+#[then("the quecto-tui library root should expose only Clean Architecture layers")]
+fn then_tui_library_root_exposes_only_layers(_world: &mut QuectoWorld) {
+    let content = std::fs::read_to_string("quecto-tui/src/lib.rs").expect("read quecto-tui lib.rs");
+    let public_modules: Vec<_> = content
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| line.strip_prefix("pub mod "))
+        .map(|rest| rest.trim_end_matches(';'))
+        .collect();
+    assert_eq!(
+        public_modules,
+        ["application", "domain", "infrastructure", "interface"],
+        "quecto-tui/src/lib.rs should match the main crate shape and expose only architecture layers"
+    );
+    assert!(
+        !content.contains("#[path ="),
+        "quecto-tui/src/lib.rs should not re-export interface internals with #[path] shims"
+    );
+}
+
+#[then("the quecto-tui binary root should delegate to the interface layer")]
+fn then_tui_binary_root_delegates_to_interface(_world: &mut QuectoWorld) {
+    let content =
+        std::fs::read_to_string("quecto-tui/src/main.rs").expect("read quecto-tui main.rs");
+    assert!(
+        content.contains("quecto_tui::interface::cli") && content.lines().count() <= 10,
+        "quecto-tui/src/main.rs should be a thin binary entrypoint delegating to interface::cli"
+    );
+}
+
 #[then("the architecture test target should enforce quecto-tui Clean Architecture layers")]
 fn then_architecture_test_enforces_tui_layers(_world: &mut QuectoWorld) {
     let content =
@@ -126,8 +156,10 @@ fn then_architecture_test_enforces_tui_root_file_placement(_world: &mut QuectoWo
         std::fs::read_to_string("tests/architecture.rs").expect("read architecture tests");
     assert!(
         content.contains("fn tui_production_files_live_inside_architecture_layers")
-            && content.contains("TUI_ALLOWED_ROOT_RS"),
-        "tests/architecture.rs must reject unlayered quecto-tui production source files"
+            && content.contains("TUI_ALLOWED_ROOT_RS")
+            && content.contains("fn tui_lib_rs_exposes_only_architecture_layers")
+            && content.contains("fn tui_main_rs_is_thin_interface_entrypoint"),
+        "tests/architecture.rs must reject unlayered quecto-tui production source files and keep crate roots thin"
     );
 }
 

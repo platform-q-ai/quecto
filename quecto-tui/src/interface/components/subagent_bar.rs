@@ -3,9 +3,9 @@
 //! Renders one line per spawned subagent with a progress-bar style indicator.
 //! Hidden when no subagents exist.
 
-use crate::client::SubagentInfoEvent;
-use crate::component::Component;
-use crate::theme;
+use crate::interface::client::SubagentInfoEvent;
+use crate::interface::component::Component;
+use crate::interface::theme;
 
 /// Widget that renders live subagent status bars.
 #[derive(Debug)]

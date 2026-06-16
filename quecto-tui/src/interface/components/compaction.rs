@@ -1,8 +1,8 @@
 //! Compaction indicator — shows progress during context compaction.
 
-use crate::component::Component;
-use crate::components::spinner::Spinner;
-use crate::keys::Key;
+use crate::interface::component::Component;
+use crate::interface::components::spinner::Spinner;
+use crate::interface::keys::Key;
 
 /// Result of a compaction interaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

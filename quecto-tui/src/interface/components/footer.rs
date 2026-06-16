@@ -1,8 +1,8 @@
 //! Footer component — status bar showing model, context, git branch.
 
-use crate::component::Component;
-use crate::theme;
-use crate::utils::{truncate_to_width, visible_width};
+use crate::interface::component::Component;
+use crate::interface::theme;
+use crate::interface::utils::{truncate_to_width, visible_width};
 
 /// Footer status bar.
 pub struct Footer {

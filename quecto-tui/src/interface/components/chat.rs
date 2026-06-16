@@ -7,12 +7,12 @@
 //! formatting (#510): bash shows `$ command` + output tail, read/write show
 //! file path + content preview, edit shows diff.
 
-use crate::component::Component;
-use crate::components::markdown::Markdown;
-use crate::theme;
+use crate::interface::component::Component;
+use crate::interface::components::markdown::Markdown;
+use crate::interface::theme;
 #[cfg(test)]
-use crate::utils::visible_width;
-use crate::utils::{truncate_to_width, wrap_text};
+use crate::interface::utils::visible_width;
+use crate::interface::utils::{truncate_to_width, wrap_text};
 
 /// Number of output lines shown for bash in collapsed mode (tail).
 const BASH_PREVIEW_LINES: usize = 5;
@@ -1331,7 +1331,7 @@ mod tests {
 
     /// Use the shared extraction function from client.rs.
     fn extract_result_text(result: &serde_json::Value) -> String {
-        crate::client::extract_result_text(result)
+        crate::interface::client::extract_result_text(result)
     }
 
     /// Check that bg-colored lines (lines containing the bg ANSI code)

@@ -1,9 +1,9 @@
 //! Select list component — navigable list with selection indicator.
 
-use crate::component::Component;
-use crate::keys::Key;
-use crate::theme;
-use crate::utils::{truncate_to_width, visible_width};
+use crate::interface::component::Component;
+use crate::interface::keys::Key;
+use crate::interface::theme;
+use crate::interface::utils::{truncate_to_width, visible_width};
 
 /// An item in a select list.
 #[derive(Debug, Clone)]

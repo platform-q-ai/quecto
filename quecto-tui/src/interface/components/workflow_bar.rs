@@ -4,7 +4,7 @@
 //! bar (issue number, title, progress, phase), and another blank spacer.
 //! Returns an empty vec when no workflow is active.
 
-use crate::theme;
+use crate::interface::theme;
 
 /// Workflow step info received from a `workflow_state` event.
 #[derive(Debug, Clone)]
@@ -78,7 +78,7 @@ pub fn render(state: &WorkflowBarState, width: usize) -> Vec<String> {
             theme::bold("SELECT"),
             state.template_count,
         );
-        let vis_width = crate::utils::visible_width(&content);
+        let vis_width = crate::interface::utils::visible_width(&content);
         let padding = if vis_width < width {
             " ".repeat(width - vis_width)
         } else {
@@ -145,7 +145,7 @@ pub fn render(state: &WorkflowBarState, width: usize) -> Vec<String> {
     );
 
     // Pad to width and apply background
-    let vis_width = crate::utils::visible_width(&content);
+    let vis_width = crate::interface::utils::visible_width(&content);
     let padding = if vis_width < width {
         " ".repeat(width - vis_width)
     } else {

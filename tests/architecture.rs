@@ -442,6 +442,35 @@ fn tui_public_ports_have_contract_tests() {
 }
 
 #[test]
+fn tui_lib_rs_exposes_only_architecture_layers() {
+    let content = fs::read_to_string("quecto-tui/src/lib.rs").expect("read quecto-tui lib.rs");
+    let public_modules: Vec<_> = content
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| line.strip_prefix("pub mod "))
+        .map(|rest| rest.trim_end_matches(';'))
+        .collect();
+    assert_eq!(
+        public_modules,
+        ["application", "domain", "infrastructure", "interface"],
+        "quecto-tui/src/lib.rs must expose only Clean Architecture layer modules"
+    );
+    assert!(
+        !content.contains("#[path ="),
+        "quecto-tui/src/lib.rs must not re-export interface internals with #[path] shims"
+    );
+}
+
+#[test]
+fn tui_main_rs_is_thin_interface_entrypoint() {
+    let content = fs::read_to_string("quecto-tui/src/main.rs").expect("read quecto-tui main.rs");
+    assert!(
+        content.contains("quecto_tui::interface::cli") && content.lines().count() <= 10,
+        "quecto-tui/src/main.rs must stay thin and delegate to quecto_tui::interface::cli"
+    );
+}
+
+#[test]
 fn tui_lib_rs_has_deny_attributes() {
     let content = fs::read_to_string("quecto-tui/src/lib.rs").expect("read quecto-tui lib.rs");
     assert!(
