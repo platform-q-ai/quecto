@@ -128,6 +128,25 @@ quecto/.pi/extensions/quecto-workflow.ts
 Pi auto-discovers it when you run Pi from the `quecto` repository. Use
 `/reload` after editing it.
 
+## OSS Fusion panel
+
+The repository also carries the Perme8 Pi fusion panel extension at:
+
+```text
+quecto/.pi/extensions/oss-fusion.ts
+```
+
+It registers:
+
+- the `oss_fusion` tool for LLM-triggered multi-model panel runs
+- the `/fusion` command for user-triggered panel runs
+- an `oss-fusion` message renderer for synthesized results
+
+Supported modes are `readonly`, `full`, `sandbox`, and `patch-chain`. The
+extension defaults to readonly mode and can be configured with environment
+variables such as `OSS_FUSION_MODELS`, `OSS_FUSION_JUDGE_MODEL`,
+`OSS_FUSION_SYNTHESIZER_MODEL`, and `OSS_FUSION_MODE`.
+
 ## Relationship to Quecto's native workflow engine
 
 This extension is separate from Quecto's built-in UDS workflow engine described
