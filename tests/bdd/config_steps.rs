@@ -218,6 +218,31 @@ fn then_effort_unset(world: &mut QuectoWorld) {
     );
 }
 
+#[then(
+    expr = "the OpenAI-compatible provider should have endpoint {string} with api_base {string}"
+)]
+fn then_openai_compatible_endpoint_loaded(
+    world: &mut QuectoWorld,
+    expected_prefix: String,
+    expected_api_base: String,
+) {
+    let config = world.config.as_ref().expect("config not loaded");
+    let endpoint = config
+        .providers
+        .openai_compatible
+        .endpoints
+        .iter()
+        .find(|endpoint| endpoint.prefix == expected_prefix)
+        .unwrap_or_else(|| panic!("missing openai_compatible endpoint '{expected_prefix}'"));
+    assert_eq!(endpoint.api_base, expected_api_base);
+}
+
+#[then("the OpenAI provider should have disable_codex_routing enabled")]
+fn then_openai_disable_codex_enabled(world: &mut QuectoWorld) {
+    let config = world.config.as_ref().expect("config not loaded");
+    assert!(config.providers.openai.disable_codex_routing);
+}
+
 #[when("I load the config and validate effort")]
 fn when_load_config_and_validate_effort(world: &mut QuectoWorld) {
     let path = world.config_path.as_ref().expect("config_path must be set");

@@ -1300,6 +1300,16 @@ fn given_anthropic_mock_text_response(world: &mut QuectoWorld, content: String) 
 
 // --- Credential store integration steps ---
 
+fn test_openai_oauth_jwt(account_id: &str) -> String {
+    use base64::Engine;
+    let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"alg":"none"}"#);
+    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(format!(
+        r#"{{"https://api.openai.com/auth":{{"chatgpt_account_id":"{}"}}}}"#,
+        account_id
+    ));
+    format!("{}.{}.sig", header, payload)
+}
+
 #[given(expr = "a config file with OpenAI api_key {string} pointing at a mock server")]
 fn given_config_with_openai_custom_key(world: &mut QuectoWorld, api_key: String) {
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1328,6 +1338,62 @@ fn given_config_with_openai_custom_key(world: &mut QuectoWorld, api_key: String)
     std::mem::forget(rt);
 }
 
+#[given(
+    expr = "a config file with OpenAI OAuth and an OpenAI-compatible provider {string} pointing at a mock server"
+)]
+fn given_config_with_openai_compatible_mock(world: &mut QuectoWorld, prefix: String) {
+    let uri = "http://127.0.0.1:1".to_string();
+
+    ensure_temp_dir(world);
+    let base = base_path(world);
+    let workspace = base.join("workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace");
+    let config = serde_json::json!({
+        "providers": {
+            "openai": { "api_key": "" },
+            "openai_compatible": {
+                "endpoints": [
+                    { "prefix": prefix, "api_key": "sk-spark", "api_base": uri }
+                ]
+            }
+        },
+        "agents": { "defaults": { "workspace": workspace.display().to_string() } }
+    });
+    std::fs::write(
+        base.join("config.json"),
+        serde_json::to_string_pretty(&config).unwrap(),
+    )
+    .expect("write config");
+}
+
+#[given(
+    expr = "a config file with OpenAI api_key {string}, disable_codex_routing true, and a mock server"
+)]
+fn given_config_with_openai_disable_codex(world: &mut QuectoWorld, api_key: String) {
+    let uri = "http://127.0.0.1:1".to_string();
+
+    ensure_temp_dir(world);
+    let base = base_path(world);
+    let workspace = base.join("workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace");
+    let config = serde_json::json!({
+        "providers": {
+            "openai": {
+                "api_key": api_key,
+                "api_base": uri,
+                "auth_method": "api_key",
+                "disable_codex_routing": true
+            }
+        },
+        "agents": { "defaults": { "workspace": workspace.display().to_string() } }
+    });
+    std::fs::write(
+        base.join("config.json"),
+        serde_json::to_string_pretty(&config).unwrap(),
+    )
+    .expect("write config");
+}
+
 #[given(expr = "the credential store has a valid token {string} for provider {string}")]
 fn given_credential_store_valid_token(world: &mut QuectoWorld, token: String, provider: String) {
     let base = base_path(world);
@@ -1340,6 +1406,24 @@ fn given_credential_store_valid_token(world: &mut QuectoWorld, token: String, pr
             expires_at: None, // no expiry = always valid
             refresh_token: None,
             account_id: None,
+        })
+        .expect("store credential");
+}
+
+#[given(
+    expr = "the credential store has a valid OpenAI OAuth token with ChatGPT account id {string}"
+)]
+fn given_credential_store_valid_openai_oauth(world: &mut QuectoWorld, account_id: String) {
+    let base = base_path(world);
+    let store = CredentialStore::new(&base);
+    store
+        .store(Credential {
+            provider: "openai".to_string(),
+            token: test_openai_oauth_jwt(&account_id),
+            method: AuthMethod::OAuth,
+            expires_at: Some(4_102_444_800),
+            refresh_token: Some("refresh-token".to_string()),
+            account_id: Some(account_id),
         })
         .expect("store credential");
 }
@@ -1389,7 +1473,19 @@ fn given_mock_expects_auth_header(
             std::fs::read_to_string(base.join("config.json")).expect("read existing config");
         let mut config: serde_json::Value =
             serde_json::from_str(&config_str).expect("parse config");
-        config["providers"]["openai"]["api_base"] = serde_json::Value::String(new_uri.clone());
+        if config["providers"].get("openai").is_some() {
+            config["providers"]["openai"]["api_base"] = serde_json::Value::String(new_uri.clone());
+        }
+        if let Some(endpoints) = config
+            .get_mut("providers")
+            .and_then(|providers| providers.get_mut("openai_compatible"))
+            .and_then(|openai_compatible| openai_compatible.get_mut("endpoints"))
+            .and_then(|endpoints| endpoints.as_array_mut())
+        {
+            for endpoint in endpoints {
+                endpoint["api_base"] = serde_json::Value::String(new_uri.clone());
+            }
+        }
         std::fs::write(
             base.join("config.json"),
             serde_json::to_string_pretty(&config).unwrap(),
