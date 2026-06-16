@@ -1,9 +1,13 @@
 pub mod app;
+pub mod application;
 pub mod client;
 pub mod component;
 pub mod components;
+pub mod domain;
 pub mod extension;
 pub mod fuzzy;
+pub mod infrastructure;
+pub mod interface;
 pub mod keys;
 pub mod kitty;
 pub mod overlay;
