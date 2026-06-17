@@ -18,8 +18,20 @@ set -euo pipefail
 RED='\033[0;31m'
 NC='\033[0m'
 
-# Find the real git binary (skip this wrapper).
-REAL_GIT="$(command -v git)"
+# Find the real git binary (skip this wrapper, which should be first in PATH).
+SELF="$(realpath "$0")"
+REAL_GIT=""
+while IFS= read -r candidate; do
+    if [[ "$(realpath "$candidate")" != "$SELF" ]]; then
+        REAL_GIT="$candidate"
+        break
+    fi
+done < <(type -aP git)
+
+if [[ -z "$REAL_GIT" ]]; then
+    echo "ERROR: could not locate real git binary behind wrapper" >&2
+    exit 127
+fi
 
 # Commands where --no-verify is dangerous.
 HOOK_COMMANDS="commit push"

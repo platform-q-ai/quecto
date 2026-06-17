@@ -308,6 +308,10 @@ async fn download_file(url: &str, dest: &std::path::Path) -> Result<(), DomainEr
             .map_err(|e| DomainError::Tool(format!("Write error: {}", e)))?;
     }
 
+    file.flush()
+        .await
+        .map_err(|e| DomainError::Tool(format!("Flush error: {}", e)))?;
+
     Ok(())
 }
 

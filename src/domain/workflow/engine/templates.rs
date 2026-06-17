@@ -5,9 +5,15 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
         WorkflowTemplate {
             id: "feature".into(),
             label: "Feature".into(),
-            description: "New capability with full BDD/TDD Red-Green-Refactor cycle, code review, and merge.".into(),
+            description: "New capability with local hook verification, BDD/TDD, code review, and merge.".into(),
             when_to_use: Some("Use for any new user-facing or system-facing behavior, new commands, new tools, or substantial extensions.".into()),
             steps: vec![
+                WorkflowTemplateStep {
+                    key: "hooks".into(),
+                    label: "Install/check local quality hooks".into(),
+                    phase: "setup".into(),
+                    guidance: Some("Run scripts/install-hooks.sh, then verify pre-commit, pre-push, pre-merge-commit, and the git --no-verify wrapper are installed/active before editing code.".into()),
+                },
                 WorkflowTemplateStep {
                     key: "scenarios".into(),
                     label: "Update Scenarios / Add new features".into(),
@@ -109,12 +115,12 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
                 WorkflowGuardRule {
                     commands: vec!["git commit".into(), "git push".into()],
                     before_step_key: "commit".into(),
-                    message: "Complete RED-GREEN-REFACTOR (steps 1-6) before committing.".into(),
+                    message: "Complete hook setup and RED/GREEN work before committing.".into(),
                 },
                 WorkflowGuardRule {
                     commands: vec!["git merge".into(), "gh pr merge".into()],
                     before_step_key: "merge".into(),
-                    message: "Complete code review (steps 10-14) before merging.".into(),
+                    message: "Complete code review and pre-merge validation before merging.".into(),
                 },
             ],
         },
@@ -126,6 +132,12 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
                 "Use when behavior is broken and needs reproduction plus repair.".into(),
             ),
             steps: vec![
+                WorkflowTemplateStep {
+                    key: "hooks".into(),
+                    label: "Install/check local quality hooks".into(),
+                    phase: "setup".into(),
+                    guidance: Some("Run scripts/install-hooks.sh, then verify pre-commit, pre-push, pre-merge-commit, and the git --no-verify wrapper are installed/active before editing code.".into()),
+                },
                 WorkflowTemplateStep {
                     key: "repro".into(),
                     label: "Capture reproduction / failing scenario".into(),
@@ -180,6 +192,12 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
             ),
             steps: vec![
                 WorkflowTemplateStep {
+                    key: "hooks".into(),
+                    label: "Install/check local quality hooks".into(),
+                    phase: "setup".into(),
+                    guidance: Some("Run scripts/install-hooks.sh, then verify pre-commit, pre-push, pre-merge-commit, and the git --no-verify wrapper are installed/active before editing code.".into()),
+                },
+                WorkflowTemplateStep {
                     key: "safety".into(),
                     label: "Define safety net tests".into(),
                     phase: "red".into(),
@@ -224,6 +242,12 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
             description: "Routine maintenance or configuration work.".into(),
             when_to_use: Some("Use for docs, dependency, CI, or maintenance tasks.".into()),
             steps: vec![
+                WorkflowTemplateStep {
+                    key: "hooks".into(),
+                    label: "Install/check local quality hooks".into(),
+                    phase: "setup".into(),
+                    guidance: Some("Run scripts/install-hooks.sh, then verify pre-commit, pre-push, pre-merge-commit, and the git --no-verify wrapper are installed/active before editing code.".into()),
+                },
                 WorkflowTemplateStep {
                     key: "scope".into(),
                     label: "Clarify the maintenance task".into(),

@@ -22,7 +22,7 @@ fn select_template_starts_run() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine.select_template("fix", None).unwrap();
     assert_eq!(engine.mode(), WorkflowMode::Active);
-    assert_eq!(engine.progress().total, 6);
+    assert_eq!(engine.progress().total, 7);
     assert_eq!(engine.current_step().unwrap().index, 1);
 }
 
@@ -171,7 +171,7 @@ fn guards_block_until_before_step_key_threshold() {
     engine.select_template("feature", None).unwrap();
     let err = engine.check_guards().unwrap_err();
     assert!(err.to_string().contains("Complete step 1"));
-    for step in 1..=14 {
+    for step in 1..=17 {
         engine.check(step).unwrap();
     }
     assert!(engine.check_guards().is_ok());
@@ -182,15 +182,13 @@ fn completion_nudge_only_when_complete() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine.select_template("chore", None).unwrap();
     assert!(engine.completion_nudge().is_none());
-    for step in 1..=4 {
+    for step in 1..=5 {
         engine.check(step).unwrap();
     }
-    assert!(
-        engine
-            .completion_nudge()
-            .unwrap()
-            .contains("All workflow steps complete")
-    );
+    let nudge = engine.completion_nudge().unwrap();
+    assert!(nudge.contains("All workflow steps complete"));
+    assert!(nudge.contains("issues authored by the authenticated user only"));
+    assert!(nudge.contains("gh issue list --author @me"));
 }
 
 #[test]
@@ -255,7 +253,7 @@ fn validate_guard_unknown_step_key() {
 }
 
 #[test]
-fn default_feature_template_matches_config_file_sixteen_step_workflow() {
+fn default_feature_template_matches_config_file_pi_feature_workflow_with_hook_step() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine.select_template("feature", None).unwrap();
     let snap = engine.snapshot(true);
@@ -264,6 +262,7 @@ fn default_feature_template_matches_config_file_sixteen_step_workflow() {
     assert_eq!(
         keys,
         vec![
+            "hooks",
             "scenarios",
             "tests",
             "red",
@@ -282,17 +281,21 @@ fn default_feature_template_matches_config_file_sixteen_step_workflow() {
             "pull",
         ]
     );
-    assert_eq!(snap.progress.total, 16);
-    assert_eq!(snap.steps[0].label, "Update Scenarios / Add new features");
+    assert_eq!(snap.progress.total, 17);
+    assert_eq!(snap.steps[0].label, "Install/check local quality hooks");
+    assert_eq!(snap.steps[1].label, "Update Scenarios / Add new features");
+    assert_eq!(snap.steps[5].label, "Refactor");
+    assert_eq!(snap.steps[6].label, "Ensure tests still pass");
     assert_eq!(
-        snap.steps[7].label,
+        snap.steps[8].label,
         "Push (pre-push hook will run tests and linting)"
     );
     assert_eq!(
-        snap.steps[9].label,
+        snap.steps[10].label,
         "Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)"
     );
-    assert_eq!(snap.steps[15].label, "Move to local master and pull");
+    assert_eq!(snap.steps[15].label, "Merge");
+    assert_eq!(snap.steps[16].label, "Move to local master and pull");
 }
 
 #[test]
@@ -312,7 +315,7 @@ fn feature_template_guards_commit_push_and_merge_like_config_file() {
     assert!(
         feature.guards[0]
             .message
-            .contains("Complete RED-GREEN-REFACTOR")
+            .contains("Complete hook setup and RED/GREEN work")
     );
     assert_eq!(
         feature.guards[1].commands,

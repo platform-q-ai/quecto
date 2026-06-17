@@ -215,7 +215,7 @@ impl WorkflowEngine {
         }
         let template = self.active_template()?;
         Some(format!(
-            "All workflow steps complete for template '{}' ({} steps). Close out the current issue if applicable, pick the next issue, call workflow(action=\"reset\") and then workflow(action=\"select_template\", template=\"<id>\").",
+            "All workflow steps complete for template '{}' ({} steps). Close out the current issue if applicable. Before choosing the next issue, query the issue tracker for issues authored by the authenticated user only (for GitHub: gh issue list --author @me). Then call workflow(action=\"reset\") and workflow(action=\"select_template\", template=\"<id>\").",
             template.label,
             template.steps.len()
         ))
