@@ -29,9 +29,9 @@ fn snapshot_in_active_mode_has_steps_and_current_step() {
         .unwrap();
     let snap = engine.snapshot(true);
     assert_eq!(snap.mode, WorkflowMode::Active);
-    assert_eq!(snap.progress.total, 16);
-    assert_eq!(snap.current_step.unwrap().key, "scenarios");
-    assert_eq!(snap.steps.len(), 16);
+    assert_eq!(snap.progress.total, 17);
+    assert_eq!(snap.current_step.unwrap().key, "hooks");
+    assert_eq!(snap.steps.len(), 17);
     assert!(snap.guards_enabled);
 }
 
@@ -47,6 +47,7 @@ fn selector_prompt_mentions_select_template() {
 fn active_prompt_mentions_guidance() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine.select_template("fix", None).unwrap();
+    engine.check(1).unwrap();
     let prompt = engine.prompt_snippet();
     assert!(prompt.contains("CURRENT STEP"));
     assert!(prompt.contains("reproducing the bug"));

@@ -297,7 +297,7 @@ fn default_max_context_tokens() -> usize {
     // older tool output already spilled (see
     // `default_context_collapse_after_turns`) and the hard-drop
     // window dropping oldest non-pinned messages once we breach it.
-    300_000
+    200_000
 }
 fn default_true() -> bool {
     true
@@ -653,6 +653,12 @@ mod tests {
     fn test_default_max_session_messages() {
         let config: Config = serde_json::from_str("{}").unwrap();
         assert_eq!(config.agents.defaults.max_session_messages, 200);
+    }
+
+    #[test]
+    fn test_default_max_context_tokens() {
+        let config: Config = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.agents.defaults.max_context_tokens, 200_000);
     }
 
     #[test]

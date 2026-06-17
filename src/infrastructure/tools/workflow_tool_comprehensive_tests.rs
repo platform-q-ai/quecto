@@ -305,7 +305,7 @@ async fn check_enforces_ordering_and_skip_bypasses_it() {
     assert!(skip.content.contains("Step 5 skipped."));
 
     let status = tool.execute(r#"{"action":"status"}"#).await.unwrap();
-    assert!(status.content.contains("[✓] 5. Refactor"));
+    assert!(status.content.contains("[✓] 5. Implement code (GREEN)"));
 }
 
 #[tokio::test]
@@ -334,7 +334,7 @@ async fn status_reflects_complete_mode() {
         .await
         .unwrap();
 
-    for step in 1..=4 {
+    for step in 1..=5 {
         let result = tool
             .execute(&format!(r#"{{"action":"check","step":{step}}}"#))
             .await
@@ -456,7 +456,7 @@ async fn check_guards_is_command_scoped_for_multi_guard_templates() {
     tool.execute(r#"{"action":"select_template","template":"feature"}"#)
         .await
         .unwrap();
-    for step in 1..=6 {
+    for step in 1..=7 {
         tool.execute(&format!(r#"{{"action":"check","step":{step}}}"#))
             .await
             .unwrap();
