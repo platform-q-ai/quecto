@@ -374,6 +374,24 @@ fn then_tui_workflow_bar_has_stage_status_and_hotkeys(_world: &mut QuectoWorld) 
     );
 }
 
+#[then(
+    "the quecto-tui workflow widget should render as a full-width yellow status bar above the editor"
+)]
+fn then_tui_workflow_widget_is_pi_style_status_bar(_world: &mut QuectoWorld) {
+    let bar = std::fs::read_to_string("quecto-tui/src/interface/components/workflow_bar.rs")
+        .expect("read workflow bar source");
+    let app = std::fs::read_to_string("quecto-tui/src/interface/app.rs").expect("read app source");
+    assert!(
+        bar.contains("render_widget") && bar.contains("BG_WORKFLOW_WIDGET"),
+        "workflow_bar should expose a Pi-style full-width yellow workflow widget"
+    );
+    assert!(
+        app.contains("workflow_bar::render_widget")
+            && app.contains("bottom.extend(workflow_widget_lines)"),
+        "app should render the workflow widget in the bottom section above the editor"
+    );
+}
+
 #[then("the TUI architecture feature should not contain pending scenarios")]
 fn then_tui_architecture_feature_not_pending(_world: &mut QuectoWorld) {
     let content = std::fs::read_to_string("tests/features/tui_clean_architecture.feature")

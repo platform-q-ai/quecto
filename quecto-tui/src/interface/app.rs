@@ -1452,12 +1452,19 @@ impl App {
         let height = self.terminal.height;
 
         let mut lines = Vec::new();
+        let mut workflow_bar_state = self.workflow_bar.clone();
+        workflow_bar_state.workflow_auto_continue = self.workflow_auto_continue;
+        workflow_bar_state.workflow_completion_nudge = self.workflow_completion_nudge;
 
         // ── Render bottom section first to know its height ──────────
         let mut bottom = Vec::new();
 
         // Widgets above editor (subagent bars stay on top, visible).
         bottom.extend(self.widgets_above.render(width));
+
+        // Pi-style workflow widget above the editor.
+        let workflow_widget_lines = workflow_bar::render_widget(&workflow_bar_state, width);
+        bottom.extend(workflow_widget_lines);
 
         // Spinner sits between widgets_above and autocomplete (#534).
         if let Some(spinner) = &mut self.spinner {
@@ -1489,9 +1496,6 @@ impl App {
             version
         )));
         // Workflow header bar (#563) — below title, above chat.
-        let mut workflow_bar_state = self.workflow_bar.clone();
-        workflow_bar_state.workflow_auto_continue = self.workflow_auto_continue;
-        workflow_bar_state.workflow_completion_nudge = self.workflow_completion_nudge;
         let wf_lines = workflow_bar::render(&workflow_bar_state, width);
         if wf_lines.is_empty() {
             lines.push(String::new());

@@ -7,6 +7,11 @@
 
 use crate::interface::theme;
 
+/// Yellow Pi-style workflow widget background shown above the editor.
+pub const BG_WORKFLOW_WIDGET: &str = "\x1b[48;2;92;69;0m";
+const FG_WORKFLOW_WIDGET: &str = "\x1b[38;2;255;244;190m";
+const WIDGET_RESET: &str = "\x1b[0m";
+
 /// Workflow step info received from a `workflow_state` event.
 #[derive(Debug, Clone)]
 pub struct WorkflowStepInfo {
@@ -188,6 +193,71 @@ pub fn render(state: &WorkflowBarState, width: usize) -> Vec<String> {
         stage_line,
         String::new(),
     ]
+}
+
+/// Render the Pi-style long workflow widget above the editor.
+pub fn render_widget(state: &WorkflowBarState, width: usize) -> Vec<String> {
+    if width == 0 || !is_widget_visible(state) {
+        return vec![];
+    }
+
+    let done = state.done;
+    let total = state.total.max(state.steps.len() as u32).max(1);
+    let pct = ((done as f32 / total as f32) * 100.0).round() as u32;
+    let filled = ((done as usize) * 15) / (total as usize);
+    let progress_bar = format!("{}{}", "█".repeat(filled), "░".repeat(15 - filled));
+
+    let issue = state
+        .issue_number
+        .map(|n| format!(" #{}", n))
+        .unwrap_or_default();
+    let current = state
+        .current_step_id()
+        .map(|id| {
+            format!(
+                "→ Step {} {}",
+                id,
+                phase_name(state.current_phase().unwrap_or("done"))
+            )
+        })
+        .unwrap_or_else(|| "✓ Workflow complete".to_string());
+    let auto = if state.workflow_auto_continue {
+        "on"
+    } else {
+        "off"
+    };
+    let nudge = if state.workflow_completion_nudge {
+        "on"
+    } else {
+        "off"
+    };
+    let plain = format!(
+        " Workflow{} {} {:02}/{:02} ({}%) {}   Ctrl+Shift+W workflow · A:auto {} · N:nudge {} ",
+        issue, progress_bar, done, total, pct, current, auto, nudge
+    );
+    vec![apply_workflow_widget_bg(&plain, width)]
+}
+
+fn is_widget_visible(state: &WorkflowBarState) -> bool {
+    state.mode.is_some()
+        || state.total > 0
+        || !state.steps.is_empty()
+        || state.issue_number.is_some()
+}
+
+fn apply_workflow_widget_bg(text: &str, width: usize) -> String {
+    let text = crate::interface::utils::truncate_to_width(text, width, Some("…"));
+    let patched = text.replace(
+        WIDGET_RESET,
+        &format!("{WIDGET_RESET}{BG_WORKFLOW_WIDGET}{FG_WORKFLOW_WIDGET}"),
+    );
+    let vis_width = crate::interface::utils::visible_width(&text);
+    let padding = if vis_width < width {
+        " ".repeat(width - vis_width)
+    } else {
+        String::new()
+    };
+    format!("{BG_WORKFLOW_WIDGET}{FG_WORKFLOW_WIDGET}{patched}{padding}{WIDGET_RESET}")
 }
 
 fn render_stage_status_line(
@@ -501,6 +571,38 @@ mod tests {
         assert!(
             stage_line.contains("N:nudge off"),
             "nudge status missing: {stage_line}"
+        );
+    }
+
+    #[test]
+    fn workflow_widget_renders_full_width_yellow_status_bar() {
+        let mut state = make_state(Some(100), 3, 14);
+        state.workflow_auto_continue = true;
+        state.workflow_completion_nudge = false;
+        let lines = render_widget(&state, 100);
+        assert_eq!(lines.len(), 1);
+        let line = &lines[0];
+        assert!(
+            line.contains(BG_WORKFLOW_WIDGET),
+            "should use yellow widget background: {line}"
+        );
+        assert!(
+            line.contains("Workflow"),
+            "should include widget label: {line}"
+        );
+        assert!(line.contains("03/14"), "should include progress: {line}");
+        assert!(
+            line.contains("Ctrl+Shift+W"),
+            "should include workflow hotkey: {line}"
+        );
+        assert!(
+            line.contains("A:auto on"),
+            "should include auto status: {line}"
+        );
+        assert_eq!(
+            crate::interface::utils::visible_width(line),
+            100,
+            "widget should fill terminal width"
         );
     }
 
