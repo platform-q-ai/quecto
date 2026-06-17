@@ -135,7 +135,7 @@ fn renders_stage_status_with_hotkey_tips() {
 }
 
 #[test]
-fn workflow_widget_renders_plain_text_like_pi() {
+fn workflow_widget_renders_plain_text_like_quecto() {
     let mut state = make_state(Some(100), 3, 14);
     state.workflow_auto_continue = true;
     state.workflow_completion_nudge = false;

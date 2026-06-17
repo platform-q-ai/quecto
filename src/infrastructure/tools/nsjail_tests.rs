@@ -324,7 +324,7 @@ fn test_nsjail_default_no_wall_time_limit() {
 
 #[test]
 fn test_nsjail_default_tmp_size_is_512_mb() {
-    // 512 MB = 536_870_912 bytes; conservative for RPi/VPS targets.
+    // 512 MB = 536_870_912 bytes; conservative for RQuecto/VPS targets.
     let args = nsjail_args_str(&NsjailOptions::default());
     assert!(
         args.contains("none:/tmp:tmpfs:size="),

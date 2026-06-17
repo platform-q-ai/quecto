@@ -271,13 +271,18 @@ fn workflow_tool_renders_select_template() {
     chat.start_tool(
         "wf-2".into(),
         "workflow".into(),
-        r#"{"action":"select_template","template":"fix"}"#.into(),
+        r#"{"action":"select_template","template":"feature"}"#.into(),
     );
-    chat.complete_tool("wf-2", "Selected workflow template 'fix'.", false, Some(10));
+    chat.complete_tool(
+        "wf-2",
+        "Selected workflow template 'feature'.",
+        false,
+        Some(10),
+    );
     let lines = chat.render(80);
     assert!(
-        bg_lines_contain(&lines, theme::BG_SUCCESS, "fix"),
-        "should contain template name 'fix'"
+        bg_lines_contain(&lines, theme::BG_SUCCESS, "feature"),
+        "should contain template name 'feature'"
     );
 }
 

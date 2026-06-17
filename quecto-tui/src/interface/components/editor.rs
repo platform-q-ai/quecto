@@ -1,6 +1,6 @@
 //! Multi-line editor component with cursor, history, borders.
 //!
-//! Modelled on Pi TUI's Editor: bordered input area with word wrap,
+//! Modelled on Quecto TUI's Editor: bordered input area with word wrap,
 //! cursor movement, line editing, and input history.
 
 use crate::interface::component::Component;

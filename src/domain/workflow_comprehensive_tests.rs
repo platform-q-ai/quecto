@@ -17,7 +17,7 @@ fn snapshot_in_selector_mode_lists_templates() {
     let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     let snap = engine.snapshot(true);
     assert_eq!(snap.mode, WorkflowMode::SelectingTemplate);
-    assert!(snap.available_templates.len() >= 4);
+    assert_eq!(snap.available_templates.len(), 1);
     assert!(snap.steps.is_empty());
 }
 
@@ -46,16 +46,20 @@ fn selector_prompt_mentions_select_template() {
 #[test]
 fn active_prompt_mentions_guidance() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
-    engine.select_template("fix", None).unwrap();
+    engine.select_template("feature", None).unwrap();
     engine.check(1).unwrap();
     let prompt = engine.prompt_snippet();
     assert!(prompt.contains("CURRENT STEP"));
-    assert!(prompt.contains("reproducing the bug"));
+    assert!(prompt.contains("updating feature coverage"));
 }
 
 #[test]
 fn auto_continue_nudge_uses_continuation_wording() {
-    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let config = WorkflowConfig {
+        auto_continue: true,
+        ..WorkflowConfig::default()
+    };
+    let mut engine = WorkflowEngine::new(config, false).unwrap();
     engine.select_template("feature", None).unwrap();
     let nudge = engine.auto_continue_nudge().unwrap();
     assert!(nudge.contains("Workflow incomplete."));

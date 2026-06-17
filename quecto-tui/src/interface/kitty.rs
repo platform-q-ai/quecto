@@ -103,15 +103,31 @@ impl Default for KittyProtocol {
 
 /// Check if a key input is a Kitty key release event.
 ///
-/// Kitty release events have the form: `CSI <keycode> ; <modifiers> : 3 u`
-/// The `:3` suffix indicates a release event.
+/// Kitty release events encode event type `3` in a colon-delimited sub-field
+/// after the modifier parameter, e.g. `CSI 97 ; 1 : 3 u`. The parser is
+/// anchored to a single CSI sequence so unrelated text containing `:3u` is not
+/// treated as a release.
 pub fn is_key_release(input: &[u8]) -> bool {
-    let s = match std::str::from_utf8(input) {
-        Ok(s) => s,
-        Err(_) => return false,
+    let Some(rest) = input.strip_prefix(b"\x1b[") else {
+        return false;
     };
-    // Pattern: ends with ":3u" (release event type)
-    s.contains(":3u") || s.contains(":3~")
+    let Some((&terminator, params)) = rest.split_last() else {
+        return false;
+    };
+    if !matches!(
+        terminator,
+        b'u' | b'~' | b'A' | b'B' | b'C' | b'D' | b'H' | b'F'
+    ) {
+        return false;
+    }
+    let Ok(params) = std::str::from_utf8(params) else {
+        return false;
+    };
+    params
+        .split(';')
+        .skip(1)
+        .filter_map(|field| field.split(':').next_back())
+        .any(|event_type| event_type == "3")
 }
 
 #[cfg(test)]
@@ -151,6 +167,16 @@ mod tests {
     fn is_key_release_false() {
         assert!(!is_key_release(b"\x1b[97;1:1u")); // 'a' press
         assert!(!is_key_release(b"\x1b[A")); // arrow up (not Kitty)
+    }
+
+    #[test]
+    fn is_key_release_ignores_unanchored_text_containing_marker() {
+        assert!(!is_key_release(b"typed text :3u"));
+    }
+
+    #[test]
+    fn is_key_release_ignores_alternate_key_fields() {
+        assert!(!is_key_release(b"\x1b[65:65:97;6:1u"));
     }
 
     #[test]

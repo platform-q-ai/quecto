@@ -77,7 +77,7 @@ Feature: Grep Tool
     Then the grep result should be an error
 
   @done
-  Scenario: Context lines use file cache (Pi parity — file-N- format)
+  Scenario: Context lines use file cache (Quecto compatibility — file-N- format)
     Given a grep workspace file "ctx.rs" with content:
       """
       line one

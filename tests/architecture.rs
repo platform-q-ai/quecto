@@ -535,6 +535,22 @@ fn assert_local_hook_enforces_formatting_and_complexity(hook: &str) {
 }
 
 #[test]
+fn hook_installation_checker_verifies_all_local_hooks() {
+    let content = fs::read_to_string("scripts/check-hooks-installed.sh")
+        .expect("read hook installation checker");
+    for hook in ["pre-commit", "pre-push", "pre-merge-commit"] {
+        assert!(
+            content.contains(hook),
+            "hook checker must verify {hook} is installed"
+        );
+    }
+    assert!(
+        content.contains("command -v git"),
+        "hook checker must verify the git wrapper is active in PATH"
+    );
+}
+
+#[test]
 fn pre_push_runs_contract_tests() {
     let content = fs::read_to_string("scripts/pre-push.sh").expect("read pre-push hook");
     assert!(

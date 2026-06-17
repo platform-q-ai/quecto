@@ -35,7 +35,7 @@ non_behavioral_features = [
   "tests/features/tui_phase7.feature",
   "tests/features/tui_phase8.feature",
   "tests/features/tui_pid_safety.feature",
-  "tests/features/tui_pi_style_tools.feature",
+  "tests/features/tui_quecto_style_tools.feature",
   "tests/features/tui_stdin_buffer_cap.feature",
   "tests/features/tui_stdin_retry.feature",
   "tests/features/tui_subagent_bar_expiry.feature",

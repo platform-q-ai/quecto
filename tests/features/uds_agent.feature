@@ -183,7 +183,7 @@ Feature: UDS mode for headless agent operation
     And the get_state response model should be "gpt-5-mini"
 
   @done
-  Scenario: set_model accepts Pi-compatible provider and modelId fields
+  Scenario: set_model accepts compatible provider and modelId fields
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
     And the mock LLM returns a text response "ok"
@@ -762,7 +762,7 @@ Feature: UDS mode for headless agent operation
     When I start the multi-client UDS agent with workflow enabled
     And client 1 connects
     And client 2 connects
-    And client 1 sends prompt "select template fix"
+    And client 1 sends prompt "select template feature"
     And I close all UDS clients
     Then the UDS agent exits with code 0
     And client 1 should have received a workflow_state event with mode "active"
@@ -775,7 +775,7 @@ Feature: UDS mode for headless agent operation
     And the mock LLM returns tool calls for workflow select then check then text "done"
     When I start the multi-client UDS agent with workflow enabled
     And client 1 connects
-    And client 1 sends prompt "select fix and check step 1"
+    And client 1 sends prompt "select feature and check step 1"
     And I close all UDS clients
     Then the UDS agent exits with code 0
     And client 1 should have received a workflow_state event with progress done 1

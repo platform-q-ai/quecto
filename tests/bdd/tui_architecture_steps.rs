@@ -368,8 +368,8 @@ fn then_tui_does_not_render_workflow_header_bar(_world: &mut QuectoWorld) {
     );
 }
 
-#[then("the quecto-tui workflow widget should render as plain text matching the Pi extension")]
-fn then_tui_workflow_widget_matches_pi_plain_text(_world: &mut QuectoWorld) {
+#[then("the quecto-tui workflow widget should render as plain text matching the Quecto workflow")]
+fn then_tui_workflow_widget_matches_quecto_plain_text(_world: &mut QuectoWorld) {
     let bar = std::fs::read_to_string("quecto-tui/src/interface/components/workflow_bar.rs")
         .expect("read workflow bar source");
     let app = std::fs::read_to_string("quecto-tui/src/interface/app.rs").expect("read app source");
@@ -379,7 +379,7 @@ fn then_tui_workflow_widget_matches_pi_plain_text(_world: &mut QuectoWorld) {
             && bar.contains("→ Step")
             && bar.contains("✓ Workflow complete")
             && !bar.contains("BG_WORKFLOW_WIDGET"),
-        "workflow widget should be plain Pi-style text without a full-width yellow background"
+        "workflow widget should be plain Quecto-style text without a full-width yellow background"
     );
     assert!(
         app.contains("workflow_bar::render_widget")

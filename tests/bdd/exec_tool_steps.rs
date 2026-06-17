@@ -1,4 +1,4 @@
-// BDD step definitions for ExecTool Pi-parity scenarios (issue #146).
+// BDD step definitions for ExecTool Quecto-compatible scenarios (issue #146).
 
 use std::sync::Arc;
 

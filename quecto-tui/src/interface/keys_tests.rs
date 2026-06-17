@@ -27,6 +27,25 @@ fn parse_arrow_left() {
 }
 
 #[test]
+fn kitty_arrow_press() {
+    let (key, n) = parse_key(b"\x1b[1;1u").unwrap();
+    assert_eq!(key, Key::Up);
+    assert_eq!(n, 6);
+}
+
+#[test]
+fn kitty_arrow_release_is_not_actionable() {
+    let (key, n) = parse_key(b"\x1b[1;1:3u").unwrap();
+    assert_eq!(key, Key::Unknown(b"1;1:3".to_vec()));
+    assert_eq!(n, 8);
+}
+
+#[test]
+fn kitty_arrow_release_final_is_detected() {
+    assert!(crate::interface::kitty::is_key_release(b"\x1b[1;1:3A"));
+}
+
+#[test]
 fn parse_enter_cr() {
     let (key, n) = parse_key(b"\r").unwrap();
     assert_eq!(key, Key::Enter);
@@ -273,7 +292,7 @@ fn modify_other_keys_ctrl_shift_letters() {
 }
 
 #[test]
-fn modify_other_keys_ignores_non_pi_two_field_tilde_variant() {
+fn modify_other_keys_ignores_non_standard_two_field_tilde_variant() {
     let (key, _) = parse_key(b"\x1b[65;6~").unwrap();
     assert!(matches!(key, Key::Unknown(_)));
 }

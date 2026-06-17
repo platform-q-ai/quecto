@@ -273,7 +273,7 @@ mod tests {
 
     #[test]
     fn data_table_rows_preserved() {
-        // Pipe-prefixed lines aren't step lines; leave them alone even if
+        // Quectope-prefixed lines aren't step lines; leave them alone even if
         // they contain bracketed text.
         let in_ = "    | field | [value] |\n";
         let out = strip_step_tags(in_, &re());

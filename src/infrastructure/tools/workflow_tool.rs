@@ -425,7 +425,7 @@ mod tests {
     async fn select_template_and_check_flow() {
         let tool = test_tool();
         let result = tool
-            .execute(r#"{"action":"select_template","template":"fix"}"#)
+            .execute(r#"{"action":"select_template","template":"feature"}"#)
             .await
             .unwrap();
         assert!(!result.is_error);

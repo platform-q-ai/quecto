@@ -3,7 +3,7 @@
 //! Displays user messages, assistant responses (with streaming), and
 //! tool execution results in a scrollable vertical layout.
 //!
-//! Tool rendering uses Pi-style background-colored boxes with tool-specific
+//! Tool rendering uses Quecto-style background-colored boxes with tool-specific
 //! formatting (#510): bash shows `$ command` + output tail, read/write show
 //! file path + content preview, edit shows diff.
 

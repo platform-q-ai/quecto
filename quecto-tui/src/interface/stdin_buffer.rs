@@ -1,6 +1,6 @@
 //! StdinBuffer — buffers raw terminal input and emits complete sequences.
 //!
-//! Modeled on Pi TUI's StdinBuffer. Solves the fundamental problem of escape
+//! Modeled on Quecto TUI's StdinBuffer. Solves the fundamental problem of escape
 //! sequences arriving split across multiple reads (e.g. `\x1b` then `[A`).
 //!
 //! The buffer accumulates bytes and only emits complete key sequences.
@@ -336,6 +336,17 @@ mod tests {
         buf.feed(b"\x1b[13;2u"); // Kitty Shift+Enter
         let seqs = buf.drain_complete();
         assert_eq!(seqs, vec![b"\x1b[13;2u".to_vec()]);
+    }
+
+    #[test]
+    fn kitty_press_and_release_in_one_read_split_into_sequences() {
+        let mut buf = StdinBuffer::new();
+        buf.feed(b"\x1b[65;1:1u\x1b[65;1:3u");
+        let seqs = buf.drain_complete();
+        assert_eq!(seqs.len(), 2);
+        assert_eq!(seqs[0], b"\x1b[65;1:1u".to_vec());
+        assert_eq!(seqs[1], b"\x1b[65;1:3u".to_vec());
+        assert!(crate::interface::kitty::is_key_release(&seqs[1]));
     }
 
     #[test]

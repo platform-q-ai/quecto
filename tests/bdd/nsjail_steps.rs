@@ -555,7 +555,7 @@ fn then_result_indicates_truncation(world: &mut QuectoWorld) {
         Err(e) => e.clone(),
     };
     // Accept both the old "[Output truncated...]" format and the new
-    // Pi-parity "[Showing lines X-Y of Z...]" format.
+    // Quecto-compatible "[Showing lines X-Y of Z...]" format.
     assert!(
         text.contains("truncated") || text.contains("Showing lines"),
         "result did not indicate truncation: {}",

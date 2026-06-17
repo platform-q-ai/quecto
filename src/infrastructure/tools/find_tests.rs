@@ -85,7 +85,7 @@ fn test_format_find_directory_trailing_slash() {
     assert!(result.contains("subdir/"), "got: {}", result);
 }
 
-// --- Pi parity: nested .gitignore and float limit ---
+// --- Quecto compatibility: nested .gitignore and float limit ---
 
 #[test]
 fn test_discover_nested_gitignore_finds_files() {

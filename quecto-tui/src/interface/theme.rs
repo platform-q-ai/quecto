@@ -118,14 +118,14 @@ pub fn tool_name(text: &str) -> String {
 
 // ── Tool output foreground color ──────────────────────────────────────────────
 
-/// Tool output text color — matches Pi's `toolOutput` (#808080).
+/// Tool output text color — matches Quecto's `toolOutput` (#808080).
 pub fn tool_output(text: &str) -> String {
     format!("\x1b[38;2;128;128;128m{}\x1b[0m", text)
 }
 
 // ── Background colors for tool boxes ─────────────────────────────────────────
 //
-// Colors match Pi's dark theme exactly (from dark.json):
+// Colors match Quecto's dark theme exactly (from dark.json):
 //   toolPendingBg: #282832 — very dark blue-gray
 //   toolSuccessBg: #283228 — very dark muted green
 //   toolErrorBg:   #3c2828 — very dark muted red
@@ -148,7 +148,7 @@ pub fn apply_bg(text: &str, width: usize, bg_fn: fn(&str) -> String) -> String {
     apply_bg_code(text, width, bg_code_from_fn(bg_fn))
 }
 
-/// Background ANSI codes for the three tool states (truecolor, matching Pi).
+/// Background ANSI codes for the three tool states (truecolor, matching Quecto).
 pub const BG_PENDING: &str = "\x1b[48;2;40;40;50m"; // #282832
 pub const BG_SUCCESS: &str = "\x1b[48;2;40;50;40m"; // #283228
 pub const BG_ERROR: &str = "\x1b[48;2;60;40;40m"; // #3c2828
@@ -191,17 +191,17 @@ fn apply_bg_code(text: &str, width: usize, bg_code: &str) -> String {
     format!("{}{}{}\x1b[0m", bg_code, patched, " ".repeat(pad))
 }
 
-/// Tool pending background — #282832 (very dark blue-gray, matches Pi).
+/// Tool pending background — #282832 (very dark blue-gray, matches Quecto).
 pub fn tool_pending_bg(text: &str) -> String {
     bg_rgb(40, 40, 50, text)
 }
 
-/// Tool success background — #283228 (very dark muted green, matches Pi).
+/// Tool success background — #283228 (very dark muted green, matches Quecto).
 pub fn tool_success_bg(text: &str) -> String {
     bg_rgb(40, 50, 40, text)
 }
 
-/// Tool error background — #3c2828 (very dark muted red, matches Pi).
+/// Tool error background — #3c2828 (very dark muted red, matches Quecto).
 pub fn tool_error_bg(text: &str) -> String {
     bg_rgb(60, 40, 40, text)
 }
@@ -297,7 +297,7 @@ mod tests {
     }
 
     #[test]
-    fn bg_colors_match_pi_dark_theme() {
+    fn bg_colors_match_quecto_dark_theme() {
         assert_eq!(BG_PENDING, "\x1b[48;2;40;40;50m");
         assert_eq!(BG_SUCCESS, "\x1b[48;2;40;50;40m");
         assert_eq!(BG_ERROR, "\x1b[48;2;60;40;40m");

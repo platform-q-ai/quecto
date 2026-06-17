@@ -445,9 +445,9 @@ async fn run_child_with_timeout(
     }
 }
 
-/// Collect stdout + stderr, truncate, and append Pi-format path hint if needed.
+/// Collect stdout + stderr, truncate, and append Quecto-format path hint if needed.
 ///
-/// Truncation notice format (matching Pi's bash.ts):
+/// Truncation notice format (matching Quecto's bash.ts):
 /// - Byte-truncated:  `[Showing lines X-Y of Z (50KB limit). Full output: PATH]`
 /// - Line-truncated:  `[Showing lines X-Y of Z. Full output: PATH]`
 /// - Save fails:      `[Output truncated to last N lines / N bytes]`

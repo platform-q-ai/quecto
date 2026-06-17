@@ -407,7 +407,7 @@ impl App {
         // Widgets above editor (subagent bars stay on top, visible).
         bottom.extend(self.widgets_above.render(width));
 
-        // Pi-style workflow widget above the editor.
+        // Quecto-style workflow widget above the editor.
         let workflow_widget_lines = workflow_bar::render_widget(&workflow_bar_state, width);
         bottom.extend(workflow_widget_lines);
 

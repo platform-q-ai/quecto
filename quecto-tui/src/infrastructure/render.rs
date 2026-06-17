@@ -1,6 +1,6 @@
 //! Differential renderer — only rewrites changed terminal lines.
 //!
-//! Modelled on Pi TUI's approach: compare new lines with previous lines,
+//! Modelled on Quecto TUI's approach: compare new lines with previous lines,
 //! emit cursor movement + line clear + new content only for changed lines.
 //! Wraps output in synchronized output markers (`CSI ?2026h` / `CSI ?2026l`)
 //! to prevent tearing on terminals that support it.

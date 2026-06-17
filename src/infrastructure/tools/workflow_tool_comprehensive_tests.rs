@@ -177,16 +177,20 @@ async fn select_template_with_issue_instantiates_active_run() {
 
     let result = tool
         .execute(
-            r#"{"action":"select_template","template":"fix","issueNumber":42,"issueTitle":"Fix login bug"}"#,
+            r#"{"action":"select_template","template":"feature","issueNumber":42,"issueTitle":"Fix login bug"}"#,
         )
         .await
         .unwrap();
     assert!(!result.is_error);
-    assert!(result.content.contains("Selected workflow template 'fix'"));
+    assert!(
+        result
+            .content
+            .contains("Selected workflow template 'feature'")
+    );
 
     let status = tool.execute(r#"{"action":"status"}"#).await.unwrap();
     assert!(status.content.contains("## Active Workflow"));
-    assert!(status.content.contains("Template: Fix (fix)"));
+    assert!(status.content.contains("Template: Feature (feature)"));
     assert!(status.content.contains("Active issue: #42 — Fix login bug"));
     assert!(status.content.contains("CURRENT STEP → 1."));
 }
@@ -215,7 +219,7 @@ async fn step_actions_fail_clearly_without_selected_template() {
 #[tokio::test]
 async fn check_accepts_string_step_numbers() {
     let tool = default_tool();
-    tool.execute(r#"{"action":"select_template","template":"fix"}"#)
+    tool.execute(r#"{"action":"select_template","template":"feature"}"#)
         .await
         .unwrap();
 
@@ -231,7 +235,7 @@ async fn check_accepts_string_step_numbers() {
 #[tokio::test]
 async fn check_rejects_invalid_step_values() {
     let tool = default_tool();
-    tool.execute(r#"{"action":"select_template","template":"fix"}"#)
+    tool.execute(r#"{"action":"select_template","template":"feature"}"#)
         .await
         .unwrap();
 
@@ -311,7 +315,7 @@ async fn check_enforces_ordering_and_skip_bypasses_it() {
 #[tokio::test]
 async fn reset_returns_tool_to_selector_mode() {
     let tool = default_tool();
-    tool.execute(r#"{"action":"select_template","template":"fix"}"#)
+    tool.execute(r#"{"action":"select_template","template":"feature"}"#)
         .await
         .unwrap();
     tool.execute(r#"{"action":"check","step":1}"#)
@@ -330,11 +334,11 @@ async fn reset_returns_tool_to_selector_mode() {
 #[tokio::test]
 async fn status_reflects_complete_mode() {
     let tool = default_tool();
-    tool.execute(r#"{"action":"select_template","template":"chore"}"#)
+    tool.execute(r#"{"action":"select_template","template":"feature"}"#)
         .await
         .unwrap();
 
-    for step in 1..=5 {
+    for step in 1..=17 {
         let result = tool
             .execute(&format!(r#"{{"action":"check","step":{step}}}"#))
             .await
@@ -355,7 +359,7 @@ async fn mutating_actions_emit_events_but_status_does_not() {
     assert_eq!(events.lock().unwrap().len(), 0);
 
     let select = tool
-        .execute(r#"{"action":"select_template","template":"fix"}"#)
+        .execute(r#"{"action":"select_template","template":"feature"}"#)
         .await
         .unwrap();
     assert!(!select.is_error);
@@ -363,7 +367,7 @@ async fn mutating_actions_emit_events_but_status_does_not() {
         let events = events.lock().unwrap();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0]["type"], "workflow_state");
-        assert_eq!(events[0]["activeTemplate"]["id"], "fix");
+        assert_eq!(events[0]["activeTemplate"]["id"], "feature");
     }
 
     let check = tool
@@ -515,7 +519,7 @@ async fn emitter_sends_workflow_state_through_broadcast_channel() {
     let tool = WorkflowTool::with_event_emitter(engine, emitter);
 
     // select_template should send an event through the channel.
-    tool.execute(r#"{"action":"select_template","template":"fix"}"#)
+    tool.execute(r#"{"action":"select_template","template":"feature"}"#)
         .await
         .unwrap();
 
@@ -526,7 +530,7 @@ async fn emitter_sends_workflow_state_through_broadcast_channel() {
     let parsed: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
     assert_eq!(parsed["type"], "workflow_state");
     assert_eq!(parsed["mode"], "active");
-    assert_eq!(parsed["activeTemplate"]["id"], "fix");
+    assert_eq!(parsed["activeTemplate"]["id"], "feature");
 
     // status should NOT send an event.
     tool.execute(r#"{"action":"status"}"#).await.unwrap();
@@ -573,7 +577,7 @@ async fn register_workflow_tool_with_broadcast_emitter() {
         .get("workflow")
         .expect("workflow tool should be registered");
     let result = tool
-        .execute(r#"{"action":"select_template","template":"chore"}"#)
+        .execute(r#"{"action":"select_template","template":"feature"}"#)
         .await
         .unwrap();
     assert!(!result.is_error);
@@ -583,5 +587,5 @@ async fn register_workflow_tool_with_broadcast_emitter() {
         .expect("expected broadcast after select_template");
     let parsed: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
     assert_eq!(parsed["type"], "workflow_state");
-    assert_eq!(parsed["activeTemplate"]["id"], "chore");
+    assert_eq!(parsed["activeTemplate"]["id"], "feature");
 }

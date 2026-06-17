@@ -1,4 +1,4 @@
-// BDD step definitions for LsTool Pi-parity scenarios (issue #149).
+// BDD step definitions for LsTool Quecto-compatible scenarios (issue #149).
 
 use crate::QuectoWorld;
 use cucumber::{given, then, when};

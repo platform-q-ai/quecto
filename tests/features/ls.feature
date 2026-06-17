@@ -1,7 +1,7 @@
 @done
-Feature: LsTool — Pi parity
+Feature: LsTool — Quecto compatibility
   As an AI agent
-  I want to list directory contents with Pi-parity behaviour
+  I want to list directory contents with Quecto-compatible behaviour
   So that I can navigate workspaces efficiently
 
   Background:
@@ -16,13 +16,13 @@ Feature: LsTool — Pi parity
     And the ls result should not be an error
 
   @done
-  Scenario: Empty directory returns informative message (Pi parity)
+  Scenario: Empty directory returns informative message (Quecto compatibility)
     When I list the workspace
     Then the ls result should contain "(empty directory)"
     And the ls result should not be an error
 
   @done
-  Scenario: Case-insensitive sort (Pi parity)
+  Scenario: Case-insensitive sort (Quecto compatibility)
     Given ls workspace file "Makefile"
     And ls workspace file "app.rs"
     And ls workspace file "Zoo.rs"
@@ -32,7 +32,7 @@ Feature: LsTool — Pi parity
     And the ls result should not be an error
 
   @done
-  Scenario: Limit parameter caps entries returned (Pi parity)
+  Scenario: Limit parameter caps entries returned (Quecto compatibility)
     Given ls workspace with 20 files named "file_NNN.txt"
     When I list the workspace with limit 5
     Then the ls result should contain "5 entries limit reached"
@@ -40,7 +40,7 @@ Feature: LsTool — Pi parity
     And the ls result should not be an error
 
   @done
-  Scenario: Default limit is 500 entries (Pi parity)
+  Scenario: Default limit is 500 entries (Quecto compatibility)
     Given ls workspace with 600 files named "file_NNN.txt"
     When I list the workspace
     Then the ls result should contain "500 entries limit reached"

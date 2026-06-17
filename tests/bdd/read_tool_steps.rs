@@ -1,4 +1,4 @@
-// BDD step definitions for ReadTool Pi-parity scenarios (issue #144).
+// BDD step definitions for ReadTool Quecto-compatible scenarios (issue #144).
 //
 // Existing image-file steps (PNG/JPEG/GIF/WebP with the canonical extension)
 // are in agent_tools_steps.rs. This module adds steps for:

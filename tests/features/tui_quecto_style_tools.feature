@@ -1,7 +1,7 @@
 @tui @pending
-Feature: TUI Pi-style tool output — unified entries, bg colors, tool-specific formatting
+Feature: TUI Quecto-style tool output — unified entries, bg colors, tool-specific formatting
   Issue #510: Tool output should use background colors, tool-specific
-  formatting, and collapsed previews matching Pi's rendering.
+  formatting, and collapsed previews matching Quecto's rendering.
 
   # ---------------------------------------------------------------------------
   # Unified tool entry (no more ToolStart/ToolEnd duplication)

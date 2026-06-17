@@ -2,7 +2,7 @@
 
 Quecto is a Rust workspace centred on a lightweight personal AI assistant. The main `quecto` binary receives messages via the command line or a UDS event bus, routes them through an LLM (OpenAI, Anthropic, or ChatGPT Codex), executes tools (shell commands, file operations, search), and persists conversations to disk.
 
-The workspace also includes companion binaries for terminal UI access (`quecto-tui`), HTTP/WebSocket gateway access (`quecto-api`), MCP tool bridging (`quecto-mcp`), and managed runtime orchestration (`quecto-runtime-manager`). Quecto runs on a VPS, Raspberry Pi, or container with no non-Rust application runtime.
+The workspace also includes companion binaries for terminal UI access (`quecto-tui`), HTTP/WebSocket gateway access (`quecto-api`), MCP tool bridging (`quecto-mcp`), and managed runtime orchestration (`quecto-runtime-manager`). Quecto runs on a VPS, small Linux host, or container with no non-Rust application runtime.
 
 ## Release Notes
 
@@ -90,7 +90,7 @@ Zero deps except `thiserror` and `serde` (derive). Defines system vocabulary.
 | `extension.rs` | `Extension` trait (`name()`, `tools()`, `system_prompt_snippet()`) |
 | `workspace.rs` | `OnboardStore` port |
 | `subagent.rs` | `SubagentConfig`, `validate_agent_id()` |
-| `workflow.rs` | `WorkflowEngine`, `WorkflowConfig` (`auto_continue`, `completion_nudge`, `templates`), `WorkflowTemplate`, `WorkflowTemplateStep`, `WorkflowGuardRule`, `WorkflowRun`, `WorkflowRunPersisted`, `WorkflowMode` (SelectingTemplate/Active/Complete), `WorkflowSnapshot`, `WorkflowError`, `default_templates()` (feature/fix/refactor/chore). UDS-only, opt-in via `--workflow` flag |
+| `workflow.rs` | `WorkflowEngine`, `WorkflowConfig` (`auto_continue`, `completion_nudge`, `templates`), `WorkflowTemplate`, `WorkflowTemplateStep`, `WorkflowGuardRule`, `WorkflowRun`, `WorkflowRunPersisted`, `WorkflowMode` (SelectingTemplate/Active/Complete), `WorkflowSnapshot`, `WorkflowError`, `default_templates()` (single `feature` Quecto workflow). UDS-only, opt-in via `--workflow` flag |
 | `error.rs` | `DomainError` enum (Provider, Tool, Session, Security, Config, Other) |
 
 Traits use `Pin<Box<dyn Future + Send + '_>>` for `Arc<dyn Trait>` compatibility.
@@ -101,7 +101,7 @@ Depends only on `domain/`. Orchestration logic, no I/O.
 | File | Purpose |
 |---|---|
 | `agent_loop.rs` | Core LLM-tool loop: send → execute tools → repeat. Traces `tool_name`, `duration_ms`, `is_error`. Progress callbacks for REPL spinner. Supports incremental streaming via `chat_stream_incremental()`. Passes configured `effort` level through to every `ChatRequest` |
-| `context_pruning.rs` | Token estimation, sliding-window pruning, pinned spill manifest, and optional tool-result collapse. Current config defaults: `max_context_tokens = 300000`, `context_collapse_after_turns = 50`; set `context_collapse_after_turns` to `4294967295` (`u32::MAX`) to disable collapse |
+| `context_pruning.rs` | Token estimation, sliding-window pruning, pinned spill manifest, and optional tool-result collapse. Current config defaults: `max_context_tokens = 200000`, `context_collapse_after_turns = 50`; set `context_collapse_after_turns` to `4294967295` (`u32::MAX`) to disable collapse |
 | `onboard.rs` | Onboarding orchestration via `OnboardStore` |
 | `reload.rs` | `/reload` use case: strips stale tool history via `strip_tool_history()`, clears spill index, coordinates `SessionStore` + `ContextSpillStore` |
 | `subagent.rs` | `SubagentContext` — child agent contexts with inherited sandbox |
@@ -203,7 +203,7 @@ REPL commands:
 
 Ctrl+D (EOF) also exits cleanly.
 
-Piped input is supported for scripting: `echo "hello" | quecto`.
+Quectoped input is supported for scripting: `echo "hello" | quecto`.
 
 ### `quecto agent` — Talk to the agent
 
@@ -496,8 +496,8 @@ Config file: `~/.quecto/config.json`
     }
   },
   "workflow": {
-    "auto_continue": true,
-    "completion_nudge": true,
+    "auto_continue": false,
+    "completion_nudge": false,
     "templates": []
   }
 }
@@ -593,7 +593,7 @@ External tool binaries (`rg`, `fd`) are resolved via `ensure_tool`: system PATH 
 
 | Tool | Description |
 |---|---|
-| `bash` | Execute a shell command. Per-invocation timeout, 1 MiB stdout/stderr capture, dangerous commands blocked. Supports `commandPrefix` for environment setup. Output truncated with Pi-compatible notices |
+| `bash` | Execute a shell command. Per-invocation timeout, 1 MiB stdout/stderr capture, dangerous commands blocked. Supports `commandPrefix` for environment setup. Output truncated with compatible notices |
 | `read` | Read file contents (text or image). Text: 2000-line / 50KB truncation with offset/limit pagination. Images (jpg/png/gif/webp): base64-encoded, auto-resized to 2000px max dimension. Magic-byte MIME detection |
 | `write` | Create or overwrite a file (auto-creates parent directories) |
 | `edit` | Replace text in a file. Two-stage exact→fuzzy matching, CRLF/BOM preservation, no-op detection, LCS-based unified diff output |
@@ -650,24 +650,25 @@ API key resolution order: credential store (`quecto auth login`) > environment v
 
 ## Development workflow
 
-Quecto development uses the repository-local Pi workflow checklist:
+Quecto development uses the repository-local Quecto workflow checklist:
 
-1 - Update Scenarios / Add new features
-2 - Write/update unit tests (run a quick smoke check; full suite runs on push)
-3 - Ensure new/modified tests FAIL (RED) — quick targeted run only, not full suite
-4 - Implement code (GREEN)
-5 - Refactor (perf, security, clean arch)
-6 - Ensure tests still pass (GREEN)
-7 - Commit
-8 - Push (pre-push hook will run tests and linting)
-9 - Create PR
-10 - Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)
-11 - Fix all valid review concerns
-12 - Push changes to remote
-13 - Reply to the reviewers comments on the PR and mark resolved (use graphql)
-14 - Run pre-merge hooks (real-LLM, machete, deny)
-15 - Merge
-16 - Move to local master and pull
+1 - Install/check local quality hooks
+2 - Update Scenarios / Add new features
+3 - Write/update unit tests (run a quick smoke check; full suite runs on push)
+4 - Ensure new/modified tests FAIL (RED) — quick targeted run only, not full suite
+5 - Implement code (GREEN)
+6 - Refactor (perf, security, clean arch)
+7 - Ensure tests still pass (GREEN)
+8 - Commit
+9 - Push (pre-push hook will run tests and linting)
+10 - Create PR
+11 - Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)
+12 - Fix all valid review concerns
+13 - Push changes to remote
+14 - Reply to the reviewers comments on the PR and mark resolved (use graphql)
+15 - Run pre-merge hooks (real-LLM, machete, deny)
+16 - Merge
+17 - Move to local master and pull
 
 ## Quality gates
 

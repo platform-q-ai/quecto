@@ -83,7 +83,7 @@ pub enum AgentCommand {
     ///
     /// Accepts either:
     /// - legacy `{ "model": "provider/modelId" }`, or
-    /// - Pi-compatible `{ "provider": "...", "modelId": "..." }`.
+    /// - compatible `{ "provider": "...", "modelId": "..." }`.
     SetModel {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
