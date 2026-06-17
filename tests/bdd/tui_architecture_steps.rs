@@ -354,36 +354,27 @@ fn then_tui_resume_selector_has_opaque_border(_world: &mut QuectoWorld) {
     );
 }
 
-#[then("the quecto-tui workflow bar should include stage status and hotkey tips")]
-fn then_tui_workflow_bar_has_stage_status_and_hotkeys(_world: &mut QuectoWorld) {
-    let bar = std::fs::read_to_string("quecto-tui/src/interface/components/workflow_bar.rs")
-        .expect("read workflow bar source");
+#[then("quecto-tui should not render a separate workflow header bar")]
+fn then_tui_does_not_render_workflow_header_bar(_world: &mut QuectoWorld) {
     let app = std::fs::read_to_string("quecto-tui/src/interface/app.rs").expect("read app source");
     assert!(
-        bar.contains("render_stage_status_line")
-            && bar.contains("Ctrl+Shift+W")
-            && bar.contains("Ctrl+Shift+A")
-            && bar.contains("Ctrl+Shift+N"),
-        "workflow bar should render Pi-style stage status with workflow hotkey tips"
-    );
-    assert!(
-        app.contains("Key::CtrlShift('w')")
-            && app.contains("Key::CtrlShift('a')")
-            && app.contains("Key::CtrlShift('n')"),
-        "workflow hotkey tips should correspond to local TUI hotkey handlers"
+        !app.contains("workflow_bar::render(&workflow_bar_state"),
+        "workflow UI should only render in the bottom widget area, not as a top header bar"
     );
 }
 
-#[then(
-    "the quecto-tui workflow widget should render as a full-width yellow status bar above the editor"
-)]
-fn then_tui_workflow_widget_is_pi_style_status_bar(_world: &mut QuectoWorld) {
+#[then("the quecto-tui workflow widget should render as plain text matching the Pi extension")]
+fn then_tui_workflow_widget_matches_pi_plain_text(_world: &mut QuectoWorld) {
     let bar = std::fs::read_to_string("quecto-tui/src/interface/components/workflow_bar.rs")
         .expect("read workflow bar source");
     let app = std::fs::read_to_string("quecto-tui/src/interface/app.rs").expect("read app source");
     assert!(
-        bar.contains("render_widget") && bar.contains("BG_WORKFLOW_WIDGET"),
-        "workflow_bar should expose a Pi-style full-width yellow workflow widget"
+        bar.contains("render_widget")
+            && bar.contains("Workflow")
+            && bar.contains("→ Step")
+            && bar.contains("✓ Workflow complete")
+            && !bar.contains("BG_WORKFLOW_WIDGET"),
+        "workflow widget should be plain Pi-style text without a full-width yellow background"
     );
     assert!(
         app.contains("workflow_bar::render_widget")

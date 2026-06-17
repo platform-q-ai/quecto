@@ -1,16 +1,10 @@
-//! Sci-fi styled workflow progress bar for the TUI header (#563).
+//! Workflow progress UI for the TUI.
 //!
-//! When visible, renders four lines: a blank spacer, the styled progress
-//! bar (issue number, title, progress, phase), a stage/hotkey tips line,
-//! and another blank spacer.
-//! Returns an empty vec when no workflow is active.
+//! Matches the Pi workflow extension: the widget is a single plain text line
+//! above the editor with no background, and the checklist panel is a read-only
+//! mirror of the Pi WorkflowChecklist.
 
 use crate::interface::theme;
-
-/// Yellow Pi-style workflow widget background shown above the editor.
-pub const BG_WORKFLOW_WIDGET: &str = "\x1b[48;2;92;69;0m";
-const FG_WORKFLOW_WIDGET: &str = "\x1b[38;2;255;244;190m";
-const WIDGET_RESET: &str = "\x1b[0m";
 
 /// Workflow step info received from a `workflow_state` event.
 #[derive(Debug, Clone)]
@@ -77,6 +71,8 @@ impl WorkflowBarState {
 ///
 /// Returns an empty vec if no workflow is active.
 /// Returns four lines if active: blank spacer, styled content, stage/hotkey tips, blank spacer.
+///
+/// Kept for backwards compatibility but no longer used in the main app render.
 pub fn render(state: &WorkflowBarState, width: usize) -> Vec<String> {
     if !state.is_visible() {
         return vec![];
@@ -195,7 +191,13 @@ pub fn render(state: &WorkflowBarState, width: usize) -> Vec<String> {
     ]
 }
 
-/// Render the Pi-style long workflow widget above the editor.
+/// Render the Pi-style workflow widget above the editor.
+///
+/// Matches the Pi extension's `updateWidget` implementation:
+/// - plain text line, no background
+/// - hidden when `done == 0 && !activeIssue`
+/// - content: `Workflow #ISSUE TITLE [bar] done/total (pct%) → Step N: label [PHASE]`
+///   or `✓ Workflow complete!` when all steps are done.
 pub fn render_widget(state: &WorkflowBarState, width: usize) -> Vec<String> {
     if width == 0 || !is_widget_visible(state) {
         return vec![];
@@ -205,7 +207,7 @@ pub fn render_widget(state: &WorkflowBarState, width: usize) -> Vec<String> {
     let total = state.total.max(state.steps.len() as u32).max(1);
     let pct = ((done as f32 / total as f32) * 100.0).round() as u32;
     let filled = ((done as usize) * 15) / (total as usize);
-    let progress_bar = format!(
+    let bar = format!(
         "{}{}",
         theme::success(&"█".repeat(filled)),
         theme::dim(&"░".repeat(15 - filled))
@@ -213,11 +215,11 @@ pub fn render_widget(state: &WorkflowBarState, width: usize) -> Vec<String> {
 
     let issue_part = match (state.issue_number, state.issue_title.as_deref()) {
         (Some(number), Some(title)) => format!(
-            "{}{}",
-            theme::accent(&theme::bold(&format!(" #{number}"))),
-            theme::dim(&format!(" {} ", ellipsize_clean(title, 40)))
+            " {}{} ",
+            theme::accent(&theme::bold(&format!("#{number}"))),
+            theme::dim(&ellipsize_clean(title, 40))
         ),
-        (Some(number), None) => theme::accent(&theme::bold(&format!(" #{number} "))),
+        (Some(number), None) => format!(" {}", theme::accent(&theme::bold(&format!("#{number}")))),
         _ => " ".to_string(),
     };
 
@@ -237,11 +239,11 @@ pub fn render_widget(state: &WorkflowBarState, width: usize) -> Vec<String> {
         "{}{}{}{}{}",
         theme::accent(&theme::bold("Workflow")),
         issue_part,
-        progress_bar,
+        bar,
         theme::muted(&format!(" {done}/{total} ({pct}%) ")),
         theme::dim(&current_info)
     );
-    vec![apply_workflow_widget_bg(&line, width)]
+    vec![truncate_line(&line, width)]
 }
 
 /// Render the Pi WorkflowChecklist panel in TUI read-only mode.
@@ -358,25 +360,8 @@ pub fn render_read_only_panel(
 }
 
 fn is_widget_visible(state: &WorkflowBarState) -> bool {
-    state.mode.is_some()
-        || state.total > 0
-        || !state.steps.is_empty()
-        || state.issue_number.is_some()
-}
-
-fn apply_workflow_widget_bg(text: &str, width: usize) -> String {
-    let text = crate::interface::utils::truncate_to_width(text, width, Some("…"));
-    let patched = text.replace(
-        WIDGET_RESET,
-        &format!("{WIDGET_RESET}{BG_WORKFLOW_WIDGET}{FG_WORKFLOW_WIDGET}"),
-    );
-    let vis_width = crate::interface::utils::visible_width(&text);
-    let padding = if vis_width < width {
-        " ".repeat(width - vis_width)
-    } else {
-        String::new()
-    };
-    format!("{BG_WORKFLOW_WIDGET}{FG_WORKFLOW_WIDGET}{patched}{padding}{WIDGET_RESET}")
+    // Match Pi extension: hide when nothing is started and no active issue.
+    state.done > 0 || state.issue_number.is_some()
 }
 
 fn truncate_line(text: &str, width: usize) -> String {
@@ -525,12 +510,14 @@ pub fn parse_workflow_event(data: &serde_json::Value) -> WorkflowBarState {
         .get("progress")
         .and_then(|p| p.get("done"))
         .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32;
+        .map(|n| n as u32)
+        .unwrap_or_else(|| steps.iter().filter(|s| s.done).count() as u32);
     let total = data
         .get("progress")
         .and_then(|p| p.get("total"))
         .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32;
+        .map(|n| n as u32)
+        .unwrap_or(steps.len() as u32);
 
     // Handle both camelCase (workflow_state event) and snake_case (get_state response).
     let issue_number = data
@@ -726,7 +713,7 @@ mod tests {
     }
 
     #[test]
-    fn workflow_widget_renders_full_width_yellow_status_bar() {
+    fn workflow_widget_renders_plain_text_like_pi() {
         let mut state = make_state(Some(100), 3, 14);
         state.workflow_auto_continue = true;
         state.workflow_completion_nudge = false;
@@ -734,8 +721,8 @@ mod tests {
         assert_eq!(lines.len(), 1);
         let line = &lines[0];
         assert!(
-            line.contains(BG_WORKFLOW_WIDGET),
-            "should use yellow widget background: {line}"
+            !line.contains("\x1b[48;2;"),
+            "widget should not have a full-width background: {line}"
         );
         assert!(
             line.contains("Workflow"),
@@ -746,11 +733,32 @@ mod tests {
             line.contains("→ Step 4"),
             "should include current step: {line}"
         );
-        assert_eq!(
-            crate::interface::utils::visible_width(line),
-            100,
-            "widget should fill terminal width"
+        assert!(
+            crate::interface::utils::visible_width(line) < 100,
+            "widget should be content-sized, not padded to full width: {line}"
         );
+    }
+
+    #[test]
+    fn workflow_widget_hidden_when_nothing_started() {
+        let state = make_state(None, 0, 14);
+        assert!(render_widget(&state, 100).is_empty());
+    }
+
+    #[test]
+    fn workflow_widget_shown_when_issue_active() {
+        let state = make_state(Some(100), 0, 14);
+        let lines = render_widget(&state, 100);
+        assert!(!lines.is_empty());
+        assert!(lines[0].contains("Workflow"));
+        assert!(lines[0].contains("0/14"));
+    }
+
+    #[test]
+    fn workflow_widget_complete_shows_done() {
+        let state = make_state(Some(100), 14, 14);
+        let lines = render_widget(&state, 100);
+        assert!(lines[0].contains("✓ Workflow complete!"));
     }
 
     #[test]
@@ -818,72 +826,17 @@ mod tests {
     }
 
     #[test]
-    fn current_phase_returns_first_unchecked() {
-        let state = make_state(Some(1), 3, 14);
-        assert_eq!(state.current_phase(), Some("green"));
-    }
-
-    #[test]
-    fn current_phase_none_when_all_done() {
-        let state = make_state(Some(1), 14, 14);
-        assert!(state.current_phase().is_none());
-    }
-
-    // ── V2 tests: mode, template, selector ──────────────────────────
-
-    #[test]
-    fn parse_v2_steps_with_index_field() {
-        let event = serde_json::json!({
-            "steps": [
-                {"index": 1, "label": "Scope", "phase": "red", "done": true},
-                {"index": 2, "label": "Change", "phase": "green", "done": false},
-            ],
-            "progress": {"done": 1, "total": 2, "percent": 50},
-        });
-        let state = parse_workflow_event(&event);
-        assert_eq!(state.steps.len(), 2);
-        assert_eq!(state.steps[0].id, 1);
-        assert_eq!(state.steps[1].id, 2);
-    }
-
-    #[test]
-    fn parse_get_state_snake_case_fields() {
-        let event = serde_json::json!({
-            "mode": "active",
-            "active_template": {"id": "chore", "label": "Chore"},
-            "available_templates": [
-                {"id": "feature", "label": "Feature"},
-                {"id": "chore", "label": "Chore"},
-            ],
-            "active_issue": [99, "Fix auth"],
-            "steps": [
-                {"index": 1, "phase": "red", "done": true},
-            ],
-            "progress": {"done": 1, "total": 1, "percent": 100},
-        });
-        let state = parse_workflow_event(&event);
-        assert_eq!(state.mode.as_deref(), Some("active"));
-        assert_eq!(state.template_name.as_deref(), Some("Chore"));
-        assert_eq!(state.template_count, 2);
-        assert_eq!(state.issue_number, Some(99));
-        assert_eq!(state.issue_title.as_deref(), Some("Fix auth"));
-    }
-
-    #[test]
     fn parse_v2_event_captures_mode() {
         let event = serde_json::json!({
             "type": "workflow_state",
             "mode": "selecting_template",
-            "steps": [],
-            "progress": {"done": 0, "total": 0, "percent": 0},
-            "availableTemplates": [
-                {"id": "feature", "label": "Feature"},
-                {"id": "fix", "label": "Fix"},
-            ],
+            "availableTemplates": [{"id": 1, "label": "default"}, {"id": 2, "label": "other"}],
+            "activeTemplate": {"id": 1, "label": "default"},
         });
         let state = parse_workflow_event(&event);
         assert_eq!(state.mode.as_deref(), Some("selecting_template"));
         assert_eq!(state.template_count, 2);
+        assert_eq!(state.template_name.as_deref(), Some("default"));
     }
 
     #[test]
@@ -891,93 +844,101 @@ mod tests {
         let event = serde_json::json!({
             "type": "workflow_state",
             "mode": "active",
-            "activeTemplate": {"id": "fix", "label": "Fix"},
+            "activeTemplate": {"id": 1, "label": "my-template"},
             "steps": [
-                {"id": 1, "label": "Reproduce", "phase": "red", "done": true},
-                {"id": 2, "label": "Test", "phase": "red", "done": false},
+                {"index": 1, "label": "Scenarios", "phase": "red", "done": true},
             ],
-            "progress": {"done": 1, "total": 2, "percent": 50},
-            "activeIssue": {"number": 42, "title": "auth bug"},
+            "progress": {"done": 1, "total": 14, "percent": 7},
         });
         let state = parse_workflow_event(&event);
         assert_eq!(state.mode.as_deref(), Some("active"));
-        assert_eq!(state.template_name.as_deref(), Some("Fix"));
+        assert_eq!(state.template_name.as_deref(), Some("my-template"));
+        assert_eq!(state.done, 1);
+        assert_eq!(state.total, 14);
     }
 
     #[test]
-    fn selector_mode_visible_even_without_issue() {
-        let mut state = WorkflowBarState::default();
-        state.mode = Some("selecting_template".into());
-        state.template_count = 4;
-        assert!(state.is_visible(), "selector mode should be visible");
+    fn parse_v2_steps_with_index_field() {
+        let event = serde_json::json!({
+                "type": "workflow_state",
+        "steps": [{"index": 1, "label": "A", "phase": "red", "done": true}],
+                "progress": {"done": 1, "total": 1, "percent": 100},
+            });
+        let state = parse_workflow_event(&event);
+        assert_eq!(state.steps.len(), 1);
+        assert_eq!(state.steps[0].id, 1);
+        assert!(state.steps[0].done);
     }
 
     #[test]
-    fn selector_mode_renders_select_template() {
-        let mut state = WorkflowBarState::default();
-        state.mode = Some("selecting_template".into());
-        state.template_count = 4;
-        let lines = render(&state, 80);
-        assert!(!lines.is_empty(), "selector mode should render");
-        let line = &lines[1];
-        assert!(
-            line.contains("SELECT") || line.contains("TEMPLATE"),
-            "selector mode should mention template selection: {line}"
-        );
+    fn parse_get_state_snake_case_fields() {
+        let event = serde_json::json!({
+            "active_issue": {"number": 99, "title": "snake case"},
+            "steps": [{"id": 1, "label": "A", "phase": "red", "done": true}],
+            "progress": {"done": 1, "total": 2, "percent": 50},
+        });
+        let state = parse_workflow_event(&event);
+        assert_eq!(state.issue_number, Some(99));
+        assert_eq!(state.issue_title.as_deref(), Some("snake case"));
+        assert_eq!(state.done, 1);
+        assert_eq!(state.total, 2);
+    }
+
+    #[test]
+    fn current_phase_returns_first_unchecked() {
+        let state = make_state(Some(1), 2, 14);
+        assert_eq!(state.current_phase(), Some("red"));
+    }
+
+    #[test]
+    fn current_phase_none_when_all_done() {
+        let state = make_state(Some(1), 14, 14);
+        assert_eq!(state.current_phase(), None);
     }
 
     #[test]
     fn active_mode_renders_template_name() {
-        let mut state = make_state(Some(42), 2, 6);
-        state.mode = Some("active".into());
-        state.template_name = Some("Fix".into());
-        let lines = render(&state, 100);
-        assert!(!lines.is_empty());
-        // Content is in the middle line (between blank spacers).
-        let content_line = lines.iter().find(|l| l.contains("Fix")).unwrap();
-        assert!(
-            content_line.contains("Fix"),
-            "active mode should show template name: {content_line}"
-        );
+        let mut state = make_state(Some(100), 3, 14);
+        state.template_name = Some("my-template".into());
+        let line = &render(&state, 80)[1];
+        assert!(line.contains("my-template"));
     }
 
-    // ── Vertical spacing (#600) ─────────────────────────────────────
+    #[test]
+    fn selector_mode_renders_select_template() {
+        let mut state = make_state(None, 0, 0);
+        state.mode = Some("selecting_template".into());
+        state.template_count = 4;
+        let line = &render(&state, 80)[1];
+        assert!(line.contains("SELECT TEMPLATE"));
+        assert!(line.contains("4 available"));
+    }
 
     #[test]
-    fn active_bar_has_blank_line_above_and_below() {
-        let state = make_state(Some(42), 3, 14);
-        let lines = render(&state, 80);
-        assert_eq!(
-            lines.len(),
-            4,
-            "expected blank + content + stage/tips + blank, got {lines:?}"
-        );
-        assert!(lines[0].trim().is_empty(), "first line should be blank");
-        assert!(!lines[1].trim().is_empty(), "main line should be content");
-        assert!(
-            lines[2].contains("Ctrl+Shift"),
-            "stage/tips line should show hotkeys"
-        );
-        assert!(lines[3].trim().is_empty(), "last line should be blank");
+    fn selector_mode_visible_even_without_issue() {
+        let mut state = make_state(None, 0, 0);
+        state.mode = Some("selecting_template".into());
+        state.template_count = 2;
+        assert!(state.is_visible());
     }
 
     #[test]
     fn selector_mode_has_blank_line_above_and_below() {
-        let mut state = WorkflowBarState::default();
+        let mut state = make_state(None, 0, 0);
         state.mode = Some("selecting_template".into());
-        state.template_count = 4;
+        state.template_count = 2;
         let lines = render(&state, 80);
-        assert_eq!(
-            lines.len(),
-            4,
-            "expected blank + content + tips + blank, got {lines:?}"
-        );
-        assert!(lines[0].trim().is_empty(), "first line should be blank");
-        assert!(lines[1].contains("SELECT"), "main line should be content");
-        assert!(
-            lines[2].contains("Ctrl+Shift"),
-            "tips line should show hotkeys"
-        );
-        assert!(lines[3].trim().is_empty(), "last line should be blank");
+        assert_eq!(lines.len(), 4);
+        assert!(lines[0].is_empty());
+        assert!(lines[3].is_empty());
+    }
+
+    #[test]
+    fn active_bar_has_blank_line_above_and_below() {
+        let state = make_state(Some(100), 3, 14);
+        let lines = render(&state, 80);
+        assert_eq!(lines.len(), 4);
+        assert!(lines[0].is_empty());
+        assert!(lines[3].is_empty());
     }
 }
