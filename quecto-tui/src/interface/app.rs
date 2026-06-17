@@ -210,6 +210,23 @@ pub struct App {
     context_stats_requested: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkflowPanelKeyAction {
+    Close,
+    ToggleAutoContinue,
+    ToggleCompletionNudge,
+    Swallow,
+}
+
+fn workflow_panel_key_action(key: &Key) -> WorkflowPanelKeyAction {
+    match key {
+        Key::Escape | Key::Ctrl('c') | Key::CtrlShift('w') => WorkflowPanelKeyAction::Close,
+        Key::CtrlShift('a') => WorkflowPanelKeyAction::ToggleAutoContinue,
+        Key::CtrlShift('n') => WorkflowPanelKeyAction::ToggleCompletionNudge,
+        _ => WorkflowPanelKeyAction::Swallow,
+    }
+}
+
 impl App {
     pub fn new(terminal: Terminal, client: Client) -> Self {
         let mut footer = Footer::new();
@@ -463,12 +480,21 @@ impl App {
             return;
         }
 
-        // If the read-only workflow panel is active, close it on Esc/Ctrl+C/Ctrl+Shift+W.
-        // Workflow toggles (Ctrl+Shift+A/N) still work while the panel is open.
-        if self.workflow_panel_open
-            && matches!(key, Key::Escape | Key::Ctrl('c') | Key::CtrlShift('w'))
-        {
-            self.workflow_panel_open = false;
+        // If the read-only workflow panel is active, keep it modal while still
+        // allowing the documented workflow toggles to work.
+        if self.workflow_panel_open {
+            match workflow_panel_key_action(&key) {
+                WorkflowPanelKeyAction::Close => {
+                    self.workflow_panel_open = false;
+                }
+                WorkflowPanelKeyAction::ToggleAutoContinue => {
+                    self.toggle_workflow_auto_continue();
+                }
+                WorkflowPanelKeyAction::ToggleCompletionNudge => {
+                    self.toggle_workflow_completion_nudge();
+                }
+                WorkflowPanelKeyAction::Swallow => {}
+            }
             return;
         }
 
@@ -2845,6 +2871,48 @@ mod tests {
             pid: 0,
         });
         assert!(entry.exited_at.is_some());
+    }
+
+    #[test]
+    fn workflow_panel_key_routing_allows_only_close_and_workflow_toggles() {
+        assert_eq!(
+            super::workflow_panel_key_action(&Key::Escape),
+            super::WorkflowPanelKeyAction::Close
+        );
+        assert_eq!(
+            super::workflow_panel_key_action(&Key::Ctrl('c')),
+            super::WorkflowPanelKeyAction::Close
+        );
+        assert_eq!(
+            super::workflow_panel_key_action(&Key::CtrlShift('w')),
+            super::WorkflowPanelKeyAction::Close
+        );
+        assert_eq!(
+            super::workflow_panel_key_action(&Key::CtrlShift('a')),
+            super::WorkflowPanelKeyAction::ToggleAutoContinue
+        );
+        assert_eq!(
+            super::workflow_panel_key_action(&Key::CtrlShift('n')),
+            super::WorkflowPanelKeyAction::ToggleCompletionNudge
+        );
+    }
+
+    #[test]
+    fn workflow_panel_key_routing_swallows_hidden_editor_and_global_actions() {
+        for key in [
+            Key::Char('x'),
+            Key::Enter,
+            Key::Ctrl('l'),
+            Key::Ctrl('z'),
+            Key::PageUp,
+            Key::MousePress(1, 1),
+        ] {
+            assert_eq!(
+                super::workflow_panel_key_action(&key),
+                super::WorkflowPanelKeyAction::Swallow,
+                "workflow panel should swallow {key:?}"
+            );
+        }
     }
 
     #[test]
