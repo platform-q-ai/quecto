@@ -645,6 +645,18 @@ fn core_command_type_names() {
         AgentCommand::GetSubagents { id: None }.type_name(),
         "get_subagents"
     );
+    assert_eq!(
+        AgentCommand::ListSessions { id: None }.type_name(),
+        "list_sessions"
+    );
+    assert_eq!(
+        AgentCommand::ResumeSession {
+            id: None,
+            session: "work".into()
+        }
+        .type_name(),
+        "resume_session"
+    );
 }
 
 #[test]

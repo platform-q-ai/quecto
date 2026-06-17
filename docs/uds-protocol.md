@@ -194,6 +194,59 @@ The system prompt (injected via `--system` flag) is preserved at `messages[0]`. 
 
 ---
 
+### `list_sessions`
+
+Return persisted CLI sessions that can be resumed by this UDS agent.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"list_sessions"` | yes | |
+| `id` | string | no | Correlation ID |
+
+**Response data:**
+
+```json
+{
+  "sessions": [
+    {"key":"cli:default","name":"default","messageCount":42,"updatedUnixSecs":1765930000}
+  ]
+}
+```
+
+Only `cli:*` sessions are returned because `resume_session` resumes CLI session names.
+
+**Example:**
+
+```json
+{"type":"list_sessions","id":"ls-1"}
+```
+
+---
+
+### `resume_session`
+
+Switch the active UDS conversation to a persisted CLI session. The current session is saved first.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"resume_session"` | yes | |
+| `id` | string | no | Correlation ID |
+| `session` | string | yes | CLI session name, e.g. `default` or `work` |
+
+**Behavior:**
+- **Agent idle:** Saves the current session, loads `cli:<session>`, and switches subsequent prompts to that history
+- **Agent running:** Returns `success: false` with error `"cannot resume a session while agent is running"`
+- Invalid session names are rejected using the same rules as `quecto agent --session`
+- Missing sessions return `success: false` with `"session not found: <name>"`
+
+**Example:**
+
+```json
+{"type":"resume_session","id":"rs-1","session":"work"}
+```
+
+---
+
 ### `get_state`
 
 Return the current session state.

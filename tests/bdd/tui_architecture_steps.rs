@@ -296,6 +296,46 @@ fn then_tui_chat_viewport_still_shows_full_historical_page(world: &mut QuectoWor
     );
 }
 
+#[then(expr = "the quecto-tui slash autocomplete should include command {string}")]
+fn then_tui_slash_autocomplete_includes_command(_world: &mut QuectoWorld, command: String) {
+    let content = std::fs::read_to_string("quecto-tui/src/interface/app.rs")
+        .expect("read quecto-tui app source");
+    assert!(
+        content.contains(&format!("name: \"{command}\".into()")),
+        "quecto-tui builtin slash command list should include /{command}"
+    );
+}
+
+#[then("quecto-tui should reject unknown slash commands before sending a prompt")]
+fn then_tui_rejects_unknown_slash_commands(_world: &mut QuectoWorld) {
+    let content = std::fs::read_to_string("quecto-tui/src/interface/app.rs")
+        .expect("read quecto-tui app source");
+    assert!(
+        content.contains("reject_unknown_slash_command"),
+        "quecto-tui should route unknown slash commands to a local rejection helper instead of sending them as prompts"
+    );
+}
+
+#[then("the UDS protocol should support listing sessions")]
+fn then_uds_protocol_supports_listing_sessions(_world: &mut QuectoWorld) {
+    let content =
+        std::fs::read_to_string("src/interface/cli/protocol.rs").expect("read UDS protocol source");
+    assert!(
+        content.contains("ListSessions") && content.contains("list_sessions"),
+        "UDS protocol should include list_sessions support"
+    );
+}
+
+#[then("the UDS protocol should support resuming a session")]
+fn then_uds_protocol_supports_resuming_session(_world: &mut QuectoWorld) {
+    let content =
+        std::fs::read_to_string("src/interface/cli/protocol.rs").expect("read UDS protocol source");
+    assert!(
+        content.contains("ResumeSession") && content.contains("resume_session"),
+        "UDS protocol should include resume_session support"
+    );
+}
+
 #[then("the TUI architecture feature should not contain pending scenarios")]
 fn then_tui_architecture_feature_not_pending(_world: &mut QuectoWorld) {
     let content = std::fs::read_to_string("tests/features/tui_clean_architecture.feature")

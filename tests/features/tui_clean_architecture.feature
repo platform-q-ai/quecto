@@ -46,3 +46,13 @@ Feature: TUI Clean Architecture and executable BDD enforcement
     Given a quecto-tui chat view is scrolled beyond the oldest full page
     When streaming assistant content extends the conversation
     Then the quecto-tui chat viewport should still show a full historical page
+
+  Scenario: TUI slash autocomplete exposes session resume
+    Then the quecto-tui slash autocomplete should include command "resume"
+
+  Scenario: TUI rejects unknown slash commands locally
+    Then quecto-tui should reject unknown slash commands before sending a prompt
+
+  Scenario: TUI can list and resume persisted CLI sessions over UDS
+    Then the UDS protocol should support listing sessions
+    And the UDS protocol should support resuming a session

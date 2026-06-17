@@ -164,7 +164,7 @@ async fn single_client_loop(
         agent,
         mut messages,
         model,
-        session_key,
+        mut session_key,
         ephemeral,
         system_prompt,
         ext_registry,
@@ -189,7 +189,10 @@ async fn single_client_loop(
             messages: &mut messages,
             session: &mut agent_session,
             stdout: &mut *writer,
-            session_key: &session_key,
+            session_key: &mut session_key,
+            session_store,
+            ephemeral,
+            system_prompt: &system_prompt,
             cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
             broadcast_tx: None,
             ext_registry,
@@ -334,7 +337,10 @@ pub(super) struct DispatchCtx<'a> {
     pub messages: &'a mut Vec<Message>,
     pub session: &'a mut AgentSession,
     pub stdout: &'a mut (dyn tokio::io::AsyncWrite + Send + Unpin),
-    pub session_key: &'a str,
+    pub session_key: &'a mut String,
+    pub session_store: &'a dyn SessionStore,
+    pub ephemeral: bool,
+    pub system_prompt: &'a str,
     pub cancel_handle: CancelHandle,
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
     pub ext_registry: Option<ExtRegistry>,
@@ -412,6 +418,15 @@ async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'_>) -> bool
     false
 }
 
+fn session_summary_to_json(summary: &crate::domain::session::SessionSummary) -> serde_json::Value {
+    serde_json::json!({
+        "key": summary.key,
+        "name": summary.name,
+        "messageCount": summary.message_count,
+        "updatedUnixSecs": summary.updated_unix_secs,
+    })
+}
+
 fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serde_json::Value> {
     match cmd {
         AgentCommand::GetState { .. } => {
@@ -453,6 +468,24 @@ fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serd
 async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_>) -> Option<bool> {
     let id = cmd.id();
     let tn = cmd.type_name();
+    if matches!(cmd, AgentCommand::ListSessions { .. }) {
+        let event = match ctx.session_store.list().await {
+            Ok(sessions) => AgentEvent::ok(
+                id,
+                tn,
+                Some(serde_json::json!({
+                    "sessions": sessions
+                        .iter()
+                        .filter(|session| session.key.starts_with("cli:"))
+                        .map(session_summary_to_json)
+                        .collect::<Vec<_>>()
+                })),
+            ),
+            Err(err) => AgentEvent::err(id, tn, err.to_string()),
+        };
+        emit_event_to_broadcast_or_writer(ctx, &event).await;
+        return Some(false);
+    }
     if let Some(data) = query_response_data(cmd, ctx) {
         let ev = AgentEvent::ok(id, tn, Some(data));
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
@@ -515,6 +548,9 @@ pub(super) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             )
             .await
         }
+        AgentCommand::ResumeSession { session, .. } => {
+            handle_resume_session(ctx, id.as_deref(), &type_name, session).await
+        }
         AgentCommand::ReloadExtensions { .. }
         | AgentCommand::RegisterTools { .. }
         | AgentCommand::UnregisterTools { .. }
@@ -528,13 +564,104 @@ pub(super) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         | AgentCommand::GetState { .. }
         | AgentCommand::GetMessages { .. }
         | AgentCommand::GetMessagesTail { .. }
-        | AgentCommand::GetSessionStats { .. } => {
+        | AgentCommand::GetSessionStats { .. }
+        | AgentCommand::ListSessions { .. } => {
             tracing::error!(command = %type_name, "fieldless variant reached dispatch fallback");
             let ev = AgentEvent::err(id.as_deref(), &type_name, "internal: unhandled command");
             emit_event_to_broadcast_or_writer(ctx, &ev).await;
             false
         }
     }
+}
+
+async fn persist_current_session(
+    ctx: &mut DispatchCtx<'_>,
+) -> Result<(), crate::domain::error::DomainError> {
+    if ctx.ephemeral || ctx.session_key.is_empty() {
+        return Ok(());
+    }
+    remove_injected_system_prompt(ctx.messages, ctx.system_prompt);
+    let session = Session {
+        key: ctx.session_key.clone(),
+        messages: ctx.messages.clone(),
+        workflow_run: ctx
+            .workflow_state
+            .as_ref()
+            .and_then(|ws| ws.lock().ok().and_then(|engine| engine.persisted_run())),
+    };
+    inject_system_prompt(ctx.messages, ctx.system_prompt);
+    ctx.session_store.save(&session).await
+}
+
+async fn handle_resume_session(
+    ctx: &mut DispatchCtx<'_>,
+    id: Option<&str>,
+    type_name: &str,
+    session: String,
+) -> bool {
+    if ctx.session.is_streaming() {
+        let ev = AgentEvent::err(
+            id,
+            type_name,
+            "cannot resume a session while agent is running",
+        );
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
+    if ctx.ephemeral {
+        let ev = AgentEvent::err(id, type_name, "cannot resume sessions in ephemeral mode");
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
+    let name = session.trim();
+    if !crate::interface::cli::is_valid_session_name(name) {
+        let ev = AgentEvent::err(
+            id,
+            type_name,
+            "session name must contain only alphanumeric, '-', or '_'",
+        );
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
+    let new_key = Session::build_key("cli", name);
+    if let Err(err) = persist_current_session(ctx).await {
+        let ev = AgentEvent::err(
+            id,
+            type_name,
+            format!("failed to save current session: {err}"),
+        );
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
+    let loaded = match ctx.session_store.load(&new_key).await {
+        Ok(Some(session)) => session,
+        Ok(None) => {
+            let ev = AgentEvent::err(id, type_name, format!("session not found: {name}"));
+            emit_event_to_broadcast_or_writer(ctx, &ev).await;
+            return false;
+        }
+        Err(err) => {
+            let ev = AgentEvent::err(id, type_name, format!("failed to load session: {err}"));
+            emit_event_to_broadcast_or_writer(ctx, &ev).await;
+            return false;
+        }
+    };
+    *ctx.session_key = new_key.clone();
+    ctx.session.set_session_key(new_key.clone());
+    ctx.session.drain_pending();
+    *ctx.messages = loaded.messages;
+    inject_system_prompt(ctx.messages, ctx.system_prompt);
+    let ev = AgentEvent::ok(
+        id,
+        type_name,
+        Some(serde_json::json!({
+            "session": name,
+            "sessionKey": new_key,
+            "messageCount": ctx.messages.len(),
+        })),
+    );
+    emit_event_to_broadcast_or_writer(ctx, &ev).await;
+    false
 }
 
 async fn handle_steer(

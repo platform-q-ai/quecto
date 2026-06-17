@@ -156,7 +156,7 @@ The UDS agent is the sole integration point for external consumers (TUIs, IDE pl
 
 | Module | Responsibility |
 |---|---|
-| `protocol.rs` | `AgentCommand` enum (16 variants: `prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_messages`, `get_messages_tail`, `get_session_stats`, `set_model`, `get_extensions`, `reload_extensions`, `register_tools`, `unregister_tools`, `tool_result`, `clear_history`, `get_subagents`), `AgentEvent` enum (events: `agent_start`, `agent_end`, `token`, `turn_start`, `turn_end`, `tool_execution_start`, `tool_execution_end`, `response`, `execute_tool`, `extensions_changed`, `subagent_notification`, `subagent_state_changed`, `workflow_state`), `StreamingBehavior`, `SessionState`, `SessionStats`. All commands except `tool_result` carry optional `id` for request/response correlation |
+| `protocol.rs` | `AgentCommand` enum (18 variants: `prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_messages`, `get_messages_tail`, `get_session_stats`, `list_sessions`, `resume_session`, `set_model`, `get_extensions`, `reload_extensions`, `register_tools`, `unregister_tools`, `tool_result`, `clear_history`, `get_subagents`), `AgentEvent` enum (events: `agent_start`, `agent_end`, `token`, `turn_start`, `turn_end`, `tool_execution_start`, `tool_execution_end`, `response`, `execute_tool`, `extensions_changed`, `subagent_notification`, `subagent_state_changed`, `workflow_state`), `StreamingBehavior`, `SessionState`, `SessionStats`. All commands except `tool_result` carry optional `id` for request/response correlation |
 | `uds.rs` | Entry point (`run_uds_loop`), socket binding (`chmod 0600`), stale socket reaping, single-client backward-compatible path, shared dispatch loop (`dispatch_command`), system prompt injection/removal |
 | `uds_multi.rs` | Multi-client accept loop (Docker-style event bus). `tokio::sync::broadcast` delivers events to all connected clients. `tokio::sync::mpsc` merges commands from all clients into a single dispatch loop (no concurrent session mutation). Max 64 clients. Agent shuts down when all clients disconnect. RAII `ClientGuard` tracks client count. Lagged clients receive a re-sync notification |
 | `uds_session.rs` | `AgentSession` — in-memory state tracker (model, streaming flag, pending message queue with `VecDeque`, max 64 pending). `compute_session_stats()`, `message_to_json()`, `messages_tail_json()` |
@@ -274,6 +274,8 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 | `get_messages` | optional `id` | Return full conversation history |
 | `get_messages_tail` | `count`, optional `id` | Return last N messages |
 | `get_session_stats` | optional `id` | Return token usage and cost statistics |
+| `list_sessions` | optional `id` | Return persisted CLI sessions available for resume |
+| `resume_session` | `session`, optional `id` | Switch the active UDS conversation to a persisted CLI session |
 | `set_model` | `model` or `provider`+`modelId`, optional `id` | Switch model at runtime |
 | `get_extensions` | optional `id` | Return list of registered extensions |
 | `reload_extensions` | optional `id` | **Deprecated no-op** (returns success immediately) |

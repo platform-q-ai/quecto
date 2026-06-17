@@ -6,7 +6,7 @@ use std::pin::Pin;
 
 use crate::domain::error::DomainError;
 use crate::domain::message::{Message, Role, StopReason, ThinkingBlock, ToolCall};
-use crate::domain::session::{Session, SessionStore};
+use crate::domain::session::{Session, SessionStore, SessionSummary};
 use crate::domain::workflow::WorkflowRunPersisted;
 
 /// File-based session store. Each session is stored as a JSON file
@@ -181,6 +181,64 @@ impl SessionStore for FileSessionStore {
     ) -> Pin<Box<dyn Future<Output = Result<bool, DomainError>> + Send + '_>> {
         let path = self.session_path(key);
         Box::pin(async move { Ok(path.exists()) })
+    }
+
+    fn list(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<SessionSummary>, DomainError>> + Send + '_>> {
+        Box::pin(async move {
+            let mut summaries = Vec::new();
+            if !self.sessions_dir.exists() {
+                return Ok(summaries);
+            }
+            let mut entries = tokio::fs::read_dir(&self.sessions_dir)
+                .await
+                .map_err(|e| DomainError::Session(format!("failed to read sessions dir: {}", e)))?;
+            while let Some(entry) = entries.next_entry().await.map_err(|e| {
+                DomainError::Session(format!("failed to read sessions dir entry: {}", e))
+            })? {
+                let path = entry.path();
+                if path.extension().is_none_or(|ext| ext != "json") {
+                    continue;
+                }
+                let metadata = entry.metadata().await.ok();
+                let updated_unix_secs = metadata
+                    .as_ref()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs());
+                let content = tokio::fs::read_to_string(&path).await.map_err(|e| {
+                    DomainError::Session(format!(
+                        "failed to read session file {}: {}",
+                        path.display(),
+                        e
+                    ))
+                })?;
+                let file: SessionFile = serde_json::from_str(&content).map_err(|e| {
+                    DomainError::Session(format!(
+                        "failed to parse session file {}: {}",
+                        path.display(),
+                        e
+                    ))
+                })?;
+                summaries.push(SessionSummary {
+                    name: file
+                        .key
+                        .strip_prefix("cli:")
+                        .unwrap_or(&file.key)
+                        .to_string(),
+                    key: file.key,
+                    message_count: file.messages.len(),
+                    updated_unix_secs,
+                });
+            }
+            summaries.sort_by(|a, b| {
+                b.updated_unix_secs
+                    .cmp(&a.updated_unix_secs)
+                    .then_with(|| a.name.cmp(&b.name))
+            });
+            Ok(summaries)
+        })
     }
 }
 
@@ -672,6 +730,40 @@ mod tests {
         let wf = loaded.workflow_run.expect("persisted run should load");
         assert_eq!(wf.template_id.as_deref(), Some("deleted_template"));
         assert_eq!(wf.done, vec![true, false]);
+    }
+
+    #[tokio::test]
+    async fn test_list_sessions_returns_cli_names_and_message_counts() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileSessionStore::new(tmp.path());
+
+        store
+            .save(&Session {
+                key: "cli:default".to_string(),
+                messages: vec![make_message(Role::User, "hello")],
+                workflow_run: None,
+            })
+            .await
+            .unwrap();
+        store
+            .save(&Session {
+                key: "cli:work".to_string(),
+                messages: vec![
+                    make_message(Role::User, "question"),
+                    make_message(Role::Assistant, "answer"),
+                ],
+                workflow_run: None,
+            })
+            .await
+            .unwrap();
+
+        let summaries = store.list().await.unwrap();
+        assert_eq!(summaries.len(), 2);
+        let work = summaries.iter().find(|s| s.name == "work").unwrap();
+        assert_eq!(work.key, "cli:work");
+        assert_eq!(work.message_count, 2);
+        let default = summaries.iter().find(|s| s.name == "default").unwrap();
+        assert_eq!(default.message_count, 1);
     }
 
     #[tokio::test]
