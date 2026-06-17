@@ -56,6 +56,8 @@ pub struct Chat {
     last_render_width: Option<usize>,
     /// Full line count from the most recent chat render, before viewport scrolling.
     last_render_line_count: usize,
+    /// Available chat viewport height, when the parent layout knows it.
+    viewport_height: Option<usize>,
     /// Global tool expand state (toggled by Ctrl+O).
     pub tool_expanded: bool,
 }
@@ -73,6 +75,7 @@ impl Chat {
             scroll_offset: 0,
             last_render_width: None,
             last_render_line_count: 0,
+            viewport_height: None,
             tool_expanded: false,
         }
     }
@@ -154,6 +157,10 @@ impl Chat {
     pub fn clear(&mut self) {
         self.entries.clear();
         self.scroll_offset = 0;
+    }
+
+    pub fn set_viewport_height(&mut self, height: usize) {
+        self.viewport_height = Some(height);
     }
 
     pub fn scroll_up(&mut self, amount: usize) {
@@ -259,17 +266,26 @@ impl Component for Chat {
         self.last_render_width = Some(width);
         self.last_render_line_count = full_line_count;
 
-        // Apply scroll offset.
-        if self.scroll_offset > 0 && !all_lines.is_empty() {
-            let max_scroll = all_lines.len();
+        if let Some(height) = self.viewport_height {
+            if height == 0 {
+                return Vec::new();
+            }
+            let max_scroll = all_lines.len().saturating_sub(height);
             let effective = self.scroll_offset.min(max_scroll);
             self.scroll_offset = effective;
             let end = all_lines.len().saturating_sub(effective);
-            if end > 0 {
-                all_lines.truncate(end);
-            } else {
-                all_lines.truncate(1);
-            }
+            let start = end.saturating_sub(height);
+            return all_lines[start..end].to_vec();
+        }
+
+        // Apply scroll offset for callers that render the full chat without a
+        // known viewport. Clamp to at least one line to avoid blanking out.
+        if self.scroll_offset > 0 && !all_lines.is_empty() {
+            let max_scroll = all_lines.len().saturating_sub(1);
+            let effective = self.scroll_offset.min(max_scroll);
+            self.scroll_offset = effective;
+            let end = all_lines.len().saturating_sub(effective);
+            all_lines.truncate(end.max(1));
         }
 
         all_lines
@@ -1322,14 +1338,6 @@ mod tests {
         );
     }
 
-    fn viewport(lines: Vec<String>, height: usize) -> Vec<String> {
-        if lines.len() > height {
-            lines[lines.len() - height..].to_vec()
-        } else {
-            lines
-        }
-    }
-
     fn chat_with_streaming_history() -> Chat {
         let mut chat = Chat::new();
         for i in 0..30 {
@@ -1366,11 +1374,12 @@ mod tests {
         let mut chat = chat_with_streaming_history();
 
         let height = 10;
+        chat.set_viewport_height(height);
         chat.scroll_up(15);
-        let before = viewport(chat.render(80), height);
+        let before = chat.render(80);
 
         chat.append_token("\nnew streamed line 1\nnew streamed line 2\nnew streamed line 3");
-        let after = viewport(chat.render(80), height);
+        let after = chat.render(80);
 
         assert_eq!(
             after, before,
@@ -1387,20 +1396,43 @@ mod tests {
         let mut chat = chat_with_streaming_history();
 
         let height = 10;
+        chat.set_viewport_height(height);
         chat.scroll_up(15);
-        let before = viewport(chat.render(80), height);
+        let before = chat.render(80);
 
         chat.start_tool(
             "tool-1".into(),
             "bash".into(),
             r#"{"command":"echo hi"}"#.into(),
         );
-        let after = viewport(chat.render(80), height);
+        let after = chat.render(80);
 
         assert_eq!(
             after, before,
             "tool output should not drag a scrolled viewport during an active response"
         );
+    }
+
+    #[test]
+    fn viewport_clamps_to_full_oldest_page_instead_of_blank() {
+        let mut chat = chat_with_streaming_history();
+        let height = 10;
+        chat.set_viewport_height(height);
+        chat.scroll_up(10_000);
+        let before = chat.render(80);
+
+        assert_eq!(
+            before.len(),
+            height,
+            "oldest scrollback view should be full"
+        );
+        assert!(before.iter().any(|line| line.contains("history line 0")));
+
+        chat.append_token("\nnew streamed line 1\nnew streamed line 2\nnew streamed line 3");
+        let after = chat.render(80);
+
+        assert_eq!(after.len(), height, "streaming should not shrink to blank");
+        assert_eq!(after, before, "oldest full page should remain anchored");
     }
 
     // ── Integration: server JSON → chat rendering (issue #511) ───────

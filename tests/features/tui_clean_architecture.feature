@@ -41,3 +41,8 @@ Feature: TUI Clean Architecture and executable BDD enforcement
     Given a quecto-tui chat view is scrolled into history
     When streaming assistant content extends the conversation
     Then the quecto-tui chat viewport should keep showing the same historical lines
+
+  Scenario: TUI scrollback stops at a full page instead of blanking while streaming
+    Given a quecto-tui chat view is scrolled beyond the oldest full page
+    When streaming assistant content extends the conversation
+    Then the quecto-tui chat viewport should still show a full historical page
