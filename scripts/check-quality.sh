@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check-quality.sh — Static analysis pass that blocks work markers, lint bypasses,
-# unsafe blocks, and ignored tests. Runs on all .rs files under src/.
+# unsafe blocks, and ignored tests. Runs on all Rust source files under workspace src/ trees.
 set -euo pipefail
 
 RED='\033[0;31m'
@@ -10,12 +10,16 @@ NC='\033[0m'
 
 FAILED=0
 
+rust_source_files() {
+    find . -path ./.git -prune -o -path ./target -prune -o -name '*.rs' -path '*/src/*' -print
+}
+
 check_pattern() {
     local pattern="$1"
     local description="$2"
     local matches
 
-    matches=$(grep -rn "$pattern" src/ --include='*.rs' || true)
+    matches=$(rust_source_files | xargs -r grep -n "$pattern" || true)
     if [ -n "$matches" ]; then
         echo -e "${RED}FAIL${NC}: Found $description"
         echo "$matches"
@@ -32,35 +36,27 @@ check_pattern 'FIXME' 'FIXME comments (resolve before committing)'
 check_pattern 'HACK' 'HACK comments (resolve before committing)'
 check_pattern 'XXX' 'XXX comments (resolve before committing)'
 check_pattern '#\[allow(' '#[allow()] attributes (remove or justify)'
-check_pattern 'unsafe {' 'unsafe blocks (require // SAFETY: justification)'
+unsafe_matches=$(rust_source_files | xargs -r awk '
+    /unsafe \{/ {
+        if (prev !~ /SAFETY:/ && $0 !~ /SAFETY:/) {
+            printf "%s:%d:%s\n", FILENAME, FNR, $0
+        }
+    }
+    { prev = $0 }
+' || true)
+if [ -n "$unsafe_matches" ]; then
+    echo -e "${RED}FAIL${NC}: Found unsafe blocks without // SAFETY: justification"
+    echo "$unsafe_matches"
+    echo ""
+    FAILED=1
+fi
 check_pattern '#\[ignore' '#[ignore] on tests (all tests must run)'
 
 # ── File size check: no new source file may exceed MAX_LINES lines ──
 MAX_LINES=750
-# Existing oversized files are grandfathered at their current line counts so the
-# gate can pass on master while still blocking new oversized files or growth in
-# known hotspots. The baseline is a ratchet: if a file shrinks, update/remove
-# its entry in this table in the same change.
-declare -A OVERSIZED_BASELINE=(
-    ["quecto-mcp/src/lib.rs"]=1119
-    ["quecto-runtime-manager/src/infrastructure.rs"]=1559
-    ["quecto-tui/src/interface/app.rs"]=2604
-    ["quecto-tui/src/infrastructure/client.rs"]=775
-    ["quecto-tui/src/interface/components/chat.rs"]=1604
-    ["quecto-tui/src/interface/components/editor.rs"]=941
-    ["quecto-tui/src/interface/components/markdown.rs"]=960
-    ["src/application/agent_loop.rs"]=809
-    ["src/application/agent_loop_tests.rs"]=1080
-    ["src/domain/workflow/engine.rs"]=829
-    ["src/infrastructure/tools/agent_cmd.rs"]=844
-    ["src/infrastructure/tools/agent_cmd_tests.rs"]=902
-    ["src/infrastructure/tools/spawn.rs"]=1051
-    ["src/interface/cli/agent_tests.rs"]=856
-    ["src/interface/cli/uds.rs"]=762
-    ["src/interface/cli/uds_ext_protocol.rs"]=1073
-    ["src/interface/cli/uds_multi.rs"]=910
-    ["src/interface/cli/uds_tests.rs"]=762
-)
+# No oversized files are grandfathered: every source file must stay at or below
+# MAX_LINES.
+declare -A OVERSIZED_BASELINE=()
 
 oversized=""
 baseline_warnings=""

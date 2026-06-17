@@ -55,7 +55,10 @@ pub trait AgentGateway: Send + Sync + 'static {
 
     /// Subscribe to the agent's broadcast event stream.
     /// Each subscriber gets its own copy of every event.
-    #[allow(clippy::type_complexity)]
+    #[expect(
+        clippy::type_complexity,
+        reason = "async trait object return keeps port object-safe"
+    )]
     fn subscribe(
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<Box<dyn EventSubscriber>, ApiError>> + Send + '_>>;

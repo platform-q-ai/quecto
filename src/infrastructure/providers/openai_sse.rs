@@ -81,3 +81,55 @@ pub(crate) async fn pump_sse_bytes(
     let mut handler = OpenAiSseHandler::new();
     pump_sse(response, tx, &mut handler).await;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn handler_emits_text_delta_and_done_response() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        let mut handler = OpenAiSseHandler::new();
+
+        let outcome = handler
+            .process_line(r#"data: {"choices":[{"delta":{"content":"hello"}}]}"#, &tx)
+            .await;
+        assert!(matches!(outcome, SseLineOutcome::Continue));
+        match rx.recv().await.unwrap() {
+            StreamEvent::TextDelta(text) => assert_eq!(text, "hello"),
+            other => panic!("unexpected event: {other:?}"),
+        }
+
+        let outcome = handler.process_line("data: [DONE]", &tx).await;
+        assert!(matches!(outcome, SseLineOutcome::Done));
+        match rx.recv().await.unwrap() {
+            StreamEvent::Done(response) => {
+                assert_eq!(response.content.as_deref(), Some("hello"));
+                assert!(response.tool_calls.is_empty());
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn handler_ignores_non_data_and_malformed_json_then_finishes_on_eof() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(2);
+        let mut handler = OpenAiSseHandler::new();
+
+        assert!(matches!(
+            handler.process_line(": keepalive", &tx).await,
+            SseLineOutcome::Continue
+        ));
+        assert!(matches!(
+            handler.process_line("data: not-json", &tx).await,
+            SseLineOutcome::Continue
+        ));
+        assert!(rx.try_recv().is_err());
+
+        handler.on_eof(&tx).await;
+        match rx.recv().await.unwrap() {
+            StreamEvent::Done(response) => assert!(response.content.is_none()),
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+}

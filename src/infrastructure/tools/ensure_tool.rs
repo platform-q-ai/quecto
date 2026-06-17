@@ -540,3 +540,168 @@ mod tests {
         assert!(found.unwrap().ends_with("rg"));
     }
 }
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::*;
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
+    use std::io::Write;
+    use tar::Builder;
+    use tempfile::TempDir;
+
+    #[test]
+    fn asset_name_covers_all_supported_combinations_and_unknowns() {
+        for tool in ["rg", "fd"] {
+            for os in ["linux", "darwin"] {
+                for arch in ["x86_64", "aarch64"] {
+                    let asset = asset_name_for(tool, os, arch).expect("supported asset");
+                    assert!(asset.contains("{VERSION}"));
+                    assert!(asset.contains(arch));
+                }
+            }
+        }
+        assert!(asset_name_for("fd", "windows", "x86_64").is_none());
+        assert!(asset_name_for("unknown", "linux", "x86_64").is_none());
+        assert!(asset_name_for("rg", "linux", "riscv64").is_none());
+    }
+
+    #[test]
+    fn detect_platform_returns_supported_current_platform() {
+        let (os, arch) = detect_platform().expect("test host should be supported");
+        assert!(matches!(os.as_str(), "linux" | "darwin"));
+        assert!(matches!(arch.as_str(), "x86_64" | "aarch64"));
+    }
+
+    #[test]
+    fn extract_binary_installs_nested_binary_and_removes_archive() {
+        let tmp = TempDir::new().unwrap();
+        let archive = tmp.path().join("tool.tar.gz");
+        write_tar_gz(&archive, "pkg/bin/rg", b"binary bytes");
+        let dest = tmp.path().join("rg-installed");
+
+        extract_binary(&archive, "rg", tmp.path(), &dest).unwrap();
+
+        assert_eq!(std::fs::read(&dest).unwrap(), b"binary bytes");
+        assert!(
+            !archive.exists(),
+            "archive should be removed after extraction"
+        );
+    }
+
+    #[test]
+    fn extract_binary_reports_missing_binary_and_cleans_temp_dir() {
+        let tmp = TempDir::new().unwrap();
+        let archive = tmp.path().join("tool.tar.gz");
+        write_tar_gz(&archive, "pkg/bin/not-rg", b"binary bytes");
+        let dest = tmp.path().join("rg-installed");
+
+        let err = extract_binary(&archive, "rg", tmp.path(), &dest).unwrap_err();
+        assert!(err.to_string().contains("not found in archive"));
+        assert!(!dest.exists());
+        assert!(std::fs::read_dir(tmp.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("_extract_tmp_")
+        }));
+    }
+
+    #[test]
+    fn extract_binary_reports_invalid_archive() {
+        let tmp = TempDir::new().unwrap();
+        let archive = tmp.path().join("bad.tar.gz");
+        std::fs::write(&archive, b"not a gzip").unwrap();
+        let dest = tmp.path().join("rg");
+
+        let err = extract_binary(&archive, "rg", tmp.path(), &dest).unwrap_err();
+        assert!(err.to_string().contains("Archive extraction failed"));
+    }
+
+    #[test]
+    fn find_binary_ignores_unreadable_or_non_matching_entries() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::create_dir(tmp.path().join("dir")).unwrap();
+        std::fs::write(tmp.path().join("dir").join("other"), "x").unwrap();
+        assert!(find_binary_in_dir(tmp.path(), "rg").is_none());
+        assert!(find_binary_in_dir(&tmp.path().join("missing"), "rg").is_none());
+    }
+
+    fn write_tar_gz(path: &std::path::Path, entry_path: &str, content: &[u8]) {
+        let file = std::fs::File::create(path).unwrap();
+        let encoder = GzEncoder::new(file, Compression::default());
+        let mut tar = Builder::new(encoder);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(content.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        tar.append_data(&mut header, entry_path, content).unwrap();
+        let encoder = tar.into_inner().unwrap();
+        let mut file = encoder.finish().unwrap();
+        file.flush().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod download_coverage_tests {
+    use super::*;
+    use tempfile::TempDir;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn download_file_writes_successful_response_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/tool.tar.gz"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![1, 2, 3, 4]))
+            .mount(&server)
+            .await;
+        let tmp = TempDir::new().unwrap();
+        let dest = tmp.path().join("download.bin");
+
+        download_file(&format!("{}/tool.tar.gz", server.uri()), &dest)
+            .await
+            .unwrap();
+
+        assert_eq!(std::fs::read(dest).unwrap(), vec![1, 2, 3, 4]);
+    }
+
+    #[tokio::test]
+    async fn download_file_reports_http_error_status() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/missing.tar.gz"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        let tmp = TempDir::new().unwrap();
+        let dest = tmp.path().join("download.bin");
+
+        let err = download_file(&format!("{}/missing.tar.gz", server.uri()), &dest)
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("Download HTTP error"));
+        assert!(!dest.exists());
+    }
+
+    #[tokio::test]
+    async fn download_file_reports_create_file_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/tool.tar.gz"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("body"))
+            .mount(&server)
+            .await;
+        let tmp = TempDir::new().unwrap();
+        let dest = tmp.path().join("missing-dir").join("download.bin");
+
+        let err = download_file(&format!("{}/tool.tar.gz", server.uri()), &dest)
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("Failed to create file"));
+    }
+}

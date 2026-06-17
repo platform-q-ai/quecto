@@ -402,7 +402,7 @@ fn collect_misplaced_tui_rs_files(dir: &Path, misplaced: &mut Vec<String>) {
             collect_misplaced_tui_rs_files(&path, misplaced);
             continue;
         }
-        if !path.extension().is_some_and(|ext| ext == "rs") {
+        if path.extension().is_none_or(|ext| ext != "rs") {
             continue;
         }
         let rel = path
@@ -497,6 +497,41 @@ fn tui_lib_rs_has_deny_attributes() {
         content.contains("#![deny(unused_imports)]"),
         "quecto-tui/src/lib.rs must contain #![deny(unused_imports)]"
     );
+}
+
+#[test]
+fn pre_commit_enforces_formatting_and_complexity_lints() {
+    assert_local_hook_enforces_formatting_and_complexity("pre-commit");
+}
+
+#[test]
+fn pre_push_enforces_formatting_and_complexity_lints() {
+    assert_local_hook_enforces_formatting_and_complexity("pre-push");
+}
+
+fn assert_local_hook_enforces_formatting_and_complexity(hook: &str) {
+    let path = format!("scripts/{hook}.sh");
+    let content = fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {path}: {err}"));
+    assert!(
+        content.contains("cargo fmt --all -- --check"),
+        "{hook} hook must enforce rustfmt max_width locally"
+    );
+    assert!(
+        content.contains(
+            "cargo clippy --workspace --all-targets --features test-support -- -D warnings"
+        ),
+        "{hook} hook must run strict workspace clippy locally"
+    );
+    for lint in [
+        "-W clippy::cognitive_complexity",
+        "-W clippy::too_many_arguments",
+        "-W clippy::too_many_lines",
+    ] {
+        assert!(
+            content.contains(lint),
+            "{hook} hook must enforce complexity lint: {lint}"
+        );
+    }
 }
 
 #[test]

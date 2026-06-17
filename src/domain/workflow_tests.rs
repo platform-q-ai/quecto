@@ -161,8 +161,8 @@ fn restore_run_clears_ordering_gaps() {
     let snapshot = engine.snapshot(true);
     assert_eq!(snapshot.progress.done, 1);
     assert_eq!(snapshot.current_step.unwrap().index, 2);
-    assert_eq!(snapshot.steps[2].done, false);
-    assert_eq!(snapshot.steps[3].done, false);
+    assert!(!snapshot.steps[2].done);
+    assert!(!snapshot.steps[3].done);
 }
 
 #[test]

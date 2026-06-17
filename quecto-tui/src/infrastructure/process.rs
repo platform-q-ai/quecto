@@ -51,6 +51,7 @@ pub(crate) fn kill_process_group(pid: i32, signal: libc::c_int) -> libc::c_int {
     if pid <= 0 {
         return -1;
     }
+    // SAFETY: `pid > 0` is checked above, so `-pid` targets that process group; libc handles invalid signals/pids by returning -1.
     unsafe { libc::kill(-pid, signal) }
 }
 
