@@ -21,7 +21,13 @@ pub struct AgentSession {
 #[derive(Debug, Clone, Default)]
 pub struct SessionUsage {
     pub tokens: TokenStats,
-    pub cost: f64,
+    pub cost_micro_usd: u64,
+}
+
+impl SessionUsage {
+    pub fn cost_usd(&self) -> f64 {
+        self.cost_micro_usd as f64 / 1_000_000.0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,6 +106,9 @@ impl AgentSession {
     }
 
     pub fn set_session_key(&mut self, session_key: String) {
+        if self.session_key != session_key {
+            self.clear_usage();
+        }
         self.session_key = session_key;
     }
 
@@ -109,46 +118,40 @@ impl AgentSession {
 
     pub fn record_agent_result(&mut self, result: &AgentResult) {
         self.record_usage(
-            result.input_tokens,
-            result.output_tokens,
+            result.billed_input_tokens,
+            result.billed_output_tokens,
             result.cache_read_tokens,
             result.cache_write_tokens,
-            result.cost,
+            result.cost_micro_usd,
         );
     }
 
     pub fn record_usage(
         &mut self,
-        input_tokens: u32,
-        output_tokens: u32,
-        cache_read_tokens: u32,
-        cache_write_tokens: u32,
-        cost: f64,
+        input_tokens: u64,
+        output_tokens: u64,
+        cache_read_tokens: u64,
+        cache_write_tokens: u64,
+        cost_micro_usd: u64,
     ) {
-        self.usage.tokens.input = self.usage.tokens.input.saturating_add(input_tokens as u64);
-        self.usage.tokens.output = self
-            .usage
-            .tokens
-            .output
-            .saturating_add(output_tokens as u64);
+        self.usage.tokens.input = self.usage.tokens.input.saturating_add(input_tokens);
+        self.usage.tokens.output = self.usage.tokens.output.saturating_add(output_tokens);
         self.usage.tokens.cache_read = self
             .usage
             .tokens
             .cache_read
-            .saturating_add(cache_read_tokens as u64);
+            .saturating_add(cache_read_tokens);
         self.usage.tokens.cache_write = self
             .usage
             .tokens
             .cache_write
-            .saturating_add(cache_write_tokens as u64);
+            .saturating_add(cache_write_tokens);
         self.usage.tokens.total = self
             .usage
             .tokens
             .input
-            .saturating_add(self.usage.tokens.output)
-            .saturating_add(self.usage.tokens.cache_read)
-            .saturating_add(self.usage.tokens.cache_write);
-        self.usage.cost += cost;
+            .saturating_add(self.usage.tokens.output);
+        self.usage.cost_micro_usd = self.usage.cost_micro_usd.saturating_add(cost_micro_usd);
     }
 
     pub fn usage_snapshot(&self) -> SessionUsage {
@@ -259,8 +262,8 @@ pub fn compute_session_stats_with_usage(
         tool_calls: tool_calls_count,
         tool_results: tool_results_count,
         total_messages: messages.len(),
+        cost: usage.cost_usd(),
         tokens: usage.tokens,
-        cost: usage.cost,
     }
 }
 

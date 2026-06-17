@@ -152,6 +152,7 @@ pub(super) async fn handle_resume_session(
     };
     *ctx.session_key = new_key.clone();
     ctx.session.set_session_key(new_key.clone());
+    ctx.session.clear_usage();
     ctx.session.drain_pending();
     *ctx.messages = loaded.messages;
     inject_system_prompt(ctx.messages, ctx.system_prompt);

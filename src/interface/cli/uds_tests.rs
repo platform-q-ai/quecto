@@ -118,16 +118,17 @@ fn test_stats_counts_tool_calls_and_results() {
 fn test_session_records_cumulative_token_usage_and_cost() {
     let mut session = AgentSession::new("gpt-5".to_string(), "cli:test".to_string());
 
-    session.record_usage(10, 2, 3, 4, 0.001);
-    session.record_usage(20, 5, 6, 7, 0.0025);
+    session.record_usage(10, 2, 3, 4, 1_000);
+    session.record_usage(20, 5, 6, 7, 2_500);
 
     let usage = session.usage_snapshot();
     assert_eq!(usage.tokens.input, 30);
     assert_eq!(usage.tokens.output, 7);
     assert_eq!(usage.tokens.cache_read, 9);
     assert_eq!(usage.tokens.cache_write, 11);
-    assert_eq!(usage.tokens.total, 57);
-    assert!((usage.cost - 0.0035).abs() < f64::EPSILON);
+    assert_eq!(usage.tokens.total, 37);
+    assert_eq!(usage.cost_micro_usd, 3_500);
+    assert!((usage.cost_usd() - 0.0035).abs() < f64::EPSILON);
 }
 
 #[test]
@@ -138,7 +139,7 @@ fn test_stats_include_session_usage_snapshot() {
         Message::assistant("reply".to_string(), vec![]),
     ];
     let mut session = AgentSession::new("gpt-5".to_string(), "k".to_string());
-    session.record_usage(100, 25, 10, 5, 0.0123);
+    session.record_usage(100, 25, 10, 5, 12_300);
 
     let stats = compute_session_stats_with_usage("k", &msgs, session.usage_snapshot());
 
@@ -146,8 +147,20 @@ fn test_stats_include_session_usage_snapshot() {
     assert_eq!(stats.tokens.output, 25);
     assert_eq!(stats.tokens.cache_read, 10);
     assert_eq!(stats.tokens.cache_write, 5);
-    assert_eq!(stats.tokens.total, 140);
+    assert_eq!(stats.tokens.total, 125);
     assert!((stats.cost - 0.0123).abs() < f64::EPSILON);
+}
+
+#[test]
+fn test_session_key_change_clears_usage() {
+    let mut session = AgentSession::new("gpt-5".to_string(), "cli:old".to_string());
+    session.record_usage(10, 2, 3, 4, 1_000);
+
+    session.set_session_key("cli:new".to_string());
+
+    let usage = session.usage_snapshot();
+    assert_eq!(usage.tokens.total, 0);
+    assert_eq!(usage.cost_micro_usd, 0);
 }
 
 // ─── parse_command_line ──────────────────────────────────────────────────────────

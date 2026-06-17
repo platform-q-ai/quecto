@@ -80,13 +80,18 @@ pub struct AgentResult {
     pub tool_iterations: u32,
     /// Whether the iteration limit was reached.
     pub iteration_limit_reached: bool,
-    /// Cumulative token usage from all LLM calls in this run.
+    /// Latest prompt/context token count for this run, used for context-window display.
     pub input_tokens: u32,
+    /// Cumulative completion tokens from all LLM calls in this run.
     pub output_tokens: u32,
-    pub cache_read_tokens: u32,
-    pub cache_write_tokens: u32,
-    /// Cumulative provider-reported cost for this run, in USD.
-    pub cost: f64,
+    /// Cumulative billed input tokens from all LLM calls in this run.
+    pub billed_input_tokens: u64,
+    /// Cumulative billed output tokens from all LLM calls in this run.
+    pub billed_output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_write_tokens: u64,
+    /// Cumulative provider-reported cost for this run, in micro-USD.
+    pub cost_micro_usd: u64,
 }
 
 impl AgentResult {
@@ -97,9 +102,11 @@ impl AgentResult {
             iteration_limit_reached: false,
             input_tokens: 0,
             output_tokens: 0,
+            billed_input_tokens: 0,
+            billed_output_tokens: 0,
             cache_read_tokens: 0,
             cache_write_tokens: 0,
-            cost: 0.0,
+            cost_micro_usd: 0,
         }
     }
 
@@ -109,9 +116,11 @@ impl AgentResult {
 
     pub fn has_usage(&self) -> bool {
         self.turn_tokens() > 0
+            || self.billed_input_tokens > 0
+            || self.billed_output_tokens > 0
             || self.cache_read_tokens > 0
             || self.cache_write_tokens > 0
-            || self.cost > 0.0
+            || self.cost_micro_usd > 0
     }
 }
 

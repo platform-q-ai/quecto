@@ -467,11 +467,13 @@ async fn test_agent_result_accumulates_usage_cache_and_cost_across_llm_calls() {
     let result = agent.run_loop(&mut messages).await.unwrap();
 
     assert_eq!(result.response, "final");
-    assert_eq!(result.input_tokens, 30);
+    assert_eq!(result.input_tokens, 20);
     assert_eq!(result.output_tokens, 7);
+    assert_eq!(result.billed_input_tokens, 30);
+    assert_eq!(result.billed_output_tokens, 7);
     assert_eq!(result.cache_read_tokens, 9);
     assert_eq!(result.cache_write_tokens, 11);
-    assert!((result.cost - 0.0035).abs() < f64::EPSILON);
+    assert_eq!(result.cost_micro_usd, 3_500);
 }
 
 #[tokio::test]

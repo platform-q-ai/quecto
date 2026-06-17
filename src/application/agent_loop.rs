@@ -1,6 +1,3 @@
-// Agent loop implementation: orchestrates LLM calls and tool execution.
-// Depends on: domain::LlmProvider, domain::Tool, infrastructure::tools::ToolRegistry
-
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -452,11 +449,13 @@ impl AgentLoopImpl {
             response: text,
             tool_iterations: iterations,
             iteration_limit_reached: false,
-            input_tokens: usage.input_tokens,
+            input_tokens: usage.context_input_tokens,
             output_tokens: usage.output_tokens,
+            billed_input_tokens: usage.billed_input_tokens,
+            billed_output_tokens: usage.billed_output_tokens,
             cache_read_tokens: usage.cache_read_tokens,
             cache_write_tokens: usage.cache_write_tokens,
-            cost: usage.cost,
+            cost_micro_usd: usage.cost_micro_usd,
         }
     }
 
@@ -678,11 +677,13 @@ impl AgentLoopImpl {
                     ),
                     tool_iterations: iterations,
                     iteration_limit_reached: true,
-                    input_tokens: usage_totals.input_tokens,
+                    input_tokens: usage_totals.context_input_tokens,
                     output_tokens: usage_totals.output_tokens,
+                    billed_input_tokens: usage_totals.billed_input_tokens,
+                    billed_output_tokens: usage_totals.billed_output_tokens,
                     cache_read_tokens: usage_totals.cache_read_tokens,
                     cache_write_tokens: usage_totals.cache_write_tokens,
-                    cost: usage_totals.cost,
+                    cost_micro_usd: usage_totals.cost_micro_usd,
                 });
             }
         }
