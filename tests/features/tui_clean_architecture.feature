@@ -60,11 +60,11 @@ Feature: TUI Clean Architecture and executable BDD enforcement
   Scenario: TUI resume selector is readable above chat history
     Then the quecto-tui resume selector should render with an opaque border
 
-  Scenario: TUI workflow bar shows stage status and hotkey tips
-    Then the quecto-tui workflow bar should include stage status and hotkey tips
+  Scenario: TUI does not render a separate workflow header bar
+    Then quecto-tui should not render a separate workflow header bar
 
   Scenario: TUI shows a Pi-style workflow widget above the editor
-    Then the quecto-tui workflow widget should render as a full-width yellow status bar above the editor
+    Then the quecto-tui workflow widget should render as plain text matching the Pi extension
 
   Scenario: TUI workflow panel matches the Pi checklist in read-only mode
     Then the quecto-tui workflow panel should render the Pi workflow checklist in read-only mode

@@ -1484,13 +1484,6 @@ impl App {
             "quecto-tui v{} — Enter send, Shift+Enter newline, /help for commands",
             version
         )));
-        // Workflow header bar (#563) — below title, above chat.
-        let wf_lines = workflow_bar::render(&workflow_bar_state, width);
-        if wf_lines.is_empty() {
-            lines.push(String::new());
-        } else {
-            lines.extend(wf_lines);
-        }
 
         // Chat — render into available space above the bottom section.
         // Reserve MIN_CHAT_GAP lines for spacing between chat and editor (#480).
