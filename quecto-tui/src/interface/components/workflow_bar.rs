@@ -243,7 +243,17 @@ pub fn render_widget(state: &WorkflowBarState, width: usize) -> Vec<String> {
         theme::muted(&format!(" {done}/{total} ({pct}%) ")),
         theme::dim(&current_info)
     );
-    vec![truncate_line(&line, width)]
+
+    let auto = if state.workflow_auto_continue { "on" } else { "off" };
+    let nudge = if state.workflow_completion_nudge { "on" } else { "off" };
+    let hints = format!(
+        "  {}",
+        theme::dim(&format!(
+            "Ctrl+Shift+W workflow · Ctrl+Shift+A auto:{auto} · Ctrl+Shift+N nudge:{nudge}"
+        ))
+    );
+
+    vec![truncate_line(&line, width), truncate_line(&hints, width)]
 }
 
 /// Render the Pi WorkflowChecklist panel in TUI read-only mode.
@@ -347,10 +357,14 @@ pub fn render_read_only_panel(
     }
 
     lines.push(String::new());
+    let auto = if state.workflow_auto_continue { "on" } else { "off" };
+    let nudge = if state.workflow_completion_nudge { "on" } else { "off" };
     lines.push(truncate_line(
         &format!(
             "  {}",
-            theme::dim("↑↓ navigate  ·  Read-only  ·  Esc close")
+            theme::dim(&format!(
+                "↑↓ navigate  ·  Read-only  ·  Esc close  ·  Ctrl+Shift+A auto:{auto}  ·  Ctrl+Shift+N nudge:{nudge}"
+            ))
         ),
         width,
     ));
@@ -718,7 +732,7 @@ mod tests {
         state.workflow_auto_continue = true;
         state.workflow_completion_nudge = false;
         let lines = render_widget(&state, 100);
-        assert_eq!(lines.len(), 1);
+        assert_eq!(lines.len(), 2);
         let line = &lines[0];
         assert!(
             !line.contains("\x1b[48;2;"),
@@ -737,6 +751,26 @@ mod tests {
             crate::interface::utils::visible_width(line) < 100,
             "widget should be content-sized, not padded to full width: {line}"
         );
+        let hints = &lines[1];
+        assert!(hints.contains("Ctrl+Shift+W"), "workflow hint missing: {hints}");
+        assert!(hints.contains("auto:on"), "auto toggle state missing: {hints}");
+        assert!(hints.contains("nudge:off"), "nudge toggle state missing: {hints}");
+    }
+
+    #[test]
+    fn workflow_widget_toggle_hints_update_when_state_changes() {
+        let mut state = make_state(Some(100), 3, 14);
+        state.workflow_auto_continue = false;
+        state.workflow_completion_nudge = true;
+        let first = render_widget(&state, 100).join("\n");
+        assert!(first.contains("auto:off"));
+        assert!(first.contains("nudge:on"));
+
+        state.workflow_auto_continue = true;
+        state.workflow_completion_nudge = false;
+        let second = render_widget(&state, 100).join("\n");
+        assert!(second.contains("auto:on"));
+        assert!(second.contains("nudge:off"));
     }
 
     #[test]
@@ -779,6 +813,17 @@ mod tests {
         );
         assert!(joined.contains("↑↓ navigate"));
         assert!(joined.contains("Esc close"));
+    }
+
+    #[test]
+    fn workflow_panel_footer_shows_toggle_state() {
+        let mut state = make_state(Some(100), 3, 14);
+        state.workflow_auto_continue = true;
+        state.workflow_completion_nudge = false;
+        let joined = render_read_only_panel(&state, 100, 40).join("\n");
+        assert!(joined.contains("Ctrl+Shift+A"));
+        assert!(joined.contains("auto:on"));
+        assert!(joined.contains("nudge:off"));
     }
 
     #[test]

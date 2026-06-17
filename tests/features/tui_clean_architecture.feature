@@ -65,6 +65,7 @@ Feature: TUI Clean Architecture and executable BDD enforcement
 
   Scenario: TUI shows a Pi-style workflow widget above the editor
     Then the quecto-tui workflow widget should render as plain text matching the Pi extension
+    And the quecto-tui workflow widget should show workflow hotkey hints with toggle state
 
   Scenario: TUI workflow panel matches the Pi checklist in read-only mode
     Then the quecto-tui workflow panel should render the Pi workflow checklist in read-only mode
