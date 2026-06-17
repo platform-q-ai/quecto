@@ -85,6 +85,10 @@ fn builtin_commands() -> Vec<SlashCommand> {
             description: "Switch model".into(),
         },
         SlashCommand {
+            name: "workflow".into(),
+            description: "Show workflow status and hotkeys".into(),
+        },
+        SlashCommand {
             name: "workflow-auto".into(),
             description: "Toggle workflow auto-continue".into(),
         },
@@ -563,6 +567,18 @@ impl App {
                 self.notify(&format!("Tool output {}", state), NotifyLevel::Info);
                 return;
             }
+            Key::CtrlShift('w') => {
+                self.show_workflow_status();
+                return;
+            }
+            Key::CtrlShift('a') => {
+                self.toggle_workflow_auto_continue();
+                return;
+            }
+            Key::CtrlShift('n') => {
+                self.toggle_workflow_completion_nudge();
+                return;
+            }
             Key::MousePress(col, row) => {
                 self.selection = Some(TextSelection {
                     start: SelectionAnchor {
@@ -667,6 +683,10 @@ impl App {
                     self.send_session_stats();
                     return;
                 }
+                "/workflow" => {
+                    self.show_workflow_status();
+                    return;
+                }
                 "/resume" => {
                     self.send_list_sessions();
                     return;
@@ -687,29 +707,11 @@ impl App {
                     return;
                 }
                 "/workflow-auto" => {
-                    self.workflow_auto_continue = !self.workflow_auto_continue;
-                    let state = if self.workflow_auto_continue {
-                        "ON — agent will be nudged to complete all steps"
-                    } else {
-                        "OFF"
-                    };
-                    self.notify(
-                        &format!("Workflow auto-continue {state}"),
-                        NotifyLevel::Info,
-                    );
+                    self.toggle_workflow_auto_continue();
                     return;
                 }
                 "/workflow-nudge" => {
-                    self.workflow_completion_nudge = !self.workflow_completion_nudge;
-                    let state = if self.workflow_completion_nudge {
-                        "ON — agent will be prompted to pick next issue"
-                    } else {
-                        "OFF"
-                    };
-                    self.notify(
-                        &format!("Workflow completion nudge {state}"),
-                        NotifyLevel::Info,
-                    );
+                    self.toggle_workflow_completion_nudge();
                     return;
                 }
                 _ => {
@@ -1174,6 +1176,9 @@ impl App {
                 "  Ctrl+D         Exit",
                 "  Ctrl+L         Open model selector",
                 "  Ctrl+O         Toggle tool output expansion",
+                "  Ctrl+Shift+W   Show workflow status",
+                "  Ctrl+Shift+A   Toggle workflow auto-continue",
+                "  Ctrl+Shift+N   Toggle workflow completion nudge",
                 "  Ctrl+Z         Suspend (resume with fg)",
                 "  PageUp/Down    Scroll chat",
                 "  Up/Down        Input history",
@@ -1184,6 +1189,7 @@ impl App {
                 "  /clear         Clear conversation",
                 "  /new           New session",
                 "  /session       Show session info",
+                "  /workflow      Show workflow status",
                 "  /resume        Pick a persisted session to resume",
                 "  /resume <name> Resume a persisted session directly",
                 "  /workflow-auto Toggle workflow auto-continue",
@@ -1193,6 +1199,65 @@ impl App {
             ]
             .join("\n"),
         });
+    }
+
+    fn show_workflow_status(&mut self) {
+        let wf = &self.workflow_bar;
+        if !wf.is_visible() {
+            self.chat.add_entry(ChatEntry::Status {
+                text: "Workflow is not active. Start quecto-tui with --workflow to enable it."
+                    .to_string(),
+            });
+            return;
+        }
+
+        let current = wf
+            .current_step_id()
+            .map(|id| {
+                let label = wf.current_step_label().unwrap_or("");
+                if label.is_empty() {
+                    format!("Step {id}")
+                } else {
+                    format!("Step {id}: {label}")
+                }
+            })
+            .unwrap_or_else(|| "Complete".to_string());
+        let issue = wf
+            .issue_number
+            .map(|n| format!("Issue #{n}: {}", wf.issue_title.as_deref().unwrap_or("")))
+            .unwrap_or_else(|| "No active issue".to_string());
+        self.chat.add_entry(ChatEntry::Status {
+            text: format!(
+                "Workflow: {}/{} complete | {} | Current: {}\nHotkeys: Ctrl+Shift+W status · Ctrl+Shift+A auto-continue · Ctrl+Shift+N completion nudge",
+                wf.done, wf.total, issue, current
+            ),
+        });
+    }
+
+    fn toggle_workflow_auto_continue(&mut self) {
+        self.workflow_auto_continue = !self.workflow_auto_continue;
+        let state = if self.workflow_auto_continue {
+            "ON — agent will be nudged to complete all steps"
+        } else {
+            "OFF"
+        };
+        self.notify(
+            &format!("Workflow auto-continue {state}"),
+            NotifyLevel::Info,
+        );
+    }
+
+    fn toggle_workflow_completion_nudge(&mut self) {
+        self.workflow_completion_nudge = !self.workflow_completion_nudge;
+        let state = if self.workflow_completion_nudge {
+            "ON — agent will be prompted to pick next issue"
+        } else {
+            "OFF"
+        };
+        self.notify(
+            &format!("Workflow completion nudge {state}"),
+            NotifyLevel::Info,
+        );
     }
 
     fn send_session_stats(&mut self) {
@@ -1424,7 +1489,10 @@ impl App {
             version
         )));
         // Workflow header bar (#563) — below title, above chat.
-        let wf_lines = workflow_bar::render(&self.workflow_bar, width);
+        let mut workflow_bar_state = self.workflow_bar.clone();
+        workflow_bar_state.workflow_auto_continue = self.workflow_auto_continue;
+        workflow_bar_state.workflow_completion_nudge = self.workflow_completion_nudge;
+        let wf_lines = workflow_bar::render(&workflow_bar_state, width);
         if wf_lines.is_empty() {
             lines.push(String::new());
         } else {
@@ -2361,6 +2429,7 @@ mod tests {
         assert!(names.contains(&"session"));
         assert!(names.contains(&"resume"));
         assert!(names.contains(&"model"));
+        assert!(names.contains(&"workflow"));
     }
 
     #[test]

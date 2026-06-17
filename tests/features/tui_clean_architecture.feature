@@ -59,3 +59,6 @@ Feature: TUI Clean Architecture and executable BDD enforcement
 
   Scenario: TUI resume selector is readable above chat history
     Then the quecto-tui resume selector should render with an opaque border
+
+  Scenario: TUI workflow bar shows stage status and hotkey tips
+    Then the quecto-tui workflow bar should include stage status and hotkey tips

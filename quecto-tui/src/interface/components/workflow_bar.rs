@@ -1,7 +1,8 @@
 //! Sci-fi styled workflow progress bar for the TUI header (#563).
 //!
-//! When visible, renders three lines: a blank spacer, the styled progress
-//! bar (issue number, title, progress, phase), and another blank spacer.
+//! When visible, renders four lines: a blank spacer, the styled progress
+//! bar (issue number, title, progress, phase), a stage/hotkey tips line,
+//! and another blank spacer.
 //! Returns an empty vec when no workflow is active.
 
 use crate::interface::theme;
@@ -10,6 +11,7 @@ use crate::interface::theme;
 #[derive(Debug, Clone)]
 pub struct WorkflowStepInfo {
     pub id: u32,
+    pub label: String,
     pub phase: String,
     pub done: bool,
 }
@@ -28,6 +30,10 @@ pub struct WorkflowBarState {
     pub template_name: Option<String>,
     /// V2: number of available templates (for selector mode display).
     pub template_count: u32,
+    /// TUI-local: whether workflow auto-continue is enabled.
+    pub workflow_auto_continue: bool,
+    /// TUI-local: whether completion nudge is enabled.
+    pub workflow_completion_nudge: bool,
 }
 
 impl WorkflowBarState {
@@ -52,12 +58,20 @@ impl WorkflowBarState {
     pub fn current_step_id(&self) -> Option<u32> {
         self.steps.iter().find(|s| !s.done).map(|s| s.id)
     }
+
+    /// Find the current step title for display.
+    pub fn current_step_label(&self) -> Option<&str> {
+        self.steps
+            .iter()
+            .find(|s| !s.done)
+            .map(|s| s.label.as_str())
+    }
 }
 
 /// Render the sci-fi workflow header bar.
 ///
 /// Returns an empty vec if no workflow is active.
-/// Returns three lines if active: blank spacer, styled content, blank spacer.
+/// Returns four lines if active: blank spacer, styled content, stage/hotkey tips, blank spacer.
 pub fn render(state: &WorkflowBarState, width: usize) -> Vec<String> {
     if !state.is_visible() {
         return vec![];
@@ -84,9 +98,15 @@ pub fn render(state: &WorkflowBarState, width: usize) -> Vec<String> {
         } else {
             String::new()
         };
+        let tips = format!(
+            " {}",
+            theme::dim("Ctrl+Shift+W workflow · Ctrl+Shift+A auto · Ctrl+Shift+N nudge")
+        );
+        let tips = pad_or_truncate_with_bg(&tips, width, bg, reset);
         return vec![
             String::new(),
             format!("{bg}{content}{padding}{reset}"),
+            tips,
             String::new(),
         ];
     }
@@ -124,7 +144,15 @@ pub fn render(state: &WorkflowBarState, width: usize) -> Vec<String> {
 
     // Step info
     let step_info = if let Some(step_id) = state.current_step_id() {
-        format!("Step {}", step_id)
+        let label = state
+            .current_step_label()
+            .map(short_step_label)
+            .unwrap_or_default();
+        if label.is_empty() {
+            format!("Step {}", step_id)
+        } else {
+            format!("Step {}: {}", step_id, label)
+        }
     } else {
         "Complete".to_string()
     };
@@ -152,11 +180,76 @@ pub fn render(state: &WorkflowBarState, width: usize) -> Vec<String> {
         String::new()
     };
 
+    let stage_line = render_stage_status_line(state, width, bg, reset);
+
     vec![
         String::new(),
         format!("{}{}{}{}", bg, content, padding, reset),
+        stage_line,
         String::new(),
     ]
+}
+
+fn render_stage_status_line(
+    state: &WorkflowBarState,
+    width: usize,
+    bg: &str,
+    reset: &str,
+) -> String {
+    let stages = ["red", "green", "refactor", "ci_cd", "review"];
+    let current_phase = state.current_phase();
+    let mut parts = Vec::new();
+    for phase in stages {
+        let phase_steps: Vec<&WorkflowStepInfo> = state
+            .steps
+            .iter()
+            .filter(|step| step.phase == phase || (phase == "ci_cd" && step.phase == "ci"))
+            .collect();
+        let marker = if !phase_steps.is_empty() && phase_steps.iter().all(|step| step.done) {
+            theme::success("✓")
+        } else if current_phase == Some(phase) || (phase == "ci_cd" && current_phase == Some("ci"))
+        {
+            theme::accent("●")
+        } else {
+            theme::dim("○")
+        };
+        parts.push(format!("{} {}", marker, phase_name(phase)));
+    }
+
+    let auto = if state.workflow_auto_continue {
+        "on"
+    } else {
+        "off"
+    };
+    let nudge = if state.workflow_completion_nudge {
+        "on"
+    } else {
+        "off"
+    };
+    let tips = format!(
+        "{} {}",
+        theme::dim("Ctrl+Shift+W workflow ·"),
+        theme::dim(&format!(
+            "Ctrl+Shift+A:auto {auto} · Ctrl+Shift+N:nudge {nudge}"
+        ))
+    );
+    let line = format!("  {}   {}", parts.join("  "), tips);
+    pad_or_truncate_with_bg(&line, width, bg, reset)
+}
+
+fn pad_or_truncate_with_bg(text: &str, width: usize, bg: &str, reset: &str) -> String {
+    let text = crate::interface::utils::truncate_to_width(text, width, Some("…"));
+    let vis_width = crate::interface::utils::visible_width(&text);
+    let padding = if vis_width < width {
+        " ".repeat(width - vis_width)
+    } else {
+        String::new()
+    };
+    format!("{bg}{text}{padding}{reset}")
+}
+
+fn short_step_label(label: &str) -> String {
+    label.chars().filter(|c| !c.is_control()).take(28).collect()
 }
 
 /// Phase display name.
@@ -194,6 +287,11 @@ pub fn parse_workflow_event(data: &serde_json::Value) -> WorkflowBarState {
                     let id = s.get("index").or_else(|| s.get("id"))?.as_u64()? as u32;
                     Some(WorkflowStepInfo {
                         id,
+                        label: s
+                            .get("label")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
                         phase: s.get("phase")?.as_str()?.to_string(),
                         done: s.get("done")?.as_bool()?,
                     })
@@ -259,6 +357,8 @@ pub fn parse_workflow_event(data: &serde_json::Value) -> WorkflowBarState {
         mode,
         template_name,
         template_count,
+        workflow_auto_continue: false,
+        workflow_completion_nudge: false,
     }
 }
 
@@ -270,10 +370,15 @@ mod tests {
         let steps: Vec<WorkflowStepInfo> = (1..=total)
             .map(|i| WorkflowStepInfo {
                 id: i,
+                label: format!("Step {i} label"),
                 phase: if i <= 3 {
                     "red".into()
                 } else if i <= 4 {
                     "green".into()
+                } else if i <= 6 {
+                    "refactor".into()
+                } else if i <= 11 {
+                    "review".into()
                 } else {
                     "ci_cd".into()
                 },
@@ -289,6 +394,8 @@ mod tests {
             mode: None,
             template_name: None,
             template_count: 0,
+            workflow_auto_continue: false,
+            workflow_completion_nudge: false,
         }
     }
 
@@ -302,7 +409,7 @@ mod tests {
     fn visible_with_issue() {
         let state = make_state(Some(559), 4, 14);
         let lines = render(&state, 80);
-        assert_eq!(lines.len(), 3, "blank + content + blank");
+        assert_eq!(lines.len(), 4, "blank + content + stage/tips + blank");
     }
 
     #[test]
@@ -362,6 +469,38 @@ mod tests {
         assert!(
             line.contains("\x1b[48;2;"),
             "should contain true-colour bg escape"
+        );
+    }
+
+    #[test]
+    fn renders_stage_status_with_hotkey_tips() {
+        let mut state = make_state(Some(100), 3, 14);
+        state.workflow_auto_continue = true;
+        state.workflow_completion_nudge = false;
+        let lines = render(&state, 120);
+        let stage_line = lines
+            .iter()
+            .find(|line| line.contains("RED") && line.contains("GREEN"))
+            .expect("stage status line should render");
+        assert!(
+            stage_line.contains("●") && stage_line.contains("GREEN"),
+            "current phase should be marked: {stage_line}"
+        );
+        assert!(
+            stage_line.contains("✓") && stage_line.contains("RED"),
+            "done stages should be marked: {stage_line}"
+        );
+        assert!(
+            stage_line.contains("Ctrl+Shift+W"),
+            "open workflow tip missing: {stage_line}"
+        );
+        assert!(
+            stage_line.contains("A:auto on"),
+            "auto-continue status missing: {stage_line}"
+        );
+        assert!(
+            stage_line.contains("N:nudge off"),
+            "nudge status missing: {stage_line}"
         );
     }
 
@@ -541,12 +680,16 @@ mod tests {
         let lines = render(&state, 80);
         assert_eq!(
             lines.len(),
-            3,
-            "expected blank + content + blank, got {lines:?}"
+            4,
+            "expected blank + content + stage/tips + blank, got {lines:?}"
         );
         assert!(lines[0].trim().is_empty(), "first line should be blank");
-        assert!(!lines[1].trim().is_empty(), "middle line should be content");
-        assert!(lines[2].trim().is_empty(), "last line should be blank");
+        assert!(!lines[1].trim().is_empty(), "main line should be content");
+        assert!(
+            lines[2].contains("Ctrl+Shift"),
+            "stage/tips line should show hotkeys"
+        );
+        assert!(lines[3].trim().is_empty(), "last line should be blank");
     }
 
     #[test]
@@ -557,11 +700,15 @@ mod tests {
         let lines = render(&state, 80);
         assert_eq!(
             lines.len(),
-            3,
-            "expected blank + content + blank, got {lines:?}"
+            4,
+            "expected blank + content + tips + blank, got {lines:?}"
         );
         assert!(lines[0].trim().is_empty(), "first line should be blank");
-        assert!(lines[1].contains("SELECT"), "middle line should be content");
-        assert!(lines[2].trim().is_empty(), "last line should be blank");
+        assert!(lines[1].contains("SELECT"), "main line should be content");
+        assert!(
+            lines[2].contains("Ctrl+Shift"),
+            "tips line should show hotkeys"
+        );
+        assert!(lines[3].trim().is_empty(), "last line should be blank");
     }
 }

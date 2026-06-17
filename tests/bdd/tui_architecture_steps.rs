@@ -354,6 +354,26 @@ fn then_tui_resume_selector_has_opaque_border(_world: &mut QuectoWorld) {
     );
 }
 
+#[then("the quecto-tui workflow bar should include stage status and hotkey tips")]
+fn then_tui_workflow_bar_has_stage_status_and_hotkeys(_world: &mut QuectoWorld) {
+    let bar = std::fs::read_to_string("quecto-tui/src/interface/components/workflow_bar.rs")
+        .expect("read workflow bar source");
+    let app = std::fs::read_to_string("quecto-tui/src/interface/app.rs").expect("read app source");
+    assert!(
+        bar.contains("render_stage_status_line")
+            && bar.contains("Ctrl+Shift+W")
+            && bar.contains("Ctrl+Shift+A")
+            && bar.contains("Ctrl+Shift+N"),
+        "workflow bar should render Pi-style stage status with workflow hotkey tips"
+    );
+    assert!(
+        app.contains("Key::CtrlShift('w')")
+            && app.contains("Key::CtrlShift('a')")
+            && app.contains("Key::CtrlShift('n')"),
+        "workflow hotkey tips should correspond to local TUI hotkey handlers"
+    );
+}
+
 #[then("the TUI architecture feature should not contain pending scenarios")]
 fn then_tui_architecture_feature_not_pending(_world: &mut QuectoWorld) {
     let content = std::fs::read_to_string("tests/features/tui_clean_architecture.feature")
