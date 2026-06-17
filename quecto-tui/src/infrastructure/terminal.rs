@@ -44,7 +44,9 @@ impl Terminal {
         }
 
         let fd = std::io::stdin().as_raw_fd();
+        // SAFETY: `libc::termios` is a plain C struct; zeroed memory is an acceptable buffer for `tcgetattr` to fill.
         let mut termios = unsafe { std::mem::zeroed::<libc::termios>() };
+        // SAFETY: `fd` is stdin and `termios` points to valid writable memory; return code is checked.
         let rc = unsafe { libc::tcgetattr(fd, &mut termios) };
         if rc != 0 {
             // Not a TTY or error — don't enter raw mode.
@@ -63,6 +65,7 @@ impl Terminal {
         termios.c_cc[libc::VMIN] = 1;
         termios.c_cc[libc::VTIME] = 0;
 
+        // SAFETY: `fd` is stdin and `termios` was initialized by `tcgetattr` then modified with valid flags.
         unsafe {
             libc::tcsetattr(fd, libc::TCSAFLUSH, &termios);
         }
@@ -108,6 +111,7 @@ impl Terminal {
 
             // Restore original termios settings (cooked mode, echo, etc.).
             let fd = std::io::stdin().as_raw_fd();
+            // SAFETY: `saved.original` is a termios value previously returned by `tcgetattr` for stdin.
             unsafe {
                 libc::tcsetattr(fd, libc::TCSANOW, &saved.original);
             }
@@ -166,6 +170,7 @@ fn get_terminal_size() -> (usize, usize) {
         ws_ypixel: 0,
     };
 
+    // SAFETY: `ws` points to valid writable memory for the TIOCGWINSZ ioctl; return code is checked.
     let result = unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws) };
 
     if result == 0 && ws.ws_col > 0 && ws.ws_row > 0 {

@@ -22,6 +22,7 @@ pub fn suspend() {
     let _ = std::io::Write::flush(&mut std::io::stdout());
 
     // Restore termios.
+    // SAFETY: termios calls operate on stdin fd 0; return values are checked before using the struct.
     unsafe {
         let fd = 0; // stdin
         let mut termios: libc::termios = std::mem::zeroed();
@@ -34,6 +35,7 @@ pub fn suspend() {
     }
 
     // Send SIGTSTP to self — process suspends here.
+    // SAFETY: raising SIGTSTP for the current process has no memory-safety preconditions.
     unsafe {
         libc::raise(libc::SIGTSTP);
     }

@@ -185,3 +185,141 @@ mod tests {
         assert!(result.is_char_boundary(result.len()));
     }
 }
+
+#[cfg(test)]
+mod pump_tests {
+    use super::*;
+    use crate::domain::message::LlmResponse;
+    use std::sync::{Arc, Mutex};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[derive(Clone, Default)]
+    struct RecordingHandler {
+        lines: Arc<Mutex<Vec<String>>>,
+        done_on: Option<String>,
+    }
+
+    impl SseHandler for RecordingHandler {
+        async fn process_line(
+            &mut self,
+            line: &str,
+            tx: &tokio::sync::mpsc::Sender<StreamEvent>,
+        ) -> SseLineOutcome {
+            self.lines.lock().unwrap().push(line.to_string());
+            if self.done_on.as_deref() == Some(line) {
+                let _ = tx
+                    .send(StreamEvent::Done(LlmResponse {
+                        content: Some("done".into()),
+                        tool_calls: vec![],
+                        usage: None,
+                        stop_reason: None,
+                        thinking_blocks: vec![],
+                    }))
+                    .await;
+                SseLineOutcome::Done
+            } else {
+                SseLineOutcome::Continue
+            }
+        }
+
+        async fn on_eof(&mut self, tx: &tokio::sync::mpsc::Sender<StreamEvent>) {
+            let _ = tx.send(StreamEvent::TextDelta("eof".into())).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn pump_sse_dispatches_lines_and_calls_eof() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sse"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"data: one\r\ndata: two\n"))
+            .mount(&server)
+            .await;
+        let mut response = reqwest::get(format!("{}/sse", server.uri())).await.unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let mut handler = RecordingHandler {
+            lines: Arc::clone(&lines),
+            done_on: None,
+        };
+
+        pump_sse(&mut response, &tx, &mut handler).await;
+
+        assert_eq!(
+            *lines.lock().unwrap(),
+            vec!["data: one".to_string(), "data: two".to_string()]
+        );
+        assert!(matches!(rx.recv().await, Some(StreamEvent::TextDelta(text)) if text == "eof"));
+    }
+
+    #[tokio::test]
+    async fn pump_sse_stops_when_handler_returns_done() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sse"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"first\nstop\nlast\n"))
+            .mount(&server)
+            .await;
+        let mut response = reqwest::get(format!("{}/sse", server.uri())).await.unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let mut handler = RecordingHandler {
+            lines: Arc::clone(&lines),
+            done_on: Some("stop".into()),
+        };
+
+        pump_sse(&mut response, &tx, &mut handler).await;
+
+        assert_eq!(
+            *lines.lock().unwrap(),
+            vec!["first".to_string(), "stop".to_string()]
+        );
+        assert!(matches!(rx.recv().await, Some(StreamEvent::Done(_))));
+    }
+
+    #[tokio::test]
+    async fn pump_sse_rejects_oversized_line_without_newline() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sse"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_bytes(vec![b'x'; MAX_SSE_LINE_BYTES + 1]),
+            )
+            .mount(&server)
+            .await;
+        let mut response = reqwest::get(format!("{}/sse", server.uri())).await.unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let mut handler = RecordingHandler::default();
+
+        pump_sse(&mut response, &tx, &mut handler).await;
+
+        assert!(
+            matches!(rx.recv().await, Some(StreamEvent::Error(message)) if message.contains("exceeds"))
+        );
+    }
+
+    #[tokio::test]
+    async fn pump_sse_skips_invalid_utf8_line() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sse"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_bytes(vec![0xff, b'\n', b'o', b'k', b'\n']),
+            )
+            .mount(&server)
+            .await;
+        let mut response = reqwest::get(format!("{}/sse", server.uri())).await.unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(2);
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let mut handler = RecordingHandler {
+            lines: Arc::clone(&lines),
+            done_on: None,
+        };
+
+        pump_sse(&mut response, &tx, &mut handler).await;
+
+        assert_eq!(*lines.lock().unwrap(), vec!["ok".to_string()]);
+        assert!(matches!(rx.recv().await, Some(StreamEvent::TextDelta(text)) if text == "eof"));
+    }
+}

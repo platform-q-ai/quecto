@@ -124,6 +124,7 @@ async fn run_tui(flags: CliFlags) -> i32 {
         );
         let _ = std::io::Write::flush(&mut std::io::stdout());
         // Restore termios to cooked mode (best-effort).
+        // SAFETY: termios calls operate on stdin fd 0; return values are checked before using the struct.
         unsafe {
             let fd = 0; // stdin
             let mut termios: libc::termios = std::mem::zeroed();

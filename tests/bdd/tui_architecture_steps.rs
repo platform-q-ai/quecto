@@ -23,6 +23,7 @@ fn then_tui_source_tree_contains_layer(_world: &mut QuectoWorld, layer: String) 
 
 #[then("the quecto-tui domain source should not contain runtime I/O patterns")]
 fn then_tui_domain_no_runtime_io(_world: &mut QuectoWorld) {
+    assert!(Path::new(TUI_ROOT).join("domain").is_dir());
     assert_no_tui_patterns(
         "domain",
         &[
@@ -37,6 +38,7 @@ fn then_tui_domain_no_runtime_io(_world: &mut QuectoWorld) {
 
 #[then("the quecto-tui application source should not contain runtime I/O patterns")]
 fn then_tui_application_no_runtime_io(_world: &mut QuectoWorld) {
+    assert!(Path::new(TUI_ROOT).join("application").is_dir());
     assert_no_tui_patterns(
         "application",
         &[
@@ -51,6 +53,7 @@ fn then_tui_application_no_runtime_io(_world: &mut QuectoWorld) {
 
 #[then("the quecto-tui domain source should not import outer layers")]
 fn then_tui_domain_no_outer_layers(_world: &mut QuectoWorld) {
+    assert!(Path::new(TUI_ROOT).join("domain").is_dir());
     assert_no_tui_patterns(
         "domain",
         &[
@@ -66,6 +69,7 @@ fn then_tui_domain_no_outer_layers(_world: &mut QuectoWorld) {
 
 #[then("the quecto-tui application source should not import infrastructure or interface layers")]
 fn then_tui_application_imports_only_inward(_world: &mut QuectoWorld) {
+    assert!(Path::new(TUI_ROOT).join("application").is_dir());
     assert_no_tui_patterns(
         "application",
         &[
@@ -79,6 +83,7 @@ fn then_tui_application_imports_only_inward(_world: &mut QuectoWorld) {
 
 #[then("the quecto-tui infrastructure source should not import application or interface layers")]
 fn then_tui_infrastructure_no_application_or_interface(_world: &mut QuectoWorld) {
+    assert!(Path::new(TUI_ROOT).join("infrastructure").is_dir());
     assert_no_tui_patterns(
         "infrastructure",
         &[
@@ -207,7 +212,7 @@ fn collect_misplaced_tui_rs_files(dir: &Path, misplaced: &mut Vec<String>) {
             collect_misplaced_tui_rs_files(&path, misplaced);
             continue;
         }
-        if !path.extension().is_some_and(|ext| ext == "rs") {
+        if path.extension().is_none_or(|ext| ext != "rs") {
             continue;
         }
         let rel = path
