@@ -383,6 +383,20 @@ fn then_tui_workflow_widget_matches_pi_plain_text(_world: &mut QuectoWorld) {
     );
 }
 
+#[then("the quecto-tui workflow widget should show workflow hotkey hints with toggle state")]
+fn then_tui_workflow_widget_shows_hotkey_hints_with_toggle_state(_world: &mut QuectoWorld) {
+    let bar = std::fs::read_to_string("quecto-tui/src/interface/components/workflow_bar.rs")
+        .expect("read workflow bar source");
+    assert!(
+        bar.contains("Ctrl+Shift+W")
+            && bar.contains("Ctrl+Shift+A")
+            && bar.contains("Ctrl+Shift+N")
+            && bar.contains("auto:{auto}")
+            && bar.contains("nudge:{nudge}"),
+        "workflow widget should display hotkey hints and live on/off toggle state"
+    );
+}
+
 #[then("the quecto-tui workflow panel should render the Pi workflow checklist in read-only mode")]
 fn then_tui_workflow_panel_matches_pi_read_only(_world: &mut QuectoWorld) {
     let bar = std::fs::read_to_string("quecto-tui/src/interface/components/workflow_bar.rs")
