@@ -36,3 +36,8 @@ Feature: TUI Clean Architecture and executable BDD enforcement
   Scenario: TUI standards are executable through BDD
     Then the BDD runner should execute TUI scenarios tagged wip or done
     And the TUI architecture feature should not contain pending scenarios
+
+  Scenario: TUI scrollback remains stable while an assistant response streams
+    Given a quecto-tui chat view is scrolled into history
+    When streaming assistant content extends the conversation
+    Then the quecto-tui chat viewport should keep showing the same historical lines

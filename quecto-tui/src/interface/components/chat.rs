@@ -47,10 +47,15 @@ pub enum ChatEntry {
 }
 
 /// Chat display component.
+#[derive(Debug)]
 pub struct Chat {
     entries: Vec<ChatEntry>,
     /// Scroll offset from the bottom (0 = at bottom, showing most recent).
     scroll_offset: usize,
+    /// Width used for the most recent full chat render.
+    last_render_width: Option<usize>,
+    /// Full line count from the most recent chat render, before viewport scrolling.
+    last_render_line_count: usize,
     /// Global tool expand state (toggled by Ctrl+O).
     pub tool_expanded: bool,
 }
@@ -66,6 +71,8 @@ impl Chat {
         Self {
             entries: Vec::new(),
             scroll_offset: 0,
+            last_render_width: None,
+            last_render_line_count: 0,
             tool_expanded: false,
         }
     }
@@ -87,7 +94,6 @@ impl Chat {
             text: token.to_string(),
             streaming: true,
         });
-        self.scroll_offset = 0;
     }
 
     /// Finalize the current streaming message.
@@ -109,7 +115,6 @@ impl Chat {
             is_error: false,
             duration_ms: None,
         });
-        self.scroll_offset = 0;
     }
 
     /// Complete a tool execution — updates existing entry in place.
@@ -139,7 +144,6 @@ impl Chat {
                 }
             }
         }
-        self.scroll_offset = 0;
     }
 
     /// Toggle expand/collapse on all tool entries.
@@ -238,6 +242,22 @@ impl Component for Chat {
                 }
             }
         }
+
+        // If the user is scrolled into history, keep the visible viewport anchored
+        // while new streaming/tool lines are appended below it. A fixed
+        // distance-from-bottom offset would otherwise shrink as content grows,
+        // pulling the viewport back toward the live response on every render.
+        let full_line_count = all_lines.len();
+        if self.scroll_offset > 0
+            && self.last_render_width == Some(width)
+            && full_line_count > self.last_render_line_count
+        {
+            self.scroll_offset = self
+                .scroll_offset
+                .saturating_add(full_line_count - self.last_render_line_count);
+        }
+        self.last_render_width = Some(width);
+        self.last_render_line_count = full_line_count;
 
         // Apply scroll offset.
         if self.scroll_offset > 0 && !all_lines.is_empty() {
@@ -1302,6 +1322,25 @@ mod tests {
         );
     }
 
+    fn viewport(lines: Vec<String>, height: usize) -> Vec<String> {
+        if lines.len() > height {
+            lines[lines.len() - height..].to_vec()
+        } else {
+            lines
+        }
+    }
+
+    fn chat_with_streaming_history() -> Chat {
+        let mut chat = Chat::new();
+        for i in 0..30 {
+            chat.add_entry(ChatEntry::User {
+                text: format!("history line {i}"),
+            });
+        }
+        chat.append_token("initial streamed response");
+        chat
+    }
+
     #[test]
     fn scroll_down_from_scrolled_position() {
         let mut chat = Chat::new();
@@ -1319,6 +1358,48 @@ mod tests {
         assert!(
             after_down.len() > scrolled_up.len(),
             "scrolling down should show more lines"
+        );
+    }
+
+    #[test]
+    fn scrolled_streaming_viewport_stays_anchored_when_tokens_add_lines() {
+        let mut chat = chat_with_streaming_history();
+
+        let height = 10;
+        chat.scroll_up(15);
+        let before = viewport(chat.render(80), height);
+
+        chat.append_token("\nnew streamed line 1\nnew streamed line 2\nnew streamed line 3");
+        let after = viewport(chat.render(80), height);
+
+        assert_eq!(
+            after, before,
+            "streaming output should not drag a scrolled viewport toward the bottom"
+        );
+        assert!(
+            chat.scroll_offset > 15,
+            "scroll offset should grow with streamed content while scrolled away from bottom"
+        );
+    }
+
+    #[test]
+    fn scrolled_viewport_stays_anchored_when_tool_entries_arrive() {
+        let mut chat = chat_with_streaming_history();
+
+        let height = 10;
+        chat.scroll_up(15);
+        let before = viewport(chat.render(80), height);
+
+        chat.start_tool(
+            "tool-1".into(),
+            "bash".into(),
+            r#"{"command":"echo hi"}"#.into(),
+        );
+        let after = viewport(chat.render(80), height);
+
+        assert_eq!(
+            after, before,
+            "tool output should not drag a scrolled viewport during an active response"
         );
     }
 
