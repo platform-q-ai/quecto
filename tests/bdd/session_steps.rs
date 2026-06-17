@@ -57,6 +57,19 @@ fn given_session_with_some_messages(world: &mut QuectoWorld, key: String) {
     given_session_with_messages(world, key, 2);
 }
 
+#[given(expr = "a corrupt session file {string}")]
+fn given_corrupt_session_file(world: &mut QuectoWorld, filename: String) {
+    ensure_session_workspace(world);
+    let ws = world
+        .session_workspace
+        .as_ref()
+        .expect("session workspace not set");
+    let sessions_dir = ws.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("create sessions dir");
+    std::fs::write(sessions_dir.join(filename), "{ invalid json\n}")
+        .expect("write corrupt session");
+}
+
 #[given(expr = "the workspace file {string} contains {string}")]
 fn given_workspace_file_contains(world: &mut QuectoWorld, filename: String, content: String) {
     let ws = world
@@ -238,6 +251,21 @@ fn then_identity_includes(world: &mut QuectoWorld, expected: String) {
         "expected identity to include '{}', got: {}",
         expected,
         identity
+    );
+}
+
+#[then(expr = "the session list should include session {string}")]
+fn then_session_list_should_include(world: &mut QuectoWorld, expected_name: String) {
+    let store = world.session_store.as_ref().expect("session store not set");
+    let summaries = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(store.list())
+        .expect("session list should succeed");
+    assert!(
+        summaries
+            .iter()
+            .any(|summary| summary.name == expected_name),
+        "expected session list to include {expected_name:?}, got {summaries:?}"
     );
 }
 

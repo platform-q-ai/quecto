@@ -29,6 +29,13 @@ Feature: Session Management
     Then the [session] should be found
     And the conversation history should contain 3 messages
 
+  @session
+  Scenario: Corrupt session files do not block session listing
+    Given a [session] workspace
+    And a [session] "cli:good" with 2 messages in history
+    And a corrupt [session] file "cli_bad.json"
+    Then the [session] list should include session "good"
+
   # NOTE: CLI session key scenarios moved to e2e_session.feature
   # because they now require a mock LLM server (cmd_agent is no longer a stub).
 

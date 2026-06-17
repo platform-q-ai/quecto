@@ -207,20 +207,28 @@ impl SessionStore for FileSessionStore {
                     .and_then(|m| m.modified().ok())
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|d| d.as_secs());
-                let content = tokio::fs::read_to_string(&path).await.map_err(|e| {
-                    DomainError::Session(format!(
-                        "failed to read session file {}: {}",
-                        path.display(),
-                        e
-                    ))
-                })?;
-                let file: SessionFile = serde_json::from_str(&content).map_err(|e| {
-                    DomainError::Session(format!(
-                        "failed to parse session file {}: {}",
-                        path.display(),
-                        e
-                    ))
-                })?;
+                let content = match tokio::fs::read_to_string(&path).await {
+                    Ok(content) => content,
+                    Err(err) => {
+                        tracing::warn!(
+                            path = %path.display(),
+                            error = %err,
+                            "skipping unreadable session file while listing sessions"
+                        );
+                        continue;
+                    }
+                };
+                let file: SessionFile = match serde_json::from_str(&content) {
+                    Ok(file) => file,
+                    Err(err) => {
+                        tracing::warn!(
+                            path = %path.display(),
+                            error = %err,
+                            "skipping invalid session file while listing sessions"
+                        );
+                        continue;
+                    }
+                };
                 summaries.push(SessionSummary {
                     name: file
                         .key
@@ -764,6 +772,29 @@ mod tests {
         assert_eq!(work.message_count, 2);
         let default = summaries.iter().find(|s| s.name == "default").unwrap();
         assert_eq!(default.message_count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_list_sessions_skips_corrupt_json_files() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileSessionStore::new(tmp.path());
+
+        store
+            .save(&Session {
+                key: "cli:good".to_string(),
+                messages: vec![make_message(Role::User, "hello")],
+                workflow_run: None,
+            })
+            .await
+            .unwrap();
+        let sessions_dir = tmp.path().join("sessions");
+        tokio::fs::write(sessions_dir.join("cli_bad.json"), "{ invalid json\n}")
+            .await
+            .unwrap();
+
+        let summaries = store.list().await.unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].name, "good");
     }
 
     #[tokio::test]
