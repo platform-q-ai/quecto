@@ -189,8 +189,6 @@ pub struct App {
     model_selector: Option<ModelSelector>,
     /// Session resume selector shown after `/resume` lists persisted sessions.
     resume_selector: Option<SelectList>,
-    /// Read-only Pi-style workflow checklist panel.
-    workflow_panel_open: bool,
     /// Client-side subagent state for immediate bar updates (#525).
     /// Updated from tool events (spawn/agent_cmd) and server pushes.
     /// Entries track expiry timestamps for auto-removal (#540).
@@ -208,23 +206,6 @@ pub struct App {
     /// Whether we've already requested session stats as a fallback to learn
     /// the real context window for the current session/model.
     context_stats_requested: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WorkflowPanelKeyAction {
-    Close,
-    ToggleAutoContinue,
-    ToggleCompletionNudge,
-    Swallow,
-}
-
-fn workflow_panel_key_action(key: &Key) -> WorkflowPanelKeyAction {
-    match key {
-        Key::Escape | Key::Ctrl('c') | Key::CtrlShift('w') => WorkflowPanelKeyAction::Close,
-        Key::CtrlShift('a') => WorkflowPanelKeyAction::ToggleAutoContinue,
-        Key::CtrlShift('n') => WorkflowPanelKeyAction::ToggleCompletionNudge,
-        _ => WorkflowPanelKeyAction::Swallow,
-    }
 }
 
 impl App {
@@ -254,7 +235,6 @@ impl App {
             current_model: None,
             model_selector: None,
             resume_selector: None,
-            workflow_panel_open: false,
             subagent_local: std::collections::BTreeMap::new(),
             selection: None,
             workflow_bar: workflow_bar::WorkflowBarState::default(),
@@ -480,24 +460,6 @@ impl App {
             return;
         }
 
-        // If the read-only workflow panel is active, keep it modal while still
-        // allowing the documented workflow toggles to work.
-        if self.workflow_panel_open {
-            match workflow_panel_key_action(&key) {
-                WorkflowPanelKeyAction::Close => {
-                    self.workflow_panel_open = false;
-                }
-                WorkflowPanelKeyAction::ToggleAutoContinue => {
-                    self.toggle_workflow_auto_continue();
-                }
-                WorkflowPanelKeyAction::ToggleCompletionNudge => {
-                    self.toggle_workflow_completion_nudge();
-                }
-                WorkflowPanelKeyAction::Swallow => {}
-            }
-            return;
-        }
-
         // If the model selector is active, route input to it.
         if self.model_selector.is_some() {
             self.handle_model_selector_key(&key);
@@ -603,10 +565,6 @@ impl App {
                     "collapsed"
                 };
                 self.notify(&format!("Tool output {}", state), NotifyLevel::Info);
-                return;
-            }
-            Key::CtrlShift('w') => {
-                self.show_workflow_status();
                 return;
             }
             Key::CtrlShift('a') => {
@@ -1214,7 +1172,6 @@ impl App {
                 "  Ctrl+D         Exit",
                 "  Ctrl+L         Open model selector",
                 "  Ctrl+O         Toggle tool output expansion",
-                "  Ctrl+Shift+W   Show workflow status",
                 "  Ctrl+Shift+A   Toggle workflow auto-continue",
                 "  Ctrl+Shift+N   Toggle workflow completion nudge",
                 "  Ctrl+Z         Suspend (resume with fg)",
@@ -1240,14 +1197,26 @@ impl App {
     }
 
     fn show_workflow_status(&mut self) {
-        if !workflow_bar::render_widget(&self.workflow_bar, self.terminal.width).is_empty() {
-            self.workflow_panel_open = true;
-            return;
-        }
-        self.chat.add_entry(ChatEntry::Status {
-            text: "Workflow is not active. Start quecto-tui with --workflow to enable it."
-                .to_string(),
-        });
+        let wf = &self.workflow_bar;
+        let text = if workflow_bar::render_widget(wf, self.terminal.width).is_empty() {
+            "Workflow is not active. Start quecto-tui with --workflow to enable it.".to_string()
+        } else {
+            let current = wf
+                .current_step_id()
+                .map(|id| {
+                    format!(
+                        "next step {id}: {}",
+                        sanitize_workflow_status_text(wf.current_step_label().unwrap_or(""), 80)
+                    )
+                })
+                .unwrap_or_else(|| "complete".to_string());
+            format!(
+                "Workflow status: {}/{} ({current})",
+                wf.done,
+                wf.total.max(1)
+            )
+        };
+        self.chat.add_entry(ChatEntry::Status { text });
     }
 
     fn toggle_workflow_auto_continue(&mut self) {
@@ -1563,32 +1532,6 @@ impl App {
                     lines[row] = crate::interface::overlay::splice_line(
                         &lines[row],
                         &selector_lines[i],
-                        start_col,
-                        overlay_width,
-                        width,
-                    );
-                }
-            }
-        }
-
-        // Composite read-only workflow checklist panel if active.
-        // Uses ANSI-aware splice_line to avoid escape code bleeding.
-        if self.workflow_panel_open {
-            let overlay_width = width.saturating_sub(4).clamp(1, 100);
-            let panel_lines = workflow_bar::render_read_only_panel(
-                &workflow_bar_state,
-                overlay_width,
-                height.saturating_sub(4),
-            );
-            let overlay_height = panel_lines.len().min(height.saturating_sub(4));
-            let start_row = height.saturating_sub(overlay_height) / 2;
-            let start_col = width.saturating_sub(overlay_width) / 2;
-            for i in 0..overlay_height {
-                let row = start_row + i;
-                if row < lines.len() && i < panel_lines.len() {
-                    lines[row] = crate::interface::overlay::splice_line(
-                        &lines[row],
-                        &panel_lines[i],
                         start_col,
                         overlay_width,
                         width,
@@ -2084,6 +2027,19 @@ const STATUS_EXITED: &str = "exited";
 const EXITED_SUBAGENT_GRACE: Duration = Duration::from_secs(5);
 
 /// Strip control characters from an agent_id for safe use as a map key.
+fn sanitize_workflow_status_text(text: &str, max_chars: usize) -> String {
+    let clean: String = text
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(max_chars)
+        .collect();
+    if text.chars().filter(|c| !c.is_control()).count() > max_chars {
+        format!("{clean}…")
+    } else {
+        clean
+    }
+}
+
 fn sanitize_agent_id(id: &str) -> String {
     id.chars().filter(|c| !c.is_control()).collect()
 }
@@ -2516,6 +2472,14 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_workflow_status_text_strips_control_and_truncates() {
+        let result = super::sanitize_workflow_status_text("hello\x1b[31mworld\x00end", 10);
+        assert!(!result.contains('\x1b'));
+        assert!(!result.contains('\x00'));
+        assert!(result.ends_with('…'));
+    }
+
+    #[test]
     fn truncate_args_short() {
         assert_eq!(super::truncate_args("ls -la"), "ls -la");
     }
@@ -2871,48 +2835,6 @@ mod tests {
             pid: 0,
         });
         assert!(entry.exited_at.is_some());
-    }
-
-    #[test]
-    fn workflow_panel_key_routing_allows_only_close_and_workflow_toggles() {
-        assert_eq!(
-            super::workflow_panel_key_action(&Key::Escape),
-            super::WorkflowPanelKeyAction::Close
-        );
-        assert_eq!(
-            super::workflow_panel_key_action(&Key::Ctrl('c')),
-            super::WorkflowPanelKeyAction::Close
-        );
-        assert_eq!(
-            super::workflow_panel_key_action(&Key::CtrlShift('w')),
-            super::WorkflowPanelKeyAction::Close
-        );
-        assert_eq!(
-            super::workflow_panel_key_action(&Key::CtrlShift('a')),
-            super::WorkflowPanelKeyAction::ToggleAutoContinue
-        );
-        assert_eq!(
-            super::workflow_panel_key_action(&Key::CtrlShift('n')),
-            super::WorkflowPanelKeyAction::ToggleCompletionNudge
-        );
-    }
-
-    #[test]
-    fn workflow_panel_key_routing_swallows_hidden_editor_and_global_actions() {
-        for key in [
-            Key::Char('x'),
-            Key::Enter,
-            Key::Ctrl('l'),
-            Key::Ctrl('z'),
-            Key::PageUp,
-            Key::MousePress(1, 1),
-        ] {
-            assert_eq!(
-                super::workflow_panel_key_action(&key),
-                super::WorkflowPanelKeyAction::Swallow,
-                "workflow panel should swallow {key:?}"
-            );
-        }
     }
 
     #[test]

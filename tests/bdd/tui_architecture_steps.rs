@@ -388,48 +388,26 @@ fn then_tui_workflow_widget_shows_hotkey_hints_with_toggle_state(_world: &mut Qu
     let bar = std::fs::read_to_string("quecto-tui/src/interface/components/workflow_bar.rs")
         .expect("read workflow bar source");
     assert!(
-        bar.contains("Ctrl+Shift+W")
-            && bar.contains("Ctrl+Shift+A")
+        bar.contains("Ctrl+Shift+A")
             && bar.contains("Ctrl+Shift+N")
             && bar.contains("auto:{auto}")
             && bar.contains("nudge:{nudge}"),
-        "workflow widget should display hotkey hints and live on/off toggle state"
+        "workflow widget should display active hotkey hints and live on/off toggle state"
     );
 }
 
-#[then("the quecto-tui workflow panel should render the Pi workflow checklist in read-only mode")]
-fn then_tui_workflow_panel_matches_pi_read_only(_world: &mut QuectoWorld) {
+#[then("quecto-tui should not expose the Ctrl+Shift+W workflow overlay")]
+fn then_tui_does_not_expose_ctrl_shift_w_workflow_overlay(_world: &mut QuectoWorld) {
     let bar = std::fs::read_to_string("quecto-tui/src/interface/components/workflow_bar.rs")
         .expect("read workflow bar source");
     let app = std::fs::read_to_string("quecto-tui/src/interface/app.rs").expect("read app source");
     assert!(
-        bar.contains("render_read_only_panel")
-            && bar.contains("Quecto Dev Workflow")
-            && bar.contains("BDD/TDD Red → Green → Refactor")
-            && bar.contains("↑↓ navigate")
-            && bar.contains("Esc close"),
-        "workflow panel should mirror the Pi WorkflowChecklist render in read-only mode"
+        !bar.contains("Ctrl+Shift+W") && !app.contains("Key::CtrlShift('w')"),
+        "workflow UI should advertise only active Ctrl+Shift+A/N toggles, not the removed Ctrl+Shift+W overlay"
     );
     assert!(
-        app.contains("workflow_panel_open") && app.contains("render_read_only_panel"),
-        "app should open and render the read-only workflow checklist panel"
-    );
-}
-
-#[then("quecto-tui should not swallow all keys when the workflow panel is open")]
-fn then_tui_workflow_panel_does_not_swallow_toggles(_world: &mut QuectoWorld) {
-    let app = std::fs::read_to_string("quecto-tui/src/interface/app.rs").expect("read app source");
-    assert!(
-        app.contains("workflow_panel_key_action")
-            && app.contains("WorkflowPanelKeyAction::ToggleAutoContinue")
-            && app.contains("WorkflowPanelKeyAction::ToggleCompletionNudge")
-            && app.contains("WorkflowPanelKeyAction::Swallow"),
-        "workflow panel key handling should route close/toggle keys through an explicit modal allowlist"
-    );
-    assert!(
-        app.contains("workflow_panel_key_routing_allows_only_close_and_workflow_toggles")
-            && app.contains("workflow_panel_key_routing_swallows_hidden_editor_and_global_actions"),
-        "workflow panel key routing should be covered by unit tests for allowed toggles and swallowed editor/global keys"
+        !app.contains("workflow_panel_open") && !app.contains("render_read_only_panel"),
+        "read-only workflow overlay state and rendering should be removed"
     );
 }
 
