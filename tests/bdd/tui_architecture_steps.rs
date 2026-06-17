@@ -419,21 +419,17 @@ fn then_tui_workflow_panel_matches_pi_read_only(_world: &mut QuectoWorld) {
 #[then("quecto-tui should not swallow all keys when the workflow panel is open")]
 fn then_tui_workflow_panel_does_not_swallow_toggles(_world: &mut QuectoWorld) {
     let app = std::fs::read_to_string("quecto-tui/src/interface/app.rs").expect("read app source");
-    let close_block = app
-        .split("// If the read-only workflow panel is active")
-        .nth(1)
-        .expect("workflow panel key handling block should exist");
     assert!(
-        close_block.contains("workflow_panel_open = false"),
-        "workflow panel should close on Esc/Ctrl+C/Ctrl+Shift+W"
+        app.contains("workflow_panel_key_action")
+            && app.contains("WorkflowPanelKeyAction::ToggleAutoContinue")
+            && app.contains("WorkflowPanelKeyAction::ToggleCompletionNudge")
+            && app.contains("WorkflowPanelKeyAction::Swallow"),
+        "workflow panel key handling should route close/toggle keys through an explicit modal allowlist"
     );
     assert!(
-        !close_block.contains("if self.workflow_panel_open {\n            if matches!(key,"),
-        "workflow panel must not return early for every key while open; toggles must still reach handlers"
-    );
-    assert!(
-        close_block.contains("Workflow toggles (Ctrl+Shift+A/N) still work"),
-        "workflow panel key handling should explicitly allow Ctrl+Shift+A/N toggles"
+        app.contains("workflow_panel_key_routing_allows_only_close_and_workflow_toggles")
+            && app.contains("workflow_panel_key_routing_swallows_hidden_editor_and_global_actions"),
+        "workflow panel key routing should be covered by unit tests for allowed toggles and swallowed editor/global keys"
     );
 }
 
