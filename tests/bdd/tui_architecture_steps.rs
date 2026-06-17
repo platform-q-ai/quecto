@@ -392,6 +392,25 @@ fn then_tui_workflow_widget_is_pi_style_status_bar(_world: &mut QuectoWorld) {
     );
 }
 
+#[then("the quecto-tui workflow panel should render the Pi workflow checklist in read-only mode")]
+fn then_tui_workflow_panel_matches_pi_read_only(_world: &mut QuectoWorld) {
+    let bar = std::fs::read_to_string("quecto-tui/src/interface/components/workflow_bar.rs")
+        .expect("read workflow bar source");
+    let app = std::fs::read_to_string("quecto-tui/src/interface/app.rs").expect("read app source");
+    assert!(
+        bar.contains("render_read_only_panel")
+            && bar.contains("Quecto Dev Workflow")
+            && bar.contains("BDD/TDD Red → Green → Refactor")
+            && bar.contains("↑↓ navigate")
+            && bar.contains("Esc close"),
+        "workflow panel should mirror the Pi WorkflowChecklist render in read-only mode"
+    );
+    assert!(
+        app.contains("workflow_panel_open") && app.contains("render_read_only_panel"),
+        "app should open and render the read-only workflow checklist panel"
+    );
+}
+
 #[then("the TUI architecture feature should not contain pending scenarios")]
 fn then_tui_architecture_feature_not_pending(_world: &mut QuectoWorld) {
     let content = std::fs::read_to_string("tests/features/tui_clean_architecture.feature")

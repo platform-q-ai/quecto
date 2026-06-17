@@ -205,37 +205,156 @@ pub fn render_widget(state: &WorkflowBarState, width: usize) -> Vec<String> {
     let total = state.total.max(state.steps.len() as u32).max(1);
     let pct = ((done as f32 / total as f32) * 100.0).round() as u32;
     let filled = ((done as usize) * 15) / (total as usize);
-    let progress_bar = format!("{}{}", "█".repeat(filled), "░".repeat(15 - filled));
+    let progress_bar = format!(
+        "{}{}",
+        theme::success(&"█".repeat(filled)),
+        theme::dim(&"░".repeat(15 - filled))
+    );
 
-    let issue = state
-        .issue_number
-        .map(|n| format!(" #{}", n))
-        .unwrap_or_default();
-    let current = state
+    let issue_part = match (state.issue_number, state.issue_title.as_deref()) {
+        (Some(number), Some(title)) => format!(
+            "{}{}",
+            theme::accent(&theme::bold(&format!(" #{number}"))),
+            theme::dim(&format!(" {} ", ellipsize_clean(title, 40)))
+        ),
+        (Some(number), None) => theme::accent(&theme::bold(&format!(" #{number} "))),
+        _ => " ".to_string(),
+    };
+
+    let current_info = state
         .current_step_id()
         .map(|id| {
+            let label = state.current_step_label().unwrap_or("");
             format!(
-                "→ Step {} {}",
-                id,
-                phase_name(state.current_phase().unwrap_or("done"))
+                "→ Step {id}: {} [{}]",
+                ellipsize_clean(label, 56),
+                phase_label_for_widget(state.current_phase().unwrap_or("done"))
             )
         })
-        .unwrap_or_else(|| "✓ Workflow complete".to_string());
-    let auto = if state.workflow_auto_continue {
-        "on"
-    } else {
-        "off"
-    };
-    let nudge = if state.workflow_completion_nudge {
-        "on"
-    } else {
-        "off"
-    };
-    let plain = format!(
-        " Workflow{} {} {:02}/{:02} ({}%) {}   Ctrl+Shift+W workflow · A:auto {} · N:nudge {} ",
-        issue, progress_bar, done, total, pct, current, auto, nudge
+        .unwrap_or_else(|| "✓ Workflow complete!".to_string());
+
+    let line = format!(
+        "{}{}{}{}{}",
+        theme::accent(&theme::bold("Workflow")),
+        issue_part,
+        progress_bar,
+        theme::muted(&format!(" {done}/{total} ({pct}%) ")),
+        theme::dim(&current_info)
     );
-    vec![apply_workflow_widget_bg(&plain, width)]
+    vec![apply_workflow_widget_bg(&line, width)]
+}
+
+/// Render the Pi WorkflowChecklist panel in TUI read-only mode.
+pub fn render_read_only_panel(
+    state: &WorkflowBarState,
+    width: usize,
+    max_height: usize,
+) -> Vec<String> {
+    if width == 0 || max_height == 0 {
+        return vec![];
+    }
+
+    let mut lines = Vec::new();
+    lines.push(String::new());
+
+    let title = theme::accent(&theme::bold(" Quecto Dev Workflow "));
+    let title_width = crate::interface::utils::visible_width(" Quecto Dev Workflow ");
+    let border_right = width.saturating_sub(3 + title_width);
+    lines.push(truncate_line(
+        &format!(
+            "{}{}{}",
+            theme::dim("───"),
+            title,
+            theme::dim(&"─".repeat(border_right))
+        ),
+        width,
+    ));
+    lines.push(truncate_line(
+        &format!("  {}", theme::dim("BDD/TDD Red → Green → Refactor")),
+        width,
+    ));
+
+    if let Some(number) = state.issue_number {
+        let title = state.issue_title.as_deref().unwrap_or("");
+        lines.push(truncate_line(
+            &format!(
+                "  {} {}",
+                theme::accent(&theme::bold(&format!("Issue #{number}"))),
+                theme::muted(&ellipsize_clean(title, width.saturating_sub(14)))
+            ),
+            width,
+        ));
+    }
+    lines.push(String::new());
+
+    let total = state.total.max(state.steps.len() as u32).max(1);
+    let done = state.done;
+    let pct = ((done as f32 / total as f32) * 100.0).round() as u32;
+    let bar_len = 30.min(width.saturating_sub(20));
+    let filled = ((done as usize) * bar_len) / (total as usize);
+    let progress_bar = format!(
+        "{}{}",
+        theme::success(&"█".repeat(filled)),
+        theme::dim(&"░".repeat(bar_len.saturating_sub(filled)))
+    );
+    lines.push(truncate_line(
+        &format!(
+            "  {} {}",
+            progress_bar,
+            theme::muted(&format!("{done}/{total} ({pct}%)"))
+        ),
+        width,
+    ));
+    lines.push(String::new());
+
+    let current_id = state.current_step_id();
+    let mut last_phase = "";
+    for step in &state.steps {
+        if step.phase != last_phase {
+            last_phase = &step.phase;
+            lines.push(truncate_line(
+                &format!(
+                    "  {}",
+                    phase_color(&step.phase, &theme::bold(phase_name(&step.phase)))
+                ),
+                width,
+            ));
+        }
+
+        let is_current = Some(step.id) == current_id;
+        let check = if step.done {
+            theme::success("✓")
+        } else {
+            theme::dim("○")
+        };
+        let num = theme::accent(&format!("{:02}.", step.id));
+        let label = if step.done {
+            theme::dim(&step.label)
+        } else {
+            sanitize_text(&step.label)
+        };
+        let pointer = if is_current {
+            theme::accent("▸ ")
+        } else {
+            "  ".to_string()
+        };
+        lines.push(truncate_line(
+            &format!("  {}{} {} {}", pointer, check, num, label),
+            width,
+        ));
+    }
+
+    lines.push(String::new());
+    lines.push(truncate_line(
+        &format!(
+            "  {}",
+            theme::dim("↑↓ navigate  ·  Read-only  ·  Esc close")
+        ),
+        width,
+    ));
+    lines.push(String::new());
+    lines.truncate(max_height);
+    lines
 }
 
 fn is_widget_visible(state: &WorkflowBarState) -> bool {
@@ -258,6 +377,38 @@ fn apply_workflow_widget_bg(text: &str, width: usize) -> String {
         String::new()
     };
     format!("{BG_WORKFLOW_WIDGET}{FG_WORKFLOW_WIDGET}{patched}{padding}{WIDGET_RESET}")
+}
+
+fn truncate_line(text: &str, width: usize) -> String {
+    crate::interface::utils::truncate_to_width(text, width, Some("…"))
+}
+
+fn sanitize_text(text: &str) -> String {
+    text.chars().filter(|c| !c.is_control()).collect()
+}
+
+fn ellipsize_clean(text: &str, max_chars: usize) -> String {
+    let clean = sanitize_text(text);
+    let mut out: String = clean.chars().take(max_chars).collect();
+    if clean.chars().count() > max_chars {
+        out.push('…');
+    }
+    out
+}
+
+fn phase_color(phase: &str, text: &str) -> String {
+    match phase {
+        "red" => theme::error(text),
+        "green" => theme::success(text),
+        "refactor" => theme::warning(text),
+        "ci" | "ci_cd" => theme::accent(text),
+        "review" => theme::muted(text),
+        _ => text.to_string(),
+    }
+}
+
+fn phase_label_for_widget(phase: &str) -> &str {
+    phase_name(phase)
 }
 
 fn render_stage_status_line(
@@ -590,20 +741,36 @@ mod tests {
             line.contains("Workflow"),
             "should include widget label: {line}"
         );
-        assert!(line.contains("03/14"), "should include progress: {line}");
+        assert!(line.contains("3/14"), "should include progress: {line}");
         assert!(
-            line.contains("Ctrl+Shift+W"),
-            "should include workflow hotkey: {line}"
-        );
-        assert!(
-            line.contains("A:auto on"),
-            "should include auto status: {line}"
+            line.contains("→ Step 4"),
+            "should include current step: {line}"
         );
         assert_eq!(
             crate::interface::utils::visible_width(line),
             100,
             "widget should fill terminal width"
         );
+    }
+
+    #[test]
+    fn workflow_panel_renders_pi_checklist_read_only() {
+        let state = make_state(Some(100), 3, 14);
+        let lines = render_read_only_panel(&state, 100, 40);
+        let joined = lines.join("\n");
+        assert!(joined.contains("Quecto Dev Workflow"));
+        assert!(joined.contains("BDD/TDD Red → Green → Refactor"));
+        assert!(joined.contains("Issue #100"));
+        assert!(joined.contains("RED"));
+        assert!(joined.contains("GREEN"));
+        assert!(joined.contains("✓"));
+        assert!(joined.contains("○"));
+        assert!(
+            joined.contains("▸"),
+            "read-only panel should point at current step"
+        );
+        assert!(joined.contains("↑↓ navigate"));
+        assert!(joined.contains("Esc close"));
     }
 
     #[test]

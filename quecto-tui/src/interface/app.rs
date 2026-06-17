@@ -189,6 +189,8 @@ pub struct App {
     model_selector: Option<ModelSelector>,
     /// Session resume selector shown after `/resume` lists persisted sessions.
     resume_selector: Option<SelectList>,
+    /// Read-only Pi-style workflow checklist panel.
+    workflow_panel_open: bool,
     /// Client-side subagent state for immediate bar updates (#525).
     /// Updated from tool events (spawn/agent_cmd) and server pushes.
     /// Entries track expiry timestamps for auto-removal (#540).
@@ -235,6 +237,7 @@ impl App {
             current_model: None,
             model_selector: None,
             resume_selector: None,
+            workflow_panel_open: false,
             subagent_local: std::collections::BTreeMap::new(),
             selection: None,
             workflow_bar: workflow_bar::WorkflowBarState::default(),
@@ -457,6 +460,14 @@ impl App {
         // If the resume selector is active, route input to it.
         if self.resume_selector.is_some() {
             self.handle_resume_selector_key(&key);
+            return;
+        }
+
+        // If the read-only workflow panel is active, close it on Esc/Ctrl+C.
+        if self.workflow_panel_open {
+            if matches!(key, Key::Escape | Key::Ctrl('c') | Key::CtrlShift('w')) {
+                self.workflow_panel_open = false;
+            }
             return;
         }
 
@@ -1202,35 +1213,13 @@ impl App {
     }
 
     fn show_workflow_status(&mut self) {
-        let wf = &self.workflow_bar;
-        if !wf.is_visible() {
-            self.chat.add_entry(ChatEntry::Status {
-                text: "Workflow is not active. Start quecto-tui with --workflow to enable it."
-                    .to_string(),
-            });
+        if !workflow_bar::render_widget(&self.workflow_bar, self.terminal.width).is_empty() {
+            self.workflow_panel_open = true;
             return;
         }
-
-        let current = wf
-            .current_step_id()
-            .map(|id| {
-                let label = wf.current_step_label().unwrap_or("");
-                if label.is_empty() {
-                    format!("Step {id}")
-                } else {
-                    format!("Step {id}: {label}")
-                }
-            })
-            .unwrap_or_else(|| "Complete".to_string());
-        let issue = wf
-            .issue_number
-            .map(|n| format!("Issue #{n}: {}", wf.issue_title.as_deref().unwrap_or("")))
-            .unwrap_or_else(|| "No active issue".to_string());
         self.chat.add_entry(ChatEntry::Status {
-            text: format!(
-                "Workflow: {}/{} complete | {} | Current: {}\nHotkeys: Ctrl+Shift+W status · Ctrl+Shift+A auto-continue · Ctrl+Shift+N completion nudge",
-                wf.done, wf.total, issue, current
-            ),
+            text: "Workflow is not active. Start quecto-tui with --workflow to enable it."
+                .to_string(),
         });
     }
 
@@ -1554,6 +1543,32 @@ impl App {
                     lines[row] = crate::interface::overlay::splice_line(
                         &lines[row],
                         &selector_lines[i],
+                        start_col,
+                        overlay_width,
+                        width,
+                    );
+                }
+            }
+        }
+
+        // Composite read-only workflow checklist panel if active.
+        // Uses ANSI-aware splice_line to avoid escape code bleeding.
+        if self.workflow_panel_open {
+            let overlay_width = width.saturating_sub(4).clamp(1, 100);
+            let panel_lines = workflow_bar::render_read_only_panel(
+                &workflow_bar_state,
+                overlay_width,
+                height.saturating_sub(4),
+            );
+            let overlay_height = panel_lines.len().min(height.saturating_sub(4));
+            let start_row = height.saturating_sub(overlay_height) / 2;
+            let start_col = width.saturating_sub(overlay_width) / 2;
+            for i in 0..overlay_height {
+                let row = start_row + i;
+                if row < lines.len() && i < panel_lines.len() {
+                    lines[row] = crate::interface::overlay::splice_line(
+                        &lines[row],
+                        &panel_lines[i],
                         start_col,
                         overlay_width,
                         width,
