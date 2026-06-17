@@ -19,6 +19,7 @@ use crate::interface::components::editor::Editor;
 use crate::interface::components::footer::Footer;
 use crate::interface::components::model_selector::{ModelSelector, ModelSelectorResult};
 use crate::interface::components::notification::{Notification, NotificationStack, NotifyLevel};
+use crate::interface::components::select_list::{SelectItem, SelectList, SelectResult};
 use crate::interface::components::spinner::Spinner;
 use crate::interface::components::subagent_bar::SubagentBar;
 use crate::interface::components::widget::WidgetContainer;
@@ -69,6 +70,10 @@ fn builtin_commands() -> Vec<SlashCommand> {
         SlashCommand {
             name: "session".into(),
             description: "Show session info".into(),
+        },
+        SlashCommand {
+            name: "resume".into(),
+            description: "Resume a persisted CLI session".into(),
         },
         SlashCommand {
             name: "model".into(),
@@ -128,6 +133,8 @@ pub struct App {
     current_model: Option<String>,
     /// The model selector component (created on demand, pushed onto overlay stack).
     model_selector: Option<ModelSelector>,
+    /// Session resume selector shown after `/resume` lists persisted sessions.
+    resume_selector: Option<SelectList>,
     /// Client-side subagent state for immediate bar updates (#525).
     /// Updated from tool events (spawn/agent_cmd) and server pushes.
     /// Entries track expiry timestamps for auto-removal (#540).
@@ -173,6 +180,7 @@ impl App {
             agent_connected: true,
             current_model: None,
             model_selector: None,
+            resume_selector: None,
             subagent_local: std::collections::BTreeMap::new(),
             selection: None,
             workflow_bar: workflow_bar::WorkflowBarState::default(),
@@ -392,6 +400,12 @@ impl App {
             return;
         }
 
+        // If the resume selector is active, route input to it.
+        if self.resume_selector.is_some() {
+            self.handle_resume_selector_key(&key);
+            return;
+        }
+
         // If the model selector is active, route input to it.
         if self.model_selector.is_some() {
             self.handle_model_selector_key(&key);
@@ -603,6 +617,15 @@ impl App {
                     self.send_session_stats();
                     return;
                 }
+                "/resume" => {
+                    self.send_list_sessions();
+                    return;
+                }
+                _ if trimmed.starts_with("/resume ") => {
+                    let session = trimmed.strip_prefix("/resume").unwrap().trim();
+                    self.send_resume_session(session);
+                    return;
+                }
                 _ if trimmed.starts_with("/model") => {
                     let model_name = trimmed.strip_prefix("/model").unwrap().trim();
                     if !model_name.is_empty() {
@@ -640,7 +663,8 @@ impl App {
                     return;
                 }
                 _ => {
-                    // Unknown slash command — send as regular prompt.
+                    self.reject_unknown_slash_command(trimmed);
+                    return;
                 }
             }
         }
@@ -876,6 +900,38 @@ impl App {
                         self.show_session_stats(&data);
                     }
                 }
+                "list_sessions" if success => {
+                    if let Some(data) = data {
+                        self.open_resume_selector(&data);
+                    }
+                }
+                "list_sessions" if !success => {
+                    let msg = error.unwrap_or_else(|| "unknown error".into());
+                    self.notify(
+                        &format!("Could not list sessions: {msg}"),
+                        NotifyLevel::Error,
+                    );
+                }
+                "resume_session" if success => {
+                    let session = data
+                        .as_ref()
+                        .and_then(|d| d.get("session").and_then(|v| v.as_str()))
+                        .unwrap_or("session");
+                    self.notify(&format!("Resumed session {session}"), NotifyLevel::Success);
+                    self.send_command(Command::GetMessages {
+                        id: Some("resume-messages".into()),
+                    });
+                    self.send_session_stats();
+                }
+                "resume_session" if !success => {
+                    let msg = error.unwrap_or_else(|| "unknown error".into());
+                    self.notify(&format!("Resume failed: {msg}"), NotifyLevel::Error);
+                }
+                "get_messages" if success => {
+                    if let Some(data) = data {
+                        self.replace_chat_with_messages(&data);
+                    }
+                }
                 "clear_history" if success => {}
                 "get_subagents" if success => {
                     if let Some(data) = &data {
@@ -1047,6 +1103,15 @@ impl App {
 
     // ── Slash command handlers ─────────────────────────────────────────
 
+    fn reject_unknown_slash_command(&mut self, command: &str) {
+        self.chat.add_entry(ChatEntry::Status {
+            text: format!(
+                "Unknown slash command: {command}\nType /help to see available commands."
+            ),
+        });
+        self.notify("Unknown slash command", NotifyLevel::Warning);
+    }
+
     fn show_help(&mut self) {
         self.chat.add_entry(ChatEntry::Status {
             text: [
@@ -1069,6 +1134,8 @@ impl App {
                 "  /clear         Clear conversation",
                 "  /new           New session",
                 "  /session       Show session info",
+                "  /resume        Pick a persisted session to resume",
+                "  /resume <name> Resume a persisted session directly",
                 "  /workflow-auto Toggle workflow auto-continue",
                 "  /workflow-nudge Toggle workflow completion nudge",
                 "  /help,/hotkeys This help",
@@ -1081,6 +1148,23 @@ impl App {
     fn send_session_stats(&mut self) {
         self.send_command(Command::GetSessionStats {
             id: Some("stats".into()),
+        });
+    }
+
+    fn send_list_sessions(&mut self) {
+        self.send_command(Command::ListSessions {
+            id: Some("resume-list".into()),
+        });
+    }
+
+    fn send_resume_session(&mut self, session: &str) {
+        if session.trim().is_empty() {
+            self.send_list_sessions();
+            return;
+        }
+        self.send_command(Command::ResumeSession {
+            id: Some("resume".into()),
+            session: session.trim().to_string(),
         });
     }
 
@@ -1131,6 +1215,88 @@ impl App {
         self.footer.set_model(model);
         self.current_model = Some(model.to_string());
         self.context_stats_requested = false;
+    }
+
+    // ── Resume selector ─────────────────────────────────────────────
+
+    fn open_resume_selector(&mut self, data: &serde_json::Value) {
+        let sessions = data
+            .get("sessions")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        if sessions.is_empty() {
+            self.chat.add_entry(ChatEntry::Status {
+                text: "No persisted sessions found.".to_string(),
+            });
+            return;
+        }
+        let items = sessions
+            .into_iter()
+            .filter_map(|session| {
+                let name = session.get("name").and_then(|v| v.as_str())?;
+                let count = session
+                    .get("messageCount")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                Some(SelectItem {
+                    value: name.to_string(),
+                    label: name.to_string(),
+                    description: Some(format!("{count} messages")),
+                })
+            })
+            .collect::<Vec<_>>();
+        if items.is_empty() {
+            self.chat.add_entry(ChatEntry::Status {
+                text: "No resumable CLI sessions found.".to_string(),
+            });
+            return;
+        }
+        self.resume_selector = Some(SelectList::new(items, 10));
+    }
+
+    fn handle_resume_selector_key(&mut self, key: &Key) {
+        if let Some(selector) = &mut self.resume_selector {
+            selector.handle_input(key);
+            match selector.take_result() {
+                SelectResult::Selected(session) => {
+                    self.resume_selector = None;
+                    self.send_resume_session(&session);
+                }
+                SelectResult::Cancelled => {
+                    self.resume_selector = None;
+                }
+                SelectResult::Pending => {}
+            }
+        }
+    }
+
+    fn replace_chat_with_messages(&mut self, data: &serde_json::Value) {
+        let messages = data
+            .get("messages")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        self.chat.clear();
+        for message in messages {
+            let role = message.get("role").and_then(|v| v.as_str()).unwrap_or("");
+            let content = message
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            match role {
+                "user" => self.chat.add_entry(ChatEntry::User { text: content }),
+                "assistant" if !content.is_empty() => self.chat.add_entry(ChatEntry::Assistant {
+                    text: content,
+                    streaming: false,
+                }),
+                _ => {}
+            }
+        }
+        self.chat.add_entry(ChatEntry::Status {
+            text: "Session resumed".to_string(),
+        });
     }
 
     // ── Model selector ──────────────────────────────────────────────
@@ -1250,6 +1416,30 @@ impl App {
         // Composite overlays on top.
         if self.overlay_stack.has_visible() {
             self.overlay_stack.composite(&mut lines, width, height);
+        }
+
+        // Composite resume selector overlay if active.
+        // Uses ANSI-aware splice_line to avoid escape code bleeding.
+        if let Some(selector) = &mut self.resume_selector {
+            let overlay_width = width.saturating_sub(4).min(72);
+            let mut selector_lines = vec![theme::bold("Resume session")];
+            selector_lines.extend(selector.render(overlay_width));
+            selector_lines.push(theme::dim("Enter resume · Esc cancel"));
+            let overlay_height = selector_lines.len().min(height.saturating_sub(4));
+            let start_row = height.saturating_sub(overlay_height) / 2;
+            let start_col = width.saturating_sub(overlay_width) / 2;
+            for i in 0..overlay_height {
+                let row = start_row + i;
+                if row < lines.len() && i < selector_lines.len() {
+                    lines[row] = crate::interface::overlay::splice_line(
+                        &lines[row],
+                        &selector_lines[i],
+                        start_col,
+                        overlay_width,
+                        width,
+                    );
+                }
+            }
         }
 
         // Composite model selector overlay if active.
@@ -2121,6 +2311,7 @@ mod tests {
         assert!(names.contains(&"help"));
         assert!(names.contains(&"new"));
         assert!(names.contains(&"session"));
+        assert!(names.contains(&"resume"));
         assert!(names.contains(&"model"));
     }
 

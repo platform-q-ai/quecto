@@ -89,6 +89,10 @@ impl AgentSession {
         self.model = model;
     }
 
+    pub fn set_session_key(&mut self, session_key: String) {
+        self.session_key = session_key;
+    }
+
     pub fn set_streaming(&mut self, v: bool) {
         self.streaming = v;
     }

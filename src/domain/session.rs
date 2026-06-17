@@ -4,6 +4,19 @@ use std::pin::Pin;
 
 use super::{error::DomainError, message::Message};
 
+/// Lightweight metadata for a persisted conversation session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionSummary {
+    /// Unique key, e.g. "cli:default".
+    pub key: String,
+    /// Human-friendly name, e.g. "default" for "cli:default".
+    pub name: String,
+    /// Number of persisted messages.
+    pub message_count: usize,
+    /// Last modification time in Unix seconds, when available.
+    pub updated_unix_secs: Option<u64>,
+}
+
 /// A conversation session identified by a unique key.
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -50,6 +63,11 @@ pub trait SessionStore: Send + Sync {
         &self,
         key: &str,
     ) -> Pin<Box<dyn Future<Output = Result<bool, DomainError>> + Send + '_>>;
+
+    /// List persisted sessions, newest first when modification times are available.
+    fn list(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<SessionSummary>, DomainError>> + Send + '_>>;
 }
 
 /// A single spilled tool output entry.

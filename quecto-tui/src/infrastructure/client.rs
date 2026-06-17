@@ -58,6 +58,15 @@ pub enum Command {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    ListSessions {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
+    ResumeSession {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        session: String,
+    },
     SetModel {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
@@ -693,6 +702,26 @@ mod tests {
         let cmd = Command::ClearHistory { id: None };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("\"type\":\"clear_history\""));
+    }
+
+    #[test]
+    fn command_list_sessions_serializes() {
+        let cmd = Command::ListSessions {
+            id: Some("ls".into()),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"type\":\"list_sessions\""));
+    }
+
+    #[test]
+    fn command_resume_session_serializes() {
+        let cmd = Command::ResumeSession {
+            id: Some("resume".into()),
+            session: "work".into(),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"type\":\"resume_session\""));
+        assert!(json.contains("\"session\":\"work\""));
     }
 
     // --- Event deserialization edge cases ---
