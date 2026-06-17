@@ -239,8 +239,18 @@ fn then_bdd_runner_executes_tui_wip_or_done(_world: &mut QuectoWorld) {
 #[given("a quecto-tui chat view is scrolled into history")]
 fn given_tui_chat_view_scrolled_into_history(world: &mut QuectoWorld) {
     let mut chat = streaming_history_chat();
+    chat.set_viewport_height(TUI_SCROLLBACK_HEIGHT);
     chat.scroll_up(15);
-    world.tui_viewport_before_stream = visible_tui_chat_viewport(chat.render(TUI_SCROLLBACK_WIDTH));
+    world.tui_viewport_before_stream = chat.render(TUI_SCROLLBACK_WIDTH);
+    world.tui_chat = Some(chat);
+}
+
+#[given("a quecto-tui chat view is scrolled beyond the oldest full page")]
+fn given_tui_chat_view_scrolled_beyond_oldest_full_page(world: &mut QuectoWorld) {
+    let mut chat = streaming_history_chat();
+    chat.set_viewport_height(TUI_SCROLLBACK_HEIGHT);
+    chat.scroll_up(10_000);
+    world.tui_viewport_before_stream = chat.render(TUI_SCROLLBACK_WIDTH);
     world.tui_chat = Some(chat);
 }
 
@@ -251,7 +261,7 @@ fn when_streaming_assistant_content_extends_conversation(world: &mut QuectoWorld
         .as_mut()
         .expect("TUI chat view should be initialized by the Given step");
     chat.append_token("\nnew streamed line 1\nnew streamed line 2\nnew streamed line 3");
-    world.tui_viewport_after_stream = visible_tui_chat_viewport(chat.render(TUI_SCROLLBACK_WIDTH));
+    world.tui_viewport_after_stream = chat.render(TUI_SCROLLBACK_WIDTH);
 }
 
 #[then("the quecto-tui chat viewport should keep showing the same historical lines")]
@@ -273,12 +283,17 @@ fn streaming_history_chat() -> Chat {
     chat
 }
 
-fn visible_tui_chat_viewport(lines: Vec<String>) -> Vec<String> {
-    if lines.len() > TUI_SCROLLBACK_HEIGHT {
-        lines[lines.len() - TUI_SCROLLBACK_HEIGHT..].to_vec()
-    } else {
-        lines
-    }
+#[then("the quecto-tui chat viewport should still show a full historical page")]
+fn then_tui_chat_viewport_still_shows_full_historical_page(world: &mut QuectoWorld) {
+    assert_eq!(
+        world.tui_viewport_after_stream.len(),
+        TUI_SCROLLBACK_HEIGHT,
+        "scrollback should clamp to a full page instead of shrinking to blank lines"
+    );
+    assert_eq!(
+        world.tui_viewport_after_stream, world.tui_viewport_before_stream,
+        "streaming output should not disturb the oldest full historical page"
+    );
 }
 
 #[then("the TUI architecture feature should not contain pending scenarios")]

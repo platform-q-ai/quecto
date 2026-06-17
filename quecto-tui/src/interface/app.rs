@@ -1219,6 +1219,7 @@ impl App {
         // Reserve MIN_CHAT_GAP lines for spacing between chat and editor (#480).
         const MIN_CHAT_GAP: usize = 3;
         let chat_height = height.saturating_sub(bottom_height + 2 + MIN_CHAT_GAP);
+        self.chat.set_viewport_height(chat_height);
         let mut chat_lines = self.chat.render(width);
 
         // If chat is taller than available space, show only the tail (auto-scroll).
