@@ -416,6 +416,27 @@ fn then_tui_workflow_panel_matches_pi_read_only(_world: &mut QuectoWorld) {
     );
 }
 
+#[then("quecto-tui should not swallow all keys when the workflow panel is open")]
+fn then_tui_workflow_panel_does_not_swallow_toggles(_world: &mut QuectoWorld) {
+    let app = std::fs::read_to_string("quecto-tui/src/interface/app.rs").expect("read app source");
+    let close_block = app
+        .split("// If the read-only workflow panel is active")
+        .nth(1)
+        .expect("workflow panel key handling block should exist");
+    assert!(
+        close_block.contains("workflow_panel_open = false"),
+        "workflow panel should close on Esc/Ctrl+C/Ctrl+Shift+W"
+    );
+    assert!(
+        !close_block.contains("if self.workflow_panel_open {\n            if matches!(key,"),
+        "workflow panel must not return early for every key while open; toggles must still reach handlers"
+    );
+    assert!(
+        close_block.contains("Workflow toggles (Ctrl+Shift+A/N) still work"),
+        "workflow panel key handling should explicitly allow Ctrl+Shift+A/N toggles"
+    );
+}
+
 #[then("the TUI architecture feature should not contain pending scenarios")]
 fn then_tui_architecture_feature_not_pending(_world: &mut QuectoWorld) {
     let content = std::fs::read_to_string("tests/features/tui_clean_architecture.feature")

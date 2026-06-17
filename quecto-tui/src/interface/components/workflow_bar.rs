@@ -244,8 +244,16 @@ pub fn render_widget(state: &WorkflowBarState, width: usize) -> Vec<String> {
         theme::dim(&current_info)
     );
 
-    let auto = if state.workflow_auto_continue { "on" } else { "off" };
-    let nudge = if state.workflow_completion_nudge { "on" } else { "off" };
+    let auto = if state.workflow_auto_continue {
+        "on"
+    } else {
+        "off"
+    };
+    let nudge = if state.workflow_completion_nudge {
+        "on"
+    } else {
+        "off"
+    };
     let hints = format!(
         "  {}",
         theme::dim(&format!(
@@ -357,8 +365,16 @@ pub fn render_read_only_panel(
     }
 
     lines.push(String::new());
-    let auto = if state.workflow_auto_continue { "on" } else { "off" };
-    let nudge = if state.workflow_completion_nudge { "on" } else { "off" };
+    let auto = if state.workflow_auto_continue {
+        "on"
+    } else {
+        "off"
+    };
+    let nudge = if state.workflow_completion_nudge {
+        "on"
+    } else {
+        "off"
+    };
     lines.push(truncate_line(
         &format!(
             "  {}",
@@ -752,9 +768,18 @@ mod tests {
             "widget should be content-sized, not padded to full width: {line}"
         );
         let hints = &lines[1];
-        assert!(hints.contains("Ctrl+Shift+W"), "workflow hint missing: {hints}");
-        assert!(hints.contains("auto:on"), "auto toggle state missing: {hints}");
-        assert!(hints.contains("nudge:off"), "nudge toggle state missing: {hints}");
+        assert!(
+            hints.contains("Ctrl+Shift+W"),
+            "workflow hint missing: {hints}"
+        );
+        assert!(
+            hints.contains("auto:on"),
+            "auto toggle state missing: {hints}"
+        );
+        assert!(
+            hints.contains("nudge:off"),
+            "nudge toggle state missing: {hints}"
+        );
     }
 
     #[test]
