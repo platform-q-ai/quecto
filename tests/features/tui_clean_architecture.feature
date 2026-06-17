@@ -56,3 +56,6 @@ Feature: TUI Clean Architecture and executable BDD enforcement
   Scenario: TUI can list and resume persisted CLI sessions over UDS
     Then the UDS protocol should support listing sessions
     And the UDS protocol should support resuming a session
+
+  Scenario: TUI resume selector is readable above chat history
+    Then the quecto-tui resume selector should render with an opaque border

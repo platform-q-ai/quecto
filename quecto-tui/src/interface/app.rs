@@ -40,6 +40,11 @@ const MOUSE_SCROLL_LINES: usize = 3;
 /// Total max wait = MAX_ESCAPE_RETRIES × escape_timeout (10ms) = 50ms.
 const MAX_ESCAPE_RETRIES: usize = 5;
 
+/// Width of the opaque padding around the resume selector content.
+const RESUME_SELECTOR_BORDER_WIDTH: usize = 6;
+/// Maximum width of the resume selector modal, including opaque padding.
+const RESUME_SELECTOR_MAX_PANEL_WIDTH: usize = 88;
+
 /// Built-in slash commands.
 fn builtin_commands() -> Vec<SlashCommand> {
     vec![
@@ -88,6 +93,51 @@ fn builtin_commands() -> Vec<SlashCommand> {
             description: "Toggle workflow completion nudge".into(),
         },
     ]
+}
+
+fn pad_ansi_to_width(text: &str, width: usize) -> String {
+    let truncated = crate::interface::utils::truncate_to_width(text, width, Some("…"));
+    let visible = crate::interface::utils::visible_width(&truncated);
+    if visible >= width {
+        truncated
+    } else {
+        format!("{}{}", truncated, " ".repeat(width - visible))
+    }
+}
+
+fn build_resume_selector_overlay(
+    selector: &mut SelectList,
+    terminal_width: usize,
+    terminal_height: usize,
+) -> (Vec<String>, usize) {
+    let panel_width = terminal_width
+        .saturating_sub(4)
+        .clamp(1, RESUME_SELECTOR_MAX_PANEL_WIDTH);
+    let border_width = RESUME_SELECTOR_BORDER_WIDTH.min(panel_width.saturating_sub(20) / 2);
+    let content_width = panel_width.saturating_sub(border_width * 2).max(1);
+    let side_padding = " ".repeat(border_width);
+
+    let mut content_lines = vec![theme::bold("Resume session")];
+    content_lines.extend(selector.render(content_width));
+    content_lines.push(theme::dim("Enter resume · Esc cancel"));
+
+    let max_height = terminal_height.saturating_sub(4).max(1);
+    let vertical_border = border_width.min(max_height.saturating_sub(1) / 2);
+    let blank = theme::apply_overlay_bg("", panel_width);
+
+    let mut overlay_lines = Vec::new();
+    overlay_lines.extend(std::iter::repeat_n(blank.clone(), vertical_border));
+    for line in content_lines {
+        let padded = pad_ansi_to_width(&line, content_width);
+        overlay_lines.push(theme::apply_overlay_bg(
+            &format!("{side_padding}{padded}{side_padding}"),
+            panel_width,
+        ));
+    }
+    overlay_lines.extend(std::iter::repeat_n(blank, vertical_border));
+    overlay_lines.truncate(max_height);
+
+    (overlay_lines, panel_width)
 }
 
 /// Mouse selection anchor for click-and-drag text copy (#528).
@@ -1421,10 +1471,8 @@ impl App {
         // Composite resume selector overlay if active.
         // Uses ANSI-aware splice_line to avoid escape code bleeding.
         if let Some(selector) = &mut self.resume_selector {
-            let overlay_width = width.saturating_sub(4).min(72);
-            let mut selector_lines = vec![theme::bold("Resume session")];
-            selector_lines.extend(selector.render(overlay_width));
-            selector_lines.push(theme::dim("Enter resume · Esc cancel"));
+            let (selector_lines, overlay_width) =
+                build_resume_selector_overlay(selector, width, height);
             let overlay_height = selector_lines.len().min(height.saturating_sub(4));
             let start_row = height.saturating_sub(overlay_height) / 2;
             let start_col = width.saturating_sub(overlay_width) / 2;
@@ -2325,6 +2373,38 @@ mod tests {
                 cmd.name
             );
         }
+    }
+
+    #[test]
+    fn resume_selector_overlay_has_opaque_border() {
+        let mut selector = SelectList::new(
+            vec![SelectItem {
+                label: "default".into(),
+                value: "default".into(),
+                description: Some("2 messages".into()),
+            }],
+            10,
+        );
+        let (lines, width) = super::build_resume_selector_overlay(&mut selector, 100, 40);
+
+        assert!(
+            width > 72,
+            "border should make the overlay wider than the list"
+        );
+        assert!(
+            lines.len() > 4,
+            "overlay should include top/bottom border padding"
+        );
+        assert!(
+            lines.iter().all(|line| line.contains(theme::BG_OVERLAY)),
+            "every overlay line should use the opaque background"
+        );
+        assert!(
+            lines
+                .iter()
+                .all(|line| crate::interface::utils::visible_width(line) == width),
+            "opaque background should span the full overlay width"
+        );
     }
 
     #[test]
