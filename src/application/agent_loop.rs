@@ -4,6 +4,7 @@
 use std::pin::Pin;
 use std::sync::Arc;
 
+use crate::application::agent_usage::UsageTotals;
 use crate::application::context_pruning;
 use crate::domain::agent::{
     AgentInfo, AgentLoop, AgentProgressEvent, AgentResult, ProgressCallback,
@@ -443,7 +444,7 @@ impl AgentLoopImpl {
         messages: &mut Vec<Message>,
         response: LlmResponse,
         iterations: u32,
-        tokens: (u32, u32),
+        usage: UsageTotals,
     ) -> AgentResult {
         let text = response.content.unwrap_or_default();
         messages.push(Message::assistant(text.clone(), vec![]));
@@ -451,8 +452,11 @@ impl AgentLoopImpl {
             response: text,
             tool_iterations: iterations,
             iteration_limit_reached: false,
-            input_tokens: tokens.0,
-            output_tokens: tokens.1,
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            cache_read_tokens: usage.cache_read_tokens,
+            cache_write_tokens: usage.cache_write_tokens,
+            cost: usage.cost,
         }
     }
 
@@ -550,10 +554,7 @@ impl AgentLoopImpl {
         // Track whether spills happened so we only rebuild manifest when needed.
         // Start true to build initial manifest from any prior session spills.
         let mut spills_dirty = true;
-        // Track token usage — use the LAST call's values since each call
-        // re-sends the full context (summing would overcount).
-        let mut last_input_tokens: u32 = 0;
-        let mut total_output_tokens: u32 = 0;
+        let mut usage_totals = UsageTotals::default();
 
         loop {
             self.refresh_dynamic_system_prompt(messages);
@@ -644,11 +645,8 @@ impl AgentLoopImpl {
                 .await;
             }
 
-            // Track usage: input = last call's prompt tokens (context size),
-            // output = sum of all calls' completion tokens.
             if let Some(ref usage) = response.usage {
-                last_input_tokens = usage.prompt_tokens; // Last call = current context size.
-                total_output_tokens = total_output_tokens.saturating_add(usage.completion_tokens);
+                usage_totals.record(usage);
             }
 
             if response.tool_calls.is_empty() {
@@ -659,7 +657,7 @@ impl AgentLoopImpl {
                     messages,
                     response,
                     iterations,
-                    (last_input_tokens, total_output_tokens),
+                    usage_totals,
                 ));
             }
 
@@ -680,8 +678,11 @@ impl AgentLoopImpl {
                     ),
                     tool_iterations: iterations,
                     iteration_limit_reached: true,
-                    input_tokens: last_input_tokens,
-                    output_tokens: total_output_tokens,
+                    input_tokens: usage_totals.input_tokens,
+                    output_tokens: usage_totals.output_tokens,
+                    cache_read_tokens: usage_totals.cache_read_tokens,
+                    cache_write_tokens: usage_totals.cache_write_tokens,
+                    cost: usage_totals.cost,
                 });
             }
         }

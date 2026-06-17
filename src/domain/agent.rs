@@ -83,6 +83,10 @@ pub struct AgentResult {
     /// Cumulative token usage from all LLM calls in this run.
     pub input_tokens: u32,
     pub output_tokens: u32,
+    pub cache_read_tokens: u32,
+    pub cache_write_tokens: u32,
+    /// Cumulative provider-reported cost for this run, in USD.
+    pub cost: f64,
 }
 
 impl AgentResult {
@@ -93,7 +97,21 @@ impl AgentResult {
             iteration_limit_reached: false,
             input_tokens: 0,
             output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            cost: 0.0,
         }
+    }
+
+    pub fn turn_tokens(&self) -> u32 {
+        self.input_tokens.saturating_add(self.output_tokens)
+    }
+
+    pub fn has_usage(&self) -> bool {
+        self.turn_tokens() > 0
+            || self.cache_read_tokens > 0
+            || self.cache_write_tokens > 0
+            || self.cost > 0.0
     }
 }
 

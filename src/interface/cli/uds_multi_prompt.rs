@@ -73,12 +73,11 @@ pub(crate) async fn run_agent_prompt_broadcast(args: PromptArgsBroadcast<'_>) ->
             PromptOutcome::Cancelled
         }
         Some(Ok(agent_result)) => {
+            session.record_agent_result(&agent_result);
             // Post-hoc tool events are NOT emitted here — ToolStarted/Finished
             // are already forwarded in real-time via forward_progress_event_broadcast.
             // Emitting them again would cause duplicate events with conflicting IDs.
-            let total = agent_result
-                .input_tokens
-                .saturating_add(agent_result.output_tokens);
+            let total = agent_result.turn_tokens();
             let usage = if total > 0 {
                 Some(TurnUsage {
                     input: agent_result.input_tokens,

@@ -115,18 +115,39 @@ fn test_stats_counts_tool_calls_and_results() {
 }
 
 #[test]
-fn test_stats_tokens_zeroed_without_usage_on_message() {
-    // Token usage is not stored on Message objects; stats returns zeroed tokens.
+fn test_session_records_cumulative_token_usage_and_cost() {
+    let mut session = AgentSession::new("gpt-5".to_string(), "cli:test".to_string());
+
+    session.record_usage(10, 2, 3, 4, 0.001);
+    session.record_usage(20, 5, 6, 7, 0.0025);
+
+    let usage = session.usage_snapshot();
+    assert_eq!(usage.tokens.input, 30);
+    assert_eq!(usage.tokens.output, 7);
+    assert_eq!(usage.tokens.cache_read, 9);
+    assert_eq!(usage.tokens.cache_write, 11);
+    assert_eq!(usage.tokens.total, 57);
+    assert!((usage.cost - 0.0035).abs() < f64::EPSILON);
+}
+
+#[test]
+fn test_stats_include_session_usage_snapshot() {
     use crate::domain::message::Message;
     let msgs = vec![
         Message::user("hi".to_string()),
         Message::assistant("reply".to_string(), vec![]),
     ];
-    let stats = compute_session_stats("k", &msgs);
-    assert_eq!(stats.tokens.input, 0);
-    assert_eq!(stats.tokens.output, 0);
-    assert_eq!(stats.tokens.total, 0);
-    assert_eq!(stats.cost, 0.0);
+    let mut session = AgentSession::new("gpt-5".to_string(), "k".to_string());
+    session.record_usage(100, 25, 10, 5, 0.0123);
+
+    let stats = compute_session_stats_with_usage("k", &msgs, session.usage_snapshot());
+
+    assert_eq!(stats.tokens.input, 100);
+    assert_eq!(stats.tokens.output, 25);
+    assert_eq!(stats.tokens.cache_read, 10);
+    assert_eq!(stats.tokens.cache_write, 5);
+    assert_eq!(stats.tokens.total, 140);
+    assert!((stats.cost - 0.0123).abs() < f64::EPSILON);
 }
 
 // ─── parse_command_line ──────────────────────────────────────────────────────────

@@ -1,4 +1,5 @@
 /// UDS session state — in-memory tracker and statistics for an active UDS connection.
+use crate::domain::agent::AgentResult;
 use crate::domain::message::{Message, Role};
 
 use super::protocol::{SessionState, SessionStats, TokenStats};
@@ -10,9 +11,17 @@ pub struct AgentSession {
     model: String,
     session_key: String,
     streaming: bool,
+    /// Cumulative provider-reported usage for this in-memory UDS session.
+    usage: SessionUsage,
     /// `VecDeque` supports O(1) push_back (enqueue) and push_front (prepend/steer).
     pending: std::collections::VecDeque<PendingMessage>,
     last_subagent_notification: std::collections::HashMap<String, u64>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SessionUsage {
+    pub tokens: TokenStats,
+    pub cost: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,6 +81,7 @@ impl AgentSession {
             model,
             session_key,
             streaming: false,
+            usage: SessionUsage::default(),
             pending: std::collections::VecDeque::new(),
             last_subagent_notification: std::collections::HashMap::new(),
         }
@@ -95,6 +105,58 @@ impl AgentSession {
 
     pub fn set_streaming(&mut self, v: bool) {
         self.streaming = v;
+    }
+
+    pub fn record_agent_result(&mut self, result: &AgentResult) {
+        self.record_usage(
+            result.input_tokens,
+            result.output_tokens,
+            result.cache_read_tokens,
+            result.cache_write_tokens,
+            result.cost,
+        );
+    }
+
+    pub fn record_usage(
+        &mut self,
+        input_tokens: u32,
+        output_tokens: u32,
+        cache_read_tokens: u32,
+        cache_write_tokens: u32,
+        cost: f64,
+    ) {
+        self.usage.tokens.input = self.usage.tokens.input.saturating_add(input_tokens as u64);
+        self.usage.tokens.output = self
+            .usage
+            .tokens
+            .output
+            .saturating_add(output_tokens as u64);
+        self.usage.tokens.cache_read = self
+            .usage
+            .tokens
+            .cache_read
+            .saturating_add(cache_read_tokens as u64);
+        self.usage.tokens.cache_write = self
+            .usage
+            .tokens
+            .cache_write
+            .saturating_add(cache_write_tokens as u64);
+        self.usage.tokens.total = self
+            .usage
+            .tokens
+            .input
+            .saturating_add(self.usage.tokens.output)
+            .saturating_add(self.usage.tokens.cache_read)
+            .saturating_add(self.usage.tokens.cache_write);
+        self.usage.cost += cost;
+    }
+
+    pub fn usage_snapshot(&self) -> SessionUsage {
+        self.usage.clone()
+    }
+
+    pub fn clear_usage(&mut self) {
+        self.usage = SessionUsage::default();
     }
 
     /// Maximum number of pending (steer/follow_up) messages buffered at once.
@@ -163,11 +225,16 @@ impl AgentSession {
 // ─── Session statistics ───────────────────────────────────────────────────────
 
 /// Compute session statistics from the current message history.
-///
-/// Note: token counts are not available from `Message` objects (usage is only
-/// on `LlmResponse` which is not persisted on `Message`).  The token fields
-/// are zeroed for now; a future enhancement can thread usage through the loop.
 pub fn compute_session_stats(session_key: &str, messages: &[Message]) -> SessionStats {
+    compute_session_stats_with_usage(session_key, messages, SessionUsage::default())
+}
+
+/// Compute session statistics with cumulative provider usage collected by the UDS session.
+pub fn compute_session_stats_with_usage(
+    session_key: &str,
+    messages: &[Message],
+    usage: SessionUsage,
+) -> SessionStats {
     let mut user_messages = 0usize;
     let mut assistant_messages = 0usize;
     let mut tool_calls_count = 0usize;
@@ -192,8 +259,8 @@ pub fn compute_session_stats(session_key: &str, messages: &[Message]) -> Session
         tool_calls: tool_calls_count,
         tool_results: tool_results_count,
         total_messages: messages.len(),
-        tokens: TokenStats::default(),
-        cost: 0.0,
+        tokens: usage.tokens,
+        cost: usage.cost,
     }
 }
 

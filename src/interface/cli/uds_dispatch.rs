@@ -217,6 +217,7 @@ pub(super) async fn handle_clear_history(
         return false;
     }
     clear_conversation(ctx.messages);
+    ctx.session.clear_usage();
     ctx.session.drain_pending();
     // Also clear spill store so stale context isn't re-injected (#412).
     if let Some(spill) = ctx.agent.spill_store() {

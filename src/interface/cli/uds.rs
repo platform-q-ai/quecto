@@ -5,8 +5,11 @@ use super::uds_cancel::{
 };
 use super::uds_extensions::build_extension_list;
 use super::uds_multi::{MultiClientArgs, PromptArgsBroadcast, run_agent_prompt_broadcast};
+#[cfg(test)]
+use super::uds_session::compute_session_stats;
 use super::uds_session::{
-    AgentSession, clear_conversation, compute_session_stats, message_to_json, messages_tail_json,
+    AgentSession, clear_conversation, compute_session_stats_with_usage, message_to_json,
+    messages_tail_json,
 };
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::message::{Message, Role};
@@ -447,7 +450,11 @@ fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serd
             Some(messages_tail_json(ctx.messages, *count))
         }
         AgentCommand::GetSessionStats { .. } => {
-            let stats = compute_session_stats(ctx.session_key, ctx.messages);
+            let stats = compute_session_stats_with_usage(
+                ctx.session_key,
+                ctx.messages,
+                ctx.session.usage_snapshot(),
+            );
             Some(serde_json::to_value(&stats).unwrap_or_default())
         }
         AgentCommand::GetExtensions { .. } => {
