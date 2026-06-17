@@ -463,11 +463,12 @@ impl App {
             return;
         }
 
-        // If the read-only workflow panel is active, close it on Esc/Ctrl+C.
-        if self.workflow_panel_open {
-            if matches!(key, Key::Escape | Key::Ctrl('c') | Key::CtrlShift('w')) {
-                self.workflow_panel_open = false;
-            }
+        // If the read-only workflow panel is active, close it on Esc/Ctrl+C/Ctrl+Shift+W.
+        // Workflow toggles (Ctrl+Shift+A/N) still work while the panel is open.
+        if self.workflow_panel_open
+            && matches!(key, Key::Escape | Key::Ctrl('c') | Key::CtrlShift('w'))
+        {
+            self.workflow_panel_open = false;
             return;
         }
 

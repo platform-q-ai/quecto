@@ -69,3 +69,6 @@ Feature: TUI Clean Architecture and executable BDD enforcement
 
   Scenario: TUI workflow panel matches the Pi checklist in read-only mode
     Then the quecto-tui workflow panel should render the Pi workflow checklist in read-only mode
+
+  Scenario: TUI workflow toggles work while the read-only panel is open
+    Then quecto-tui should not swallow all keys when the workflow panel is open
