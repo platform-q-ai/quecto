@@ -776,6 +776,7 @@ Tool binary cache (auto-downloaded `rg`, `fd`):
 
 | Guide | Description |
 |---|---|
+| [Quecto Agent Capability Guide](docs/quecto.md) | Compact retrieval map for agents using Quecto capabilities on demand |
 | [Getting Started](docs/getting-started.md) | Quickstart guide for UDS agent integration |
 | [UDS Protocol](docs/uds-protocol.md) | Complete UDS command and event specification |
 | [Sessions](docs/sessions.md) | Conversation persistence, context management, spill/recall |

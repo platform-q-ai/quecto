@@ -51,14 +51,25 @@ pub fn datetime_preamble() -> String {
     format!("Current date and time: {}", date_str)
 }
 
-/// Build a complete system prompt with datetime preamble, skills, and user prompt.
+/// Compact Quecto capability signpost injected into every agent system prompt.
+///
+/// This is intentionally a retrieval policy, not full documentation. It tells
+/// agents where to look only when Quecto-specific operational knowledge is
+/// needed, keeping normal prompt/context usage small.
+pub fn agent_docs_retrieval_policy() -> &'static str {
+    "Quecto agent capability docs are available in this repository. When asked to use Quecto itself, improve agent behavior, extend tools, manage sessions/context, delegate to subagents, or use workflows, read `docs/quecto.md` first, then only the targeted docs it references. Keep context lean: do not load full docs until that knowledge is needed."
+}
+
+/// Build a complete system prompt with datetime preamble, Quecto docs policy,
+/// skills, and user prompt.
 ///
 /// Always prepends the current date/time/timezone so the agent knows
 /// what "today" and "now" mean — critical for cron scheduling and
 /// time-aware tasks. Combines:
 /// 1. Datetime preamble (always present, see [`datetime_preamble`])
-/// 2. Skill content (if any skills are loaded)
-/// 3. User-provided system prompt (if any)
+/// 2. Quecto capability docs retrieval policy
+/// 3. Skill content (if any skills are loaded)
+/// 4. User-provided system prompt (if any)
 ///
 /// Note: Some LLM providers inject their own date metadata (e.g. "Current
 /// date: 2026-03-01"). The quecto preamble is richer (day-of-week, full
@@ -66,11 +77,12 @@ pub fn datetime_preamble() -> String {
 /// This duplication is intentional — see issue #104.
 pub fn build_system_prompt(skill_prompt: &str, user_prompt: &Option<String>) -> String {
     let preamble = datetime_preamble();
+    let docs_policy = agent_docs_retrieval_policy();
     let merged = merge_prompts(skill_prompt, user_prompt);
     if merged.is_empty() {
-        preamble
+        format!("{}\n\n{}", preamble, docs_policy)
     } else {
-        format!("{}\n\n{}", preamble, merged)
+        format!("{}\n\n{}\n\n{}", preamble, docs_policy, merged)
     }
 }
 
