@@ -336,6 +336,24 @@ fn then_uds_protocol_supports_resuming_session(_world: &mut QuectoWorld) {
     );
 }
 
+#[then("the quecto-tui resume selector should render with an opaque border")]
+fn then_tui_resume_selector_has_opaque_border(_world: &mut QuectoWorld) {
+    let app = std::fs::read_to_string("quecto-tui/src/interface/app.rs")
+        .expect("read quecto-tui app source");
+    let theme = std::fs::read_to_string("quecto-tui/src/interface/theme.rs")
+        .expect("read quecto-tui theme source");
+    assert!(
+        app.contains("build_resume_selector_overlay")
+            && app.contains("RESUME_SELECTOR_BORDER_WIDTH")
+            && app.contains("apply_overlay_bg"),
+        "resume selector should be rendered as a padded opaque overlay instead of raw text over chat history"
+    );
+    assert!(
+        theme.contains("BG_OVERLAY") && theme.contains("apply_overlay_bg"),
+        "theme should expose an opaque overlay background for modal readability"
+    );
+}
+
 #[then("the TUI architecture feature should not contain pending scenarios")]
 fn then_tui_architecture_feature_not_pending(_world: &mut QuectoWorld) {
     let content = std::fs::read_to_string("tests/features/tui_clean_architecture.feature")

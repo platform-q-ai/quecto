@@ -152,6 +152,8 @@ pub fn apply_bg(text: &str, width: usize, bg_fn: fn(&str) -> String) -> String {
 pub const BG_PENDING: &str = "\x1b[48;2;40;40;50m"; // #282832
 pub const BG_SUCCESS: &str = "\x1b[48;2;40;50;40m"; // #283228
 pub const BG_ERROR: &str = "\x1b[48;2;60;40;40m"; // #3c2828
+/// Opaque modal overlay background — black for maximum contrast over chat text.
+pub const BG_OVERLAY: &str = "\x1b[48;2;0;0;0m";
 
 /// Extract the background ANSI escape code from a bg function.
 ///
@@ -202,6 +204,11 @@ pub fn tool_success_bg(text: &str) -> String {
 /// Tool error background — #3c2828 (very dark muted red, matches Pi).
 pub fn tool_error_bg(text: &str) -> String {
     bg_rgb(60, 40, 40, text)
+}
+
+/// Apply the opaque modal overlay background to a line, padding to full width.
+pub fn apply_overlay_bg(text: &str, width: usize) -> String {
+    apply_bg_code(text, width, BG_OVERLAY)
 }
 
 /// Tool title (bold, used inside tool boxes).
