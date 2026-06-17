@@ -2,76 +2,142 @@
   "providers": {
     "openai": {
       "api_key": ""
-    },
-    "openai_compatible": {
-      "endpoints": []
     }
   },
   "agents": {
     "defaults": {
-      "model": "openai/gpt-5.5"
+      "model": "openai/gpt-5.5",
+      "max_context_tokens": 200000
     }
   },
   "workflow": {
-    "auto_continue": true,
-    "completion_nudge": true,
-    "selector_prompt": "Examine the task and select the workflow template that best fits. If unsure, use 'feature' for new behavior, 'fix' for bugs, 'refactor' for cleanup, or 'chore' for maintenance.",
+    "auto_continue": false,
+    "completion_nudge": false,
+    "selector_prompt": "Select the single Quecto repository workflow template, 'feature', before checking steps. If this is the post-completion handoff, first query the issue tracker for issues authored by the authenticated user only (for GitHub: gh issue list --author @me) and choose only from that filtered set.",
     "templates": [
       {
         "id": "feature",
         "label": "Feature",
-        "description": "New capability with full BDD/TDD Red-Green-Refactor cycle, code review, and merge.",
-        "when_to_use": "Use for any new user-facing or system-facing behavior, new commands, new tools, or substantial extensions.",
+        "description": "New capability with local hook verification, BDD/TDD, code review, and merge.",
+        "when_to_use": "Use for all Quecto development work in this repository.",
         "steps": [
-          { "key": "scenarios", "label": "Update Scenarios / Add new features", "phase": "red", "guidance": "Start by updating feature coverage and task-facing scenarios. Identify acceptance criteria." },
-          { "key": "tests", "label": "Write/update unit tests (run a quick smoke check; full suite runs on push)", "phase": "red", "guidance": "Write or update the unit tests for the change. Run a quick targeted smoke check to confirm they compile." },
-          { "key": "red", "label": "Ensure new/modified tests FAIL (RED) — quick targeted run only, not full suite", "phase": "red", "guidance": "Run only the new/modified tests to confirm they fail before any implementation." },
-          { "key": "green", "label": "Implement code (GREEN)", "phase": "green", "guidance": "Write the minimum code needed to satisfy the failing tests." },
-          { "key": "refactor", "label": "Refactor", "phase": "refactor" },
-          { "key": "verify", "label": "Ensure tests still pass", "phase": "green" },
-          { "key": "commit", "label": "Commit", "phase": "ci_cd" },
-          { "key": "push", "label": "Push (pre-push hook will run tests and linting)", "phase": "ci_cd" },
-          { "key": "pr", "label": "Create PR", "phase": "ci_cd" },
-          { "key": "reviewers", "label": "Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)", "phase": "review", "guidance": "Use the subagent tool in parallel mode to dispatch architecture-reviewer, security-reviewer, and performance-reviewer." },
-          { "key": "fix_reviews", "label": "Fix all valid review concerns", "phase": "review" },
-          { "key": "push_fixes", "label": "Push changes to remote", "phase": "review" },
-          { "key": "resolve_threads", "label": "Reply to the reviewers comments on the PR and mark resolved (use graphql)", "phase": "review" },
-          { "key": "pre_merge", "label": "Run pre-merge hooks (real-LLM, machete, deny)", "phase": "ci_cd" },
-          { "key": "merge", "label": "Merge", "phase": "ci_cd" },
-          { "key": "pull", "label": "Move to local master and pull", "phase": "ci_cd" }
-        ],
-        "guards": [
           {
-            "commands": ["git commit", "git push"],
-            "before_step_key": "commit",
-            "message": "Complete RED-GREEN-REFACTOR (steps 1-6) before committing."
+            "key": "hooks",
+            "label": "Install/check local quality hooks",
+            "phase": "setup",
+            "guidance": "Run scripts/install-hooks.sh, then verify pre-commit, pre-push, pre-merge-commit, and the git --no-verify wrapper are installed/active before editing code."
           },
           {
-            "commands": ["git merge", "gh pr merge"],
-            "before_step_key": "merge",
-            "message": "Complete code review (steps 10-14) before merging."
+            "key": "scenarios",
+            "label": "Update Scenarios / Add new features",
+            "phase": "red",
+            "guidance": "Start by updating feature coverage and task-facing scenarios. Identify acceptance criteria."
+          },
+          {
+            "key": "tests",
+            "label": "Write/update unit tests (run a quick smoke check; full suite runs on push)",
+            "phase": "red",
+            "guidance": "Write or update the unit tests for the change. Run a quick targeted smoke check to confirm they compile."
+          },
+          {
+            "key": "red",
+            "label": "Ensure new/modified tests FAIL (RED) \u2014 quick targeted run only, not full suite",
+            "phase": "red",
+            "guidance": "Run only the new/modified tests to confirm they fail before any implementation."
+          },
+          {
+            "key": "green",
+            "label": "Implement code (GREEN)",
+            "phase": "green",
+            "guidance": "Write the minimum code needed to satisfy the failing tests. Do NOT worry about the size of a change \u2014 implement it in full."
+          },
+          {
+            "key": "refactor",
+            "label": "Refactor",
+            "phase": "refactor"
+          },
+          {
+            "key": "verify",
+            "label": "Ensure tests still pass",
+            "phase": "green"
+          },
+          {
+            "key": "commit",
+            "label": "Commit",
+            "phase": "ci_cd"
+          },
+          {
+            "key": "push",
+            "label": "Push (pre-push hook will run tests and linting)",
+            "phase": "ci_cd"
+          },
+          {
+            "key": "pr",
+            "label": "Create PR",
+            "phase": "ci_cd"
+          },
+          {
+            "key": "reviewers",
+            "label": "Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)",
+            "phase": "review",
+            "guidance": "Use the subagent tool in parallel mode to dispatch architecture-reviewer, security-reviewer, and performance-reviewer."
+          },
+          {
+            "key": "fix_reviews",
+            "label": "Fix all valid review concerns",
+            "phase": "review"
+          },
+          {
+            "key": "push_fixes",
+            "label": "Push changes to remote",
+            "phase": "review"
+          },
+          {
+            "key": "resolve_threads",
+            "label": "Reply to the reviewers comments on the PR and mark resolved (use graphql)",
+            "phase": "review",
+            "guidance": "Reply to every review comment on the PR, then resolve the threads using GraphQL mutations."
+          },
+          {
+            "key": "pre_merge",
+            "label": "Run pre-merge hooks (real-LLM, machete, deny)",
+            "phase": "ci_cd"
+          },
+          {
+            "key": "merge",
+            "label": "Merge",
+            "phase": "ci_cd"
+          },
+          {
+            "key": "pull",
+            "label": "Move to local master and pull",
+            "phase": "ci_cd"
           }
-        ]
-      },
-      {
-        "id": "chore",
-        "label": "Chore",
-        "description": "Routine maintenance, docs, dependency updates, CI config, or configuration work.",
-        "when_to_use": "Use for docs, dependency bumps, CI pipeline changes, config updates, or any non-behavioral maintenance.",
-        "steps": [
-          { "key": "scope", "label": "Clarify the maintenance task", "phase": "red", "guidance": "Restate the task and identify any required validation." },
-          { "key": "change", "label": "Apply the maintenance change", "phase": "green" },
-          { "key": "verify", "label": "Verify the change", "phase": "green" },
-          { "key": "commit", "label": "Commit", "phase": "ci_cd" }
         ],
         "guards": [
           {
-            "commands": ["git commit"],
+            "commands": [
+              "git commit",
+              "git push"
+            ],
             "before_step_key": "commit",
-            "message": "Verify the maintenance change before committing."
+            "message": "Complete hook setup and RED/GREEN work before committing."
+          },
+          {
+            "commands": [
+              "git merge",
+              "gh pr merge"
+            ],
+            "before_step_key": "merge",
+            "message": "Complete code review and pre-merge validation before merging."
           }
         ]
       }
     ]
+  },
+  "tools": {
+    "exec": {
+      "isolation": "native"
+    }
   }
 }

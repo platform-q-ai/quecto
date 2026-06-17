@@ -537,7 +537,7 @@ pub fn check_provider_readiness(creds: &HashMap<String, Credential>) -> Vec<Stri
 /// Build a shared HTTP client with sensible timeouts.
 ///
 /// Used by providers and native extensions to share a single connection pool
-/// and TLS context. Important on memory-constrained targets (RPi, containers).
+/// and TLS context. Important on memory-constrained targets (RQuecto, containers).
 pub fn build_http_client() -> reqwest::Client {
     // No overall timeout — SSE streams legitimately run for minutes during
     // long LLM generations. The connect_timeout gates the initial handshake;

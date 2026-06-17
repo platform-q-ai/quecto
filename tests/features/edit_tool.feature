@@ -1,5 +1,5 @@
 @done
-Feature: EditTool — Pi parity
+Feature: EditTool — Quecto compatibility
   As an LLM agent
   I want the edit tool to handle LLM-emitted Unicode quirks and file format variations
   So that edits succeed without manual retry loops

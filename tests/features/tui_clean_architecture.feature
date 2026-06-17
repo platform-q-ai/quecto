@@ -63,8 +63,8 @@ Feature: TUI Clean Architecture and executable BDD enforcement
   Scenario: TUI does not render a separate workflow header bar
     Then quecto-tui should not render a separate workflow header bar
 
-  Scenario: TUI shows a Pi-style workflow widget above the editor
-    Then the quecto-tui workflow widget should render as plain text matching the Pi extension
+  Scenario: TUI shows a Quecto-style workflow widget above the editor
+    Then the quecto-tui workflow widget should render as plain text matching the Quecto workflow
     And the quecto-tui workflow widget should show workflow hotkey hints with toggle state
 
   Scenario: TUI workflow widget uses only active toggle hotkeys

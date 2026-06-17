@@ -170,7 +170,7 @@ pub struct ExecToolConfig {
     pub wall_time_limit_secs: u64,
     /// Size of the writable `/tmp` tmpfs in MB.
     ///
-    /// Defaults to 512 MB — safe for RPi/VPS targets with 1–2 GB RAM.
+    /// Defaults to 512 MB — safe for RQuecto/VPS targets with 1–2 GB RAM.
     /// Each concurrent jail gets its own tmpfs, so N jails can consume
     /// N × `tmp_size_mb` MB of RAM from `/tmp` alone.  Raise this on hosts
     /// with ample RAM to accommodate large build artefacts.
@@ -329,7 +329,7 @@ fn default_nsjail_wall_time_limit_secs() -> u64 {
 }
 fn default_nsjail_tmp_size_mb() -> u64 {
     // Canonical value: DEFAULT_NSJAIL_TMP_SIZE_MB in nsjail.rs.
-    // 512 MB — conservative default safe for RPi/VPS (1–2 GB RAM).
+    // 512 MB — conservative default safe for RQuecto/VPS (1–2 GB RAM).
     512
 }
 impl Config {

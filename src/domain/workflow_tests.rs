@@ -4,10 +4,8 @@ use super::*;
 fn default_config_uses_builtins_when_templates_empty() {
     let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     let templates = engine.list_templates();
-    assert!(templates.iter().any(|t| t.id == "feature"));
-    assert!(templates.iter().any(|t| t.id == "fix"));
-    assert!(templates.iter().any(|t| t.id == "refactor"));
-    assert!(templates.iter().any(|t| t.id == "chore"));
+    assert_eq!(templates.len(), 1);
+    assert_eq!(templates[0].id, "feature");
 }
 
 #[test]
@@ -18,11 +16,18 @@ fn selector_mode_before_template_selection() {
 }
 
 #[test]
+fn default_workflow_config_disables_backend_nudges() {
+    let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    assert!(!engine.auto_continue_enabled());
+    assert!(!engine.completion_nudge_enabled());
+}
+
+#[test]
 fn select_template_starts_run() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
-    engine.select_template("fix", None).unwrap();
+    engine.select_template("feature", None).unwrap();
     assert_eq!(engine.mode(), WorkflowMode::Active);
-    assert_eq!(engine.progress().total, 7);
+    assert_eq!(engine.progress().total, 17);
     assert_eq!(engine.current_step().unwrap().index, 1);
 }
 
@@ -77,7 +82,7 @@ fn set_issue_truncates_title() {
 fn persisted_run_round_trip() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine
-        .select_template("fix", Some((7, "bug".into())))
+        .select_template("feature", Some((7, "bug".into())))
         .unwrap();
     engine.check(1).unwrap();
     let persisted = engine.persisted_run().unwrap();
@@ -116,7 +121,7 @@ fn workflow_subsystem_select_template_preserves_issue_set_in_selector_mode() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine.set_issue(42, "keep me".into());
 
-    engine.select_template("fix", None).unwrap();
+    engine.select_template("feature", None).unwrap();
 
     assert_eq!(
         engine.snapshot(true).active_issue,
@@ -130,7 +135,7 @@ fn workflow_subsystem_select_template_explicit_issue_overrides_existing_one() {
     engine.set_issue(1, "old issue".into());
 
     engine
-        .select_template("fix", Some((2, "new issue".into())))
+        .select_template("feature", Some((2, "new issue".into())))
         .unwrap();
 
     assert_eq!(
@@ -179,10 +184,14 @@ fn guards_block_until_before_step_key_threshold() {
 
 #[test]
 fn completion_nudge_only_when_complete() {
-    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
-    engine.select_template("chore", None).unwrap();
+    let config = WorkflowConfig {
+        completion_nudge: true,
+        ..WorkflowConfig::default()
+    };
+    let mut engine = WorkflowEngine::new(config, false).unwrap();
+    engine.select_template("feature", None).unwrap();
     assert!(engine.completion_nudge().is_none());
-    for step in 1..=5 {
+    for step in 1..=17 {
         engine.check(step).unwrap();
     }
     let nudge = engine.completion_nudge().unwrap();
@@ -253,7 +262,7 @@ fn validate_guard_unknown_step_key() {
 }
 
 #[test]
-fn default_feature_template_matches_config_file_pi_feature_workflow_with_hook_step() {
+fn default_feature_template_matches_config_file_quecto_feature_workflow_with_hook_step() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine.select_template("feature", None).unwrap();
     let snap = engine.snapshot(true);

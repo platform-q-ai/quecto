@@ -1,5 +1,5 @@
 // Shared path resolution utilities for tool implementations.
-// Mirrors Pi's path-utils.js — handles ~ expansion, absolute paths,
+// Mirrors Quecto's path-utils.js — handles ~ expansion, absolute paths,
 // @ prefix stripping, Unicode space normalisation, and macOS filename fixups.
 //
 // # Security
@@ -20,7 +20,7 @@ use std::sync::OnceLock;
 
 /// Strip a leading `@` prefix that editors sometimes prepend to file references.
 ///
-/// Note: `@` is a valid filename character. This stripping matches Pi's
+/// Note: `@` is a valid filename character. This stripping matches Quecto's
 /// `path-utils.js` behaviour and is intentional for editor-reference paths.
 pub fn normalize_at_prefix(path: &str) -> &str {
     path.strip_prefix('@').unwrap_or(path)

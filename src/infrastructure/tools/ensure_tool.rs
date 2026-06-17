@@ -1,4 +1,4 @@
-// ensure_tool — auto-download rg and fd binaries (Pi parity: ensureTool).
+// ensure_tool — auto-download rg and fd binaries (Quecto compatibility: ensureTool).
 //
 // Resolution order:
 // 1. System PATH (highest priority)

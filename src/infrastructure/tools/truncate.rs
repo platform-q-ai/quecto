@@ -1,5 +1,5 @@
 // Shared truncation module for consistent output limiting across all tools.
-// Mirrors Pi's truncate.js — provides head/tail truncation, line truncation,
+// Mirrors Quecto's truncate.js — provides head/tail truncation, line truncation,
 // and human-readable size formatting.
 
 pub const DEFAULT_MAX_LINES: usize = 2_000;

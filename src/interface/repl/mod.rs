@@ -65,7 +65,7 @@ struct ReplSession {
 /// This abstraction allows the REPL to be driven by:
 /// - Real stdin/stdout (interactive terminal use)
 /// - In-memory buffers (BDD testing)
-/// - Piped input (scripting: `echo "hello" | quecto`)
+/// - Quectoped input (scripting: `echo "hello" | quecto`)
 pub struct ReplLoop<R: BufRead, W: Write> {
     reader: R,
     writer: W,
@@ -412,7 +412,7 @@ pub fn run_repl<R: BufRead, W: Write>(
 /// The spinner thread lives for the entire REPL session, including idle time
 /// between user inputs. The thread blocks on `mpsc::recv_timeout(80ms)` and
 /// consumes negligible CPU when no events are flowing. On resource-constrained
-/// targets (RPi, containers) the idle cost is ~1 wakeup/80ms — acceptable for
+/// targets (RQuecto, containers) the idle cost is ~1 wakeup/80ms — acceptable for
 /// an interactive terminal tool. Future optimization: spawn per `process_input()`
 /// call and stop immediately after if tighter resource bounds are needed.
 fn resolve_progress_callback(

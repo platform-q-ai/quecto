@@ -264,6 +264,14 @@ fn parse_kitty_key(params: &[u8]) -> Key {
     let ctrl = mod_bits & 4 != 0;
 
     match keycode {
+        1 => Key::Up,
+        2 => Key::Down,
+        3 => Key::Right,
+        4 => Key::Left,
+        5 => Key::Home,
+        6 => Key::End,
+        7 => Key::PageUp,
+        8 => Key::PageDown,
         13 if shift => Key::ShiftEnter,
         13 => Key::Enter,
         9 if shift => Key::BackTab,

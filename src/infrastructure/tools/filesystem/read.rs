@@ -1,4 +1,4 @@
-// ReadTool — Pi name: "read"
+// ReadTool — tool name: "read"
 // Supports text files with offset/limit pagination and image files as base64.
 
 use std::future::Future;

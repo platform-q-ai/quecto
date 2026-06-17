@@ -1,4 +1,4 @@
-//! Component system — trait and Container, matching Pi TUI's design.
+//! Component system — trait and Container, matching Quecto TUI's design.
 //!
 //! Components render to `Vec<String>` (one per line), handle keyboard input,
 //! and cache their output until `invalidate()` is called.

@@ -10,34 +10,34 @@ pub const TERMINATE_GRACE_MS: u64 = 200;
 
 /// Error returned when a PID cannot be safely used for signalling.
 #[derive(Debug, PartialEq)]
-pub enum PidError {
+pub enum QuectodError {
     /// PID exceeds `i32::MAX` — wrapping `as i32` would produce a wrong value.
     Overflow(u32),
     /// PID 0 would signal the caller's own process group.
     Zero,
 }
 
-impl std::fmt::Display for PidError {
+impl std::fmt::Display for QuectodError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PidError::Overflow(pid) => {
+            QuectodError::Overflow(pid) => {
                 write!(f, "PID {pid} exceeds i32::MAX, cannot safely convert")
             }
-            PidError::Zero => write!(f, "PID 0 would signal the caller's own process group"),
+            QuectodError::Zero => write!(f, "PID 0 would signal the caller's own process group"),
         }
     }
 }
 
-impl std::error::Error for PidError {}
+impl std::error::Error for QuectodError {}
 
 /// Convert a `u32` PID (from `child.id()`) to a safe `i32` for use with `libc::kill`.
 ///
 /// Returns `Err` if the PID is 0 or exceeds `i32::MAX`.
-pub fn checked_pid(pid: u32) -> Result<i32, PidError> {
+pub fn checked_pid(pid: u32) -> Result<i32, QuectodError> {
     if pid == 0 {
-        return Err(PidError::Zero);
+        return Err(QuectodError::Zero);
     }
-    i32::try_from(pid).map_err(|_| PidError::Overflow(pid))
+    i32::try_from(pid).map_err(|_| QuectodError::Overflow(pid))
 }
 
 /// Send a signal to an entire process group.
@@ -45,13 +45,13 @@ pub fn checked_pid(pid: u32) -> Result<i32, PidError> {
 /// Uses `libc::kill(-pid, sig)` — the negative PID targets the group.
 /// Returns the raw libc result (0 on success, -1 on error).
 ///
-/// Requires `pid > 0`. Returns `-1` without signalling if `pid <= 0`
+/// Requires `quectod > 0`. Returns `-1` without signalling if `quectod <= 0`
 /// (pid 0 would signal the caller's group, negative would flip sign).
 pub(crate) fn kill_process_group(pid: i32, signal: libc::c_int) -> libc::c_int {
     if pid <= 0 {
         return -1;
     }
-    // SAFETY: `pid > 0` is checked above, so `-pid` targets that process group; libc handles invalid signals/pids by returning -1.
+    // SAFETY: `quectod > 0` is checked above, so `-pid` targets that process group; libc handles invalid signals/pids by returning -1.
     unsafe { libc::kill(-pid, signal) }
 }
 
@@ -128,12 +128,12 @@ mod tests {
     #[test]
     fn checked_pid_i32_max_plus_one_is_err() {
         let overflow = (i32::MAX as u32) + 1; // 2_147_483_648
-        assert_eq!(checked_pid(overflow), Err(PidError::Overflow(overflow)));
+        assert_eq!(checked_pid(overflow), Err(QuectodError::Overflow(overflow)));
     }
 
     #[test]
     fn checked_pid_u32_max_is_err() {
-        assert_eq!(checked_pid(u32::MAX), Err(PidError::Overflow(u32::MAX)));
+        assert_eq!(checked_pid(u32::MAX), Err(QuectodError::Overflow(u32::MAX)));
     }
 
     #[test]
@@ -148,12 +148,12 @@ mod tests {
 
     #[test]
     fn checked_pid_zero_is_err() {
-        assert_eq!(checked_pid(0), Err(PidError::Zero));
+        assert_eq!(checked_pid(0), Err(QuectodError::Zero));
     }
 
     #[test]
     fn pid_error_display_overflow() {
-        let e = PidError::Overflow(2_147_483_648);
+        let e = QuectodError::Overflow(2_147_483_648);
         let msg = e.to_string();
         assert!(msg.contains("2147483648"), "should mention the PID value");
         assert!(msg.contains("i32::MAX"), "should mention the limit");
@@ -161,14 +161,14 @@ mod tests {
 
     #[test]
     fn pid_error_display_zero() {
-        let e = PidError::Zero;
+        let e = QuectodError::Zero;
         let msg = e.to_string();
         assert!(msg.contains("PID 0"), "should mention PID 0");
     }
 
     #[test]
     fn pid_error_implements_std_error() {
-        let e: Box<dyn std::error::Error> = Box::new(PidError::Zero);
+        let e: Box<dyn std::error::Error> = Box::new(QuectodError::Zero);
         assert!(e.to_string().contains("PID 0"));
     }
 

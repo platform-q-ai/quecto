@@ -79,7 +79,7 @@ Feature: Sandbox Hardening
     Then the validation should be an error
     And the error should mention "not in allowlist"
 
-  Scenario: Pipe to disallowed command is rejected
+  Scenario: Quectope to disallowed command is rejected
     Given a sandbox with command allowlist "echo,ls"
     When the agent tries to validate command "ls | bash"
     Then the validation should be an error

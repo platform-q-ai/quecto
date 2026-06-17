@@ -2336,7 +2336,7 @@ fn when_start_mc_uds_with_workflow(world: &mut QuectoWorld) {
     world._workflow_enabled = true;
 }
 
-/// Mock: LLM returns a tool call for `workflow select_template fix`, then a text reply.
+/// Mock: LLM returns a tool call for `workflow select_template feature`, then a text reply.
 #[given(expr = "the mock LLM returns a tool call for workflow select_template then text {string}")]
 fn given_mock_llm_workflow_select(world: &mut QuectoWorld, text: String) {
     assert!(

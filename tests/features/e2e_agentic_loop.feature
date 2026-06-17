@@ -45,7 +45,7 @@ Feature: End-to-End Agentic Loop
       | call | read  | {"path":"input.txt"}                         |
       | call | exec       | {"command":"echo HELLO WORLD"}                |
       | call | write | {"path":"output.txt","content":"HELLO WORLD"} |
-      | text | Pipeline complete |                                        |
+      | text | Quectopeline complete |                                        |
     When I run quecto agent -s - -m "Uppercase input.txt and save to output.txt"
     Then the exit code should be 0
     And the file "output.txt" should exist in the e2e workspace

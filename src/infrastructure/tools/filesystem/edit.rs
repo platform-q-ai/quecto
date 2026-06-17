@@ -1,4 +1,4 @@
-// EditTool — Pi name: "edit"
+// EditTool — tool name: "edit"
 // Two-stage exact→fuzzy matching, CRLF/BOM preservation, no-op detection,
 // LCS-based unified diff via the `similar` crate.
 
@@ -97,11 +97,11 @@ impl Tool for EditTool {
             let Some(path) = args["path"].as_str() else {
                 return Ok(missing_edit_arg("path"));
             };
-            // Accept "oldText" (Pi name) or legacy "old"
+            // Accept "oldText" (tool name) or legacy "old"
             let Some(old_text) = args["oldText"].as_str().or_else(|| args["old"].as_str()) else {
                 return Ok(missing_edit_arg("oldText"));
             };
-            // Accept "newText" (Pi name) or legacy "new"
+            // Accept "newText" (tool name) or legacy "new"
             let Some(new_text) = args["newText"].as_str().or_else(|| args["new"].as_str()) else {
                 return Ok(missing_edit_arg("newText"));
             };
@@ -254,7 +254,7 @@ fn base_normalise(s: &str) -> String {
     out
 }
 
-/// Normalise text for fuzzy matching — mirrors Pi's `normalizeForFuzzyMatch`.
+/// Normalise text for fuzzy matching — mirrors Quecto's `normalizeForFuzzyMatch`.
 ///
 /// Applies on top of BOM stripping and CRLF normalisation:
 /// - Trailing whitespace stripped per line
@@ -325,9 +325,9 @@ fn count_occurrences_capped(haystack: &str, needle: &str, cap: usize) -> (usize,
 /// Context window is [`DIFF_CONTEXT_LINES`] lines on each side of each hunk.
 /// If the diff exceeds [`DIFF_MAX_BYTES`] the full diff is omitted and only
 /// the success message is returned.
-/// Generate a Pi-style diff with per-line numbers and context ellipsis.
+/// Generate a Quecto-style diff with per-line numbers and context ellipsis.
 ///
-/// Output format (matching Pi's `generateDiffString`):
+/// Output format (matching Quecto's `generateDiffString`):
 /// ```text
 ///  11 context line
 /// -12 removed line

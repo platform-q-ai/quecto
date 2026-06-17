@@ -54,7 +54,7 @@ pub const DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS: u64 = 0;
 /// Writable `/tmp` tmpfs cap: 512 MB (536 870 912 bytes).
 ///
 /// Conservative default that is safe for the project's primary targets
-/// (Raspberry Pi, small VPS with 1–2 GB RAM).  tmpfs is RAM-backed, so a
+/// (small Linux host, small VPS with 1–2 GB RAM).  tmpfs is RAM-backed, so a
 /// runaway process writing to `/tmp` consumes physical RAM; at 512 MB the
 /// blast radius is bounded even on a 1 GB host.
 ///

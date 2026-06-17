@@ -1,6 +1,6 @@
-Feature: ReadTool — Pi parity
+Feature: ReadTool — Quecto compatibility
   As an AI agent
-  I want the read tool to match Pi's feature set
+  I want the read tool to match Quecto's feature set
   So that LLM interactions are reliable regardless of image format or file size
 
   Background:

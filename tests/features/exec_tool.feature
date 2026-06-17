@@ -1,6 +1,6 @@
-Feature: ExecTool (bash) — Pi parity
+Feature: ExecTool (bash) — Quecto compatibility
   As an AI agent
-  I want the bash tool to match Pi's feature set
+  I want the bash tool to match Quecto's feature set
   So that long-running commands work and truncation notices are informative
 
   Background:

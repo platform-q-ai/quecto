@@ -10,8 +10,7 @@ template libraries.
 - **Not available** in REPL or one-shot (`agent -m`) mode
 - **Disabled by default**: no workflow engine, tool, prompt, or state unless
   explicitly enabled via `--workflow`
-- **Template-library model**: multiple workflow templates (feature, fix,
-  refactor, chore, or custom) — agents select one before starting
+- **Single built-in template model**: Quecto ships one repository workflow template (`feature`); custom configs may still define their own templates
 - **In-process engine**: `WorkflowEngine` owns all state; the UDS bus is
   the external read/broadcast interface, not the coordinator
 
@@ -28,7 +27,7 @@ All three flags require `--mode uds`. Using them without it produces an error.
 ### Typical invocation
 
 ```bash
-# Built-in templates, guards enabled, named session
+# Built-in template, guards enabled, named session
 quecto agent --mode uds --workflow --workflow-guards -s my-session
 
 # With a custom system prompt
@@ -64,7 +63,7 @@ credentials and all agent defaults must also be present in the specified file.
 
 ### Minimal per-repo config example
 
-A repo-local config that uses OpenAI with custom workflow templates:
+A repo-local config that uses OpenAI with the Quecto workflow template:
 
 ```json
 {
@@ -73,63 +72,141 @@ A repo-local config that uses OpenAI with custom workflow templates:
       "api_key": ""
     }
   },
-  "tools": {
-    "exec": {
-      "isolation": "native"
-    }
-  },
   "agents": {
     "defaults": {
-      "model": "openai/gpt-5.5"
+      "model": "openai/gpt-5.5",
+      "max_context_tokens": 200000
     }
   },
   "workflow": {
-    "auto_continue": true,
-    "completion_nudge": true,
+    "auto_continue": false,
+    "completion_nudge": false,
+    "selector_prompt": "Select the single Quecto repository workflow template, 'feature', before checking steps. If this is the post-completion handoff, first query the issue tracker for issues authored by the authenticated user only (for GitHub: gh issue list --author @me) and choose only from that filtered set.",
     "templates": [
       {
         "id": "feature",
         "label": "Feature",
-        "description": "New capability with full TDD cycle.",
-        "when_to_use": "Use for any new user-facing behavior.",
+        "description": "New capability with local hook verification, BDD/TDD, code review, and merge.",
+        "when_to_use": "Use for all Quecto development work in this repository.",
         "steps": [
-          { "key": "scenarios", "label": "Update scenarios", "phase": "red" },
-          { "key": "tests", "label": "Write failing tests", "phase": "red" },
-          { "key": "red", "label": "Verify tests fail (RED)", "phase": "red" },
-          { "key": "green", "label": "Implement (GREEN)", "phase": "green" },
-          { "key": "refactor", "label": "Refactor", "phase": "refactor" },
-          { "key": "verify", "label": "Verify tests pass", "phase": "green" },
-          { "key": "commit", "label": "Commit and push", "phase": "ci_cd" }
-        ],
-        "guards": [
           {
-            "commands": ["git commit", "git push"],
-            "before_step_key": "commit",
-            "message": "Complete RED-GREEN-REFACTOR before committing."
+            "key": "hooks",
+            "label": "Install/check local quality hooks",
+            "phase": "setup",
+            "guidance": "Run scripts/install-hooks.sh, then verify pre-commit, pre-push, pre-merge-commit, and the git --no-verify wrapper are installed/active before editing code."
+          },
+          {
+            "key": "scenarios",
+            "label": "Update Scenarios / Add new features",
+            "phase": "red",
+            "guidance": "Start by updating feature coverage and task-facing scenarios. Identify acceptance criteria."
+          },
+          {
+            "key": "tests",
+            "label": "Write/update unit tests (run a quick smoke check; full suite runs on push)",
+            "phase": "red",
+            "guidance": "Write or update the unit tests for the change. Run a quick targeted smoke check to confirm they compile."
+          },
+          {
+            "key": "red",
+            "label": "Ensure new/modified tests FAIL (RED) \u2014 quick targeted run only, not full suite",
+            "phase": "red",
+            "guidance": "Run only the new/modified tests to confirm they fail before any implementation."
+          },
+          {
+            "key": "green",
+            "label": "Implement code (GREEN)",
+            "phase": "green",
+            "guidance": "Write the minimum code needed to satisfy the failing tests. Do NOT worry about the size of a change \u2014 implement it in full."
+          },
+          {
+            "key": "refactor",
+            "label": "Refactor",
+            "phase": "refactor"
+          },
+          {
+            "key": "verify",
+            "label": "Ensure tests still pass",
+            "phase": "green"
+          },
+          {
+            "key": "commit",
+            "label": "Commit",
+            "phase": "ci_cd"
+          },
+          {
+            "key": "push",
+            "label": "Push (pre-push hook will run tests and linting)",
+            "phase": "ci_cd"
+          },
+          {
+            "key": "pr",
+            "label": "Create PR",
+            "phase": "ci_cd"
+          },
+          {
+            "key": "reviewers",
+            "label": "Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)",
+            "phase": "review",
+            "guidance": "Use the subagent tool in parallel mode to dispatch architecture-reviewer, security-reviewer, and performance-reviewer."
+          },
+          {
+            "key": "fix_reviews",
+            "label": "Fix all valid review concerns",
+            "phase": "review"
+          },
+          {
+            "key": "push_fixes",
+            "label": "Push changes to remote",
+            "phase": "review"
+          },
+          {
+            "key": "resolve_threads",
+            "label": "Reply to the reviewers comments on the PR and mark resolved (use graphql)",
+            "phase": "review",
+            "guidance": "Reply to every review comment on the PR, then resolve the threads using GraphQL mutations."
+          },
+          {
+            "key": "pre_merge",
+            "label": "Run pre-merge hooks (real-LLM, machete, deny)",
+            "phase": "ci_cd"
+          },
+          {
+            "key": "merge",
+            "label": "Merge",
+            "phase": "ci_cd"
+          },
+          {
+            "key": "pull",
+            "label": "Move to local master and pull",
+            "phase": "ci_cd"
           }
-        ]
-      },
-      {
-        "id": "fix",
-        "label": "Fix",
-        "description": "Bug fix with reproduction test.",
-        "when_to_use": "Use when behavior is broken.",
-        "steps": [
-          { "key": "repro", "label": "Reproduce the bug", "phase": "red" },
-          { "key": "test", "label": "Write regression test", "phase": "red" },
-          { "key": "fix", "label": "Implement fix", "phase": "green" },
-          { "key": "verify", "label": "Verify fix", "phase": "green" },
-          { "key": "commit", "label": "Commit", "phase": "ci_cd" }
         ],
         "guards": [
           {
-            "commands": ["git commit"],
+            "commands": [
+              "git commit",
+              "git push"
+            ],
             "before_step_key": "commit",
-            "message": "Verify the fix before committing."
+            "message": "Complete hook setup and RED/GREEN work before committing."
+          },
+          {
+            "commands": [
+              "git merge",
+              "gh pr merge"
+            ],
+            "before_step_key": "merge",
+            "message": "Complete code review and pre-merge validation before merging."
           }
         ]
       }
     ]
+  },
+  "tools": {
+    "exec": {
+      "isolation": "native"
+    }
   }
 }
 ```
@@ -138,7 +215,7 @@ Invoke with:
 
 ```bash
 quecto agent --mode uds --workflow --workflow-guards \
-  --config ./my-repo/.quecto/config.json -s fix-auth-bug
+  --config ./my-repo/.quecto/config.json -s feature-work
 ```
 
 ## Configuration reference
@@ -148,8 +225,8 @@ Optional `workflow` section in `config.json`:
 ```json
 {
   "workflow": {
-    "auto_continue": true,
-    "completion_nudge": true,
+    "auto_continue": false,
+    "completion_nudge": false,
     "selector_prompt": null,
     "templates": []
   }
@@ -158,10 +235,10 @@ Optional `workflow` section in `config.json`:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `auto_continue` | boolean | `true` | Nudge the agent to continue with the next step after each turn |
-| `completion_nudge` | boolean | `true` | Prompt the agent to close and cycle when all steps are done |
+| `auto_continue` | boolean | `false` | Nudge the agent to continue with the next step after each turn |
+| `completion_nudge` | boolean | `false` | Prompt the agent to close and cycle when all steps are done |
 | `selector_prompt` | string | null | Custom prompt shown during template selection |
-| `templates` | array | `[]` | Custom template definitions (empty = use built-in defaults) |
+| `templates` | array | `[]` | Custom template definitions (empty = use the single built-in Quecto workflow) |
 
 ### Template fields
 
@@ -201,14 +278,11 @@ Optional `workflow` section in `config.json`:
 
 ## Built-in templates
 
-When `templates` is empty (or omitted), four defaults are loaded:
+When `templates` is empty (or omitted), one default is loaded:
 
 | ID | Label | Steps | Guards |
 |----|-------|-------|--------|
-| `feature` | Feature | 7 (scenarios → tests → RED → GREEN → refactor → verify → commit) | `git commit`/`git push` before commit step |
-| `fix` | Fix | 6 (reproduce → tests → RED → GREEN → verify → commit) | `git commit`/`git push` before commit step |
-| `refactor` | Refactor | 5 (safety net → baseline → refactor → verify → commit) | `git commit` before commit step |
-| `chore` | Chore | 4 (scope → change → verify → commit) | `git commit` before commit step |
+| `feature` | Feature | 17-step Quecto workflow (hooks → scenarios → tests → RED → GREEN → refactor → verify → commit → push → PR → review → merge/pull) | `git commit`/`git push` before commit step; merge before merge step |
 
 To override built-ins, define at least one template in `templates`. When any
 custom templates are present, **only** the custom templates are available —
@@ -253,7 +327,7 @@ Available actions:
 ### Template selection
 
 ```json
-{"action": "select_template", "template": "fix", "issueNumber": 42, "issueTitle": "Login bug"}
+{"action": "select_template", "template": "feature", "issueNumber": 42, "issueTitle": "Login bug"}
 ```
 
 If an issue was set in selector mode before selecting a template, it carries
@@ -322,7 +396,7 @@ When workflow is disabled, no `workflow_state` events are emitted.
 
 ## Complete config examples
 
-### Example 1: Built-in templates with guards (simplest setup)
+### Example 1: Built-in template with guards (simplest setup)
 
 ```json
 {
@@ -340,7 +414,7 @@ When workflow is disabled, no `workflow_state` events are emitted.
 quecto agent --mode uds --workflow --workflow-guards -s my-session
 ```
 
-This uses the 4 built-in templates (feature, fix, refactor, chore) with their
+This uses the single built-in feature template with its
 default guard rules. The empty `workflow: {}` uses all defaults.
 
 ### Example 2: Custom deployment workflow
@@ -354,8 +428,8 @@ default guard rules. The empty `workflow: {}` uses all defaults.
     "defaults": { "model": "openai/gpt-5.5" }
   },
   "workflow": {
-    "auto_continue": true,
-    "completion_nudge": true,
+    "auto_continue": false,
+    "completion_nudge": false,
     "selector_prompt": "Choose the workflow that best matches this deployment task.",
     "templates": [
       {

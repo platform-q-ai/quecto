@@ -165,7 +165,7 @@ async fn workflow_subsystem_registers_live_engine_handle() {
     let result = registry
         .execute(
             "workflow",
-            r#"{"action":"select_template","template":"fix"}"#,
+            r#"{"action":"select_template","template":"feature"}"#,
         )
         .await
         .unwrap();

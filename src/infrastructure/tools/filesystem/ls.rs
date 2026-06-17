@@ -1,4 +1,4 @@
-// LsTool — Pi name: "ls"
+// LsTool — tool name: "ls"
 
 use std::future::Future;
 use std::path::PathBuf;
@@ -11,7 +11,7 @@ use crate::infrastructure::security::sandbox::Sandbox;
 
 use super::resolve_and_validate;
 
-/// Default maximum number of directory entries to show (Pi parity: 500).
+/// Default maximum number of directory entries to show (Quecto compatibility: 500).
 const LS_DEFAULT_LIMIT: usize = 500;
 /// Maximum allowed limit (prevents abuse).
 const LS_MAX_LIMIT: usize = 5000;
@@ -117,7 +117,7 @@ impl Tool for LsTool {
                 }
             }
 
-            // Pi parity: empty directory message.
+            // Quecto compatibility: empty directory message.
             let over_limit = names.len() > limit;
             if names.is_empty() {
                 return Ok(ToolResult {
@@ -127,8 +127,8 @@ impl Tool for LsTool {
                 });
             }
 
-            // Pi parity: case-insensitive sort.
-            // Pi parity: case-insensitive sort.
+            // Quecto compatibility: case-insensitive sort.
+            // Quecto compatibility: case-insensitive sort.
             // sort_by_key allocates the lowercase key once per entry (not per comparison).
             names.sort_by_key(|s| s.to_lowercase());
 
@@ -145,7 +145,7 @@ impl Tool for LsTool {
                 output.truncate(end);
             }
 
-            // Pi parity: actionable truncation notices.
+            // Quecto compatibility: actionable truncation notices.
             if over_limit {
                 // Suggest doubling, but cap at LS_MAX_LIMIT to avoid suggesting an impossible value.
                 let suggested = (limit * 2).min(LS_MAX_LIMIT);
@@ -221,7 +221,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // --- Pi parity ---
+    // --- Quecto compatibility ---
 
     #[tokio::test]
     async fn test_ls_empty_directory_message() {

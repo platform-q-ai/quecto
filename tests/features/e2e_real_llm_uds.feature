@@ -82,7 +82,7 @@ Feature: E2E Real LLM UDS Agent
   Scenario: UDS set_model with provider and modelId fields
     When I start the real LLM UDS agent
     And I send set_model provider "anthropic" modelId "claude-sonnet-4-20250514"
-    And I send command "get_state" with id "gs-pi"
+    And I send command "get_state" with id "gs-quecto"
     And I close the UDS connection
     Then the UDS agent exits with code 0
     And the agent output should contain a response command "set_model" with success true

@@ -1,8 +1,8 @@
 //! Workflow progress UI for the TUI.
 //!
-//! Matches the Pi workflow extension: the widget is a single plain text line
+//! Matches the Quecto workflow extension: the widget is a single plain text line
 //! above the editor with no background, and the checklist panel is a read-only
-//! mirror of the Pi WorkflowChecklist.
+//! mirror of the Quecto WorkflowChecklist.
 
 use crate::interface::theme;
 
@@ -188,9 +188,9 @@ pub fn render(state: &WorkflowBarState, width: usize) -> Vec<String> {
     ]
 }
 
-/// Render the Pi-style workflow widget above the editor.
+/// Render the Quecto-style workflow widget above the editor.
 ///
-/// Matches the Pi extension's `updateWidget` implementation:
+/// Matches the Quecto workflow's `updateWidget` implementation:
 /// - plain text line, no background
 /// - hidden when `done == 0 && !activeIssue`
 /// - content: `Workflow #ISSUE TITLE [bar] done/total (pct%) → Step N: label [PHASE]`
@@ -262,7 +262,7 @@ pub fn render_widget(state: &WorkflowBarState, width: usize) -> Vec<String> {
 }
 
 fn is_widget_visible(state: &WorkflowBarState) -> bool {
-    // Match Pi extension: hide when nothing is started and no active issue.
+    // Match Quecto workflow: hide when nothing is started and no active issue.
     state.done > 0 || state.issue_number.is_some()
 }
 
@@ -293,7 +293,7 @@ fn render_stage_status_line(
     bg: &str,
     reset: &str,
 ) -> String {
-    let stages = ["red", "green", "refactor", "ci_cd", "review"];
+    let stages = ["setup", "red", "green", "refactor", "ci_cd", "review"];
     let current_phase = state.current_phase();
     let mut parts = Vec::new();
     for phase in stages {
@@ -348,6 +348,7 @@ fn short_step_label(label: &str) -> String {
 /// Phase display name.
 fn phase_name(phase: &str) -> &str {
     match phase {
+        "setup" => "SETUP",
         "red" => "RED",
         "green" => "GREEN",
         "refactor" => "REFACTOR",
@@ -360,6 +361,7 @@ fn phase_name(phase: &str) -> &str {
 /// True-colour background tint per phase (Alacritty-safe).
 fn phase_bg(phase: &str) -> &'static str {
     match phase {
+        "setup" => "\x1b[48;2;25;25;45m",
         "red" => "\x1b[48;2;40;10;10m",
         "green" => "\x1b[48;2;10;40;10m",
         "ci_cd" => "\x1b[48;2;10;10;40m",

@@ -1,4 +1,4 @@
-// Grep tool — ripgrep-powered file content search (Pi parity).
+// Grep tool — ripgrep-powered file content search (Quecto compatibility).
 // Uses `rg --json` for robust structured match extraction.
 // Context lines are extracted from a file cache, not rg's --context output.
 
@@ -16,9 +16,9 @@ use crate::infrastructure::tools::truncate::format_size;
 
 /// Maximum number of matches to return (default).
 const DEFAULT_MATCH_LIMIT: usize = 100;
-/// Maximum line length before truncation (chars); matches Pi's GREP_MAX_LINE_LENGTH.
+/// Maximum line length before truncation (chars); matches Quecto's GREP_MAX_LINE_LENGTH.
 const MAX_LINE_BYTES: usize = 500;
-/// Maximum total output bytes (50KB); matches Pi's DEFAULT_MAX_BYTES.
+/// Maximum total output bytes (50KB); matches Quecto's DEFAULT_MAX_BYTES.
 const MAX_OUTPUT_BYTES: usize = 50 * 1024;
 /// Maximum individual file size for context reads (1MB); prevents OOM from huge cached files.
 const MAX_FILE_CACHE_BYTES: usize = 1024 * 1024;
@@ -327,7 +327,7 @@ struct GrepFormatArgs<'a> {
     max_output_bytes: usize,
 }
 
-/// Format parsed matches with file-cache-based context extraction (Pi parity).
+/// Format parsed matches with file-cache-based context extraction (Quecto compatibility).
 /// Configuration shared across all match blocks during formatting.
 struct BlockConfig<'a> {
     ws_str: &'a str,

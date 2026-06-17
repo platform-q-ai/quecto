@@ -308,7 +308,7 @@ async fn test_edit_diff_uses_minus_plus_markers() {
         .await
         .unwrap();
     assert!(!result.is_error, "edit should succeed: {}", result.content);
-    // Pi-style line-numbered diff: "-2 line2" and "+2 CHANGED"
+    // Quecto-style line-numbered diff: "-2 line2" and "+2 CHANGED"
     assert!(
         result.content.contains("-") && result.content.contains("line2"),
         "diff should contain removed line2: {}",

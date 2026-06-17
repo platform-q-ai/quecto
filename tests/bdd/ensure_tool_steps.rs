@@ -1,4 +1,4 @@
-// BDD step definitions for ensure_tool Pi-parity scenarios (issue #150).
+// BDD step definitions for ensure_tool Quecto-compatible scenarios (issue #150).
 
 use crate::QuectoWorld;
 use cucumber::{given, then, when};

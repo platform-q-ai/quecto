@@ -56,7 +56,7 @@ impl App {
         let mut spinner_interval = tokio::time::interval(SPINNER_TICK);
         spinner_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-        // Timeout for incomplete escape sequences (matches Pi TUI's 10ms).
+        // Timeout for incomplete escape sequences (matches Quecto TUI's 10ms).
         let escape_timeout = Duration::from_millis(10);
 
         // Main event loop.
@@ -76,11 +76,10 @@ impl App {
                             continue;
                         }
                     }
-                    // Filter Kitty key release events.
-                    if self.kitty.active && crate::interface::kitty::is_key_release(&bytes) {
-                        continue;
-                    }
-                    // Feed bytes into the proper StdinBuffer.
+                    // Feed bytes into the proper StdinBuffer. Kitty release events are
+                    // filtered per decoded sequence in `process_key_sequence`; filtering
+                    // the raw read can drop a legitimate press when a press+release arrive
+                    // in the same read.
                     self.stdin_buffer.feed(&bytes);
 
                     // Drain complete sequences immediately.
@@ -191,6 +190,12 @@ impl App {
 
     /// Process a single complete key sequence from the StdinBuffer.
     pub(super) fn process_key_sequence(&mut self, seq: &[u8]) {
+        // Kitty key release events can arrive in the same stdin read as a key
+        // press. Filtering only the raw read can miss them, causing one arrow
+        // key press to be handled twice. Drop releases per decoded sequence.
+        if self.kitty.active && crate::interface::kitty::is_key_release(seq) {
+            return;
+        }
         if let Some((key, _)) = keys::parse_key(seq) {
             self.handle_key(key);
         }

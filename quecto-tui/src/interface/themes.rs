@@ -69,7 +69,7 @@ impl NamedTheme {
     }
 }
 
-/// Dark theme (default) — matches Pi TUI's dark mode.
+/// Dark theme (default) — matches Quecto TUI's dark mode.
 pub const DARK: NamedTheme = NamedTheme {
     name: "dark",
     accent: 6,   // cyan
