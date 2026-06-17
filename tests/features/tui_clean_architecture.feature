@@ -62,3 +62,6 @@ Feature: TUI Clean Architecture and executable BDD enforcement
 
   Scenario: TUI workflow bar shows stage status and hotkey tips
     Then the quecto-tui workflow bar should include stage status and hotkey tips
+
+  Scenario: TUI shows a Pi-style workflow widget above the editor
+    Then the quecto-tui workflow widget should render as a full-width yellow status bar above the editor
