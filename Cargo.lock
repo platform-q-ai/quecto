@@ -1644,6 +1644,7 @@ dependencies = [
  "dirs",
  "flate2",
  "futures",
+ "quecto-tui",
  "rand 0.8.5",
  "regex",
  "reqwest",

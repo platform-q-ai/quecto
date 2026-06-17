@@ -314,6 +314,12 @@ pub struct QuectoWorld {
     pub exec_tool: Option<Arc<ExecTool>>,
     /// Environment variable overrides for exec tool env sanitization tests
     pub exec_env_vars: HashMap<String, String>,
+    /// TUI scrollback BDD: chat view under test.
+    pub tui_chat: Option<quecto_tui::interface::components::chat::Chat>,
+    /// TUI scrollback BDD: viewport captured before streaming growth.
+    pub tui_viewport_before_stream: Vec<String>,
+    /// TUI scrollback BDD: viewport captured after streaming growth.
+    pub tui_viewport_after_stream: Vec<String>,
     /// nsjail BDD: whether nsjail availability was declared by scenario
     pub nsjail_available: Option<bool>,
     /// nsjail BDD: selected binary path used to construct ExecTool in nsjail mode

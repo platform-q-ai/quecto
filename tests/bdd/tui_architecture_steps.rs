@@ -1,6 +1,10 @@
 use super::*;
+use quecto_tui::interface::component::Component;
+use quecto_tui::interface::components::chat::{Chat, ChatEntry};
 
 const TUI_ROOT: &str = "quecto-tui/src";
+const TUI_SCROLLBACK_WIDTH: usize = 80;
+const TUI_SCROLLBACK_HEIGHT: usize = 10;
 
 #[then(expr = "the quecto-tui source tree should contain layer {string}")]
 fn then_tui_source_tree_contains_layer(_world: &mut QuectoWorld, layer: String) {
@@ -230,6 +234,51 @@ fn then_bdd_runner_executes_tui_wip_or_done(_world: &mut QuectoWorld) {
         content.contains("tag_filter") && content.contains("wip") && content.contains("done"),
         "BDD runner must support executing selected @tui scenarios when they are tagged @wip or @done"
     );
+}
+
+#[given("a quecto-tui chat view is scrolled into history")]
+fn given_tui_chat_view_scrolled_into_history(world: &mut QuectoWorld) {
+    let mut chat = streaming_history_chat();
+    chat.scroll_up(15);
+    world.tui_viewport_before_stream = visible_tui_chat_viewport(chat.render(TUI_SCROLLBACK_WIDTH));
+    world.tui_chat = Some(chat);
+}
+
+#[when("streaming assistant content extends the conversation")]
+fn when_streaming_assistant_content_extends_conversation(world: &mut QuectoWorld) {
+    let chat = world
+        .tui_chat
+        .as_mut()
+        .expect("TUI chat view should be initialized by the Given step");
+    chat.append_token("\nnew streamed line 1\nnew streamed line 2\nnew streamed line 3");
+    world.tui_viewport_after_stream = visible_tui_chat_viewport(chat.render(TUI_SCROLLBACK_WIDTH));
+}
+
+#[then("the quecto-tui chat viewport should keep showing the same historical lines")]
+fn then_tui_chat_viewport_keeps_showing_same_history(world: &mut QuectoWorld) {
+    assert_eq!(
+        world.tui_viewport_after_stream, world.tui_viewport_before_stream,
+        "streaming output should not move a user-scrolled TUI viewport toward the bottom"
+    );
+}
+
+fn streaming_history_chat() -> Chat {
+    let mut chat = Chat::new();
+    for i in 0..30 {
+        chat.add_entry(ChatEntry::User {
+            text: format!("history line {i}"),
+        });
+    }
+    chat.append_token("initial streamed response");
+    chat
+}
+
+fn visible_tui_chat_viewport(lines: Vec<String>) -> Vec<String> {
+    if lines.len() > TUI_SCROLLBACK_HEIGHT {
+        lines[lines.len() - TUI_SCROLLBACK_HEIGHT..].to_vec()
+    } else {
+        lines
+    }
 }
 
 #[then("the TUI architecture feature should not contain pending scenarios")]
