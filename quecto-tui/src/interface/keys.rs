@@ -108,9 +108,10 @@ fn parse_csi(rest: &[u8]) -> Option<(Key, usize)> {
         return parse_sgr_mouse(&rest[1..]);
     }
 
-    // Collect parameter bytes (digits and semicolons)
+    // Collect CSI parameter/intermediate bytes until the final byte.
+    // Kitty keyboard protocol may include ':' alternate-key/event fields.
     let mut i = 0;
-    while i < rest.len() && (rest[i].is_ascii_digit() || rest[i] == b';') {
+    while i < rest.len() && !(0x40..=0x7E).contains(&rest[i]) {
         i += 1;
     }
 
@@ -141,7 +142,9 @@ fn parse_csi(rest: &[u8]) -> Option<(Key, usize)> {
             b"3" => Key::Delete,
             b"5" => Key::PageUp,
             b"6" => Key::PageDown,
-            _ => Key::Unknown(rest[..=i].to_vec()),
+            _ => {
+                parse_modify_other_keys(params).unwrap_or_else(|| Key::Unknown(rest[..=i].to_vec()))
+            }
         },
         _ => Key::Unknown(rest[..=i].to_vec()),
     };
@@ -233,14 +236,24 @@ fn parse_kitty_key(params: &[u8]) -> Key {
     // Parse "keycode;modifiers" from params bytes.
     let s = std::str::from_utf8(params).unwrap_or("");
     let parts: Vec<&str> = s.split(';').collect();
-    let keycode: u32 = parts.first().and_then(|p| p.parse().ok()).unwrap_or(0);
-    let modifiers: u32 = parts
-        .get(1)
-        .and_then(|p| {
-            // Modifiers may contain event type after colon (e.g. "2:1" for press).
-            p.split(':').next().and_then(|m| m.parse().ok())
-        })
+    let key_field = parts.first().copied().unwrap_or("");
+    let mut key_fields = key_field.split(':');
+    let primary_keycode: u32 = key_fields.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+    let _shifted_keycode: Option<u32> = key_fields
+        .next()
+        .filter(|p| !p.is_empty())
+        .and_then(|p| p.parse().ok());
+    let base_layout_keycode: Option<u32> = key_fields.next().and_then(|p| p.parse().ok());
+    let keycode = effective_kitty_keycode(primary_keycode, base_layout_keycode);
+    let modifier_field = parts.get(1).copied().unwrap_or("1");
+    let mut modifier_parts = modifier_field.split(':');
+    let modifiers: u32 = modifier_parts
+        .next()
+        .and_then(|m| m.parse().ok())
         .unwrap_or(1); // 1 = no modifier in Kitty protocol
+    if matches!(modifier_parts.next(), Some("3")) {
+        return Key::Unknown(params.to_vec());
+    }
 
     // Kitty protocol: modifier value 1 = no modifier. Bits are (value - 1):
     //   bit 0 = Shift, bit 1 = Alt, bit 2 = Ctrl.
@@ -257,8 +270,10 @@ fn parse_kitty_key(params: &[u8]) -> Key {
         9 => Key::Tab,
         127 => Key::Backspace,
         27 => Key::Escape,
-        // Ctrl+Shift+letter: keycode 97..=122 (a-z) with ctrl+shift.
+        // Ctrl+Shift+letter: terminals may report either lowercase base
+        // keycodes (97..=122) or uppercase shifted keycodes (65..=90).
         97..=122 if ctrl && shift => Key::CtrlShift((keycode as u8) as char),
+        65..=90 if ctrl && shift => Key::CtrlShift(((keycode as u8) + b'a' - b'A') as char),
         // Ctrl+letter: keycode 97..=122 (a-z) with ctrl modifier only.
         // Ctrl+Alt is deliberately treated as Ctrl-only.
         97..=122 if ctrl => Key::Ctrl((keycode as u8) as char),
@@ -267,6 +282,48 @@ fn parse_kitty_key(params: &[u8]) -> Key {
         // Plain printable ASCII (keycode 32..=126) with no modifier.
         32..=126 if !ctrl && !alt && !shift => Key::Char(char::from(keycode as u8)),
         _ => Key::Unknown(params.to_vec()),
+    }
+}
+
+fn effective_kitty_keycode(primary: u32, base_layout: Option<u32>) -> u32 {
+    let is_latin_letter = (b'a' as u32..=b'z' as u32).contains(&primary)
+        || (b'A' as u32..=b'Z' as u32).contains(&primary);
+    let is_digit = (b'0' as u32..=b'9' as u32).contains(&primary);
+    let is_known_symbol = matches!(primary, 32 | 45 | 47 | 59 | 91 | 92 | 93 | 95);
+    if is_latin_letter || is_digit || is_known_symbol {
+        primary
+    } else {
+        base_layout.unwrap_or(primary)
+    }
+}
+
+fn parse_modify_other_keys(params: &[u8]) -> Option<Key> {
+    let s = std::str::from_utf8(params).ok()?;
+    let mut parts = s.split(';');
+    // xterm modifyOtherKeys mode 2: CSI 27 ; modifiers ; codepoint ~
+    if parts.next()? != "27" {
+        return None;
+    }
+    let modifiers = parts.next()?.parse::<u32>().ok()?;
+    let codepoint = parts.next()?.parse::<u32>().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+
+    let mod_bits = modifiers.saturating_sub(1);
+    let shift = mod_bits & 1 != 0;
+    let alt = mod_bits & 2 != 0;
+    let ctrl = mod_bits & 4 != 0;
+
+    match codepoint {
+        65..=90 if ctrl && shift => Some(Key::CtrlShift(((codepoint as u8) + b'a' - b'A') as char)),
+        97..=122 if ctrl && shift => Some(Key::CtrlShift((codepoint as u8) as char)),
+        65..=90 if ctrl => Some(Key::Ctrl(((codepoint as u8) + b'a' - b'A') as char)),
+        97..=122 if ctrl => Some(Key::Ctrl((codepoint as u8) as char)),
+        65..=90 if alt => Some(Key::Alt(((codepoint as u8) + b'a' - b'A') as char)),
+        97..=122 if alt => Some(Key::Alt((codepoint as u8) as char)),
+        32..=126 if !ctrl && !alt && !shift => Some(Key::Char(char::from(codepoint as u8))),
+        _ => None,
     }
 }
 
@@ -533,6 +590,74 @@ mod tests {
     fn kitty_ctrl_o() {
         let (key, _) = parse_key(b"\x1b[111;5u").unwrap();
         assert_eq!(key, Key::Ctrl('o'));
+    }
+
+    #[test]
+    fn kitty_ctrl_shift_letters_accept_lowercase_keycodes() {
+        let (key, _) = parse_key(b"\x1b[97;6u").unwrap();
+        assert_eq!(key, Key::CtrlShift('a'));
+        let (key, _) = parse_key(b"\x1b[110;6u").unwrap();
+        assert_eq!(key, Key::CtrlShift('n'));
+        let (key, _) = parse_key(b"\x1b[119;6u").unwrap();
+        assert_eq!(key, Key::CtrlShift('w'));
+    }
+
+    #[test]
+    fn kitty_ctrl_shift_letters_accept_uppercase_shifted_keycodes() {
+        let (key, _) = parse_key(b"\x1b[65;6u").unwrap();
+        assert_eq!(key, Key::CtrlShift('a'));
+        let (key, _) = parse_key(b"\x1b[78;6u").unwrap();
+        assert_eq!(key, Key::CtrlShift('n'));
+        let (key, _) = parse_key(b"\x1b[87;6u").unwrap();
+        assert_eq!(key, Key::CtrlShift('w'));
+    }
+
+    #[test]
+    fn kitty_ctrl_shift_letters_accept_event_type_suffix() {
+        let (key, _) = parse_key(b"\x1b[65;6:1u").unwrap();
+        assert_eq!(key, Key::CtrlShift('a'));
+        let (key, _) = parse_key(b"\x1b[78;6:1u").unwrap();
+        assert_eq!(key, Key::CtrlShift('n'));
+        let (key, _) = parse_key(b"\x1b[87;6:1u").unwrap();
+        assert_eq!(key, Key::CtrlShift('w'));
+    }
+
+    #[test]
+    fn kitty_ctrl_shift_letters_accept_alternate_key_fields() {
+        let (key, _) = parse_key(b"\x1b[65:65:97;6:1u").unwrap();
+        assert_eq!(key, Key::CtrlShift('a'));
+        let (key, _) = parse_key(b"\x1b[78:78:110;6:1u").unwrap();
+        assert_eq!(key, Key::CtrlShift('n'));
+        let (key, _) = parse_key(b"\x1b[87:87:119;6:1u").unwrap();
+        assert_eq!(key, Key::CtrlShift('w'));
+    }
+
+    #[test]
+    fn kitty_ctrl_shift_uses_base_layout_for_non_latin_codepoints() {
+        let (key, _) = parse_key(b"\x1b[1092::97;6:1u").unwrap();
+        assert_eq!(key, Key::CtrlShift('a'));
+    }
+
+    #[test]
+    fn kitty_ctrl_shift_release_event_is_not_actionable() {
+        let (key, _) = parse_key(b"\x1b[65;6:3u").unwrap();
+        assert!(matches!(key, Key::Unknown(_)));
+    }
+
+    #[test]
+    fn modify_other_keys_ctrl_shift_letters() {
+        let (key, _) = parse_key(b"\x1b[27;6;65~").unwrap();
+        assert_eq!(key, Key::CtrlShift('a'));
+        let (key, _) = parse_key(b"\x1b[27;6;78~").unwrap();
+        assert_eq!(key, Key::CtrlShift('n'));
+        let (key, _) = parse_key(b"\x1b[27;6;87~").unwrap();
+        assert_eq!(key, Key::CtrlShift('w'));
+    }
+
+    #[test]
+    fn modify_other_keys_ignores_non_pi_two_field_tilde_variant() {
+        let (key, _) = parse_key(b"\x1b[65;6~").unwrap();
+        assert!(matches!(key, Key::Unknown(_)));
     }
 
     #[test]
