@@ -549,3 +549,40 @@ fn test_validate_config_path_single_dot_ok() {
     let result = validate_config_path("./config.json");
     assert!(result.is_ok());
 }
+
+#[test]
+fn with_event_forwarding_sets_broadcast_and_parent() {
+    let (tx, _rx) = tokio::sync::broadcast::channel::<String>(4);
+    let tool =
+        SpawnTool::new(vec![], true).with_event_forwarding(Some(tx), Some("root".to_string()));
+    // Fields are private; the Debug projection exercises the builder + fields.
+    assert!(format!("{tool:?}").contains("root"));
+}
+
+#[tokio::test]
+async fn execute_in_stub_mode_returns_running_message() {
+    // SpawnTool::new has an empty base_dir → execute() runs in stub mode and
+    // does not spawn a real process.
+    let tool = SpawnTool::new(vec![], true);
+    let result = tool
+        .execute(r#"{"task":"do it","agent_id":"probe"}"#)
+        .await
+        .unwrap();
+    assert!(
+        !result.is_error,
+        "stub execute should succeed: {}",
+        result.content
+    );
+    assert!(result.content.contains("probe"));
+}
+
+#[tokio::test]
+async fn execute_with_invalid_args_is_error() {
+    let tool = SpawnTool::new(vec![], true);
+    let result = tool
+        .execute(r#"{"workflow_spec":{"no":"template"}}"#)
+        .await
+        .unwrap();
+    assert!(result.is_error);
+    assert!(result.content.contains("invalid workflow_spec"));
+}

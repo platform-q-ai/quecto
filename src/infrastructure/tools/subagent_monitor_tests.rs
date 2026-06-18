@@ -358,3 +358,150 @@ fn test_notify_from_parsed_no_type_is_noop() {
     notify_from_parsed(Some(&tx), "worker", 1, &value);
     assert!(rx.try_recv().is_err());
 }
+
+#[test]
+fn forward_child_workflow_event_retags_workflow_state() {
+    let line = r#"{"type":"workflow_state","mode":"active","progress":{"done":1,"total":3}}"#;
+    let out = forward_child_workflow_event(line, "child", Some("root")).expect("forwarded");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["type"], "workflow_state");
+    assert_eq!(v["agent_id"], "child");
+    assert_eq!(v["parent_id"], "root");
+}
+
+#[test]
+fn forward_child_workflow_event_ignores_non_workflow_lines() {
+    assert!(forward_child_workflow_event(r#"{"type":"agent_end"}"#, "child", None).is_none());
+    assert!(forward_child_workflow_event("not json", "child", None).is_none());
+}
+
+#[test]
+fn apply_event_parsed_records_workflow_snapshot() {
+    let mut entry = test_entry();
+    let value: serde_json::Value = serde_json::from_str(
+        r#"{"type":"workflow_state","mode":"complete","progress":{"done":3,"total":3}}"#,
+    )
+    .unwrap();
+    apply_event_parsed(&mut entry, &value);
+    let wf = entry.workflow.expect("workflow snapshot recorded");
+    assert_eq!(wf.mode, "complete");
+    assert_eq!(wf.steps_completed, 3);
+    assert_eq!(wf.steps_total, 3);
+}
+
+#[test]
+fn handle_monitor_line_records_and_forwards_workflow_state() {
+    let registry = super::super::subagent_registry::new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("child".to_string(), test_entry());
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(4);
+    let line = r#"{"type":"workflow_state","mode":"active","progress":{"done":2,"total":4}}"#;
+    super::handle_monitor_line(line, "child", &registry, None, Some(&tx), Some("root"));
+    // R-B3: the child's workflow snapshot is recorded on its entry.
+    let wf = registry
+        .lock()
+        .unwrap()
+        .get("child")
+        .unwrap()
+        .workflow
+        .clone()
+        .expect("workflow recorded");
+    assert_eq!(wf.steps_completed, 2);
+    assert_eq!(wf.steps_total, 4);
+    // R-B2: the event is forwarded to the parent stream, re-tagged.
+    let fwd: serde_json::Value = serde_json::from_str(&rx.try_recv().unwrap()).unwrap();
+    assert_eq!(fwd["agent_id"], "child");
+    assert_eq!(fwd["parent_id"], "root");
+}
+
+#[test]
+fn handle_monitor_line_drops_oversized_line() {
+    let registry = super::super::subagent_registry::new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("child".to_string(), test_entry());
+    let big = format!(
+        r#"{{"type":"workflow_state","x":"{}"}}"#,
+        "z".repeat(2_000_000)
+    );
+    super::handle_monitor_line(&big, "child", &registry, None, None, None);
+    assert!(
+        registry
+            .lock()
+            .unwrap()
+            .get("child")
+            .unwrap()
+            .workflow
+            .is_none(),
+        "oversized line must be dropped"
+    );
+}
+
+#[test]
+fn forward_child_workflow_event_with_no_parent_yields_null_parent() {
+    let line = r#"{"type":"workflow_state","mode":"active"}"#;
+    let out = forward_child_workflow_event(line, "child", None).expect("forwarded");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["agent_id"], "child");
+    assert!(v["parent_id"].is_null());
+}
+
+#[test]
+fn apply_event_parsed_workflow_state_defaults_missing_progress() {
+    let mut entry = test_entry();
+    let value: serde_json::Value =
+        serde_json::from_str(r#"{"type":"workflow_state","mode":"active"}"#).unwrap();
+    apply_event_parsed(&mut entry, &value);
+    let wf = entry.workflow.expect("workflow recorded");
+    assert_eq!(wf.mode, "active");
+    assert_eq!(wf.steps_completed, 0);
+    assert_eq!(wf.steps_total, 0);
+}
+
+#[tokio::test]
+async fn monitor_loop_forwards_child_workflow_state_to_broadcast() {
+    use tokio::io::AsyncWriteExt;
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("child.sock");
+    let listener = tokio::net::UnixListener::bind(&sock).unwrap();
+    let registry = super::super::subagent_registry::new_registry();
+    registry
+        .lock()
+        .unwrap()
+        .insert("child".to_string(), test_entry());
+    let (btx, mut brx) = tokio::sync::broadcast::channel::<String>(8);
+    let handle = spawn_monitor_task(
+        "child".to_string(),
+        sock.clone(),
+        registry.clone(),
+        None,
+        Some(btx),
+        Some("root".to_string()),
+    );
+    let (mut stream, _) = listener.accept().await.unwrap();
+    stream
+        .write_all(b"{\"type\":\"workflow_state\",\"mode\":\"active\",\"progress\":{\"done\":1,\"total\":2}}\n")
+        .await
+        .unwrap();
+    let line = tokio::time::timeout(std::time::Duration::from_secs(3), brx.recv())
+        .await
+        .expect("monitor should forward within 3s")
+        .expect("broadcast line");
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(v["agent_id"], "child");
+    assert_eq!(v["parent_id"], "root");
+    // And the child's snapshot was recorded on the entry.
+    assert!(
+        registry
+            .lock()
+            .unwrap()
+            .get("child")
+            .unwrap()
+            .workflow
+            .is_some()
+    );
+    handle.abort();
+}
