@@ -232,8 +232,11 @@ pub fn render_widget(state: &WorkflowBarState, width: usize) -> Vec<String> {
         })
         .unwrap_or_else(|| "✓ Workflow complete!".to_string());
 
+    // `▸ Workflow` panel header mirrors the subagent bar's `▸ Subagents` so the
+    // two widgets read as sibling panels with a shared left gutter.
     let line = format!(
-        "{}{}{}{}{}",
+        "  {} {}{}{}{}{}",
+        theme::dim("▸"),
         theme::accent(&theme::bold("Workflow")),
         issue_part,
         bar,
@@ -252,13 +255,79 @@ pub fn render_widget(state: &WorkflowBarState, width: usize) -> Vec<String> {
         "off"
     };
     let hints = format!(
-        "  {}",
+        "    {}",
         theme::dim(&format!(
             "Ctrl+Shift+A auto:{auto} · Ctrl+Shift+N nudge:{nudge}"
         ))
     );
 
-    vec![truncate_line(&line, width), truncate_line(&hints, width)]
+    let mut out = vec![truncate_line(&line, width)];
+    // Phase-pill overview, derived from the actual steps so it generalises to
+    // arbitrary V2 templates rather than the hardcoded TDD phase set.
+    if let Some(pills) = phase_pill_line(state) {
+        out.push(truncate_line(&pills, width));
+    }
+    out.push(truncate_line(&hints, width));
+    out
+}
+
+/// Normalise phase keys so synonyms collapse to one pill (`ci` → `ci_cd`).
+fn normalize_phase(phase: &str) -> &str {
+    match phase {
+        "ci" => "ci_cd",
+        other => other,
+    }
+}
+
+/// Display label for a phase: known phases use their canonical name, unknown
+/// (custom-template) phases fall back to their upper-cased key.
+fn phase_display(phase: &str) -> String {
+    match phase {
+        "setup" => "SETUP".to_string(),
+        "red" => "RED".to_string(),
+        "green" => "GREEN".to_string(),
+        "refactor" => "REFACTOR".to_string(),
+        "ci_cd" => "CI/CD".to_string(),
+        "review" => "REVIEW".to_string(),
+        other => other.to_uppercase(),
+    }
+}
+
+/// Build the phase-pill overview line: one marker per distinct phase, in the
+/// order phases first appear in the step list. `✓` done, `●` current, `○` pending.
+/// Returns `None` when there are no steps to summarise.
+fn phase_pill_line(state: &WorkflowBarState) -> Option<String> {
+    let mut phases: Vec<&str> = Vec::new();
+    for step in &state.steps {
+        let p = normalize_phase(&step.phase);
+        if !phases.contains(&p) {
+            phases.push(p);
+        }
+    }
+    if phases.is_empty() {
+        return None;
+    }
+    let current = state.current_phase().map(normalize_phase);
+    let parts: Vec<String> = phases
+        .iter()
+        .map(|&p| {
+            let all_done = state
+                .steps
+                .iter()
+                .filter(|s| normalize_phase(&s.phase) == p)
+                .all(|s| s.done);
+            let marker = if all_done {
+                theme::success("✓")
+            } else if current == Some(p) {
+                theme::accent("●")
+            } else {
+                theme::dim("○")
+            };
+            format!("{} {}", marker, phase_display(p))
+        })
+        .collect();
+    // Nested under the `▸ Workflow` header (column 4), aligned with the hints row.
+    Some(format!("    {}", parts.join("  ")))
 }
 
 fn is_widget_visible(state: &WorkflowBarState) -> bool {

@@ -1,16 +1,41 @@
 //! Subagent status bar widget (#525).
 //!
-//! Renders one line per spawned subagent with a progress-bar style indicator.
-//! Hidden when no subagents exist.
+//! Renders a `▸ Subagents` panel header followed by one indented row per spawned
+//! subagent: an animated spinner (or terminal-state glyph), the agent id, its
+//! status, how long it has been alive, and a short context (current tool, or
+//! error message). The header/indent layout and colour semantics
+//! (green=done, cyan=active, red=error, dim=pending) mirror the workflow widget
+//! so the two read as sibling panels. Hidden when no subagents exist.
 
 use crate::infrastructure::client::SubagentInfoEvent;
 use crate::interface::component::Component;
 use crate::interface::theme;
 
+/// Braille spinner frames — matches the main spinner (`components/spinner.rs`)
+/// so a running subagent animates identically to the agent spinner.
+const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// A single subagent's display row: wire info plus client-computed liveness.
+#[derive(Debug, Clone)]
+pub struct SubagentRow {
+    pub info: SubagentInfoEvent,
+    /// Seconds the agent has been alive (client-side clock; frozen on exit).
+    pub elapsed_secs: u64,
+}
+
+impl SubagentRow {
+    /// Convenience constructor used by callers and tests.
+    pub fn new(info: SubagentInfoEvent, elapsed_secs: u64) -> Self {
+        Self { info, elapsed_secs }
+    }
+}
+
 /// Widget that renders live subagent status bars.
 #[derive(Debug)]
 pub struct SubagentBar {
-    agents: Vec<SubagentInfoEvent>,
+    rows: Vec<SubagentRow>,
+    /// Animation frame for running-agent spinners.
+    frame: usize,
     cache: Option<Vec<String>>,
     cached_width: usize,
 }
@@ -18,21 +43,23 @@ pub struct SubagentBar {
 impl SubagentBar {
     pub fn new() -> Self {
         Self {
-            agents: Vec::new(),
+            rows: Vec::new(),
+            frame: 0,
             cache: None,
             cached_width: 0,
         }
     }
 
-    /// Update the agent list (full replacement).
-    pub fn update(&mut self, agents: Vec<SubagentInfoEvent>) {
-        self.agents = agents;
+    /// Update the agent rows and animation frame (full replacement).
+    pub fn update(&mut self, rows: Vec<SubagentRow>, frame: usize) {
+        self.rows = rows;
+        self.frame = frame;
         self.cache = None;
     }
 
     /// Whether there are any agents to display.
     pub fn is_empty(&self) -> bool {
-        self.agents.is_empty()
+        self.rows.is_empty()
     }
 }
 
@@ -44,7 +71,7 @@ impl Default for SubagentBar {
 
 impl Component for SubagentBar {
     fn render(&mut self, width: usize) -> Vec<String> {
-        if self.agents.is_empty() {
+        if self.rows.is_empty() {
             return Vec::new();
         }
         if width != self.cached_width {
@@ -53,20 +80,24 @@ impl Component for SubagentBar {
         if let Some(ref cache) = self.cache {
             return cache.clone();
         }
-        let max_name = 20;
         let name_width = self
-            .agents
+            .rows
             .iter()
-            .map(|a| a.agent_id.len())
+            .map(|r| r.info.agent_id.chars().count())
             .max()
             .unwrap_or(0)
-            .clamp(4, max_name);
-        let bar_width = if width > 60 { 14 } else { 8 };
-        let lines: Vec<String> = self
-            .agents
-            .iter()
-            .map(|a| format_agent(a, name_width, bar_width))
-            .collect();
+            .clamp(4, 20);
+
+        let mut lines: Vec<String> = Vec::with_capacity(self.rows.len() + 1);
+        // Panel header (always present) gives the block an identity and mirrors
+        // the workflow widget's `▸ Workflow` header for visual alignment.
+        lines.push(header_line(&self.rows));
+        lines.extend(
+            self.rows
+                .iter()
+                .map(|r| format_agent(r, name_width, self.frame)),
+        );
+
         self.cache = Some(lines.clone());
         self.cached_width = width;
         lines
@@ -82,17 +113,68 @@ fn sanitize(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).collect()
 }
 
-/// Format a single agent line.
-fn format_agent(info: &SubagentInfoEvent, name_width: usize, bar_width: usize) -> String {
-    let name = sanitize(&info.agent_id);
-    let name = pad_right(&name, name_width);
-    let bar = render_bar(&info.status, bar_width);
+/// Panel header: `▸ Subagents  X running · Y error · Z done`.
+fn header_line(rows: &[SubagentRow]) -> String {
+    let mut running = 0usize;
+    let mut error = 0usize;
+    let mut done = 0usize;
+    for r in rows {
+        match r.info.status.as_str() {
+            "running" | "starting" => running += 1,
+            "error" => error += 1,
+            "idle" | "exited" => done += 1,
+            _ => {}
+        }
+    }
+    let mut counts = Vec::new();
+    if running > 0 {
+        counts.push(theme::accent(&format!("{running} running")));
+    }
+    if error > 0 {
+        counts.push(theme::red(&format!("{error} error")));
+    }
+    if done > 0 {
+        counts.push(theme::dim(&format!("{done} done")));
+    }
+    let title = theme::accent(&theme::bold("Subagents"));
+    if counts.is_empty() {
+        format!("  {} {}", theme::dim("▸"), title)
+    } else {
+        format!(
+            "  {} {}  {}",
+            theme::dim("▸"),
+            title,
+            counts.join(theme::dim(" · ").as_str())
+        )
+    }
+}
+
+/// Format a single agent row, indented to nest under the panel header.
+fn format_agent(row: &SubagentRow, name_width: usize, frame: usize) -> String {
+    let info = &row.info;
+    let glyph = leading_glyph(&info.status, frame);
+    let name = pad_right(&sanitize(&info.agent_id), name_width);
     let status_label = status_styled(&info.status);
+    let elapsed = theme::dim(&fmt_elapsed(row.elapsed_secs));
     let context = agent_context(info);
     if context.is_empty() {
-        format!("  {} {} {}", name, bar, status_label)
+        format!("    {} {} {} {}", glyph, name, status_label, elapsed)
     } else {
-        format!("  {} {} {} · {}", name, bar, status_label, context)
+        format!(
+            "    {} {} {} {} · {}",
+            glyph, name, status_label, elapsed, context
+        )
+    }
+}
+
+/// Leading glyph: animated spinner while active, terminal glyph otherwise.
+fn leading_glyph(status: &str, frame: usize) -> String {
+    match status {
+        "running" | "starting" => theme::spinner(SPINNER_FRAMES[frame % SPINNER_FRAMES.len()]),
+        "idle" => theme::green("✓"),
+        "error" => theme::red("✗"),
+        "exited" => theme::dim("•"),
+        _ => theme::dim("·"),
     }
 }
 
@@ -106,29 +188,21 @@ fn pad_right(s: &str, width: usize) -> String {
     }
 }
 
-/// Render a progress bar for the given status.
-fn render_bar(status: &str, width: usize) -> String {
-    let (fill, empty) = match status {
-        "running" => (width / 2, width - width / 2),
-        "idle" => (width, 0),
-        "error" => (width / 3, width - width / 3),
-        "starting" => (1.min(width), width.saturating_sub(1)),
-        _ => (0, width),
-    };
-    let bar_content = format!("{}{}", "█".repeat(fill), "░".repeat(empty));
-    let colored = match status {
-        "running" => theme::blue(&bar_content),
-        "idle" => theme::green(&bar_content),
-        "error" => theme::red(&bar_content),
-        _ => theme::dim(&bar_content),
-    };
-    format!("[{}]", colored)
+/// Format an elapsed duration compactly: `12s`, `1m12s`, `2h05m`.
+fn fmt_elapsed(secs: u64) -> String {
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
+        format!("{}m{:02}s", secs / 60, secs % 60)
+    } else {
+        format!("{}h{:02}m", secs / 3600, (secs % 3600) / 60)
+    }
 }
 
 /// Style the status label text.
 fn status_styled(status: &str) -> String {
     match status {
-        "running" => theme::blue("Running"),
+        "running" => theme::accent("Running"),
         "idle" => theme::green("Idle"),
         "error" => theme::red("Error"),
         "starting" => theme::dim("Starting"),
@@ -181,6 +255,19 @@ mod tests {
         }
     }
 
+    fn row(id: &str, status: &str, tool: Option<&str>, error: Option<&str>) -> SubagentRow {
+        SubagentRow::new(make_info(id, status, tool, error), 0)
+    }
+
+    fn update(bar: &mut SubagentBar, rows: Vec<SubagentRow>) {
+        bar.update(rows, 0);
+    }
+
+    /// True if any rendered line contains the needle.
+    fn any_contains(lines: &[String], needle: &str) -> bool {
+        lines.iter().any(|l| l.contains(needle))
+    }
+
     #[test]
     fn empty_bar_renders_nothing() {
         let mut bar = SubagentBar::new();
@@ -190,73 +277,110 @@ mod tests {
     #[test]
     fn single_running_agent() {
         let mut bar = SubagentBar::new();
-        bar.update(vec![make_info("reviewer", "running", Some("bash"), None)]);
+        update(
+            &mut bar,
+            vec![row("reviewer", "running", Some("bash"), None)],
+        );
         let lines = bar.render(80);
-        assert_eq!(lines.len(), 1);
-        assert!(lines[0].contains("reviewer"));
-        assert!(lines[0].contains("Running"));
-        assert!(lines[0].contains("bash"));
+        // panel header + 1 agent row
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("Subagents"));
+        assert!(lines[1].contains("reviewer"));
+        assert!(lines[1].contains("Running"));
+        assert!(lines[1].contains("bash"));
     }
 
     #[test]
     fn idle_agent_no_context() {
         let mut bar = SubagentBar::new();
-        bar.update(vec![make_info("fmt", "idle", None, None)]);
+        update(&mut bar, vec![row("fmt", "idle", None, None)]);
         let lines = bar.render(80);
-        assert_eq!(lines.len(), 1);
-        assert!(lines[0].contains("Idle"));
-        assert!(!lines[0].contains("·"));
+        assert_eq!(lines.len(), 2);
+        assert!(lines[1].contains("Idle"));
+        // no `·` context separator on the agent row
+        assert!(!lines[1].contains("·"));
     }
 
     #[test]
     fn error_agent_shows_error() {
         let mut bar = SubagentBar::new();
-        bar.update(vec![make_info(
-            "lint",
-            "error",
-            None,
-            Some("tool 'bash' returned error"),
-        )]);
+        update(
+            &mut bar,
+            vec![row(
+                "lint",
+                "error",
+                None,
+                Some("tool 'bash' returned error"),
+            )],
+        );
         let lines = bar.render(80);
-        assert_eq!(lines.len(), 1);
-        assert!(lines[0].contains("Error"));
-        assert!(lines[0].contains("tool 'bash' returned error"));
+        assert_eq!(lines.len(), 2);
+        assert!(lines[1].contains("Error"));
+        assert!(lines[1].contains("tool 'bash' returned error"));
     }
 
     #[test]
-    fn multiple_agents_render_multiple_lines() {
+    fn multiple_agents_render_header_plus_lines() {
         let mut bar = SubagentBar::new();
-        bar.update(vec![
-            make_info("a", "running", Some("read"), None),
-            make_info("b", "idle", None, None),
-            make_info("c", "exited", None, None),
-        ]);
-        assert_eq!(bar.render(80).len(), 3);
+        update(
+            &mut bar,
+            vec![
+                row("a", "running", Some("read"), None),
+                row("b", "idle", None, None),
+                row("c", "exited", None, None),
+            ],
+        );
+        let lines = bar.render(80);
+        // header + 3 agents
+        assert_eq!(lines.len(), 4);
+        assert!(lines[0].contains("Subagents"));
+        assert!(lines[0].contains("1 running"));
+        assert!(lines[0].contains("2 done"));
+    }
+
+    #[test]
+    fn elapsed_is_rendered() {
+        let mut bar = SubagentBar::new();
+        bar.update(
+            vec![SubagentRow::new(make_info("a", "running", None, None), 72)],
+            0,
+        );
+        assert!(any_contains(&bar.render(80), "1m12s"));
+    }
+
+    #[test]
+    fn running_agent_shows_spinner_frame() {
+        let mut bar = SubagentBar::new();
+        bar.update(
+            vec![SubagentRow::new(make_info("a", "running", None, None), 0)],
+            2,
+        );
+        assert!(any_contains(&bar.render(80), SPINNER_FRAMES[2]));
     }
 
     #[test]
     fn update_replaces_agents() {
         let mut bar = SubagentBar::new();
-        bar.update(vec![make_info("a", "running", None, None)]);
-        assert_eq!(bar.render(80).len(), 1);
-        bar.update(vec![]);
+        update(&mut bar, vec![row("a", "running", None, None)]);
+        assert!(!bar.render(80).is_empty());
+        update(&mut bar, vec![]);
         assert!(bar.render(80).is_empty());
     }
 
     #[test]
     fn cache_is_invalidated_on_update() {
         let mut bar = SubagentBar::new();
-        bar.update(vec![make_info("a", "running", None, None)]);
+        update(&mut bar, vec![row("a", "running", None, None)]);
         let _ = bar.render(80);
         assert!(bar.cache.is_some());
-        bar.update(vec![make_info("b", "idle", None, None)]);
+        update(&mut bar, vec![row("b", "idle", None, None)]);
         assert!(bar.cache.is_none());
     }
 
     #[test]
     fn invalidate_clears_cache() {
         let mut bar = SubagentBar::new();
-        bar.update(vec![make_info("a", "idle", None, None)]);
+        update(&mut bar, vec![row("a", "idle", None, None)]);
         let _ = bar.render(80);
         bar.invalidate();
         assert!(bar.cache.is_none());
@@ -265,24 +389,31 @@ mod tests {
     #[test]
     fn narrow_terminal_still_renders() {
         let mut bar = SubagentBar::new();
-        bar.update(vec![make_info("x", "running", Some("bash"), None)]);
+        update(&mut bar, vec![row("x", "running", Some("bash"), None)]);
         let lines = bar.render(30);
-        assert_eq!(lines.len(), 1);
-        assert!(lines[0].contains("Running"));
+        assert_eq!(lines.len(), 2);
+        assert!(any_contains(&lines, "Running"));
     }
 
     #[test]
     fn starting_status() {
         let mut bar = SubagentBar::new();
-        bar.update(vec![make_info("init", "starting", None, None)]);
-        assert!(bar.render(80)[0].contains("Starting"));
+        update(&mut bar, vec![row("init", "starting", None, None)]);
+        assert!(any_contains(&bar.render(80), "Starting"));
     }
 
     #[test]
     fn exited_status() {
         let mut bar = SubagentBar::new();
-        bar.update(vec![make_info("done", "exited", None, None)]);
-        assert!(bar.render(80)[0].contains("Exited"));
+        update(&mut bar, vec![row("done", "exited", None, None)]);
+        assert!(any_contains(&bar.render(80), "Exited"));
+    }
+
+    #[test]
+    fn fmt_elapsed_formats() {
+        assert_eq!(fmt_elapsed(5), "5s");
+        assert_eq!(fmt_elapsed(72), "1m12s");
+        assert_eq!(fmt_elapsed(3 * 3600 + 5 * 60), "3h05m");
     }
 
     #[test]
@@ -310,18 +441,17 @@ mod tests {
     #[test]
     fn cache_invalidated_on_width_change() {
         let mut bar = SubagentBar::new();
-        bar.update(vec![make_info("a", "idle", None, None)]);
+        update(&mut bar, vec![row("a", "idle", None, None)]);
         let _ = bar.render(80);
         assert!(bar.cache.is_some());
         let _ = bar.render(40); // different width
-        // Cache was rebuilt for new width
         assert_eq!(bar.cached_width, 40);
     }
 
     #[test]
     fn unknown_status_shows_unknown() {
         let mut bar = SubagentBar::new();
-        bar.update(vec![make_info("x", "weird", None, None)]);
-        assert!(bar.render(80)[0].contains("Unknown"));
+        update(&mut bar, vec![row("x", "weird", None, None)]);
+        assert!(any_contains(&bar.render(80), "Unknown"));
     }
 }

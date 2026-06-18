@@ -37,15 +37,32 @@ impl App {
         if self.subagent_local.is_empty() {
             self.widgets_above.clear("subagents");
         } else {
-            let infos: Vec<crate::infrastructure::client::SubagentInfoEvent> = self
+            let now = tokio::time::Instant::now();
+            let rows: Vec<SubagentRow> = self
                 .subagent_local
                 .values()
-                .map(|t| t.info.clone())
+                .map(|t| SubagentRow::new(t.info.clone(), t.elapsed_secs(now)))
                 .collect();
             let mut bar = SubagentBar::new();
-            bar.update(infos);
+            bar.update(rows, self.subagent_frame);
             self.widgets_above.set("subagents", Box::new(bar));
         }
+    }
+
+    /// Advance the subagent spinner animation. Returns `true` if a re-render is
+    /// needed (i.e. at least one agent is active). Driven by the spinner tick so
+    /// running agents animate and their elapsed-time clocks stay current.
+    pub(super) fn tick_subagent_animation(&mut self) -> bool {
+        let any_active = self
+            .subagent_local
+            .values()
+            .any(|t| matches!(t.info.status.as_str(), "running" | "starting"));
+        if !any_active {
+            return false;
+        }
+        self.subagent_frame = self.subagent_frame.wrapping_add(1);
+        self.rebuild_subagent_bar();
+        true
     }
 
     /// GC exited subagent bars whose grace period has elapsed (#540).

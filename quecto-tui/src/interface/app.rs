@@ -21,7 +21,7 @@ use crate::interface::components::model_selector::{ModelSelector, ModelSelectorR
 use crate::interface::components::notification::{Notification, NotificationStack, NotifyLevel};
 use crate::interface::components::select_list::{SelectItem, SelectList, SelectResult};
 use crate::interface::components::spinner::Spinner;
-use crate::interface::components::subagent_bar::SubagentBar;
+use crate::interface::components::subagent_bar::{SubagentBar, SubagentRow};
 use crate::interface::components::widget::WidgetContainer;
 use crate::interface::components::workflow_bar;
 use crate::interface::keys::{self, Key};
@@ -193,6 +193,8 @@ pub struct App {
     /// Updated from tool events (spawn/agent_cmd) and server pushes.
     /// Entries track expiry timestamps for auto-removal (#540).
     subagent_local: std::collections::BTreeMap<String, TrackedSubagent>,
+    /// Animation frame for the subagent spinner, advanced on each spinner tick.
+    subagent_frame: usize,
     /// Active mouse text selection (#528).
     selection: Option<TextSelection>,
     /// Workflow header bar state (#563).
@@ -236,6 +238,7 @@ impl App {
             model_selector: None,
             resume_selector: None,
             subagent_local: std::collections::BTreeMap::new(),
+            subagent_frame: 0,
             selection: None,
             workflow_bar: workflow_bar::WorkflowBarState::default(),
             workflow_auto_continue: false,
@@ -618,18 +621,31 @@ fn sanitize_agent_id(id: &str) -> String {
 #[derive(Debug, Clone)]
 struct TrackedSubagent {
     info: crate::infrastructure::client::SubagentInfoEvent,
+    /// When the subagent was first observed (for the elapsed-time display).
+    started_at: tokio::time::Instant,
     /// When the subagent entered the "exited" state. `None` if still active.
     exited_at: Option<tokio::time::Instant>,
 }
 
 impl TrackedSubagent {
     fn new(info: crate::infrastructure::client::SubagentInfoEvent) -> Self {
+        let now = tokio::time::Instant::now();
         let exited_at = if info.status == STATUS_EXITED {
-            Some(tokio::time::Instant::now())
+            Some(now)
         } else {
             None
         };
-        Self { info, exited_at }
+        Self {
+            info,
+            started_at: now,
+            exited_at,
+        }
+    }
+
+    /// Seconds the agent has been alive, frozen once it has exited.
+    fn elapsed_secs(&self, now: tokio::time::Instant) -> u64 {
+        let end = self.exited_at.unwrap_or(now);
+        end.saturating_duration_since(self.started_at).as_secs()
     }
 
     /// Update the info, recording exited_at on transition to "exited".
