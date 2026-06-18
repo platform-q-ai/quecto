@@ -45,15 +45,17 @@ impl Markdown {
         }
 
         let opts = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES;
-        let parser = Parser::new_ext(&self.text, opts);
+        let sanitized_text = sanitize_markdown_source(&self.text);
+        let parser = Parser::new_ext(&sanitized_text, opts);
 
-        let mut lines: Vec<String> = Vec::new();
+        let mut lines: Vec<RenderedLine> = Vec::new();
         let mut current_line = String::new();
+        let mut current_line_hanging_indent: Option<usize> = None;
         let mut in_code_block = false;
         let mut code_block_lang = String::new();
         let mut code_block_content = String::new();
         let mut list_depth: usize = 0;
-        let mut ordered_list_index: Vec<u64> = Vec::new();
+        let mut list_stack: Vec<ListState> = Vec::new();
         let mut in_blockquote = false;
         let mut blockquote_lines: Vec<String> = Vec::new();
         let mut heading_level: u8 = 0;
@@ -62,6 +64,16 @@ impl Markdown {
         let mut current_row: Vec<String> = Vec::new();
         let mut current_cell = String::new();
 
+        macro_rules! flush_current_line {
+            () => {
+                flush_line(
+                    &mut current_line,
+                    &mut lines,
+                    &mut current_line_hanging_indent,
+                )
+            };
+        }
+
         // Style stack for nested inline styles.
         let mut style_stack: Vec<InlineStyle> = Vec::new();
 
@@ -69,23 +81,25 @@ impl Markdown {
             match event {
                 Event::Start(tag) => match tag {
                     Tag::Heading { level, .. } => {
-                        flush_line(&mut current_line, &mut lines);
+                        flush_current_line!();
                         heading_level = level as u8;
                     }
                     Tag::Paragraph => {
-                        flush_line(&mut current_line, &mut lines);
+                        flush_current_line!();
                     }
                     Tag::CodeBlock(kind) => {
-                        flush_line(&mut current_line, &mut lines);
+                        flush_current_line!();
                         in_code_block = true;
                         code_block_lang = match kind {
-                            pulldown_cmark::CodeBlockKind::Fenced(lang) => lang.to_string(),
+                            pulldown_cmark::CodeBlockKind::Fenced(lang) => {
+                                sanitize_for_display(&lang)
+                            }
                             _ => String::new(),
                         };
                         code_block_content.clear();
                     }
                     Tag::Table(_alignments) => {
-                        flush_line(&mut current_line, &mut lines);
+                        flush_current_line!();
                         in_table = true;
                         table_rows.clear();
                     }
@@ -96,25 +110,27 @@ impl Markdown {
                         current_cell = String::new();
                     }
                     Tag::List(start) => {
-                        flush_line(&mut current_line, &mut lines);
+                        flush_current_line!();
                         list_depth += 1;
-                        ordered_list_index.push(start.unwrap_or(1));
+                        list_stack.push(ListState::from_start(start));
                     }
                     Tag::Item => {
-                        flush_line(&mut current_line, &mut lines);
+                        flush_current_line!();
                         let indent = "  ".repeat(list_depth.saturating_sub(1));
-                        let bullet = if let Some(idx) = ordered_list_index.last_mut() {
-                            // Check if parent list is ordered.
-                            let num = *idx;
-                            *idx += 1;
-                            format!("{}{}. ", indent, num)
-                        } else {
-                            format!("{}{} ", indent, theme::accent("•"))
+                        let marker = match list_stack.last_mut() {
+                            Some(ListState::Ordered { next }) => {
+                                let num = *next;
+                                *next = next.saturating_add(1);
+                                format!("{}{}. ", indent, num)
+                            }
+                            _ => format!("{}{} ", indent, theme::accent("•")),
                         };
-                        current_line.push_str(&bullet);
+                        let marker_width = visible_width(&marker);
+                        current_line.push_str(&marker);
+                        current_line_hanging_indent = Some(marker_width);
                     }
                     Tag::BlockQuote(_) => {
-                        flush_line(&mut current_line, &mut lines);
+                        flush_current_line!();
                         in_blockquote = true;
                         blockquote_lines.clear();
                     }
@@ -140,8 +156,8 @@ impl Markdown {
                         // Render the collected table.
                         if !table_rows.is_empty() {
                             let rendered = render_table(&table_rows, content_width);
-                            lines.extend(rendered);
-                            lines.push(String::new());
+                            lines.extend(rendered.into_iter().map(RenderedLine::plain));
+                            lines.push(RenderedLine::blank());
                         }
                         in_table = false;
                         table_rows.clear();
@@ -166,48 +182,52 @@ impl Markdown {
                                 text
                             ))),
                         };
-                        lines.push(styled);
-                        lines.push(String::new()); // spacing after heading
+                        lines.push(RenderedLine::plain(styled));
+                        lines.push(RenderedLine::blank()); // spacing after heading
                         heading_level = 0;
                     }
                     TagEnd::Paragraph => {
-                        flush_line(&mut current_line, &mut lines);
-                        lines.push(String::new()); // spacing after paragraph
+                        flush_current_line!();
+                        lines.push(RenderedLine::blank()); // spacing after paragraph
                     }
                     TagEnd::CodeBlock => {
                         // Render the code block with borders.
                         let border_text = format!("```{}", code_block_lang);
-                        lines.push(theme::dim(&border_text));
+                        lines.push(RenderedLine::plain(theme::dim(&border_text)));
                         for code_line in code_block_content.lines() {
-                            lines.push(format!("  {}", theme::dim(code_line)));
+                            lines.push(RenderedLine::plain(format!("  {}", theme::dim(code_line))));
                         }
-                        lines.push(theme::dim("```"));
-                        lines.push(String::new());
+                        lines.push(RenderedLine::plain(theme::dim("```")));
+                        lines.push(RenderedLine::blank());
                         in_code_block = false;
                         code_block_content.clear();
                     }
                     TagEnd::List(_) => {
                         list_depth = list_depth.saturating_sub(1);
-                        ordered_list_index.pop();
+                        list_stack.pop();
                         if list_depth == 0 {
-                            flush_line(&mut current_line, &mut lines);
-                            lines.push(String::new());
+                            flush_line(
+                                &mut current_line,
+                                &mut lines,
+                                &mut current_line_hanging_indent,
+                            );
+                            lines.push(RenderedLine::blank());
                         }
                     }
                     TagEnd::Item => {
-                        flush_line(&mut current_line, &mut lines);
+                        flush_current_line!();
                     }
                     TagEnd::BlockQuote(_) => {
-                        flush_line(&mut current_line, &mut lines);
+                        flush_current_line!();
                         // Prefix each blockquote line with a border.
                         for ql in &blockquote_lines {
-                            lines.push(format!(
+                            lines.push(RenderedLine::plain(format!(
                                 "{} {}",
                                 theme::dim("│"),
                                 theme::italic(&theme::dim(ql))
-                            ));
+                            )));
                         }
-                        lines.push(String::new());
+                        lines.push(RenderedLine::blank());
                         in_blockquote = false;
                         blockquote_lines.clear();
                     }
@@ -230,13 +250,14 @@ impl Markdown {
 
                 Event::Text(text) => {
                     if in_table {
-                        current_cell.push_str(&text);
+                        current_cell.push_str(&sanitize_for_display(&text));
                     } else if in_code_block {
-                        code_block_content.push_str(&text);
+                        code_block_content.push_str(&sanitize_for_display(&text));
                     } else if in_blockquote {
-                        blockquote_lines.push(text.to_string());
+                        blockquote_lines.push(sanitize_for_display(&text));
                     } else {
-                        let styled = apply_inline_styles(&text, &style_stack);
+                        let sanitized = sanitize_for_display(&text);
+                        let styled = apply_inline_styles(&sanitized, &style_stack);
                         current_line.push_str(&styled);
                     }
                 }
@@ -245,11 +266,13 @@ impl Markdown {
                     if in_table {
                         // Append code text to the table cell (#550).
                         // Backticks preserved for display as plain text.
+                        let sanitized = sanitize_for_display(&code);
                         current_cell.push('`');
-                        current_cell.push_str(&code);
+                        current_cell.push_str(&sanitized);
                         current_cell.push('`');
                     } else {
-                        let styled = theme::cyan(&format!("`{}`", code));
+                        let sanitized = sanitize_for_display(&code);
+                        let styled = theme::cyan(&format!("`{}`", sanitized));
                         current_line.push_str(&styled);
                     }
                 }
@@ -271,14 +294,16 @@ impl Markdown {
                         let text = std::mem::take(&mut current_line);
                         blockquote_lines.push(text);
                     } else {
-                        flush_line(&mut current_line, &mut lines);
+                        flush_current_line!();
                     }
                 }
 
                 Event::Rule => {
-                    flush_line(&mut current_line, &mut lines);
-                    lines.push(theme::dim(&"─".repeat(content_width.min(60))));
-                    lines.push(String::new());
+                    flush_current_line!();
+                    lines.push(RenderedLine::plain(theme::dim(
+                        &"─".repeat(content_width.min(60)),
+                    )));
+                    lines.push(RenderedLine::blank());
                 }
 
                 _ => {}
@@ -286,24 +311,34 @@ impl Markdown {
         }
 
         // Flush remaining content.
-        flush_line(&mut current_line, &mut lines);
+        flush_current_line!();
 
         // Remove trailing empty lines.
-        while lines.last().map(|l| l.is_empty()).unwrap_or(false) {
+        while lines.last().map(|l| l.text.is_empty()).unwrap_or(false) {
             lines.pop();
         }
 
         // Wrap and pad each line.
         let mut result = Vec::new();
         for line in &lines {
-            if line.is_empty() {
+            if line.text.is_empty() {
                 result.push(String::new());
-            } else if visible_width(line) > content_width {
-                for wl in wrap_text(line, content_width) {
-                    result.push(format!("{}{}", pad, wl));
+            } else if visible_width(&line.text) > content_width {
+                if let Some(hanging_indent) = line.hanging_indent {
+                    push_wrapped_with_hanging_indent(
+                        &mut result,
+                        &pad,
+                        &line.text,
+                        hanging_indent,
+                        content_width,
+                    );
+                } else {
+                    for wl in wrap_text(&line.text, content_width) {
+                        result.push(format!("{}{}", pad, wl));
+                    }
                 }
             } else {
-                result.push(format!("{}{}", pad, line));
+                result.push(format!("{}{}", pad, line.text));
             }
         }
 
@@ -338,6 +373,47 @@ impl Component for Markdown {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+struct RenderedLine {
+    text: String,
+    hanging_indent: Option<usize>,
+}
+
+impl RenderedLine {
+    fn plain(text: String) -> Self {
+        Self {
+            text,
+            hanging_indent: None,
+        }
+    }
+
+    fn wrapped(text: String, hanging_indent: usize) -> Self {
+        Self {
+            text,
+            hanging_indent: Some(hanging_indent),
+        }
+    }
+
+    fn blank() -> Self {
+        Self::plain(String::new())
+    }
+}
+
+#[derive(Debug, Clone)]
+enum ListState {
+    Ordered { next: u64 },
+    Unordered,
+}
+
+impl ListState {
+    fn from_start(start: Option<u64>) -> Self {
+        match start {
+            Some(next) => Self::Ordered { next },
+            None => Self::Unordered,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 enum InlineStyle {
@@ -476,6 +552,32 @@ fn render_table(rows: &[Vec<String>], max_width: usize) -> Vec<String> {
     lines
 }
 
+/// Strip terminal control sequences from markdown source before parsing.
+///
+/// This keeps `\n` intact so block/list structure still reaches pulldown-cmark,
+/// while removing terminal escapes before they can affect display.
+fn sanitize_markdown_source(s: &str) -> String {
+    sanitize_for_display_preserving_newlines(s)
+}
+
+fn sanitize_for_display_preserving_newlines(s: &str) -> String {
+    let mut result = String::new();
+    let mut chars = s.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            consume_escape_sequence(&mut chars);
+            continue;
+        }
+
+        if ch == '\n' || (ch >= '\u{0020}' && ch != '\u{007F}') {
+            result.push(ch);
+        }
+    }
+
+    result
+}
+
 /// Strip ANSI escape sequences and control characters from text for safe display.
 ///
 /// Removes complete CSI sequences (ESC[...letter), OSC sequences
@@ -486,40 +588,10 @@ fn sanitize_for_display(s: &str) -> String {
 
     while let Some(ch) = chars.next() {
         if ch == '\x1b' {
-            // Start of escape sequence — consume the entire sequence.
-            match chars.peek() {
-                Some(&'[') => {
-                    // CSI sequence: ESC [ ... (letter or ~)
-                    chars.next(); // consume '['
-                    loop {
-                        match chars.next() {
-                            Some(c) if c.is_ascii_alphabetic() || c == '~' => break,
-                            None => break,
-                            _ => {} // consume parameter bytes
-                        }
-                    }
-                }
-                Some(&']') => {
-                    // OSC sequence: ESC ] ... (BEL or ST)
-                    chars.next(); // consume ']'
-                    loop {
-                        match chars.next() {
-                            Some('\x07') => break,
-                            Some('\x1b') if chars.peek() == Some(&'\\') => {
-                                chars.next();
-                                break;
-                            }
-                            None => break,
-                            _ => {}
-                        }
-                    }
-                }
-                _ => {
-                    // Bare ESC or unknown — skip ESC and continue.
-                }
-            }
+            consume_escape_sequence(&mut chars);
             continue;
         }
+
         // Filter out control characters (C0: 0x00-0x1F, DEL: 0x7F).
         if ch >= '\u{0020}' && ch != '\u{007F}' {
             result.push(ch);
@@ -529,9 +601,94 @@ fn sanitize_for_display(s: &str) -> String {
     result
 }
 
-fn flush_line(current: &mut String, lines: &mut Vec<String>) {
+fn consume_escape_sequence<I>(chars: &mut std::iter::Peekable<I>)
+where
+    I: Iterator<Item = char>,
+{
+    match chars.peek() {
+        Some(&'[') => {
+            // CSI sequence: ESC [ ... (letter or ~)
+            chars.next();
+            loop {
+                match chars.next() {
+                    Some(c) if c.is_ascii_alphabetic() || c == '~' => break,
+                    None => break,
+                    _ => {}
+                }
+            }
+        }
+        Some(&']') => {
+            // OSC sequence: ESC ] ... (BEL or ST)
+            chars.next();
+            loop {
+                match chars.next() {
+                    Some('\x07') => break,
+                    Some('\x1b') if chars.peek() == Some(&'\\') => {
+                        chars.next();
+                        break;
+                    }
+                    None => break,
+                    _ => {}
+                }
+            }
+        }
+        _ => {
+            // Bare ESC or unknown — skip ESC and continue.
+        }
+    }
+}
+
+fn push_wrapped_with_hanging_indent(
+    result: &mut Vec<String>,
+    pad: &str,
+    line: &str,
+    hanging_indent: usize,
+    content_width: usize,
+) {
+    let split_at = byte_index_for_visible_width(line, hanging_indent);
+    let (prefix, rest) = line.split_at(split_at);
+    let available = content_width.saturating_sub(hanging_indent);
+
+    if available == 0 {
+        for wl in wrap_text(line, content_width) {
+            result.push(format!("{}{}", pad, wl));
+        }
+        return;
+    }
+
+    let wrapped = wrap_text(rest, available);
+    if let Some((first, tail)) = wrapped.split_first() {
+        result.push(format!("{}{}{}", pad, prefix, first));
+        let continuation_indent = " ".repeat(hanging_indent);
+        for wl in tail {
+            result.push(format!("{}{}{}", pad, continuation_indent, wl));
+        }
+    }
+}
+
+fn byte_index_for_visible_width(s: &str, target_width: usize) -> usize {
+    for (idx, _) in s.char_indices() {
+        if visible_width(&s[..idx]) >= target_width {
+            return idx;
+        }
+    }
+    s.len()
+}
+
+fn flush_line(
+    current: &mut String,
+    lines: &mut Vec<RenderedLine>,
+    hanging_indent: &mut Option<usize>,
+) {
     if !current.is_empty() {
-        lines.push(std::mem::take(current));
+        let text = std::mem::take(current);
+        if let Some(indent) = hanging_indent.take() {
+            lines.push(RenderedLine::wrapped(text, indent));
+        } else {
+            lines.push(RenderedLine::plain(text));
+        }
+    } else {
+        *hanging_indent = None;
     }
 }
 
