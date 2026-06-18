@@ -156,7 +156,7 @@ The UDS agent is the sole integration point for external consumers (TUIs, IDE pl
 
 | Module | Responsibility |
 |---|---|
-| `protocol.rs` | `AgentCommand` enum (18 variants: `prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_messages`, `get_messages_tail`, `get_session_stats`, `list_sessions`, `resume_session`, `set_model`, `get_extensions`, `reload_extensions`, `register_tools`, `unregister_tools`, `tool_result`, `clear_history`, `get_subagents`), `AgentEvent` enum (events: `agent_start`, `agent_end`, `token`, `turn_start`, `turn_end`, `tool_execution_start`, `tool_execution_end`, `response`, `execute_tool`, `extensions_changed`, `subagent_notification`, `subagent_state_changed`, `workflow_state`), `StreamingBehavior`, `SessionState`, `SessionStats`. All commands except `tool_result` carry optional `id` for request/response correlation |
+| `protocol.rs` | `AgentCommand` enum (19 variants: `prompt`, `steer`, `follow_up`, `abort`, `get_state`, `get_messages`, `get_messages_tail`, `get_session_stats`, `list_sessions`, `resume_session`, `set_model`, `get_extensions`, `reload_extensions`, `register_tools`, `unregister_tools`, `tool_result`, `clear_history`, `set_workflow_automation`, `get_subagents`), `AgentEvent` enum (events: `agent_start`, `agent_end`, `token`, `turn_start`, `turn_end`, `tool_execution_start`, `tool_execution_end`, `response`, `execute_tool`, `extensions_changed`, `subagent_notification`, `subagent_state_changed`, `workflow_state`), `StreamingBehavior`, `SessionState`, `SessionStats`. All commands except `tool_result` carry optional `id` for request/response correlation |
 | `uds.rs` | Entry point (`run_uds_loop`), socket binding (`chmod 0600`), stale socket reaping, single-client backward-compatible path, shared dispatch loop (`dispatch_command`), system prompt injection/removal |
 | `uds_multi.rs` | Multi-client accept loop (Docker-style event bus). `tokio::sync::broadcast` delivers events to all connected clients. `tokio::sync::mpsc` merges commands from all clients into a single dispatch loop (no concurrent session mutation). Max 64 clients. Agent shuts down when all clients disconnect. RAII `ClientGuard` tracks client count. Lagged clients receive a re-sync notification |
 | `uds_session.rs` | `AgentSession` — in-memory state tracker (model, streaming flag, pending message queue with `VecDeque`, max 64 pending). `compute_session_stats()`, `message_to_json()`, `messages_tail_json()` |
@@ -268,7 +268,7 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 |---|---|---|
 | `prompt` | `message`, optional `id`, `streamingBehavior` | Send a user message. When agent is running, `streamingBehavior` (`"steer"` or `"followUp"`) is required |
 | `steer` | `message`, optional `id` | Interrupt after current tool, deliver this message next |
-| `follow_up` | `message`, optional `id` | Queue message for after current run completes |
+| `follow_up` | `message`, optional `id` | Queue message for after current run completes; if idle, run it immediately |
 | `abort` | optional `id` | Cancel the current agent run |
 | `get_state` | optional `id` | Return session state (model, streaming, message count, and workflow snapshot when enabled) |
 | `get_messages` | optional `id` | Return full conversation history |
@@ -283,6 +283,7 @@ socat - UNIX-CONNECT:/tmp/quecto-agent-<uuid>.sock
 | `unregister_tools` | `tools` array (names), optional `id` | Remove previously registered extension tools |
 | `tool_result` | `toolCallId`, `content`, optional `isError` | Return result of an `execute_tool` request |
 | `clear_history` | optional `id` | Clear conversation history, preserve system prompt |
+| `set_workflow_automation` | optional `id`, `autoContinue`, `completionNudge` | Toggle core workflow auto-continue/completion nudges for this UDS session |
 | `get_subagents` | optional `id` | Return spawned subagents and live status |
 
 **Events** (emitted as JSON lines):
@@ -496,8 +497,8 @@ Config file: `~/.quecto/config.json`
     }
   },
   "workflow": {
-    "auto_continue": false,
-    "completion_nudge": false,
+    "auto_continue": true,
+    "completion_nudge": true,
     "templates": []
   }
 }

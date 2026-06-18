@@ -435,9 +435,16 @@ fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serd
     match cmd {
         AgentCommand::GetState { .. } => {
             let workflow = ctx.workflow_state.as_ref().and_then(|ws| {
-                ws.lock()
-                    .ok()
-                    .map(|engine| serde_json::to_value(engine.snapshot(true)).unwrap_or_default())
+                ws.lock().ok().map(|engine| {
+                    let mut value = serde_json::to_value(engine.snapshot(true)).unwrap_or_default();
+                    if let Some(config) = &ctx.workflow_config {
+                        value["automation"] = serde_json::json!({
+                            "autoContinue": config.auto_continue,
+                            "completionNudge": config.completion_nudge,
+                        });
+                    }
+                    value
+                })
             });
             let state = ctx.session.state_snapshot(ctx.messages.len(), workflow);
             Some(serde_json::to_value(&state).unwrap_or_default())
@@ -554,32 +561,51 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
     false
 }
 
-/// Drain pending messages, then inject a workflow nudge if applicable (#562).
-async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
+/// Drain pending messages, then inject core workflow nudges while progress is advancing (#562).
+pub(super) async fn drain_pending_and_nudge(ctx: &mut DispatchCtx<'_>) {
     drain_and_run_pending(ctx).await;
-    let nudged = match (&ctx.workflow_state, &ctx.workflow_config) {
-        (Some(ws), Some(wc)) if wc.auto_continue || wc.completion_nudge => {
-            let Ok(s) = ws.lock() else { return };
-            let n = (wc.auto_continue)
-                .then(|| s.auto_continue_nudge())
-                .flatten()
-                .or_else(|| {
-                    (wc.completion_nudge)
-                        .then(|| s.completion_nudge())
-                        .flatten()
-                });
-            if let Some(m) = n {
-                ctx.session.enqueue_pending(m);
-                true
-            } else {
-                false
-            }
-        }
-        _ => false,
-    };
-    if nudged {
+
+    // One guard per configured workflow step, plus a small allowance for the
+    // completion nudge/reset path. Prevents a misbehaving model from being
+    // nudged forever if it ignores the workflow instruction.
+    const MAX_WORKFLOW_NUDGES: usize = 128;
+    for _ in 0..MAX_WORKFLOW_NUDGES {
+        let before = workflow_progress_fingerprint(ctx);
+        let Some(message) = workflow_nudge_message(ctx) else {
+            break;
+        };
+        ctx.session.enqueue_pending(message);
         drain_and_run_pending(ctx).await;
+        let after = workflow_progress_fingerprint(ctx);
+        if after == before {
+            break;
+        }
     }
+}
+
+fn workflow_nudge_message(ctx: &DispatchCtx<'_>) -> Option<String> {
+    let (Some(ws), Some(wc)) = (&ctx.workflow_state, &ctx.workflow_config) else {
+        return None;
+    };
+    if !wc.auto_continue && !wc.completion_nudge {
+        return None;
+    }
+    let Ok(engine) = ws.lock() else { return None };
+    wc.auto_continue
+        .then(|| engine.auto_continue_nudge())
+        .flatten()
+        .or_else(|| {
+            wc.completion_nudge
+                .then(|| engine.completion_nudge())
+                .flatten()
+        })
+}
+
+fn workflow_progress_fingerprint(ctx: &DispatchCtx<'_>) -> Option<String> {
+    let ws = ctx.workflow_state.as_ref()?;
+    let engine = ws.lock().ok()?;
+    let snapshot = engine.snapshot(true);
+    serde_json::to_string(&snapshot).ok()
 }
 
 async fn run_prompt_dispatch(
@@ -660,3 +686,6 @@ mod parse_tests;
 #[cfg(test)]
 #[path = "uds_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "uds_workflow_automation_tests.rs"]
+mod workflow_automation_tests;

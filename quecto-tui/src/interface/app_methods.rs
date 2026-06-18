@@ -1,51 +1,6 @@
 use super::*;
 
 impl App {
-    pub(super) fn maybe_send_workflow_followup(&mut self) {
-        let wf = &self.workflow_bar;
-        // Only act when workflow is active (has steps).
-        if wf.total == 0 && wf.mode.as_deref() != Some("selecting_template") {
-            return;
-        }
-        let all_done = wf.total > 0 && wf.done == wf.total;
-
-        if self.workflow_auto_continue && !all_done && wf.done > 0 {
-            let msg = format!(
-                "Workflow incomplete ({}/{}). Continue with the next incomplete step. \
-                 Use the workflow tool to check off steps as you complete them. \
-                 Respond with just the word DONE when all {} steps are checked off.",
-                wf.done, wf.total, wf.total
-            );
-            self.send_command(Command::FollowUp {
-                id: None,
-                message: msg,
-            });
-        } else if self.workflow_completion_nudge && all_done {
-            let issue_part = wf
-                .issue_number
-                .map(|n| {
-                    let title = wf.issue_title.as_deref().unwrap_or("");
-                    format!(
-                        "You have completed all {} workflow steps for issue #{}: \"{}\". ",
-                        wf.total, n, title
-                    )
-                })
-                .unwrap_or_else(|| format!("You have completed all {} workflow steps. ", wf.total));
-            let msg = format!(
-                "{issue_part}Now do the following in order:\n\
-                 1. Close the issue (if applicable)\n\
-                 2. Pick the next issue to work on — if no open issues exist, respond with just the word NONE\n\
-                 3. Record it: call the workflow tool with action=\"set_issue\", issueNumber=<n>, issueTitle=\"...\"\n\
-                 4. Reset the checklist: call the workflow tool with action=\"reset\"\n\
-                 5. Begin Step 1 immediately for the new issue"
-            );
-            self.send_command(Command::FollowUp {
-                id: None,
-                message: msg,
-            });
-        }
-    }
-
     pub(super) fn update_subagent_bar(
         &mut self,
         subagents: Vec<crate::infrastructure::client::SubagentInfoEvent>,
@@ -181,29 +136,21 @@ impl App {
     }
 
     pub(super) fn toggle_workflow_auto_continue(&mut self) {
-        self.workflow_auto_continue = !self.workflow_auto_continue;
-        let state = if self.workflow_auto_continue {
-            "ON — agent will be nudged to complete all steps"
-        } else {
-            "OFF"
-        };
-        self.notify(
-            &format!("Workflow auto-continue {state}"),
-            NotifyLevel::Info,
-        );
+        let next = !self.workflow_auto_continue;
+        self.send_command(Command::SetWorkflowAutomation {
+            id: Some("workflow-auto".into()),
+            auto_continue: Some(next),
+            completion_nudge: None,
+        });
     }
 
     pub(super) fn toggle_workflow_completion_nudge(&mut self) {
-        self.workflow_completion_nudge = !self.workflow_completion_nudge;
-        let state = if self.workflow_completion_nudge {
-            "ON — agent will be prompted to pick next issue"
-        } else {
-            "OFF"
-        };
-        self.notify(
-            &format!("Workflow completion nudge {state}"),
-            NotifyLevel::Info,
-        );
+        let next = !self.workflow_completion_nudge;
+        self.send_command(Command::SetWorkflowAutomation {
+            id: Some("workflow-nudge".into()),
+            auto_continue: None,
+            completion_nudge: Some(next),
+        });
     }
 
     pub(super) fn send_session_stats(&mut self) {

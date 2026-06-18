@@ -81,6 +81,11 @@ impl WorkflowEngine {
         self.completion_nudge
     }
 
+    pub fn set_automation(&mut self, auto_continue: bool, completion_nudge: bool) {
+        self.auto_continue = auto_continue;
+        self.completion_nudge = completion_nudge;
+    }
+
     pub fn mode(&self) -> WorkflowMode {
         let Some(template) = self.active_template() else {
             return WorkflowMode::SelectingTemplate;

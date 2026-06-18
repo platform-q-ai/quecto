@@ -11,8 +11,8 @@
     }
   },
   "workflow": {
-    "auto_continue": false,
-    "completion_nudge": false,
+    "auto_continue": true,
+    "completion_nudge": true,
     "selector_prompt": "Select the single Quecto repository workflow template, 'feature', before checking steps. If this is the post-completion handoff, first query the issue tracker for issues authored by the authenticated user only (for GitHub: gh issue list --author @me) and choose only from that filtered set.",
     "templates": [
       {

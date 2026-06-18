@@ -16,10 +16,10 @@ fn selector_mode_before_template_selection() {
 }
 
 #[test]
-fn default_workflow_config_disables_backend_nudges() {
+fn default_workflow_config_enables_core_backend_nudges() {
     let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
-    assert!(!engine.auto_continue_enabled());
-    assert!(!engine.completion_nudge_enabled());
+    assert!(engine.auto_continue_enabled());
+    assert!(engine.completion_nudge_enabled());
 }
 
 #[test]

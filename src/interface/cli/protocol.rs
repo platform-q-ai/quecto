@@ -129,6 +129,15 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    /// Toggle core workflow automation for this UDS session.
+    SetWorkflowAutomation {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(rename = "autoContinue", skip_serializing_if = "Option::is_none")]
+        auto_continue: Option<bool>,
+        #[serde(rename = "completionNudge", skip_serializing_if = "Option::is_none")]
+        completion_nudge: Option<bool>,
+    },
     /// Return the current list of spawned subagents and their live status (#524).
     GetSubagents {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -170,6 +179,7 @@ impl AgentCommand {
             Self::UnregisterTools { id, .. } => id.as_deref(),
             Self::ToolResult { .. } => None,
             Self::ClearHistory { id } => id.as_deref(),
+            Self::SetWorkflowAutomation { id, .. } => id.as_deref(),
             Self::GetSubagents { id } => id.as_deref(),
         }
     }
@@ -194,6 +204,7 @@ impl AgentCommand {
             Self::UnregisterTools { .. } => "unregister_tools",
             Self::ToolResult { .. } => "tool_result",
             Self::ClearHistory { .. } => "clear_history",
+            Self::SetWorkflowAutomation { .. } => "set_workflow_automation",
             Self::GetSubagents { .. } => "get_subagents",
         }
     }

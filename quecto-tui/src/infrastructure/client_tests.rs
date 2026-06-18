@@ -268,6 +268,19 @@ fn command_follow_up_serializes() {
 }
 
 #[test]
+fn command_set_workflow_automation_serializes() {
+    let cmd = Command::SetWorkflowAutomation {
+        id: Some("wf".into()),
+        auto_continue: Some(false),
+        completion_nudge: Some(true),
+    };
+    let json = serde_json::to_string(&cmd).unwrap();
+    assert!(json.contains("\"type\":\"set_workflow_automation\""));
+    assert!(json.contains("\"autoContinue\":false"));
+    assert!(json.contains("\"completionNudge\":true"));
+}
+
+#[test]
 fn command_get_messages_serializes() {
     let cmd = Command::GetMessages { id: None };
     let json = serde_json::to_string(&cmd).unwrap();

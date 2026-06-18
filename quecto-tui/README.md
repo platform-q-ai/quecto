@@ -70,8 +70,8 @@ provider credentials) instead of only reporting that startup failed.
 | `/clear` | Clear the current conversation |
 | `/new` | Start a fresh conversation |
 | `/session` | Show session statistics |
-| `/workflow-auto` | Toggle workflow auto-continue |
-| `/workflow-nudge` | Toggle workflow completion nudge |
+| `/workflow-auto` | Toggle core workflow auto-continue |
+| `/workflow-nudge` | Toggle core workflow completion nudge |
 | `/help` or `/hotkeys` | Show built-in help |
 | `/quit` or `/exit` | Exit the TUI |
 
