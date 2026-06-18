@@ -52,6 +52,38 @@ fn validate_config_path(s: &str) -> Result<PathBuf, String> {
     Ok(p)
 }
 
+/// Write `data` to `path`, creating it privately: `O_CREAT|O_EXCL` (so a
+/// pre-planted symlink at the path is rejected rather than followed) with
+/// owner-only `0600` permissions. A stale file left by a crashed prior spawn is
+/// removed and recreated once (the retry still uses `O_EXCL`). Falls back to a
+/// plain write on non-unix platforms.
+#[cfg(unix)]
+fn write_private_new(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    fn create_excl(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+    }
+    let mut file = match create_excl(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let _ = std::fs::remove_file(path);
+            create_excl(path)?
+        }
+        Err(e) => return Err(e),
+    };
+    file.write_all(data)
+}
+
+#[cfg(not(unix))]
+fn write_private_new(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    std::fs::write(path, data)
+}
+
 /// Tool that spawns a child `quecto agent` process in UDS mode.
 ///
 /// When executed, validates the request, launches the child as a
@@ -182,15 +214,17 @@ impl SpawnTool {
             return Err("workflow_guards requires workflow to also be true".to_string());
         }
 
-        // Optional by-value workflow assignment. Validate it deserializes to a
-        // WorkflowSpec (must carry a `template`) so we fail fast with a clear
-        // error rather than letting the child crash on a malformed spec. The
-        // raw JSON is forwarded verbatim so future spec fields survive.
-        let workflow_spec_json = match args.get("workflow_spec") {
+        // Optional by-value workflow assignment. Deserialize straight into the
+        // typed domain `WorkflowSpec` (borrowing the JSON value — no clone) so a
+        // malformed spec is rejected here with a clear error rather than crashing
+        // the child, and the rest of the pipeline carries a domain type, not raw
+        // JSON.
+        let workflow_spec = match args.get("workflow_spec") {
             Some(v) if !v.is_null() => {
-                serde_json::from_value::<crate::domain::workflow::WorkflowSpec>(v.clone())
+                use serde::Deserialize;
+                let spec = crate::domain::workflow::WorkflowSpec::deserialize(v)
                     .map_err(|e| format!("invalid workflow_spec: {}", e))?;
-                Some(v.to_string())
+                Some(spec)
             }
             _ => None,
         };
@@ -210,7 +244,7 @@ impl SpawnTool {
             config_path,
             workflow,
             workflow_guards,
-            workflow_spec_json,
+            workflow_spec,
         })
     }
 
@@ -275,13 +309,26 @@ impl SpawnTool {
         // A by-value workflow assignment is written to a file next to the
         // socket and forwarded as `--workflow-spec <path>`; the inline template
         // is too large for a bare CLI arg. The child runs it in Active mode
-        // (binding) — see agent_tool_registry.
-        if let Some(ref spec_json) = config.workflow_spec_json {
-            let spec_path = self
-                .socket_dir
-                .join(format!("quecto-wfspec-{session_name}.json"));
-            tokio::fs::write(&spec_path, spec_json)
-                .await
+        // (binding) and deletes the file once read — see agent_tool_registry.
+        if let Some(ref spec) = config.workflow_spec {
+            let spec_json = serde_json::to_string(spec).map_err(|e| {
+                DomainError::Tool(format!("failed to serialize workflow spec: {e}"))
+            })?;
+            if spec_json.len() > crate::domain::workflow::MAX_WORKFLOW_SPEC_BYTES {
+                return Err(DomainError::Tool(format!(
+                    "workflow spec too large: {} bytes (max {})",
+                    spec_json.len(),
+                    crate::domain::workflow::MAX_WORKFLOW_SPEC_BYTES
+                )));
+            }
+            // Unique per spawn (pid + session) and created privately with
+            // O_CREAT|O_EXCL + mode 0600 so a pre-planted symlink at the path
+            // cannot be followed/overwritten and the contents are owner-only.
+            let spec_path = self.socket_dir.join(format!(
+                "quecto-wfspec-{session_name}-{}.json",
+                std::process::id()
+            ));
+            write_private_new(&spec_path, spec_json.as_bytes())
                 .map_err(|e| DomainError::Tool(format!("failed to write workflow spec: {e}")))?;
             cmd.arg("--workflow-spec").arg(&spec_path);
         }

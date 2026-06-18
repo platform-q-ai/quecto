@@ -53,6 +53,71 @@ fn single_template_config_binds_to_active_on_select() {
     assert_eq!(engine.list_templates().len(), 1);
 }
 
+fn bound_template(id: &str) -> WorkflowTemplate {
+    WorkflowTemplate {
+        id: id.into(),
+        label: id.into(),
+        description: "d".into(),
+        when_to_use: None,
+        steps: vec![WorkflowTemplateStep {
+            key: "a".into(),
+            label: "A".into(),
+            phase: "x".into(),
+            guidance: None,
+        }],
+        guards: vec![],
+    }
+}
+
+fn bound_engine(templates: Vec<WorkflowTemplate>, select: &str) -> WorkflowEngine {
+    let config = WorkflowConfig {
+        auto_continue: true,
+        completion_nudge: true,
+        selector_prompt: None,
+        templates,
+    };
+    let mut engine = WorkflowEngine::new(config, false).unwrap();
+    engine.select_template(select, None).unwrap();
+    engine.set_bound(true);
+    engine
+}
+
+#[test]
+fn bound_engine_reset_keeps_template_active() {
+    let mut engine = bound_engine(vec![bound_template("only")], "only");
+    engine.check(1).unwrap();
+    engine.reset();
+    // A bound engine must NOT return to template selection on reset; it stays
+    // active on the assigned template with progress cleared.
+    assert_eq!(engine.mode(), WorkflowMode::Active);
+    assert!(engine.is_bound());
+}
+
+#[test]
+fn bound_engine_rejects_switching_template() {
+    let mut engine = bound_engine(vec![bound_template("a"), bound_template("b")], "a");
+    assert!(
+        engine.select_template("b", None).is_err(),
+        "a bound engine must not switch to a different template"
+    );
+    // Re-selecting the SAME bound template is allowed (reset relies on it).
+    assert!(engine.select_template("a", None).is_ok());
+}
+
+#[test]
+fn bound_engine_completion_nudge_does_not_instruct_reselect() {
+    let mut engine = bound_engine(vec![bound_template("only")], "only");
+    engine.check(1).unwrap();
+    assert_eq!(engine.mode(), WorkflowMode::Complete);
+    let nudge = engine
+        .completion_nudge()
+        .expect("a completed bound workflow should still nudge");
+    assert!(
+        !nudge.contains("select_template") && !nudge.contains("reset"),
+        "bound completion nudge must not tell the model to reset/reselect: {nudge}"
+    );
+}
+
 #[test]
 fn default_config_uses_builtins_when_templates_empty() {
     let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();

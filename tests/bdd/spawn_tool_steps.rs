@@ -360,12 +360,13 @@ fn then_parsed_spawn_config_has_workflow_spec(world: &mut QuectoWorld) {
         .as_ref()
         .expect("subagent_config not set — was parse_args called?");
     let spec = cfg
-        .workflow_spec_json
+        .workflow_spec
         .as_ref()
         .expect("expected a workflow spec, got none");
-    assert!(
-        spec.contains("\"template\""),
-        "workflow spec should carry a template: {spec}"
+    assert_eq!(
+        spec.template.id, "rev",
+        "workflow spec should carry the assigned template, got id '{}'",
+        spec.template.id
     );
 }
 

@@ -155,9 +155,63 @@ fn build_agent_with_workflow_spec_binds_template_in_active_mode() {
         .workflow_state
         .expect("workflow state should exist for a bound spec");
     let engine = handle.lock().unwrap();
-    // Bound: exactly the assigned template, pre-selected into Active mode.
+    // Bound: exactly the assigned template, pre-selected into Active mode, and
+    // the engine is locked to it.
     assert_eq!(engine.mode(), crate::domain::workflow::WorkflowMode::Active);
+    assert!(
+        engine.is_bound(),
+        "engine should be bound to the assigned template"
+    );
     let templates = engine.list_templates();
     assert_eq!(templates.len(), 1, "stderr: {stderr}");
     assert_eq!(templates[0].id, "review-pr");
+}
+
+#[test]
+fn build_agent_with_unloadable_workflow_spec_fails_closed() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("config.json"),
+        r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#,
+    )
+    .unwrap();
+    // Point at a spec file that does not exist.
+    let mut flags = uds_workflow_flags(false, false);
+    flags.workflow_spec_path = Some(tmp.path().join("missing.json"));
+    let mut stderr = String::new();
+    let cfg = tmp.path().join("config.json");
+    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr, None)
+        .expect("agent should still build");
+    // Fail closed: an assigned-but-unloadable spec must NOT degrade into a
+    // free-selection workflow agent — no workflow is registered.
+    assert!(result.workflow_state.is_none(), "stderr: {stderr}");
+    assert!(
+        stderr.contains("refusing to start a workflow"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn build_agent_with_oversized_workflow_spec_fails_closed() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("config.json"),
+        r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#,
+    )
+    .unwrap();
+    // A spec larger than MAX_WORKFLOW_SPEC_BYTES must be rejected on load.
+    let filler = "z".repeat(crate::domain::workflow::MAX_WORKFLOW_SPEC_BYTES + 1);
+    let huge = format!(
+        r#"{{"template":{{"id":"x","label":"x","description":"{filler}","steps":[{{"key":"a","label":"A","phase":"p"}}]}}}}"#
+    );
+    let spec_path = tmp.path().join("spec.json");
+    std::fs::write(&spec_path, huge).unwrap();
+    let mut flags = uds_workflow_flags(false, false);
+    flags.workflow_spec_path = Some(spec_path);
+    let mut stderr = String::new();
+    let cfg = tmp.path().join("config.json");
+    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr, None)
+        .expect("agent should still build");
+    assert!(result.workflow_state.is_none(), "stderr: {stderr}");
+    assert!(stderr.contains("too large"), "stderr: {stderr}");
 }

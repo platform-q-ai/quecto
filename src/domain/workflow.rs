@@ -49,6 +49,11 @@ pub struct WorkflowRunPersisted {
     pub active_issue: Option<(u32, String)>,
 }
 
+/// Maximum serialized size of a by-value [`WorkflowSpec`] (256 KiB). Bounds the
+/// inline template a parent may hand a child, on both the write and read sides,
+/// so a malformed/hostile spec cannot exhaust memory at each recursion level.
+pub const MAX_WORKFLOW_SPEC_BYTES: usize = 256 * 1024;
+
 /// A by-value, binding workflow assignment handed to a spawned sub-agent.
 ///
 /// Carries the **full template definition** (not an id reference), so a parent
@@ -178,6 +183,11 @@ pub struct WorkflowEngine {
     completion_nudge: bool,
     guards_enabled: bool,
     selector_prompt: Option<String>,
+    /// When true the engine is bound to a single assigned template (a by-value
+    /// `--workflow-spec`): it cannot return to template selection (`reset` only
+    /// clears step progress), `select_template` cannot switch templates, and the
+    /// completion nudge does not tell the model to pick a new workflow.
+    bound: bool,
 }
 
 mod engine;
