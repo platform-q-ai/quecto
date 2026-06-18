@@ -458,7 +458,7 @@ async fn test_await_idle_agent_with_zero_idle_timeout() {
     assert!(!result.is_error);
     let parsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
     assert_eq!(parsed["status"], "idle");
-    assert_eq!(parsed["reason"], "completed");
+    assert_eq!(parsed["reason"], "idle");
     assert_eq!(parsed["agent_id"], "w1");
 }
 
@@ -697,7 +697,7 @@ async fn test_await_idle_resets_on_running() {
     assert!(!result.is_error);
     let parsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
     assert_eq!(parsed["status"], "idle");
-    assert_eq!(parsed["reason"], "completed");
+    assert_eq!(parsed["reason"], "idle");
 }
 
 #[test]

@@ -269,7 +269,7 @@ impl AgentCmdTool {
                                 let workflow = self.fetch_workflow_snapshot(&agent_id).await;
                                 let result = AwaitResult::new(
                                     "idle",
-                                    Some("completed"),
+                                    Some("idle"),
                                     agent_id.clone(),
                                     start.elapsed().as_millis() as u64,
                                     workflow,
@@ -286,7 +286,7 @@ impl AgentCmdTool {
                                 let workflow = self.fetch_workflow_snapshot(&agent_id).await;
                                 let result = AwaitResult::new(
                                     "idle",
-                                    Some("completed"),
+                                    Some("idle"),
                                     agent_id.clone(),
                                     start.elapsed().as_millis() as u64,
                                     workflow,
@@ -320,7 +320,7 @@ impl AgentCmdTool {
                             let workflow = self.fetch_workflow_snapshot(&agent_id).await;
                             let result = AwaitResult::new(
                                 "idle",
-                                Some("completed"),
+                                Some("idle"),
                                 agent_id.clone(),
                                 start.elapsed().as_millis() as u64,
                                 workflow,
@@ -359,20 +359,14 @@ impl AgentCmdTool {
             .unwrap_or("unknown")
             .to_string();
         // `get_state` serializes the workflow snapshot with a nested
-        // `progress: { done, total }` (see domain `WorkflowSnapshot`). Read that
-        // first; fall back to flat `steps_completed`/`steps_total` for
-        // forward/backward compatibility.
+        // `progress: { done, total }` (see domain `WorkflowSnapshot`).
         let progress = workflow.get("progress");
         let steps_completed = progress
             .and_then(|p| p.get("done"))
-            .or_else(|| workflow.get("steps_completed"))
-            .or_else(|| workflow.get("stepsCompleted"))
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32;
         let steps_total = progress
             .and_then(|p| p.get("total"))
-            .or_else(|| workflow.get("steps_total"))
-            .or_else(|| workflow.get("stepsTotal"))
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32;
 

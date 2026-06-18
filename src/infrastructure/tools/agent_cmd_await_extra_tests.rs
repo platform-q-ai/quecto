@@ -37,7 +37,7 @@ async fn test_await_removed_agent_returns_exited() {
 fn test_await_result_serialization() {
     let result = AwaitResult::new(
         "idle",
-        Some("completed"),
+        Some("idle"),
         "w1".into(),
         5000,
         Some(WorkflowSnapshot {
@@ -49,7 +49,7 @@ fn test_await_result_serialization() {
     let json = serde_json::to_string(&result).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed["status"], "idle");
-    assert_eq!(parsed["reason"], "completed");
+    assert_eq!(parsed["reason"], "idle");
     assert_eq!(parsed["agent_id"], "w1");
     assert_eq!(parsed["elapsed_ms"], 5000);
     assert_eq!(parsed["workflow"]["mode"], "complete");

@@ -87,6 +87,29 @@ pub enum WorkflowMode {
     Complete,
 }
 
+impl WorkflowMode {
+    /// Wire string, matching the serde `snake_case` serialization. Use this to
+    /// compare against a mode read off the wire instead of a magic literal.
+    pub fn wire_str(&self) -> &'static str {
+        match self {
+            Self::SelectingTemplate => "selecting_template",
+            Self::Active => "active",
+            Self::Complete => "complete",
+        }
+    }
+}
+
+/// Typed verdict for an awaited sub-agent (PRD Stage A R-A3). Serialized
+/// `snake_case`. `Blocked` is reserved for Stage E budget/depth bounds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerdictStatus {
+    Completed,
+    Failed,
+    Incomplete,
+    Blocked,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WorkflowRun {
     pub template_id: Option<String>,
