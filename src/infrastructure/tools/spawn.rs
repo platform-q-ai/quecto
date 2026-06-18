@@ -106,6 +106,12 @@ pub struct SpawnTool {
     registry: SubagentRegistry,
     /// Optional notification sender for parent LLM auto-notify (#523).
     notify_tx: Option<NotificationTx>,
+    /// Parent's broadcast channel, so the child monitor can forward the child's
+    /// workflow_state events onto the parent's stream (PRD Stage B / R-B2).
+    broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    /// This (parent) agent's own id, stamped as the `parent_id` on forwarded
+    /// child events (PRD Stage B).
+    parent_id: Option<String>,
 }
 
 impl SpawnTool {
@@ -118,6 +124,8 @@ impl SpawnTool {
             socket_dir: PathBuf::new(),
             registry: Arc::new(Mutex::new(HashMap::new())),
             notify_tx: None,
+            broadcast_tx: None,
+            parent_id: None,
         }
     }
 
@@ -135,6 +143,8 @@ impl SpawnTool {
             socket_dir: PathBuf::new(),
             registry: Arc::new(Mutex::new(HashMap::new())),
             notify_tx: None,
+            broadcast_tx: None,
+            parent_id: None,
         }
     }
 
@@ -159,6 +169,18 @@ impl SpawnTool {
     /// Set the notification sender for auto-notifying the parent LLM (#523).
     pub fn with_notify_tx(mut self, tx: NotificationTx) -> Self {
         self.notify_tx = Some(tx);
+        self
+    }
+
+    /// Set the parent's broadcast channel + own id so spawned children forward
+    /// their workflow_state events onto the parent's stream (PRD Stage B).
+    pub fn with_event_forwarding(
+        mut self,
+        broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+        parent_id: Option<String>,
+    ) -> Self {
+        self.broadcast_tx = broadcast_tx;
+        self.parent_id = parent_id;
         self
     }
 
@@ -392,6 +414,8 @@ impl SpawnTool {
             socket_path.clone(),
             self.registry.clone(),
             self.notify_tx.clone(),
+            self.broadcast_tx.clone(),
+            self.parent_id.clone(),
         );
 
         // Store the monitor handle so it can be aborted on shutdown.

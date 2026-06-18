@@ -29,6 +29,7 @@ const STATE_CHANGING_EVENTS: &[&str] = &[
     "\"type\":\"agent_end\"",
     "\"type\":\"tool_execution_start\"",
     "\"type\":\"tool_execution_end\"",
+    "\"type\":\"workflow_state\"",
 ];
 
 /// Apply a single JSON-line event to a SubagentEntry.
@@ -100,6 +101,30 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
             }
             entry.updated_at = Instant::now();
         }
+        "workflow_state" => {
+            // Record the child's latest workflow snapshot on its registry entry
+            // so the parent's SubagentInfo carries it (PRD Stage B / R-B3).
+            let mode = value
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let progress = value.get("progress");
+            let done = progress
+                .and_then(|p| p.get("done"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+            let total = progress
+                .and_then(|p| p.get("total"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+            entry.workflow = Some(super::subagent_registry::WorkflowSnapshot {
+                mode,
+                steps_completed: done,
+                steps_total: total,
+            });
+            entry.updated_at = Instant::now();
+        }
         _ => {}
     }
 }
@@ -122,9 +147,19 @@ pub fn spawn_monitor_task(
     socket_path: std::path::PathBuf,
     registry: SubagentRegistry,
     notify_tx: Option<NotificationTx>,
+    broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    parent_id: Option<String>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        monitor_loop(&agent_id, &socket_path, &registry, notify_tx.as_ref()).await;
+        monitor_loop(
+            &agent_id,
+            &socket_path,
+            &registry,
+            notify_tx.as_ref(),
+            broadcast_tx.as_ref(),
+            parent_id.as_deref(),
+        )
+        .await;
     })
 }
 
@@ -134,6 +169,8 @@ async fn monitor_loop(
     socket_path: &std::path::Path,
     registry: &SubagentRegistry,
     notify_tx: Option<&NotificationTx>,
+    broadcast_tx: Option<&tokio::sync::broadcast::Sender<String>>,
+    parent_id: Option<&str>,
 ) {
     use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -164,25 +201,14 @@ async fn monitor_loop(
     loop {
         match lines.next_line().await {
             Ok(Some(line)) => {
-                // Guard against oversized lines from misbehaving children.
-                if line.len() > MAX_LINE_BYTES {
-                    tracing::warn!(
-                        agent = %agent_id,
-                        len = line.len(),
-                        "monitor: dropping oversized line"
-                    );
-                    continue;
-                }
-                // Only acquire the mutex lock for state-changing events.
-                if STATE_CHANGING_EVENTS.iter().any(|pat| line.contains(pat)) {
-                    // Parse once, use for both state update and notification.
-                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
-                        let sequence = update_entry_next_sequence(registry, agent_id, |e| {
-                            apply_event_parsed(e, &value)
-                        });
-                        notify_from_parsed(notify_tx, agent_id, sequence, &value);
-                    }
-                }
+                handle_monitor_line(
+                    &line,
+                    agent_id,
+                    registry,
+                    notify_tx,
+                    broadcast_tx,
+                    parent_id,
+                );
             }
             Ok(None) => {
                 // EOF — child closed the connection.
@@ -213,6 +239,37 @@ async fn monitor_loop(
                 );
                 return;
             }
+        }
+    }
+}
+
+/// Process one event line from a child: drop oversized lines, update the
+/// registry entry + fire notifications for state-changing events, and forward
+/// the child's workflow_state events onto the parent's stream (R-B2).
+fn handle_monitor_line(
+    line: &str,
+    agent_id: &str,
+    registry: &SubagentRegistry,
+    notify_tx: Option<&NotificationTx>,
+    broadcast_tx: Option<&tokio::sync::broadcast::Sender<String>>,
+    parent_id: Option<&str>,
+) {
+    if line.len() > MAX_LINE_BYTES {
+        tracing::warn!(agent = %agent_id, len = line.len(), "monitor: dropping oversized line");
+        return;
+    }
+    // Only acquire the mutex lock for state-changing events.
+    if STATE_CHANGING_EVENTS.iter().any(|pat| line.contains(pat)) {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
+            let sequence =
+                update_entry_next_sequence(registry, agent_id, |e| apply_event_parsed(e, &value));
+            notify_from_parsed(notify_tx, agent_id, sequence, &value);
+        }
+    }
+    // Forward the child's workflow_state events onto the parent's stream.
+    if let Some(tx) = broadcast_tx {
+        if let Some(fwd) = forward_child_workflow_event(line, agent_id, parent_id) {
+            let _ = tx.send(format!("{fwd}\n"));
         }
     }
 }
@@ -364,365 +421,5 @@ fn truncate_string(s: &str, max_len: usize) -> String {
 // ─── Unit tests ──────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::PathBuf;
-
-    fn test_entry() -> SubagentEntry {
-        SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 0)
-    }
-
-    // --- apply_event: agent_start ---
-
-    #[test]
-    fn test_agent_start_sets_running() {
-        let mut entry = test_entry();
-        entry.status = SubagentStatus::Idle;
-        apply_event(&mut entry, r#"{"type":"agent_start"}"#);
-        assert_eq!(entry.status, SubagentStatus::Running);
-    }
-
-    #[test]
-    fn test_agent_start_clears_last_error() {
-        let mut entry = test_entry();
-        entry.status = SubagentStatus::Error;
-        entry.last_error = Some("old error".to_string());
-        apply_event(&mut entry, r#"{"type":"agent_start"}"#);
-        assert_eq!(entry.status, SubagentStatus::Running);
-        assert!(entry.last_error.is_none());
-    }
-
-    // --- apply_event: agent_end ---
-
-    #[test]
-    fn test_agent_end_sets_idle() {
-        let mut entry = test_entry();
-        entry.status = SubagentStatus::Running;
-        apply_event(&mut entry, r#"{"type":"agent_end","messages":[]}"#);
-        assert_eq!(entry.status, SubagentStatus::Idle);
-    }
-
-    // --- apply_event: tool_execution_start ---
-
-    #[test]
-    fn test_tool_start_sets_running_and_last_tool() {
-        let mut entry = test_entry();
-        entry.status = SubagentStatus::Running;
-        apply_event(
-            &mut entry,
-            r#"{"type":"tool_execution_start","toolCallId":"c1","toolName":"bash","args":{}}"#,
-        );
-        assert_eq!(entry.status, SubagentStatus::Running);
-        assert_eq!(entry.last_tool.as_deref(), Some("bash"));
-    }
-
-    // --- apply_event: tool_execution_end ---
-
-    #[test]
-    fn test_tool_end_error_sets_error_and_last_error() {
-        let mut entry = test_entry();
-        entry.status = SubagentStatus::Running;
-        apply_event(
-            &mut entry,
-            r#"{"type":"tool_execution_end","toolCallId":"c1","toolName":"edit","result":{"content":[]},"isError":true}"#,
-        );
-        assert_eq!(entry.status, SubagentStatus::Error);
-        assert!(entry.last_error.as_ref().unwrap().contains("edit"));
-    }
-
-    #[test]
-    fn test_tool_end_no_error_keeps_running() {
-        let mut entry = test_entry();
-        entry.status = SubagentStatus::Running;
-        apply_event(
-            &mut entry,
-            r#"{"type":"tool_execution_end","toolCallId":"c1","toolName":"read","result":{"content":[]},"isError":false}"#,
-        );
-        assert_eq!(entry.status, SubagentStatus::Running);
-    }
-
-    #[test]
-    fn test_tool_end_success_clears_last_error() {
-        let mut entry = test_entry();
-        entry.status = SubagentStatus::Running;
-        entry.last_error = Some("previous error".to_string());
-        apply_event(
-            &mut entry,
-            r#"{"type":"tool_execution_end","toolCallId":"c1","toolName":"read","result":{"content":[]},"isError":false}"#,
-        );
-        assert!(entry.last_error.is_none());
-    }
-
-    // --- apply_event: unknown / malformed ---
-
-    #[test]
-    fn test_unknown_event_ignored() {
-        let mut entry = test_entry();
-        entry.status = SubagentStatus::Idle;
-        apply_event(&mut entry, r#"{"type":"token","token":"hello"}"#);
-        assert_eq!(entry.status, SubagentStatus::Idle);
-    }
-
-    #[test]
-    fn test_malformed_json_ignored() {
-        let mut entry = test_entry();
-        entry.status = SubagentStatus::Idle;
-        apply_event(&mut entry, "not valid json");
-        assert_eq!(entry.status, SubagentStatus::Idle);
-    }
-
-    // --- mark_exited ---
-
-    #[test]
-    fn test_mark_exited() {
-        let mut entry = test_entry();
-        entry.status = SubagentStatus::Running;
-        mark_exited(&mut entry);
-        assert_eq!(entry.status, SubagentStatus::Exited);
-    }
-
-    // --- truncate_string ---
-
-    #[test]
-    fn test_truncate_string_short() {
-        assert_eq!(truncate_string("hello", 10), "hello");
-    }
-
-    #[test]
-    fn test_truncate_string_exact() {
-        assert_eq!(truncate_string("hello", 5), "hello");
-    }
-
-    #[test]
-    fn test_truncate_string_long() {
-        let result = truncate_string("hello world", 5);
-        assert_eq!(result, "hello…");
-    }
-
-    // --- update_entry ---
-
-    #[test]
-    fn test_update_entry_modifies_registry() {
-        let registry = super::super::subagent_registry::new_registry();
-        registry.lock().unwrap().insert(
-            "bot".to_string(),
-            SubagentEntry::new(PathBuf::from("/tmp/bot.sock"), 0),
-        );
-        update_entry(&registry, "bot", |e| {
-            e.status = SubagentStatus::Running;
-        });
-        let entries = registry.lock().unwrap();
-        assert_eq!(entries["bot"].status, SubagentStatus::Running);
-    }
-
-    #[test]
-    fn test_update_entry_missing_agent_is_noop() {
-        let registry = super::super::subagent_registry::new_registry();
-        // Should not panic
-        update_entry(&registry, "nonexistent", |e| {
-            e.status = SubagentStatus::Running;
-        });
-    }
-
-    // --- pre-filter ---
-
-    #[test]
-    fn test_pre_filter_skips_token_events() {
-        let mut entry = test_entry();
-        entry.status = SubagentStatus::Idle;
-        // Token event should be filtered out before JSON parse.
-        apply_event(&mut entry, r#"{"type":"token","token":"hello"}"#);
-        assert_eq!(entry.status, SubagentStatus::Idle);
-    }
-
-    // --- Sequence of events ---
-
-    #[test]
-    fn test_full_lifecycle() {
-        let mut entry = test_entry();
-        assert_eq!(entry.status, SubagentStatus::Starting);
-
-        apply_event(&mut entry, r#"{"type":"agent_start"}"#);
-        assert_eq!(entry.status, SubagentStatus::Running);
-
-        apply_event(
-            &mut entry,
-            r#"{"type":"tool_execution_start","toolCallId":"c1","toolName":"bash","args":{}}"#,
-        );
-        assert_eq!(entry.status, SubagentStatus::Running);
-        assert_eq!(entry.last_tool.as_deref(), Some("bash"));
-
-        apply_event(
-            &mut entry,
-            r#"{"type":"tool_execution_end","toolCallId":"c1","toolName":"bash","result":{"content":[]},"isError":false}"#,
-        );
-        assert_eq!(entry.status, SubagentStatus::Running);
-
-        apply_event(&mut entry, r#"{"type":"agent_end","messages":[]}"#);
-        assert_eq!(entry.status, SubagentStatus::Idle);
-
-        mark_exited(&mut entry);
-        assert_eq!(entry.status, SubagentStatus::Exited);
-    }
-
-    // --- maybe_notify (#523) ---
-
-    #[tokio::test]
-    async fn test_notify_on_agent_end() {
-        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
-        let line = r#"{"type":"agent_end","messages":[{"role":"assistant","content":"Done"}]}"#;
-        maybe_notify(Some(&tx), "worker", line);
-        let notif = rx.try_recv().unwrap();
-        match notif.notification {
-            SubagentNotification::Completed {
-                agent_id, summary, ..
-            } => {
-                assert_eq!(agent_id, "worker");
-                assert_eq!(summary, "Done");
-            }
-            _ => panic!("expected Completed"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_notify_on_tool_error() {
-        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
-        let line = r#"{"type":"tool_execution_end","toolCallId":"c1","toolName":"bash","result":{"content":[]},"isError":true}"#;
-        maybe_notify(Some(&tx), "worker", line);
-        let notif = rx.try_recv().unwrap();
-        match notif.notification {
-            SubagentNotification::Errored {
-                agent_id, error, ..
-            } => {
-                assert_eq!(agent_id, "worker");
-                assert!(error.contains("bash"));
-            }
-            _ => panic!("expected Errored"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_no_notify_on_agent_start() {
-        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
-        let line = r#"{"type":"agent_start"}"#;
-        maybe_notify(Some(&tx), "worker", line);
-        assert!(rx.try_recv().is_err(), "no notification should be sent");
-    }
-
-    #[tokio::test]
-    async fn test_no_notify_on_successful_tool_end() {
-        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
-        let line = r#"{"type":"tool_execution_end","toolCallId":"c1","toolName":"bash","result":{"content":[]},"isError":false}"#;
-        maybe_notify(Some(&tx), "worker", line);
-        assert!(rx.try_recv().is_err());
-    }
-
-    #[tokio::test]
-    async fn test_notify_none_tx_is_noop() {
-        // Should not panic
-        maybe_notify(None, "worker", r#"{"type":"agent_end","messages":[]}"#);
-    }
-
-    #[tokio::test]
-    async fn test_send_notification_exited() {
-        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
-        send_notification(
-            Some(&tx),
-            super::super::subagent_registry::SequencedSubagentNotification::new(
-                1,
-                SubagentNotification::Exited {
-                    agent_id: "bot".to_string(),
-                },
-            ),
-        );
-        let notif = rx.try_recv().unwrap();
-        assert_eq!(
-            notif,
-            super::super::subagent_registry::SequencedSubagentNotification::new(
-                1,
-                SubagentNotification::Exited {
-                    agent_id: "bot".to_string(),
-                },
-            )
-        );
-    }
-
-    #[tokio::test]
-    async fn test_maybe_notify_agent_end() {
-        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
-        let line = r#"{"type":"agent_end","messages":[{"role":"assistant","content":"done"}]}"#;
-        maybe_notify(Some(&tx), "worker", line);
-        let notif = rx.try_recv().unwrap();
-        match notif.notification {
-            SubagentNotification::Completed {
-                agent_id, summary, ..
-            } => {
-                assert_eq!(agent_id, "worker");
-                assert!(summary.contains("done"));
-            }
-            _ => panic!("expected Completed"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_maybe_notify_tool_error() {
-        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
-        let line = r#"{"type":"tool_execution_end","toolName":"bash","isError":true}"#;
-        maybe_notify(Some(&tx), "worker", line);
-        let notif = rx.try_recv().unwrap();
-        match notif.notification {
-            SubagentNotification::Errored {
-                agent_id, error, ..
-            } => {
-                assert_eq!(agent_id, "worker");
-                assert!(error.contains("bash"));
-            }
-            _ => panic!("expected Errored"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_maybe_notify_tool_success_no_notification() {
-        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
-        let line = r#"{"type":"tool_execution_end","toolName":"bash","isError":false}"#;
-        maybe_notify(Some(&tx), "worker", line);
-        assert!(rx.try_recv().is_err()); // No notification for success
-    }
-
-    #[test]
-    fn test_maybe_notify_none_tx_is_noop() {
-        let line = r#"{"type":"agent_end","messages":[]}"#;
-        maybe_notify(None, "worker", line); // should not panic
-    }
-
-    #[test]
-    fn test_maybe_notify_invalid_json_is_noop() {
-        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
-        maybe_notify(Some(&tx), "worker", "not json");
-        assert!(rx.try_recv().is_err());
-    }
-
-    #[test]
-    fn test_maybe_notify_non_state_event_is_noop() {
-        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
-        let line = r#"{"type":"token","token":"hello"}"#;
-        maybe_notify(Some(&tx), "worker", line);
-        assert!(rx.try_recv().is_err());
-    }
-
-    #[test]
-    fn test_notify_from_parsed_unknown_event_is_noop() {
-        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
-        let value = serde_json::json!({"type": "token", "token": "hi"});
-        notify_from_parsed(Some(&tx), "worker", 1, &value);
-        assert!(rx.try_recv().is_err());
-    }
-
-    #[test]
-    fn test_notify_from_parsed_no_type_is_noop() {
-        let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
-        let value = serde_json::json!({"data": "something"});
-        notify_from_parsed(Some(&tx), "worker", 1, &value);
-        assert!(rx.try_recv().is_err());
-    }
-}
+#[path = "subagent_monitor_tests.rs"]
+mod tests;

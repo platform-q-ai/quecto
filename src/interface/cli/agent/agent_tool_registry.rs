@@ -82,7 +82,10 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
             .with_network(effective_network)
             .with_socket_dir(socket_dir)
             .with_registry(subagent_registry.clone())
-            .with_notify_tx(notify_tx),
+            .with_notify_tx(notify_tx)
+            // Forward spawned children's workflow_state events onto this agent's
+            // stream, tagged with the child id + this agent's id (PRD Stage B).
+            .with_event_forwarding(broadcast_tx.clone(), flags.session_name.clone()),
     ));
     let subagent_registry_for_protocol = subagent_registry.clone();
     registry.register(Arc::new(AgentCmdTool::new(subagent_registry)));
