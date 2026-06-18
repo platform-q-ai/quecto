@@ -252,6 +252,32 @@ polling loops that burn LLM tokens.
 - **Workflow snapshot:** The `workflow` field is a read-only snapshot of
   workflow state at the moment of return (null if workflow is not enabled).
 
+## Observing the unit tree
+
+Every agent in a spawn hierarchy is the same quecto unit, and its
+`workflow_state` events are **identity-tagged** with `agent_id` (the agent's
+own id) and `parent_id` (its spawner; `null` at the root). `spawn` passes its
+own id to each child automatically, so a child's events are correctly parented
+without any manual flag. From these two fields alone a consumer can rebuild the
+whole parent → child tree from the event stream — no per-child polling required.
+
+Two complementary ways to observe a child's progress:
+
+- **Pull — `get_subagents`:** each entry now carries `parent_id` and an optional
+  `workflow` snapshot (`{mode, steps_completed, steps_total}`) for that child,
+  kept current by the parent's per-child monitor. Good for a point-in-time view
+  of every child at once.
+- **Push — forwarded events:** the parent's monitor re-emits each child's
+  `workflow_state` events onto the **parent's** own event stream, re-stamped
+  with the child's identity. A supervisor watching one socket sees its whole
+  subtree advance live. Forwarded events are rebuilt canonically (only
+  `type`/`agent_id`/`parent_id`/`mode`/`progress`), so a child cannot inject
+  arbitrary fields onto the parent's stream.
+
+Prefer reading forwarded `workflow_state` events (or one `get_subagents` call)
+over repeatedly polling each child with `get_state`. See
+[`uds-protocol.md`](uds-protocol.md#workflow_state) for the wire shape.
+
 ## Sessions
 
 Each subagent gets its own session, persisted under `<base_dir>/sessions/`.
