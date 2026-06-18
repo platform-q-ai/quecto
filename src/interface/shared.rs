@@ -57,7 +57,7 @@ pub fn datetime_preamble() -> String {
 /// agents where to look only when Quecto-specific operational knowledge is
 /// needed, keeping normal prompt/context usage small.
 pub fn agent_docs_retrieval_policy() -> &'static str {
-    "Quecto agent capability docs are available in this repository. When asked to use Quecto itself, improve agent behavior, extend tools, manage sessions/context, delegate to subagents, or use workflows, read `docs/quecto.md` first, then only the targeted docs it references. Keep context lean: do not load full docs until that knowledge is needed."
+    "Quecto's own capability docs are embedded in the binary and reachable from any directory via the `docs` tool (do not read docs/*.md from the filesystem — that fails outside the quecto checkout). When asked to use Quecto itself, improve agent behavior, extend tools, manage sessions/context, delegate to subagents, or use workflows, call the `docs` tool with name `quecto` first, then only the targeted docs it references — fetch any `docs/NAME.md` reference via the `docs` tool with that NAME (call `docs` with no name to list them). Keep context lean: do not load full docs until that knowledge is needed."
 }
 
 /// Build a complete system prompt with datetime preamble, Quecto docs policy,

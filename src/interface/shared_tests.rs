@@ -121,7 +121,8 @@ fn test_datetime_preamble_contains_current_date() {
 fn test_build_system_prompt_datetime_only() {
     let result = build_system_prompt("", &None);
     assert!(result.starts_with("Current date and time:"));
-    assert!(result.contains("docs/quecto.md"));
+    assert!(result.contains("`docs` tool"));
+    assert!(result.contains("name `quecto`"));
     assert!(result.contains("extend tools"));
     assert!(result.contains("subagents"));
     assert!(result.contains("workflows"));
@@ -134,7 +135,7 @@ fn test_build_system_prompt_datetime_only() {
 fn test_build_system_prompt_with_skills() {
     let result = build_system_prompt("Skill content", &None);
     assert!(result.starts_with("Current date and time:"));
-    assert!(result.contains("docs/quecto.md"));
+    assert!(result.contains("`docs` tool"));
     assert!(result.contains("Skill content"));
 }
 
