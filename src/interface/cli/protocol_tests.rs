@@ -215,6 +215,8 @@ fn test_subagent_state_changed_event_serializes() {
             last_tool: Some("bash".to_string()),
             last_error: None,
             pid: 123,
+            parent_id: None,
+            workflow: None,
         }],
     };
     let json = ev.to_json_line();
@@ -232,6 +234,8 @@ fn test_subagent_info_null_fields_omitted() {
         last_tool: None,
         last_error: None,
         pid: 456,
+        parent_id: None,
+        workflow: None,
     };
     let json = serde_json::to_string(&info).unwrap();
     assert!(!json.contains("lastTool"));
@@ -246,6 +250,8 @@ fn test_subagent_info_with_error() {
         last_tool: None,
         last_error: Some("connection refused".to_string()),
         pid: 0,
+        parent_id: None,
+        workflow: None,
     };
     let json = serde_json::to_string(&info).unwrap();
     assert!(json.contains("\"lastError\":\"connection refused\""));

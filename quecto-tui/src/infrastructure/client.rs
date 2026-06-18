@@ -180,6 +180,21 @@ pub struct SubagentInfoEvent {
     pub last_tool: Option<String>,
     pub last_error: Option<String>,
     pub pid: u32,
+    /// Spawning agent's id, for reconstructing the unit tree (PRD Stage B).
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    /// Latest workflow snapshot for this subagent, if any (PRD Stage B).
+    #[serde(default)]
+    pub workflow: Option<SubagentWorkflow>,
+}
+
+/// Workflow snapshot mirror carried on a subagent entry (PRD Stage B).
+/// Field names match the server's snake_case `WorkflowSnapshot` serialization.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SubagentWorkflow {
+    pub mode: String,
+    pub steps_completed: u32,
+    pub steps_total: u32,
 }
 
 // ─── Result text extraction ───────────────────────────────────────────────────

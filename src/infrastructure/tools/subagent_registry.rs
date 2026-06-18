@@ -73,6 +73,10 @@ pub struct SubagentEntry {
     /// Exit signal sender — the reaper task sends the exit code/signal through
     /// this channel so that a waiting `await` call can return immediately (#612).
     pub exit_signal_tx: Option<ExitSignalTx>,
+    /// The spawning agent's id, for reconstructing the unit tree (PRD Stage B).
+    pub parent_id: Option<String>,
+    /// Latest workflow snapshot reported by the child's monitor (PRD Stage B).
+    pub workflow: Option<WorkflowSnapshot>,
 }
 
 impl SubagentEntry {
@@ -88,6 +92,8 @@ impl SubagentEntry {
             monitor_handle: None,
             notification_sequence: 0,
             exit_signal_tx: None,
+            parent_id: None,
+            workflow: None,
         }
     }
 }

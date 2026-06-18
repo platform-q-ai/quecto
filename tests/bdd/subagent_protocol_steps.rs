@@ -147,6 +147,8 @@ fn given_subagent_info(
         },
         last_error: None,
         pid: pid as u32,
+        parent_id: None,
+        workflow: None,
     });
 }
 
@@ -237,6 +239,8 @@ fn given_state_changed_event(world: &mut QuectoWorld, count: usize) {
             last_tool: None,
             last_error: None,
             pid: i as u32,
+            parent_id: None,
+            workflow: None,
         })
         .collect();
     world.protocol_event = Some(AgentEvent::SubagentStateChanged { subagents });
@@ -256,6 +260,8 @@ fn given_state_changed_one(
             last_tool: None,
             last_error: None,
             pid: 1,
+            parent_id: None,
+            workflow: None,
         }],
     });
 }

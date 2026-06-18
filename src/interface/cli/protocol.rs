@@ -326,6 +326,12 @@ pub struct SubagentInfo {
     pub last_error: Option<String>,
     /// Child process PID.
     pub pid: u32,
+    /// The spawning agent's id, for reconstructing the unit tree (PRD Stage B).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    /// Latest workflow snapshot for this subagent, if any (PRD Stage B).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<crate::infrastructure::tools::subagent_registry::WorkflowSnapshot>,
 }
 
 /// Metadata for a registered extension, used in `ExtensionsChanged` events
@@ -387,6 +393,8 @@ pub fn build_subagent_info_list(
                 last_tool: entry.last_tool.clone(),
                 last_error: entry.last_error.clone(),
                 pid: entry.pid,
+                parent_id: entry.parent_id.clone(),
+                workflow: entry.workflow.clone(),
             })
             .collect()
     }; // guard dropped here — sort happens outside critical section

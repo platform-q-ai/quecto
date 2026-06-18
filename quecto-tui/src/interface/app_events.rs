@@ -129,6 +129,8 @@ impl App {
                 last_tool: None,
                 last_error: None,
                 pid: 0,
+                parent_id: None,
+                workflow: None,
             }),
         );
         self.rebuild_subagent_bar();
@@ -531,6 +533,8 @@ mod tests {
             last_tool: Some("read".into()),
             last_error: None,
             pid: 42,
+            parent_id: None,
+            workflow: None,
         };
         app.handle_event(Event::SubagentStateChanged {
             subagents: vec![info.clone()],
