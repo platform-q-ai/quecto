@@ -89,7 +89,8 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
     // Build a workflow event emitter from the broadcast channel (#598).
     let wf_emitter =
         broadcast_tx.map(crate::infrastructure::tools::workflow_tool::broadcast_emitter);
-    let wf_state = if flags.workflow {
+    let workflow_available = flags.uds_mode && !flags.workflow_disabled;
+    let wf_state = if workflow_available {
         match crate::interface::shared::register_workflow_tool(
             &mut registry,
             config.workflow.clone(),

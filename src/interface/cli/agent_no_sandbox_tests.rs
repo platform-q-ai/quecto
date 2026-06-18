@@ -106,6 +106,7 @@ fn test_build_agent_no_sandbox_emits_warning() {
         effort: None,
         workflow: false,
         workflow_guards: false,
+        workflow_disabled: false,
     };
 
     let mut stderr = String::new();
@@ -184,6 +185,7 @@ fn test_build_agent_with_sandbox_enabled_no_warning() {
         effort: None,
         workflow: false,
         workflow_guards: false,
+        workflow_disabled: false,
     };
 
     let mut stderr = String::new();
@@ -292,6 +294,7 @@ fn test_build_agent_network_flag_emits_warning() {
         effort: None,
         workflow: false,
         workflow_guards: false,
+        workflow_disabled: false,
     };
 
     let mut stderr = String::new();
@@ -343,6 +346,7 @@ fn test_build_agent_without_network_flag_no_warning() {
         effort: None,
         workflow: false,
         workflow_guards: false,
+        workflow_disabled: false,
     };
 
     let mut stderr = String::new();
