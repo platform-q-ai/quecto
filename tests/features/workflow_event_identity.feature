@@ -1,4 +1,4 @@
-@wip
+@done
 Feature: Workflow event identity and forwarding (PRD Stage B)
   Identity-tagged events let any consumer reconstruct the unit tree and each
   unit's workflow from the event stream alone, without polling child sockets.
