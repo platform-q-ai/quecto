@@ -17,9 +17,9 @@ fn given_render_bottom(world: &mut QuectoWorld) {
 fn then_widgets_above_before_spinner(_world: &mut QuectoWorld) {
     // Verify the render order by reading the source file and checking
     // that widgets_above.render() appears before spinner.render() in
-    // the bottom section.
-    let source = std::fs::read_to_string("quecto-tui/src/interface/app.rs")
-        .expect("should be able to read interface/app.rs");
+    // the bottom section. The render composition lives in app_methods.rs.
+    let source = std::fs::read_to_string("quecto-tui/src/interface/app_methods.rs")
+        .expect("should be able to read interface/app_methods.rs");
     let widgets_pos = source
         .find("widgets_above.render(width)")
         .expect("widgets_above.render not found");

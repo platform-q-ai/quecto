@@ -15,7 +15,20 @@ impl WorkflowEngine {
             completion_nudge: config.completion_nudge,
             guards_enabled,
             selector_prompt: config.selector_prompt,
+            bound: false,
         })
+    }
+
+    /// Bind the engine to its currently-selected template (a by-value
+    /// `--workflow-spec` assignment). Once bound, the model cannot switch or
+    /// re-select a different template. See [`WorkflowEngine`].
+    pub fn set_bound(&mut self, bound: bool) {
+        self.bound = bound;
+    }
+
+    /// Whether this engine is bound to a single assigned template.
+    pub fn is_bound(&self) -> bool {
+        self.bound
     }
 
     pub fn restore_run(&mut self, persisted: WorkflowRunPersisted) {
@@ -112,6 +125,18 @@ impl WorkflowEngine {
         template_id: &str,
         issue: Option<(u32, String)>,
     ) -> Result<(), WorkflowError> {
+        // A bound engine is pinned to its assigned template; it may re-select
+        // that same template (used by `reset`) but never switch to another.
+        if self.bound {
+            if let Some(current) = self.run.template_id.as_deref() {
+                if current != template_id {
+                    return Err(WorkflowError::UnknownTemplate(format!(
+                        "agent is bound to workflow template '{}' and cannot select '{}'",
+                        current, template_id
+                    )));
+                }
+            }
+        }
         let template_index = self
             .templates
             .iter()
@@ -160,6 +185,15 @@ impl WorkflowEngine {
     }
 
     pub fn reset(&mut self) {
+        // A bound engine cannot return to template selection: reset only clears
+        // step progress for the assigned template, keeping it active.
+        if self.bound {
+            let steps = self.active_template().map(|t| t.steps.len());
+            if let Some(steps) = steps {
+                self.run.done = vec![false; steps];
+            }
+            return;
+        }
         self.run = WorkflowRun::default();
     }
 
@@ -219,6 +253,15 @@ impl WorkflowEngine {
             return None;
         }
         let template = self.active_template()?;
+        // A bound agent runs exactly one assigned workflow; on completion it
+        // reports its result rather than picking a new workflow.
+        if self.bound {
+            return Some(format!(
+                "All workflow steps complete for assigned template '{}' ({} steps). The assigned task is done — report your result and stop.",
+                template.label,
+                template.steps.len()
+            ));
+        }
         Some(format!(
             "All workflow steps complete for template '{}' ({} steps). Close out the current issue if applicable. Before choosing the next issue, query the issue tracker for issues authored by the authenticated user only (for GitHub: gh issue list --author @me). Then call workflow(action=\"reset\") and workflow(action=\"select_template\", template=\"<id>\").",
             template.label,

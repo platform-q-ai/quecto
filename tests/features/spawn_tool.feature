@@ -242,6 +242,19 @@ Feature: SpawnTool — child agent process spawning
     Then the spawn result should not be an error
     And the parsed spawn config should have workflow false
 
+  # --- by-value workflow spec assignment ---
+
+  Scenario: Parse a request that assigns a by-value workflow spec
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work","workflow_spec":{"template":{"id":"rev","label":"Rev","description":"d","steps":[{"key":"a","label":"A","phase":"review"}]}}}'
+    Then the spawn result should not be an error
+    And the parsed spawn config should have a workflow spec
+
+  Scenario: A workflow spec without a template is rejected
+    Given a SpawnTool with empty allowlist and restrict_to_workspace true
+    When I parse spawn arguments '{"task":"work","workflow_spec":{"inputs":{"pr":7}}}'
+    Then the parse should fail with "invalid workflow_spec"
+
   # --- workflow_guards forwarding ---
 
   

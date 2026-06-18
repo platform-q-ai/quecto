@@ -1999,15 +1999,16 @@ fn then_llm_system_message_only_preamble(world: &mut QuectoWorld) {
             "system message should start with datetime preamble, got: {}",
             &content[..content.len().min(100)]
         );
-        // After the datetime line, there should be no additional content
-        // (no skill prompts, no user prompts).
-        let lines: Vec<&str> = content.lines().collect();
+        // Beyond the datetime line, the only standard content is the Quecto
+        // capability-docs preamble (injected when running inside the quecto
+        // repo). No skill prompts or user prompts should leak into the system
+        // message.
+        let extra = content.lines().skip(1).collect::<Vec<_>>().join("\n");
+        let extra = extra.trim();
         assert!(
-            lines.len() == 1,
-            "system message should only have the datetime preamble (exactly 1 line), \
-             got {} lines: {:?}",
-            lines.len(),
-            &lines[..lines.len().min(5)]
+            extra.is_empty() || extra.contains("Quecto agent capability docs are available"),
+            "system message should contain only the standard preamble, got: {:?}",
+            content.lines().collect::<Vec<_>>()
         );
     }
 }

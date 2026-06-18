@@ -21,6 +21,10 @@ pub struct SubagentConfig {
     pub workflow: bool,
     /// Whether to start the child with `--workflow-guards`.
     pub workflow_guards: bool,
+    /// Optional by-value workflow assignment. When set, the child is launched
+    /// with `--workflow-spec <path>` and runs exactly that template in Active
+    /// mode (binding).
+    pub workflow_spec: Option<crate::domain::workflow::WorkflowSpec>,
 }
 
 /// Validate an agent_id against an allowlist.
@@ -64,6 +68,7 @@ mod tests {
             config_path: None,
             workflow: false,
             workflow_guards: false,
+            workflow_spec: None,
         };
         assert!(cfg.config_path.is_none());
         assert!(!cfg.workflow);
@@ -80,6 +85,7 @@ mod tests {
             config_path: Some(PathBuf::from("/custom/config.json")),
             workflow: false,
             workflow_guards: false,
+            workflow_spec: None,
         };
         assert_eq!(cfg.config_path, Some(PathBuf::from("/custom/config.json")));
     }
@@ -94,6 +100,7 @@ mod tests {
             config_path: None,
             workflow: true,
             workflow_guards: true,
+            workflow_spec: None,
         };
         assert!(cfg.workflow);
         assert!(cfg.workflow_guards);

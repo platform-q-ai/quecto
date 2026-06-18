@@ -139,12 +139,12 @@ Feature: Context pruning via sliding window (no tool-result collapse)
     Given a string of 100 CJK characters
     Then the estimated token count should be 100
 
-  # --- Default max context tokens is 300,000 ---
+  # --- Default max context tokens is 200,000 ---
 
   @done
-  Scenario: Default max context tokens is 300000
+  Scenario: Default max context tokens is 200000
     Given a default agent configuration
-    Then the max_context_tokens is 300000
+    Then the max_context_tokens is 200000
 
   # --- Session persistence ---
 

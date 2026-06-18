@@ -313,8 +313,9 @@ fn then_tui_slash_autocomplete_includes_command(_world: &mut QuectoWorld, comman
 
 #[then("quecto-tui should reject unknown slash commands before sending a prompt")]
 fn then_tui_rejects_unknown_slash_commands(_world: &mut QuectoWorld) {
-    let content = std::fs::read_to_string("quecto-tui/src/interface/app.rs")
-        .expect("read quecto-tui app source");
+    // Submit handling lives in the app_event_loop module.
+    let content = std::fs::read_to_string("quecto-tui/src/interface/app_event_loop.rs")
+        .expect("read quecto-tui app_event_loop source");
     assert!(
         content.contains("reject_unknown_slash_command"),
         "quecto-tui should route unknown slash commands to a local rejection helper instead of sending them as prompts"
@@ -372,7 +373,9 @@ fn then_tui_does_not_render_workflow_header_bar(_world: &mut QuectoWorld) {
 fn then_tui_workflow_widget_matches_quecto_plain_text(_world: &mut QuectoWorld) {
     let bar = std::fs::read_to_string("quecto-tui/src/interface/components/workflow_bar.rs")
         .expect("read workflow bar source");
-    let app = std::fs::read_to_string("quecto-tui/src/interface/app.rs").expect("read app source");
+    // The render composition lives in app_methods.rs, not app.rs.
+    let app = std::fs::read_to_string("quecto-tui/src/interface/app_methods.rs")
+        .expect("read app_methods source");
     assert!(
         bar.contains("render_widget")
             && bar.contains("Workflow")

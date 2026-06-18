@@ -89,15 +89,74 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
     // Build a workflow event emitter from the broadcast channel (#598).
     let wf_emitter =
         broadcast_tx.map(crate::infrastructure::tools::workflow_tool::broadcast_emitter);
-    let workflow_available = flags.uds_mode && !flags.workflow_disabled;
+    // A by-value workflow spec (`--workflow-spec`) binds this agent to exactly
+    // one template, started directly in Active mode (no model-driven selection),
+    // overriding the config's template library for this run.
+    let spec_requested = flags.workflow_spec_path.is_some();
+    let bound_spec = flags
+        .workflow_spec_path
+        .as_ref()
+        .and_then(|p| match load_workflow_spec(p) {
+            Ok(spec) => Some(spec),
+            Err(err) => {
+                stderr.push_str(&format!(
+                    "failed to load workflow spec '{}': {}\n",
+                    p.display(),
+                    err
+                ));
+                None
+            }
+        });
+    // Fail closed: a spec was assigned but could not be loaded. The parent
+    // validated it before writing, so this is corruption/IO loss — do NOT
+    // silently degrade into a free-selection workflow agent.
+    if spec_requested && bound_spec.is_none() {
+        stderr.push_str(
+            "workflow spec was assigned but could not be loaded; refusing to start a workflow\n",
+        );
+    }
+    let workflow_available = flags.uds_mode
+        && !(spec_requested && bound_spec.is_none())
+        && (!flags.workflow_disabled || bound_spec.is_some());
     let wf_state = if workflow_available {
+        // For a bound run, use a config containing ONLY the assigned template
+        // (avoids cloning the whole default library just to discard it).
+        let wf_config = match &bound_spec {
+            Some(spec) => crate::domain::workflow::WorkflowConfig {
+                auto_continue: config.workflow.auto_continue,
+                completion_nudge: config.workflow.completion_nudge,
+                selector_prompt: None,
+                templates: vec![spec.template.clone()],
+            },
+            None => config.workflow.clone(),
+        };
         match crate::interface::shared::register_workflow_tool(
             &mut registry,
-            config.workflow.clone(),
+            wf_config,
             flags.workflow_guards,
             wf_emitter,
         ) {
-            Ok(state) => Some(state),
+            Ok(state) => {
+                // Bind: pre-select the assigned template (Active mode) and lock
+                // the engine so the model cannot reset or switch templates.
+                if let Some(spec) = bound_spec {
+                    match state.lock() {
+                        Ok(mut engine) => match engine.select_template(&spec.template.id, None) {
+                            Ok(()) => engine.set_bound(true),
+                            Err(err) => stderr.push_str(&format!(
+                                "failed to bind workflow template '{}': {}\n",
+                                spec.template.id, err
+                            )),
+                        },
+                        Err(_) => {
+                            stderr.push_str(
+                                "failed to bind workflow template: engine lock poisoned\n",
+                            );
+                        }
+                    }
+                }
+                Some(state)
+            }
             Err(err) => {
                 stderr.push_str(&format!("failed to initialize workflow: {}\n", err));
                 None
@@ -128,4 +187,23 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
         },
         workflow_state: wf_state,
     }
+}
+
+/// Load and parse a by-value workflow spec file (`--workflow-spec <path>`).
+///
+/// Bounds the file size before reading (defense-in-depth against a hostile or
+/// corrupt spec) and removes the single-use file once read so it does not
+/// linger beside the socket.
+fn load_workflow_spec(
+    path: &std::path::Path,
+) -> Result<crate::domain::workflow::WorkflowSpec, String> {
+    let len = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
+    let max = crate::domain::workflow::MAX_WORKFLOW_SPEC_BYTES as u64;
+    if len > max {
+        return Err(format!("workflow spec too large: {len} bytes (max {max})"));
+    }
+    let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    // Single-use: best-effort cleanup once consumed.
+    let _ = std::fs::remove_file(path);
+    serde_json::from_str::<crate::domain::workflow::WorkflowSpec>(&raw).map_err(|e| e.to_string())
 }

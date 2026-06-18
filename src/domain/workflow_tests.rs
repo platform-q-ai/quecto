@@ -1,6 +1,124 @@
 use super::*;
 
 #[test]
+fn workflow_spec_deserializes_with_template_and_ignores_extra_fields() {
+    let json = serde_json::json!({
+        "template": {
+            "id": "review",
+            "label": "Review",
+            "description": "desc",
+            "steps": [{"key": "a", "label": "A", "phase": "review"}]
+        },
+        "inputs": {"pr": 7},        // forward-compat extras must be ignored
+        "acceptance": "tests pass"
+    });
+    let spec: WorkflowSpec = serde_json::from_value(json).unwrap();
+    assert_eq!(spec.template.id, "review");
+    assert_eq!(spec.template.steps.len(), 1);
+}
+
+#[test]
+fn workflow_spec_requires_a_template() {
+    let json = serde_json::json!({ "inputs": {"pr": 7} });
+    assert!(serde_json::from_value::<WorkflowSpec>(json).is_err());
+}
+
+#[test]
+fn single_template_config_binds_to_active_on_select() {
+    let template = WorkflowTemplate {
+        id: "review".into(),
+        label: "Review".into(),
+        description: "desc".into(),
+        when_to_use: None,
+        steps: vec![WorkflowTemplateStep {
+            key: "a".into(),
+            label: "A".into(),
+            phase: "review".into(),
+            guidance: None,
+        }],
+        guards: vec![],
+    };
+    let config = WorkflowConfig {
+        auto_continue: true,
+        completion_nudge: true,
+        selector_prompt: None,
+        templates: vec![template],
+    };
+    let mut engine = WorkflowEngine::new(config, false).unwrap();
+    // Before selection the engine is in selector mode...
+    assert_eq!(engine.mode(), WorkflowMode::SelectingTemplate);
+    // ...and binding it to the only template activates it immediately.
+    engine.select_template("review", None).unwrap();
+    assert_eq!(engine.mode(), WorkflowMode::Active);
+    assert_eq!(engine.list_templates().len(), 1);
+}
+
+fn bound_template(id: &str) -> WorkflowTemplate {
+    WorkflowTemplate {
+        id: id.into(),
+        label: id.into(),
+        description: "d".into(),
+        when_to_use: None,
+        steps: vec![WorkflowTemplateStep {
+            key: "a".into(),
+            label: "A".into(),
+            phase: "x".into(),
+            guidance: None,
+        }],
+        guards: vec![],
+    }
+}
+
+fn bound_engine(templates: Vec<WorkflowTemplate>, select: &str) -> WorkflowEngine {
+    let config = WorkflowConfig {
+        auto_continue: true,
+        completion_nudge: true,
+        selector_prompt: None,
+        templates,
+    };
+    let mut engine = WorkflowEngine::new(config, false).unwrap();
+    engine.select_template(select, None).unwrap();
+    engine.set_bound(true);
+    engine
+}
+
+#[test]
+fn bound_engine_reset_keeps_template_active() {
+    let mut engine = bound_engine(vec![bound_template("only")], "only");
+    engine.check(1).unwrap();
+    engine.reset();
+    // A bound engine must NOT return to template selection on reset; it stays
+    // active on the assigned template with progress cleared.
+    assert_eq!(engine.mode(), WorkflowMode::Active);
+    assert!(engine.is_bound());
+}
+
+#[test]
+fn bound_engine_rejects_switching_template() {
+    let mut engine = bound_engine(vec![bound_template("a"), bound_template("b")], "a");
+    assert!(
+        engine.select_template("b", None).is_err(),
+        "a bound engine must not switch to a different template"
+    );
+    // Re-selecting the SAME bound template is allowed (reset relies on it).
+    assert!(engine.select_template("a", None).is_ok());
+}
+
+#[test]
+fn bound_engine_completion_nudge_does_not_instruct_reselect() {
+    let mut engine = bound_engine(vec![bound_template("only")], "only");
+    engine.check(1).unwrap();
+    assert_eq!(engine.mode(), WorkflowMode::Complete);
+    let nudge = engine
+        .completion_nudge()
+        .expect("a completed bound workflow should still nudge");
+    assert!(
+        !nudge.contains("select_template") && !nudge.contains("reset"),
+        "bound completion nudge must not tell the model to reset/reselect: {nudge}"
+    );
+}
+
+#[test]
 fn default_config_uses_builtins_when_templates_empty() {
     let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     let templates = engine.list_templates();

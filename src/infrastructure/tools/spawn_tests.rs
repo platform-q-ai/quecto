@@ -8,6 +8,48 @@ fn test_tool() -> SpawnTool {
 }
 
 #[test]
+fn parse_args_accepts_by_value_workflow_spec() {
+    let tool = test_tool();
+    let args = r#"{"task":"t","workflow_spec":{"template":{"id":"rev","label":"Rev","description":"d","steps":[{"key":"a","label":"A","phase":"review"}]}}}"#;
+    let cfg = tool.parse_args_for_test(args).expect("should parse");
+    let spec = cfg.workflow_spec.expect("workflow_spec should be set");
+    assert_eq!(spec.template.id, "rev");
+    assert_eq!(spec.template.steps.len(), 1);
+}
+
+#[test]
+fn parse_args_rejects_workflow_spec_without_template() {
+    let tool = test_tool();
+    let args = r#"{"task":"t","workflow_spec":{"inputs":{"pr":7}}}"#;
+    let err = tool.parse_args_for_test(args).unwrap_err();
+    assert!(err.contains("invalid workflow_spec"), "got: {err}");
+}
+
+#[test]
+fn parse_args_without_workflow_spec_leaves_it_none() {
+    let tool = test_tool();
+    let cfg = tool.parse_args_for_test(r#"{"task":"t"}"#).unwrap();
+    assert!(cfg.workflow_spec.is_none());
+}
+
+#[test]
+fn write_private_new_creates_private_file_and_replaces_stale() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("wf.json");
+    write_private_new(&path, b"first").unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "first");
+    // A stale file (O_EXCL hits AlreadyExists) is removed and recreated once.
+    write_private_new(&path, b"second").unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "second");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "spec file must be owner-only");
+    }
+}
+
+#[test]
 fn test_definition() {
     let tool = test_tool();
     let def = tool.definition();

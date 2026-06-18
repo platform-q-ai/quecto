@@ -33,6 +33,7 @@ pub(crate) struct AgentFlags {
     pub(crate) workflow: bool,
     pub(crate) workflow_guards: bool,
     pub(crate) workflow_disabled: bool,
+    pub(crate) workflow_spec_path: Option<std::path::PathBuf>,
 }
 
 /// Bundles the stdout/stderr pair passed through the agent pipeline.
@@ -142,6 +143,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut workflow = false;
     let mut no_workflow_requested = false;
     let mut workflow_guards = false;
+    let mut workflow_spec_path: Option<std::path::PathBuf> = None;
     let mut i = 0;
 
     while i < args.len() {
@@ -220,16 +222,28 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                 let _val = next_arg(args, i, "--config requires a path", stderr)?;
                 i += 2;
             }
+            "--workflow-spec" => {
+                let val = next_arg(args, i, "--workflow-spec requires a path", stderr)?;
+                workflow_spec_path = Some(std::path::PathBuf::from(val));
+                i += 2;
+            }
             _ => {
                 i += 1;
             }
         }
     }
 
-    if (workflow || no_workflow_requested || workflow_guards) && !uds_mode {
+    if (workflow || no_workflow_requested || workflow_guards || workflow_spec_path.is_some())
+        && !uds_mode
+    {
         stderr.push_str(
-            "agent: --workflow, --no-workflow, and --workflow-guards require --mode uds\n",
+            "agent: --workflow, --no-workflow, --workflow-guards, and --workflow-spec require --mode uds\n",
         );
+        return None;
+    }
+
+    if workflow_spec_path.is_some() && no_workflow_requested {
+        stderr.push_str("agent: --workflow-spec cannot be combined with --no-workflow\n");
         return None;
     }
 
@@ -251,6 +265,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         workflow,
         workflow_guards,
         workflow_disabled: no_workflow_requested,
+        workflow_spec_path,
     };
     validate_agent_flags(flags, stderr)
 }
@@ -730,3 +745,6 @@ mod no_session_tests;
 #[cfg(test)]
 #[path = "agent_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "agent_workflow_spec_tests.rs"]
+mod workflow_spec_tests;

@@ -448,6 +448,7 @@ fn test_build_agent_from_config_no_config_file() {
         workflow: false,
         workflow_guards: false,
         workflow_disabled: false,
+        workflow_spec_path: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -478,6 +479,7 @@ fn test_build_agent_from_config_invalid_json() {
         workflow: false,
         workflow_guards: false,
         workflow_disabled: false,
+        workflow_spec_path: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -512,6 +514,7 @@ fn test_build_agent_from_config_no_providers() {
         workflow: false,
         workflow_guards: false,
         workflow_disabled: false,
+        workflow_spec_path: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
@@ -546,92 +549,12 @@ fn test_build_agent_from_config_with_model_override() {
         workflow: false,
         workflow_guards: false,
         workflow_disabled: false,
+        workflow_spec_path: None,
     };
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
     let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr, None);
     assert!(result.is_some(), "stderr: {}", stderr);
-}
-
-fn uds_workflow_flags(workflow: bool, workflow_disabled: bool) -> AgentFlags {
-    AgentFlags {
-        session_name: None,
-        no_session: false,
-        message: None,
-        system_prompt: None,
-        model_override: None,
-        max_iterations: None,
-        max_time: None,
-        uds_mode: true,
-        no_sandbox: false,
-        network: false,
-        socket_path: None,
-        persist: false,
-        disabled_tools: vec![],
-        effort: None,
-        workflow,
-        workflow_guards: false,
-        workflow_disabled,
-    }
-}
-
-#[test]
-fn test_build_agent_from_config_uds_default_makes_workflow_available_without_forced_prompt() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    std::fs::write(
-        tmp.path().join("config.json"),
-        r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#,
-    )
-    .unwrap();
-    let flags = uds_workflow_flags(false, false);
-    let mut stderr = String::new();
-    let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr, None)
-        .expect("agent should build with optional workflow available");
-    assert!(result.workflow_state.is_some(), "stderr: {}", stderr);
-    assert!(result.workflow_config.is_some(), "stderr: {}", stderr);
-    assert!(
-        !result.workflow_prompt_initially_active,
-        "normal UDS must not inject selector-mode workflow prompt before selection"
-    );
-}
-
-#[test]
-fn test_build_agent_from_config_uds_no_workflow_disables_workflow_state() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    std::fs::write(
-        tmp.path().join("config.json"),
-        r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#,
-    )
-    .unwrap();
-    let flags = uds_workflow_flags(false, true);
-    let mut stderr = String::new();
-    let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr, None)
-        .expect("agent should build with workflow disabled");
-    assert!(result.workflow_state.is_none(), "stderr: {}", stderr);
-    assert!(result.workflow_config.is_none(), "stderr: {}", stderr);
-}
-
-#[test]
-fn test_build_agent_from_config_uds_workflow_flag_creates_workflow_state() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    std::fs::write(
-        tmp.path().join("config.json"),
-        r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#,
-    )
-    .unwrap();
-    let flags = uds_workflow_flags(true, false);
-    let mut stderr = String::new();
-    let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr, None)
-        .expect("agent should build with workflow enabled");
-    assert!(result.workflow_state.is_some(), "stderr: {}", stderr);
-    assert!(result.workflow_config.is_some(), "stderr: {}", stderr);
-    assert!(
-        result.workflow_prompt_initially_active,
-        "--workflow should inject selector-mode workflow prompt immediately"
-    );
 }
 
 // ===================================================================

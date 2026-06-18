@@ -52,6 +52,7 @@ fn test_flags(msg: Option<&str>, session: Option<&str>, sys: Option<&str>) -> Ag
         workflow: false,
         workflow_guards: false,
         workflow_disabled: false,
+        workflow_spec_path: None,
     }
 }
 
