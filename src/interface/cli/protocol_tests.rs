@@ -83,6 +83,23 @@ fn test_parse_abort_command() {
 }
 
 #[test]
+fn test_parse_set_workflow_automation_command() {
+    let json = r#"{"type":"set_workflow_automation","autoContinue":false,"completionNudge":true}"#;
+    let cmd: AgentCommand = serde_json::from_str(json).unwrap();
+    match cmd {
+        AgentCommand::SetWorkflowAutomation {
+            auto_continue,
+            completion_nudge,
+            ..
+        } => {
+            assert_eq!(auto_continue, Some(false));
+            assert_eq!(completion_nudge, Some(true));
+        }
+        _ => panic!("expected SetWorkflowAutomation"),
+    }
+}
+
+#[test]
 fn test_parse_get_state_command() {
     let json = r#"{"type":"get_state","id":"gs-1"}"#;
     let cmd: AgentCommand = serde_json::from_str(json).unwrap();

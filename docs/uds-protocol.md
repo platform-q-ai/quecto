@@ -122,8 +122,8 @@ Queue a message that will be processed after the current (or next) agent run com
 | `message` | string | yes | The follow-up message |
 
 **Behavior:**
-- Appends the message to the pending queue
-- When the next prompt completes (success, error, or cancellation), all pending messages are drained and executed in order
+- **Agent running:** Appends the message to the pending queue. When the current run completes (success, error, or cancellation), pending messages are drained and executed in order.
+- **Agent idle:** Appends the message to the pending queue and immediately starts draining it, matching Pi-style follow-up delivery.
 - Each pending message triggers its own full event sequence (`agent_start` → `agent_end`)
 
 **Response:** Always `success: true`.
@@ -155,6 +155,25 @@ Cancel the current agent run. If the agent is idle, this is a no-op.
 
 ```json
 {"type":"abort","id":"ab-1"}
+```
+
+---
+
+### `set_workflow_automation`
+
+Toggle core workflow automation for this UDS session. Requires workflow mode.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"set_workflow_automation"` | yes | |
+| `id` | string | no | Correlation ID |
+| `autoContinue` | boolean | no | Enable/disable core auto-continue nudges |
+| `completionNudge` | boolean | no | Enable/disable core completion nudges |
+
+**Response data:**
+
+```json
+{"autoContinue": true, "completionNudge": true}
 ```
 
 ---

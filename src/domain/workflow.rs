@@ -6,8 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 
-fn is_false(v: &bool) -> bool {
-    !*v
+fn default_true() -> bool {
+    true
 }
 
 const MAX_TEMPLATE_COUNT: usize = 32;
@@ -49,11 +49,11 @@ pub struct WorkflowRunPersisted {
     pub active_issue: Option<(u32, String)>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowConfig {
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default = "default_true")]
     pub auto_continue: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default = "default_true")]
     pub completion_nudge: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selector_prompt: Option<String>,
@@ -145,6 +145,17 @@ impl std::fmt::Display for WorkflowError {
     }
 }
 impl std::error::Error for WorkflowError {}
+
+impl Default for WorkflowConfig {
+    fn default() -> Self {
+        Self {
+            auto_continue: true,
+            completion_nudge: true,
+            selector_prompt: None,
+            templates: Vec::new(),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct WorkflowEngine {

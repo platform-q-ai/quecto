@@ -77,6 +77,14 @@ pub enum Command {
         #[serde(rename = "modelId", skip_serializing_if = "Option::is_none")]
         model_id: Option<String>,
     },
+    SetWorkflowAutomation {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(rename = "autoContinue", skip_serializing_if = "Option::is_none")]
+        auto_continue: Option<bool>,
+        #[serde(rename = "completionNudge", skip_serializing_if = "Option::is_none")]
+        completion_nudge: Option<bool>,
+    },
     ClearHistory {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,

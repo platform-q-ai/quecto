@@ -57,7 +57,6 @@ impl App {
         self.footer.set_streaming(false);
         self.spinner = None;
         self.chat.finalize_assistant();
-        self.maybe_send_workflow_followup();
     }
 
     fn handle_turn_end(&mut self, message: serde_json::Value) {
@@ -182,6 +181,10 @@ impl App {
             "get_state" if success => self.handle_get_state(data),
             "set_model" if success => self.notify("Model switched", NotifyLevel::Success),
             "set_model" => self.notify_response_error("Model switch failed", error),
+            "set_workflow_automation" if success => self.handle_workflow_automation(data),
+            "set_workflow_automation" => {
+                self.notify_response_error("Workflow automation update failed", error)
+            }
             "get_session_stats" if success => {
                 if let Some(data) = data {
                     self.show_session_stats(&data);
@@ -220,7 +223,38 @@ impl App {
         }
         if let Some(wf) = data.get("workflow") {
             self.workflow_bar = workflow_bar::parse_workflow_event(wf);
+            self.sync_workflow_automation(wf);
         }
+    }
+
+    fn sync_workflow_automation(&mut self, data: &serde_json::Value) {
+        let automation = data.get("automation").unwrap_or(data);
+        if let Some(value) = automation.get("autoContinue").and_then(|v| v.as_bool()) {
+            self.workflow_auto_continue = value;
+        }
+        if let Some(value) = automation.get("completionNudge").and_then(|v| v.as_bool()) {
+            self.workflow_completion_nudge = value;
+        }
+    }
+
+    fn handle_workflow_automation(&mut self, data: Option<serde_json::Value>) {
+        if let Some(data) = data {
+            self.sync_workflow_automation(&data);
+        }
+        let auto = if self.workflow_auto_continue {
+            "ON"
+        } else {
+            "OFF"
+        };
+        let nudge = if self.workflow_completion_nudge {
+            "ON"
+        } else {
+            "OFF"
+        };
+        self.notify(
+            &format!("Workflow automation: auto-continue {auto}, completion nudge {nudge}"),
+            NotifyLevel::Info,
+        );
     }
 
     fn handle_resume_success(&mut self, data: Option<serde_json::Value>) {

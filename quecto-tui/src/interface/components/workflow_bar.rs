@@ -29,9 +29,9 @@ pub struct WorkflowBarState {
     pub template_name: Option<String>,
     /// V2: number of available templates (for selector mode display).
     pub template_count: u32,
-    /// TUI-local: whether workflow auto-continue is enabled.
+    /// Whether core workflow auto-continue is enabled.
     pub workflow_auto_continue: bool,
-    /// TUI-local: whether completion nudge is enabled.
+    /// Whether core workflow completion nudge is enabled.
     pub workflow_completion_nudge: bool,
 }
 

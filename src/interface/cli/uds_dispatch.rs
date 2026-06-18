@@ -34,6 +34,20 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             handle_follow_up(ctx, id.as_deref(), &type_name, message).await
         }
         AgentCommand::Abort { .. } => handle_abort(ctx, id.as_deref(), &type_name).await,
+        AgentCommand::SetWorkflowAutomation {
+            auto_continue,
+            completion_nudge,
+            ..
+        } => {
+            handle_set_workflow_automation(
+                ctx,
+                id.as_deref(),
+                &type_name,
+                auto_continue,
+                completion_nudge,
+            )
+            .await
+        }
         AgentCommand::SetModel {
             model,
             provider,
@@ -194,6 +208,44 @@ pub(super) async fn handle_follow_up(
 ) -> bool {
     ctx.session.enqueue_pending(message);
     let ev = AgentEvent::ok(id, type_name, None);
+    emit_event_to_broadcast_or_writer(ctx, &ev).await;
+    if !ctx.session.is_streaming() {
+        super::drain_pending_and_nudge(ctx).await;
+    }
+    false
+}
+
+pub(super) async fn handle_set_workflow_automation(
+    ctx: &mut DispatchCtx<'_>,
+    id: Option<&str>,
+    type_name: &str,
+    auto_continue: Option<bool>,
+    completion_nudge: Option<bool>,
+) -> bool {
+    let Some(config) = ctx.workflow_config.as_mut() else {
+        let ev = AgentEvent::err(id, type_name, "workflow is not active");
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    };
+    if let Some(value) = auto_continue {
+        config.auto_continue = value;
+    }
+    if let Some(value) = completion_nudge {
+        config.completion_nudge = value;
+    }
+    if let Some(workflow) = &ctx.workflow_state
+        && let Ok(mut engine) = workflow.lock()
+    {
+        engine.set_automation(config.auto_continue, config.completion_nudge);
+    }
+    let ev = AgentEvent::ok(
+        id,
+        type_name,
+        Some(serde_json::json!({
+            "autoContinue": config.auto_continue,
+            "completionNudge": config.completion_nudge,
+        })),
+    );
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
 }

@@ -197,9 +197,9 @@ pub struct App {
     selection: Option<TextSelection>,
     /// Workflow header bar state (#563).
     workflow_bar: workflow_bar::WorkflowBarState,
-    /// TUI-local: auto-continue sends follow-up when steps are incomplete.
+    /// Mirror of core workflow auto-continue state, toggled through UDS.
     workflow_auto_continue: bool,
-    /// TUI-local: completion nudge sends issue-cycling prompt when all done.
+    /// Mirror of core workflow completion-nudge state, toggled through UDS.
     workflow_completion_nudge: bool,
     /// Last rendered lines (for extracting selected text from the buffer).
     last_rendered_lines: Vec<String>,
