@@ -39,6 +39,18 @@ connects to the child's UDS socket directly from Rust.
     "system": {
       "type": "string",
       "description": "System prompt for the subagent"
+    },
+    "config": {
+      "type": "string",
+      "description": "Path to a config file to pass to the child via --config (optional)"
+    },
+    "workflow": {
+      "type": "boolean",
+      "description": "Start the child with --workflow (model selects a template itself)"
+    },
+    "workflow_spec": {
+      "type": "object",
+      "description": "Assign a specific workflow to the child by value: { \"template\": { full inline template } }. The child runs exactly that template, bound, in Active mode — no model-driven selection."
     }
   }
 }
@@ -47,6 +59,7 @@ connects to the child's UDS socket directly from Rust.
 - **`task` is optional.** Omitting it creates an idle agent ready for prompts via `agent_cmd`.
 - **`agent_id`** must be unique. Spawning with an already-running ID returns an error.
 - Returns immediately (< 1 second) after the child's socket is ready.
+- **`workflow_spec` vs `workflow`.** `workflow: true` makes the workflow tool available so the *child* picks a template; `workflow_spec` hands the child a specific template **by value** and binds it. They are independent of `config`, which supplies the child's runtime (providers/model/default template library).
 
 **Example:**
 
@@ -66,6 +79,43 @@ connects to the child's UDS socket directly from Rust.
 ```
 Subagent 'security-reviewer' is running. Use agent_cmd to interact.
 ```
+
+#### Assigning a bound workflow (`workflow_spec`)
+
+A parent can hand a child a specific workflow **by value** — the full template
+travels in the spawn call, so the child does not need that template in its own
+config. The assigned child starts in **Active** mode bound to exactly that
+template: it cannot select a different template, and on completion it reports
+its result rather than picking a new workflow.
+
+```json
+{
+  "name": "spawn",
+  "arguments": {
+    "agent_id": "pr-reviewer",
+    "task": "Review PR #682",
+    "workflow_spec": {
+      "template": {
+        "id": "review-pr",
+        "label": "Review PR",
+        "description": "Analyze a diff and run the test suite",
+        "steps": [
+          { "key": "analyze", "label": "Analyze the diff", "phase": "review" },
+          { "key": "verify",  "label": "Run the test suite", "phase": "review" }
+        ]
+      }
+    }
+  }
+}
+```
+
+- The `template` is the full definition (same shape as a `workflow-config.json`
+  template); see [workflow.md](workflow.md) for the field reference.
+- The spec is size-bounded (256 KiB) and written to a private, single-use file
+  the child deletes once read.
+- If a spec is assigned but cannot be loaded, the child **fails closed** (it
+  refuses to start a workflow rather than falling back to free selection).
+- `workflow_spec` cannot be combined with the child's `--no-workflow`.
 
 ### `agent_cmd` — interact with a subagent
 

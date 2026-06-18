@@ -31,8 +31,9 @@ first turn.
 | `--workflow` | Start in workflow-driven mode: the workflow tool is available and selector/active prompt text is injected immediately |
 | `--no-workflow` | Fully disable workflow tool/state/prompt (clears `--workflow` and `--workflow-guards`) |
 | `--workflow-guards` | Enable bash command guards when the workflow tool is available; does not by itself force workflow prompt injection |
+| `--workflow-spec <path>` | Run the by-value template in the given spec file, **bound** in Active mode from the first turn (no template selection). Cannot be combined with `--no-workflow`. Usually set by the parent `spawn` tool, not by hand — see [Bound mode](#bound-mode) |
 
-All three flags require `--mode uds`. Using them without it produces an error.
+All flags require `--mode uds`. Using them without it produces an error.
 
 ### Typical invocation
 
@@ -327,6 +328,21 @@ itself through incomplete steps while workflow progress advances.
 All steps in the template are checked. If `completion_nudge` is enabled, the
 core agent runtime nudges the agent to close the current issue and begin a new
 cycle.
+
+### Bound mode
+
+When an agent is started with a by-value workflow assignment (`--workflow-spec`,
+typically set by a parent's `spawn` `workflow_spec` — see
+[subagents.md](subagents.md)), the engine is **bound** to that single template:
+
+- It starts directly in Active mode — no selector phase.
+- `select_template` cannot switch to a different template, and `reset` only
+  clears step progress (it never returns to Selector mode).
+- On completion the nudge tells the agent to report its result and stop, rather
+  than to reset and pick a new workflow.
+
+This makes a parent's assignment authoritative: the child runs exactly the
+workflow it was handed.
 
 ## The workflow tool
 
