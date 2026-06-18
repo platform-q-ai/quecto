@@ -217,6 +217,26 @@ async fn monitor_loop(
     }
 }
 
+/// If `line` is a child's `workflow_state` event, re-stamp it with the child's
+/// identity so it can be forwarded onto the parent's event stream (PRD Stage B
+/// / R-B2): a parent/supervisor then sees descendant workflows without polling
+/// each child socket. Returns the re-tagged JSON line, or `None` for any line
+/// that is not a `workflow_state` event.
+pub fn forward_child_workflow_event(
+    line: &str,
+    child_id: &str,
+    parent_id: Option<&str>,
+) -> Option<String> {
+    let mut value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    if value.get("type").and_then(|t| t.as_str()) != Some("workflow_state") {
+        return None;
+    }
+    let obj = value.as_object_mut()?;
+    obj.insert("agent_id".into(), serde_json::json!(child_id));
+    obj.insert("parent_id".into(), serde_json::json!(parent_id));
+    serde_json::to_string(&value).ok()
+}
+
 /// Check if a JSON-lines event should trigger a notification and send it.
 /// Parses the line from string — use `notify_from_parsed` when you already have a Value.
 #[cfg(test)]

@@ -218,6 +218,7 @@ pub struct QuectoWorld {
     pub event_identity_agent_id: Option<String>,
     pub event_identity_parent_id: Option<String>,
     pub event_identity_last: Option<serde_json::Value>,
+    pub event_identity_stream: Vec<serde_json::Value>,
     /// Loaded config (after "When I load the config")
     pub config: Option<Config>,
     /// Resolved workspace path (after "When I resolve the workspace path")

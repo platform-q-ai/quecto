@@ -402,6 +402,39 @@ pub fn build_subagent_info_list(
     list
 }
 
+/// The unit tree reconstructed purely from an identity-tagged event stream
+/// (PRD Stage B / R-B4). Each `workflow_state` / subagent event carries
+/// `agent_id` + `parent_id`, so any consumer can rebuild the parent→child
+/// structure without a side channel.
+#[derive(Debug, Default, Clone)]
+pub struct UnitTree {
+    /// agent_id → its parent_id (None at the root).
+    parents: std::collections::HashMap<String, Option<String>>,
+}
+
+impl UnitTree {
+    /// Build the tree from a slice of identity-tagged events. Any event with an
+    /// `agent_id` contributes a node; later events overwrite earlier parentage.
+    pub fn from_events(events: &[serde_json::Value]) -> Self {
+        let mut parents = std::collections::HashMap::new();
+        for ev in events {
+            if let Some(agent) = ev.get("agent_id").and_then(|v| v.as_str()) {
+                let parent = ev
+                    .get("parent_id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                parents.insert(agent.to_string(), parent);
+            }
+        }
+        Self { parents }
+    }
+
+    /// Direct parent of `agent`, or `None` if it is a root (or unknown).
+    pub fn parent_of(&self, agent: &str) -> Option<&str> {
+        self.parents.get(agent).and_then(|p| p.as_deref())
+    }
+}
+
 // ─── Response helpers ────────────────────────────────────────────────────────
 
 impl AgentEvent {

@@ -120,3 +120,100 @@ fn then_subagent_workflow_snapshot(world: &mut QuectoWorld, child: String, done:
     assert_eq!(wf.steps_completed, done);
     assert_eq!(wf.steps_total, total);
 }
+
+// ─── Stage B / R-B2: child workflow_state forwarded to the parent stream ────
+
+#[given(expr = "a parent agent {string} with subagent {string}")]
+fn given_parent_with_subagent(world: &mut QuectoWorld, parent: String, child: String) {
+    world.event_identity_parent_id = Some(parent);
+    world.event_identity_agent_id = Some(child);
+}
+
+#[when(expr = "{string} advances its workflow")]
+fn when_child_advances_workflow(world: &mut QuectoWorld, child: String) {
+    use quecto::infrastructure::tools::subagent_monitor::forward_child_workflow_event;
+    // The child emits its own workflow_state line; the parent's monitor
+    // re-stamps it with the child's identity before forwarding.
+    let engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    let child_line = serde_json::to_string(&snapshot_to_event(&engine.snapshot(true))).unwrap();
+    let parent = world.event_identity_parent_id.clone();
+    let forwarded = forward_child_workflow_event(&child_line, &child, parent.as_deref())
+        .expect("a workflow_state line should be forwarded");
+    world.event_identity_last = Some(serde_json::from_str(&forwarded).unwrap());
+}
+
+#[then(
+    expr = "{string}'s event stream should receive a workflow_state event tagged agent_id {string} parent_id {string}"
+)]
+fn then_parent_stream_receives_tagged_event(
+    world: &mut QuectoWorld,
+    _parent_stream: String,
+    expected_agent: String,
+    expected_parent: String,
+) {
+    let ev = world
+        .event_identity_last
+        .as_ref()
+        .expect("no forwarded event");
+    assert_eq!(ev["type"].as_str(), Some("workflow_state"));
+    assert_eq!(ev["agent_id"].as_str(), Some(expected_agent.as_str()));
+    assert_eq!(ev["parent_id"].as_str(), Some(expected_parent.as_str()));
+}
+
+// ─── Stage B / R-B4: reconstruct the unit tree from the event stream ────────
+
+fn tagged_event(agent: &str, parent: Option<&str>) -> serde_json::Value {
+    serde_json::json!({ "type": "workflow_state", "agent_id": agent, "parent_id": parent })
+}
+
+#[given(
+    expr = "an event stream with identity-tagged workflow_state events for {string}, {string} under {string}, and {string} under {string}"
+)]
+fn given_identity_tagged_stream(
+    world: &mut QuectoWorld,
+    root: String,
+    child: String,
+    child_parent: String,
+    grandchild: String,
+    grandchild_parent: String,
+) {
+    world.event_identity_stream = vec![
+        tagged_event(&root, None),
+        tagged_event(&child, Some(&child_parent)),
+        tagged_event(&grandchild, Some(&grandchild_parent)),
+    ];
+}
+
+#[when("a consumer reconstructs the unit tree from the stream")]
+fn when_reconstruct_unit_tree(world: &mut QuectoWorld) {
+    use quecto::interface::cli::protocol::UnitTree;
+    let tree = UnitTree::from_events(&world.event_identity_stream);
+    // Project the parentage into a JSON map so the assertion needn't import the type.
+    let mut map = serde_json::Map::new();
+    for ev in &world.event_identity_stream {
+        if let Some(agent) = ev["agent_id"].as_str() {
+            map.insert(agent.to_string(), serde_json::json!(tree.parent_of(agent)));
+        }
+    }
+    world.event_identity_last = Some(serde_json::Value::Object(map));
+}
+
+#[then(expr = "the tree should place {string} under {string} under {string}")]
+fn then_tree_places_nesting(
+    world: &mut QuectoWorld,
+    grandchild: String,
+    child: String,
+    root: String,
+) {
+    let map = world
+        .event_identity_last
+        .as_ref()
+        .expect("no reconstructed tree");
+    assert_eq!(
+        map[&grandchild].as_str(),
+        Some(child.as_str()),
+        "grandchild parent"
+    );
+    assert_eq!(map[&child].as_str(), Some(root.as_str()), "child parent");
+    assert!(map[&root].is_null(), "root should have no parent");
+}
