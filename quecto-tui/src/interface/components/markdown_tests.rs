@@ -31,6 +31,15 @@ fn render_plain(text: &str, width: usize) -> String {
         .join("\n")
 }
 
+fn render_plain_nonempty(text: &str, width: usize) -> Vec<String> {
+    render_md(text, width)
+        .into_iter()
+        .map(|line| strip_ansi(&line))
+        .filter(|line| !line.is_empty())
+        .map(|line| line.trim_end().to_string())
+        .collect()
+}
+
 #[test]
 fn heading_level_1() {
     let lines = render_md("# Hello", 80);
@@ -113,6 +122,105 @@ fn ordered_list() {
     assert!(plain.contains("1."));
     assert!(plain.contains("first"));
     assert!(plain.contains("second"));
+}
+
+#[test]
+fn unordered_list_uses_bullets() {
+    let lines = render_plain_nonempty("- item one\n- item two\n- item three", 80);
+
+    assert_eq!(lines, vec!["• item one", "• item two", "• item three"]);
+}
+
+#[test]
+fn ordered_list_uses_numbers() {
+    let lines = render_plain_nonempty("1. first\n2. second\n3. third", 80);
+
+    assert_eq!(lines, vec!["1. first", "2. second", "3. third"]);
+}
+
+#[test]
+fn ordered_list_preserves_start_number() {
+    let lines = render_plain_nonempty("10. ten\n11. eleven", 80);
+
+    assert_eq!(lines, vec!["10. ten", "11. eleven"]);
+}
+
+#[test]
+fn nested_unordered_list_uses_bullets() {
+    let lines = render_plain_nonempty("- parent\n  - child\n  - sibling", 80);
+
+    assert_eq!(lines, vec!["• parent", "  • child", "  • sibling"]);
+}
+
+#[test]
+fn mixed_ordered_unordered_nesting() {
+    let lines = render_plain_nonempty("1. a\n   - b\n   - c\n2. d", 80);
+
+    assert_eq!(lines, vec!["1. a", "  • b", "  • c", "2. d"]);
+}
+
+#[test]
+fn unordered_list_long_item_wraps_with_hanging_indent() {
+    let lines = render_plain_nonempty("- alpha beta gamma delta epsilon zeta", 24);
+
+    assert_eq!(lines, vec!["• alpha beta gamma", "  delta epsilon zeta"]);
+}
+
+#[test]
+fn ordered_list_long_item_wraps_with_hanging_indent() {
+    let lines = render_plain_nonempty("10. alpha beta gamma delta epsilon zeta", 24);
+
+    assert_eq!(
+        lines,
+        vec!["10. alpha beta gamma", "    delta epsilon zeta"]
+    );
+}
+
+#[test]
+fn nested_unordered_list_long_item_wraps_with_hanging_indent() {
+    let lines = render_plain_nonempty("- parent\n  - alpha beta gamma delta epsilon zeta", 24);
+
+    assert_eq!(
+        lines,
+        vec!["• parent", "  • alpha beta gamma", "    delta epsilon zeta"]
+    );
+}
+
+#[test]
+fn list_item_strips_terminal_control_sequences() {
+    let rendered = render_md("- safe \x1b[2Jtext \x1b]52;c;payload\x07", 80).join("\n");
+
+    assert!(
+        !rendered.contains("\x1b[2J"),
+        "CSI escape should be stripped"
+    );
+    assert!(!rendered.contains("]52;"), "OSC payload should be stripped");
+    assert!(strip_ansi(&rendered).contains("• safe text"));
+}
+
+#[test]
+fn inline_code_strips_terminal_control_sequences() {
+    let rendered = render_md("Use `safe \x1b[2Jcode`", 80).join("\n");
+
+    assert!(
+        !rendered.contains("\x1b[2J"),
+        "CSI escape should be stripped"
+    );
+    assert!(strip_ansi(&rendered).contains("`safe code`"));
+}
+
+#[test]
+fn escaped_ordered_marker_paragraph_does_not_get_hanging_indent() {
+    let lines = render_plain_nonempty("1\\. alpha beta gamma delta epsilon zeta", 24);
+
+    assert_eq!(lines, vec!["1. alpha beta gamma", "delta epsilon zeta"]);
+}
+
+#[test]
+fn literal_bullet_paragraph_does_not_get_hanging_indent() {
+    let lines = render_plain_nonempty("• alpha beta gamma delta epsilon zeta", 24);
+
+    assert_eq!(lines, vec!["• alpha beta gamma", "delta epsilon zeta"]);
 }
 
 #[test]
