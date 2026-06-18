@@ -332,8 +332,8 @@ cycle.
 ### Bound mode
 
 When an agent is started with a by-value workflow assignment (`--workflow-spec`,
-typically set by a parent's `spawn` `workflow_spec` — see
-[subagents.md](subagents.md)), the engine is **bound** to that single template:
+typically set by a parent's `spawn` `workflow_spec` — see the `subagents`
+doc (`docs {"name":"subagents"}`)), the engine is **bound** to that single template:
 
 - It starts directly in Active mode — no selector phase.
 - `select_template` cannot switch to a different template, and `reset` only

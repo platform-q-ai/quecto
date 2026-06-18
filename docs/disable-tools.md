@@ -128,8 +128,8 @@ the lifetime of the agent process.
 
 ## See also
 
-- [Getting Started](getting-started.md) — quickstart guide for UDS agent integration
-- [UDS Protocol Reference](uds-protocol.md) — full protocol specification
-- [Extensions](extensions.md) — custom tools and how they interact with the denylist
-- [Subagents](subagents.md) — spawning child agent processes
-- [Workflow Automation](workflow.md) — structured development process
+- Getting Started (`docs {"name":"getting-started"}`) — quickstart guide for UDS agent integration
+- UDS Protocol Reference (`docs {"name":"uds-protocol"}`) — full protocol specification
+- Extensions (`docs {"name":"extensions"}`) — custom tools and how they interact with the denylist
+- Subagents (`docs {"name":"subagents"}`) — spawning child agent processes
+- Workflow Automation (`docs {"name":"workflow"}`) — structured development process

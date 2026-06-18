@@ -32,6 +32,11 @@ const EMBEDDED_DOCS: &[(&str, &str)] = &[
         "uds-protocol",
         include_str!("../../../docs/uds-protocol.md"),
     ),
+    (
+        "getting-started",
+        include_str!("../../../docs/getting-started.md"),
+    ),
+    ("readme", include_str!("../../../README.md")),
 ];
 
 /// Normalize a requested doc name: strip a leading `docs/` and a trailing
