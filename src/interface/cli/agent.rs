@@ -34,6 +34,10 @@ pub(crate) struct AgentFlags {
     pub(crate) workflow_guards: bool,
     pub(crate) workflow_disabled: bool,
     pub(crate) workflow_spec_path: Option<std::path::PathBuf>,
+    /// `--parent-id`: the spawning agent's id, stamped onto this agent's emitted
+    /// events so consumers can reconstruct the unit tree (PRD Stage B). `None`
+    /// at the root.
+    pub(crate) parent_id: Option<String>,
 }
 
 /// Bundles the stdout/stderr pair passed through the agent pipeline.
@@ -50,80 +54,11 @@ pub(crate) enum DeadlineResult {
     TimedOut,
 }
 
-/// Return `args[i+1]` or push `err_msg` to stderr and return `None`.
-fn next_arg<'a>(
-    args: &'a [String],
-    i: usize,
-    err_msg: &str,
-    stderr: &mut String,
-) -> Option<&'a str> {
-    if i + 1 < args.len() {
-        Some(args[i + 1].as_str())
-    } else {
-        stderr.push_str(&format!("agent: {err_msg}\n"));
-        None
-    }
-}
-
-/// Parse a positive non-zero u32 for `--max-iterations`.
-fn parse_pos_u32(val: &str, flag: &str, stderr: &mut String) -> Option<u32> {
-    match val.parse::<u32>() {
-        Ok(n) if n > 0 => Some(n),
-        _ => {
-            stderr.push_str(&format!("agent: {flag} requires a positive integer\n"));
-            None
-        }
-    }
-}
-
-/// Parse a positive non-zero u64 for `--max-time`.
-fn parse_pos_u64(val: &str, flag: &str, stderr: &mut String) -> Option<u64> {
-    match val.parse::<u64>() {
-        Ok(n) if n > 0 => Some(n),
-        _ => {
-            stderr.push_str(&format!("agent: {flag} requires a positive integer\n"));
-            None
-        }
-    }
-}
-
-/// Parse an effort level string, writing an error to `stderr` on failure.
-fn parse_effort_level(
-    val: &str,
-    stderr: &mut String,
-) -> Option<crate::domain::provider::EffortLevel> {
-    crate::domain::provider::EffortLevel::parse(val).or_else(|| {
-        stderr.push_str(&format!(
-            "agent: invalid effort level '{}'; expected one of: low, medium, high, max\n",
-            val
-        ));
-        None
-    })
-}
-
-/// Parse and validate a session name from `args[i+1]`.
-fn parse_session_name(args: &[String], i: usize, stderr: &mut String) -> Option<String> {
-    let name = next_arg(args, i, "-s requires a session name", stderr)?;
-    if !super::is_valid_session_name(name) {
-        stderr.push_str("agent: session name must contain only alphanumeric, '-', or '_'\n");
-        return None;
-    }
-    Some(name.to_string())
-}
-
-/// Parse the `--mode` flag value.  Returns `Some(true)` for `"uds"`, `None`
-/// (with an error written to `stderr`) for any unknown value.
-fn parse_agent_mode(val: &str, stderr: &mut String) -> Option<bool> {
-    match val {
-        "uds" => Some(true),
-        other => {
-            stderr.push_str(&format!(
-                "agent: --mode '{other}' is not valid; supported: uds\n"
-            ));
-            None
-        }
-    }
-}
+mod flag_parse;
+use flag_parse::{
+    next_arg, parse_agent_mode, parse_effort_level, parse_pos_u32, parse_pos_u64,
+    parse_session_name,
+};
 
 pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<AgentFlags> {
     let mut session_name: Option<String> = None;
@@ -144,6 +79,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut no_workflow_requested = false;
     let mut workflow_guards = false;
     let mut workflow_spec_path: Option<std::path::PathBuf> = None;
+    let mut parent_id: Option<String> = None;
     let mut i = 0;
 
     while i < args.len() {
@@ -227,6 +163,11 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
                 workflow_spec_path = Some(std::path::PathBuf::from(val));
                 i += 2;
             }
+            "--parent-id" => {
+                let val = next_arg(args, i, "--parent-id requires a value", stderr)?;
+                parent_id = Some(val.to_string());
+                i += 2;
+            }
             _ => {
                 i += 1;
             }
@@ -266,6 +207,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         workflow_guards,
         workflow_disabled: no_workflow_requested,
         workflow_spec_path,
+        parent_id,
     };
     validate_agent_flags(flags, stderr)
 }

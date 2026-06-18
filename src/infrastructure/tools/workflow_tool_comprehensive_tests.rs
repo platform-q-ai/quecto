@@ -514,7 +514,7 @@ async fn check_guards_only_uses_the_selected_template() {
 #[tokio::test]
 async fn emitter_sends_workflow_state_through_broadcast_channel() {
     let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(16);
-    let emitter = broadcast_emitter(broadcast_tx.clone());
+    let emitter = broadcast_emitter(broadcast_tx.clone(), None, None);
     let engine = engine_handle_with_config(WorkflowConfig::default(), false);
     let tool = WorkflowTool::with_event_emitter(engine, emitter);
 
@@ -557,7 +557,7 @@ async fn register_workflow_tool_with_broadcast_emitter() {
     use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
     let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(16);
-    let emitter = broadcast_emitter(broadcast_tx.clone());
+    let emitter = broadcast_emitter(broadcast_tx.clone(), None, None);
 
     let tmp = tempfile::tempdir().unwrap();
     let workspace = tmp.path().to_path_buf();
