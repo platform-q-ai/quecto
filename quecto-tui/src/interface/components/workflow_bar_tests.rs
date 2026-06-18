@@ -140,7 +140,8 @@ fn workflow_widget_renders_plain_text_like_quecto() {
     state.workflow_auto_continue = true;
     state.workflow_completion_nudge = false;
     let lines = render_widget(&state, 100);
-    assert_eq!(lines.len(), 2);
+    // main line + phase-pill overview + hints
+    assert_eq!(lines.len(), 3);
     let line = &lines[0];
     assert!(
         !line.contains("\x1b[48;2;"),
@@ -159,7 +160,7 @@ fn workflow_widget_renders_plain_text_like_quecto() {
         crate::interface::utils::visible_width(line) < 100,
         "widget should be content-sized, not padded to full width: {line}"
     );
-    let hints = &lines[1];
+    let hints = lines.last().unwrap();
     assert!(
         hints.contains("auto:on"),
         "auto toggle state missing: {hints}"
@@ -168,6 +169,48 @@ fn workflow_widget_renders_plain_text_like_quecto() {
         hints.contains("nudge:off"),
         "nudge toggle state missing: {hints}"
     );
+}
+
+#[test]
+fn workflow_widget_renders_phase_pills() {
+    // done=3 → all RED steps done, step 4 (GREEN) is current.
+    let state = make_state(Some(100), 3, 14);
+    let lines = render_widget(&state, 120);
+    let pills = lines
+        .iter()
+        .find(|l| l.contains("RED") && l.contains("GREEN"))
+        .expect("phase-pill overview line should render");
+    assert!(pills.contains('✓'), "done phase marker missing: {pills}");
+    assert!(pills.contains('●'), "current phase marker missing: {pills}");
+    assert!(pills.contains('○'), "pending phase marker missing: {pills}");
+}
+
+#[test]
+fn workflow_widget_pills_handle_custom_phase_keys() {
+    // A custom-template phase key that isn't in the canonical TDD set should
+    // still appear as an upper-cased pill rather than being dropped or shown as DONE.
+    let mut state = make_state(Some(100), 0, 0);
+    state.steps = vec![
+        WorkflowStepInfo {
+            id: 1,
+            label: "Design".into(),
+            phase: "discovery".into(),
+            done: true,
+        },
+        WorkflowStepInfo {
+            id: 2,
+            label: "Build".into(),
+            phase: "delivery".into(),
+            done: false,
+        },
+    ];
+    state.total = 2;
+    let lines = render_widget(&state, 120);
+    let pills = lines
+        .iter()
+        .find(|l| l.contains("DISCOVERY"))
+        .expect("custom phase pill should render");
+    assert!(pills.contains("DELIVERY"), "custom phase missing: {pills}");
 }
 
 #[test]

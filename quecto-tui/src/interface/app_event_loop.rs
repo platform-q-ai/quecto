@@ -164,6 +164,10 @@ impl App {
                     if self.gc_exited_subagents() {
                         needs_render = true;
                     }
+                    // Animate the subagent spinner / advance elapsed-time clocks.
+                    if self.tick_subagent_animation() {
+                        needs_render = true;
+                    }
                     // Kitty fallback — enable modifyOtherKeys if no response.
                     if !kitty_fallback_done && tokio::time::Instant::now() >= kitty_deadline {
                         if !self.kitty.active {
