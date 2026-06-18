@@ -339,6 +339,57 @@ pub(super) fn text_response(content: &str) -> LlmResponse {
     }
 }
 
+#[derive(Clone, Copy)]
+struct UsageFixture(u32, u32, u32, u32, u64);
+
+fn text_response_with_usage(content: &str, fixture: UsageFixture) -> LlmResponse {
+    LlmResponse {
+        content: Some(content.to_string()),
+        tool_calls: vec![],
+        usage: Some(UsageInfo {
+            prompt_tokens: fixture.0,
+            completion_tokens: fixture.1,
+            cache_read_tokens: Some(fixture.2),
+            cache_write_tokens: Some(fixture.3),
+            cost: Some(crate::domain::message::CostInfo {
+                input_cost_micro_usd: 0,
+                output_cost_micro_usd: 0,
+                cache_read_cost_micro_usd: 0,
+                cache_write_cost_micro_usd: 0,
+                total_cost_micro_usd: fixture.4,
+            }),
+        }),
+        stop_reason: None,
+        thinking_blocks: vec![],
+    }
+}
+
+fn tool_call_response_with_usage(name: &str, args: &str, fixture: UsageFixture) -> LlmResponse {
+    LlmResponse {
+        content: None,
+        tool_calls: vec![ToolCall {
+            id: format!("call_{}", name),
+            name: name.to_string(),
+            arguments: args.to_string(),
+        }],
+        usage: Some(UsageInfo {
+            prompt_tokens: fixture.0,
+            completion_tokens: fixture.1,
+            cache_read_tokens: Some(fixture.2),
+            cache_write_tokens: Some(fixture.3),
+            cost: Some(crate::domain::message::CostInfo {
+                input_cost_micro_usd: 0,
+                output_cost_micro_usd: 0,
+                cache_read_cost_micro_usd: 0,
+                cache_write_cost_micro_usd: 0,
+                total_cost_micro_usd: fixture.4,
+            }),
+        }),
+        stop_reason: None,
+        thinking_blocks: vec![],
+    }
+}
+
 pub(super) fn tool_call_response(name: &str, args: &str) -> LlmResponse {
     LlmResponse {
         content: None,
@@ -396,6 +447,33 @@ async fn test_multiple_tool_calls_in_sequence() {
     let result = agent.run_loop(&mut messages).await.unwrap();
     assert_eq!(result.response, "Done copying");
     assert_eq!(result.tool_iterations, 2);
+}
+
+#[tokio::test]
+async fn test_agent_result_accumulates_usage_cache_and_cost_across_llm_calls() {
+    let (agent, _) = make_agent(
+        vec![
+            tool_call_response_with_usage(
+                "read",
+                r#"{"path":"x"}"#,
+                UsageFixture(10, 2, 3, 4, 1_000),
+            ),
+            text_response_with_usage("final", UsageFixture(20, 5, 6, 7, 2_500)),
+        ],
+        vec![("read", "content")],
+    );
+    let mut messages = vec![Message::user("read")];
+
+    let result = agent.run_loop(&mut messages).await.unwrap();
+
+    assert_eq!(result.response, "final");
+    assert_eq!(result.input_tokens, 20);
+    assert_eq!(result.output_tokens, 7);
+    assert_eq!(result.billed_input_tokens, 30);
+    assert_eq!(result.billed_output_tokens, 7);
+    assert_eq!(result.cache_read_tokens, 9);
+    assert_eq!(result.cache_write_tokens, 11);
+    assert_eq!(result.cost_micro_usd, 3_500);
 }
 
 #[tokio::test]

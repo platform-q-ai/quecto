@@ -152,6 +152,7 @@ pub(super) async fn handle_resume_session(
     };
     *ctx.session_key = new_key.clone();
     ctx.session.set_session_key(new_key.clone());
+    ctx.session.clear_usage();
     ctx.session.drain_pending();
     *ctx.messages = loaded.messages;
     inject_system_prompt(ctx.messages, ctx.system_prompt);
@@ -217,6 +218,7 @@ pub(super) async fn handle_clear_history(
         return false;
     }
     clear_conversation(ctx.messages);
+    ctx.session.clear_usage();
     ctx.session.drain_pending();
     // Also clear spill store so stale context isn't re-injected (#412).
     if let Some(spill) = ctx.agent.spill_store() {

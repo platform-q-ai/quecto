@@ -194,11 +194,10 @@ pub(crate) async fn run_agent_message(args: PromptMessageArgs<'_>) -> PromptOutc
             PromptOutcome::Cancelled
         }
         Some(Ok(agent_result)) => {
+            agent_session.record_agent_result(&agent_result);
             // Tool events are now forwarded in real-time via
             // forward_progress_event — no post-hoc emit needed.
-            let total = agent_result
-                .input_tokens
-                .saturating_add(agent_result.output_tokens);
+            let total = agent_result.turn_tokens();
             let usage = if total > 0 {
                 Some(TurnUsage {
                     input: agent_result.input_tokens,

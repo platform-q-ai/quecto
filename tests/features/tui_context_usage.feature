@@ -15,6 +15,12 @@ Feature: TUI context size and usage percentage display
     When each TurnEnd event includes cumulative usage
     Then the footer should reflect the latest usage percentage
 
+  Scenario: Session stats accumulate provider usage and cost
+    Given multiple LLM calls return input, output, cache, and cost usage
+    When the TUI requests session stats
+    Then the stats response should include non-zero token totals and cost
+    And the TUI should display those token totals and cost instead of zeros
+
   Scenario: High usage shows warning color
     Given context usage exceeds 70%
     When the footer renders
