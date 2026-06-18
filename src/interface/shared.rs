@@ -109,6 +109,22 @@ pub fn append_workflow_prompt(system: &mut String, workflow: &WorkflowStateHandl
     system.push_str(&engine.prompt_snippet());
 }
 
+/// Append workflow context only after a template is selected unless forced.
+pub fn append_workflow_prompt_if_active(
+    system: &mut String,
+    workflow: &WorkflowStateHandle,
+    force_selector_prompt: bool,
+) {
+    let Ok(engine) = workflow.lock() else { return };
+    if !force_selector_prompt
+        && engine.mode() == crate::domain::workflow::WorkflowMode::SelectingTemplate
+    {
+        return;
+    }
+    system.push_str("\n\n");
+    system.push_str(&engine.prompt_snippet());
+}
+
 /// Register the workflow tool and optional guard in a tool registry.
 pub fn register_workflow_tool(
     registry: &mut crate::infrastructure::tools::registry::ToolRegistryImpl,

@@ -32,6 +32,7 @@ pub(crate) struct AgentFlags {
     pub(crate) effort: Option<crate::domain::provider::EffortLevel>,
     pub(crate) workflow: bool,
     pub(crate) workflow_guards: bool,
+    pub(crate) workflow_disabled: bool,
 }
 
 /// Bundles the stdout/stderr pair passed through the agent pipeline.
@@ -249,6 +250,7 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         effort,
         workflow,
         workflow_guards,
+        workflow_disabled: no_workflow_requested,
     };
     validate_agent_flags(flags, stderr)
 }
@@ -263,8 +265,8 @@ fn validate_agent_flags(flags: AgentFlags, stderr: &mut String) -> Option<AgentF
         stderr.push_str("agent: --persist requires --mode uds\n");
         return None;
     }
-    if flags.workflow_guards && !flags.workflow {
-        stderr.push_str("agent: --workflow-guards requires --workflow\n");
+    if flags.workflow_guards && flags.workflow_disabled {
+        stderr.push_str("agent: --workflow-guards cannot be used with --no-workflow\n");
         return None;
     }
     Some(flags)
@@ -322,6 +324,7 @@ pub(crate) struct AgentBuildResult {
     pub subagent_registry:
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
+    pub workflow_prompt_initially_active: bool,
 }
 
 pub(crate) fn build_agent_from_config(
@@ -402,7 +405,8 @@ pub(crate) fn build_agent_from_config(
         })
     });
 
-    let wf_config = flags.workflow.then(|| config.workflow.clone());
+    let workflow_prompt_initially_active = flags.workflow;
+    let wf_config = workflow_state.as_ref().map(|_| config.workflow.clone());
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
         tool_registry: Box::new(registry),
@@ -434,6 +438,7 @@ pub(crate) fn build_agent_from_config(
         notification_rx,
         subagent_registry,
         workflow_state,
+        workflow_prompt_initially_active,
     })
 }
 
@@ -599,7 +604,8 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     let config_path = ctx.config_path();
     // Create the broadcast channel early so the WorkflowTool emitter can
     // send workflow_state events from the moment it is constructed (#598).
-    let broadcast_tx = if flags.workflow {
+    let workflow_available = flags.uds_mode && !flags.workflow_disabled;
+    let broadcast_tx = if workflow_available {
         let (tx, _) = tokio::sync::broadcast::channel::<String>(
             crate::interface::cli::uds_multi::BROADCAST_CHANNEL_CAPACITY,
         );
@@ -629,7 +635,9 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         crate::domain::session::Session::build_key("cli", name)
     };
 
-    // When workflow is active, create the audit log for durable event recording.
+    // Keep durable audit logging tied to explicit workflow-driven mode. Normal UDS
+    // makes workflow available, but should not add audit I/O/privacy overhead before
+    // the user opts into autonomous workflow behavior.
     if flags.workflow && !ephemeral && !session_key.is_empty() {
         match crate::infrastructure::persistence::audit_log::AuditLog::open_sync(
             &base_dir,
@@ -659,9 +667,14 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     if let Some(workflow) = build.workflow_state.clone() {
         let base_prompt = system_prompt.clone();
         let workflow_for_provider = workflow.clone();
+        let force_workflow_selector = build.workflow_prompt_initially_active;
         agent.set_system_prompt_provider(Some(Arc::new(move || {
             let mut prompt = base_prompt.clone();
-            crate::interface::shared::append_workflow_prompt(&mut prompt, &workflow_for_provider);
+            crate::interface::shared::append_workflow_prompt_if_active(
+                &mut prompt,
+                &workflow_for_provider,
+                force_workflow_selector,
+            );
             prompt
         })));
     }
