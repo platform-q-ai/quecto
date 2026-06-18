@@ -55,6 +55,10 @@ If you prefer a terminal UI instead of working with `socat` directly, run the
 workspace member:
 
 ```bash
+# Conversational TUI; workflow tool is available but dormant
+cargo run -p quecto-tui --
+
+# Workflow-driven TUI; model is prompted to enter workflow mode immediately
 cargo run -p quecto-tui -- --workflow --workflow-guards
 ```
 
@@ -68,9 +72,10 @@ cargo run -p quecto-tui -- --socket /tmp/agent.sock
 When `quecto-tui` spawns the agent for you, it can also forward several useful
 agent flags:
 
-- `--workflow` enables the workflow subsystem for the spawned agent
-- `--workflow-guards` enables workflow bash guards
-- `--no-workflow` clears both workflow flags
+- default launch exposes the workflow tool but does not prompt the model to start a workflow
+- `--workflow` starts workflow-driven prompt injection immediately
+- `--workflow-guards` enables workflow bash guards; it does not by itself force workflow prompt injection
+- `--no-workflow` hides the workflow tool/state/prompt entirely
 - `--system <prompt>` passes a custom system prompt through to the spawned agent
 - `--config <path>` uses an alternate quecto config file
 - `--no-sandbox` disables filesystem sandboxing for the spawned agent

@@ -24,7 +24,7 @@ This file is the compact entry point for agents running inside the Quecto harnes
 ## Operational guidance
 
 - Use built-in tools first: filesystem tools for code navigation, `grep`/`find` for discovery, `bash` for focused checks, `recall` for spilled context, and `spawn`/`agent_cmd` when parallel or delegated investigation helps.
-- Use workflows when a task benefits from explicit progress tracking, guard checks, or stepwise completion.
+- In UDS/TUI sessions, the `workflow` tool is normally available but dormant; ask to select a template when explicit progress tracking is useful. Use `--workflow` only when you want workflow prompt guidance from the first turn, and `--no-workflow` when the workflow tool must be hidden entirely.
 - Use subagents for separable investigations, parallel test/debug work, or preserving a focused parent context.
 - Use extensions when the agent needs a durable new capability rather than repeatedly improvising shell commands.
 - Keep context lean: retrieve docs and historical context only when they are needed for the next decision.

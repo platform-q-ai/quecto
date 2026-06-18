@@ -28,17 +28,19 @@ When `quecto-tui` spawns the agent for you, it can forward these flags:
 | Flag | Description |
 |---|---|
 | `--socket <path>` | Connect to an existing UDS agent instead of spawning one |
-| `--workflow` | Start the spawned agent with workflow support enabled |
-| `--workflow-guards` | Start the spawned agent with workflow bash guards enabled |
-| `--no-workflow` | Disable workflow flags for the spawned agent |
+| `--workflow` | Start the spawned agent in workflow-driven mode immediately |
+| `--workflow-guards` | Enable workflow bash guards for the spawned agent; does not by itself force workflow prompt injection |
+| `--no-workflow` | Disable workflow tool/state/prompt for the spawned agent |
 | `--system <prompt>` | Pass a custom system prompt to the spawned agent |
 | `--config <path>` | Use an alternate quecto config file when spawning the agent |
 | `--no-sandbox` | Spawn the agent with filesystem sandboxing disabled |
 | `--network` | Allow outbound network access for bash in the spawned agent |
 
-If you pass `--workflow` without `--system`, `quecto-tui` injects a default
-coding-assistant system prompt that tells the agent to use the workflow tool.
-An explicit `--system` value overrides that default.
+By default, the spawned UDS agent has the workflow tool available but dormant:
+you can talk normally, then ask the model to select a workflow template when you
+want one. If you pass `--workflow` without `--system`, `quecto-tui` injects a
+default coding-assistant system prompt that tells the agent to use the workflow
+tool immediately. An explicit `--system` value overrides that default.
 
 ## Startup errors
 
