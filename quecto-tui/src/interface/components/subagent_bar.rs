@@ -252,6 +252,8 @@ mod tests {
             last_tool: tool.map(|s| s.to_string()),
             last_error: error.map(|s| s.to_string()),
             pid: 0,
+            parent_id: None,
+            workflow: None,
         }
     }
 

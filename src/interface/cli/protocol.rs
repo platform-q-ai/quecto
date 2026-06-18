@@ -326,6 +326,12 @@ pub struct SubagentInfo {
     pub last_error: Option<String>,
     /// Child process PID.
     pub pid: u32,
+    /// The spawning agent's id, for reconstructing the unit tree (PRD Stage B).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    /// Latest workflow snapshot for this subagent, if any (PRD Stage B).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<crate::infrastructure::tools::subagent_registry::WorkflowSnapshot>,
 }
 
 /// Metadata for a registered extension, used in `ExtensionsChanged` events
@@ -387,11 +393,46 @@ pub fn build_subagent_info_list(
                 last_tool: entry.last_tool.clone(),
                 last_error: entry.last_error.clone(),
                 pid: entry.pid,
+                parent_id: entry.parent_id.clone(),
+                workflow: entry.workflow.clone(),
             })
             .collect()
     }; // guard dropped here — sort happens outside critical section
     list.sort_by(|a, b| a.agent_id.cmp(&b.agent_id));
     list
+}
+
+/// The unit tree reconstructed purely from an identity-tagged event stream
+/// (PRD Stage B / R-B4). Each `workflow_state` / subagent event carries
+/// `agent_id` + `parent_id`, so any consumer can rebuild the parent→child
+/// structure without a side channel.
+#[derive(Debug, Default, Clone)]
+pub struct UnitTree {
+    /// agent_id → its parent_id (None at the root).
+    parents: std::collections::HashMap<String, Option<String>>,
+}
+
+impl UnitTree {
+    /// Build the tree from a slice of identity-tagged events. Any event with an
+    /// `agent_id` contributes a node; later events overwrite earlier parentage.
+    pub fn from_events(events: &[serde_json::Value]) -> Self {
+        let mut parents = std::collections::HashMap::new();
+        for ev in events {
+            if let Some(agent) = ev.get("agent_id").and_then(|v| v.as_str()) {
+                let parent = ev
+                    .get("parent_id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                parents.insert(agent.to_string(), parent);
+            }
+        }
+        Self { parents }
+    }
+
+    /// Direct parent of `agent`, or `None` if it is a root (or unknown).
+    pub fn parent_of(&self, agent: &str) -> Option<&str> {
+        self.parents.get(agent).and_then(|p| p.as_deref())
+    }
 }
 
 // ─── Response helpers ────────────────────────────────────────────────────────

@@ -82,13 +82,26 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
             .with_network(effective_network)
             .with_socket_dir(socket_dir)
             .with_registry(subagent_registry.clone())
-            .with_notify_tx(notify_tx),
+            .with_notify_tx(notify_tx)
+            // Forward spawned children's workflow_state events onto this agent's
+            // stream, tagged with the child id + this agent's id (PRD Stage B).
+            .with_event_forwarding(broadcast_tx.clone(), flags.session_name.clone()),
     ));
     let subagent_registry_for_protocol = subagent_registry.clone();
     registry.register(Arc::new(AgentCmdTool::new(subagent_registry)));
     // Build a workflow event emitter from the broadcast channel (#598).
-    let wf_emitter =
-        broadcast_tx.map(crate::infrastructure::tools::workflow_tool::broadcast_emitter);
+    // Stamp emitted workflow_state events with this agent's identity (its
+    // session name) and its parent (PRD Stage B), so consumers can rebuild the
+    // unit tree from the stream.
+    let emitter_agent_id = flags.session_name.clone();
+    let emitter_parent_id = flags.parent_id.clone();
+    let wf_emitter = broadcast_tx.map(|tx| {
+        crate::infrastructure::tools::workflow_tool::broadcast_emitter(
+            tx,
+            emitter_agent_id,
+            emitter_parent_id,
+        )
+    });
     // A by-value workflow spec (`--workflow-spec`) binds this agent to exactly
     // one template, started directly in Active mode (no model-driven selection),
     // overriding the config's template library for this run.

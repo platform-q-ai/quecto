@@ -164,3 +164,31 @@ async fn test_send_uds_command_eof_without_response_errors() {
 
     server.await.unwrap();
 }
+
+#[tokio::test]
+async fn execute_await_unknown_agent_is_structured_error() {
+    let tool = AgentCmdTool::new(new_registry());
+    let result = tool
+        .execute(r#"{"agent_id":"nope","command":"await","idle_timeout":0}"#)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(v["status"], "error");
+    assert_eq!(v["reason"], "agent_not_found");
+    assert_eq!(v["result"]["status"], "failed");
+}
+
+#[tokio::test]
+async fn execute_await_missing_agent_id_is_error() {
+    let tool = AgentCmdTool::new(new_registry());
+    let result = tool.execute(r#"{"command":"await"}"#).await.unwrap();
+    assert!(result.is_error);
+    assert!(result.content.contains("agent_id"));
+}
+
+#[tokio::test]
+async fn execute_await_invalid_json_is_error() {
+    let tool = AgentCmdTool::new(new_registry());
+    let result = tool.execute(r#"{"command":"await""#).await.unwrap();
+    assert!(result.is_error);
+}

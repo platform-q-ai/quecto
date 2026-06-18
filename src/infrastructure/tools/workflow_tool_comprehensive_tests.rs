@@ -514,7 +514,7 @@ async fn check_guards_only_uses_the_selected_template() {
 #[tokio::test]
 async fn emitter_sends_workflow_state_through_broadcast_channel() {
     let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(16);
-    let emitter = broadcast_emitter(broadcast_tx.clone());
+    let emitter = broadcast_emitter(broadcast_tx.clone(), None, None);
     let engine = engine_handle_with_config(WorkflowConfig::default(), false);
     let tool = WorkflowTool::with_event_emitter(engine, emitter);
 
@@ -557,7 +557,7 @@ async fn register_workflow_tool_with_broadcast_emitter() {
     use crate::infrastructure::tools::registry::ToolRegistryImpl;
 
     let (broadcast_tx, mut broadcast_rx) = tokio::sync::broadcast::channel::<String>(16);
-    let emitter = broadcast_emitter(broadcast_tx.clone());
+    let emitter = broadcast_emitter(broadcast_tx.clone(), None, None);
 
     let tmp = tempfile::tempdir().unwrap();
     let workspace = tmp.path().to_path_buf();
@@ -588,4 +588,27 @@ async fn register_workflow_tool_with_broadcast_emitter() {
     let parsed: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
     assert_eq!(parsed["type"], "workflow_state");
     assert_eq!(parsed["activeTemplate"]["id"], "feature");
+}
+
+#[test]
+fn broadcast_emitter_stamps_agent_and_parent_identity() {
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(4);
+    let emitter = broadcast_emitter(tx, Some("root".to_string()), None);
+    emitter(serde_json::json!({ "type": "workflow_state" }));
+    let line = rx.try_recv().expect("event line");
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(v["agent_id"], "root");
+    assert!(
+        v.as_object().unwrap().contains_key("parent_id"),
+        "parent_id field must be present (null at root)"
+    );
+}
+
+#[test]
+fn broadcast_emitter_passes_through_non_object_event() {
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<String>(4);
+    let emitter = broadcast_emitter(tx, Some("a".to_string()), Some("b".to_string()));
+    // A non-object event has nowhere to stamp identity; it is still forwarded.
+    emitter(serde_json::json!("just a string"));
+    assert_eq!(rx.try_recv().unwrap().trim(), "\"just a string\"");
 }

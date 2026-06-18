@@ -37,6 +37,8 @@ fn drive_monitor_with_lines(
             socket_path.clone(),
             registry,
             Some(tx),
+            None,
+            None,
         );
         let (mut stream, _) = listener.accept().await.expect("accept monitor connection");
         for line in lines {

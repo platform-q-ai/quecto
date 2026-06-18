@@ -214,6 +214,11 @@ pub struct QuectoWorld {
     pub config_path: Option<String>,
     /// Path to a temporary workspace directory used in tests
     pub workspace_path: Option<String>,
+    /// Stage B event-identity steps: emitting agent's id/parent and last event.
+    pub event_identity_agent_id: Option<String>,
+    pub event_identity_parent_id: Option<String>,
+    pub event_identity_last: Option<serde_json::Value>,
+    pub event_identity_stream: Vec<serde_json::Value>,
     /// Loaded config (after "When I load the config")
     pub config: Option<Config>,
     /// Resolved workspace path (after "When I resolve the workspace path")
@@ -941,6 +946,7 @@ mod truncate_steps;
 mod tui_architecture_steps;
 mod uds_steps;
 mod web_fetch_steps;
+mod workflow_event_identity_steps;
 
 // Runner
 // ===========================================================================

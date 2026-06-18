@@ -15,8 +15,21 @@ pub type WorkflowEngineHandle = Arc<Mutex<WorkflowEngine>>;
 
 /// Build a [`WorkflowEventEmitter`] that serializes each event as a JSON line
 /// and sends it through a `tokio::sync::broadcast` channel (#598).
-pub fn broadcast_emitter(tx: tokio::sync::broadcast::Sender<String>) -> WorkflowEventEmitter {
-    Arc::new(move |event: serde_json::Value| {
+///
+/// Every emitted event is stamped with the emitting unit's identity —
+/// `agent_id` (this agent's session name) and `parent_id` (the spawning
+/// agent, or null at the root) — so any consumer can reconstruct the unit tree
+/// from the event stream alone (PRD Stage B).
+pub fn broadcast_emitter(
+    tx: tokio::sync::broadcast::Sender<String>,
+    agent_id: Option<String>,
+    parent_id: Option<String>,
+) -> WorkflowEventEmitter {
+    Arc::new(move |mut event: serde_json::Value| {
+        if let Some(obj) = event.as_object_mut() {
+            obj.insert("agent_id".into(), serde_json::json!(agent_id));
+            obj.insert("parent_id".into(), serde_json::json!(parent_id));
+        }
         // serde_json::Value → String serialization is infallible.
         let mut line =
             serde_json::to_string(&event).expect("serde_json::Value serializes infallibly");

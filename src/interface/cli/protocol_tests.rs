@@ -215,6 +215,8 @@ fn test_subagent_state_changed_event_serializes() {
             last_tool: Some("bash".to_string()),
             last_error: None,
             pid: 123,
+            parent_id: None,
+            workflow: None,
         }],
     };
     let json = ev.to_json_line();
@@ -232,6 +234,8 @@ fn test_subagent_info_null_fields_omitted() {
         last_tool: None,
         last_error: None,
         pid: 456,
+        parent_id: None,
+        workflow: None,
     };
     let json = serde_json::to_string(&info).unwrap();
     assert!(!json.contains("lastTool"));
@@ -246,6 +250,8 @@ fn test_subagent_info_with_error() {
         last_tool: None,
         last_error: Some("connection refused".to_string()),
         pid: 0,
+        parent_id: None,
+        workflow: None,
     };
     let json = serde_json::to_string(&info).unwrap();
     assert!(json.contains("\"lastError\":\"connection refused\""));
@@ -499,4 +505,47 @@ fn test_session_stats_serializes() {
     assert!(json.contains("\"userMessages\":2"));
     assert!(json.contains("\"totalMessages\":10"));
     assert!(json.contains("\"tokens\""));
+}
+
+#[test]
+fn unit_tree_reconstructs_parentage_from_events() {
+    let events = vec![
+        serde_json::json!({"agent_id":"root","parent_id":null}),
+        serde_json::json!({"agent_id":"child","parent_id":"root"}),
+        serde_json::json!({"agent_id":"grandchild","parent_id":"child"}),
+    ];
+    let tree = UnitTree::from_events(&events);
+    assert_eq!(tree.parent_of("grandchild"), Some("child"));
+    assert_eq!(tree.parent_of("child"), Some("root"));
+    assert_eq!(tree.parent_of("root"), None);
+}
+
+#[test]
+fn build_subagent_info_list_includes_parent_and_workflow() {
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, WorkflowSnapshot, new_registry,
+    };
+    let reg = new_registry();
+    {
+        let mut g = reg.lock().unwrap();
+        let mut e = SubagentEntry::new(std::path::PathBuf::from("/tmp/c.sock"), 0);
+        e.parent_id = Some("root".to_string());
+        e.workflow = Some(WorkflowSnapshot {
+            mode: "active".to_string(),
+            steps_completed: 1,
+            steps_total: 2,
+        });
+        g.insert("child".to_string(), e);
+    }
+    let list = build_subagent_info_list(&Some(reg));
+    let info = list.iter().find(|i| i.agent_id == "child").unwrap();
+    assert_eq!(info.parent_id.as_deref(), Some("root"));
+    assert_eq!(info.workflow.as_ref().unwrap().steps_completed, 1);
+}
+
+#[test]
+fn unit_tree_parent_of_unknown_agent_is_none() {
+    let tree = UnitTree::from_events(&[serde_json::json!({"agent_id":"root","parent_id":null})]);
+    assert_eq!(tree.parent_of("nope"), None);
+    assert_eq!(tree.parent_of("root"), None);
 }

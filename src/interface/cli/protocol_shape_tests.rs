@@ -489,6 +489,8 @@ fn subagent_info_camel_case_serialization() {
         last_tool: Some("bash".into()),
         last_error: None,
         pid: 12345,
+        parent_id: None,
+        workflow: None,
     };
     let j = round_trip(&info);
     assert_eq!(j["agentId"], "test-agent");
@@ -510,6 +512,8 @@ fn subagent_info_null_fields_omitted() {
         last_tool: None,
         last_error: None,
         pid: 1,
+        parent_id: None,
+        workflow: None,
     };
     let j = round_trip(&info);
     // skip_serializing_if = Option::is_none should omit these
@@ -525,6 +529,8 @@ fn subagent_info_with_error_field() {
         last_tool: None,
         last_error: Some("tool 'bash' returned error".into()),
         pid: 0,
+        parent_id: None,
+        workflow: None,
     };
     let j = round_trip(&info);
     assert_eq!(j["lastError"], "tool 'bash' returned error");
@@ -540,6 +546,8 @@ fn subagent_state_changed_event_matches_spec() {
                 last_tool: Some("bash: cargo test".into()),
                 last_error: None,
                 pid: 12345,
+                parent_id: None,
+                workflow: None,
             },
             SubagentInfo {
                 agent_id: "formatter".into(),
@@ -547,6 +555,8 @@ fn subagent_state_changed_event_matches_spec() {
                 last_tool: None,
                 last_error: None,
                 pid: 12346,
+                parent_id: None,
+                workflow: None,
             },
         ],
     };
@@ -572,6 +582,8 @@ fn subagent_state_changed_event_roundtrip() {
             last_tool: None,
             last_error: None,
             pid: 999,
+            parent_id: None,
+            workflow: None,
         }],
     };
     let json = ev.to_json_line();
