@@ -121,6 +121,7 @@ Feature: agent_cmd await — block until sub-agent reaches terminal state
     And the agent_cmd await result workflow mode should be "complete"
     And the agent_cmd await result workflow steps_completed should be 7
     And the agent_cmd await result workflow steps_total should be 7
+    And the agent_cmd await result verdict should be "completed"
 
   Scenario: await returns null workflow when workflow is not enabled
     Given an AgentCmdTool with a mock await registry

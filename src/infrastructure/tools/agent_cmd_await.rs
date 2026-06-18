@@ -59,13 +59,13 @@ impl AgentCmdTool {
                     (entry.socket_path.clone(), rx)
                 }
                 None => {
-                    let result = AwaitResult {
-                        status: "error".into(),
-                        reason: Some("agent_not_found".into()),
-                        agent_id: agent_id.clone(),
-                        elapsed_ms: 0,
-                        workflow: None,
-                    };
+                    let result = AwaitResult::new(
+                        "error",
+                        Some("agent_not_found"),
+                        agent_id.clone(),
+                        0,
+                        None,
+                    );
                     return Ok(ToolResult {
                         content: serde_json::to_string(&result).unwrap(),
                         is_error: false,
@@ -79,13 +79,13 @@ impl AgentCmdTool {
         {
             let mut active = self.active_awaits.lock().unwrap_or_else(|e| e.into_inner());
             if active.contains(&agent_id) {
-                let result = AwaitResult {
-                    status: "error".into(),
-                    reason: Some("another_await_active".into()),
-                    agent_id: agent_id.clone(),
-                    elapsed_ms: 0,
-                    workflow: None,
-                };
+                let result = AwaitResult::new(
+                    "error",
+                    Some("another_await_active"),
+                    agent_id.clone(),
+                    0,
+                    None,
+                );
                 return Ok(ToolResult {
                     content: serde_json::to_string(&result).unwrap(),
                     is_error: false,
@@ -117,26 +117,26 @@ impl AgentCmdTool {
                 entries.contains_key(&agent_id)
             };
             if still_registered {
-                let result = AwaitResult {
-                    status: "error".into(),
-                    reason: Some("connection_failed".into()),
-                    agent_id: agent_id.clone(),
-                    elapsed_ms: start.elapsed().as_millis() as u64,
-                    workflow: None,
-                };
+                let result = AwaitResult::new(
+                    "error",
+                    Some("connection_failed"),
+                    agent_id.clone(),
+                    start.elapsed().as_millis() as u64,
+                    None,
+                );
                 return Ok(ToolResult {
                     content: serde_json::to_string(&result).unwrap(),
                     is_error: false,
                     image_blocks: vec![],
                 });
             } else {
-                let result = AwaitResult {
-                    status: "error".into(),
-                    reason: Some("agent_not_found".into()),
-                    agent_id: agent_id.clone(),
-                    elapsed_ms: start.elapsed().as_millis() as u64,
-                    workflow: None,
-                };
+                let result = AwaitResult::new(
+                    "error",
+                    Some("agent_not_found"),
+                    agent_id.clone(),
+                    start.elapsed().as_millis() as u64,
+                    None,
+                );
                 return Ok(ToolResult {
                     content: serde_json::to_string(&result).unwrap(),
                     is_error: false,
@@ -160,13 +160,13 @@ impl AgentCmdTool {
             // Check if we've exceeded the overall timeout.
             if tokio::time::Instant::now() >= deadline {
                 let workflow = self.fetch_workflow_snapshot(&agent_id).await;
-                let result = AwaitResult {
-                    status: "timeout".into(),
-                    reason: None,
-                    agent_id: agent_id.clone(),
-                    elapsed_ms: start.elapsed().as_millis() as u64,
+                let result = AwaitResult::new(
+                    "timeout",
+                    None,
+                    agent_id.clone(),
+                    start.elapsed().as_millis() as u64,
                     workflow,
-                };
+                );
                 return Ok(ToolResult {
                     content: serde_json::to_string(&result).unwrap(),
                     is_error: false,
@@ -199,13 +199,13 @@ impl AgentCmdTool {
                         } else {
                             Some("exit_code_0".to_string())
                         };
-                        let result = AwaitResult {
-                            status: "exited".into(),
-                            reason,
-                            agent_id: agent_id.clone(),
-                            elapsed_ms: start.elapsed().as_millis() as u64,
-                            workflow: None,
-                        };
+                        let result = AwaitResult::new(
+                            "exited",
+                            reason.as_deref(),
+                            agent_id.clone(),
+                            start.elapsed().as_millis() as u64,
+                            None,
+                        );
                         return Ok(ToolResult {
                             content: serde_json::to_string(&result).unwrap(),
                             is_error: false,
@@ -246,13 +246,13 @@ impl AgentCmdTool {
                             })
                             .or(Some("exit_code_0".into()))
                     };
-                    let result = AwaitResult {
-                        status: "exited".into(),
-                        reason,
-                        agent_id: agent_id.clone(),
-                        elapsed_ms: start.elapsed().as_millis() as u64,
-                        workflow: None,
-                    };
+                    let result = AwaitResult::new(
+                        "exited",
+                        reason.as_deref(),
+                        agent_id.clone(),
+                        start.elapsed().as_millis() as u64,
+                        None,
+                    );
                     return Ok(ToolResult {
                         content: serde_json::to_string(&result).unwrap(),
                         is_error: false,
@@ -267,13 +267,13 @@ impl AgentCmdTool {
                             idle_since = Some(now);
                             if idle_timeout_secs == 0 {
                                 let workflow = self.fetch_workflow_snapshot(&agent_id).await;
-                                let result = AwaitResult {
-                                    status: "idle".into(),
-                                    reason: Some("completed".into()),
-                                    agent_id: agent_id.clone(),
-                                    elapsed_ms: start.elapsed().as_millis() as u64,
+                                let result = AwaitResult::new(
+                                    "idle",
+                                    Some("completed"),
+                                    agent_id.clone(),
+                                    start.elapsed().as_millis() as u64,
                                     workflow,
-                                };
+                                );
                                 return Ok(ToolResult {
                                     content: serde_json::to_string(&result).unwrap(),
                                     is_error: false,
@@ -284,13 +284,13 @@ impl AgentCmdTool {
                         Some(since) => {
                             if now.duration_since(since) >= Duration::from_secs(idle_timeout_secs) {
                                 let workflow = self.fetch_workflow_snapshot(&agent_id).await;
-                                let result = AwaitResult {
-                                    status: "idle".into(),
-                                    reason: Some("completed".into()),
-                                    agent_id: agent_id.clone(),
-                                    elapsed_ms: start.elapsed().as_millis() as u64,
+                                let result = AwaitResult::new(
+                                    "idle",
+                                    Some("completed"),
+                                    agent_id.clone(),
+                                    start.elapsed().as_millis() as u64,
                                     workflow,
-                                };
+                                );
                                 return Ok(ToolResult {
                                     content: serde_json::to_string(&result).unwrap(),
                                     is_error: false,
@@ -318,13 +318,13 @@ impl AgentCmdTool {
                             || elapsed_idle >= Duration::from_secs(idle_timeout_secs)
                         {
                             let workflow = self.fetch_workflow_snapshot(&agent_id).await;
-                            let result = AwaitResult {
-                                status: "idle".into(),
-                                reason: Some("completed".into()),
-                                agent_id: agent_id.clone(),
-                                elapsed_ms: start.elapsed().as_millis() as u64,
+                            let result = AwaitResult::new(
+                                "idle",
+                                Some("completed"),
+                                agent_id.clone(),
+                                start.elapsed().as_millis() as u64,
                                 workflow,
-                            };
+                            );
                             return Ok(ToolResult {
                                 content: serde_json::to_string(&result).unwrap(),
                                 is_error: false,
@@ -358,13 +358,20 @@ impl AgentCmdTool {
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string();
-        let steps_completed = workflow
-            .get("steps_completed")
+        // `get_state` serializes the workflow snapshot with a nested
+        // `progress: { done, total }` (see domain `WorkflowSnapshot`). Read that
+        // first; fall back to flat `steps_completed`/`steps_total` for
+        // forward/backward compatibility.
+        let progress = workflow.get("progress");
+        let steps_completed = progress
+            .and_then(|p| p.get("done"))
+            .or_else(|| workflow.get("steps_completed"))
             .or_else(|| workflow.get("stepsCompleted"))
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32;
-        let steps_total = workflow
-            .get("steps_total")
+        let steps_total = progress
+            .and_then(|p| p.get("total"))
+            .or_else(|| workflow.get("steps_total"))
             .or_else(|| workflow.get("stepsTotal"))
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32;

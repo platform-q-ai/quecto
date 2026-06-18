@@ -101,6 +101,10 @@ pub fn new_registry() -> SubagentRegistry {
 // ─── Await support (#612) ────────────────────────────────────────────────────
 
 /// Result of an `agent_cmd await` call.
+///
+/// `status`/`reason` describe the await lifecycle (idle/exited/timeout/error);
+/// `result` is the typed verdict a parent branches on without parsing prose
+/// (PRD Stage A R-A3).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct AwaitResult {
     pub status: String,
@@ -108,6 +112,29 @@ pub struct AwaitResult {
     pub agent_id: String,
     pub elapsed_ms: u64,
     pub workflow: Option<WorkflowSnapshot>,
+    pub result: WorkflowResult,
+}
+
+impl AwaitResult {
+    /// Build an `AwaitResult`, deriving the typed [`WorkflowResult`] verdict from
+    /// the lifecycle status, reason, and workflow snapshot.
+    pub fn new(
+        status: &str,
+        reason: Option<&str>,
+        agent_id: String,
+        elapsed_ms: u64,
+        workflow: Option<WorkflowSnapshot>,
+    ) -> Self {
+        let result = WorkflowResult::derive(status, reason, workflow.as_ref());
+        Self {
+            status: status.to_string(),
+            reason: reason.map(str::to_string),
+            agent_id,
+            elapsed_ms,
+            workflow,
+            result,
+        }
+    }
 }
 
 /// Snapshot of workflow state at the moment `await` returns.
@@ -116,6 +143,89 @@ pub struct WorkflowSnapshot {
     pub mode: String,
     pub steps_completed: u32,
     pub steps_total: u32,
+}
+
+/// Typed verdict for an awaited subagent — the structured outcome a parent can
+/// branch on. `status` is one of `completed` | `failed` | `incomplete`
+/// (`blocked` is reserved for Stage E budget/depth bounds).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct WorkflowResult {
+    pub status: String,
+    pub summary: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow_progress: Option<ResultProgress>,
+}
+
+/// Step progress carried in a [`WorkflowResult`].
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ResultProgress {
+    pub done: u32,
+    pub total: u32,
+}
+
+impl WorkflowResult {
+    /// Derive the verdict from the await lifecycle status, reason, and workflow.
+    ///
+    /// - `completed` — the workflow reached `complete`, or the agent exited cleanly.
+    /// - `failed` — an await/agent error, or a non-clean exit.
+    /// - `incomplete` — went idle or timed out without completing the workflow.
+    pub fn derive(status: &str, reason: Option<&str>, workflow: Option<&WorkflowSnapshot>) -> Self {
+        let workflow_progress = workflow.map(|w| ResultProgress {
+            done: w.steps_completed,
+            total: w.steps_total,
+        });
+        let complete = workflow.is_some_and(|w| w.mode == "complete");
+        let (verdict, summary): (&str, String) = match status {
+            "idle" if complete => {
+                let w = workflow.expect("complete implies a workflow snapshot");
+                (
+                    "completed",
+                    format!(
+                        "workflow complete ({}/{} steps)",
+                        w.steps_completed, w.steps_total
+                    ),
+                )
+            }
+            "idle" => match workflow {
+                Some(w) => (
+                    "incomplete",
+                    format!(
+                        "went idle with workflow incomplete ({}/{} steps)",
+                        w.steps_completed, w.steps_total
+                    ),
+                ),
+                None => (
+                    "incomplete",
+                    "went idle with no active workflow".to_string(),
+                ),
+            },
+            "exited" => {
+                let clean = reason.is_none_or(|r| r == "exit_code_0");
+                if clean {
+                    ("completed", "subagent exited cleanly".to_string())
+                } else {
+                    (
+                        "failed",
+                        format!("subagent exited: {}", reason.unwrap_or("unknown")),
+                    )
+                }
+            }
+            "timeout" => (
+                "incomplete",
+                "await timed out before the subagent completed".to_string(),
+            ),
+            "error" => (
+                "failed",
+                format!("await error: {}", reason.unwrap_or("unknown")),
+            ),
+            other => ("incomplete", format!("subagent status: {other}")),
+        };
+        WorkflowResult {
+            status: verdict.to_string(),
+            summary,
+            workflow_progress,
+        }
+    }
 }
 
 /// Signal sent by the reaper task when a child process exits.
@@ -295,6 +405,65 @@ mod tests {
     fn test_new_registry_is_empty() {
         let r = new_registry();
         assert!(r.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn verdict_completed_when_idle_and_workflow_complete() {
+        let wf = WorkflowSnapshot {
+            mode: "complete".into(),
+            steps_completed: 7,
+            steps_total: 7,
+        };
+        let r = WorkflowResult::derive("idle", Some("completed"), Some(&wf));
+        assert_eq!(r.status, "completed");
+        assert_eq!(
+            r.workflow_progress,
+            Some(ResultProgress { done: 7, total: 7 })
+        );
+    }
+
+    #[test]
+    fn verdict_incomplete_when_idle_but_workflow_active() {
+        let wf = WorkflowSnapshot {
+            mode: "active".into(),
+            steps_completed: 3,
+            steps_total: 7,
+        };
+        // The lifecycle reason is the misleading "completed"; the verdict must
+        // reflect the real workflow state.
+        let r = WorkflowResult::derive("idle", Some("completed"), Some(&wf));
+        assert_eq!(r.status, "incomplete");
+    }
+
+    #[test]
+    fn verdict_incomplete_when_idle_without_workflow() {
+        let r = WorkflowResult::derive("idle", Some("completed"), None);
+        assert_eq!(r.status, "incomplete");
+        assert!(r.workflow_progress.is_none());
+    }
+
+    #[test]
+    fn verdict_failed_on_error_and_nonzero_exit() {
+        assert_eq!(
+            WorkflowResult::derive("error", Some("connection_failed"), None).status,
+            "failed"
+        );
+        assert_eq!(
+            WorkflowResult::derive("exited", Some("exit_code_1"), None).status,
+            "failed"
+        );
+        assert_eq!(
+            WorkflowResult::derive("exited", Some("exit_code_0"), None).status,
+            "completed"
+        );
+    }
+
+    #[test]
+    fn verdict_incomplete_on_timeout() {
+        assert_eq!(
+            WorkflowResult::derive("timeout", None, None).status,
+            "incomplete"
+        );
     }
 
     #[test]
