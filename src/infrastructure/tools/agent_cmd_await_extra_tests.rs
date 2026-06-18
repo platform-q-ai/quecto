@@ -35,37 +35,35 @@ async fn test_await_removed_agent_returns_exited() {
 
 #[test]
 fn test_await_result_serialization() {
-    let result = AwaitResult {
-        status: "idle".into(),
-        reason: Some("completed".into()),
-        agent_id: "w1".into(),
-        elapsed_ms: 5000,
-        workflow: Some(WorkflowSnapshot {
+    let result = AwaitResult::new(
+        "idle",
+        Some("idle"),
+        "w1".into(),
+        5000,
+        Some(WorkflowSnapshot {
             mode: "complete".into(),
             steps_completed: 7,
             steps_total: 7,
         }),
-    };
+    );
     let json = serde_json::to_string(&result).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert_eq!(parsed["status"], "idle");
-    assert_eq!(parsed["reason"], "completed");
+    assert_eq!(parsed["reason"], "idle");
     assert_eq!(parsed["agent_id"], "w1");
     assert_eq!(parsed["elapsed_ms"], 5000);
     assert_eq!(parsed["workflow"]["mode"], "complete");
     assert_eq!(parsed["workflow"]["steps_completed"], 7);
     assert_eq!(parsed["workflow"]["steps_total"], 7);
+    // Typed verdict: a complete workflow at idle is "completed".
+    assert_eq!(parsed["result"]["status"], "completed");
+    assert_eq!(parsed["result"]["workflow_progress"]["done"], 7);
+    assert_eq!(parsed["result"]["workflow_progress"]["total"], 7);
 }
 
 #[test]
 fn test_await_result_round_trip() {
-    let result = AwaitResult {
-        status: "timeout".into(),
-        reason: None,
-        agent_id: "bot-1".into(),
-        elapsed_ms: 120000,
-        workflow: None,
-    };
+    let result = AwaitResult::new("timeout", None, "bot-1".into(), 120000, None);
     let json = serde_json::to_string(&result).unwrap();
     let back: AwaitResult = serde_json::from_str(&json).unwrap();
     assert_eq!(result, back);

@@ -159,11 +159,22 @@ enforced, so a runaway workflow cannot fork unboundedly or exhaust budget.
   passed on the child invocation (e.g. a `--workflow-spec <path>` file, since an
   inline template is too large for a bare CLI arg), consistent with how
   `--config` is forwarded today.
-- **R-A3 — Typed result contract.** A unit returns a structured result document:
-  `{ status: "completed" | "failed" | "blocked", outputs (object), summary
-  (string), workflow_progress { done, total } }`. `agent_cmd await` returns this
-  document to the parent; the parent must not need to parse prose to determine
-  control flow. This closes the "idle ≠ completed" gap from the Problem section.
+- **R-A3 — Typed result contract.** `agent_cmd await` returns a typed `result`
+  verdict alongside the lifecycle status: `{ status, summary, workflow_progress
+  { done, total } }`. The parent branches on `result.status` without parsing
+  prose, which closes the "idle ≠ completed" gap from the Problem section.
+  - **Status** (implemented, derived from lifecycle + the child's workflow
+    snapshot): `completed` (workflow reached `complete`, or clean exit),
+    `failed` (await/agent error or non-clean exit), `incomplete` (went idle or
+    timed out without completing). `blocked` is reserved for Stage E
+    (budget/depth bounds).
+  - **`outputs`** (custom, child-declared) is deferred: it needs a child-side
+    mechanism to set named outputs and is tracked as a follow-up, not part of
+    the derived verdict.
+  - This pass also fixed a latent bug: `await`'s workflow snapshot read the
+    wrong keys (`steps_completed`/`steps_total`) while `get_state` emits
+    `progress { done, total }`, so step counts were always 0; the snapshot now
+    reads the real shape.
 - **R-A4 — Backward compatibility.** `spawn` with no `workflow_spec` behaves
   exactly as today (boolean `workflow` / `workflow_guards` flag inheritance,
   model-driven template selection). The spec is purely additive.

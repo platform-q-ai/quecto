@@ -41,20 +41,21 @@ Feature: agent_cmd await — block until sub-agent reaches terminal state
 
   # --- Stable idle detection ---
 
-  Scenario: await returns idle/completed when agent is already idle
+  Scenario: await returns idle with an incomplete verdict when no workflow completed
     Given an AgentCmdTool with a mock await registry
     And the mock subagent "w1" has status "idle"
     When I execute agent_cmd with '{"agent_id":"w1","command":"await","idle_timeout":0}'
     Then the agent_cmd await result status should be "idle"
-    And the agent_cmd await result reason should be "completed"
+    And the agent_cmd await result reason should be "idle"
     And the agent_cmd await result agent_id should be "w1"
+    And the agent_cmd await result verdict should be "incomplete"
 
   Scenario: await waits through idle_timeout window before returning
     Given an AgentCmdTool with a mock await registry
     And the mock subagent "w1" has status "idle"
     When I execute agent_cmd with '{"agent_id":"w1","command":"await","idle_timeout":1}'
     Then the agent_cmd await result status should be "idle"
-    And the agent_cmd await result reason should be "completed"
+    And the agent_cmd await result reason should be "idle"
     And the agent_cmd await result elapsed_ms should be at least 1000
 
   # --- Process exit detection ---
@@ -88,7 +89,7 @@ Feature: agent_cmd await — block until sub-agent reaches terminal state
     And the mock subagent "w1" will go idle then resume after 200ms then idle permanently
     When I execute agent_cmd with '{"agent_id":"w1","command":"await","idle_timeout":1,"timeout":10}'
     Then the agent_cmd await result status should be "idle"
-    And the agent_cmd await result reason should be "completed"
+    And the agent_cmd await result reason should be "idle"
 
   # --- Multiple awaiters ---
 
@@ -121,6 +122,7 @@ Feature: agent_cmd await — block until sub-agent reaches terminal state
     And the agent_cmd await result workflow mode should be "complete"
     And the agent_cmd await result workflow steps_completed should be 7
     And the agent_cmd await result workflow steps_total should be 7
+    And the agent_cmd await result verdict should be "completed"
 
   Scenario: await returns null workflow when workflow is not enabled
     Given an AgentCmdTool with a mock await registry

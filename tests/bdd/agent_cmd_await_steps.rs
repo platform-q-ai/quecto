@@ -213,8 +213,9 @@ fn given_mock_subagent_workflow(
                                 Err(_) => break,
                             };
                             let mode = if c >= t { "complete" } else { "active" };
+                            // Match the real get_state shape: a nested progress object.
                             let response = format!(
-                                r#"{{"type":"response","command":"get_state","success":true,"data":{{"isStreaming":false,"workflow":{{"mode":"{}","steps_completed":{},"steps_total":{}}}}}}}"#,
+                                r#"{{"type":"response","command":"get_state","success":true,"data":{{"isStreaming":false,"workflow":{{"mode":"{}","progress":{{"done":{},"total":{}}}}}}}}}"#,
                                 mode, c, t
                             );
                             let _ = writeln!(stream, "{}", response);
@@ -379,6 +380,18 @@ fn then_await_result_workflow_mode(world: &mut QuectoWorld, expected: String) {
         "expected workflow mode '{}', got: {}",
         expected,
         await_result
+    );
+}
+
+#[then(expr = "the agent_cmd await result verdict should be {string}")]
+fn then_await_result_verdict(world: &mut QuectoWorld, expected: String) {
+    let await_result = world.await_result.as_ref().expect("no await_result");
+    assert_eq!(
+        await_result["result"]["status"].as_str(),
+        Some(expected.as_str()),
+        "expected verdict '{}', got: {}",
+        expected,
+        await_result["result"]
     );
 }
 
