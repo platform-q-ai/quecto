@@ -64,7 +64,9 @@ fn gc_keeps_running_subagent() {
 }
 
 #[test]
-fn gc_mixed_removes_only_expired() {
+fn gc_defers_removals_while_a_sibling_is_active() {
+    // An exited agent past its grace period is still kept while a sibling is
+    // running — reclaiming it mid-batch shrinks the panel and jolts the chat.
     let mut map = std::collections::BTreeMap::new();
 
     let (id1, entry1) = make_tracked("active", "running");
@@ -74,19 +76,43 @@ fn gc_mixed_removes_only_expired() {
     entry2.exited_at = Some(tokio::time::Instant::now() - Duration::from_secs(10));
     map.insert(id2, entry2);
 
-    let (id3, entry3) = make_tracked("recent-exit", "exited");
-    map.insert(id3, entry3);
+    let removed = super::gc_exited_subagents(
+        &mut map,
+        tokio::time::Instant::now(),
+        Duration::from_secs(5),
+    );
+    assert!(!removed, "must defer GC while a sibling is active");
+    assert_eq!(
+        map.len(),
+        2,
+        "finished agents stay until the batch is quiescent"
+    );
+}
+
+#[test]
+fn gc_reclaims_expired_once_batch_is_quiescent() {
+    // With no active sibling (idle counts as quiescent), an expired exited agent
+    // is reclaimed; the idle one stays.
+    let mut map = std::collections::BTreeMap::new();
+
+    let (id1, mut old) = make_tracked("old-exit", "exited");
+    old.exited_at = Some(tokio::time::Instant::now() - Duration::from_secs(10));
+    map.insert(id1, old);
+
+    let (id2, idle) = make_tracked("idle-sib", "idle");
+    map.insert(id2, idle);
 
     let removed = super::gc_exited_subagents(
         &mut map,
         tokio::time::Instant::now(),
         Duration::from_secs(5),
     );
-    assert!(removed, "should have removed old-exit");
-    assert_eq!(map.len(), 2);
-    assert!(map.contains_key("active"));
-    assert!(map.contains_key("recent-exit"));
+    assert!(
+        removed,
+        "should reclaim the expired exited agent once quiescent"
+    );
     assert!(!map.contains_key("old-exit"));
+    assert!(map.contains_key("idle-sib"));
 }
 
 #[test]
@@ -252,4 +278,54 @@ fn selection_range_same_row_normalizes() {
     };
     let (sr, sc, er, ec) = super::selection_range(&sel);
     assert_eq!((sr, sc, er, ec), (3, 2, 3, 10));
+}
+
+fn mk_info(id: &str, status: &str) -> crate::infrastructure::client::SubagentInfoEvent {
+    crate::infrastructure::client::SubagentInfoEvent {
+        agent_id: id.to_string(),
+        status: status.to_string(),
+        last_tool: None,
+        last_error: None,
+        pid: 0,
+        parent_id: None,
+        workflow: None,
+    }
+}
+
+#[test]
+fn elapsed_keeps_ticking_while_running() {
+    let (_, e) = make_tracked("w", "running");
+    let start = e.started_at;
+    assert_eq!(e.elapsed_secs(start + Duration::from_secs(30)), 30);
+}
+
+#[test]
+fn elapsed_freezes_when_agent_goes_idle() {
+    // Regression: an idle agent's timer must freeze at the moment it went idle,
+    // not keep ticking until the last sibling goes idle.
+    let (_, mut e) = make_tracked("w", "running");
+    let start = e.started_at;
+    e.stopped_at = Some(start + Duration::from_secs(10)); // went idle at 10s
+    assert_eq!(e.elapsed_secs(start + Duration::from_secs(30)), 10);
+}
+
+#[test]
+fn update_info_idle_freezes_then_running_resumes() {
+    let (_, mut e) = make_tracked("w", "running");
+    assert!(e.stopped_at.is_none());
+    e.update_info(mk_info("w", "idle"));
+    assert!(e.stopped_at.is_some(), "going idle should freeze the timer");
+    e.update_info(mk_info("w", "running"));
+    assert!(e.stopped_at.is_none(), "resuming should restart the timer");
+}
+
+#[test]
+fn idle_then_exit_keeps_timer_frozen_at_idle() {
+    let (_, mut e) = make_tracked("w", "running");
+    let start = e.started_at;
+    e.stopped_at = Some(start + Duration::from_secs(10));
+    e.update_info(mk_info("w", "exited"));
+    // Timer stays frozen at the idle moment; exited_at is recorded for GC.
+    assert_eq!(e.elapsed_secs(start + Duration::from_secs(30)), 10);
+    assert!(e.exited_at.is_some());
 }
