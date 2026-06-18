@@ -1,15 +1,22 @@
 # Workflow V2
 
-The workflow subsystem is a **UDS-only**, **opt-in**, native in-process runtime
-that guides agents through structured development cycles using configurable
-template libraries.
+The workflow subsystem is a **UDS-only**, native in-process runtime. In normal
+UDS sessions it is available as a dormant tool so users can opt into a workflow
+mid-conversation. With `--workflow`, it actively guides agents through
+structured development cycles using configurable template libraries from the
+first turn.
 
 ## Architecture
 
-- **UDS-only**: workflow requires `quecto agent --mode uds --workflow`
+- **UDS-only**: workflow availability requires `quecto agent --mode uds`
 - **Not available** in REPL or one-shot (`agent -m`) mode
-- **Disabled by default**: no workflow engine, tool, prompt, or state unless
-  explicitly enabled via `--workflow`
+- **Dormant by default in UDS**: the workflow engine/tool/state are created, but
+  selector-mode prompt text is not injected and the model is not pushed to start
+  a workflow until a template is selected explicitly
+- **Workflow-driven with `--workflow`**: selector/active workflow prompt text is
+  injected from the first turn, so the model may choose and follow a template
+  immediately
+- **Fully disabled with `--no-workflow`**: no workflow engine/tool/state/prompt
 - **Single built-in template model**: Quecto ships one repository workflow template (`feature`); custom configs may still define their own templates
 - **In-process engine**: `WorkflowEngine` owns all state; the UDS bus is
   the external read/broadcast interface, not the coordinator
@@ -21,22 +28,31 @@ template libraries.
 
 | Flag | Effect |
 |------|--------|
-| `--workflow` | Enable the workflow subsystem for this UDS session |
-| `--no-workflow` | Explicitly disable workflow (clears `--workflow` and `--workflow-guards`) |
-| `--workflow-guards` | Enable bash command guards (requires `--workflow`) |
+| `--workflow` | Start in workflow-driven mode: the workflow tool is available and selector/active prompt text is injected immediately |
+| `--no-workflow` | Fully disable workflow tool/state/prompt (clears `--workflow` and `--workflow-guards`) |
+| `--workflow-guards` | Enable bash command guards when the workflow tool is available; does not by itself force workflow prompt injection |
 
 All three flags require `--mode uds`. Using them without it produces an error.
 
 ### Typical invocation
 
 ```bash
-# Built-in template, guards enabled, named session
+# Conversational UDS agent: workflow tool/state available but dormant
+quecto agent --mode uds -s my-session
+
+# Later, ask the model explicitly:
+# "Select the feature workflow and implement abc."
+
+# Workflow-driven agent: prompt injection starts immediately
 quecto agent --mode uds --workflow --workflow-guards -s my-session
 
 # With a custom system prompt
 quecto agent --mode uds --workflow --workflow-guards \
   --system "You are a senior engineer. Follow the workflow strictly." \
   -s feature-work
+
+# Fully disable workflow if an integration must hide the tool entirely
+quecto agent --mode uds --no-workflow -s my-session
 ```
 
 ## Per-repo configuration
@@ -388,8 +404,9 @@ changes which guards are active. Non-bash tools are never blocked.
 
 ### `get_state` response
 
-When workflow is enabled, `get_state` includes a `workflow` field with the
-full engine snapshot. When disabled, the field is absent.
+When workflow is available (normal UDS or `--workflow`), `get_state` includes a
+`workflow` field with the full engine snapshot. When disabled with
+`--no-workflow`, the field is absent.
 
 ### `workflow_state` event
 
@@ -397,7 +414,7 @@ Emitted on template selection, step mutation, issue mutation, reset, and
 completion transitions. Payload includes mode, progress, steps, active
 template, active issue, and available templates.
 
-When workflow is disabled, no `workflow_state` events are emitted.
+When workflow is disabled with `--no-workflow`, no `workflow_state` events are emitted.
 
 ## Complete config examples
 
@@ -493,7 +510,7 @@ quecto agent --mode uds --workflow -s advisory-session
 ```
 
 Without `--workflow-guards`, the workflow tool tracks progress and injects
-prompt state, but no bash commands are blocked. Useful for advisory workflows
+prompt state once workflow prompting is active, but no bash commands are blocked. Useful for advisory workflows
 where process enforcement is not desired.
 
 ### Example 4: Disable auto-nudging
@@ -511,17 +528,36 @@ The agent tracks workflow state but does not autonomously continue to the next
 step or prompt for issue cycling. The LLM only interacts with the workflow when
 explicitly asked.
 
-## Disabling workflow completely
+## Dormant workflow vs disabling workflow completely
 
-Workflow is **off by default**. If you never pass `--workflow`, no workflow
-subsystem is created and there is zero runtime overhead:
+Workflow is **available by default** in UDS mode. If you do not pass
+`--workflow`, the `workflow` tool is registered and `get_state` includes
+workflow state, but the model is not shown selector-mode instructions and is not
+pushed to start a workflow. The user may explicitly ask the model to select a
+template later, for example: "select the feature workflow and implement abc".
 
 ```bash
-# No workflow — standard UDS agent
+# Dormant workflow tool available — standard conversational UDS agent
 quecto agent --mode uds -s my-session
 ```
 
-When workflow is disabled:
+In dormant mode:
+
+- A `WorkflowEngine` is created
+- The `workflow` tool is registered and may be called if the user asks for it
+- Selector-mode workflow prompt text is not injected
+- Once a template is selected, active workflow prompt context is injected on
+  later turns
+- No auto-continue or completion nudge starts a workflow by itself
+
+Use `--no-workflow` only when workflow must be completely unavailable:
+
+```bash
+# No workflow tool/state at all
+quecto agent --mode uds --no-workflow -s my-session
+```
+
+When workflow is disabled with `--no-workflow`:
 
 - No `WorkflowEngine` is created
 - No `workflow` tool is registered (the LLM cannot see or call it)
@@ -541,12 +577,13 @@ If a wrapper script or alias passes `--workflow` and you need to override it:
 quecto agent --mode uds --workflow --no-workflow -s my-session
 ```
 
-`--no-workflow` clears both `--workflow` and `--workflow-guards`. The last
-flag wins — `--workflow` after `--no-workflow` re-enables the subsystem.
+`--no-workflow` clears both `--workflow` and `--workflow-guards` during parsing.
+Use it when a wrapper or alias would otherwise expose workflow and you need the
+model to have no workflow tool at all.
 
 ### Disabling guards only
 
-To keep the workflow tool and prompt injection but remove all command blocking:
+To use workflow-driven prompting without command blocking:
 
 ```bash
 # Workflow enabled, guards disabled
@@ -554,5 +591,5 @@ quecto agent --mode uds --workflow -s my-session
 ```
 
 Simply omit `--workflow-guards`. The agent tracks progress and injects prompt
-state, but no bash commands are intercepted. Templates may still define guard
+state once workflow prompting is active, but no bash commands are intercepted. Templates may still define guard
 rules in their config — they are simply not enforced at runtime.

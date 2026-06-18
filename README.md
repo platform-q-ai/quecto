@@ -27,22 +27,28 @@ quecto agent -m "Hello, what can you do?"
 quecto
 
 # Or launch the terminal UI client (workspace member `quecto-tui`)
+# Normal launch: conversational, with the workflow tool available but dormant
+cargo run -p quecto-tui --
+
+# Workflow-driven launch: prompt the model to enter workflow mode immediately
 cargo run -p quecto-tui -- --workflow --workflow-guards
 ```
 
 `quecto-tui` is a lightweight terminal UI for the UDS agent. By default it
 spawns `quecto agent --mode uds` for you, then connects over the same JSON-lines
-protocol documented below. You can also point it at an already-running agent
-with `--socket /path/to/agent.sock`.
+protocol documented below. In that normal mode, the workflow tool is available
+but dormant: the model is not instructed to start a workflow until you ask it to
+select a template. You can also point the TUI at an already-running agent with
+`--socket /path/to/agent.sock`.
 
 Useful `quecto-tui` flags:
 
 | Flag | Description |
 |---|---|
 | `--socket <path>` | Connect to an existing UDS agent instead of spawning one |
-| `--workflow` | Start the spawned agent with workflow support enabled |
-| `--workflow-guards` | Start the spawned agent with workflow bash guards enabled |
-| `--no-workflow` | Disable workflow flags for the spawned agent |
+| `--workflow` | Start the spawned agent in workflow-driven mode immediately |
+| `--workflow-guards` | Enable workflow bash guards for the spawned agent; does not by itself force workflow prompt injection |
+| `--no-workflow` | Disable workflow tool/state/prompt for the spawned agent |
 | `--system <prompt>` | Pass a custom system prompt to the spawned agent |
 | `--config <path>` | Use an alternate quecto config file when spawning the agent |
 | `--no-sandbox` | Spawn the agent with filesystem sandboxing disabled |
@@ -90,7 +96,7 @@ Zero deps except `thiserror` and `serde` (derive). Defines system vocabulary.
 | `extension.rs` | `Extension` trait (`name()`, `tools()`, `system_prompt_snippet()`) |
 | `workspace.rs` | `OnboardStore` port |
 | `subagent.rs` | `SubagentConfig`, `validate_agent_id()` |
-| `workflow.rs` | `WorkflowEngine`, `WorkflowConfig` (`auto_continue`, `completion_nudge`, `templates`), `WorkflowTemplate`, `WorkflowTemplateStep`, `WorkflowGuardRule`, `WorkflowRun`, `WorkflowRunPersisted`, `WorkflowMode` (SelectingTemplate/Active/Complete), `WorkflowSnapshot`, `WorkflowError`, `default_templates()` (single `feature` Quecto workflow). UDS-only, opt-in via `--workflow` flag |
+| `workflow.rs` | `WorkflowEngine`, `WorkflowConfig` (`auto_continue`, `completion_nudge`, `templates`), `WorkflowTemplate`, `WorkflowTemplateStep`, `WorkflowGuardRule`, `WorkflowRun`, `WorkflowRunPersisted`, `WorkflowMode` (SelectingTemplate/Active/Complete), `WorkflowSnapshot`, `WorkflowError`, `default_templates()` (single `feature` Quecto workflow). UDS-only; available by default in UDS as a dormant tool, prompt-driven via `--workflow`, disabled via `--no-workflow` |
 | `error.rs` | `DomainError` enum (Provider, Tool, Session, Security, Config, Other) |
 
 Traits use `Pin<Box<dyn Future + Send + '_>>` for `Arc<dyn Trait>` compatibility.
@@ -113,7 +119,7 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 |---|---|
 | `config.rs` | `Config` with serde, env overrides (`QUECTO_AGENTS_DEFAULTS_EFFORT` validated at load), exec isolation settings (nsjail binary/limits/fallback), `WorkflowConfig` (template library, optional custom templates). Tolerates unknown fields (forward-compatible) |
 | `providers/` | `OpenAiProvider` (SSE streaming via `openai_sse`), `AnthropicProvider` (SSE streaming via `anthropic_sse`, extended thinking support with `signature_delta` capture, auto-enables adaptive thinking for 4.6 models, effort default `low` for 4.6 models, OAuth identity for tokens — system prompt prefix + tool name remapping + beta headers, `interleaved-thinking` + `fine-grained-tool-streaming` betas, thinking block replay in multi-turn via `ThinkingBlock`, `claude_code.rs` for tool name canonical casing), `CodexProvider` (Responses API, SSE, `prompt_cache_key`, orphan pair repair), `RefreshableProvider` (OAuth 401 → auto-refresh → retry), `FallbackProvider` (cooldown + error classification + `provider/model` routing syntax). URL validation: https required for non-loopback (override with `QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS=1`) |
-| `tools/` | `bash/` (shell, 1MiB cap, per-invocation timeout, `commandPrefix`, native/nsjail modes), `filesystem/` (`ReadTool` with image base64+auto-resize, `WriteTool`, `EditTool` with fuzzy match+CRLF/BOM+LCS diff, `LsTool` with limit+case-insensitive sort), `grep.rs` (rg JSON output, file-cache context), `find.rs` (fd, nested .gitignore, path-segment globs via `--full-path`), `ensure_tool.rs` (auto-download rg/fd from GitHub), `spawn.rs` (background UDS-mode subagent spawning), `agent_cmd.rs` (send commands to spawned UDS agents — `steer`, `follow_up`, `abort`, `get_state`), `web_search.rs` (Brave+DDG), `web_fetch.rs` (URL fetch with HTML stripping, per-host SSRF allowlist for tests), `recall.rs` (spill retrieval), `workflow_tool.rs` (`WorkflowTool` thin façade over `WorkflowEngine`, `WorkflowGuard` template-aware `ToolGuard` impl — mutating actions emit `workflow_state` events, guard registration gated by `--workflow-guards`), `path_utils.rs`, `truncate.rs`, `command_match.rs`, `registry.rs` (`ToolRegistryImpl`, `guard_count()`) |
+| `tools/` | `bash/` (shell, 1MiB cap, per-invocation timeout, `commandPrefix`, native/nsjail modes), `filesystem/` (`ReadTool` with image base64+auto-resize, `WriteTool`, `EditTool` with fuzzy match+CRLF/BOM+LCS diff, `LsTool` with limit+case-insensitive sort), `grep.rs` (rg JSON output, file-cache context), `find.rs` (fd, nested .gitignore, path-segment globs via `--full-path`), `ensure_tool.rs` (auto-download rg/fd from GitHub), `spawn.rs` (background UDS-mode subagent spawning), `agent_cmd.rs` (send commands to spawned UDS agents — `steer`, `follow_up`, `abort`, `get_state`), `web_search.rs` (Brave+DDG), `web_fetch.rs` (URL fetch with HTML stripping, per-host SSRF allowlist for tests), `recall.rs` (spill retrieval), `workflow_tool.rs` (`WorkflowTool` thin façade over `WorkflowEngine`, available by default in UDS unless `--no-workflow`; `WorkflowGuard` template-aware `ToolGuard` impl — mutating actions emit `workflow_state` events, guard registration gated by `--workflow-guards`), `path_utils.rs`, `truncate.rs`, `command_match.rs`, `registry.rs` (`ToolRegistryImpl`, `guard_count()`) |
 | `persistence/` | `FileSessionStore` (round-trips all Message fields including `thinking_blocks` for multi-turn thinking replay), `MemoryStore`, `FileSkillLoader`, `FileOnboardStore` (`workspace_store.rs`), `FileContextSpillStore` (JSONL append-only) |
 | `security/` | `Sandbox` — workspace path validation + command filtering |
 | `extensions/` | `ExtensionRegistry` (register extensions, aggregate tools + system prompt snippets), `NativeExtension` (compiled-in config-gated tools, e.g. `web_search`, `web_fetch`), `UdsExtensionTool` (routes tool execution to connected UDS clients via mpsc/oneshot channels). See [Extensions guide](docs/extensions.md) |
@@ -225,9 +231,9 @@ quecto agent -m "Write a Python script that generates primes"
 | `--mode` | No | Operation mode: default one-shot, or `uds` for UDS event bus |
 | `--socket` | No | Explicit socket path for `--mode uds` (default: auto-generated in tmpdir) |
 | `--persist` | No | UDS mode only — keep agent alive when all clients disconnect (default: exit on last disconnect) |
-| `--workflow` | No | UDS mode only — enable native workflow state/tool/prompt injection |
-| `--workflow-guards` | No | UDS mode only — enable workflow bash command guards (requires `--workflow`) |
-| `--no-workflow` | No | UDS mode only — explicitly disable workflow flags; last workflow flag wins |
+| `--workflow` | No | UDS mode only — start workflow-driven prompt injection immediately |
+| `--workflow-guards` | No | UDS mode only — enable workflow bash command guards; does not force prompt injection |
+| `--no-workflow` | No | UDS mode only — explicitly disable workflow tool/state/prompt |
 | `--effort` | No | Effort level for 4.6 models (`low`/`medium`/`high`/`max`). Overrides config and env var |
 | `--disable-tool` | No | Remove a tool from the registry (repeatable). See [Disabling Tools](docs/disable-tools.md) |
 | `--config` | No | Override config file path |
@@ -606,7 +612,7 @@ External tool binaries (`rg`, `fd`) are resolved via `ensure_tool`: system PATH 
 | `agent_cmd` | Send commands to spawned UDS subagents: `prompt`, `steer`, `follow_up`, `abort`, `kill`, `get_state`, `get_messages`, `get_messages_tail`, `get_session_stats`, `get_subagents`, `get_extensions`, `set_model`, `clear_history`, `reload_extensions` |
 | `web_search` | Optional: search the web via Brave Search or DuckDuckGo when `tools.web.brave.enabled` or `tools.web.duckduckgo.enabled` is true |
 | `web_fetch` | Optional: fetch a URL and return readable text when `tools.web.fetch.enabled` is true (HTML stripped by default; `raw: true` returns the original body) |
-| `workflow` | UDS-only template-based development workflow (status, list_templates, select_template, check, uncheck, skip, reset, set_issue, clear_issue, check_guards with command). Enabled via `--workflow` flag. See [Workflow docs](docs/workflow.md) |
+| `workflow` | UDS-only template-based development workflow (status, list_templates, select_template, check, uncheck, skip, reset, set_issue, clear_issue, check_guards with command). Available by default in UDS as a dormant tool unless `--no-workflow`; `--workflow` starts prompt-driven mode immediately. See [Workflow docs](docs/workflow.md) |
 
 Filesystem tools (`read`, `write`, `edit`, `ls`) run on async `tokio::fs` adapters.
 
@@ -784,7 +790,7 @@ Tool binary cache (auto-downloaded `rg`, `fd`):
 | [Extensions](docs/extensions.md) | Add custom tools via native extensions (config-gated) or UDS extensions (external processes) |
 | [Subagents](docs/subagents.md) | Spawning and controlling UDS-mode subagents with `spawn` and `agent_cmd` tools |
 | [Disabling Tools](docs/disable-tools.md) | Restricting which tools the agent can access via `--disable-tool` |
-| [Workflow](docs/workflow.md) | UDS-only template-based workflow engine with selector mode, guards, and live prompt injection |
+| [Workflow](docs/workflow.md) | UDS-only template-based workflow engine with default dormant tool availability, selector mode, guards, and live prompt injection |
 
 ## Tech stack
 Rust 2024, Tokio, reqwest+rustls, serde/serde_json, uuid, tracing, dirs, thiserror, similar, base64, sha2, flate2, tar, rand, urlencoding, unicode-normalization. Dev: cucumber 0.21, futures, tempfile, wiremock 0.6, regex.
