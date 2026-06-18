@@ -323,9 +323,9 @@ Native extensions can contribute text to the agent's system prompt. This is conf
 
 ## See also
 
-- [Getting Started](getting-started.md) — quickstart guide for UDS agent integration
-- [UDS Protocol Reference](uds-protocol.md) — full protocol specification
-- [Subagents](subagents.md) — spawning child agent processes
-- [Workflow Automation](workflow.md) — structured development process
-- [Disabling Tools](disable-tools.md) — restricting which tools the agent can access
+- Getting Started (`docs {"name":"getting-started"}`) — quickstart guide for UDS agent integration
+- UDS Protocol Reference (`docs {"name":"uds-protocol"}`) — full protocol specification
+- Subagents (`docs {"name":"subagents"}`) — spawning child agent processes
+- Workflow Automation (`docs {"name":"workflow"}`) — structured development process
+- Disabling Tools (`docs {"name":"disable-tools"}`) — restricting which tools the agent can access
 - [Configuration](../README.md) — `config.json` reference

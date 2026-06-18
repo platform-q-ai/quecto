@@ -145,7 +145,7 @@ Returns token usage, message counts, and cost estimates.
 
 Clears all messages except the system prompt. Drains any pending follow-up
 or steer messages. Fails if the agent is currently streaming. See
-[UDS Protocol Reference](uds-protocol.md#clear_history) for full details.
+UDS Protocol Reference (`docs {"name":"uds-protocol"}`) for full details.
 
 ## Configuration
 
@@ -169,6 +169,6 @@ Session behavior is configured in `config.json` under `agents.defaults`:
 
 ## See also
 
-- [Getting Started](getting-started.md) — quickstart guide for UDS agent integration
-- [UDS Protocol Reference](uds-protocol.md) — `get_state`, `get_messages`, `get_session_stats`, `clear_history`
-- [Subagents](subagents.md) — each subagent gets its own session
+- Getting Started (`docs {"name":"getting-started"}`) — quickstart guide for UDS agent integration
+- UDS Protocol Reference (`docs {"name":"uds-protocol"}`) — `get_state`, `get_messages`, `get_session_stats`, `clear_history`
+- Subagents (`docs {"name":"subagents"}`) — each subagent gets its own session

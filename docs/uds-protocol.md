@@ -484,7 +484,7 @@ Returns an empty array if no extensions are registered.
 
 ### `register_tools`
 
-Register one or more tools from a connected extension client. See [Extensions guide](extensions.md) for full details.
+Register one or more tools from a connected extension client. See Extensions guide (`docs {"name":"extensions"}`) for full details.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -964,7 +964,7 @@ All flags for `quecto agent` that affect UDS mode:
 
 ## See also
 
-- [Extensions](extensions.md) — adding custom tools via native config or UDS registration
-- [Subagents](subagents.md) — spawning child agent processes from within a session
-- [Workflow Automation](workflow.md) — configurable step-by-step development process
-- [Disabling Tools](disable-tools.md) — restricting which tools the agent can access
+- Extensions (`docs {"name":"extensions"}`) — adding custom tools via native config or UDS registration
+- Subagents (`docs {"name":"subagents"}`) — spawning child agent processes from within a session
+- Workflow Automation (`docs {"name":"workflow"}`) — configurable step-by-step development process
+- Disabling Tools (`docs {"name":"disable-tools"}`) — restricting which tools the agent can access

@@ -110,7 +110,7 @@ its result rather than picking a new workflow.
 ```
 
 - The `template` is the full definition (same shape as a `workflow-config.json`
-  template); see [workflow.md](workflow.md) for the field reference.
+  template); see the `workflow` doc (`docs {"name":"workflow"}`) for the field reference.
 - The spec is size-bounded (256 KiB) and written to a private, single-use file
   the child deletes once read.
 - If a spec is assigned but cannot be loaded, the child **fails closed** (it
@@ -275,8 +275,8 @@ Two complementary ways to observe a child's progress:
   arbitrary fields onto the parent's stream.
 
 Prefer reading forwarded `workflow_state` events (or one `get_subagents` call)
-over repeatedly polling each child with `get_state`. See
-[`uds-protocol.md`](uds-protocol.md#workflow_state) for the wire shape.
+over repeatedly polling each child with `get_state`. See the `uds-protocol`
+doc (`docs {"name":"uds-protocol"}`) for the wire shape.
 
 ## Sessions
 
@@ -369,7 +369,7 @@ To prevent the LLM from spawning subagents entirely:
 quecto agent --disable-tool spawn --disable-tool agent_cmd -m "fix the bug"
 ```
 
-See [Disabling Tools](disable-tools.md) for details.
+See Disabling Tools (`docs {"name":"disable-tools"}`) for details.
 
 ## REPL subagent commands
 
@@ -506,6 +506,6 @@ Later, when I need help:
 
 ## See also
 
-- [Disabling Tools](disable-tools.md) — `--disable-tool spawn` to prevent subagent spawning
-- [UDS Protocol Reference](uds-protocol.md) — the JSON-lines protocol used for agent communication
-- [Extensions](extensions.md) — adding custom tools to the agent
+- Disabling Tools (`docs {"name":"disable-tools"}`) — `--disable-tool spawn` to prevent subagent spawning
+- UDS Protocol Reference (`docs {"name":"uds-protocol"}`) — the JSON-lines protocol used for agent communication
+- Extensions (`docs {"name":"extensions"}`) — adding custom tools to the agent

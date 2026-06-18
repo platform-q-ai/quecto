@@ -28,6 +28,7 @@ pub struct ExecRegistrySettings {
     /// Threaded through from `ExecToolConfig::tmp_size_mb`.
     pub tmp_size_mb: u64,
 }
+use super::docs::DocsTool;
 use super::filesystem::{EditTool, LsTool, ReadTool, WriteTool};
 use super::find::FindTool;
 use super::grep::GrepTool;
@@ -155,6 +156,9 @@ impl ToolRegistryImpl {
         reg.register(Arc::new(LsTool::new(workspace.clone(), sandbox.clone())));
         reg.register(Arc::new(GrepTool::new(workspace.clone(), sandbox.clone())));
         reg.register(Arc::new(FindTool::new(workspace.clone(), sandbox.clone())));
+        // Quecto's own capability docs, embedded in the binary — reachable from
+        // any working directory (not the filesystem).
+        reg.register(Arc::new(DocsTool::new()));
 
         reg
     }

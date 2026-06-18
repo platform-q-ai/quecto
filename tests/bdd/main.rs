@@ -219,6 +219,9 @@ pub struct QuectoWorld {
     pub event_identity_parent_id: Option<String>,
     pub event_identity_last: Option<serde_json::Value>,
     pub event_identity_stream: Vec<serde_json::Value>,
+    /// Output of the `docs` tool under test (PRD docs-access work)
+    pub docs_output: String,
+    pub docs_is_error: bool,
     /// Loaded config (after "When I load the config")
     pub config: Option<Config>,
     /// Resolved workspace path (after "When I resolve the workspace path")
@@ -914,6 +917,7 @@ mod config_steps;
 mod context_pruning_steps;
 mod e2e_steps;
 mod edit_tool_steps;
+mod embedded_docs_steps;
 mod ensure_tool_steps;
 mod exec_tool_steps;
 mod extension_steps;
