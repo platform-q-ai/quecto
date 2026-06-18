@@ -68,7 +68,7 @@ Feature: Agent Tool System
       | oldText | hello    |
       | newText | world    |
     Then the file "code.py" should contain "print('world')"
-    And the [ToolResult] should contain "@@"
+    And the [ToolResult] should contain "+1 print('world')"
 
   Scenario: Edit rejects ambiguous match
     Given a tool workspace

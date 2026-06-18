@@ -129,16 +129,15 @@ Feature: EditTool — Quecto compatibility
   # --- Improved diff output ---
 
   @done
-  Scenario: Diff output contains unified diff markers
+  Scenario: Diff output shows changed lines with line numbers
     Given a tool workspace
     And a file "multi.txt" exists with content "line1\nline2\nline3\nline4\nline5"
     When the agent executes tool "edit" with args:
       | path    | multi.txt |
       | oldText | line3     |
       | newText | CHANGED   |
-    Then the [ToolResult] should contain "@@"
-    And the [ToolResult] should contain "-line3"
-    And the [ToolResult] should contain "+CHANGED"
+    Then the [ToolResult] should contain "-3 line3"
+    And the [ToolResult] should contain "+3 CHANGED"
     And the [ToolResult] should not be an error
 
   @done
