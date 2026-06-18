@@ -659,6 +659,29 @@ A tool finished executing. Includes the result and whether it was an error.
 }
 ```
 
+### `workflow_state`
+
+Emitted whenever an agent's workflow advances (template selected, step completed, mode change). Every `workflow_state` event is **identity-tagged** so any consumer can rebuild the unit tree from the stream alone:
+
+```json
+{
+  "type": "workflow_state",
+  "agent_id": "reviewer",
+  "parent_id": "root",
+  "mode": "active",
+  "progress": {"done": 2, "total": 5}
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `agent_id` | string \| null | The emitting agent's id (its session name); `null` if unnamed |
+| `parent_id` | string \| null | The spawning agent's id; `null` at the root. Sourced from `--parent-id` (set automatically by `spawn`) |
+| `mode` | string | Workflow mode (`selecting_template` / `active` / `complete`) |
+| `progress` | object | `{done, total}` step counts (plus `percent` on the emitter's own events) |
+
+**Forwarding (push observability).** A parent's per-child monitor re-emits each child's `workflow_state` events onto the **parent's** stream, re-stamped with the child's identity. Forwarded events are rebuilt **canonically** — only `type`, `agent_id`, `parent_id`, `mode`, and `progress` are carried; arbitrary child-supplied keys are not passed through. This lets a supervisor observe a whole subtree's progress from a single socket without polling each child (PRD Stage B).
+
 ### `response`
 
 Direct response to a command. Carries the correlation `id` (if one was sent), the command name, success/failure, and optional data or error message.

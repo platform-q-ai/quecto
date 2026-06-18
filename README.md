@@ -234,6 +234,7 @@ quecto agent -m "Write a Python script that generates primes"
 | `--workflow` | No | UDS mode only — start workflow-driven prompt injection immediately |
 | `--workflow-guards` | No | UDS mode only — enable workflow bash command guards; does not force prompt injection |
 | `--no-workflow` | No | UDS mode only — explicitly disable workflow tool/state/prompt |
+| `--parent-id` | No | UDS mode only — declares this agent's parent in the unit tree; stamped as `parent_id` on its `workflow_state` events. Set automatically by `spawn`; rarely passed by hand |
 | `--effort` | No | Effort level for 4.6 models (`low`/`medium`/`high`/`max`). Overrides config and env var |
 | `--disable-tool` | No | Remove a tool from the registry (repeatable). See [Disabling Tools](docs/disable-tools.md) |
 | `--config` | No | Override config file path |

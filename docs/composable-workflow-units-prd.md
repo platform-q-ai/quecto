@@ -71,6 +71,13 @@ Delivered in stages so each is independently shippable and reviewable:
 Stages A and B together make the per-sub-agent-workflow visibility we previously
 scoped fall out for free and *uniformly* (see "Relationship to prior work").
 
+**Status (2026-06-18):** Stage A shipped (PRs #682–#684) — by-value `workflow_spec`
+assignment + typed `agent_cmd await` result. Stage B shipped (PR #685) —
+identity-tagged event bus: `--parent-id`, `agent_id`/`parent_id` on every
+`workflow_state` event, child→parent event forwarding, `parent_id` + workflow
+snapshot on `SubagentInfo`, and `UnitTree::from_events` tree reconstruction.
+Stages C–E are not yet started.
+
 ## Non-goals
 
 - Do not introduce a privileged "orchestrator" agent type. Every node remains a
