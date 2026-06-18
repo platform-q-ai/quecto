@@ -56,7 +56,9 @@ impl Component for Spinner {
         }
         let spinner = theme::spinner(FRAMES[self.frame % FRAMES.len()]);
         let msg = theme::muted(&self.message);
-        let line = format!("{} {}", spinner, msg);
+        // 2-space gutter so the spinner sits under the `▸` column of the
+        // subagent/workflow panels in the bottom section (shared left margin).
+        let line = format!("  {} {}", spinner, msg);
         vec![truncate_to_width(&line, width, None)]
     }
 
