@@ -8,6 +8,33 @@ fn test_tool() -> SpawnTool {
 }
 
 #[test]
+fn parse_args_accepts_by_value_workflow_spec() {
+    let tool = test_tool();
+    let args = r#"{"task":"t","workflow_spec":{"template":{"id":"rev","label":"Rev","description":"d","steps":[{"key":"a","label":"A","phase":"review"}]}}}"#;
+    let cfg = tool.parse_args_for_test(args).expect("should parse");
+    let spec_json = cfg
+        .workflow_spec_json
+        .expect("workflow_spec_json should be set");
+    assert!(spec_json.contains("\"template\""));
+    assert!(spec_json.contains("rev"));
+}
+
+#[test]
+fn parse_args_rejects_workflow_spec_without_template() {
+    let tool = test_tool();
+    let args = r#"{"task":"t","workflow_spec":{"inputs":{"pr":7}}}"#;
+    let err = tool.parse_args_for_test(args).unwrap_err();
+    assert!(err.contains("invalid workflow_spec"), "got: {err}");
+}
+
+#[test]
+fn parse_args_without_workflow_spec_leaves_it_none() {
+    let tool = test_tool();
+    let cfg = tool.parse_args_for_test(r#"{"task":"t"}"#).unwrap();
+    assert!(cfg.workflow_spec_json.is_none());
+}
+
+#[test]
 fn test_definition() {
     let tool = test_tool();
     let def = tool.definition();

@@ -13,6 +13,7 @@ fn given_subagent_spawn_request(world: &mut QuectoWorld, task: String) {
         config_path: None,
         workflow: false,
         workflow_guards: false,
+        workflow_spec_json: None,
     });
 }
 
@@ -27,6 +28,7 @@ fn given_parent_config_restrict(world: &mut QuectoWorld, value: String) {
         config_path: None,
         workflow: false,
         workflow_guards: false,
+        workflow_spec_json: None,
     });
 }
 

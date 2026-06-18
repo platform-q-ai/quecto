@@ -39,6 +39,7 @@ mod tests {
             config_path: None,
             workflow: false,
             workflow_guards: false,
+            workflow_spec_json: None,
         };
         let ctx = SubagentContext::from_config(&config);
         assert_eq!(ctx.task, "Do stuff");
@@ -55,6 +56,7 @@ mod tests {
             config_path: None,
             workflow: false,
             workflow_guards: false,
+            workflow_spec_json: None,
         };
         let ctx = SubagentContext::from_config(&config);
         assert!(ctx.restrict_to_workspace);
@@ -70,6 +72,7 @@ mod tests {
             config_path: None,
             workflow: false,
             workflow_guards: false,
+            workflow_spec_json: None,
         };
         let ctx = SubagentContext::from_config(&config);
         assert!(!ctx.restrict_to_workspace);
@@ -85,6 +88,7 @@ mod tests {
             config_path: None,
             workflow: false,
             workflow_guards: false,
+            workflow_spec_json: None,
         };
         let ctx = SubagentContext::from_config(&config);
         assert_eq!(ctx.task, "");

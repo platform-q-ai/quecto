@@ -353,6 +353,22 @@ fn then_parsed_spawn_config_has_workflow(world: &mut QuectoWorld, expected: Stri
     );
 }
 
+#[then("the parsed spawn config should have a workflow spec")]
+fn then_parsed_spawn_config_has_workflow_spec(world: &mut QuectoWorld) {
+    let cfg = world
+        .subagent_config
+        .as_ref()
+        .expect("subagent_config not set — was parse_args called?");
+    let spec = cfg
+        .workflow_spec_json
+        .as_ref()
+        .expect("expected a workflow spec, got none");
+    assert!(
+        spec.contains("\"template\""),
+        "workflow spec should carry a template: {spec}"
+    );
+}
+
 #[then(expr = "the parsed spawn config should have workflow_guards {word}")]
 fn then_parsed_spawn_config_has_workflow_guards(world: &mut QuectoWorld, expected: String) {
     let cfg = world

@@ -182,6 +182,19 @@ impl SpawnTool {
             return Err("workflow_guards requires workflow to also be true".to_string());
         }
 
+        // Optional by-value workflow assignment. Validate it deserializes to a
+        // WorkflowSpec (must carry a `template`) so we fail fast with a clear
+        // error rather than letting the child crash on a malformed spec. The
+        // raw JSON is forwarded verbatim so future spec fields survive.
+        let workflow_spec_json = match args.get("workflow_spec") {
+            Some(v) if !v.is_null() => {
+                serde_json::from_value::<crate::domain::workflow::WorkflowSpec>(v.clone())
+                    .map_err(|e| format!("invalid workflow_spec: {}", e))?;
+                Some(v.to_string())
+            }
+            _ => None,
+        };
+
         if let Some(ref id) = agent_id {
             super::subagent_registry::validate_agent_id_format(id)?;
             if !self.allowed_agents.is_empty() {
@@ -197,6 +210,7 @@ impl SpawnTool {
             config_path,
             workflow,
             workflow_guards,
+            workflow_spec_json,
         })
     }
 
@@ -256,6 +270,20 @@ impl SpawnTool {
         }
         if config.workflow_guards {
             cmd.arg("--workflow-guards");
+        }
+
+        // A by-value workflow assignment is written to a file next to the
+        // socket and forwarded as `--workflow-spec <path>`; the inline template
+        // is too large for a bare CLI arg. The child runs it in Active mode
+        // (binding) — see agent_tool_registry.
+        if let Some(ref spec_json) = config.workflow_spec_json {
+            let spec_path = self
+                .socket_dir
+                .join(format!("quecto-wfspec-{session_name}.json"));
+            tokio::fs::write(&spec_path, spec_json)
+                .await
+                .map_err(|e| DomainError::Tool(format!("failed to write workflow spec: {e}")))?;
+            cmd.arg("--workflow-spec").arg(&spec_path);
         }
 
         // Propagate --no-sandbox so child agents inherit the same workspace
@@ -459,7 +487,7 @@ impl Tool for SpawnTool {
                 to wait for idle/exited/timeout/error, then inspect results with \
                 get_messages_tail or get_messages before summarizing."
                 .into(),
-            parameters_schema: r#"{"type":"object","properties":{"task":{"type":"string","description":"Initial task to send to the subagent (optional — starts idle if omitted)"},"agent_id":{"type":"string","description":"Session name for the subagent (used to address it via agent_cmd)"},"system":{"type":"string","description":"System prompt for the subagent"},"config":{"type":"string","description":"Path to a config file to pass to the child agent via --config (optional)"},"workflow":{"type":"boolean","description":"Start the child agent with --workflow (requires --mode uds, always enabled for spawned agents)"},"workflow_guards":{"type":"boolean","description":"Start the child agent with --workflow-guards (requires --workflow)"}}}"#.into(),
+            parameters_schema: r#"{"type":"object","properties":{"task":{"type":"string","description":"Initial task to send to the subagent (optional — starts idle if omitted)"},"agent_id":{"type":"string","description":"Session name for the subagent (used to address it via agent_cmd)"},"system":{"type":"string","description":"System prompt for the subagent"},"config":{"type":"string","description":"Path to a config file to pass to the child agent via --config (optional)"},"workflow":{"type":"boolean","description":"Start the child agent with --workflow (requires --mode uds, always enabled for spawned agents)"},"workflow_guards":{"type":"boolean","description":"Start the child agent with --workflow-guards (requires --workflow)"},"workflow_spec":{"type":"object","description":"Assign a binding workflow to the child by value. Provide the full template inline: {\"template\":{\"id\":...,\"label\":...,\"description\":...,\"steps\":[{\"key\":...,\"label\":...,\"phase\":...}]}}. The child runs exactly this template in Active mode (no template selection) and it overrides the child's default template library.","properties":{"template":{"type":"object"}}}}}"#.into(),
         }
     }
 

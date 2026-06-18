@@ -89,15 +89,60 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
     // Build a workflow event emitter from the broadcast channel (#598).
     let wf_emitter =
         broadcast_tx.map(crate::infrastructure::tools::workflow_tool::broadcast_emitter);
-    let workflow_available = flags.uds_mode && !flags.workflow_disabled;
+    // A by-value workflow spec (`--workflow-spec`) binds this agent to exactly
+    // one template, started directly in Active mode (no model-driven selection).
+    // It overrides the config's template library for this run. Loading is
+    // best-effort: a malformed spec is reported and the agent falls back to
+    // normal workflow availability.
+    let bound_spec = flags
+        .workflow_spec_path
+        .as_ref()
+        .and_then(|p| match load_workflow_spec(p) {
+            Ok(spec) => Some(spec),
+            Err(err) => {
+                stderr.push_str(&format!(
+                    "failed to load workflow spec '{}': {}\n",
+                    p.display(),
+                    err
+                ));
+                None
+            }
+        });
+    let workflow_available = flags.uds_mode && (!flags.workflow_disabled || bound_spec.is_some());
     let wf_state = if workflow_available {
+        let mut wf_config = config.workflow.clone();
+        if let Some(ref spec) = bound_spec {
+            wf_config.templates = vec![spec.template.clone()];
+            wf_config.selector_prompt = None;
+        }
         match crate::interface::shared::register_workflow_tool(
             &mut registry,
-            config.workflow.clone(),
+            wf_config,
             flags.workflow_guards,
             wf_emitter,
         ) {
-            Ok(state) => Some(state),
+            Ok(state) => {
+                // Bind: pre-select the assigned template so the engine enters
+                // Active mode immediately and the model cannot pick another.
+                if let Some(spec) = bound_spec {
+                    match state.lock() {
+                        Ok(mut engine) => {
+                            if let Err(err) = engine.select_template(&spec.template.id, None) {
+                                stderr.push_str(&format!(
+                                    "failed to bind workflow template '{}': {}\n",
+                                    spec.template.id, err
+                                ));
+                            }
+                        }
+                        Err(_) => {
+                            stderr.push_str(
+                                "failed to bind workflow template: engine lock poisoned\n",
+                            );
+                        }
+                    }
+                }
+                Some(state)
+            }
             Err(err) => {
                 stderr.push_str(&format!("failed to initialize workflow: {}\n", err));
                 None
@@ -128,4 +173,12 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
         },
         workflow_state: wf_state,
     }
+}
+
+/// Load and parse a by-value workflow spec file (`--workflow-spec <path>`).
+fn load_workflow_spec(
+    path: &std::path::Path,
+) -> Result<crate::domain::workflow::WorkflowSpec, String> {
+    let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    serde_json::from_str::<crate::domain::workflow::WorkflowSpec>(&raw).map_err(|e| e.to_string())
 }

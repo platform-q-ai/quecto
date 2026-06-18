@@ -49,6 +49,19 @@ pub struct WorkflowRunPersisted {
     pub active_issue: Option<(u32, String)>,
 }
 
+/// A by-value, binding workflow assignment handed to a spawned sub-agent.
+///
+/// Carries the **full template definition** (not an id reference), so a parent
+/// can hand a child a sub-workflow without the child's config having to define
+/// it. An assigned child runs exactly this template in `Active` mode and cannot
+/// select another (binding). Unknown fields are ignored so the spec can carry
+/// future additions (inputs, acceptance, budget) without breaking older agents.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkflowSpec {
+    /// The template the assigned sub-agent must run.
+    pub template: WorkflowTemplate,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowConfig {
     #[serde(default = "default_true")]
