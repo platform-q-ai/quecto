@@ -258,18 +258,24 @@ fn handle_monitor_line(
         tracing::warn!(agent = %agent_id, len = line.len(), "monitor: dropping oversized line");
         return;
     }
-    // Only acquire the mutex lock for state-changing events.
-    if STATE_CHANGING_EVENTS.iter().any(|pat| line.contains(pat)) {
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
-            let sequence =
-                update_entry_next_sequence(registry, agent_id, |e| apply_event_parsed(e, &value));
-            notify_from_parsed(notify_tx, agent_id, sequence, &value);
-        }
+    // Cheap substring pre-filter: any line that isn't a tracked event type
+    // (including high-volume `token` lines) is skipped before the JSON parse.
+    if !STATE_CHANGING_EVENTS.iter().any(|pat| line.contains(pat)) {
+        return;
     }
-    // Forward the child's workflow_state events onto the parent's stream.
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+        return;
+    };
+    // Parse once; reuse for the registry update, notification, and forwarding.
+    let sequence =
+        update_entry_next_sequence(registry, agent_id, |e| apply_event_parsed(e, &value));
+    notify_from_parsed(notify_tx, agent_id, sequence, &value);
+    // Forward workflow_state events onto the parent's stream as a canonical,
+    // re-tagged event (R-B2).
     if let Some(tx) = broadcast_tx {
-        if let Some(fwd) = forward_child_workflow_event(line, agent_id, parent_id) {
-            let _ = tx.send(format!("{fwd}\n"));
+        if let Some(mut fwd) = canonical_workflow_forward(&value, agent_id, parent_id) {
+            fwd.push('\n');
+            let _ = tx.send(fwd);
         }
     }
 }
@@ -279,19 +285,39 @@ fn handle_monitor_line(
 /// / R-B2): a parent/supervisor then sees descendant workflows without polling
 /// each child socket. Returns the re-tagged JSON line, or `None` for any line
 /// that is not a `workflow_state` event.
+pub fn canonical_workflow_forward(
+    value: &serde_json::Value,
+    child_id: &str,
+    parent_id: Option<&str>,
+) -> Option<String> {
+    if value.get("type").and_then(|t| t.as_str()) != Some("workflow_state") {
+        return None;
+    }
+    // Re-build a canonical event from KNOWN fields with identity force-stamped.
+    // We deliberately do NOT pass through arbitrary child-supplied keys onto the
+    // parent's client stream.
+    let canonical = serde_json::json!({
+        "type": "workflow_state",
+        "agent_id": child_id,
+        "parent_id": parent_id,
+        "mode": value.get("mode").cloned().unwrap_or(serde_json::Value::Null),
+        "progress": value.get("progress").cloned().unwrap_or(serde_json::Value::Null),
+    });
+    serde_json::to_string(&canonical).ok()
+}
+
+/// Line-based wrapper around [`canonical_workflow_forward`]: cheap substring
+/// pre-filter, then parse once. Returns `None` for non-`workflow_state` lines.
 pub fn forward_child_workflow_event(
     line: &str,
     child_id: &str,
     parent_id: Option<&str>,
 ) -> Option<String> {
-    let mut value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
-    if value.get("type").and_then(|t| t.as_str()) != Some("workflow_state") {
+    if !line.contains("\"type\":\"workflow_state\"") {
         return None;
     }
-    let obj = value.as_object_mut()?;
-    obj.insert("agent_id".into(), serde_json::json!(child_id));
-    obj.insert("parent_id".into(), serde_json::json!(parent_id));
-    serde_json::to_string(&value).ok()
+    let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    canonical_workflow_forward(&value, child_id, parent_id)
 }
 
 /// Check if a JSON-lines event should trigger a notification and send it.

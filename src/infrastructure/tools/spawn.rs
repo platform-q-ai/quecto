@@ -320,6 +320,13 @@ impl SpawnTool {
             cmd.arg("--config").arg(cfg_path);
         }
 
+        // Tell the child who its parent is, so the child's OWN emitted events
+        // carry the correct parent_id (PRD Stage B) — not just the copy the
+        // parent's monitor re-stamps when forwarding.
+        if let Some(parent_id) = &self.parent_id {
+            cmd.arg("--parent-id").arg(parent_id);
+        }
+
         // Forward --workflow / --workflow-guards when requested.
         if config.workflow {
             cmd.arg("--workflow");
