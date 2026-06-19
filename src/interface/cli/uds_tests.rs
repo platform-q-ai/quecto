@@ -142,7 +142,7 @@ fn test_stats_include_session_usage_snapshot() {
     let mut session = AgentSession::new("gpt-5".to_string(), "k".to_string());
     session.record_usage(100, 25, 10, 5, 12_300);
 
-    let stats = compute_session_stats_with_usage("k", &msgs, session.usage_snapshot(), 0);
+    let stats = compute_session_stats_with_usage("k", &msgs, session.usage_snapshot(), 42, 0);
 
     assert_eq!(stats.tokens.input, 100);
     assert_eq!(stats.tokens.output, 25);
@@ -150,18 +150,39 @@ fn test_stats_include_session_usage_snapshot() {
     assert_eq!(stats.tokens.cache_write, 5);
     assert_eq!(stats.tokens.total, 125);
     assert!((stats.cost - 0.0123).abs() < f64::EPSILON);
+    assert_eq!(stats.context_tokens, 42);
+}
+
+#[test]
+fn test_session_tracks_context_tokens() {
+    let mut session = AgentSession::new("gpt-5".to_string(), "cli:test".to_string());
+    session.set_context_tokens(77);
+    assert_eq!(session.context_tokens(), 77);
+
+    let mut result = crate::domain::agent::AgentResult::text("ok");
+    result.context_tokens = 88;
+    result.billed_input_tokens = 10;
+    session.record_agent_result(&result);
+    assert_eq!(session.context_tokens(), 88);
+    assert_eq!(session.usage_snapshot().tokens.input, 10);
+
+    session.clear_usage();
+    assert_eq!(session.context_tokens(), 0);
+    assert_eq!(session.usage_snapshot().tokens.total, 0);
 }
 
 #[test]
 fn test_session_key_change_clears_usage() {
     let mut session = AgentSession::new("gpt-5".to_string(), "cli:old".to_string());
     session.record_usage(10, 2, 3, 4, 1_000);
+    session.set_context_tokens(99);
 
     session.set_session_key("cli:new".to_string());
 
     let usage = session.usage_snapshot();
     assert_eq!(usage.tokens.total, 0);
     assert_eq!(usage.cost_micro_usd, 0);
+    assert_eq!(session.context_tokens(), 0);
 }
 
 // ─── parse_command_line ──────────────────────────────────────────────────────────

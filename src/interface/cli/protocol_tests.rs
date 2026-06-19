@@ -503,12 +503,14 @@ fn test_session_stats_serializes() {
             total: 2100,
         },
         cost: 0.42,
+        context_tokens: 12_000,
         max_context_tokens: 200_000,
     };
     let json = serde_json::to_string(&stats).unwrap();
     assert!(json.contains("\"userMessages\":2"));
     assert!(json.contains("\"totalMessages\":10"));
     assert!(json.contains("\"tokens\""));
+    assert!(json.contains("\"contextTokens\":12000"));
 }
 
 #[test]

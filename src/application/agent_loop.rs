@@ -445,11 +445,13 @@ impl AgentLoopImpl {
     ) -> AgentResult {
         let text = response.content.unwrap_or_default();
         messages.push(Message::assistant(text.clone(), vec![]));
+        let context_tokens = context_pruning::estimate_total_tokens(messages);
         AgentResult {
             response: text,
             tool_iterations: iterations,
             iteration_limit_reached: false,
             input_tokens: usage.context_input_tokens,
+            context_tokens,
             output_tokens: usage.output_tokens,
             billed_input_tokens: usage.billed_input_tokens,
             billed_output_tokens: usage.billed_output_tokens,
@@ -571,7 +573,6 @@ impl AgentLoopImpl {
             });
 
             let request = self.build_chat_request(messages, tool_defs);
-
             // Audit: LlmTurnStart (guarded)
             if self.audit_log.is_some() {
                 self.audit(
@@ -585,14 +586,12 @@ impl AgentLoopImpl {
             }
 
             let llm_start = std::time::Instant::now();
-
             // Use streaming when enabled (UDS mode) so token events are
             // forwarded in real time.  REPL/one-shot use the
             // non-streaming path.
             let response = self.call_provider_with_retries(request).await;
 
             let llm_duration_ms = llm_start.elapsed().as_millis() as u64;
-
             let response = match response {
                 Ok(r) => r,
                 Err(e) => {
@@ -678,6 +677,7 @@ impl AgentLoopImpl {
                     tool_iterations: iterations,
                     iteration_limit_reached: true,
                     input_tokens: usage_totals.context_input_tokens,
+                    context_tokens: context_pruning::estimate_total_tokens(messages),
                     output_tokens: usage_totals.output_tokens,
                     billed_input_tokens: usage_totals.billed_input_tokens,
                     billed_output_tokens: usage_totals.billed_output_tokens,

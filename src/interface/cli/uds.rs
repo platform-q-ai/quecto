@@ -185,6 +185,9 @@ async fn single_client_loop(
     inject_system_prompt(&mut messages, &system_prompt);
 
     let mut agent_session = AgentSession::new(model, session_key.clone());
+    agent_session.set_context_tokens(crate::application::context_pruning::estimate_total_tokens(
+        &messages,
+    ));
 
     run_command_loop(
         reader,
@@ -465,6 +468,7 @@ fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serd
                 ctx.session_key,
                 ctx.messages,
                 ctx.session.usage_snapshot(),
+                ctx.session.context_tokens(),
                 ctx.agent.max_context_tokens(),
             );
             Some(serde_json::to_value(&stats).unwrap_or_default())

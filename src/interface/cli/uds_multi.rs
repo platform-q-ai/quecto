@@ -131,6 +131,9 @@ pub(super) async fn multi_client_loop(
     inject_system_prompt(&mut messages, &system_prompt);
 
     let mut agent_session = AgentSession::new(model, session_key.clone());
+    agent_session.set_context_tokens(crate::application::context_pruning::estimate_total_tokens(
+        &messages,
+    ));
 
     // Use the pre-created broadcast channel when available (workflow emitter
     // is already wired to it), otherwise create a fresh one (#598).

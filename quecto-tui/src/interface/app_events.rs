@@ -66,14 +66,16 @@ impl App {
         let Some(usage) = message.get("usage") else {
             return;
         };
-        let input = usage.get("input").and_then(|v| v.as_u64()).unwrap_or(0);
         let total = usage.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
-        if let Some(window) = message
-            .get("maxContextTokens")
-            .and_then(|v| v.as_u64())
-            .map(|v| v as usize)
-        {
-            self.footer.update_context_usage(input, window);
+        let context_tokens = message.get("contextTokens").and_then(|v| v.as_u64());
+        if let (Some(used), Some(window)) = (
+            context_tokens,
+            message
+                .get("maxContextTokens")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize),
+        ) {
+            self.footer.update_context_usage(used, window);
             self.context_stats_requested = true;
         } else if total > 0 && !self.context_stats_requested {
             self.context_stats_requested = true;
@@ -334,11 +336,17 @@ mod tests {
         app.handle_event(Event::TurnEnd {
             message: serde_json::json!({
                 "usage": {"input": 10, "output": 5, "total": 15},
+                "contextTokens": 40,
                 "maxContextTokens": 100
             }),
             tool_results: vec![],
         });
         assert!(app.context_stats_requested);
+        let rendered = app.footer.render(80).join("\n");
+        assert!(
+            rendered.contains("40/100"),
+            "footer should use contextTokens: {rendered}"
+        );
 
         let mut app = test_app().await;
         app.handle_event(Event::TurnEnd {
@@ -346,6 +354,36 @@ mod tests {
             tool_results: vec![],
         });
         assert!(app.context_stats_requested);
+    }
+
+    #[tokio::test]
+    async fn session_stats_footer_uses_context_tokens_not_cumulative_input() {
+        let mut app = test_app().await;
+        app.handle_event(Event::Response {
+            id: None,
+            command: "get_session_stats".into(),
+            success: true,
+            data: Some(serde_json::json!({
+                "tokens": {"input": 999_000, "output": 1, "total": 999_001},
+                "contextTokens": 12_000,
+                "maxContextTokens": 200_000
+            })),
+            error: None,
+        });
+
+        let rendered = app.footer.render(80).join("\n");
+        let plain: String = rendered
+            .chars()
+            .filter(|c| !c.is_control() || *c == '\n')
+            .collect();
+        assert!(
+            plain.contains("12k/200k"),
+            "footer should show active context: {plain}"
+        );
+        assert!(
+            !plain.contains("999k/200k"),
+            "footer must not show cumulative input: {plain}"
+        );
     }
 
     #[tokio::test]

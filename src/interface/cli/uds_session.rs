@@ -13,6 +13,8 @@ pub struct AgentSession {
     streaming: bool,
     /// Cumulative provider-reported usage for this in-memory UDS session.
     usage: SessionUsage,
+    /// Latest estimated active/pruned context size reported by the agent loop.
+    context_tokens: usize,
     /// `VecDeque` supports O(1) push_back (enqueue) and push_front (prepend/steer).
     pending: std::collections::VecDeque<PendingMessage>,
     last_subagent_notification: std::collections::HashMap<String, u64>,
@@ -88,6 +90,7 @@ impl AgentSession {
             session_key,
             streaming: false,
             usage: SessionUsage::default(),
+            context_tokens: 0,
             pending: std::collections::VecDeque::new(),
             last_subagent_notification: std::collections::HashMap::new(),
         }
@@ -117,6 +120,7 @@ impl AgentSession {
     }
 
     pub fn record_agent_result(&mut self, result: &AgentResult) {
+        self.context_tokens = result.context_tokens;
         self.record_usage(
             result.billed_input_tokens,
             result.billed_output_tokens,
@@ -124,6 +128,14 @@ impl AgentSession {
             result.cache_write_tokens,
             result.cost_micro_usd,
         );
+    }
+
+    pub fn context_tokens(&self) -> usize {
+        self.context_tokens
+    }
+
+    pub fn set_context_tokens(&mut self, context_tokens: usize) {
+        self.context_tokens = context_tokens;
     }
 
     pub fn record_usage(
@@ -160,6 +172,7 @@ impl AgentSession {
 
     pub fn clear_usage(&mut self) {
         self.usage = SessionUsage::default();
+        self.context_tokens = 0;
     }
 
     /// Maximum number of pending (steer/follow_up) messages buffered at once.
@@ -231,7 +244,7 @@ impl AgentSession {
 
 /// Compute session statistics from the current message history.
 pub fn compute_session_stats(session_key: &str, messages: &[Message]) -> SessionStats {
-    compute_session_stats_with_usage(session_key, messages, SessionUsage::default(), 0)
+    compute_session_stats_with_usage(session_key, messages, SessionUsage::default(), 0, 0)
 }
 
 /// Compute session statistics with cumulative provider usage collected by the UDS session.
@@ -240,6 +253,7 @@ pub fn compute_session_stats_with_usage(
     session_key: &str,
     messages: &[Message],
     usage: SessionUsage,
+    context_tokens: usize,
     max_context_tokens: usize,
 ) -> SessionStats {
     let mut user_messages = 0usize;
@@ -268,6 +282,7 @@ pub fn compute_session_stats_with_usage(
         total_messages: messages.len(),
         cost: usage.cost_usd(),
         tokens: usage.tokens,
+        context_tokens,
         max_context_tokens,
     }
 }
