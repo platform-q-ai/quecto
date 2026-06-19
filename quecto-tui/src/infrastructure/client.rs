@@ -155,6 +155,12 @@ pub enum Event {
     },
     /// Workflow state changed — step checked/unchecked/reset (#563).
     WorkflowState {
+        /// Identity of the emitting agent (PRD Stage B). `None` for the
+        /// connected agent's own events; set to a child's id on events the
+        /// parent's monitor forwards up — those must NOT clobber the parent's
+        /// own workflow bar.
+        #[serde(default)]
+        agent_id: Option<String>,
         steps: Vec<serde_json::Value>,
         progress: serde_json::Value,
         #[serde(rename = "activeIssue", default)]
