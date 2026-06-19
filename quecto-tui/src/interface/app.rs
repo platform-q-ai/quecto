@@ -623,13 +623,26 @@ struct TrackedSubagent {
     info: crate::infrastructure::client::SubagentInfoEvent,
     /// When the subagent was first observed (for the elapsed-time display).
     started_at: tokio::time::Instant,
-    /// When the subagent entered the "exited" state. `None` if still active.
+    /// When the subagent last stopped being active (idle/error/exited), used to
+    /// freeze the elapsed-time display. `None` while active. Without this, an
+    /// idle agent's timer keeps ticking until the *last* sibling goes idle
+    /// (the animation tick runs while any agent is active).
+    stopped_at: Option<tokio::time::Instant>,
+    /// When the subagent entered the "exited" state. `None` if not exited. Kept
+    /// distinct from `stopped_at` because GC grace counts from exit, while the
+    /// timer freezes from when the agent first went idle.
     exited_at: Option<tokio::time::Instant>,
+}
+
+/// Whether a subagent status counts as "actively running" for the timer.
+fn subagent_status_is_active(status: &str) -> bool {
+    matches!(status, "starting" | "running")
 }
 
 impl TrackedSubagent {
     fn new(info: crate::infrastructure::client::SubagentInfoEvent) -> Self {
         let now = tokio::time::Instant::now();
+        let active = subagent_status_is_active(&info.status);
         let exited_at = if info.status == STATUS_EXITED {
             Some(now)
         } else {
@@ -638,20 +651,30 @@ impl TrackedSubagent {
         Self {
             info,
             started_at: now,
+            stopped_at: if active { None } else { Some(now) },
             exited_at,
         }
     }
 
-    /// Seconds the agent has been alive, frozen once it has exited.
+    /// Seconds the agent was actively running, frozen once it goes idle/exits.
     fn elapsed_secs(&self, now: tokio::time::Instant) -> u64 {
-        let end = self.exited_at.unwrap_or(now);
+        let end = self.stopped_at.unwrap_or(now);
         end.saturating_duration_since(self.started_at).as_secs()
     }
 
-    /// Update the info, recording exited_at on transition to "exited".
+    /// Update the info, freezing the timer when the agent stops being active and
+    /// recording exited_at on transition to "exited".
     fn update_info(&mut self, new_info: crate::infrastructure::client::SubagentInfoEvent) {
+        let now = tokio::time::Instant::now();
+        if subagent_status_is_active(&new_info.status) {
+            // Resumed work — let the timer run again.
+            self.stopped_at = None;
+        } else if self.stopped_at.is_none() {
+            // First transition into a stopped state — freeze the timer here.
+            self.stopped_at = Some(now);
+        }
         if new_info.status == STATUS_EXITED && self.exited_at.is_none() {
-            self.exited_at = Some(tokio::time::Instant::now());
+            self.exited_at = Some(now);
         } else if new_info.status != STATUS_EXITED {
             self.exited_at = None;
         }
@@ -661,11 +684,22 @@ impl TrackedSubagent {
 
 /// Remove exited subagents whose grace period has elapsed (#540).
 /// Returns `true` if any entries were removed.
+///
+/// While any sibling is still active, finished agents are kept on screen so the
+/// panel doesn't shrink mid-batch and jolt the chat above it — reclamation is
+/// deferred until the whole batch is quiescent (the panel then grows once and
+/// clears once instead of oscillating as agents come and go).
 fn gc_exited_subagents(
     map: &mut std::collections::BTreeMap<String, TrackedSubagent>,
     now: tokio::time::Instant,
     grace: Duration,
 ) -> bool {
+    if map
+        .values()
+        .any(|entry| subagent_status_is_active(&entry.info.status))
+    {
+        return false;
+    }
     let mut removed = false;
     map.retain(|_, entry| {
         if let Some(exited_at) = entry.exited_at {

@@ -56,7 +56,7 @@ impl App {
         let any_active = self
             .subagent_local
             .values()
-            .any(|t| matches!(t.info.status.as_str(), "running" | "starting"));
+            .any(|t| subagent_status_is_active(&t.info.status));
         if !any_active {
             return false;
         }
