@@ -390,12 +390,16 @@ impl App {
         // Quecto-style workflow widget above the editor.
         bottom.extend(workflow_bar::render_widget(&workflow_bar_state, width));
 
-        // Spinner sits between widgets_above and autocomplete (#534). It renders
-        // a stable single line for the whole processing turn; per-agent await
-        // status is shown on the sub-agent rows. (Suppressing it during await
-        // made it flip on/off between consecutive awaits — a sub-second flash.)
+        // Spinner sits between widgets_above and autocomplete (#534). While
+        // sub-agents are tracked, RESERVE its line (spinner when active, blank
+        // when idle): workflow children fire notifications that make the parent
+        // do many short runs, each creating/dropping the spinner — a toggling
+        // 0↔1 line would reflow the chat on every run (the panel-size 6↔7 /
+        // 11↔12 judder). A reserved slot keeps the below-chat height stable.
         if let Some(spinner) = &mut self.spinner {
             bottom.extend(spinner.render(width));
+        } else if !self.subagent_local.is_empty() {
+            bottom.push(String::new());
         }
 
         // Autocomplete dropdown.

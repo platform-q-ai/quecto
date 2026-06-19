@@ -151,3 +151,29 @@ async fn state_query_result_json_never_renders_in_chat() {
         "get_state result JSON leaked into the chat (the percent/total flash):\n{dump}"
     );
 }
+
+/// The real-log judder: workflow sub-agents fire notifications, so the parent
+/// does many short runs, each creating/dropping the spinner. With sub-agents
+/// present that 0↔1 spinner toggle must NOT reflow the chat (its line is
+/// reserved), or the panel size oscillates (6↔7 / 11↔12) on every run.
+#[tokio::test]
+async fn spinner_blink_with_subagents_does_not_reflow() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(
+        (1..=5)
+            .map(|i| subagent(&format!("a{i}"), "running", Some(("active", 1, 3))))
+            .collect(),
+    ));
+    // Parent runs repeatedly (one per subagent notification): spinner blinks.
+    for _ in 0..5 {
+        h.event(Event::AgentEnd { messages: vec![] }); // spinner off
+        h.event(Event::AgentStart); // spinner on
+    }
+    assert!(
+        h.flashes().is_empty(),
+        "spinner blink reflowed the chat (height flash): {:?}\nheights = {:?}",
+        h.flashes(),
+        h.heights()
+    );
+}
