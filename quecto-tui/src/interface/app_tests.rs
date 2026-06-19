@@ -1,4 +1,5 @@
 use super::*;
+use crate::interface::theme;
 
 #[test]
 fn initial_state_not_running() {
@@ -339,7 +340,8 @@ fn resume_selector_overlay_has_opaque_border() {
         }],
         10,
     );
-    let (lines, width) = super::build_resume_selector_overlay(&mut selector, 100, 40);
+    let (lines, width) =
+        crate::interface::select_overlay::build_resume_selector_overlay(&mut selector, 100, 40);
 
     assert!(
         width > 72,
@@ -359,6 +361,31 @@ fn resume_selector_overlay_has_opaque_border() {
             .all(|line| crate::interface::utils::visible_width(line) == width),
         "opaque background should span the full overlay width"
     );
+}
+
+#[test]
+fn rewind_selector_overlay_uses_go_back_title() {
+    let mut selector = SelectList::new(
+        vec![SelectItem {
+            label: "Previous turn: hello".into(),
+            value: "2".into(),
+            description: None,
+        }],
+        10,
+    );
+    let (lines, _) =
+        crate::interface::select_overlay::build_rewind_selector_overlay(&mut selector, 100, 40);
+    let joined = lines.join("\n");
+    assert!(joined.contains("Go back to"));
+    assert!(joined.contains("Previous turn: hello"));
+}
+
+#[test]
+fn rewind_preview_sanitizes_user_content() {
+    let preview = super::app_rewind::rewind_preview("safe \u{1b}]52;c;payload\u{7}text");
+    assert_eq!(preview, "safe text");
+    assert!(!preview.contains("]52;"));
+    assert!(!preview.contains('\u{1b}'));
 }
 
 #[test]

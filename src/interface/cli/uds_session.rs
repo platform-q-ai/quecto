@@ -307,6 +307,34 @@ pub fn clear_conversation(messages: &mut Vec<Message>) {
     }
 }
 
+/// Rewind conversation history to a selected user-message boundary.
+///
+/// The target index must point at an existing user message. The selected user
+/// message and everything after it are removed, preserving earlier system
+/// prompts and completed turns.
+pub fn rewind_to_message_index(messages: &mut Vec<Message>, message_index: usize) -> bool {
+    let Some(message) = messages.get(message_index) else {
+        return false;
+    };
+    if message.role != Role::User {
+        return false;
+    }
+    messages.truncate(message_index);
+    remove_spill_references(messages);
+    true
+}
+
+fn remove_spill_references(messages: &mut Vec<Message>) {
+    messages.retain(|message| !message.is_manifest);
+    for message in messages {
+        if message.is_collapsed {
+            message.content.clear();
+            message.is_collapsed = false;
+        }
+        message.spill_id = None;
+    }
+}
+
 #[cfg(test)]
 mod subagent_notification_dedupe_tests {
     use super::*;

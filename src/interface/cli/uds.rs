@@ -9,7 +9,7 @@ use super::uds_multi::{MultiClientArgs, PromptArgsBroadcast, run_agent_prompt_br
 use super::uds_session::compute_session_stats;
 use super::uds_session::{
     AgentSession, clear_conversation, compute_session_stats_with_usage, message_to_json,
-    messages_tail_json,
+    messages_tail_json, rewind_to_message_index,
 };
 use crate::application::agent_loop::AgentLoopImpl;
 use crate::domain::message::{Message, Role};

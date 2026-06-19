@@ -89,6 +89,12 @@ pub enum Command {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    RewindTo {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(rename = "messageIndex")]
+        message_index: usize,
+    },
     GetSubagents {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,

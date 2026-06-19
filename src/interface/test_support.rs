@@ -38,3 +38,40 @@ impl LlmProvider for StubProvider {
 pub(crate) fn make_stub_provider() -> Arc<dyn LlmProvider> {
     Arc::new(StubProvider)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stub_provider_reports_name() {
+        let provider = StubProvider;
+        assert_eq!(provider.name(), "stub");
+    }
+
+    #[tokio::test]
+    async fn stub_provider_returns_fixed_response() {
+        let provider = make_stub_provider();
+        let messages = [];
+        let request = ChatRequest {
+            messages: &messages,
+            tools: &[],
+            model: "stub-model",
+            max_tokens: 1024,
+            temperature: 0.0,
+            session_id: None,
+            tool_choice: None,
+            metadata: None,
+            thinking_level: None,
+            cancel_flag: None,
+            effort: None,
+        };
+
+        let response = provider.chat(request).await.unwrap();
+        assert_eq!(response.content.as_deref(), Some("stub response"));
+        assert!(response.tool_calls.is_empty());
+        assert!(response.usage.is_none());
+        assert!(response.stop_reason.is_none());
+        assert!(response.thinking_blocks.is_empty());
+    }
+}

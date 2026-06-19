@@ -463,6 +463,12 @@ fn when_send_command_with_id(world: &mut QuectoWorld, command: String, id: Strin
     world.uds_commands.push(cmd.to_string());
 }
 
+#[when(expr = "I send rewind_to messageIndex {int} with id {string}")]
+fn when_send_rewind_to(world: &mut QuectoWorld, message_index: usize, id: String) {
+    let cmd = serde_json::json!({"type": "rewind_to", "id": id, "messageIndex": message_index});
+    world.uds_commands.push(cmd.to_string());
+}
+
 #[when(expr = "I send set_model {string}")]
 fn when_send_set_model(world: &mut QuectoWorld, model: String) {
     let cmd = serde_json::json!({"type": "set_model", "id": "sm-1", "model": model});
@@ -732,6 +738,16 @@ fn then_get_messages_has_array(world: &mut QuectoWorld, field: String) {
         "expected get_messages.data.{field} to be an array\ngot: {}",
         resp["data"]
     );
+}
+
+#[then(expr = "the get_messages response data should include a {string} array with {int} messages")]
+fn then_get_messages_array_len(world: &mut QuectoWorld, field: String, expected: usize) {
+    let resp = find_agent_response(world, "get_messages").expect("no get_messages response");
+    let len = resp["data"][&field]
+        .as_array()
+        .map(|a| a.len())
+        .unwrap_or(0);
+    assert_eq!(len, expected, "unexpected get_messages.data.{field} length");
 }
 
 // ─── get_messages_tail assertions ─────────────────────────────────────────────
