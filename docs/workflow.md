@@ -294,7 +294,7 @@ When `templates` is empty (or omitted), one default is loaded:
 
 | ID | Label | Steps | Guards |
 |----|-------|-------|--------|
-| `feature` | Feature | 17-step Quecto workflow (hooks → scenarios → tests → RED → GREEN → refactor → verify → commit → push → PR → review → merge/pull) | `git commit`/`git push` before commit step; merge before merge step |
+| `feature` | Feature | 18-step Quecto workflow (hooks → scenarios → tests → RED → GREEN → refactor → verify → commit → push → PR → review → merge/pull → cleanup) | `git commit`/`git push` before commit step; merge before merge step |
 
 To override built-ins, define at least one template in `templates`. When any
 custom templates are present, **only** the custom templates are available —

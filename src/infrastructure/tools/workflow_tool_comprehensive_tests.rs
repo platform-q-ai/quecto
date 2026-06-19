@@ -338,7 +338,7 @@ async fn status_reflects_complete_mode() {
         .await
         .unwrap();
 
-    for step in 1..=17 {
+    for step in 1..=18 {
         let result = tool
             .execute(&format!(r#"{{"action":"check","step":{step}}}"#))
             .await
