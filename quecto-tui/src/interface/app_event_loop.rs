@@ -57,8 +57,10 @@ impl App {
         spinner_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         // Git branch footer refresh timer.
-        let mut git_branch_interval = tokio::time::interval(GIT_BRANCH_POLL_INTERVAL);
+        let mut git_branch_interval = tokio::time::interval(app_git::GIT_BRANCH_POLL_INTERVAL);
         git_branch_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let (git_branch_tx, mut git_branch_rx) = mpsc::channel::<Option<String>>(1);
+        let mut git_branch_refresh_in_flight = false;
 
         // Timeout for incomplete escape sequences (matches Quecto TUI's 10ms).
         let escape_timeout = Duration::from_millis(10);
@@ -183,15 +185,20 @@ impl App {
                         self.render();
                     }
                 }
+                Some(branch) = git_branch_rx.recv() => {
+                    git_branch_refresh_in_flight = false;
+                    if self.apply_git_branch(branch) {
+                        self.render();
+                    }
+                }
                 // Git branch footer refresh tick.
                 _ = git_branch_interval.tick() => {
                     // Git branch may change while the TUI is running (checkout/switch
                     // from another shell or from commands the agent runs). Refresh it
                     // periodically so the footer does not stay pinned to the startup
-                    // branch.
-                    if self.refresh_git_branch() {
-                        self.render();
-                    }
+                    // branch. The filesystem read runs off the UI loop so slow or
+                    // unusual repositories cannot block input, rendering, or agent events.
+                    self.start_git_branch_refresh(&git_branch_tx, &mut git_branch_refresh_in_flight);
                 }
             }
         }

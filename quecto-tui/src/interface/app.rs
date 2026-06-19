@@ -5,7 +5,7 @@
 //! signal handling, and extension management.
 
 use std::io::Write;
-use std::path::Path;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -31,9 +31,6 @@ use crate::interface::overlay::OverlayStack;
 
 /// Tick interval for spinner animation (~12fps).
 const SPINNER_TICK: Duration = Duration::from_millis(80);
-
-/// How often to poll `.git/HEAD` for footer branch changes.
-const GIT_BRANCH_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Lines scrolled per mouse wheel tick.
 const MOUSE_SCROLL_LINES: usize = 3;
@@ -178,6 +175,8 @@ pub struct App {
     workflow_completion_nudge: bool,
     /// Last observed git branch shown in the footer.
     git_branch: Option<String>,
+    /// Repository root used for git branch polling.
+    git_repo: Option<PathBuf>,
     /// Last rendered lines (for extracting selected text from the buffer).
     last_rendered_lines: Vec<String>,
     /// Whether we've already requested session stats as a fallback to learn
@@ -188,7 +187,8 @@ pub struct App {
 impl App {
     pub fn new(terminal: Terminal, client: Client) -> Self {
         let mut footer = Footer::new();
-        let git_branch = read_git_branch();
+        let git_repo = std::env::current_dir().ok();
+        let git_branch = git_repo.as_deref().and_then(app_git::read_git_branch_from);
         footer.set_git_branch(git_branch.clone());
 
         Self {
@@ -226,13 +226,13 @@ impl App {
             workflow_auto_continue: false,
             workflow_completion_nudge: false,
             git_branch,
+            git_repo,
             last_rendered_lines: Vec::new(),
             context_stats_requested: false,
         }
     }
 
-    fn refresh_git_branch(&mut self) -> bool {
-        let branch = read_git_branch();
+    fn apply_git_branch(&mut self, branch: Option<String>) -> bool {
         if branch == self.git_branch {
             return false;
         }
@@ -240,12 +240,29 @@ impl App {
         self.footer.set_git_branch(branch);
         true
     }
+
+    fn start_git_branch_refresh(&self, tx: &mpsc::Sender<Option<String>>, in_flight: &mut bool) {
+        if *in_flight {
+            return;
+        }
+        let Some(repo) = self.git_repo.clone() else {
+            return;
+        };
+        *in_flight = true;
+        let tx = tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let branch = app_git::read_git_branch_from(&repo);
+            let _ = tx.blocking_send(branch);
+        });
+    }
 }
 
 #[path = "app_event_loop.rs"]
 mod app_event_loop;
 #[path = "app_events.rs"]
 mod app_events;
+#[path = "app_git.rs"]
+mod app_git;
 #[path = "app_methods.rs"]
 mod app_methods;
 #[path = "app_response.rs"]
@@ -453,25 +470,6 @@ fn truncate_args(args: &str) -> String {
     } else {
         clean
     }
-}
-
-/// Read the current git branch from .git/HEAD.
-fn read_git_branch() -> Option<String> {
-    let cwd = std::env::current_dir().ok()?;
-    read_git_branch_from(&cwd)
-}
-
-fn read_git_branch_from(repo: &Path) -> Option<String> {
-    let head = std::fs::read_to_string(repo.join(".git/HEAD")).ok()?;
-    let trimmed = head.trim();
-    trimmed
-        .strip_prefix("ref: refs/heads/")
-        .or_else(|| trimmed.strip_prefix("ref: "))
-        .map(sanitize_git_ref_for_display)
-}
-
-fn sanitize_git_ref_for_display(ref_name: &str) -> String {
-    ref_name.chars().filter(|c| !c.is_control()).collect()
 }
 
 // ── Agent state machine (extracted for testability) ───────────────────────

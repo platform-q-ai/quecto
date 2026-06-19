@@ -425,7 +425,7 @@ fn truncate_args_empty() {
 #[test]
 fn read_git_branch_returns_some_in_repo() {
     // We're in a git repo during tests
-    let branch = super::read_git_branch();
+    let branch = super::app_git::read_git_branch();
     // May be None if running from a detached HEAD or non-git context
     // but in our repo it should be Some
     if let Some(b) = branch {
@@ -444,7 +444,10 @@ fn read_git_branch_reflects_head_changes_without_restart() {
     std::fs::create_dir_all(repo.join(".git")).unwrap();
 
     std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
-    assert_eq!(super::read_git_branch_from(&repo), Some("main".to_string()));
+    assert_eq!(
+        super::app_git::read_git_branch_from(&repo),
+        Some("main".to_string())
+    );
 
     std::fs::write(
         repo.join(".git/HEAD"),
@@ -452,7 +455,7 @@ fn read_git_branch_reflects_head_changes_without_restart() {
     )
     .unwrap();
     assert_eq!(
-        super::read_git_branch_from(&repo),
+        super::app_git::read_git_branch_from(&repo),
         Some("feature/footer-branch".to_string())
     );
 
@@ -475,9 +478,51 @@ fn read_git_branch_strips_control_sequences_from_head() {
     )
     .unwrap();
     assert_eq!(
-        super::read_git_branch_from(&repo),
+        super::app_git::read_git_branch_from(&repo),
         Some("feature/]0;ownedfooter".to_string())
     );
+
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+#[cfg(unix)]
+#[test]
+fn read_git_branch_rejects_head_symlink() {
+    let repo = std::env::temp_dir().join(format!(
+        "quecto-tui-branch-symlink-test-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("unnamed")
+    ));
+    let _ = std::fs::remove_dir_all(&repo);
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    let target = repo.join("target-head");
+    std::fs::write(&target, "ref: refs/heads/main\n").unwrap();
+    std::os::unix::fs::symlink(&target, repo.join(".git/HEAD")).unwrap();
+
+    assert_eq!(super::app_git::read_git_branch_from(&repo), None);
+
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn read_git_branch_rejects_oversized_head() {
+    let repo = std::env::temp_dir().join(format!(
+        "quecto-tui-branch-oversized-test-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("unnamed")
+    ));
+    let _ = std::fs::remove_dir_all(&repo);
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    std::fs::write(
+        repo.join(".git/HEAD"),
+        format!(
+            "ref: refs/heads/{}\n",
+            "x".repeat((super::app_git::GIT_HEAD_READ_LIMIT + 1) as usize)
+        ),
+    )
+    .unwrap();
+
+    assert_eq!(super::app_git::read_git_branch_from(&repo), None);
 
     let _ = std::fs::remove_dir_all(&repo);
 }
