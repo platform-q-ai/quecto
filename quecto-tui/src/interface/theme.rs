@@ -2,6 +2,10 @@
 //!
 //! No external crate. Just raw SGR (Select Graphic Rendition) sequences.
 
+/// Shared braille spinner frames, so every animated indicator (the agent
+/// spinner, sub-agent rows, the idle "N working" line) cycles identically.
+pub const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
 /// Apply an SGR code around text, with reset after.
 fn styled(code: u8, text: &str) -> String {
     format!("\x1b[{}m{}\x1b[0m", code, text)

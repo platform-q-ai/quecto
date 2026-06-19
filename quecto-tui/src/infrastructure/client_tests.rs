@@ -586,3 +586,18 @@ async fn client_connect_returns_io_error_for_missing_socket() {
     };
     assert!(matches!(err, ClientError::Io(_)));
 }
+
+#[test]
+fn forwarded_canonical_workflow_state_parses_without_steps() {
+    // PRD Stage B forwards child workflow_state canonically (no `steps`). It must
+    // still deserialize as WorkflowState (not error → which would print raw JSON
+    // over the TUI, the "percent N" leak).
+    let line = r#"{"type":"workflow_state","agent_id":"tui-ui-test-3","parent_id":null,"mode":"active","progress":{"done":3,"total":5,"percent":60}}"#;
+    let ev: super::Event = serde_json::from_str(line).expect("must parse, not error");
+    match ev {
+        super::Event::WorkflowState { agent_id, .. } => {
+            assert_eq!(agent_id.as_deref(), Some("tui-ui-test-3"));
+        }
+        other => panic!("expected WorkflowState, got {other:?}"),
+    }
+}

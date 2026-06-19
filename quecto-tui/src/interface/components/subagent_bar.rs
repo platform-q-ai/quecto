@@ -13,7 +13,7 @@ use crate::interface::theme;
 
 /// Braille spinner frames — matches the main spinner (`components/spinner.rs`)
 /// so a running subagent animates identically to the agent spinner.
-const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+use crate::interface::theme::SPINNER_FRAMES;
 
 /// A single subagent's display row: wire info plus client-computed liveness.
 #[derive(Debug, Clone)]

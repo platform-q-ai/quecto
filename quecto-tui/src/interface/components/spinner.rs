@@ -5,7 +5,7 @@ use crate::interface::theme;
 use crate::interface::utils::truncate_to_width;
 
 /// Braille spinner frames.
-const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+use crate::interface::theme::SPINNER_FRAMES as FRAMES;
 
 /// Animated spinner with a status message.
 pub struct Spinner {
