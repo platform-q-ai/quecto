@@ -324,6 +324,9 @@ pub struct QuectoWorld {
     pub exec_env_vars: HashMap<String, String>,
     /// TUI scrollback BDD: chat view under test.
     pub tui_chat: Option<quecto_tui::interface::components::chat::Chat>,
+    /// TUI @files BDD: file-mention autocomplete under test.
+    pub tui_files_autocomplete:
+        Option<quecto_tui::interface::components::files_autocomplete::FilesAutocomplete>,
     /// TUI scrollback BDD: viewport captured before streaming growth.
     pub tui_viewport_before_stream: Vec<String>,
     /// TUI scrollback BDD: viewport captured after streaming growth.
@@ -935,6 +938,7 @@ mod tool_empty_args_steps;
 mod tool_output_cr_steps;
 mod truncate_steps;
 mod tui_architecture_steps;
+mod tui_file_mention_steps;
 mod uds_steps;
 mod web_fetch_steps;
 mod workflow_event_identity_steps;

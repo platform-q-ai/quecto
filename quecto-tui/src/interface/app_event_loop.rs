@@ -311,6 +311,33 @@ impl App {
             }
         }
 
+        // If the @files autocomplete is active, route navigation keys there.
+        // Unlike slash commands, Enter ACCEPTS the mention but does NOT submit —
+        // the `@path` is part of a longer message.
+        if self.files_autocomplete.is_active() {
+            match &key {
+                Key::Up | Key::Down | Key::Tab | Key::Escape => {
+                    self.files_autocomplete.handle_input(&key);
+                    if let AutocompleteResult::Selected(path) =
+                        self.files_autocomplete.take_result()
+                    {
+                        self.accept_file_mention(&path);
+                    }
+                    return;
+                }
+                Key::Enter => {
+                    self.files_autocomplete.handle_input(&Key::Tab);
+                    if let AutocompleteResult::Selected(path) =
+                        self.files_autocomplete.take_result()
+                    {
+                        self.accept_file_mention(&path);
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         // Global key handlers.
         // Note: Ctrl+D is handled at the top of handle_key (unconditional exit).
         match &key {
@@ -444,11 +471,29 @@ impl App {
         // Update autocomplete after every editor change.
         self.autocomplete.update(&self.editor.text());
 
+        // Update the @files popup from the cursor's line (slash takes priority).
+        if self.autocomplete.is_active() {
+            self.files_autocomplete.dismiss();
+        } else {
+            let line = self.editor.current_line().to_string();
+            let col = self.editor.cursor_col();
+            self.files_autocomplete.update(&line, col);
+        }
+
         // Check if editor submitted.
         if let Some(text) = self.editor.take_submit() {
             self.autocomplete.dismiss();
             self.handle_submit(&text);
         }
+    }
+
+    /// Replace the active `@token` in the editor with the selected file path.
+    fn accept_file_mention(&mut self, path: &str) {
+        if let Some(start) = self.files_autocomplete.token_start() {
+            self.editor
+                .replace_before_cursor(start, &format!("@{path} "));
+        }
+        self.files_autocomplete.dismiss();
     }
 
     pub(super) fn handle_submit(&mut self, text: &str) {
