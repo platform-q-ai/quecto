@@ -118,6 +118,11 @@ impl App {
         };
         let msg = match tool_name {
             "spawn" => format!("Spawning {}...", sanitized_arg(args, "agent_id", "agent")),
+            // For `await`, keep a generic, stable message — the awaited agent is
+            // marked on its own sub-agent row, so the shared line stays put.
+            "agent_cmd" if args.get("command").and_then(|v| v.as_str()) == Some("await") => {
+                "Working... (Esc to interrupt)".to_string()
+            }
             "agent_cmd" => format!(
                 "{} → {}...",
                 sanitized_arg(args, "command", "?"),

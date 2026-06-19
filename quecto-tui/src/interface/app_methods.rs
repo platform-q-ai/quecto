@@ -376,17 +376,12 @@ impl App {
         let workflow_widget_lines = workflow_bar::render_widget(&workflow_bar_state, width);
         bottom.extend(workflow_widget_lines);
 
-        // Spinner sits between widgets_above and autocomplete (#534). While
-        // awaiting a known sub-agent, the indicator lives on that agent's row,
-        // so the shared spinner line is suppressed (one fewer oscillating line).
-        let await_on_row = self
-            .awaited_agent_id
-            .as_deref()
-            .is_some_and(|id| self.subagent_local.contains_key(id));
+        // Spinner sits between widgets_above and autocomplete (#534). It renders
+        // a stable single line for the whole processing turn; per-agent await
+        // status is shown on the sub-agent rows. (Suppressing it during await
+        // made it flip on/off between consecutive awaits — a sub-second flash.)
         if let Some(spinner) = &mut self.spinner {
-            if !await_on_row {
-                bottom.extend(spinner.render(width));
-            }
+            bottom.extend(spinner.render(width));
         }
 
         // Autocomplete dropdown.
