@@ -10,7 +10,6 @@ use std::path::{Component, Path, PathBuf};
 struct CliFlags {
     socket_path: Option<PathBuf>,
     no_sandbox: bool,
-    network: bool,
     workflow: bool,
     workflow_guards: bool,
     config_path: Option<PathBuf>,
@@ -36,7 +35,6 @@ fn parse_flags(args: &[String]) -> CliFlags {
     let mut flags = CliFlags {
         socket_path: None,
         no_sandbox: false,
-        network: false,
         workflow: false,
         workflow_guards: false,
         config_path: None,
@@ -59,10 +57,6 @@ fn parse_flags(args: &[String]) -> CliFlags {
             }
             "--no-sandbox" => {
                 flags.no_sandbox = true;
-                i += 1;
-            }
-            "--network" => {
-                flags.network = true;
                 i += 1;
             }
             "--workflow" => {
@@ -186,9 +180,6 @@ async fn spawn_agent(flags: &CliFlags) -> Result<(PathBuf, tokio::process::Child
     let mut args = vec!["agent".to_string(), "--mode".to_string(), "uds".to_string()];
     if flags.no_sandbox {
         args.push("--no-sandbox".to_string());
-    }
-    if flags.network {
-        args.push("--network".to_string());
     }
     if flags.workflow {
         args.push("--workflow".to_string());

@@ -577,37 +577,6 @@ fn when_run_agent_no_sandbox(world: &mut QuectoWorld, message: String) {
     world.stderr = output.stderr;
 }
 
-#[when(expr = "I run quecto agent --network -m {string}")]
-fn when_run_agent_network(world: &mut QuectoWorld, message: String) {
-    let args = vec![
-        "quecto".to_string(),
-        "agent".to_string(),
-        "--network".to_string(),
-        "-m".to_string(),
-        message,
-    ];
-    let output = cli::run_with_output(args, &world.cli_context);
-    world.exit_code = output.exit_code;
-    world.stdout = output.stdout;
-    world.stderr = output.stderr;
-}
-
-#[when(expr = "I run quecto agent --network --no-sandbox -m {string}")]
-fn when_run_agent_network_no_sandbox(world: &mut QuectoWorld, message: String) {
-    let args = vec![
-        "quecto".to_string(),
-        "agent".to_string(),
-        "--network".to_string(),
-        "--no-sandbox".to_string(),
-        "-m".to_string(),
-        message,
-    ];
-    let output = cli::run_with_output(args, &world.cli_context);
-    world.exit_code = output.exit_code;
-    world.stdout = output.stdout;
-    world.stderr = output.stderr;
-}
-
 #[when(expr = "I run quecto agent --no-sandbox --no-session -m {string}")]
 fn when_run_agent_no_sandbox_no_session(world: &mut QuectoWorld, message: String) {
     let args = vec![
