@@ -330,16 +330,16 @@ impl App {
             active_template,
             available_templates,
         } = workflow;
-        // Ignore workflow_state events forwarded up from a sub-agent (PRD Stage
-        // B): they belong to a child, not the connected agent, and must not
-        // overwrite the parent's own workflow bar — doing so makes the bar
-        // flicker between children and judders the layout while awaiting several
-        // workflow-running children. The child's progress is shown on its own
-        // row via get_subagents instead.
-        if let Some(id) = agent_id.as_deref() {
-            if self.subagent_local.contains_key(id) {
-                return;
-            }
+        // Only the connected agent's OWN workflow_state updates its bar. The TUI
+        // launches its agent without a session name, so the agent's own events
+        // carry no `agent_id`; any event WITH an `agent_id` is a descendant's,
+        // forwarded up (PRD Stage B). Applying those makes the parent bar
+        // flicker between children — most visibly when a child's workflow first
+        // loads (its first forwarded event), which previously slipped through
+        // before the child was registered in `subagent_local`. Child progress is
+        // shown on each sub-agent's own row instead.
+        if agent_id.is_some() {
+            return;
         }
         let mut event = serde_json::json!({
             "steps": steps,
@@ -587,6 +587,22 @@ mod tests {
         assert!(
             app.workflow_bar.issue_number.is_none(),
             "a forwarded child event must not set the parent's workflow bar"
+        );
+
+        // The race that caused the "first loaded" flash: a forwarded event for a
+        // child NOT yet registered in subagent_local must still be ignored.
+        app.handle_event(Event::WorkflowState {
+            agent_id: Some("unregistered-child".into()),
+            steps: vec![],
+            progress: serde_json::json!({"done": 1, "total": 4}),
+            active_issue: Some(serde_json::json!({"number": 3, "title": "x"})),
+            mode: Some("active".into()),
+            active_template: None,
+            available_templates: None,
+        });
+        assert!(
+            app.workflow_bar.issue_number.is_none(),
+            "an unregistered child's first forwarded event must not flash the parent bar"
         );
 
         // The connected agent's own event (no agent_id) does update the bar.
