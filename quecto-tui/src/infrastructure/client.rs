@@ -161,7 +161,13 @@ pub enum Event {
         /// own workflow bar.
         #[serde(default)]
         agent_id: Option<String>,
+        // Forwarded child events (PRD Stage B) are re-emitted canonically with
+        // only type/agent_id/parent_id/mode/progress — no `steps`. Default these
+        // so such events still parse (then the handler ignores them by agent_id)
+        // instead of failing and printing raw JSON over the TUI.
+        #[serde(default)]
         steps: Vec<serde_json::Value>,
+        #[serde(default)]
         progress: serde_json::Value,
         #[serde(rename = "activeIssue", default)]
         active_issue: Option<serde_json::Value>,
@@ -342,14 +348,13 @@ impl Client {
                                     break; // Receiver dropped
                                 }
                             }
-                            Err(e) => {
-                                // Truncate logged content to avoid leaking sensitive data.
-                                let preview_len = trimmed.len().min(200);
-                                eprintln!(
-                                    "quecto-tui: failed to parse agent event: {e} (line len: {}, preview: {}...)",
-                                    trimmed.len(),
-                                    &trimmed[..preview_len]
-                                );
+                            Err(_e) => {
+                                // Drop unparseable events silently. The TUI owns
+                                // the terminal, so printing to stderr here paints
+                                // the raw event (e.g. a forwarded workflow_state's
+                                // JSON) over the UI — the "percent N" leak. Known
+                                // event types parse via serde defaults; truly
+                                // malformed lines are simply ignored.
                             }
                         }
                     }
