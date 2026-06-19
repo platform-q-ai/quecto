@@ -8,25 +8,14 @@ use std::sync::Arc;
 
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolGuard, ToolRegistry, ToolResult};
-use crate::infrastructure::config::{Config, ExecIsolationConfig};
+use crate::infrastructure::config::Config;
 use crate::infrastructure::security::sandbox::Sandbox;
 
-use super::bash::{ExecIsolationMode, ExecOptions, ExecTool, NsjailOptions};
+use super::bash::{ExecOptions, ExecTool};
 
 #[derive(Debug, Clone)]
 pub struct ExecRegistrySettings {
     pub max_capture_bytes: usize,
-    pub isolation_mode: ExecIsolationMode,
-    pub allow_native_fallback: bool,
-    pub nsjail_binary: String,
-    pub network_passthrough: bool,
-    pub memory_limit_mb: u64,
-    pub pid_limit: u64,
-    pub cpu_time_limit_secs: u64,
-    pub wall_time_limit_secs: u64,
-    /// Size of the writable `/tmp` tmpfs inside the jail in MB.
-    /// Threaded through from `ExecToolConfig::tmp_size_mb`.
-    pub tmp_size_mb: u64,
 }
 use super::docs::DocsTool;
 use super::filesystem::{EditTool, LsTool, ReadTool, WriteTool};
@@ -64,22 +53,8 @@ impl Default for ToolRegistryImpl {
 impl ToolRegistryImpl {
     /// Build exec registry settings from config in one place.
     pub fn exec_registry_settings_from_config(config: &Config) -> ExecRegistrySettings {
-        let exec = &config.tools.exec;
         ExecRegistrySettings {
             max_capture_bytes: config.agents.defaults.exec_max_capture_bytes,
-            isolation_mode: if exec.isolation == ExecIsolationConfig::Nsjail {
-                ExecIsolationMode::Nsjail
-            } else {
-                ExecIsolationMode::Native
-            },
-            allow_native_fallback: exec.allow_native_fallback,
-            nsjail_binary: exec.nsjail_binary.clone(),
-            network_passthrough: exec.network_passthrough,
-            memory_limit_mb: exec.memory_limit_mb,
-            pid_limit: exec.pid_limit,
-            cpu_time_limit_secs: exec.cpu_time_limit_secs,
-            wall_time_limit_secs: exec.wall_time_limit_secs,
-            tmp_size_mb: exec.tmp_size_mb,
         }
     }
 
@@ -119,17 +94,6 @@ impl ToolRegistryImpl {
     ) -> Self {
         let exec_options = ExecOptions {
             max_capture_bytes: settings.max_capture_bytes,
-            isolation_mode: settings.isolation_mode,
-            allow_native_fallback: settings.allow_native_fallback,
-            nsjail: NsjailOptions {
-                binary: settings.nsjail_binary,
-                network_passthrough: settings.network_passthrough,
-                memory_limit_mb: Some(settings.memory_limit_mb),
-                pid_limit: Some(settings.pid_limit),
-                cpu_time_limit_secs: Some(settings.cpu_time_limit_secs),
-                wall_time_limit_secs: Some(settings.wall_time_limit_secs),
-                tmp_size_mb: Some(settings.tmp_size_mb),
-            },
             ..ExecOptions::default()
         };
         Self::with_core_tools_and_exec_options(workspace, sandbox, exec_options)

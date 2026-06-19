@@ -1006,19 +1006,6 @@ fn given_final_text_for_parallel(world: &mut QuectoWorld, content: String) {
 // E2E Safety and Limits Steps
 // ===========================================================================
 
-#[given(expr = "exec isolation is set to {string} in the config")]
-fn given_exec_isolation(world: &mut QuectoWorld, mode: String) {
-    let base = base_path(world);
-    let config_str = std::fs::read_to_string(base.join("config.json")).expect("read config");
-    let mut config: serde_json::Value = serde_json::from_str(&config_str).expect("parse config");
-    config["tools"]["exec"]["isolation"] = serde_json::Value::String(mode);
-    std::fs::write(
-        base.join("config.json"),
-        serde_json::to_string_pretty(&config).unwrap(),
-    )
-    .expect("rewrite config");
-}
-
 #[given("restrict_to_workspace is enabled in the config")]
 fn given_restrict_to_workspace_enabled(world: &mut QuectoWorld) {
     let base = base_path(world);

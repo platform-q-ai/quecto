@@ -25,7 +25,6 @@ pub(crate) struct AgentFlags {
     pub(crate) max_time: Option<u64>,
     pub(crate) uds_mode: bool,
     pub(crate) no_sandbox: bool,
-    pub(crate) network: bool,
     pub(crate) socket_path: Option<std::path::PathBuf>,
     pub(crate) persist: bool,
     pub(crate) disabled_tools: Vec<String>,
@@ -70,7 +69,6 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
     let mut max_time: Option<u64> = None;
     let mut uds_mode = false;
     let mut no_sandbox = false;
-    let mut network = false;
     let mut socket_path: Option<std::path::PathBuf> = None;
     let mut persist = false;
     let mut disabled_tools: Vec<String> = Vec::new();
@@ -84,12 +82,11 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
 
     while i < args.len() {
         match args[i].as_str() {
-            f @ ("--no-session" | "--no-sandbox" | "--network" | "--persist" | "--workflow"
+            f @ ("--no-session" | "--no-sandbox" | "--persist" | "--workflow"
             | "--workflow-guards") => {
                 *match f {
                     "--no-session" => &mut no_session,
                     "--no-sandbox" => &mut no_sandbox,
-                    "--network" => &mut network,
                     "--persist" => &mut persist,
                     "--workflow" => &mut workflow,
                     _ => &mut workflow_guards,
@@ -198,7 +195,6 @@ pub(crate) fn parse_agent_flags(args: &[String], stderr: &mut String) -> Option<
         max_time,
         uds_mode,
         no_sandbox,
-        network,
         socket_path,
         persist,
         disabled_tools,

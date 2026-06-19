@@ -96,8 +96,6 @@ pub struct SpawnTool {
     allowed_agents: Vec<String>,
     /// Whether workspace restriction should be inherited.
     restrict_to_workspace: bool,
-    /// Whether network passthrough should be inherited.
-    network_passthrough: bool,
     /// Base directory for the child agent process.
     base_dir: PathBuf,
     /// Directory for UDS sockets (e.g. `$XDG_RUNTIME_DIR` or temp).
@@ -119,7 +117,6 @@ impl SpawnTool {
         Self {
             allowed_agents,
             restrict_to_workspace,
-            network_passthrough: false,
             base_dir: PathBuf::new(),
             socket_dir: PathBuf::new(),
             registry: Arc::new(Mutex::new(HashMap::new())),
@@ -138,7 +135,6 @@ impl SpawnTool {
         Self {
             allowed_agents,
             restrict_to_workspace,
-            network_passthrough: false,
             base_dir,
             socket_dir: PathBuf::new(),
             registry: Arc::new(Mutex::new(HashMap::new())),
@@ -151,12 +147,6 @@ impl SpawnTool {
     /// Set the directory for child agent UDS sockets.
     pub fn with_socket_dir(mut self, socket_dir: PathBuf) -> Self {
         self.socket_dir = socket_dir;
-        self
-    }
-
-    /// Enable or disable network passthrough for spawned child agents.
-    pub fn with_network(mut self, network_passthrough: bool) -> Self {
-        self.network_passthrough = network_passthrough;
         self
     }
 
@@ -366,12 +356,6 @@ impl SpawnTool {
         // restriction posture as the parent.
         if !self.restrict_to_workspace {
             cmd.arg("--no-sandbox");
-        }
-
-        // Propagate --network so child agents inherit the same network access
-        // posture as the parent.
-        if self.network_passthrough {
-            cmd.arg("--network");
         }
 
         if !self.base_dir.as_os_str().is_empty() {

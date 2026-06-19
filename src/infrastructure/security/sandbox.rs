@@ -26,12 +26,11 @@ const DANGEROUS_PATTERNS: &[&str] = &[
     ":(){ :",
     "chmod -R 777 /",
     // #304: Narrowed from "chown -R " (blocked legitimate workspace-scoped usage and
-    // missed the no-space variant -Rroot). Patterns target system-root ownership changes;
-    // nsjail mount namespace prevents escapes in sandboxed mode.
+    // missed the no-space variant -Rroot). Patterns target system-root ownership changes.
     //
     // Known gap: non-recursive `chown root /` (no -R) is not covered here — this is
-    // intentional; the denylist only targets recursive forms. nsjail is the primary
-    // defence for sandboxed deployments.
+    // intentional; the denylist only targets recursive forms. Running Quecto in a
+    // container is the primary defence for untrusted deployments.
     "chown -r root", // -R root (spaced); also catches -R newroot via substring
     "chown -rroot",  // -Rroot (no space, compact form)
     "chown --recursive root", // GNU long-flag form
@@ -86,10 +85,9 @@ impl Sandbox {
     /// the subsequent filesystem I/O (open/write/read) performed by the caller.
     /// A symlink could be swapped to point outside the workspace in that window.
     ///
-    /// - **Not mitigated by nsjail**: nsjail only wraps bash/exec child processes;
-    ///   filesystem tools (read, write, edit, ls) run in the parent Quecto process
-    ///   and call `validate_path` directly, so the TOCTOU gap exists regardless
-    ///   of nsjail configuration.
+    /// - **Process-local check**: filesystem tools (read, write, edit, ls) run in
+    ///   the Quecto process and call `validate_path` directly, so the TOCTOU gap
+    ///   exists regardless of any external isolation (e.g. a container).
     /// - **Known low-severity limitation**: exploitation requires local filesystem
     ///   access and precise timing. For security-critical native deployments,
     ///   consider `O_NOFOLLOW` on the final path component, or re-validate by

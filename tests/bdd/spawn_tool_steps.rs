@@ -62,12 +62,6 @@ fn when_execute_spawn_tool(world: &mut QuectoWorld, arguments: String) {
     when_parse_spawn_args(world, arguments);
 }
 
-#[when("I enable network passthrough on the SpawnTool")]
-fn when_enable_network(world: &mut QuectoWorld) {
-    let tool = world.spawn_tool.take().expect("spawn_tool not set");
-    world.spawn_tool = Some(tool.with_network(true));
-}
-
 // --- Then ---
 
 #[then(expr = "the parsed config should have task {string}")]
@@ -159,19 +153,6 @@ fn then_parse_fails_with(world: &mut QuectoWorld, expected: String) {
         "expected error to contain '{}', got: {}",
         expected,
         result.content
-    );
-}
-
-#[then(expr = "the SpawnTool should have network_passthrough {word}")]
-fn then_network_passthrough(world: &mut QuectoWorld, expected: String) {
-    let tool = world.spawn_tool.as_ref().expect("spawn_tool not set");
-    let debug = format!("{:?}", tool);
-    let expected_str = format!("network_passthrough: {}", expected);
-    assert!(
-        debug.contains(&expected_str),
-        "expected '{}' in debug: {}",
-        expected_str,
-        debug
     );
 }
 

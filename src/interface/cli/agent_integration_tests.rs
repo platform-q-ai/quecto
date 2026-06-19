@@ -44,7 +44,6 @@ fn test_flags(msg: Option<&str>, session: Option<&str>, sys: Option<&str>) -> Ag
         max_time: None,
         uds_mode: false,
         no_sandbox: false,
-        network: false,
         socket_path: None,
         persist: false,
         disabled_tools: vec![],

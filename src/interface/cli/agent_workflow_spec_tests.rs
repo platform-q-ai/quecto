@@ -15,7 +15,6 @@ fn uds_workflow_flags(workflow: bool, workflow_disabled: bool) -> AgentFlags {
         max_time: None,
         uds_mode: true,
         no_sandbox: false,
-        network: false,
         socket_path: None,
         persist: false,
         disabled_tools: vec![],
