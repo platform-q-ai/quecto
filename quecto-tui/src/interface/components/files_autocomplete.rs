@@ -7,10 +7,10 @@
 //! first activation via `git ls-files` (tracked + untracked-not-ignored),
 //! falling back to a bounded filesystem walk when git is unavailable.
 
-use std::collections::BTreeSet;
 use std::path::Path;
-use std::process::Command;
+use std::time::{Duration, Instant};
 
+use crate::infrastructure::workspace_files::list_workspace_files;
 use crate::interface::component::Component;
 use crate::interface::components::autocomplete::{AutocompleteResult, Suggestion};
 use crate::interface::fuzzy::fuzzy_filter;
@@ -18,15 +18,19 @@ use crate::interface::keys::Key;
 use crate::interface::theme;
 use crate::interface::utils::truncate_to_width;
 
-/// Cap on entries returned by the filesystem-walk fallback.
-const MAX_WALK_ENTRIES: usize = 5000;
+/// How long a loaded file list stays fresh before the next activation reloads
+/// it — so files the agent creates mid-session eventually appear.
+const CACHE_TTL: Duration = Duration::from_secs(30);
 
 /// `@files` autocomplete dropdown.
 #[derive(Debug)]
 pub struct FilesAutocomplete {
     /// Workspace file paths (relative), loaded lazily on first activation.
     files: Vec<String>,
-    loaded: bool,
+    /// Files were injected (tests) and must never be reloaded from disk.
+    injected: bool,
+    /// When the list was last loaded; `None` until the first load.
+    loaded_at: Option<Instant>,
     suggestions: Vec<Suggestion>,
     selected: usize,
     max_visible: usize,
@@ -44,7 +48,8 @@ impl FilesAutocomplete {
     pub fn new(max_visible: usize) -> Self {
         Self {
             files: Vec::new(),
-            loaded: false,
+            injected: false,
+            loaded_at: None,
             suggestions: Vec::new(),
             selected: 0,
             max_visible,
@@ -59,7 +64,7 @@ impl FilesAutocomplete {
     pub fn with_files(files: Vec<String>, max_visible: usize) -> Self {
         let mut s = Self::new(max_visible);
         s.files = files;
-        s.loaded = true;
+        s.injected = true;
         s
     }
 
@@ -92,14 +97,17 @@ impl FilesAutocomplete {
         self.set_suggestions(new);
     }
 
-    /// Lazily load the workspace file list from the cwd on first use.
+    /// Load the workspace file list from the cwd on first use, and reload it
+    /// when the cache has gone stale (so files created mid-session appear).
+    /// Injected (test) lists are never reloaded.
     fn ensure_loaded(&mut self) {
-        if self.loaded {
+        let age = self.loaded_at.map(|t| t.elapsed());
+        if !should_reload(self.injected, age, CACHE_TTL) {
             return;
         }
-        self.loaded = true;
         let cwd = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
         self.files = list_workspace_files(&cwd);
+        self.loaded_at = Some(Instant::now());
     }
 
     fn set_suggestions(&mut self, new: Vec<Suggestion>) {
@@ -169,77 +177,16 @@ fn suggestions_match(a: &[Suggestion], b: &[Suggestion]) -> bool {
     a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.value == y.value)
 }
 
-/// List workspace files relative to `cwd`: prefer git (tracked +
-/// untracked-not-ignored); fall back to a bounded filesystem walk.
-fn list_workspace_files(cwd: &Path) -> Vec<String> {
-    if let Some(files) = git_files(cwd) {
-        if !files.is_empty() {
-            return files;
-        }
+/// Whether the file cache should be (re)loaded: never for injected test lists;
+/// otherwise when it has never loaded or its age has reached the TTL.
+fn should_reload(injected: bool, age: Option<Duration>, ttl: Duration) -> bool {
+    if injected {
+        return false;
     }
-    fs_walk(cwd)
-}
-
-fn git_files(cwd: &Path) -> Option<Vec<String>> {
-    let tracked = Command::new("git")
-        .args(["ls-files", "-z"])
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    if !tracked.status.success() {
-        return None;
+    match age {
+        None => true,
+        Some(a) => a >= ttl,
     }
-    let others = Command::new("git")
-        .args(["ls-files", "--others", "--exclude-standard", "-z"])
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    let mut set: BTreeSet<String> = BTreeSet::new();
-    for out in [&tracked.stdout, &others.stdout] {
-        for part in out.split(|b| *b == 0) {
-            if !part.is_empty() {
-                set.insert(String::from_utf8_lossy(part).into_owned());
-            }
-        }
-    }
-    Some(set.into_iter().collect())
-}
-
-fn fs_walk(root: &Path) -> Vec<String> {
-    const SKIP: &[&str] = &[".git", "target", "node_modules", ".jj", "dist"];
-    let mut out = Vec::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        if out.len() >= MAX_WALK_ENTRIES {
-            break;
-        }
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name.starts_with('.') || SKIP.contains(&name.as_ref()) {
-                continue;
-            }
-            let Ok(ft) = entry.file_type() else {
-                continue;
-            };
-            let path = entry.path();
-            if ft.is_dir() {
-                stack.push(path);
-            } else if ft.is_file() {
-                if let Ok(rel) = path.strip_prefix(root) {
-                    out.push(rel.to_string_lossy().into_owned());
-                }
-                if out.len() >= MAX_WALK_ENTRIES {
-                    break;
-                }
-            }
-        }
-    }
-    out.sort();
-    out
 }
 
 impl Component for FilesAutocomplete {
@@ -433,5 +380,17 @@ mod tests {
     fn renders_nothing_when_inactive() {
         let mut f = fa();
         assert!(f.render(60).is_empty());
+    }
+
+    #[test]
+    fn cache_reload_policy() {
+        let ttl = Duration::from_secs(30);
+        // Injected (test) lists never reload, regardless of age.
+        assert!(!should_reload(true, None, ttl));
+        assert!(!should_reload(true, Some(Duration::from_secs(999)), ttl));
+        // Production: load when never loaded, keep while fresh, reload when stale.
+        assert!(should_reload(false, None, ttl));
+        assert!(!should_reload(false, Some(Duration::from_secs(5)), ttl));
+        assert!(should_reload(false, Some(Duration::from_secs(31)), ttl));
     }
 }

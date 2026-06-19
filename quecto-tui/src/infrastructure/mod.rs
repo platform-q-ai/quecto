@@ -9,3 +9,4 @@ pub mod process;
 pub mod render;
 pub mod signals;
 pub mod terminal;
+pub mod workspace_files;
