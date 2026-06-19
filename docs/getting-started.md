@@ -80,10 +80,15 @@ agent flags:
 - `--config <path>` uses an alternate quecto config file
 - `--no-sandbox` disables filesystem sandboxing for the spawned agent
 
-`bash` commands run natively in the workspace and have access to your home
-directory, so tools like `gh auth status` and `git push` work without extra
-configuration. If you need to confine command execution (process, network,
-or resource limits), run Quecto inside a container.
+`bash` commands run natively as your user — the workspace is just the working
+directory, **not** a confinement boundary. Commands can read your home directory
+(`~/.ssh`, cloud/`git` credentials) and reach the network, so tools like
+`gh auth status` and `git push` work without extra configuration. The command
+denylist is a best-effort speed-bump, not a security boundary, and there are no
+process/resource limits. To run untrusted input safely, run Quecto in a
+container that is non-root, with minimal/read-only mounts, cgroup limits
+(`--memory`/`--pids-limit`/`--cpus`), and a restricted network. See the
+[Security section in the README](../README.md#security).
 
 For safety, auto-discovered socket paths are validated and must live under
 `/tmp`, `$TMPDIR`, `$XDG_RUNTIME_DIR`, or `$HOME`.

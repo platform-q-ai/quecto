@@ -129,7 +129,7 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 
 **Filesystem tools** (`read`, `write`, `edit`, `ls`): `Sandbox::validate_path` — canonicalises the path, follows symlinks at every component, and rejects anything outside `canonical_workspace`. Called before any I/O.
 
-**bash** (exec only): commands run natively in the workspace via the user's shell (validated against an allowlist). `Sandbox::validate_command` rejects a denylist of destructive commands before execution. Process/network isolation is delegated to the deployment — run Quecto inside a container if you need to confine untrusted command execution.
+**bash** (exec only): commands run natively as the invoking user, with the workspace as the working directory but **no filesystem confinement** — unlike the filesystem tools, `bash` is *not* restricted to the workspace and can read any path the user can (e.g. `~/.ssh`, `~/.aws`, `/etc/passwd`) and reach the network. `Sandbox::validate_command` rejects a denylist of obviously-destructive commands, but this is a **best-effort speed-bump, not a security boundary** (trivially bypassed via shell escapes, `base64`, env indirection). There are **no in-process resource limits** (memory/PID/CPU/wall-time are unbounded). Real isolation is delegated to the deployment — see [Security](#security).
 
 **Tool binary resolution** (`rg`, `fd`): `ensure_tool` resolves via system PATH → cache dir (`~/.local/share/quecto/tools/`) → auto-download from GitHub releases. Set `QUECTO_OFFLINE=1` to disable downloads.
 
@@ -594,11 +594,11 @@ Filesystem tools (`read`, `write`, `edit`, `ls`) run on async `tokio::fs` adapte
 
 ## Security
 
-The agent operates inside a sandbox:
+Quecto provides **in-process guardrails for the filesystem tools only**; real isolation is the deployment's job (run it in a container). Understand the split before exposing it to untrusted input:
 
-- **Workspace restriction**: When `restrict_to_workspace` is `true` (default), all file operations are confined to the workspace directory. Symlinks pointing outside are blocked. Path traversal (`../`) is caught.
-- **Dangerous commands blocked**: `rm -rf /`, `rm -r -f /`, `mkfs`, `dd`, `shutdown`, `reboot`, `chmod -R 777 /`, fork bombs, and pipe-to-shell patterns (`curl|sh`) are always blocked regardless of other settings. Command checks normalize whitespace/casing, so equivalent variants like `rm  -rf /` are also blocked.
-- **Exec runtime isolation**: The `bash` tool runs commands natively in the workspace. Quecto ships no built-in process/network/resource jail — run it inside a container (or other OS-level sandbox) to confine untrusted command execution.
+- **Workspace restriction (filesystem tools)**: When `restrict_to_workspace` is `true` (default), `read`/`write`/`edit`/`ls` are confined to the workspace. Symlinks pointing outside are blocked; path traversal (`../`) is caught.
+- **`bash` is NOT confined**: the exec tool runs commands natively as the invoking user. Its working directory is the workspace, but it can read any path the user can (`~/.ssh`, `~/.aws`, cloud/`git` credentials, `/etc/passwd`) and reach the network. It has **no resource limits** (memory/PID/CPU/wall-time are unbounded). The `Sandbox::validate_command` denylist (`rm -rf /`, `mkfs`, `dd`, fork bombs, `curl|sh`, …) is a **best-effort speed-bump, not a security boundary** — trivially bypassed via shell escapes/`base64`/env indirection. Do not rely on it to contain untrusted commands.
+- **Isolation is the container's responsibility**: to run untrusted workloads safely, run Quecto in a container that is **non-root**, with **minimal/read-only mounts** (so `bash` can't read host secrets), **cgroup resource limits** (`--memory`, `--pids-limit`, `--cpus`), and a **network policy** (drop egress unless needed). A default `docker run` enforces none of these. (Old config files' `tools.exec` isolation/nsjail keys are now ignored.)
 - **Environment handling**: `bash` children are launched with `env_clear()` and then receive the current process environment (or explicit test overrides). Do not place secrets in the Quecto process environment if the agent should not be able to read them with shell commands.
 - **Secret redaction**: Log/status output redacts OpenAI/Anthropic (`sk-*`), Groq (`gsk_*`/`gsk-*`), and Telegram bot token values.
 - **UDS socket security**: Socket files are created with `chmod 0600` (owner-only). Stale sockets older than 24h are reaped on startup.
