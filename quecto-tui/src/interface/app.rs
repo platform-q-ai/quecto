@@ -185,6 +185,9 @@ pub struct App {
     agent_connected: bool,
     /// Current model name (from get_state), sanitized.
     current_model: Option<String>,
+    /// Connected agent's own id (from get_state sessionKey); distinguishes its
+    /// own workflow_state from descendants' forwarded events. None when unnamed.
+    connected_agent_id: Option<String>,
     /// The model selector component (created on demand, pushed onto overlay stack).
     model_selector: Option<ModelSelector>,
     /// Session resume selector shown after `/resume` lists persisted sessions.
@@ -242,6 +245,7 @@ impl App {
             stdin_buffer: crate::interface::stdin_buffer::StdinBuffer::new(),
             agent_connected: true,
             current_model: None,
+            connected_agent_id: None,
             model_selector: None,
             resume_selector: None,
             subagent_local: std::collections::BTreeMap::new(),
@@ -674,15 +678,13 @@ impl TrackedSubagent {
     /// Update the info, freezing the timer when the agent stops being active and
     /// recording exited_at on transition to "exited".
     fn update_info(&mut self, mut new_info: crate::infrastructure::client::SubagentInfoEvent) {
-        // Preserve the last-known workflow snapshot + parentage when an update
-        // omits them. `get_subagents` responses carry only agent_id/status/pid
-        // (no workflow/parent_id), so without this they'd erase the `n/n` and
-        // tree info that `subagent_state_changed` provided.
+        // Preserve last-known workflow + parent_id when an update omits them
+        // (get_subagents carries neither, and would otherwise erase the n/n).
         if new_info.workflow.is_none() {
-            new_info.workflow = self.info.workflow.take();
+            new_info.workflow = self.info.workflow.clone();
         }
         if new_info.parent_id.is_none() {
-            new_info.parent_id = self.info.parent_id.take();
+            new_info.parent_id = self.info.parent_id.clone();
         }
         let now = tokio::time::Instant::now();
         if subagent_status_is_active(&new_info.status) {

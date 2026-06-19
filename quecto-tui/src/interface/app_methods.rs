@@ -357,12 +357,18 @@ impl App {
 
     // ── Rendering ─────────────────────────────────────────────────────
 
-    /// Diagnostic: append one frame's below-chat section to the render log.
+    /// Diagnostic: append one frame (ANSI-stripped) to the render log.
     fn log_render_frame(&self, path: &str, bottom: &[String]) {
         use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        // Frames can contain conversation/tool content, so create owner-only
+        // (0600) and refuse to follow a pre-planted symlink (O_NOFOLLOW) — this
+        // is a diagnostic that may run on a shared host.
         let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
             .open(path)
         else {
             return;
@@ -433,6 +439,12 @@ impl App {
     /// (pre-selection-highlight) and width-enforced, WITHOUT writing it.
     /// `render()` writes the result; the headless harness (`tui_harness`)
     /// captures it for layout/flicker assertions without a terminal.
+    ///
+    /// Contract: composition must be **render-idempotent** — calling it twice in
+    /// a row yields the same frame. Its only side effects are render-state
+    /// (`set_viewport_height`, `last_rendered_lines`), never external I/O or
+    /// model mutation. The harness relies on this (it composes per capture); a
+    /// future non-idempotent step would make captures diverge from real renders.
     pub(super) fn compose_frame(&mut self) -> Vec<String> {
         let width = self.terminal.width;
         let height = self.terminal.height;
@@ -556,8 +568,8 @@ impl App {
 
         // Diagnostic: dump the WHOLE frame (chat + below-chat) so a transient
         // line (too fast to see) can be replayed from the log.
-        if let Some(path) = self.render_log_path.clone() {
-            self.log_render_frame(&path, &lines);
+        if let Some(path) = self.render_log_path.as_deref() {
+            self.log_render_frame(path, &lines);
         }
 
         // Apply mouse selection highlight (#546) to the display copy only, so
@@ -672,8 +684,8 @@ impl App {
 /// Animated "N subagent(s) working…" line shown in the reserved spinner slot
 /// while the parent is idle but children are still active.
 fn subagent_activity_line(active: usize, frame: usize) -> String {
-    const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-    let spin = theme::spinner(FRAMES[frame % FRAMES.len()]);
+    use crate::interface::theme::SPINNER_FRAMES;
+    let spin = theme::spinner(SPINNER_FRAMES[frame % SPINNER_FRAMES.len()]);
     let noun = if active == 1 { "subagent" } else { "subagents" };
     format!(
         "  {} {}",

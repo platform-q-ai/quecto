@@ -244,6 +244,14 @@ impl App {
             self.footer.set_context_window(max_ctx as usize);
             self.context_stats_requested = true;
         }
+        // Learn the connected agent's own id from its sessionKey ("cli:<name>").
+        if let Some(key) = data.get("sessionKey").and_then(|v| v.as_str()) {
+            let name = key.rsplit(':').next().unwrap_or("");
+            self.connected_agent_id = match name {
+                "" | "default" => None,
+                other => Some(other.chars().filter(|c| !c.is_control()).collect()),
+            };
+        }
         if let Some(wf) = data.get("workflow") {
             self.workflow_bar = workflow_bar::parse_workflow_event(wf);
             self.sync_workflow_automation(wf);
@@ -330,16 +338,13 @@ impl App {
             active_template,
             available_templates,
         } = workflow;
-        // Only the connected agent's OWN workflow_state updates its bar. The TUI
-        // launches its agent without a session name, so the agent's own events
-        // carry no `agent_id`; any event WITH an `agent_id` is a descendant's,
-        // forwarded up (PRD Stage B). Applying those makes the parent bar
-        // flicker between children — most visibly when a child's workflow first
-        // loads (its first forwarded event), which previously slipped through
-        // before the child was registered in `subagent_local`. Child progress is
-        // shown on each sub-agent's own row instead.
-        if agent_id.is_some() {
-            return;
+        // Only the connected agent's OWN workflow_state updates its bar; events
+        // with a different agent_id are descendants' forwarded events (Stage B).
+        // Compare to the connected id so a *named*/resumed agent still updates.
+        if let Some(id) = agent_id.as_deref() {
+            if self.connected_agent_id.as_deref() != Some(id) {
+                return;
+            }
         }
         let mut event = serde_json::json!({
             "steps": steps,
@@ -641,6 +646,50 @@ mod tests {
             available_templates: None,
         });
         assert_eq!(app.workflow_bar.issue_number, Some(9));
+    }
+
+    #[tokio::test]
+    async fn named_connected_agent_own_workflow_updates_bar() {
+        // When attached to a NAMED agent (e.g. a resumed session), its own
+        // workflow_state carries its agent_id — it must still update the bar
+        // (the old `agent_id.is_some()` guard would have wrongly dropped it).
+        let mut app = test_app().await;
+        app.handle_event(Event::Response {
+            id: Some("init".into()),
+            command: "get_state".into(),
+            success: true,
+            data: Some(serde_json::json!({ "sessionKey": "cli:foo" })),
+            error: None,
+        });
+        app.handle_event(Event::WorkflowState {
+            agent_id: Some("foo".into()),
+            steps: vec![],
+            progress: serde_json::json!({"done": 1, "total": 2}),
+            active_issue: Some(serde_json::json!({"number": 11, "title": "own"})),
+            mode: Some("active".into()),
+            active_template: None,
+            available_templates: None,
+        });
+        assert_eq!(
+            app.workflow_bar.issue_number,
+            Some(11),
+            "named agent's own event should update its bar"
+        );
+        // A descendant's forwarded event (different agent_id) must NOT.
+        app.handle_event(Event::WorkflowState {
+            agent_id: Some("child".into()),
+            steps: vec![],
+            progress: serde_json::json!({"done": 2, "total": 3}),
+            active_issue: Some(serde_json::json!({"number": 22, "title": "child"})),
+            mode: Some("active".into()),
+            active_template: None,
+            available_templates: None,
+        });
+        assert_eq!(
+            app.workflow_bar.issue_number,
+            Some(11),
+            "a child's forwarded event must not overwrite the named agent's bar"
+        );
     }
 
     #[tokio::test]
