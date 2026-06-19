@@ -72,7 +72,7 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
                 key: "reviewers".into(),
                 label: "Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)".into(),
                 phase: "review".into(),
-                guidance: Some("Use the subagent tool in parallel mode to dispatch architecture-reviewer, security-reviewer, and performance-reviewer.".into()),
+                guidance: Some("Use the subagent tool in parallel mode to dispatch architecture-reviewer, security-reviewer, and performance-reviewer. Start each sub agent on its OWN workflow. Instruct every reviewer to ALWAYS leave its findings as inline comments on the PR in GitHub via the GraphQL API (addPullRequestReviewThread, anchored to the specific file and line), not merely as a summary.".into()),
             },
             WorkflowTemplateStep {
                 key: "fix_reviews".into(),
@@ -109,6 +109,12 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
                 label: "Move to local master and pull".into(),
                 phase: "ci_cd".into(),
                 guidance: None,
+            },
+            WorkflowTemplateStep {
+                key: "cleanup".into(),
+                label: "Clean up sub agents".into(),
+                phase: "ci_cd".into(),
+                guidance: Some("Terminate any sub agents spawned during this workflow now that it is complete (use agent_cmd to abort them, or get_subagents then kill each) so no orphaned sub agents remain.".into()),
             },
         ],
         guards: vec![

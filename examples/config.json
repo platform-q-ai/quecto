@@ -80,7 +80,7 @@
             "key": "reviewers",
             "label": "Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)",
             "phase": "review",
-            "guidance": "Use the subagent tool in parallel mode to dispatch architecture-reviewer, security-reviewer, and performance-reviewer."
+            "guidance": "Use the subagent tool in parallel mode to dispatch architecture-reviewer, security-reviewer, and performance-reviewer. Start each sub agent on its OWN workflow. Instruct every reviewer to ALWAYS leave its findings as inline comments on the PR in GitHub via the GraphQL API (addPullRequestReviewThread, anchored to the specific file and line), not merely as a summary."
           },
           {
             "key": "fix_reviews",
@@ -112,6 +112,12 @@
             "key": "pull",
             "label": "Move to local master and pull",
             "phase": "ci_cd"
+          },
+          {
+            "key": "cleanup",
+            "label": "Clean up sub agents",
+            "phase": "ci_cd",
+            "guidance": "Terminate any sub agents spawned during this workflow now that it is complete (use agent_cmd to abort them, or get_subagents then kill each) so no orphaned sub agents remain."
           }
         ],
         "guards": [

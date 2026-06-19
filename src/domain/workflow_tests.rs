@@ -145,7 +145,7 @@ fn select_template_starts_run() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     engine.select_template("feature", None).unwrap();
     assert_eq!(engine.mode(), WorkflowMode::Active);
-    assert_eq!(engine.progress().total, 17);
+    assert_eq!(engine.progress().total, 18);
     assert_eq!(engine.current_step().unwrap().index, 1);
 }
 
@@ -294,7 +294,7 @@ fn guards_block_until_before_step_key_threshold() {
     engine.select_template("feature", None).unwrap();
     let err = engine.check_guards().unwrap_err();
     assert!(err.to_string().contains("Complete step 1"));
-    for step in 1..=17 {
+    for step in 1..=18 {
         engine.check(step).unwrap();
     }
     assert!(engine.check_guards().is_ok());
@@ -309,7 +309,7 @@ fn completion_nudge_only_when_complete() {
     let mut engine = WorkflowEngine::new(config, false).unwrap();
     engine.select_template("feature", None).unwrap();
     assert!(engine.completion_nudge().is_none());
-    for step in 1..=17 {
+    for step in 1..=18 {
         engine.check(step).unwrap();
     }
     let nudge = engine.completion_nudge().unwrap();
@@ -406,9 +406,10 @@ fn default_feature_template_matches_config_file_quecto_feature_workflow_with_hoo
             "pre_merge",
             "merge",
             "pull",
+            "cleanup",
         ]
     );
-    assert_eq!(snap.progress.total, 17);
+    assert_eq!(snap.progress.total, 18);
     assert_eq!(snap.steps[0].label, "Install/check local quality hooks");
     assert_eq!(snap.steps[1].label, "Update Scenarios / Add new features");
     assert_eq!(snap.steps[5].label, "Refactor");
@@ -423,6 +424,7 @@ fn default_feature_template_matches_config_file_quecto_feature_workflow_with_hoo
     );
     assert_eq!(snap.steps[15].label, "Merge");
     assert_eq!(snap.steps[16].label, "Move to local master and pull");
+    assert_eq!(snap.steps[17].label, "Clean up sub agents");
 }
 
 #[test]

@@ -30,18 +30,17 @@ fn workflow_guards(config: &Value) -> &[Value] {
 }
 
 fn assert_reference_steps(steps: &[Value]) {
-    assert_eq!(steps.len(), 17);
+    assert_eq!(steps.len(), 18);
     assert_eq!(steps.first().unwrap()["key"], "hooks");
     assert_eq!(
         steps.first().unwrap()["label"],
         "Install/check local quality hooks"
     );
     assert_eq!(steps[1]["key"], "scenarios");
-    assert_eq!(steps.last().unwrap()["key"], "pull");
-    assert_eq!(
-        steps.last().unwrap()["label"],
-        "Move to local master and pull"
-    );
+    assert_eq!(steps[16]["key"], "pull");
+    assert_eq!(steps[16]["label"], "Move to local master and pull");
+    assert_eq!(steps.last().unwrap()["key"], "cleanup");
+    assert_eq!(steps.last().unwrap()["label"], "Clean up sub agents");
 }
 
 fn assert_reference_guards(guards: &[Value]) {
@@ -64,7 +63,7 @@ fn readme_workflow_config_uses_guards_not_deprecated_fields() {
 }
 
 #[test]
-fn readme_lists_full_17_step_reference_workflow() {
+fn readme_lists_full_18_step_reference_workflow() {
     let readme = read_repo_file("README.md");
 
     for expected in [
@@ -85,6 +84,7 @@ fn readme_lists_full_17_step_reference_workflow() {
         "15 - Run pre-merge hooks (real-LLM, machete, deny)",
         "16 - Merge",
         "17 - Move to local master and pull",
+        "18 - Clean up sub agents",
     ] {
         assert!(
             readme.contains(expected),
