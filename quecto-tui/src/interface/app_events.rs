@@ -29,6 +29,7 @@ impl App {
             } => self.handle_response(command, success, data, error),
             Event::SubagentStateChanged { subagents } => self.update_subagent_bar(subagents),
             Event::WorkflowState {
+                agent_id,
                 steps,
                 progress,
                 active_issue,
@@ -36,6 +37,7 @@ impl App {
                 active_template,
                 available_templates,
             } => self.handle_workflow_state(WorkflowStateEvent {
+                agent_id,
                 steps,
                 progress,
                 active_issue,
@@ -91,6 +93,16 @@ impl App {
             args.to_string()
         };
         self.update_tool_spinner(&tool_name, &args, &args_str);
+        // Mark the awaited sub-agent so its row shows a per-row "awaiting"
+        // indicator instead of the shared spinner line.
+        if tool_name == "agent_cmd" && args.get("command").and_then(|v| v.as_str()) == Some("await")
+        {
+            self.awaited_agent_id = args
+                .get("agent_id")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            self.rebuild_subagent_bar();
+        }
         let is_spawn = tool_name == "spawn";
         if !suppress_tool_box(&tool_name, &args) {
             self.chat.start_tool(tool_call_id, tool_name, args_str);
@@ -151,6 +163,10 @@ impl App {
         }
         if is_subagent_tool(&tool_name) {
             self.send_command(Command::GetSubagents { id: None });
+        }
+        if self.awaited_agent_id.is_some() {
+            self.awaited_agent_id = None;
+            self.rebuild_subagent_bar();
         }
         if let Some(spinner) = &mut self.spinner {
             spinner.set_message("Working... (Esc to interrupt)");
@@ -301,6 +317,7 @@ impl App {
 
     fn handle_workflow_state(&mut self, workflow: WorkflowStateEvent) {
         let WorkflowStateEvent {
+            agent_id,
             steps,
             progress,
             active_issue,
@@ -308,6 +325,17 @@ impl App {
             active_template,
             available_templates,
         } = workflow;
+        // Ignore workflow_state events forwarded up from a sub-agent (PRD Stage
+        // B): they belong to a child, not the connected agent, and must not
+        // overwrite the parent's own workflow bar — doing so makes the bar
+        // flicker between children and judders the layout while awaiting several
+        // workflow-running children. The child's progress is shown on its own
+        // row via get_subagents instead.
+        if let Some(id) = agent_id.as_deref() {
+            if self.subagent_local.contains_key(id) {
+                return;
+            }
+        }
         let mut event = serde_json::json!({
             "steps": steps,
             "progress": progress,
@@ -329,6 +357,7 @@ impl App {
 }
 
 struct WorkflowStateEvent {
+    agent_id: Option<String>,
     steps: Vec<serde_json::Value>,
     progress: serde_json::Value,
     active_issue: Option<serde_json::Value>,
@@ -525,6 +554,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn forwarded_child_workflow_state_does_not_clobber_parent_bar() {
+        let mut app = test_app().await;
+        // Register a child subagent.
+        app.handle_event(Event::SubagentStateChanged {
+            subagents: vec![crate::infrastructure::client::SubagentInfoEvent {
+                agent_id: "child".into(),
+                status: "running".into(),
+                last_tool: None,
+                last_error: None,
+                pid: 0,
+                parent_id: None,
+                workflow: None,
+            }],
+        });
+        // A workflow_state forwarded up from the child (agent_id = "child", a
+        // known subagent) must NOT touch the parent's own workflow bar.
+        app.handle_event(Event::WorkflowState {
+            agent_id: Some("child".into()),
+            steps: vec![],
+            progress: serde_json::json!({"done": 3, "total": 5}),
+            active_issue: Some(serde_json::json!({"number": 7, "title": "child"})),
+            mode: Some("active".into()),
+            active_template: None,
+            available_templates: None,
+        });
+        assert!(
+            app.workflow_bar.issue_number.is_none(),
+            "a forwarded child event must not set the parent's workflow bar"
+        );
+
+        // The connected agent's own event (no agent_id) does update the bar.
+        app.handle_event(Event::WorkflowState {
+            agent_id: None,
+            steps: vec![],
+            progress: serde_json::json!({"done": 1, "total": 2}),
+            active_issue: Some(serde_json::json!({"number": 9, "title": "parent"})),
+            mode: Some("active".into()),
+            active_template: None,
+            available_templates: None,
+        });
+        assert_eq!(app.workflow_bar.issue_number, Some(9));
+    }
+
+    #[tokio::test]
     async fn handles_subagent_workflow_and_error_events() {
         let mut app = test_app().await;
         let info = crate::infrastructure::client::SubagentInfoEvent {
@@ -553,6 +626,7 @@ mod tests {
             error: None,
         });
         app.handle_event(Event::WorkflowState {
+            agent_id: None,
             steps: vec![],
             progress: serde_json::json!({"done": 0, "total": 0}),
             active_issue: Some(serde_json::json!({"number": 1, "title": "Issue"})),

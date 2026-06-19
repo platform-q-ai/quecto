@@ -36,6 +36,9 @@ pub struct SubagentBar {
     rows: Vec<SubagentRow>,
     /// Animation frame for running-agent spinners.
     frame: usize,
+    /// Sub-agent currently being awaited by the parent, shown with a per-row
+    /// "awaiting" indicator.
+    awaited: Option<String>,
     cache: Option<Vec<String>>,
     cached_width: usize,
 }
@@ -45,6 +48,7 @@ impl SubagentBar {
         Self {
             rows: Vec::new(),
             frame: 0,
+            awaited: None,
             cache: None,
             cached_width: 0,
         }
@@ -54,6 +58,12 @@ impl SubagentBar {
     pub fn update(&mut self, rows: Vec<SubagentRow>, frame: usize) {
         self.rows = rows;
         self.frame = frame;
+        self.cache = None;
+    }
+
+    /// Set which sub-agent (if any) the parent is awaiting.
+    pub fn set_awaited(&mut self, awaited: Option<String>) {
+        self.awaited = awaited;
         self.cache = None;
     }
 
@@ -92,11 +102,10 @@ impl Component for SubagentBar {
         // Panel header (always present) gives the block an identity and mirrors
         // the workflow widget's `▸ Workflow` header for visual alignment.
         lines.push(header_line(&self.rows));
-        lines.extend(
-            self.rows
-                .iter()
-                .map(|r| format_agent(r, name_width, self.frame)),
-        );
+        lines.extend(self.rows.iter().map(|r| {
+            let awaited = self.awaited.as_deref() == Some(r.info.agent_id.as_str());
+            format_agent(r, name_width, self.frame, awaited)
+        }));
 
         self.cache = Some(lines.clone());
         self.cached_width = width;
@@ -150,21 +159,52 @@ fn header_line(rows: &[SubagentRow]) -> String {
 }
 
 /// Format a single agent row, indented to nest under the panel header.
-fn format_agent(row: &SubagentRow, name_width: usize, frame: usize) -> String {
+fn format_agent(row: &SubagentRow, name_width: usize, frame: usize, awaited: bool) -> String {
     let info = &row.info;
     let glyph = leading_glyph(&info.status, frame);
     let name = pad_right(&sanitize(&info.agent_id), name_width);
     let status_label = status_styled(&info.status);
     let elapsed = theme::dim(&fmt_elapsed(row.elapsed_secs));
+
+    // Trailing detail segments (joined with " · ") — current tool/error, then
+    // the agent's own workflow progress (PRD Stage B snapshot).
+    let mut segments: Vec<String> = Vec::new();
     let context = agent_context(info);
-    if context.is_empty() {
+    if !context.is_empty() {
+        segments.push(context);
+    }
+    if let Some(wf) = &info.workflow {
+        segments.push(workflow_segment(wf));
+    }
+
+    let mut line = if segments.is_empty() {
         format!("    {} {} {} {}", glyph, name, status_label, elapsed)
     } else {
         format!(
             "    {} {} {} {} · {}",
-            glyph, name, status_label, elapsed, context
+            glyph,
+            name,
+            status_label,
+            elapsed,
+            segments.join(&theme::dim(" · "))
         )
+    };
+    // Per-row "awaiting" indicator for the agent the parent is blocked on.
+    if awaited {
+        let spin = theme::spinner(SPINNER_FRAMES[frame % SPINNER_FRAMES.len()]);
+        line.push_str(&format!("  {} {}", spin, theme::accent("awaiting")));
     }
+    line
+}
+
+/// Compact one-line workflow progress for a sub-agent row, e.g. `wf active 3/5`.
+fn workflow_segment(wf: &crate::infrastructure::client::SubagentWorkflow) -> String {
+    theme::dim(&format!(
+        "wf {} {}/{}",
+        sanitize(&wf.mode),
+        wf.steps_completed,
+        wf.steps_total
+    ))
 }
 
 /// Leading glyph: animated spinner while active, terminal glyph otherwise.
@@ -274,6 +314,50 @@ mod tests {
     fn empty_bar_renders_nothing() {
         let mut bar = SubagentBar::new();
         assert!(bar.render(80).is_empty());
+    }
+
+    #[test]
+    fn row_shows_workflow_snapshot() {
+        let mut info = make_info("w", "running", None, None);
+        info.workflow = Some(crate::infrastructure::client::SubagentWorkflow {
+            mode: "active".into(),
+            steps_completed: 3,
+            steps_total: 5,
+        });
+        let mut bar = SubagentBar::new();
+        update(&mut bar, vec![SubagentRow::new(info, 0)]);
+        assert!(any_contains(&bar.render(80), "wf active 3/5"));
+    }
+
+    #[test]
+    fn awaited_agent_row_shows_awaiting_indicator() {
+        let mut bar = SubagentBar::new();
+        update(
+            &mut bar,
+            vec![
+                row("busy", "running", None, None),
+                row("other", "running", None, None),
+            ],
+        );
+        bar.set_awaited(Some("busy".into()));
+        let lines = bar.render(80);
+        let busy = lines.iter().find(|l| l.contains("busy")).unwrap();
+        assert!(
+            busy.contains("awaiting"),
+            "awaited row should show indicator"
+        );
+        let other = lines.iter().find(|l| l.contains("other")).unwrap();
+        assert!(
+            !other.contains("awaiting"),
+            "non-awaited row must not show indicator"
+        );
+    }
+
+    #[test]
+    fn no_awaiting_indicator_without_await() {
+        let mut bar = SubagentBar::new();
+        update(&mut bar, vec![row("w", "running", None, None)]);
+        assert!(!any_contains(&bar.render(80), "awaiting"));
     }
 
     #[test]
