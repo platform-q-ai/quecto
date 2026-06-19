@@ -541,35 +541,41 @@ fn regular_tools_are_not_subagent_tools() {
 fn spawn_tool_output_suppressed() {
     let args = serde_json::json!({"agent_id": "worker-1"});
     assert!(
-        super::suppress_tool_box("spawn", &args),
+        super::app_events::suppress_tool_box("spawn", &args),
         "spawn output should be suppressed (status bar shows it)"
     );
 }
 
 #[test]
-fn agent_cmd_query_output_shown() {
-    for cmd in &[
-        "get_state",
-        "get_messages_tail",
-        "get_session_stats",
-        "get_messages",
-        "get_subagents",
-    ] {
+fn agent_cmd_content_reads_shown() {
+    // Content reads and one-shot results still render in the chat.
+    for cmd in &["get_messages", "get_messages_tail", "await"] {
         let args = serde_json::json!({"agent_id": "w1", "command": cmd});
         assert!(
-            !super::suppress_tool_box("agent_cmd", &args),
-            "agent_cmd {cmd} output should be shown (query result)"
+            !super::app_events::suppress_tool_box("agent_cmd", &args),
+            "agent_cmd {cmd} output should be shown"
         );
     }
 }
 
 #[test]
-fn agent_cmd_mutation_output_suppressed() {
-    for cmd in &["prompt", "steer", "abort"] {
+fn agent_cmd_state_and_control_output_suppressed() {
+    // Fire-and-forget control commands AND state queries (raw status/workflow
+    // JSON already shown in the sub-agent panel) are suppressed — rendering that
+    // JSON in the chat is noise and flashes as the model polls.
+    for cmd in &[
+        "prompt",
+        "steer",
+        "abort",
+        "get_state",
+        "get_subagents",
+        "get_session_stats",
+        "get_extensions",
+    ] {
         let args = serde_json::json!({"agent_id": "w1", "command": cmd});
         assert!(
-            super::suppress_tool_box("agent_cmd", &args),
-            "agent_cmd {cmd} output should be suppressed (mutation)"
+            super::app_events::suppress_tool_box("agent_cmd", &args),
+            "agent_cmd {cmd} output should be suppressed"
         );
     }
 }
@@ -578,7 +584,7 @@ fn agent_cmd_mutation_output_suppressed() {
 fn agent_cmd_unknown_command_shown() {
     let args = serde_json::json!({"agent_id": "w1", "command": "future_query"});
     assert!(
-        !super::suppress_tool_box("agent_cmd", &args),
+        !super::app_events::suppress_tool_box("agent_cmd", &args),
         "unknown agent_cmd commands should be shown by default"
     );
 }
@@ -586,10 +592,10 @@ fn agent_cmd_unknown_command_shown() {
 #[test]
 fn regular_tool_output_shown() {
     let args = serde_json::json!({});
-    assert!(!super::suppress_tool_box("bash", &args));
-    assert!(!super::suppress_tool_box("read", &args));
-    assert!(!super::suppress_tool_box("write", &args));
-    assert!(!super::suppress_tool_box("edit", &args));
+    assert!(!super::app_events::suppress_tool_box("bash", &args));
+    assert!(!super::app_events::suppress_tool_box("read", &args));
+    assert!(!super::app_events::suppress_tool_box("write", &args));
+    assert!(!super::app_events::suppress_tool_box("edit", &args));
 }
 
 // ── Exited subagent GC tests (#540) ──────────────────────────────

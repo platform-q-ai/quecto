@@ -1,0 +1,321 @@
+// Reusable test toolkit: not every helper is exercised by the current tests.
+#![allow(dead_code)]
+//! Headless render harness for TUI layout/flicker testing.
+//!
+//! Drives the *real* render path (`App::compose_bottom`) with scripted events
+//! and a fixed terminal size — no TTY, no live agent — and captures the
+//! below-chat section frame-by-frame. Tests assert on layout stability (no
+//! transient "flash" lines, bounded height changes) so TUI regressions like the
+//! sub-agent panel judder can be reproduced and caught in `cargo test` without
+//! manually eyeballing a live session.
+//!
+//! The below-chat section (sub-agent panel → workflow bar → spinner → editor →
+//! notifications → footer) is exactly the region whose height changes reflow
+//! the chat, so that's what the harness records.
+
+use super::App;
+use super::app_methods::strip_ansi;
+use crate::infrastructure::client::{Client, Event, SubagentInfoEvent, SubagentWorkflow};
+use crate::infrastructure::terminal::Terminal;
+use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::io::AsyncReadExt;
+
+const DEFAULT_WIDTH: usize = 120;
+const DEFAULT_HEIGHT: usize = 40;
+
+static SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Build an App with a fixed terminal size and a dummy (drained) socket client,
+/// so the render path runs headlessly and deterministically.
+async fn headless_app(width: usize, height: usize) -> App {
+    let n = SEQ.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("quecto-tui-harness-{}-{}", std::process::id(), n));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let socket_path = dir.join("agent.sock");
+    let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+    tokio::spawn(async move {
+        if let Ok((mut stream, _)) = listener.accept().await {
+            let mut buf = [0u8; 4096];
+            loop {
+                match stream.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+            }
+        }
+    });
+    let client = Client::connect(&socket_path).await.unwrap();
+    let mut term = Terminal::new();
+    term.width = width;
+    term.height = height;
+    App::new(term, client)
+}
+
+/// Frame-capturing harness over the real render path.
+pub struct TuiHarness {
+    app: App,
+    width: usize,
+    /// Below-chat section per captured frame (ANSI-stripped, trailing-trimmed).
+    bottoms: Vec<Vec<String>>,
+    /// Full screen frame per captured frame (ANSI-stripped) — for catching
+    /// chat-area transients (e.g. a tool result that flashes in and out).
+    fulls: Vec<Vec<String>>,
+}
+
+impl TuiHarness {
+    pub async fn new() -> Self {
+        Self::sized(DEFAULT_WIDTH, DEFAULT_HEIGHT).await
+    }
+
+    pub async fn sized(width: usize, height: usize) -> Self {
+        Self {
+            app: headless_app(width, height).await,
+            width,
+            bottoms: Vec::new(),
+            fulls: Vec::new(),
+        }
+    }
+
+    /// Feed an event through the real handler and capture the resulting frame.
+    pub fn event(&mut self, ev: Event) -> &mut Self {
+        self.app.handle_event(ev);
+        self.capture();
+        self
+    }
+
+    /// Advance the spinner/elapsed animation tick and capture.
+    pub fn tick(&mut self) -> &mut Self {
+        self.app.tick_subagent_animation();
+        self.capture();
+        self
+    }
+
+    /// Run the exited-sub-agent GC and capture.
+    pub fn gc(&mut self) -> &mut Self {
+        self.app.gc_exited_subagents();
+        self.capture();
+        self
+    }
+
+    /// Capture the current below-chat section and the full frame (ANSI-stripped).
+    pub fn capture(&mut self) {
+        let w = self.width;
+        let bottom = self
+            .app
+            .compose_bottom(w)
+            .iter()
+            .map(|l| strip_ansi(l).trim_end().to_string())
+            .collect();
+        self.bottoms.push(bottom);
+        let full = self
+            .app
+            .compose_frame()
+            .iter()
+            .map(|l| strip_ansi(l).trim_end().to_string())
+            .collect();
+        self.fulls.push(full);
+    }
+
+    /// Lines anywhere on the full screen that appear in exactly one frame and
+    /// are absent from both neighbours (normalized) — a chat-area flash too.
+    pub fn full_transient_lines(&self) -> Vec<(usize, String)> {
+        transient_in(&self.fulls)
+    }
+
+    /// Frame-by-frame dump of the FULL screen (for `--nocapture`).
+    pub fn dump_full(&self) -> String {
+        let mut s = String::new();
+        for (i, f) in self.fulls.iter().enumerate() {
+            s.push_str(&format!("=== full frame {i} ===\n"));
+            for l in f {
+                if l.trim().is_empty() {
+                    continue;
+                }
+                s.push_str("  | ");
+                s.push_str(l);
+                s.push('\n');
+            }
+        }
+        s
+    }
+
+    // ── Analysis ──────────────────────────────────────────────────────
+
+    /// Below-chat line count per captured frame.
+    pub fn heights(&self) -> Vec<usize> {
+        self.bottoms.iter().map(|b| b.len()).collect()
+    }
+
+    /// Number of frames where the below-chat height differs from the previous
+    /// frame (each one reflows the chat above it).
+    pub fn height_changes(&self) -> usize {
+        self.heights().windows(2).filter(|w| w[0] != w[1]).count()
+    }
+
+    /// Frames where the below-chat height spikes up-then-down or dips
+    /// down-then-up — a visible single-frame flash. Returns (frame, prev, cur, next).
+    pub fn flashes(&self) -> Vec<(usize, usize, usize, usize)> {
+        let h = self.heights();
+        let mut out = Vec::new();
+        if h.len() < 3 {
+            return out;
+        }
+        for i in 1..h.len() - 1 {
+            let (p, c, n) = (h[i - 1], h[i], h[i + 1]);
+            if (c > p && c > n) || (c < p && c < n) {
+                out.push((i, p, c, n));
+            }
+        }
+        out
+    }
+
+    /// Lines that appear in exactly one frame and are absent from both
+    /// neighbours — a transient line that flashes in and out. Spinner glyphs and
+    /// digit runs (elapsed time) are normalized so routine ticks aren't flagged.
+    pub fn transient_lines(&self) -> Vec<(usize, String)> {
+        transient_in(&self.bottoms)
+    }
+
+    /// Frame-by-frame dump of the below-chat section (for `--nocapture`).
+    pub fn dump(&self) -> String {
+        let mut s = String::new();
+        for (i, b) in self.bottoms.iter().enumerate() {
+            s.push_str(&format!(
+                "--- frame {i} ({} below-chat lines) ---\n",
+                b.len()
+            ));
+            for l in b {
+                s.push_str("  | ");
+                s.push_str(l);
+                s.push('\n');
+            }
+        }
+        s
+    }
+
+    /// The most recently captured below-chat section, joined into one string.
+    pub fn last(&self) -> String {
+        self.bottoms
+            .last()
+            .map(|b| b.join("\n"))
+            .unwrap_or_default()
+    }
+
+    /// Escape hatch for driving fields the event API doesn't cover.
+    pub fn app_mut(&mut self) -> &mut App {
+        &mut self.app
+    }
+}
+
+/// Lines present (normalized) in exactly one frame and absent from both
+/// neighbours — a line that flashes in and out.
+fn transient_in(frames: &[Vec<String>]) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    if frames.len() < 3 {
+        return out;
+    }
+    for i in 1..frames.len() - 1 {
+        for line in &frames[i] {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let key = normalize(line);
+            let in_prev = frames[i - 1].iter().any(|l| normalize(l) == key);
+            let in_next = frames[i + 1].iter().any(|l| normalize(l) == key);
+            if !in_prev && !in_next {
+                out.push((i, line.clone()));
+            }
+        }
+    }
+    out
+}
+
+/// Normalize a rendered line for transient detection: drop braille spinner
+/// frames and collapse digit runs (elapsed seconds) so animation ticks don't
+/// register as appearing/disappearing content.
+fn normalize(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut last_was_digit = false;
+    for c in line.chars() {
+        if ('\u{2800}'..='\u{28ff}').contains(&c) {
+            continue; // braille spinner frame
+        }
+        if c.is_ascii_digit() {
+            if !last_was_digit {
+                out.push('#');
+            }
+            last_was_digit = true;
+            continue;
+        }
+        last_was_digit = false;
+        out.push(c);
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+// ── Scenario event builders ───────────────────────────────────────────
+
+/// A `SubagentInfoEvent`, optionally carrying a workflow snapshot `(mode, done, total)`.
+pub fn subagent(id: &str, status: &str, wf: Option<(&str, u32, u32)>) -> SubagentInfoEvent {
+    SubagentInfoEvent {
+        agent_id: id.to_string(),
+        status: status.to_string(),
+        last_tool: None,
+        last_error: None,
+        pid: 0,
+        parent_id: None,
+        workflow: wf.map(|(mode, d, t)| SubagentWorkflow {
+            mode: mode.to_string(),
+            steps_completed: d,
+            steps_total: t,
+        }),
+    }
+}
+
+/// `get_subagents`-style push of the full sub-agent list.
+pub fn subagents_changed(list: Vec<SubagentInfoEvent>) -> Event {
+    Event::SubagentStateChanged { subagents: list }
+}
+
+/// A `spawn` tool starting (registers the child locally as "starting").
+pub fn spawn_start(id: &str) -> Event {
+    Event::ToolExecutionStart {
+        tool_call_id: format!("tc-spawn-{id}"),
+        tool_name: "spawn".to_string(),
+        args: serde_json::json!({ "agent_id": id }),
+    }
+}
+
+/// An `agent_cmd await` tool starting on `id` (marks the row "awaiting").
+pub fn await_start(id: &str) -> Event {
+    Event::ToolExecutionStart {
+        tool_call_id: format!("tc-await-{id}"),
+        tool_name: "agent_cmd".to_string(),
+        args: serde_json::json!({ "command": "await", "agent_id": id }),
+    }
+}
+
+/// A tool finishing (clears the awaiting marker / spinner message).
+pub fn tool_end(call_id: &str, tool: &str) -> Event {
+    Event::ToolExecutionEnd {
+        tool_call_id: call_id.to_string(),
+        tool_name: tool.to_string(),
+        result: serde_json::json!({ "content": [{ "type": "text", "text": "ok" }] }),
+        is_error: false,
+    }
+}
+
+/// A forwarded child `workflow_state` event (carries `agent_id` — must NOT
+/// touch the parent's workflow bar).
+pub fn forwarded_workflow(agent_id: &str, done: u32, total: u32) -> Event {
+    Event::WorkflowState {
+        agent_id: Some(agent_id.to_string()),
+        steps: Vec::new(),
+        progress: serde_json::json!({ "done": done, "total": total, "percent": done * 100 / total.max(1) }),
+        active_issue: Some(serde_json::json!({ "number": 7, "title": "child" })),
+        mode: Some("active".to_string()),
+        active_template: None,
+        available_templates: None,
+    }
+}

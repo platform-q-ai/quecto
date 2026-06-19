@@ -357,24 +357,38 @@ impl App {
 
     // ── Rendering ─────────────────────────────────────────────────────
 
-    pub(super) fn render(&mut self) {
-        let width = self.terminal.width;
-        let height = self.terminal.height;
+    /// Diagnostic: append one frame's below-chat section to the render log.
+    fn log_render_frame(&self, path: &str, bottom: &[String]) {
+        use std::io::Write;
+        let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        else {
+            return;
+        };
+        let _ = writeln!(f, "=== frame: {} below-chat lines ===", bottom.len());
+        for line in bottom {
+            let _ = writeln!(f, "  | {}", strip_ansi(line));
+        }
+    }
 
-        let mut lines = Vec::new();
+    /// Build the below-chat section (sub-agent panel → workflow bar → spinner →
+    /// autocomplete → editor → widgets-below → notifications → footer). This is
+    /// the region whose height changes reflow the chat, so the headless harness
+    /// captures it directly to assert on layout stability.
+    pub(super) fn compose_bottom(&mut self, width: usize) -> Vec<String> {
         let mut workflow_bar_state = self.workflow_bar.clone();
         workflow_bar_state.workflow_auto_continue = self.workflow_auto_continue;
         workflow_bar_state.workflow_completion_nudge = self.workflow_completion_nudge;
 
-        // ── Render bottom section first to know its height ──────────
         let mut bottom = Vec::new();
 
         // Widgets above editor (subagent bars stay on top, visible).
         bottom.extend(self.widgets_above.render(width));
 
         // Quecto-style workflow widget above the editor.
-        let workflow_widget_lines = workflow_bar::render_widget(&workflow_bar_state, width);
-        bottom.extend(workflow_widget_lines);
+        bottom.extend(workflow_bar::render_widget(&workflow_bar_state, width));
 
         // Spinner sits between widgets_above and autocomplete (#534). It renders
         // a stable single line for the whole processing turn; per-agent await
@@ -386,19 +400,30 @@ impl App {
 
         // Autocomplete dropdown.
         bottom.extend(self.autocomplete.render(width));
-
         // Editor.
         bottom.extend(self.editor.render(width));
-
         // Widgets below editor.
         bottom.extend(self.widgets_below.render(width));
-
         // Notifications.
         bottom.extend(self.notifications.render(width));
-
         // Footer.
         bottom.extend(self.footer.render(width));
 
+        bottom
+    }
+
+    /// Build the full screen frame (chat + bottom section + overlays), clean
+    /// (pre-selection-highlight) and width-enforced, WITHOUT writing it.
+    /// `render()` writes the result; the headless harness (`tui_harness`)
+    /// captures it for layout/flicker assertions without a terminal.
+    pub(super) fn compose_frame(&mut self) -> Vec<String> {
+        let width = self.terminal.width;
+        let height = self.terminal.height;
+
+        let mut lines = Vec::new();
+
+        // ── Render bottom section first to know its height ──────────
+        let bottom = self.compose_bottom(width);
         let bottom_height = bottom.len();
 
         // ── Render top section (header + chat) ──────────────────────
@@ -504,9 +529,22 @@ impl App {
         // Must happen BEFORE highlight injection to avoid leaking
         // reverse-video escapes into the extraction buffer (#546 review).
         self.last_rendered_lines = lines.clone();
+        lines
+    }
 
-        // Apply mouse selection highlight (#546).
-        // Applied to a separate copy so extraction buffer stays clean.
+    /// Compose the current frame and write it to the terminal.
+    pub(super) fn render(&mut self) {
+        let mut lines = self.compose_frame();
+        let height = self.terminal.height;
+
+        // Diagnostic: dump the WHOLE frame (chat + below-chat) so a transient
+        // line (too fast to see) can be replayed from the log.
+        if let Some(path) = self.render_log_path.clone() {
+            self.log_render_frame(&path, &lines);
+        }
+
+        // Apply mouse selection highlight (#546) to the display copy only, so
+        // the extraction buffer (`last_rendered_lines`) stays clean.
         apply_selection_highlight(&self.selection, &mut lines);
 
         // Write to terminal.
@@ -612,4 +650,41 @@ impl App {
 
         result
     }
+}
+
+/// Strip ANSI escape sequences (CSI + OSC) for the render-log diagnostic and
+/// the headless test harness.
+pub(super) fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('[') => {
+                // CSI: consume until a final byte in 0x40..=0x7e.
+                for c2 in chars.by_ref() {
+                    if ('@'..='~').contains(&c2) {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                // OSC: consume until BEL or ST (ESC \).
+                while let Some(c2) = chars.next() {
+                    if c2 == '\x07' {
+                        break;
+                    }
+                    if c2 == '\x1b' && chars.peek() == Some(&'\\') {
+                        chars.next();
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }

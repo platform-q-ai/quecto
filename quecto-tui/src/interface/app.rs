@@ -199,6 +199,9 @@ pub struct App {
     /// if any. Rendered as a per-row "awaiting" indicator instead of a shared
     /// spinner line.
     awaited_agent_id: Option<String>,
+    /// Diagnostic: when `QUECTO_TUI_RENDER_LOG` is set, every frame is appended
+    /// (ANSI-stripped) to this file for frame-by-frame replay.
+    render_log_path: Option<String>,
     /// Active mouse text selection (#528).
     selection: Option<TextSelection>,
     /// Workflow header bar state (#563).
@@ -244,6 +247,7 @@ impl App {
             subagent_local: std::collections::BTreeMap::new(),
             subagent_frame: 0,
             awaited_agent_id: None,
+            render_log_path: std::env::var("QUECTO_TUI_RENDER_LOG").ok(),
             selection: None,
             workflow_bar: workflow_bar::WorkflowBarState::default(),
             workflow_auto_continue: false,
@@ -720,20 +724,15 @@ fn gc_exited_subagents(
     removed
 }
 
-fn suppress_tool_box(tool_name: &str, args: &serde_json::Value) -> bool {
-    match tool_name {
-        "spawn" => true,
-        "agent_cmd" => {
-            let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
-            matches!(cmd, "prompt" | "steer" | "abort")
-        }
-        _ => false,
-    }
-}
-
 #[cfg(test)]
 #[path = "app_subagent_selection_tests.rs"]
 mod subagent_selection_tests;
 #[cfg(test)]
 #[path = "app_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "tui_harness.rs"]
+mod tui_harness;
+#[cfg(test)]
+#[path = "tui_harness_tests.rs"]
+mod tui_harness_tests;

@@ -380,6 +380,31 @@ fn sanitized_arg(args: &serde_json::Value, key: &str, fallback: &str) -> String 
         .collect()
 }
 
+/// Whether a tool's chat box should be hidden (its output is shown elsewhere or
+/// is noise). `spawn` and `agent_cmd` control/state-query commands are
+/// suppressed — the latter dump raw status/workflow JSON already shown in the
+/// sub-agent panel, which flashes as the model polls. Content reads
+/// (`get_messages*`) and one-shot `await` results still render.
+pub(super) fn suppress_tool_box(tool_name: &str, args: &serde_json::Value) -> bool {
+    match tool_name {
+        "spawn" => true,
+        "agent_cmd" => {
+            let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
+            const HIDDEN: &[&str] = &[
+                "prompt",
+                "steer",
+                "abort",
+                "get_state",
+                "get_subagents",
+                "get_session_stats",
+                "get_extensions",
+            ];
+            HIDDEN.contains(&cmd)
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
