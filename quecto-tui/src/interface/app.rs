@@ -5,6 +5,7 @@
 //! signal handling, and extension management.
 
 use std::io::Write;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -172,6 +173,10 @@ pub struct App {
     workflow_auto_continue: bool,
     /// Mirror of core workflow completion-nudge state, toggled through UDS.
     workflow_completion_nudge: bool,
+    /// Last observed git branch shown in the footer.
+    git_branch: Option<String>,
+    /// Repository root used for git branch polling.
+    git_repo: Option<PathBuf>,
     /// Last rendered lines (for extracting selected text from the buffer).
     last_rendered_lines: Vec<String>,
     /// Whether we've already requested session stats as a fallback to learn
@@ -182,9 +187,9 @@ pub struct App {
 impl App {
     pub fn new(terminal: Terminal, client: Client) -> Self {
         let mut footer = Footer::new();
-        if let Some(branch) = read_git_branch() {
-            footer.set_git_branch(Some(branch));
-        }
+        let git_repo = std::env::current_dir().ok();
+        let git_branch = git_repo.as_deref().and_then(app_git::read_git_branch_from);
+        footer.set_git_branch(git_branch.clone());
 
         Self {
             terminal,
@@ -220,9 +225,35 @@ impl App {
             workflow_bar: workflow_bar::WorkflowBarState::default(),
             workflow_auto_continue: false,
             workflow_completion_nudge: false,
+            git_branch,
+            git_repo,
             last_rendered_lines: Vec::new(),
             context_stats_requested: false,
         }
+    }
+
+    fn apply_git_branch(&mut self, branch: Option<String>) -> bool {
+        if branch == self.git_branch {
+            return false;
+        }
+        self.git_branch = branch.clone();
+        self.footer.set_git_branch(branch);
+        true
+    }
+
+    fn start_git_branch_refresh(&self, tx: &mpsc::Sender<Option<String>>, in_flight: &mut bool) {
+        if *in_flight {
+            return;
+        }
+        let Some(repo) = self.git_repo.clone() else {
+            return;
+        };
+        *in_flight = true;
+        let tx = tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let branch = app_git::read_git_branch_from(&repo);
+            let _ = tx.blocking_send(branch);
+        });
     }
 }
 
@@ -230,6 +261,8 @@ impl App {
 mod app_event_loop;
 #[path = "app_events.rs"]
 mod app_events;
+#[path = "app_git.rs"]
+mod app_git;
 #[path = "app_methods.rs"]
 mod app_methods;
 #[path = "app_response.rs"]
@@ -437,17 +470,6 @@ fn truncate_args(args: &str) -> String {
     } else {
         clean
     }
-}
-
-/// Read the current git branch from .git/HEAD.
-fn read_git_branch() -> Option<String> {
-    let cwd = std::env::current_dir().ok()?;
-    let head = std::fs::read_to_string(cwd.join(".git/HEAD")).ok()?;
-    let trimmed = head.trim();
-    trimmed
-        .strip_prefix("ref: ")
-        .and_then(|r| r.rsplit('/').next())
-        .map(|s| s.to_string())
 }
 
 // ── Agent state machine (extracted for testability) ───────────────────────
