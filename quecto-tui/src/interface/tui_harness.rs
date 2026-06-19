@@ -84,6 +84,17 @@ impl TuiHarness {
         self
     }
 
+    /// Feed a raw wire JSON line through the REAL `Event` deserializer (the path
+    /// `event()` skips). Panics if the line fails to parse — the connected
+    /// client would otherwise drop it (and historically printed it over the
+    /// TUI), so a forwarded/edge event that doesn't deserialize is a bug the
+    /// render-only `event()` API can't catch.
+    pub fn event_line(&mut self, json: &str) -> &mut Self {
+        let ev: Event = serde_json::from_str(json)
+            .unwrap_or_else(|e| panic!("wire event failed to deserialize: {e}\n  line: {json}"));
+        self.event(ev)
+    }
+
     /// Advance the spinner/elapsed animation tick and capture.
     pub fn tick(&mut self) -> &mut Self {
         self.app.tick_subagent_animation();

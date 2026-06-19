@@ -177,3 +177,27 @@ async fn spinner_blink_with_subagents_does_not_reflow() {
         h.heights()
     );
 }
+
+/// End-to-end guard for the parse-error leak: forwarded child workflow_state
+/// arrives as a raw wire line WITHOUT `steps`. It must deserialize (so the
+/// client never drops it / prints it over the TUI), and it must not render
+/// into the frame (it's a child's, ignored by agent_id).
+#[tokio::test]
+async fn forwarded_canonical_wire_line_parses_and_does_not_leak() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![subagent(
+        "tui-ui-test-3",
+        "running",
+        Some(("active", 3, 5)),
+    )]));
+    // The exact shape the monitor forwards (canonical, no `steps`).
+    h.event_line(
+        r#"{"type":"workflow_state","agent_id":"tui-ui-test-3","parent_id":null,"mode":"active","progress":{"done":3,"total":5,"percent":60}}"#,
+    );
+    assert!(
+        !h.dump_full().contains("percent"),
+        "forwarded workflow_state leaked a percent into the frame:\n{}",
+        h.dump_full()
+    );
+}
