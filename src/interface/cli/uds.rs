@@ -446,7 +446,11 @@ fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serd
                     value
                 })
             });
-            let state = ctx.session.state_snapshot(ctx.messages.len(), workflow);
+            let state = ctx.session.state_snapshot(
+                ctx.messages.len(),
+                workflow,
+                ctx.agent.max_context_tokens(),
+            );
             Some(serde_json::to_value(&state).unwrap_or_default())
         }
         AgentCommand::GetMessages { .. } => {
@@ -461,6 +465,7 @@ fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serd
                 ctx.session_key,
                 ctx.messages,
                 ctx.session.usage_snapshot(),
+                ctx.agent.max_context_tokens(),
             );
             Some(serde_json::to_value(&stats).unwrap_or_default())
         }

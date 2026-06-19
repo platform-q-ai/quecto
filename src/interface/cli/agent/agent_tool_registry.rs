@@ -52,14 +52,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
         stderr.push_str("WARNING: --no-sandbox is active — workspace path restriction disabled\n");
     }
     let sandbox = Sandbox::new(Some(workspace.clone()), restrict_to_workspace);
-    let mut exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(config);
-    if flags.network {
-        exec_settings.network_passthrough = true;
-        stderr
-            .push_str("WARNING: --network is active — bash network namespace isolation disabled\n");
-        tracing::warn!("--network: bash network namespace isolation disabled");
-    }
-    let effective_network = exec_settings.network_passthrough;
+    let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(config);
     let mut registry =
         ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);
     let session_key = if flags.no_session || flags.session_name.as_deref() == Some("-") {
@@ -79,7 +72,6 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
         crate::infrastructure::tools::subagent_registry::new_notification_channel();
     registry.register(Arc::new(
         SpawnTool::with_base_dir(vec![], restrict_to_workspace, base_dir.to_path_buf())
-            .with_network(effective_network)
             .with_socket_dir(socket_dir)
             .with_registry(subagent_registry.clone())
             .with_notify_tx(notify_tx)

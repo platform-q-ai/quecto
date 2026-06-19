@@ -58,6 +58,7 @@ fn turn_end_matches_spec_shape() {
                 total: 1700,
             }),
             stop_reason: Some("toolUse".into()),
+            max_context_tokens: Some(200_000),
         },
         tool_results: vec![],
     };
@@ -69,6 +70,7 @@ fn turn_end_matches_spec_shape() {
     assert_eq!(j["message"]["usage"]["output"], 200);
     assert_eq!(j["message"]["usage"]["total"], 1700);
     assert_eq!(j["message"]["stopReason"], "toolUse"); // camelCase
+    assert_eq!(j["message"]["maxContextTokens"], 200_000); // camelCase
     assert!(j.get("stop_reason").is_none());
     assert!(j["toolResults"].is_array()); // camelCase
 }
@@ -111,6 +113,7 @@ fn get_state_data_matches_spec_shape() {
         session_key: "cli:my-session".into(),
         message_count: 12,
         pending_message_count: 0,
+        max_context_tokens: 200_000,
         workflow: None,
     };
     let j = round_trip(&state);
@@ -119,6 +122,7 @@ fn get_state_data_matches_spec_shape() {
     assert_eq!(j["sessionKey"], "cli:my-session"); // camelCase
     assert_eq!(j["messageCount"], 12); // camelCase
     assert_eq!(j["pendingMessageCount"], 0); // camelCase
+    assert_eq!(j["maxContextTokens"], 200_000); // camelCase
     assert!(j.get("is_streaming").is_none());
 }
 
@@ -138,6 +142,7 @@ fn make_test_stats() -> SessionStats {
             total: 105000,
         },
         cost: 0.45,
+        max_context_tokens: 200_000,
     }
 }
 

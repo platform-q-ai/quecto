@@ -213,6 +213,7 @@ impl AgentSession {
         &self,
         message_count: usize,
         workflow: Option<serde_json::Value>,
+        max_context_tokens: usize,
     ) -> SessionState {
         SessionState {
             model: self.model.clone(),
@@ -220,6 +221,7 @@ impl AgentSession {
             session_key: self.session_key.clone(),
             message_count,
             pending_message_count: self.pending.len(),
+            max_context_tokens,
             workflow,
         }
     }
@@ -229,14 +231,16 @@ impl AgentSession {
 
 /// Compute session statistics from the current message history.
 pub fn compute_session_stats(session_key: &str, messages: &[Message]) -> SessionStats {
-    compute_session_stats_with_usage(session_key, messages, SessionUsage::default())
+    compute_session_stats_with_usage(session_key, messages, SessionUsage::default(), 0)
 }
 
 /// Compute session statistics with cumulative provider usage collected by the UDS session.
+/// `max_context_tokens` is the active model's context-window ceiling (0 = unknown).
 pub fn compute_session_stats_with_usage(
     session_key: &str,
     messages: &[Message],
     usage: SessionUsage,
+    max_context_tokens: usize,
 ) -> SessionStats {
     let mut user_messages = 0usize;
     let mut assistant_messages = 0usize;
@@ -264,6 +268,7 @@ pub fn compute_session_stats_with_usage(
         total_messages: messages.len(),
         cost: usage.cost_usd(),
         tokens: usage.tokens,
+        max_context_tokens,
     }
 }
 
@@ -387,7 +392,7 @@ mod passive_subagent_notification_tests {
         let mut session = AgentSession::new("m".into(), "k".into());
 
         assert!(session.record_subagent_notification("worker".into(), 1));
-        assert_eq!(session.state_snapshot(0, None).pending_message_count, 0);
+        assert_eq!(session.state_snapshot(0, None, 0).pending_message_count, 0);
         assert!(session.drain_pending().is_empty());
         assert!(!session.record_subagent_notification("worker".into(), 1));
     }

@@ -395,7 +395,6 @@ fn parse_repl_flags(args: &[String]) -> Result<ReplFlags, String> {
     let mut system_prompt: Option<String> = None;
     let mut model_override: Option<String> = None;
     let mut no_sandbox = false;
-    let mut network = false;
     let mut i = 0;
 
     while i < args.len() {
@@ -434,10 +433,6 @@ fn parse_repl_flags(args: &[String]) -> Result<ReplFlags, String> {
                 no_sandbox = true;
                 i += 1;
             }
-            "--network" => {
-                network = true;
-                i += 1;
-            }
             "--config" => {
                 // Consumed globally by CliContext, but skip the value here.
                 if i + 1 >= args.len() {
@@ -459,7 +454,6 @@ fn parse_repl_flags(args: &[String]) -> Result<ReplFlags, String> {
         system_prompt,
         model_override,
         no_sandbox,
-        network,
     })
 }
 
@@ -494,7 +488,7 @@ fn help_text(out: &mut String) {
     ));
     out.push_str("\nUsage: quecto [command]\n");
     out.push_str("\nWhen run with no arguments, quecto enters interactive REPL mode.\n");
-    out.push_str("  REPL options: -s <name>, --system <p>, --model <m>, --no-sandbox, --network\n");
+    out.push_str("  REPL options: -s <name>, --system <p>, --model <m>, --no-sandbox\n");
     out.push_str("\nGlobal options:\n");
     out.push_str(
         "  --config <path>  Override config file path (default: <base_dir>/config.json)\n",
@@ -506,9 +500,6 @@ fn help_text(out: &mut String) {
     out.push_str("                       --no-session  Ephemeral mode — nothing saved or loaded\n");
     out.push_str(
         "                       --no-sandbox  Disable workspace path restriction (DANGEROUS)\n",
-    );
-    out.push_str(
-        "                       --network     Enable outbound network in bash (disables nsjail net namespace)\n",
     );
     out.push_str("                       --model <m>   Override model\n");
     out.push_str("                       --system <p>  System prompt\n");

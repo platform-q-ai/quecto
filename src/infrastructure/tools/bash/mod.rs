@@ -1,15 +1,13 @@
 // Shell execution tool: impl Tool for ExecTool (bash).
-
-mod nsjail;
-
-pub use nsjail::{DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS, ExecIsolationMode, NsjailOptions};
+//
+// Commands run natively (via the user's shell) in the configured workspace.
+// Isolation is delegated to the deployment (e.g. running Quecto in a
+// container); the in-process `Sandbox` still confines file/command access and
+// can be disabled with `--no-sandbox`.
 
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
-
-#[cfg(any(test, feature = "test-support"))]
-use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,19 +18,15 @@ use crate::infrastructure::security::sandbox::Sandbox;
 
 use crate::infrastructure::tools::truncate::{TruncatedBy, truncate_tail};
 
-use nsjail::{
-    DEFAULT_EXEC_TIMEOUT, ExecIsolationMode as Mode, MAX_CAPTURE_BYTES, NsjailConfig,
-    STREAM_DRAIN_TIMEOUT_ON_KILL, build_nsjail_command, resolve_nsjail_binary,
-    resolve_ro_bindmounts, resolve_ro_dev_files, resolve_ro_etc_files,
-};
+/// Default per-command capture cap (10 MiB). Output beyond this is truncated.
+const MAX_CAPTURE_BYTES: usize = 10 * 1024 * 1024;
+/// Grace window for draining stdout/stderr after a timed-out child is killed.
+const STREAM_DRAIN_TIMEOUT_ON_KILL: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone)]
 pub struct ExecOptions {
     pub timeout: Duration,
     pub max_capture_bytes: usize,
-    pub isolation_mode: ExecIsolationMode,
-    pub allow_native_fallback: bool,
-    pub nsjail: NsjailOptions,
     /// Optional string prepended to every command before execution.
     /// Useful for setting environment variables or aliases (e.g. `shopt -s expand_aliases`).
     /// Separated from the actual command by `\n`.
@@ -41,21 +35,10 @@ pub struct ExecOptions {
 
 impl Default for ExecOptions {
     fn default() -> Self {
-        // No default timeout — processes run indefinitely unless configured.
-        // When nsjail wall_time_limit is set, add a 30s grace period so
-        // nsjail's own SIGKILL fires before Tokio steps in.
-        let wall = DEFAULT_NSJAIL_WALL_TIME_LIMIT_SECS;
-        let timeout = if wall == 0 {
-            Duration::MAX
-        } else {
-            Duration::from_secs(wall + DEFAULT_EXEC_TIMEOUT.as_secs())
-        };
         Self {
-            timeout,
+            // No default timeout — processes run indefinitely unless configured.
+            timeout: Duration::MAX,
             max_capture_bytes: MAX_CAPTURE_BYTES,
-            isolation_mode: ExecIsolationMode::Native,
-            allow_native_fallback: false,
-            nsjail: NsjailOptions::default(),
             command_prefix: None,
         }
     }
@@ -66,16 +49,8 @@ pub struct ExecTool {
     sandbox: Arc<Sandbox>,
     timeout: Duration,
     max_capture_bytes: usize,
-    mode: ExecIsolationMode,
-    nsjail: NsjailOptions,
     /// Optional string prepended to every command (e.g. alias setup or env exports).
     command_prefix: Option<String>,
-    /// System paths resolved at construction time to avoid per-execution stat() calls.
-    ro_bindmounts: Vec<&'static str>,
-    ro_etc_files: Vec<&'static str>,
-    ro_dev_files: Vec<&'static str>,
-    startup_warning: Option<String>,
-    startup_error: Option<String>,
 }
 
 impl std::fmt::Debug for ExecTool {
@@ -84,7 +59,6 @@ impl std::fmt::Debug for ExecTool {
             .field("workspace", &self.workspace)
             .field("timeout", &self.timeout)
             .field("max_capture_bytes", &self.max_capture_bytes)
-            .field("mode", &self.mode)
             .finish()
     }
 }
@@ -119,125 +93,19 @@ impl ExecTool {
     pub fn with_options(
         workspace: Arc<PathBuf>,
         sandbox: Arc<Sandbox>,
-        mut options: ExecOptions,
-    ) -> Self {
-        let mut warning = None;
-        let mut startup_error = None;
-        let mut mode = options.isolation_mode;
-        if mode == Mode::Nsjail {
-            if options.nsjail.memory_limit_mb.is_none()
-                && options.nsjail.pid_limit.is_none()
-                && options.nsjail.cpu_time_limit_secs.is_none()
-                && options.nsjail.wall_time_limit_secs.is_none()
-            {
-                tracing::warn!(
-                    target: "bash",
-                    "nsjail isolation is active but all resource limits are disabled."
-                );
-            }
-            if let Some(resolved_binary) = resolve_nsjail_binary(&options.nsjail.binary) {
-                options.nsjail.binary = resolved_binary;
-            } else {
-                let missing = format!(
-                    "nsjail binary '{}' is not available or not executable",
-                    options.nsjail.binary
-                );
-                if options.allow_native_fallback {
-                    mode = Mode::Native;
-                    warning = Some(format!("{}; falling back to native exec", missing));
-                    tracing::warn!(target: "bash", "{}", warning.as_deref().unwrap_or_default());
-                } else {
-                    startup_error = Some(format!(
-                        "{}; set tools.exec.allow_native_fallback=true to permit native fallback",
-                        missing
-                    ));
-                    tracing::error!(target: "bash", "{}", startup_error.as_deref().unwrap_or_default());
-                }
-            }
-        }
-        let ro_bindmounts = resolve_ro_bindmounts();
-        let ro_etc_files = resolve_ro_etc_files();
-        let ro_dev_files = resolve_ro_dev_files();
-        Self {
-            workspace,
-            sandbox,
-            timeout: options.timeout,
-            max_capture_bytes: options.max_capture_bytes,
-            mode,
-            nsjail: options.nsjail,
-            command_prefix: options.command_prefix,
-            ro_bindmounts,
-            ro_etc_files,
-            ro_dev_files,
-            startup_warning: warning,
-            startup_error,
-        }
-    }
-
-    /// Construct with options but skip nsjail binary path validation.
-    ///
-    /// Intended **only** for tests where a fake nsjail script lives outside
-    /// the trusted system directories.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn with_options_trusted(
-        workspace: Arc<PathBuf>,
-        sandbox: Arc<Sandbox>,
         options: ExecOptions,
     ) -> Self {
-        let ro_bindmounts = resolve_ro_bindmounts();
-        let ro_etc_files = resolve_ro_etc_files();
-        let ro_dev_files = resolve_ro_dev_files();
         Self {
             workspace,
             sandbox,
             timeout: options.timeout,
             max_capture_bytes: options.max_capture_bytes,
-            mode: options.isolation_mode,
-            nsjail: options.nsjail,
             command_prefix: options.command_prefix,
-            ro_bindmounts,
-            ro_etc_files,
-            ro_dev_files,
-            startup_warning: None,
-            startup_error: None,
         }
     }
 
     pub fn timeout(&self) -> Duration {
         self.timeout
-    }
-
-    pub fn mode(&self) -> ExecIsolationMode {
-        self.mode
-    }
-
-    pub fn startup_warning(&self) -> Option<&str> {
-        self.startup_warning.as_deref()
-    }
-
-    pub fn startup_error(&self) -> Option<&str> {
-        self.startup_error.as_deref()
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn nsjail_options(&self) -> &NsjailOptions {
-        &self.nsjail
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn build_nsjail_command_for_testing(
-        &self,
-        workspace: &Path,
-        command: &str,
-    ) -> tokio::process::Command {
-        let source_env = HashMap::new();
-        let config = NsjailConfig {
-            options: &self.nsjail,
-            ro_dirs: &self.ro_bindmounts,
-            ro_etc_files: &self.ro_etc_files,
-            ro_dev_files: &self.ro_dev_files,
-        };
-        build_nsjail_command(workspace, command, &source_env, &config)
     }
 
     pub fn execute_with_env(
@@ -256,10 +124,6 @@ impl ExecTool {
         arguments: &str,
         env_overrides: Option<&HashMap<String, String>>,
     ) -> Result<ToolResult, DomainError> {
-        if let Some(startup_error) = &self.startup_error {
-            return Err(DomainError::Config(startup_error.clone()));
-        }
-
         // LLM-addressable: malformed JSON → Ok(is_error=true). Tool contract.
         let args: serde_json::Value = match serde_json::from_str(arguments) {
             Ok(v) => v,
@@ -313,18 +177,7 @@ impl ExecTool {
         source_env: &HashMap<String, String>,
         timeout_dur: Duration,
     ) -> Result<ToolResult, DomainError> {
-        let mut cmd = match self.mode {
-            Mode::Nsjail => {
-                let config = NsjailConfig {
-                    options: &self.nsjail,
-                    ro_dirs: &self.ro_bindmounts,
-                    ro_etc_files: &self.ro_etc_files,
-                    ro_dev_files: &self.ro_dev_files,
-                };
-                build_nsjail_command(&self.workspace, command, source_env, &config)
-            }
-            Mode::Native => build_shell_command(&self.workspace, command, source_env),
-        };
+        let mut cmd = build_shell_command(&self.workspace, command, source_env);
 
         let mut child = cmd
             .stdout(std::process::Stdio::piped())
@@ -398,8 +251,6 @@ fn build_shell_command(
 ) -> tokio::process::Command {
     // Detect the user's shell from $SHELL in the filtered source environment.
     // Validated against an allowlist to prevent arbitrary binary execution.
-    // nsjail mode always uses sh (hardcoded in build_nsjail_command) for
-    // sandboxing consistency.
     let shell = source_env
         .get("SHELL")
         .map(String::as_str)
@@ -635,7 +486,3 @@ impl Tool for ExecTool {
 #[cfg(test)]
 #[path = "../bash_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "../nsjail_tests.rs"]
-mod nsjail_tests;

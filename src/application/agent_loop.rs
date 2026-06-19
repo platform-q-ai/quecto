@@ -124,9 +124,8 @@ impl AgentLoopImpl {
         }
     }
 
-    /// Switch the model used for all subsequent LLM calls.
-    ///
-    /// The model name is validated only by the underlying provider at call time.
+    /// Switch the model used for all subsequent LLM calls (validated by the
+    /// underlying provider at call time).
     pub fn set_model(&mut self, model: String) {
         self.model = model;
     }
@@ -136,13 +135,14 @@ impl AgentLoopImpl {
         &self.model
     }
 
-    /// Fire a progress event to the registered callback, if any.
-    ///
-    /// Accepts a closure that constructs the event so it is only evaluated
-    /// when a callback is actually registered. On the headless path
-    /// (`progress_callback = None`) the closure is never called — no String
-    /// allocations, no truncation scans. This keeps the hot tool-execution
-    /// path zero-cost when progress reporting is disabled.
+    /// Context-window ceiling (tokens), surfaced for UDS clients (TUI footer).
+    pub fn max_context_tokens(&self) -> usize {
+        self.max_context_tokens
+    }
+
+    /// Fire a progress event to the registered callback, if any. Takes a closure
+    /// so the event is only constructed when a callback is registered; on the
+    /// headless path (`progress_callback = None`) it's never called.
     #[inline]
     fn notify(&self, make_event: impl FnOnce() -> AgentProgressEvent) {
         if let Some(ref cb) = self.progress_callback {

@@ -34,7 +34,6 @@ When `quecto-tui` spawns the agent for you, it can forward these flags:
 | `--system <prompt>` | Pass a custom system prompt to the spawned agent |
 | `--config <path>` | Use an alternate quecto config file when spawning the agent |
 | `--no-sandbox` | Spawn the agent with filesystem sandboxing disabled |
-| `--network` | Allow outbound network access for bash in the spawned agent |
 
 By default, the spawned UDS agent has the workflow tool available but dormant:
 you can talk normally, then ask the model to select a workflow template when you

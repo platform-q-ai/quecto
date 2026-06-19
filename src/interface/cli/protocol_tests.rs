@@ -419,6 +419,7 @@ fn test_session_state_serializes() {
         session_key: "cli:test".to_string(),
         message_count: 4,
         pending_message_count: 0,
+        max_context_tokens: 200_000,
         workflow: None,
     };
     let json = serde_json::to_string(&state).unwrap();
@@ -435,6 +436,7 @@ fn test_session_state_with_workflow_serializes() {
         session_key: "cli:wf".to_string(),
         message_count: 2,
         pending_message_count: 0,
+        max_context_tokens: 200_000,
         workflow: Some(serde_json::json!({
             "enabled": true,
             "guardsEnabled": true,
@@ -455,6 +457,7 @@ fn test_session_state_without_workflow_omits_field() {
         session_key: "cli:no_wf".to_string(),
         message_count: 0,
         pending_message_count: 0,
+        max_context_tokens: 200_000,
         workflow: None,
     };
     let json = serde_json::to_string(&state).unwrap();
@@ -500,6 +503,7 @@ fn test_session_stats_serializes() {
             total: 2100,
         },
         cost: 0.42,
+        max_context_tokens: 200_000,
     };
     let json = serde_json::to_string(&stats).unwrap();
     assert!(json.contains("\"userMessages\":2"));

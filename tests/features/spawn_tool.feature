@@ -103,17 +103,6 @@ Feature: SpawnTool — child agent process spawning
     When I parse spawn arguments '{"task":"a"}'
     Then the parsed config should have restrict_to_workspace false
 
-  # --- Network passthrough ---
-
-  Scenario: Network passthrough is disabled by default
-    Given a SpawnTool with allowlist "bot" and restrict_to_workspace true
-    Then the SpawnTool should have network_passthrough false
-
-  Scenario: Network passthrough can be enabled
-    Given a SpawnTool with allowlist "bot" and restrict_to_workspace true
-    When I enable network passthrough on the SpawnTool
-    Then the SpawnTool should have network_passthrough true
-
   # --- Constructors ---
 
   Scenario: with_base_dir sets base directory

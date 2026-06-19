@@ -3,7 +3,7 @@ members = [".", "quecto-tui", "quecto-api", "quecto-mcp", "quecto-runtime-manage
 
 [package]
 name = "quecto"
-version = "0.26.0"
+version = "0.80.0"
 edition = "2024"
 description = "Ultra-lightweight personal AI assistant"
 license = "LicenseRef-Proprietary"
@@ -47,7 +47,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 tempfile = "3"
 wiremock = "0.6"
 regex = "1"
-quecto-tui = { version = "0.2.0", path = "quecto-tui" }
+quecto-tui = { version = "0.8.0", path = "quecto-tui" }
 
 [profile.release]
 opt-level = 3

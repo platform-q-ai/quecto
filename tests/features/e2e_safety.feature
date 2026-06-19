@@ -120,8 +120,7 @@ Feature: End-to-End Safety and Limits
 
 
   Scenario: Max-time covers total elapsed time including tool execution
-    Given exec isolation is set to "native" in the config
-    And the mock LLM first returns a tool call for "bash" with args:
+    Given the mock LLM first returns a tool call for "bash" with args:
       | command | sleep 3 |
     And the mock LLM then returns a text response "Done"
     When I run quecto agent -s - --max-time 1 -m "Run slow command"

@@ -79,14 +79,16 @@ agent flags:
 - `--system <prompt>` passes a custom system prompt through to the spawned agent
 - `--config <path>` uses an alternate quecto config file
 - `--no-sandbox` disables filesystem sandboxing for the spawned agent
-- `--network` enables outbound network access for bash in the spawned agent
 
-> **Gotcha with `--config`:** The default bash isolation mode is `nsjail`,
-> which does not mount `$HOME`. If your custom config omits `tools.exec`,
-> commands like `gh auth status` and `git push` will fail because they
-> cannot reach `~/.config/gh/` or `~/.gitconfig`. Add
-> `"tools": { "exec": { "isolation": "native" } }` to your config file to
-> fix this.
+`bash` commands run natively as your user — the workspace is just the working
+directory, **not** a confinement boundary. Commands can read your home directory
+(`~/.ssh`, cloud/`git` credentials) and reach the network, so tools like
+`gh auth status` and `git push` work without extra configuration. The command
+denylist is a best-effort speed-bump, not a security boundary, and there are no
+process/resource limits. To run untrusted input safely, run Quecto in a
+container that is non-root, with minimal/read-only mounts, cgroup limits
+(`--memory`/`--pids-limit`/`--cpus`), and a restricted network. See the
+[Security section in the README](../README.md#security).
 
 For safety, auto-discovered socket paths are validated and must live under
 `/tmp`, `$TMPDIR`, `$XDG_RUNTIME_DIR`, or `$HOME`.
