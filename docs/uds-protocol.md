@@ -950,17 +950,14 @@ All flags for `quecto agent` that affect UDS mode:
 | `--max-iterations <n>` | Max tool call rounds per prompt |
 | `--max-time <secs>` | Wall-clock timeout for the entire agent |
 | `--no-sandbox` | Disable workspace path restriction (DANGEROUS) |
-| `--network` | Enable outbound network in bash |
 | `--persist` | Keep agent alive after all clients disconnect |
 | `--effort <level>` | Effort level for 4.6 models (`low`/`medium`/`high`/`max`). Overrides config and env var |
 | `--disable-tool <name>` | Remove a tool from the registry (repeatable) |
 | `--config <path>` | Override config file path |
 
-> **Note on `--config`:** When using a custom config file, ensure it includes
-> `"tools": { "exec": { "isolation": "native" } }` if the agent needs access
-> to `$HOME` (e.g. for `gh` credentials, `.gitconfig`). The default isolation
-> mode is `nsjail`, which sandboxes bash commands and does not mount the home
-> directory.
+> **Note:** `bash` commands run natively in the workspace and can reach
+> `$HOME` (e.g. `gh` credentials, `.gitconfig`). To confine command
+> execution, run Quecto inside a container.
 
 ## See also
 

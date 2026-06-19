@@ -52,7 +52,6 @@ Useful `quecto-tui` flags:
 | `--system <prompt>` | Pass a custom system prompt to the spawned agent |
 | `--config <path>` | Use an alternate quecto config file when spawning the agent |
 | `--no-sandbox` | Spawn the agent with filesystem sandboxing disabled |
-| `--network` | Allow outbound network access for bash in the spawned agent |
 
 Handy TUI controls: `Shift+Enter` or `Alt+Enter` inserts a newline, `Escape`
 aborts the active run (or clears the editor when idle), `Ctrl+C` clears the
@@ -117,9 +116,9 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 
 | Component | Contents |
 |---|---|
-| `config.rs` | `Config` with serde, env overrides (`QUECTO_AGENTS_DEFAULTS_EFFORT` validated at load), exec isolation settings (nsjail binary/limits/fallback), `WorkflowConfig` (template library, optional custom templates). Tolerates unknown fields (forward-compatible) |
+| `config.rs` | `Config` with serde, env overrides (`QUECTO_AGENTS_DEFAULTS_EFFORT` validated at load), `WorkflowConfig` (template library, optional custom templates). Tolerates unknown fields (forward-compatible) |
 | `providers/` | `OpenAiProvider` (SSE streaming via `openai_sse`), `AnthropicProvider` (SSE streaming via `anthropic_sse`, extended thinking support with `signature_delta` capture, auto-enables adaptive thinking for 4.6 models, effort default `low` for 4.6 models, OAuth identity for tokens — system prompt prefix + tool name remapping + beta headers, `interleaved-thinking` + `fine-grained-tool-streaming` betas, thinking block replay in multi-turn via `ThinkingBlock`, `claude_code.rs` for tool name canonical casing), `CodexProvider` (Responses API, SSE, `prompt_cache_key`, orphan pair repair), `RefreshableProvider` (OAuth 401 → auto-refresh → retry), `FallbackProvider` (cooldown + error classification + `provider/model` routing syntax). URL validation: https required for non-loopback (override with `QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS=1`) |
-| `tools/` | `bash/` (shell, 1MiB cap, per-invocation timeout, `commandPrefix`, native/nsjail modes), `filesystem/` (`ReadTool` with image base64+auto-resize, `WriteTool`, `EditTool` with fuzzy match+CRLF/BOM+LCS diff, `LsTool` with limit+case-insensitive sort), `grep.rs` (rg JSON output, file-cache context), `find.rs` (fd, nested .gitignore, path-segment globs via `--full-path`), `ensure_tool.rs` (auto-download rg/fd from GitHub), `spawn.rs` (background UDS-mode subagent spawning), `agent_cmd.rs` (send commands to spawned UDS agents — `steer`, `follow_up`, `abort`, `get_state`), `web_search.rs` (Brave+DDG), `web_fetch.rs` (URL fetch with HTML stripping, per-host SSRF allowlist for tests), `recall.rs` (spill retrieval), `docs.rs` (`DocsTool` — quecto's capability docs embedded via `include_str!`, served by the `docs` tool from any directory), `workflow_tool.rs` (`WorkflowTool` thin façade over `WorkflowEngine`, available by default in UDS unless `--no-workflow`; `WorkflowGuard` template-aware `ToolGuard` impl — mutating actions emit `workflow_state` events, guard registration gated by `--workflow-guards`), `path_utils.rs`, `truncate.rs`, `command_match.rs`, `registry.rs` (`ToolRegistryImpl`, `guard_count()`) |
+| `tools/` | `bash/` (shell, 1MiB cap, per-invocation timeout, `commandPrefix`, native exec), `filesystem/` (`ReadTool` with image base64+auto-resize, `WriteTool`, `EditTool` with fuzzy match+CRLF/BOM+LCS diff, `LsTool` with limit+case-insensitive sort), `grep.rs` (rg JSON output, file-cache context), `find.rs` (fd, nested .gitignore, path-segment globs via `--full-path`), `ensure_tool.rs` (auto-download rg/fd from GitHub), `spawn.rs` (background UDS-mode subagent spawning), `agent_cmd.rs` (send commands to spawned UDS agents — `steer`, `follow_up`, `abort`, `get_state`), `web_search.rs` (Brave+DDG), `web_fetch.rs` (URL fetch with HTML stripping, per-host SSRF allowlist for tests), `recall.rs` (spill retrieval), `docs.rs` (`DocsTool` — quecto's capability docs embedded via `include_str!`, served by the `docs` tool from any directory), `workflow_tool.rs` (`WorkflowTool` thin façade over `WorkflowEngine`, available by default in UDS unless `--no-workflow`; `WorkflowGuard` template-aware `ToolGuard` impl — mutating actions emit `workflow_state` events, guard registration gated by `--workflow-guards`), `path_utils.rs`, `truncate.rs`, `command_match.rs`, `registry.rs` (`ToolRegistryImpl`, `guard_count()`) |
 | `persistence/` | `FileSessionStore` (round-trips all Message fields including `thinking_blocks` for multi-turn thinking replay), `MemoryStore`, `FileSkillLoader`, `FileOnboardStore` (`workspace_store.rs`), `FileContextSpillStore` (JSONL append-only) |
 | `security/` | `Sandbox` — workspace path validation + command filtering |
 | `extensions/` | `ExtensionRegistry` (register extensions, aggregate tools + system prompt snippets), `NativeExtension` (compiled-in config-gated tools, e.g. `web_search`, `web_fetch`), `UdsExtensionTool` (routes tool execution to connected UDS clients via mpsc/oneshot channels). See [Extensions guide](docs/extensions.md) |
@@ -130,7 +129,7 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 
 **Filesystem tools** (`read`, `write`, `edit`, `ls`): `Sandbox::validate_path` — canonicalises the path, follows symlinks at every component, and rejects anything outside `canonical_workspace`. Called before any I/O.
 
-**bash** (exec only): nsjail for process isolation via Linux kernel namespaces + rlimits. Workspace RW, toolchain RO, memory/PID/CPU limits via `--rlimit_as`/`--rlimit_nproc`/`--rlimit_cpu` (no cgroup access required). Agent config defaults: 4 GB AS, 256 PIDs, 28,800 CPU-seconds, 14,400 wall-clock seconds, 512 MB tmpfs. Configure via `tools.exec.isolation`, `tools.exec.nsjail_binary`, and `tools.exec.allow_native_fallback`. Network namespace isolation is disabled with `--network` or `tools.exec.network_passthrough`.
+**bash** (exec only): commands run natively in the workspace via the user's shell (validated against an allowlist). `Sandbox::validate_command` rejects a denylist of destructive commands before execution. Process/network isolation is delegated to the deployment — run Quecto inside a container if you need to confine untrusted command execution.
 
 **Tool binary resolution** (`rg`, `fd`): `ensure_tool` resolves via system PATH → cache dir (`~/.local/share/quecto/tools/`) → auto-download from GitHub releases. Set `QUECTO_OFFLINE=1` to disable downloads.
 
@@ -139,8 +138,8 @@ Manual arg parsing (no clap). Entry point: `cli::run(args) -> i32`.
 
 | Command | Description |
 |---|---|
-| `quecto` | Interactive REPL (`-s` session, `--system` prompt, `--model` override, `--no-sandbox`, `--network`; global `--config <path>`) with live progress spinner |
-| `quecto agent -m <msg>` | Headless one-shot (`-s`, `--no-session`, `--system`, `--model`, `--max-iterations`, `--max-time`, `--effort`, `--disable-tool`, `--no-sandbox`, `--network`; global `--config <path>`) |
+| `quecto` | Interactive REPL (`-s` session, `--system` prompt, `--model` override, `--no-sandbox`; global `--config <path>`) with live progress spinner |
+| `quecto agent -m <msg>` | Headless one-shot (`-s`, `--no-session`, `--system`, `--model`, `--max-iterations`, `--max-time`, `--effort`, `--disable-tool`, `--no-sandbox`; global `--config <path>`) |
 | `quecto agent --mode uds` | Persistent UDS event bus: multi-client JSON-lines protocol over Unix domain socket (`--socket <path>` for explicit path, auto-generated otherwise; `--persist`, `--workflow`, `--workflow-guards`, `--no-workflow` supported) |
 | `quecto onboard` | Creates workspace + default config |
 | `quecto skills list\|remove\|install` | Skill management |
@@ -194,7 +193,6 @@ The REPL reads input line by line, sends each to the LLM agent, prints the respo
 | `--system` | System prompt prepended to each turn (not persisted) |
 | `--model` | Override the default model from config |
 | `--no-sandbox` | Disable workspace path restriction (DANGEROUS) |
-| `--network` | Enable outbound network in bash (disables nsjail net namespace) |
 | `--config <path>` | Override config file path (global option) |
 
 REPL commands:
@@ -223,7 +221,6 @@ quecto agent -m "Write a Python script that generates primes"
 | `-s` / `--session` | No | Session name for persistence. Omit for `cli:default`. Use `-` for ephemeral |
 | `--no-session` | No | Ephemeral mode — nothing saved or loaded (mutually exclusive with `-s`) |
 | `--no-sandbox` | No | Disable workspace path restriction (DANGEROUS) |
-| `--network` | No | Enable outbound network in bash (disables nsjail net namespace) |
 | `--system` | No | System prompt prepended to conversation |
 | `--model` | No | Override model. Accepts bare id (`gpt-5.3-codex`) or provider-qualified (`openai/gpt-4o`). Default: `gpt-5.5` |
 | `--max-iterations` | No | Max tool call rounds before stopping |
@@ -476,17 +473,6 @@ Config file: `~/.quecto/config.json`
     }
   },
   "tools": {
-    "exec": {
-      "isolation": "nsjail",
-      "nsjail_binary": "nsjail",
-      "allow_native_fallback": false,
-      "network_passthrough": false,
-      "memory_limit_mb": 4096,
-      "pid_limit": 256,
-      "cpu_time_limit_secs": 28800,
-      "wall_time_limit_secs": 14400,
-      "tmp_size_mb": 512
-    },
     "web": {
       "brave": {
         "enabled": true,
@@ -555,23 +541,12 @@ If you intentionally want to use the built-in `openai` slot for a custom endpoin
 
 Credential precedence for built-in providers is otherwise: credential store (`quecto auth login`) > environment variable > config file. Environment overrides are applied while loading config, so `disable_codex_routing` uses the post-env config value. An existing valid `openai` OAuth credential overrides `providers.openai.api_key` unless `disable_codex_routing` is enabled.
 
-### Exec isolation settings
+### Exec behaviour
 
-- `tools.exec.isolation`: `nsjail` (default) or `native`
-- `tools.exec.nsjail_binary`: binary name or absolute path used when `isolation` is `nsjail` (default `nsjail`)
-- `tools.exec.allow_native_fallback`: when `true`, missing/unexecutable nsjail falls back to native mode; when `false` (default), `bash` calls fail with a config error
-- `tools.exec.network_passthrough`: allow outbound network inside nsjail (`false` by default)
-- `tools.exec.memory_limit_mb`: virtual address-space limit via `--rlimit_as` (MB, default `4096`). Limits virtual reservations, not physical RSS — runtimes with large virtual mappings (Go, JVM) may need higher values
-- `tools.exec.pid_limit`: max processes via `--rlimit_nproc` (default `256`). Per-UID limit, not per-jail — budget is shared across concurrent jails running as the same UID
-- `tools.exec.cpu_time_limit_secs`: CPU time limit via `--rlimit_cpu` (default `28800` — 8 hours across 2 cores)
-- `tools.exec.wall_time_limit_secs`: wall-clock timeout via `--time_limit` (default `14400` — 4 hours)
-- `tools.exec.tmp_size_mb`: size of writable `/tmp` tmpfs inside the jail in MB (default `512`). Each concurrent jail gets its own tmpfs, so N jails consume N × `tmp_size_mb` of RAM
-- `tools.exec.nsjail_binary`: must resolve to an executable under trusted system paths (`/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`, `/usr/local/bin`); relative paths are resolved through trusted PATH directories only
-- exec child processes clear the ambient environment and then explicitly receive the current process environment (or test-provided overrides); `$SHELL` is restricted to known system shells in native mode, while nsjail mode always uses `/bin/sh`
-
-nsjail resource limits use rlimits (`--rlimit_as`, `--rlimit_nproc`, `--rlimit_cpu`) instead of cgroups, so no root access or cgroup write permissions are required. The cgroup namespace is always disabled (`--disable_clone_newcgroup`). This means nsjail works in containers, on unprivileged users, and in any environment without `/sys/fs/cgroup/` access.
-
-nsjail mounts `/bin`, `/usr`, `/lib`, `/lib64` read-only inside the jail, plus individual `/etc` files needed by the dynamic linker and NSS (`ld.so.cache`, `ld.so.conf`, `nsswitch.conf`, `passwd`, `group`, `ssl`, `alternatives`). Only paths that exist on the host are mounted.
+- `bash` commands run natively in the workspace via the user's shell. The shell is read from `$SHELL` and validated against an allowlist of known system shells (defaults to `/bin/sh`).
+- exec child processes clear the ambient environment and then explicitly receive the current process environment (or test-provided overrides).
+- `Sandbox::validate_command` rejects a denylist of destructive commands (e.g. `rm -rf /`, recursive `chown root`) before execution; this stays active unless `--no-sandbox` is passed.
+- There is no built-in process/network/resource isolation. For untrusted workloads, run Quecto inside a container (or other OS-level sandbox), which bounds filesystem, network, and resource access for the whole process.
 
 ### Environment variable overrides
 
@@ -623,7 +598,7 @@ The agent operates inside a sandbox:
 
 - **Workspace restriction**: When `restrict_to_workspace` is `true` (default), all file operations are confined to the workspace directory. Symlinks pointing outside are blocked. Path traversal (`../`) is caught.
 - **Dangerous commands blocked**: `rm -rf /`, `rm -r -f /`, `mkfs`, `dd`, `shutdown`, `reboot`, `chmod -R 777 /`, fork bombs, and pipe-to-shell patterns (`curl|sh`) are always blocked regardless of other settings. Command checks normalize whitespace/casing, so equivalent variants like `rm  -rf /` are also blocked.
-- **Exec runtime isolation**: The `bash` tool runs in `nsjail` mode by default with rlimit-based resource bounds (no cgroup access required); `native` remains available as an explicit opt-in via `tools.exec.isolation`.
+- **Exec runtime isolation**: The `bash` tool runs commands natively in the workspace. Quecto ships no built-in process/network/resource jail — run it inside a container (or other OS-level sandbox) to confine untrusted command execution.
 - **Environment handling**: `bash` children are launched with `env_clear()` and then receive the current process environment (or explicit test overrides). Do not place secrets in the Quecto process environment if the agent should not be able to read them with shell commands.
 - **Secret redaction**: Log/status output redacts OpenAI/Anthropic (`sk-*`), Groq (`gsk_*`/`gsk-*`), and Telegram bot token values.
 - **UDS socket security**: Socket files are created with `chmod 0600` (owner-only). Stale sockets older than 24h are reaped on startup.

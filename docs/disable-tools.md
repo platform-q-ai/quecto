@@ -83,9 +83,9 @@ quecto agent \
 ```
 
 Note: disabling `bash` is important here because `bash` can also make
-network requests (e.g. `curl`, `wget`). For network-only restriction
-without disabling `bash` entirely, use nsjail network isolation instead
-(the default when nsjail is available).
+network requests (e.g. `curl`, `wget`). To restrict network access without
+disabling `bash` entirely, run Quecto inside a container with no (or
+restricted) network access.
 
 ### Restricting subagent spawning
 
@@ -115,7 +115,6 @@ bypassing the restriction at runtime.
 | Flag combination | Behaviour |
 |-----------------|-----------|
 | `--disable-tool bash --no-sandbox` | Both apply: no workspace restriction AND no bash |
-| `--disable-tool bash --network` | Network flag is irrelevant since bash is disabled |
 | `--disable-tool recall` | Agent cannot retrieve spilled context. The agent loop still spills long outputs but the model cannot recall them — collapse stubs become permanent summaries. |
 
 ## Implementation details

@@ -12,7 +12,7 @@ process in UDS mode (`--mode uds --persist`). The child process:
 
 - Uses the same quecto binary (`std::env::current_exe()`)
 - Inherits the parent's `QUECTO_BASE_DIR` (config, credentials, sessions)
-- Inherits the parent's sandbox posture (`--no-sandbox`, `--network`)
+- Inherits the parent's sandbox posture (`--no-sandbox`)
 - Gets its own session (default name: `subagent`, or a custom `agent_id`)
 - Listens on a Unix domain socket for commands
 - Runs in the background — the parent is **not blocked**
@@ -306,8 +306,6 @@ The child inherits the parent's security posture:
 |------------|---------------|
 | `--no-sandbox` active | Child gets `--no-sandbox` (unrestricted file access) |
 | `--no-sandbox` not set | Child uses default workspace restriction from config |
-| `--network` active | Child gets `--network` (bash network access enabled) |
-| `--network` not set | Child uses default network isolation |
 
 This ensures consistent security boundaries across the agent hierarchy. A
 child agent cannot escalate its own privileges beyond what the parent has.
