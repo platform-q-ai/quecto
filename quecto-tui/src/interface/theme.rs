@@ -180,19 +180,106 @@ fn bg_code_from_fn(bg_fn: fn(&str) -> String) -> &'static str {
 }
 
 /// Core implementation: apply a background ANSI code to text, padding to width.
+///
+/// Tool output carries third-party SGR sequences. Any escape whose net effect
+/// leaves the background at default — a reset (`\x1b[0m`, `\x1b[m`, `\x1b[0;1m`)
+/// or the default-bg code (`\x1b[49m`) — would otherwise drop the box
+/// background for the rest of the line, leaving a gap. So the box bg is
+/// re-asserted after each such escape (and again before the padding). SGRs that
+/// *set* a background (an inner highlight like `48;2;…`) are left intact so
+/// deliberate highlights survive.
 fn apply_bg_code(text: &str, width: usize, bg_code: &str) -> String {
-    // Build the reset-and-reapply sequence once.
-    let reset_and_reapply = format!("\x1b[0m{}", bg_code);
+    let mut out = String::with_capacity(text.len() + bg_code.len() * 4 + width);
+    out.push_str(bg_code);
 
-    // Replace all \x1b[0m resets in the text with reset + bg re-apply.
-    // This ensures the background persists through styled content.
-    let patched = text.replace("\x1b[0m", &reset_and_reapply);
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '\x1b' {
+            out.push(ch);
+            continue;
+        }
+        out.push(ch);
+        match chars.peek() {
+            // CSI: copy params + terminator; re-assert bg after a bg-clearing SGR.
+            Some('[') => {
+                out.push(chars.next().unwrap());
+                let mut params = String::new();
+                let mut terminator = '\0';
+                for c in chars.by_ref() {
+                    out.push(c);
+                    if c.is_ascii_alphabetic() || c == '~' {
+                        terminator = c;
+                        break;
+                    }
+                    params.push(c);
+                }
+                if terminator == 'm' && sgr_clears_bg(&params) {
+                    out.push_str(bg_code);
+                }
+            }
+            // OSC: copy through BEL or ST; never affects the background.
+            Some(']') => {
+                out.push(chars.next().unwrap());
+                while let Some(c) = chars.next() {
+                    out.push(c);
+                    if c == '\x07' {
+                        break;
+                    }
+                    if c == '\x1b' && chars.peek() == Some(&'\\') {
+                        out.push(chars.next().unwrap());
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 
-    // Pad to full width.
-    let vis = crate::interface::utils::visible_width(text);
-    let pad = width.saturating_sub(vis);
+    let pad = width.saturating_sub(crate::interface::utils::visible_width(text));
+    out.push_str(bg_code);
+    out.push_str(&" ".repeat(pad));
+    out.push_str("\x1b[0m");
+    out
+}
 
-    format!("{}{}{}\x1b[0m", bg_code, patched, " ".repeat(pad))
+/// Whether an SGR parameter list leaves the background at its default — i.e. the
+/// box bg must be re-asserted after it. Tracks the net effect in order: `0`/empty
+/// and `49` clear it; a standard (`40`–`47`/`100`–`107`) or extended (`48;…`) bg
+/// sets it. Extended-colour value params (`38`/`48` … `5;n` or `2;r;g;b`) are
+/// consumed so their components (e.g. the zeros in `48;2;0;0;0`) aren't misread.
+fn sgr_clears_bg(params: &str) -> bool {
+    if params.is_empty() {
+        return true; // `\x1b[m` == full reset
+    }
+    let mut bg_off = false;
+    let mut it = params.split(';');
+    while let Some(p) = it.next() {
+        let code: u16 = if p.is_empty() {
+            0
+        } else {
+            p.parse().unwrap_or(u16::MAX)
+        };
+        match code {
+            0 | 49 => bg_off = true,
+            40..=47 | 100..=107 => bg_off = false,
+            38 | 48 => {
+                bg_off = code == 38 && bg_off; // 48 sets a bg; 38 leaves bg as-is
+                match it.next().map(|x| x.parse::<u16>().unwrap_or(u16::MAX)) {
+                    Some(5) => {
+                        it.next();
+                    }
+                    Some(2) => {
+                        it.next();
+                        it.next();
+                        it.next();
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    bg_off
 }
 
 /// Tool pending background — #282832 (very dark blue-gray, matches Quecto).
@@ -305,5 +392,62 @@ mod tests {
         assert_eq!(BG_PENDING, "\x1b[48;2;40;40;50m");
         assert_eq!(BG_SUCCESS, "\x1b[48;2;40;50;40m");
         assert_eq!(BG_ERROR, "\x1b[48;2;60;40;40m");
+    }
+
+    // ── gap fix: re-assert bg after ANY bg-clearing escape, not just \x1b[0m ──
+
+    #[test]
+    fn apply_bg_reasserts_after_bare_reset() {
+        // Foreign tool output often resets with `\x1b[m` (empty params), which a
+        // literal `\x1b[0m` replace misses — leaving a background gap.
+        let result = apply_bg("a\x1b[mb", 10, tool_success_bg);
+        assert!(
+            result.contains(&format!("\x1b[m{BG_SUCCESS}")),
+            "bare reset must re-assert the box bg: {result:?}"
+        );
+    }
+
+    #[test]
+    fn apply_bg_reasserts_after_default_bg_49() {
+        // `\x1b[49m` sets the default background — must re-assert the box bg.
+        let result = apply_bg("x\x1b[49my", 10, tool_success_bg);
+        assert!(
+            result.contains(&format!("\x1b[49m{BG_SUCCESS}")),
+            "default-bg (49) must re-assert the box bg: {result:?}"
+        );
+    }
+
+    #[test]
+    fn apply_bg_reasserts_after_compound_reset() {
+        // `\x1b[0;1m` (reset bundled with bold) also clears bg.
+        let result = apply_bg("p\x1b[0;1mq", 10, tool_success_bg);
+        assert!(
+            result.contains(&format!("\x1b[0;1m{BG_SUCCESS}")),
+            "compound reset must re-assert the box bg: {result:?}"
+        );
+    }
+
+    #[test]
+    fn apply_bg_preserves_inner_background_highlight() {
+        // A deliberate inner background (e.g. a diff-context highlight) must NOT
+        // be immediately overridden by the box bg.
+        let grey = "\x1b[48;2;80;80;80m";
+        let result = apply_bg(&format!("{grey}hi\x1b[0m"), 10, tool_success_bg);
+        assert!(
+            !result.contains(&format!("{grey}{BG_SUCCESS}")),
+            "inner highlight must survive: {result:?}"
+        );
+    }
+
+    #[test]
+    fn apply_bg_keeps_truecolor_bg_with_zero_component() {
+        // `48;2;0;0;0` is a black background, not a reset — the zero components
+        // must not be misread as a `0` reset and clobbered.
+        let black = "\x1b[48;2;0;0;0m";
+        let result = apply_bg(&format!("{black}z\x1b[0m"), 10, tool_success_bg);
+        assert!(
+            !result.contains(&format!("{black}{BG_SUCCESS}")),
+            "truecolor bg with zero components must survive: {result:?}"
+        );
     }
 }
