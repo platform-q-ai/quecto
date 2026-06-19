@@ -45,6 +45,7 @@ impl App {
                 .collect();
             let mut bar = SubagentBar::new();
             bar.update(rows, self.subagent_frame);
+            bar.set_awaited(self.awaited_agent_id.clone());
             self.widgets_above.set("subagents", Box::new(bar));
         }
     }
@@ -375,9 +376,17 @@ impl App {
         let workflow_widget_lines = workflow_bar::render_widget(&workflow_bar_state, width);
         bottom.extend(workflow_widget_lines);
 
-        // Spinner sits between widgets_above and autocomplete (#534).
+        // Spinner sits between widgets_above and autocomplete (#534). While
+        // awaiting a known sub-agent, the indicator lives on that agent's row,
+        // so the shared spinner line is suppressed (one fewer oscillating line).
+        let await_on_row = self
+            .awaited_agent_id
+            .as_deref()
+            .is_some_and(|id| self.subagent_local.contains_key(id));
         if let Some(spinner) = &mut self.spinner {
-            bottom.extend(spinner.render(width));
+            if !await_on_row {
+                bottom.extend(spinner.render(width));
+            }
         }
 
         // Autocomplete dropdown.

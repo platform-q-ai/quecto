@@ -195,6 +195,10 @@ pub struct App {
     subagent_local: std::collections::BTreeMap<String, TrackedSubagent>,
     /// Animation frame for the subagent spinner, advanced on each spinner tick.
     subagent_frame: usize,
+    /// The sub-agent the parent is currently blocked on via `agent_cmd await`,
+    /// if any. Rendered as a per-row "awaiting" indicator instead of a shared
+    /// spinner line.
+    awaited_agent_id: Option<String>,
     /// Active mouse text selection (#528).
     selection: Option<TextSelection>,
     /// Workflow header bar state (#563).
@@ -239,6 +243,7 @@ impl App {
             resume_selector: None,
             subagent_local: std::collections::BTreeMap::new(),
             subagent_frame: 0,
+            awaited_agent_id: None,
             selection: None,
             workflow_bar: workflow_bar::WorkflowBarState::default(),
             workflow_auto_continue: false,
