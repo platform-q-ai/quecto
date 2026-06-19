@@ -463,7 +463,7 @@ fn read_git_branch_reflects_head_changes_without_restart() {
 }
 
 #[test]
-fn read_git_branch_strips_control_sequences_from_head() {
+fn read_git_branch_strips_control_and_bidi_sequences_from_head() {
     let repo = std::env::temp_dir().join(format!(
         "quecto-tui-branch-sanitize-test-{}-{}",
         std::process::id(),
@@ -474,12 +474,36 @@ fn read_git_branch_strips_control_sequences_from_head() {
 
     std::fs::write(
         repo.join(".git/HEAD"),
-        "ref: refs/heads/feature/\x1b]0;owned\x07footer\n",
+        "ref: refs/heads/feature/\x1b]0;owned\x07foot\u{202e}er\n",
     )
     .unwrap();
     assert_eq!(
         super::app_git::read_git_branch_from(&repo),
         Some("feature/]0;ownedfooter".to_string())
+    );
+
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn read_git_branch_resolves_gitdir_file_from_subdirectory() {
+    let repo = std::env::temp_dir().join(format!(
+        "quecto-tui-branch-gitdir-test-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("unnamed")
+    ));
+    let _ = std::fs::remove_dir_all(&repo);
+    let worktree = repo.join("worktree");
+    let gitdir = repo.join("actual-git-dir");
+    let child = worktree.join("nested/child");
+    std::fs::create_dir_all(&child).unwrap();
+    std::fs::create_dir_all(&gitdir).unwrap();
+    std::fs::write(worktree.join(".git"), "gitdir: ../actual-git-dir\n").unwrap();
+    std::fs::write(gitdir.join("HEAD"), "ref: refs/heads/worktree/topic\n").unwrap();
+
+    assert_eq!(
+        super::app_git::read_git_branch_from(&child),
+        Some("worktree/topic".to_string())
     );
 
     let _ = std::fs::remove_dir_all(&repo);
