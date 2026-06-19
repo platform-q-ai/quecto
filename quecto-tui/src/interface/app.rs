@@ -466,8 +466,12 @@ fn read_git_branch_from(repo: &Path) -> Option<String> {
     let trimmed = head.trim();
     trimmed
         .strip_prefix("ref: refs/heads/")
-        .map(|s| s.to_string())
-        .or_else(|| trimmed.strip_prefix("ref: ").map(|s| s.to_string()))
+        .or_else(|| trimmed.strip_prefix("ref: "))
+        .map(sanitize_git_ref_for_display)
+}
+
+fn sanitize_git_ref_for_display(ref_name: &str) -> String {
+    ref_name.chars().filter(|c| !c.is_control()).collect()
 }
 
 // ── Agent state machine (extracted for testability) ───────────────────────

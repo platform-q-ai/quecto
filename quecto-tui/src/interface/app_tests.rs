@@ -460,6 +460,29 @@ fn read_git_branch_reflects_head_changes_without_restart() {
 }
 
 #[test]
+fn read_git_branch_strips_control_sequences_from_head() {
+    let repo = std::env::temp_dir().join(format!(
+        "quecto-tui-branch-sanitize-test-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("unnamed")
+    ));
+    let _ = std::fs::remove_dir_all(&repo);
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+
+    std::fs::write(
+        repo.join(".git/HEAD"),
+        "ref: refs/heads/feature/\x1b]0;owned\x07footer\n",
+    )
+    .unwrap();
+    assert_eq!(
+        super::read_git_branch_from(&repo),
+        Some("feature/]0;ownedfooter".to_string())
+    );
+
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+#[test]
 fn strip_ansi_for_selection_empty() {
     assert_eq!(super::strip_ansi_for_selection(""), "");
 }
