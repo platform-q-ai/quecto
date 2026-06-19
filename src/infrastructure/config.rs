@@ -146,18 +146,7 @@ impl std::fmt::Debug for OpenAiCompatibleEndpoint {
 pub struct ToolsConfig {
     #[serde(default)]
     pub web: WebToolConfig,
-    #[serde(default)]
-    pub exec: ExecToolConfig,
 }
-
-/// Configuration for the `bash`/exec tool.
-///
-/// Commands run natively in the workspace; process/network isolation is
-/// delegated to the deployment (e.g. running Quecto in a container). The
-/// in-process sandbox (see `agents.defaults.restrict_to_workspace` and the
-/// `--no-sandbox` flag) still confines file and command access.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ExecToolConfig {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WebToolConfig {

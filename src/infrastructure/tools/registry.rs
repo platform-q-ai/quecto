@@ -13,10 +13,6 @@ use crate::infrastructure::security::sandbox::Sandbox;
 
 use super::bash::{ExecOptions, ExecTool};
 
-#[derive(Debug, Clone)]
-pub struct ExecRegistrySettings {
-    pub max_capture_bytes: usize,
-}
 use super::docs::DocsTool;
 use super::filesystem::{EditTool, LsTool, ReadTool, WriteTool};
 use super::find::FindTool;
@@ -51,11 +47,9 @@ impl Default for ToolRegistryImpl {
 }
 
 impl ToolRegistryImpl {
-    /// Build exec registry settings from config in one place.
-    pub fn exec_registry_settings_from_config(config: &Config) -> ExecRegistrySettings {
-        ExecRegistrySettings {
-            max_capture_bytes: config.agents.defaults.exec_max_capture_bytes,
-        }
+    /// The exec tool's max captured-output size, read from config in one place.
+    pub fn exec_registry_settings_from_config(config: &Config) -> usize {
+        config.agents.defaults.exec_max_capture_bytes
     }
 
     /// Create a new empty registry.
@@ -86,14 +80,14 @@ impl ToolRegistryImpl {
         Self::with_core_tools_and_exec_options(workspace, sandbox, ExecOptions::default())
     }
 
-    /// Create a registry with core tools and exec isolation mode settings.
+    /// Create a registry with core tools and an explicit exec capture limit.
     pub fn with_core_tools_and_exec_settings(
         workspace: PathBuf,
         sandbox: Sandbox,
-        settings: ExecRegistrySettings,
+        max_capture_bytes: usize,
     ) -> Self {
         let exec_options = ExecOptions {
-            max_capture_bytes: settings.max_capture_bytes,
+            max_capture_bytes,
             ..ExecOptions::default()
         };
         Self::with_core_tools_and_exec_options(workspace, sandbox, exec_options)
