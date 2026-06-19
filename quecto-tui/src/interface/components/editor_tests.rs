@@ -407,3 +407,21 @@ fn take_submit_returns_none_when_no_submit() {
     let mut e = Editor::new();
     assert_eq!(e.take_submit(), None);
 }
+
+#[test]
+fn replace_before_cursor_swaps_token_and_moves_cursor() {
+    let mut e = Editor::new();
+    e.set_text("see @mai");
+    // Cursor is at end (col 8). Replace the "@mai" token (start col 4).
+    e.replace_before_cursor(4, "@src/main.rs ");
+    assert_eq!(e.text(), "see @src/main.rs ");
+    assert_eq!(e.cursor_col(), "see @src/main.rs ".len());
+}
+
+#[test]
+fn cursor_col_and_current_line_reflect_state() {
+    let mut e = Editor::new();
+    e.set_text("hello");
+    assert_eq!(e.current_line(), "hello");
+    assert_eq!(e.cursor_col(), 5);
+}

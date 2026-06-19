@@ -345,8 +345,9 @@ impl App {
             }
         }
 
-        // Autocomplete dropdown.
+        // Autocomplete dropdown (slash commands, then @files — only one active).
         bottom.extend(self.autocomplete.render(width));
+        bottom.extend(self.files_autocomplete.render(width));
         // Editor.
         bottom.extend(self.editor.render(width));
         // Widgets below editor.

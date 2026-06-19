@@ -76,6 +76,32 @@ impl Editor {
         self.submit_text.take()
     }
 
+    /// Byte offset of the cursor within the current line.
+    pub fn cursor_col(&self) -> usize {
+        self.cursor_col
+    }
+
+    /// The line the cursor is currently on.
+    pub fn current_line(&self) -> &str {
+        &self.lines[self.cursor_row]
+    }
+
+    /// Replace `[start_col, cursor_col)` on the current line with `replacement`,
+    /// leaving the cursor at the end of the inserted text. Used to swap an
+    /// `@token` for a selected file path. No-op on a non-char-boundary range.
+    pub fn replace_before_cursor(&mut self, start_col: usize, replacement: &str) {
+        let line = &mut self.lines[self.cursor_row];
+        let end = self.cursor_col.min(line.len());
+        let start = start_col.min(end);
+        if !line.is_char_boundary(start) || !line.is_char_boundary(end) {
+            return;
+        }
+        line.replace_range(start..end, replacement);
+        self.cursor_col = start + replacement.len();
+        self.update_bash_mode();
+        self.invalidate();
+    }
+
     /// Maximum history entries to retain.
     const MAX_HISTORY: usize = 500;
 

@@ -17,6 +17,7 @@ use crate::interface::components::autocomplete::{Autocomplete, AutocompleteResul
 use crate::interface::components::chat::Chat;
 use crate::interface::components::chat::ChatEntry;
 use crate::interface::components::editor::Editor;
+use crate::interface::components::files_autocomplete::FilesAutocomplete;
 use crate::interface::components::footer::Footer;
 use crate::interface::components::model_selector::{ModelSelector, ModelSelectorResult};
 use crate::interface::components::notification::{Notification, NotificationStack, NotifyLevel};
@@ -119,6 +120,7 @@ pub struct App {
     spinner: Option<Spinner>,
     footer: Footer,
     autocomplete: Autocomplete,
+    files_autocomplete: FilesAutocomplete,
     notifications: NotificationStack,
     overlay_stack: OverlayStack,
     widgets_above: WidgetContainer,
@@ -199,6 +201,7 @@ impl App {
             spinner: None,
             footer,
             autocomplete: Autocomplete::new(builtin_commands(), 8),
+            files_autocomplete: FilesAutocomplete::new(8),
             notifications: NotificationStack::new(),
             overlay_stack: OverlayStack::new(),
             widgets_above: WidgetContainer::new(),
