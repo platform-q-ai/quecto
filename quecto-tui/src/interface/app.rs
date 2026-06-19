@@ -5,6 +5,7 @@
 //! signal handling, and extension management.
 
 use std::io::Write;
+use std::path::Path;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
@@ -30,6 +31,9 @@ use crate::interface::overlay::OverlayStack;
 
 /// Tick interval for spinner animation (~12fps).
 const SPINNER_TICK: Duration = Duration::from_millis(80);
+
+/// How often to poll `.git/HEAD` for footer branch changes.
+const GIT_BRANCH_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Lines scrolled per mouse wheel tick.
 const MOUSE_SCROLL_LINES: usize = 3;
@@ -172,6 +176,8 @@ pub struct App {
     workflow_auto_continue: bool,
     /// Mirror of core workflow completion-nudge state, toggled through UDS.
     workflow_completion_nudge: bool,
+    /// Last observed git branch shown in the footer.
+    git_branch: Option<String>,
     /// Last rendered lines (for extracting selected text from the buffer).
     last_rendered_lines: Vec<String>,
     /// Whether we've already requested session stats as a fallback to learn
@@ -182,9 +188,8 @@ pub struct App {
 impl App {
     pub fn new(terminal: Terminal, client: Client) -> Self {
         let mut footer = Footer::new();
-        if let Some(branch) = read_git_branch() {
-            footer.set_git_branch(Some(branch));
-        }
+        let git_branch = read_git_branch();
+        footer.set_git_branch(git_branch.clone());
 
         Self {
             terminal,
@@ -220,9 +225,20 @@ impl App {
             workflow_bar: workflow_bar::WorkflowBarState::default(),
             workflow_auto_continue: false,
             workflow_completion_nudge: false,
+            git_branch,
             last_rendered_lines: Vec::new(),
             context_stats_requested: false,
         }
+    }
+
+    fn refresh_git_branch(&mut self) -> bool {
+        let branch = read_git_branch();
+        if branch == self.git_branch {
+            return false;
+        }
+        self.git_branch = branch.clone();
+        self.footer.set_git_branch(branch);
+        true
     }
 }
 
@@ -442,12 +458,16 @@ fn truncate_args(args: &str) -> String {
 /// Read the current git branch from .git/HEAD.
 fn read_git_branch() -> Option<String> {
     let cwd = std::env::current_dir().ok()?;
-    let head = std::fs::read_to_string(cwd.join(".git/HEAD")).ok()?;
+    read_git_branch_from(&cwd)
+}
+
+fn read_git_branch_from(repo: &Path) -> Option<String> {
+    let head = std::fs::read_to_string(repo.join(".git/HEAD")).ok()?;
     let trimmed = head.trim();
     trimmed
-        .strip_prefix("ref: ")
-        .and_then(|r| r.rsplit('/').next())
+        .strip_prefix("ref: refs/heads/")
         .map(|s| s.to_string())
+        .or_else(|| trimmed.strip_prefix("ref: ").map(|s| s.to_string()))
 }
 
 // ── Agent state machine (extracted for testability) ───────────────────────

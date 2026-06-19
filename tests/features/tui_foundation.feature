@@ -25,6 +25,12 @@ Feature: TUI Foundation
     Then the TUI client should receive a response with command "get_state" and success true
 
   @tui @pending
+  Scenario: TUI footer updates when the current git branch changes
+    Given quecto-tui is running in a git repository on branch "main"
+    When the repository switches to branch "feature/footer-branch"
+    Then the footer should show branch "feature/footer-branch" without restarting the TUI
+
+  @tui @pending
   Scenario: TUI sends a prompt and receives streaming tokens
     Given a quecto agent is running in UDS mode
     And the TUI client connects to the agent socket

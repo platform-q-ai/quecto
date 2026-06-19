@@ -56,6 +56,10 @@ impl App {
         let mut spinner_interval = tokio::time::interval(SPINNER_TICK);
         spinner_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+        // Git branch footer refresh timer.
+        let mut git_branch_interval = tokio::time::interval(GIT_BRANCH_POLL_INTERVAL);
+        git_branch_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         // Timeout for incomplete escape sequences (matches Quecto TUI's 10ms).
         let escape_timeout = Duration::from_millis(10);
 
@@ -176,6 +180,16 @@ impl App {
                         kitty_fallback_done = true;
                     }
                     if needs_render {
+                        self.render();
+                    }
+                }
+                // Git branch footer refresh tick.
+                _ = git_branch_interval.tick() => {
+                    // Git branch may change while the TUI is running (checkout/switch
+                    // from another shell or from commands the agent runs). Refresh it
+                    // periodically so the footer does not stay pinned to the startup
+                    // branch.
+                    if self.refresh_git_branch() {
                         self.render();
                     }
                 }
