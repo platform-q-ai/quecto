@@ -11,6 +11,9 @@ pub struct Footer {
     session_name: Option<String>,
     context_percent: Option<f64>,
     context_window: usize,
+    /// Tokens currently occupying the context window (last turn's input count).
+    /// `None` until the first usage report arrives.
+    context_used: Option<u64>,
     is_streaming: bool,
     /// Cached working directory (read once at construction).
     pwd: String,
@@ -38,6 +41,7 @@ impl Footer {
             session_name: None,
             context_percent: None,
             context_window: 0,
+            context_used: None,
             is_streaming: false,
             pwd,
         }
@@ -58,6 +62,9 @@ impl Footer {
     pub fn set_context(&mut self, percent: Option<f64>, window: usize) {
         self.context_percent = percent;
         self.context_window = window;
+        // Callers using set_context don't supply a token count (None resets the
+        // display to the percent-only / unknown form).
+        self.context_used = None;
     }
 
     pub fn set_context_window(&mut self, window: usize) {
@@ -70,7 +77,9 @@ impl Footer {
         } else {
             None
         };
-        self.set_context(pct, window);
+        self.context_percent = pct;
+        self.context_window = window;
+        self.context_used = Some(input_tokens);
     }
 
     pub fn set_streaming(&mut self, streaming: bool) {
@@ -92,20 +101,18 @@ impl Component for Footer {
 
         let pwd_line = truncate_to_width(&theme::dim(&pwd), width, Some("..."));
 
-        // Line 2: context usage (left) + model name (right)
-        let context_str = match self.context_percent {
-            Some(pct) => {
-                let window = format_tokens(self.context_window);
-                let display = format!("{:.1}%/{}", pct, window);
-                if pct > 90.0 {
-                    theme::error(&display)
-                } else if pct > 70.0 {
-                    theme::warning(&display)
-                } else {
-                    display
-                }
+        // Line 2: context usage (left) + model name (right).
+        // Preferred form shows tokens-used / model-limit and the percentage,
+        // e.g. "123k/200k (61.5%)". Falls back to percent-only, then to
+        // "?/limit" when neither usage nor a percentage is known yet.
+        let window = format_tokens(self.context_window);
+        let context_str = match (self.context_used, self.context_percent) {
+            (Some(used), Some(pct)) => {
+                let display = format!("{}/{} ({:.1}%)", format_tokens(used as usize), window, pct);
+                colorize_usage(display, pct)
             }
-            None => format!("?/{}", format_tokens(self.context_window)),
+            (_, Some(pct)) => colorize_usage(format!("{:.1}%/{}", pct, window), pct),
+            (_, None) => format!("?/{}", window),
         };
 
         let left = context_str;
@@ -136,6 +143,18 @@ impl Component for Footer {
     }
 
     fn invalidate(&mut self) {}
+}
+
+/// Color a context-usage string by how full the window is: red past 90%,
+/// yellow past 70%, plain otherwise.
+fn colorize_usage(display: String, pct: f64) -> String {
+    if pct > 90.0 {
+        theme::error(&display)
+    } else if pct > 70.0 {
+        theme::warning(&display)
+    } else {
+        display
+    }
 }
 
 fn format_tokens(count: usize) -> String {
@@ -238,6 +257,20 @@ mod tests {
         let lines = f.render(80);
         let joined = lines.join("\n");
         assert!(joined.contains("42.5%"));
+    }
+
+    #[test]
+    fn footer_shows_used_tokens_and_limit() {
+        let mut f = Footer::new();
+        // 120k of a 200k window → 60.0%.
+        f.update_context_usage(120_000, 200_000);
+        let lines = f.render(80);
+        let joined = lines.join("\n");
+        assert!(
+            joined.contains("120k/200k"),
+            "should show used/limit: {joined}"
+        );
+        assert!(joined.contains("60.0%"), "should show percent: {joined}");
     }
 
     #[test]

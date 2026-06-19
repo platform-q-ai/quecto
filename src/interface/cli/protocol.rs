@@ -350,6 +350,10 @@ pub struct TurnMessage {
     pub usage: Option<TurnUsage>,
     #[serde(rename = "stopReason", skip_serializing_if = "Option::is_none")]
     pub stop_reason: Option<String>,
+    /// The active model's context-window limit (tokens), so the TUI footer can
+    /// render context usage against it. `None` when unknown.
+    #[serde(rename = "maxContextTokens", skip_serializing_if = "Option::is_none")]
+    pub max_context_tokens: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -476,6 +480,8 @@ pub struct SessionState {
     pub session_key: String,
     pub message_count: usize,
     pub pending_message_count: usize,
+    /// The active model's context-window limit (tokens). `0` when unknown.
+    pub max_context_tokens: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workflow: Option<serde_json::Value>,
 }
@@ -493,6 +499,8 @@ pub struct SessionStats {
     pub total_messages: usize,
     pub tokens: TokenStats,
     pub cost: f64,
+    /// The active model's context-window limit (tokens). `0` when unknown.
+    pub max_context_tokens: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

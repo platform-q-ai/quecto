@@ -220,6 +220,9 @@ impl AgentSession {
             session_key: self.session_key.clone(),
             message_count,
             pending_message_count: self.pending.len(),
+            // Populated by the dispatcher from the agent's config (it owns the
+            // value); 0 here means "unknown".
+            max_context_tokens: 0,
             workflow,
         }
     }
@@ -264,6 +267,8 @@ pub fn compute_session_stats_with_usage(
         total_messages: messages.len(),
         cost: usage.cost_usd(),
         tokens: usage.tokens,
+        // Populated by the dispatcher from the agent's config; 0 = unknown.
+        max_context_tokens: 0,
     }
 }
 

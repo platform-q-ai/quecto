@@ -213,6 +213,7 @@ pub(crate) async fn run_agent_message(args: PromptMessageArgs<'_>) -> PromptOutc
                     content: agent_result.response.clone(),
                     usage,
                     stop_reason: None,
+                    max_context_tokens: Some(agent.max_context_tokens() as u64),
                 },
                 tool_results: vec![],
             };

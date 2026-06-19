@@ -446,7 +446,8 @@ fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serd
                     value
                 })
             });
-            let state = ctx.session.state_snapshot(ctx.messages.len(), workflow);
+            let mut state = ctx.session.state_snapshot(ctx.messages.len(), workflow);
+            state.max_context_tokens = ctx.agent.max_context_tokens();
             Some(serde_json::to_value(&state).unwrap_or_default())
         }
         AgentCommand::GetMessages { .. } => {
@@ -457,11 +458,12 @@ fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serd
             Some(messages_tail_json(ctx.messages, *count))
         }
         AgentCommand::GetSessionStats { .. } => {
-            let stats = compute_session_stats_with_usage(
+            let mut stats = compute_session_stats_with_usage(
                 ctx.session_key,
                 ctx.messages,
                 ctx.session.usage_snapshot(),
             );
+            stats.max_context_tokens = ctx.agent.max_context_tokens();
             Some(serde_json::to_value(&stats).unwrap_or_default())
         }
         AgentCommand::GetExtensions { .. } => {
