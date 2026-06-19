@@ -80,8 +80,10 @@ pub struct AgentResult {
     pub tool_iterations: u32,
     /// Whether the iteration limit was reached.
     pub iteration_limit_reached: bool,
-    /// Latest prompt/context token count for this run, used for context-window display.
+    /// Latest prompt/provider input token count for this run.
     pub input_tokens: u32,
+    /// Estimated tokens currently occupying the active, pruned context after this run.
+    pub context_tokens: usize,
     /// Cumulative completion tokens from all LLM calls in this run.
     pub output_tokens: u32,
     /// Cumulative billed input tokens from all LLM calls in this run.
@@ -101,6 +103,7 @@ impl AgentResult {
             tool_iterations: 0,
             iteration_limit_reached: false,
             input_tokens: 0,
+            context_tokens: 0,
             output_tokens: 0,
             billed_input_tokens: 0,
             billed_output_tokens: 0,

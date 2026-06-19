@@ -137,12 +137,13 @@ impl App {
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
         let cost = data.get("cost").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let context_tokens = data.get("contextTokens").and_then(|v| v.as_u64());
         let max_context_tokens = data
             .get("maxContextTokens")
             .and_then(|v| v.as_u64())
             .map(|v| v as usize);
-        if let Some(window) = max_context_tokens {
-            self.footer.update_context_usage(input, window);
+        if let (Some(used), Some(window)) = (context_tokens, max_context_tokens) {
+            self.footer.update_context_usage(used, window);
             self.context_stats_requested = true;
         }
 

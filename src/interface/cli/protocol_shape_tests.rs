@@ -9,7 +9,6 @@ fn round_trip<T: serde::Serialize + serde::de::DeserializeOwned>(v: &T) -> serde
     let s = serde_json::to_string(v).unwrap();
     serde_json::from_str(&s).unwrap()
 }
-
 #[test]
 fn tool_execution_start_matches_spec_shape() {
     let ev = AgentEvent::ToolExecutionStart {
@@ -26,7 +25,6 @@ fn tool_execution_start_matches_spec_shape() {
     assert!(j.get("tool_call_id").is_none());
     assert!(j.get("tool_name").is_none());
 }
-
 #[test]
 fn tool_execution_end_matches_spec_shape() {
     let ev = AgentEvent::ToolExecutionEnd {
@@ -58,6 +56,7 @@ fn turn_end_matches_spec_shape() {
                 total: 1700,
             }),
             stop_reason: Some("toolUse".into()),
+            context_tokens: Some(1_200),
             max_context_tokens: Some(200_000),
         },
         tool_results: vec![],
@@ -70,6 +69,7 @@ fn turn_end_matches_spec_shape() {
     assert_eq!(j["message"]["usage"]["output"], 200);
     assert_eq!(j["message"]["usage"]["total"], 1700);
     assert_eq!(j["message"]["stopReason"], "toolUse"); // camelCase
+    assert_eq!(j["message"]["contextTokens"], 1_200); // camelCase
     assert_eq!(j["message"]["maxContextTokens"], 200_000); // camelCase
     assert!(j.get("stop_reason").is_none());
     assert!(j["toolResults"].is_array()); // camelCase
@@ -121,8 +121,7 @@ fn get_state_data_matches_spec_shape() {
     assert_eq!(j["isStreaming"], false); // camelCase
     assert_eq!(j["sessionKey"], "cli:my-session"); // camelCase
     assert_eq!(j["messageCount"], 12); // camelCase
-    assert_eq!(j["pendingMessageCount"], 0); // camelCase
-    assert_eq!(j["maxContextTokens"], 200_000); // camelCase
+    assert_eq!(j["pendingMessageCount"], 0); // camelCase // camelCase
     assert!(j.get("is_streaming").is_none());
 }
 
@@ -142,10 +141,10 @@ fn make_test_stats() -> SessionStats {
             total: 105000,
         },
         cost: 0.45,
+        context_tokens: 12_345,
         max_context_tokens: 200_000,
     }
 }
-
 #[test]
 fn get_session_stats_message_counts_camel_case() {
     let j = round_trip(&make_test_stats());
@@ -166,6 +165,7 @@ fn get_session_stats_tokens_camel_case() {
     assert_eq!(j["tokens"]["cacheWrite"], 5000);
     assert_eq!(j["tokens"]["total"], 105000);
     assert!((j["cost"].as_f64().unwrap() - 0.45).abs() < 1e-9);
+    assert_eq!(j["maxContextTokens"], 200_000);
 }
 
 #[test]

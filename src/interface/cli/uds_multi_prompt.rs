@@ -93,6 +93,7 @@ pub(crate) async fn run_agent_prompt_broadcast(args: PromptArgsBroadcast<'_>) ->
                     content: agent_result.response.clone(),
                     usage,
                     stop_reason: None,
+                    context_tokens: Some(agent_result.context_tokens as u64),
                     max_context_tokens: Some(agent.max_context_tokens() as u64),
                 },
                 tool_results: vec![],
