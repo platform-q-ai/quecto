@@ -206,6 +206,10 @@ impl App {
     }
 
     pub(super) fn handle_key(&mut self, key: Key) {
+        if !matches!(key, Key::Escape) {
+            self.last_idle_escape = None;
+        }
+
         // Unconditional exit — Ctrl+D must work regardless of overlays,
         // autocomplete state, or agent activity (#478).
         if matches!(key, Key::Ctrl('d')) {
@@ -218,18 +222,28 @@ impl App {
 
         // If the resume selector is active, route input to it.
         if self.resume_selector.is_some() {
+            self.last_idle_escape = None;
             self.handle_resume_selector_key(&key);
+            return;
+        }
+
+        // If the rewind selector is active, route input to it.
+        if self.rewind_selector.is_some() {
+            self.last_idle_escape = None;
+            self.handle_rewind_selector_key(&key);
             return;
         }
 
         // If the model selector is active, route input to it.
         if self.model_selector.is_some() {
+            self.last_idle_escape = None;
             self.handle_model_selector_key(&key);
             return;
         }
 
         // If an overlay is active, route input there.
         if self.overlay_stack.has_visible() {
+            self.last_idle_escape = None;
             if let Some(entry) = self.overlay_stack.topmost_entry_mut() {
                 entry.component.handle_input(&key);
             }
@@ -244,6 +258,9 @@ impl App {
         if self.autocomplete.is_active() {
             match &key {
                 Key::Up | Key::Down | Key::Tab | Key::Escape => {
+                    if matches!(key, Key::Escape) {
+                        self.last_idle_escape = None;
+                    }
                     self.autocomplete.handle_input(&key);
                     // Check if a suggestion was selected.
                     match self.autocomplete.take_result() {
@@ -291,13 +308,14 @@ impl App {
             }
             Key::Escape => {
                 if self.agent_state.is_running() {
+                    self.last_idle_escape = None;
                     self.handle_abort();
+                } else if !self.editor.text().is_empty() {
+                    self.last_idle_escape = None;
+                    self.editor.set_text("");
+                    self.autocomplete.dismiss();
                 } else {
-                    // Clear editor if it has text.
-                    if !self.editor.text().is_empty() {
-                        self.editor.set_text("");
-                        self.autocomplete.dismiss();
-                    }
+                    self.handle_idle_escape_for_rewind();
                 }
                 return;
             }

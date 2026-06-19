@@ -34,6 +34,9 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             handle_follow_up(ctx, id.as_deref(), &type_name, message).await
         }
         AgentCommand::Abort { .. } => handle_abort(ctx, id.as_deref(), &type_name).await,
+        AgentCommand::RewindTo { message_index, .. } => {
+            handle_rewind_to(ctx, id.as_deref(), &type_name, message_index).await
+        }
         AgentCommand::SetWorkflowAutomation {
             auto_continue,
             completion_nudge,
@@ -279,6 +282,51 @@ pub(super) async fn handle_clear_history(
         }
     }
     let ev = AgentEvent::ok(id, tn, None);
+    emit_event_to_broadcast_or_writer(ctx, &ev).await;
+    false
+}
+
+pub(super) async fn handle_rewind_to(
+    ctx: &mut DispatchCtx<'_>,
+    id: Option<&str>,
+    tn: &str,
+    message_index: usize,
+) -> bool {
+    if ctx.session.is_streaming() {
+        let ev = AgentEvent::err(id, tn, "cannot rewind while agent is running");
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
+
+    if !rewind_to_message_index(ctx.messages, message_index) {
+        let ev = AgentEvent::err(id, tn, "invalid rewind target");
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
+
+    ctx.session.clear_usage();
+    ctx.session.drain_pending();
+    // Clear spill store and remove retained spill references so stale truncated
+    // tool output is not recallable or re-injected.
+    if let Some(spill) = ctx.agent.spill_store() {
+        if let Err(e) = spill.clear(ctx.session_key).await {
+            tracing::warn!("rewind_to: failed to clear spill store: {e}");
+        }
+    }
+    if let Err(err) = persist_current_session(ctx).await {
+        let ev = AgentEvent::err(id, tn, format!("failed to save rewound session: {err}"));
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
+
+    let ev = AgentEvent::ok(
+        id,
+        tn,
+        Some(serde_json::json!({
+            "rewound": true,
+            "messageIndex": message_index,
+        })),
+    );
     emit_event_to_broadcast_or_writer(ctx, &ev).await;
     false
 }

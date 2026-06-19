@@ -146,6 +146,76 @@ fn test_clear_history_blocked_while_streaming() {
     assert!(session.is_streaming());
 }
 
+// ─── rewind_to ───────────────────────────────────────────────────────────────
+
+#[test]
+fn test_parse_rewind_to_command() {
+    let line = r#"{"type":"rewind_to","id":"rw-1","messageIndex":2}"#;
+    let cmd = parse_command_line(line).unwrap();
+    assert_eq!(cmd.type_name(), "rewind_to");
+    assert_eq!(cmd.id(), Some("rw-1"));
+}
+
+#[test]
+fn test_rewind_to_type_name() {
+    let cmd = AgentCommand::RewindTo {
+        id: None,
+        message_index: 0,
+    };
+    assert_eq!(cmd.type_name(), "rewind_to");
+}
+
+#[test]
+fn test_rewind_to_user_boundary_truncates() {
+    let mut messages: Vec<Message> = vec![
+        Message::system("Be helpful."),
+        Message::user("first"),
+        Message::assistant("first reply", vec![]),
+        Message::user("second"),
+        Message::assistant("second reply", vec![]),
+    ];
+    assert!(rewind_to_message_index(&mut messages, 3));
+    assert_eq!(messages.len(), 3);
+    assert_eq!(messages[2].content, "first reply");
+}
+
+#[test]
+fn test_rewind_to_rejects_non_user_boundary() {
+    let mut messages: Vec<Message> =
+        vec![Message::user("first"), Message::assistant("reply", vec![])];
+    assert!(!rewind_to_message_index(&mut messages, 1));
+    assert_eq!(messages.len(), 2);
+}
+
+#[test]
+fn test_rewind_to_rejects_out_of_range() {
+    let mut messages: Vec<Message> = vec![Message::user("first")];
+    assert!(!rewind_to_message_index(&mut messages, 99));
+    assert_eq!(messages.len(), 1);
+}
+
+#[test]
+fn test_rewind_to_removes_retained_spill_references() {
+    let mut manifest = Message::system("[Session memory: 1 spilled entry]");
+    manifest.is_manifest = true;
+    let mut collapsed = Message::tool("call-1", "[bash: output — recall(\"turn1:bash:0\")]");
+    collapsed.is_collapsed = true;
+    collapsed.spill_id = Some("turn1:bash:0".into());
+    let mut messages: Vec<Message> = vec![
+        Message::system("Be helpful."),
+        manifest,
+        Message::user("first"),
+        collapsed,
+        Message::user("second"),
+    ];
+
+    assert!(rewind_to_message_index(&mut messages, 4));
+    assert!(!messages.iter().any(|m| m.is_manifest));
+    assert!(!messages.iter().any(|m| m.is_collapsed));
+    assert!(!messages.iter().any(|m| m.spill_id.is_some()));
+    assert!(!messages.iter().any(|m| m.content.contains("recall(")));
+}
+
 // ─── clear_history + spill store (#412) ──────────────────────────────────────
 
 #[tokio::test]

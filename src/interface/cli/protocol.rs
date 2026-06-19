@@ -129,6 +129,13 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    /// Rewind conversation history to a selected user-message boundary.
+    RewindTo {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(rename = "messageIndex")]
+        message_index: usize,
+    },
     /// Toggle core workflow automation for this UDS session.
     SetWorkflowAutomation {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -179,6 +186,7 @@ impl AgentCommand {
             Self::UnregisterTools { id, .. } => id.as_deref(),
             Self::ToolResult { .. } => None,
             Self::ClearHistory { id } => id.as_deref(),
+            Self::RewindTo { id, .. } => id.as_deref(),
             Self::SetWorkflowAutomation { id, .. } => id.as_deref(),
             Self::GetSubagents { id } => id.as_deref(),
         }
@@ -204,6 +212,7 @@ impl AgentCommand {
             Self::UnregisterTools { .. } => "unregister_tools",
             Self::ToolResult { .. } => "tool_result",
             Self::ClearHistory { .. } => "clear_history",
+            Self::RewindTo { .. } => "rewind_to",
             Self::SetWorkflowAutomation { .. } => "set_workflow_automation",
             Self::GetSubagents { .. } => "get_subagents",
         }

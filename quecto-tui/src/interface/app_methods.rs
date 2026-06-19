@@ -1,88 +1,10 @@
 use super::*;
+use crate::interface::select_overlay::{
+    build_resume_selector_overlay, build_rewind_selector_overlay,
+};
+use crate::interface::theme;
 
 impl App {
-    pub(super) fn update_subagent_bar(
-        &mut self,
-        subagents: Vec<crate::infrastructure::client::SubagentInfoEvent>,
-    ) {
-        // Merge server data with existing local state to preserve exited_at
-        // timestamps. New entries are inserted; entries absent from the
-        // server push are removed unless they have an active grace period.
-        let mut new_map = std::collections::BTreeMap::new();
-        for s in subagents {
-            let id = sanitize_agent_id(&s.agent_id);
-            if let Some(mut existing) = self.subagent_local.remove(&id) {
-                existing.update_info(s);
-                new_map.insert(id, existing);
-            } else {
-                new_map.insert(id, TrackedSubagent::new(s));
-            }
-        }
-        // Preserve locally-tracked exited entries whose grace period
-        // hasn't elapsed yet (server may stop reporting them immediately).
-        let now = tokio::time::Instant::now();
-        for (id, entry) in std::mem::take(&mut self.subagent_local) {
-            if let Some(exited_at) = entry.exited_at {
-                if now.saturating_duration_since(exited_at) < EXITED_SUBAGENT_GRACE {
-                    new_map.entry(id).or_insert(entry);
-                }
-            }
-        }
-        self.subagent_local = new_map;
-        self.rebuild_subagent_bar();
-    }
-
-    /// Rebuild the widget from local state.
-    pub(super) fn rebuild_subagent_bar(&mut self) {
-        if self.subagent_local.is_empty() {
-            self.widgets_above.clear("subagents");
-        } else {
-            let now = tokio::time::Instant::now();
-            let rows: Vec<SubagentRow> = self
-                .subagent_local
-                .values()
-                .map(|t| SubagentRow::new(t.info.clone(), t.elapsed_secs(now)))
-                .collect();
-            let mut bar = SubagentBar::new();
-            bar.update(rows, self.subagent_frame);
-            bar.set_awaited(self.awaited_agent_id.clone());
-            self.widgets_above.set("subagents", Box::new(bar));
-        }
-    }
-
-    /// Advance the subagent spinner animation. Returns `true` if a re-render is
-    /// needed (i.e. at least one agent is active). Driven by the spinner tick so
-    /// running agents animate and their elapsed-time clocks stay current.
-    pub(super) fn tick_subagent_animation(&mut self) -> bool {
-        let any_active = self
-            .subagent_local
-            .values()
-            .any(|t| subagent_status_is_active(&t.info.status));
-        if !any_active {
-            return false;
-        }
-        self.subagent_frame = self.subagent_frame.wrapping_add(1);
-        self.rebuild_subagent_bar();
-        true
-    }
-
-    /// GC exited subagent bars whose grace period has elapsed (#540).
-    /// Returns `true` if the bar was modified.
-    pub(super) fn gc_exited_subagents(&mut self) -> bool {
-        if self.subagent_local.is_empty() {
-            return false;
-        }
-        let removed = gc_exited_subagents(
-            &mut self.subagent_local,
-            tokio::time::Instant::now(),
-            EXITED_SUBAGENT_GRACE,
-        );
-        if removed {
-            self.rebuild_subagent_bar();
-        }
-        removed
-    }
-
     // ── Slash command handlers ─────────────────────────────────────────
 
     pub(super) fn reject_unknown_slash_command(&mut self, command: &str) {
@@ -102,6 +24,7 @@ impl App {
                 "  Shift+Enter    Insert newline",
                 "  Alt+Enter      Insert newline",
                 "  Escape         Abort agent / clear editor",
+                "  Esc Esc        Choose a previous turn to go back to",
                 "  Ctrl+C         Clear editor first, abort if empty",
                 "  Ctrl+D         Exit",
                 "  Ctrl+L         Open model selector",
@@ -505,6 +428,27 @@ impl App {
         if let Some(selector) = &mut self.resume_selector {
             let (selector_lines, overlay_width) =
                 build_resume_selector_overlay(selector, width, height);
+            let overlay_height = selector_lines.len().min(height.saturating_sub(4));
+            let start_row = height.saturating_sub(overlay_height) / 2;
+            let start_col = width.saturating_sub(overlay_width) / 2;
+            for i in 0..overlay_height {
+                let row = start_row + i;
+                if row < lines.len() && i < selector_lines.len() {
+                    lines[row] = crate::interface::overlay::splice_line(
+                        &lines[row],
+                        &selector_lines[i],
+                        start_col,
+                        overlay_width,
+                        width,
+                    );
+                }
+            }
+        }
+
+        // Composite rewind selector overlay if active.
+        if let Some(selector) = &mut self.rewind_selector {
+            let (selector_lines, overlay_width) =
+                build_rewind_selector_overlay(selector, width, height);
             let overlay_height = selector_lines.len().min(height.saturating_sub(4));
             let start_row = height.saturating_sub(overlay_height) / 2;
             let start_col = width.saturating_sub(overlay_width) / 2;

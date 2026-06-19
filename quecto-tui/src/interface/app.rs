@@ -27,7 +27,6 @@ use crate::interface::components::workflow_bar;
 use crate::interface::keys::{self, Key};
 use crate::interface::kitty::KittyProtocol;
 use crate::interface::overlay::OverlayStack;
-use crate::interface::theme;
 
 /// Tick interval for spinner animation (~12fps).
 const SPINNER_TICK: Duration = Duration::from_millis(80);
@@ -39,11 +38,6 @@ const MOUSE_SCROLL_LINES: usize = 3;
 /// Handles up to 5-fragment CSI splits on slow SSH/serial connections.
 /// Total max wait = MAX_ESCAPE_RETRIES × escape_timeout (10ms) = 50ms.
 const MAX_ESCAPE_RETRIES: usize = 5;
-
-/// Width of the opaque padding around the resume selector content.
-const RESUME_SELECTOR_BORDER_WIDTH: usize = 6;
-/// Maximum width of the resume selector modal, including opaque padding.
-const RESUME_SELECTOR_MAX_PANEL_WIDTH: usize = 88;
 
 /// Built-in slash commands.
 fn builtin_commands() -> Vec<SlashCommand> {
@@ -99,51 +93,6 @@ fn builtin_commands() -> Vec<SlashCommand> {
     ]
 }
 
-fn pad_ansi_to_width(text: &str, width: usize) -> String {
-    let truncated = crate::interface::utils::truncate_to_width(text, width, Some("…"));
-    let visible = crate::interface::utils::visible_width(&truncated);
-    if visible >= width {
-        truncated
-    } else {
-        format!("{}{}", truncated, " ".repeat(width - visible))
-    }
-}
-
-fn build_resume_selector_overlay(
-    selector: &mut SelectList,
-    terminal_width: usize,
-    terminal_height: usize,
-) -> (Vec<String>, usize) {
-    let panel_width = terminal_width
-        .saturating_sub(4)
-        .clamp(1, RESUME_SELECTOR_MAX_PANEL_WIDTH);
-    let border_width = RESUME_SELECTOR_BORDER_WIDTH.min(panel_width.saturating_sub(20) / 2);
-    let content_width = panel_width.saturating_sub(border_width * 2).max(1);
-    let side_padding = " ".repeat(border_width);
-
-    let mut content_lines = vec![theme::bold("Resume session")];
-    content_lines.extend(selector.render(content_width));
-    content_lines.push(theme::dim("Enter resume · Esc cancel"));
-
-    let max_height = terminal_height.saturating_sub(4).max(1);
-    let vertical_border = border_width.min(max_height.saturating_sub(1) / 2);
-    let blank = theme::apply_overlay_bg("", panel_width);
-
-    let mut overlay_lines = Vec::new();
-    overlay_lines.extend(std::iter::repeat_n(blank.clone(), vertical_border));
-    for line in content_lines {
-        let padded = pad_ansi_to_width(&line, content_width);
-        overlay_lines.push(theme::apply_overlay_bg(
-            &format!("{side_padding}{padded}{side_padding}"),
-            panel_width,
-        ));
-    }
-    overlay_lines.extend(std::iter::repeat_n(blank, vertical_border));
-    overlay_lines.truncate(max_height);
-
-    (overlay_lines, panel_width)
-}
-
 /// Mouse selection anchor for click-and-drag text copy (#528).
 #[derive(Debug, Clone, Copy)]
 struct SelectionAnchor {
@@ -192,6 +141,16 @@ pub struct App {
     model_selector: Option<ModelSelector>,
     /// Session resume selector shown after `/resume` lists persisted sessions.
     resume_selector: Option<SelectList>,
+    /// Rewind selector shown after idle double-Escape lists prior user turns.
+    rewind_selector: Option<SelectList>,
+    /// Last idle bare Escape used to detect double-Escape for rewind.
+    last_idle_escape: Option<tokio::time::Instant>,
+    /// Locally-issued get_messages id for opening the rewind selector.
+    pending_rewind_open_id: Option<String>,
+    /// Locally-issued rewind_to id awaiting acknowledgement.
+    pending_rewind_apply_id: Option<String>,
+    /// Monotonic client-local sequence for rewind correlation ids.
+    rewind_request_seq: u64,
     /// Client-side subagent state for immediate bar updates (#525).
     /// Updated from tool events (spawn/agent_cmd) and server pushes.
     /// Entries track expiry timestamps for auto-removal (#540).
@@ -248,6 +207,11 @@ impl App {
             connected_agent_id: None,
             model_selector: None,
             resume_selector: None,
+            rewind_selector: None,
+            last_idle_escape: None,
+            pending_rewind_open_id: None,
+            pending_rewind_apply_id: None,
+            rewind_request_seq: 0,
             subagent_local: std::collections::BTreeMap::new(),
             subagent_frame: 0,
             awaited_agent_id: None,
@@ -268,6 +232,12 @@ mod app_event_loop;
 mod app_events;
 #[path = "app_methods.rs"]
 mod app_methods;
+#[path = "app_response.rs"]
+mod app_response;
+#[path = "app_rewind.rs"]
+mod app_rewind;
+#[path = "app_subagents.rs"]
+mod app_subagents;
 
 /// Maximum bytes for OSC 52 clipboard payload (100 KiB before base64 encoding).
 /// Some terminals (e.g. tmux) have a ~64 KiB limit; this cap prevents
