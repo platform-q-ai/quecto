@@ -673,7 +673,17 @@ impl TrackedSubagent {
 
     /// Update the info, freezing the timer when the agent stops being active and
     /// recording exited_at on transition to "exited".
-    fn update_info(&mut self, new_info: crate::infrastructure::client::SubagentInfoEvent) {
+    fn update_info(&mut self, mut new_info: crate::infrastructure::client::SubagentInfoEvent) {
+        // Preserve the last-known workflow snapshot + parentage when an update
+        // omits them. `get_subagents` responses carry only agent_id/status/pid
+        // (no workflow/parent_id), so without this they'd erase the `n/n` and
+        // tree info that `subagent_state_changed` provided.
+        if new_info.workflow.is_none() {
+            new_info.workflow = self.info.workflow.take();
+        }
+        if new_info.parent_id.is_none() {
+            new_info.parent_id = self.info.parent_id.take();
+        }
         let now = tokio::time::Instant::now();
         if subagent_status_is_active(&new_info.status) {
             // Resumed work — let the timer run again.

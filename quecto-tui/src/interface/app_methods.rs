@@ -399,7 +399,20 @@ impl App {
         if let Some(spinner) = &mut self.spinner {
             bottom.extend(spinner.render(width));
         } else if !self.subagent_local.is_empty() {
-            bottom.push(String::new());
+            // Parent is idle but sub-agents are tracked. Keep the reserved slot
+            // meaningful: if any child is still working, show an animated
+            // "N working" indicator (so activity stays visible while the parent
+            // waits); otherwise a blank keeps the height stable.
+            let active = self
+                .subagent_local
+                .values()
+                .filter(|t| subagent_status_is_active(&t.info.status))
+                .count();
+            if active > 0 {
+                bottom.push(subagent_activity_line(active, self.subagent_frame));
+            } else {
+                bottom.push(String::new());
+            }
         }
 
         // Autocomplete dropdown.
@@ -654,6 +667,19 @@ impl App {
 
         result
     }
+}
+
+/// Animated "N subagent(s) working…" line shown in the reserved spinner slot
+/// while the parent is idle but children are still active.
+fn subagent_activity_line(active: usize, frame: usize) -> String {
+    const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let spin = theme::spinner(FRAMES[frame % FRAMES.len()]);
+    let noun = if active == 1 { "subagent" } else { "subagents" };
+    format!(
+        "  {} {}",
+        spin,
+        theme::muted(&format!("{active} {noun} working..."))
+    )
 }
 
 /// Strip ANSI escape sequences (CSI + OSC) for the render-log diagnostic and

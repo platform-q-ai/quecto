@@ -201,3 +201,48 @@ async fn forwarded_canonical_wire_line_parses_and_does_not_leak() {
         h.dump_full()
     );
 }
+
+/// A `get_subagents` poll carries no workflow snapshot; it must NOT erase the
+/// `n/n` that `subagent_state_changed` provided (the missing step-info bug).
+#[tokio::test]
+async fn workflow_snapshot_survives_workflowless_poll() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![subagent(
+        "a1",
+        "running",
+        Some(("active", 2, 3)),
+    )]));
+    assert!(
+        h.last().contains("wf active 2/3"),
+        "wf should show:\n{}",
+        h.last()
+    );
+    // get_subagents response shape: status only, no workflow.
+    h.event(subagents_changed(vec![subagent("a1", "running", None)]));
+    assert!(
+        h.last().contains("wf active 2/3"),
+        "wf must persist through a workflowless poll:\n{}",
+        h.last()
+    );
+}
+
+/// While the parent is idle but a child is still active, the reserved spinner
+/// slot shows an animated "N working" indicator (not a blank) — the "missing
+/// working spinner" report.
+#[tokio::test]
+async fn idle_parent_shows_subagent_activity() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![subagent(
+        "a1",
+        "running",
+        Some(("active", 2, 3)),
+    )]));
+    h.event(Event::AgentEnd { messages: vec![] }); // parent idle, a1 still running
+    assert!(
+        h.last().contains("subagent working"),
+        "idle parent with an active child should show an activity line:\n{}",
+        h.last()
+    );
+}
