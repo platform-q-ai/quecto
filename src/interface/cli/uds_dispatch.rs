@@ -189,7 +189,14 @@ pub(super) async fn handle_resume_session(
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
-    let new_key = Session::build_key("cli", name);
+    // The /resume picker selects by full session key (e.g. a `chat-…` user
+    // chat); a typed `/resume <name>` refers to a legacy `cli:<name>` session.
+    // Don't re-prefix an already-qualified user-chat key.
+    let new_key = if name.starts_with(crate::domain::session::USER_CHAT_PREFIX) {
+        name.to_string()
+    } else {
+        Session::build_key("cli", name)
+    };
     if let Err(err) = persist_current_session(ctx).await {
         let ev = AgentEvent::err(
             id,
