@@ -20,6 +20,12 @@ Feature: TUI model selector overlay — scrollable list with fuzzy search
     And the output should contain "anthropic/claude-opus-4-8"
     And the output should contain "anthropic/claude-opus-4-7"
 
+  Scenario: Model selector includes Fireworks serverless models
+    Given a model selector with known models
+    When rendered at width 80
+    Then the output should contain "fireworks/glm-5.2"
+    And the output should contain "fireworks/kimi-k2.7-code-fast"
+
   Scenario: Model selector shows selection indicator
     Given a model selector with known models
     When rendered at width 60
