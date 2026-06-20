@@ -3,7 +3,7 @@ use quecto_runtime_manager::{
     infrastructure::{AppState, serve},
 };
 use reqwest::{Certificate, Client};
-use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::sync::Mutex;
 
 #[tokio::main]
@@ -27,7 +27,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             socket_root: env_path("QUECTO_SOCKET_ROOT", "/data/sockets"),
             api_port_base: env_u16("QUECTO_API_PORT_BASE", 21000),
             api_port_span: env_u16("QUECTO_API_PORT_SPAN", 2000),
-            idle: Duration::from_millis(env_u64("QUECTO_RUNTIME_IDLE_MS", 1_800_000)),
             max_runtimes: env_usize("QUECTO_MAX_RUNTIMES", 24),
             system_prompt_path: env_path(
                 "QUECTO_SYSTEM_PROMPT_PATH",
@@ -80,13 +79,6 @@ fn env_path(key: &str, default: &str) -> PathBuf {
 }
 
 fn env_u16(key: &str, default: u16) -> u16 {
-    std::env::var(key)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(default)
-}
-
-fn env_u64(key: &str, default: u64) -> u64 {
     std::env::var(key)
         .ok()
         .and_then(|value| value.parse().ok())

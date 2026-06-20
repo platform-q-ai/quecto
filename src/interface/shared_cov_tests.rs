@@ -149,9 +149,13 @@ async fn sync_credentials_to_manager_noop_when_env_unset() {
     // touching the filesystem or network.
     let tmp = tempfile::TempDir::new().unwrap();
     let path = tmp.path().join("credentials.json");
-    if std::env::var("QUECTO_CREDENTIAL_SYNC_URL").is_err() {
-        sync_credentials_to_manager(&path).await;
-    }
+    // Call unconditionally: with no sync URL configured this is a no-op, and the
+    // function never writes to `path` regardless, so the file must not appear.
+    sync_credentials_to_manager(&path).await;
+    assert!(
+        !path.exists(),
+        "no-op credential sync must not create the credentials file"
+    );
 }
 
 // --- native extension build + registration ---

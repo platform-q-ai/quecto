@@ -79,8 +79,12 @@ async fn ensure_runtime(
     let runtime_ref = envelope.runtime_ref.clone();
 
     // Reject early if the socket path would exceed the OS UDS path limit —
-    // otherwise the later bind() fails with a cryptic truncation error.
-    if !crate::domain::socket_path_within_uds_limit(&state.config.socket_root, &runtime_ref) {
+    // otherwise the later bind() fails with a cryptic truncation error. Only the
+    // process model binds a local `socket_root/{ref}.sock`; the pod model uses a
+    // fixed `kubernetes://` socket, so the length guard doesn't apply there.
+    if body.execution_model.as_deref() != Some("pod")
+        && !crate::domain::socket_path_within_uds_limit(&state.config.socket_root, &runtime_ref)
+    {
         return json_error(
             StatusCode::BAD_REQUEST,
             format!("socket path too long for runtime '{runtime_ref}' (exceeds the OS UDS limit)"),
