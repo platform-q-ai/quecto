@@ -44,6 +44,13 @@ if ! [[ "$SHARDS" =~ ^[0-9]+$ ]] || [[ "$SHARDS" -le 0 ]]; then
     exit 2
 fi
 
+# Load repo-local .env (API keys) ONLY for real-LLM runs, so direct invocations
+# pick it up without `set -a; . ./.env`. Deterministic (non-real) shards must
+# NOT see provider keys — an ambient key makes "no providers" tests fail.
+if [[ "$REAL_LLM" == "1" ]]; then
+    source "$ROOT/scripts/load-dotenv.sh"
+fi
+
 TMP_DIR="$(mktemp -d "$ROOT/.git/${SUITE_NAME}-shards.XXXXXX")"
 
 echo "Running ${SUITE_NAME} in ${SHARDS} shard(s); timeout per shard: ${TIMEOUT_PER_SHARD}"

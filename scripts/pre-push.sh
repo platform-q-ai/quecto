@@ -9,7 +9,10 @@ export PATH="$HOME/.cargo/bin:$PATH"
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
-source "$ROOT/scripts/load-dotenv.sh"
+# NOTE: pre-push runs only deterministic checks (no real-LLM step — those live in
+# pre-merge-commit.sh). It must NOT load .env: a real provider key in the
+# environment makes the agent see a configured provider, which breaks the many
+# "no providers configured" / default-config tests in the deterministic wave.
 
 E2E_TIMEOUT="${QUECTO_E2E_TIMEOUT:-12m}"
 BDD_SHARDS="${QUECTO_BDD_SHARDS:-24}"
