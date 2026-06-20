@@ -301,8 +301,9 @@ pub(crate) fn build_agent_from_config(
 ) -> Option<AgentBuildResult> {
     // An explicitly-provided --config path must exist; only a missing DEFAULT
     // config falls back to zero-config defaults.
-    if config_explicit && !config_path.exists() {
-        stderr.push_str(&format!("config not found: {}\n", config_path.display()));
+    if let Some(msg) = super::explicit_config_missing(config_path, config_explicit) {
+        stderr.push_str(&msg);
+        stderr.push('\n');
         return None;
     }
     // Zero-config: a missing default config file loads defaults (no onboarding step).

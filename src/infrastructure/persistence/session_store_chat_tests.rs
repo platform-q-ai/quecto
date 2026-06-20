@@ -57,23 +57,27 @@ async fn list_returns_only_user_chat_sessions_with_metadata_newest_first() {
         .await
         .unwrap();
 
-    let summaries = store.list().await.unwrap();
+    let summaries = store
+        .list(Some(crate::domain::session::USER_CHAT_PREFIX))
+        .await
+        .unwrap();
 
     assert_eq!(summaries.len(), 2);
     assert_eq!(summaries[0].key, "chat-new");
-    assert_eq!(summaries[0].name, "newer chat title");
+    assert_eq!(summaries[0].title, "newer chat title");
     assert_eq!(summaries[0].message_count, 2);
     assert!(summaries[0].updated_unix_secs.is_some());
     assert_eq!(summaries[1].key, "chat-old");
-    assert_eq!(summaries[1].name, "older chat title");
+    assert_eq!(summaries[1].title, "older chat title");
     assert_eq!(summaries[1].message_count, 1);
 }
 
 #[tokio::test]
-async fn list_derives_untitled_and_truncates_first_user_message() {
+async fn list_extracts_raw_first_user_message() {
     let tmp = TempDir::new().unwrap();
     let store = FileSessionStore::new(tmp.path());
     let long = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let huge = "x".repeat(500);
 
     store
         .save(&Session {
@@ -91,12 +95,28 @@ async fn list_derives_untitled_and_truncates_first_user_message() {
         })
         .await
         .unwrap();
+    store
+        .save(&Session {
+            key: "chat-huge".to_string(),
+            messages: vec![chat_message(Role::User, &huge)],
+            workflow_run: None,
+        })
+        .await
+        .unwrap();
 
-    let summaries = store.list().await.unwrap();
+    let summaries = store
+        .list(Some(crate::domain::session::USER_CHAT_PREFIX))
+        .await
+        .unwrap();
     let long_summary = summaries.iter().find(|s| s.key == "chat-long").unwrap();
     let empty_summary = summaries.iter().find(|s| s.key == "chat-empty").unwrap();
+    let huge_summary = summaries.iter().find(|s| s.key == "chat-huge").unwrap();
 
-    assert!(long_summary.name.chars().count() <= 51);
-    assert!(long_summary.name.ends_with('…'));
-    assert_eq!(empty_summary.name, "(untitled)");
+    // Persistence returns the RAW first user message — no truncation/ellipsis;
+    // display formatting (truncation, "(untitled)") lives in the interface layer.
+    assert_eq!(long_summary.title, long);
+    // No user message → empty title (display applies the "(untitled)" placeholder).
+    assert_eq!(empty_summary.title, "");
+    // Bounded to the transport cap (200 chars) to keep wire payloads sane.
+    assert_eq!(huge_summary.title.chars().count(), 200);
 }

@@ -4,7 +4,33 @@ use crate::interface::select_overlay::{
 };
 use crate::interface::theme;
 
+/// Format a Unix timestamp as `YYYY-MM-DD HH:MM` in **local** time, falling
+/// back to UTC if the platform's local-time conversion is unavailable.
 fn format_unix_minutes(secs: u64) -> String {
+    format_local_minutes(secs).unwrap_or_else(|| format_utc_minutes(secs))
+}
+
+/// Local time via `libc::localtime_r`. Returns `None` if the conversion fails.
+fn format_local_minutes(secs: u64) -> Option<String> {
+    let t = secs as libc::time_t;
+    // SAFETY: `libc::tm` is plain-old-data; an all-zero value is a valid initial state for libc to fill.
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    // SAFETY: `&t`/`&mut tm` point to live locals; localtime_r fills `tm` and returns null on failure (checked next).
+    if unsafe { libc::localtime_r(&t, &mut tm) }.is_null() {
+        return None;
+    }
+    Some(format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}",
+        tm.tm_year + 1900,
+        tm.tm_mon + 1,
+        tm.tm_mday,
+        tm.tm_hour,
+        tm.tm_min
+    ))
+}
+
+/// UTC fallback (pure arithmetic) when local-time conversion is unavailable.
+pub(super) fn format_utc_minutes(secs: u64) -> String {
     let secs = secs as i64;
     let days = secs.div_euclid(86_400);
     let mut rem = secs.rem_euclid(86_400);

@@ -185,7 +185,15 @@ impl SessionStore for FileSessionStore {
 
     fn list(
         &self,
+        key_prefix: Option<&str>,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<SessionSummary>, DomainError>> + Send + '_>> {
+        // The caller owns the namespace policy. Pre-compute the sanitized
+        // filename prefix so non-matching files can be skipped WITHOUT being
+        // read or parsed (files on disk are named "<sanitized key>.json").
+        let key_prefix = key_prefix.map(|p| p.to_string());
+        let file_prefix = key_prefix
+            .as_deref()
+            .map(super::filename::sanitize_session_key);
         Box::pin(async move {
             let mut summaries = Vec::new();
             if !self.sessions_dir.exists() {
@@ -200,6 +208,13 @@ impl SessionStore for FileSessionStore {
                 let path = entry.path();
                 if path.extension().is_none_or(|ext| ext != "json") {
                     continue;
+                }
+                // Cheap filename-level filter: skip files outside the requested
+                // namespace before the costly read + parse.
+                if let Some(ref fp) = file_prefix {
+                    if !entry.file_name().to_string_lossy().starts_with(fp.as_str()) {
+                        continue;
+                    }
                 }
                 let metadata = entry.metadata().await.ok();
                 let updated_unix_secs = metadata
@@ -229,20 +244,19 @@ impl SessionStore for FileSessionStore {
                         continue;
                     }
                 };
-                if !file
-                    .key
-                    .starts_with(crate::domain::session::USER_CHAT_PREFIX)
-                {
-                    continue;
+                // Authoritative backstop on the real key.
+                if let Some(ref prefix) = key_prefix {
+                    if !file.key.starts_with(prefix.as_str()) {
+                        continue;
+                    }
                 }
-                let title = session_title(&file.messages);
+                let title = first_user_message(&file.messages);
                 let message_count = file
                     .messages
                     .iter()
                     .filter(|m| matches!(str_to_role(&m.role), Role::User | Role::Assistant))
                     .count();
                 summaries.push(SessionSummary {
-                    name: title.clone(),
                     title,
                     key: file.key,
                     message_count,
@@ -252,7 +266,7 @@ impl SessionStore for FileSessionStore {
             summaries.sort_by(|a, b| {
                 b.updated_unix_secs
                     .cmp(&a.updated_unix_secs)
-                    .then_with(|| a.name.cmp(&b.name))
+                    .then_with(|| a.title.cmp(&b.title))
             });
             Ok(summaries)
         })
@@ -280,23 +294,19 @@ fn str_to_role(s: &str) -> Role {
     }
 }
 
-fn session_title(messages: &[MessageRecord]) -> String {
-    let title = messages
+/// Extract the raw title datum: the session's first user message, trimmed.
+/// Returns an empty string when there is none, bounded to a transport-safe
+/// length (no ellipsis). Display truncation and the "(untitled)" placeholder
+/// are applied by the interface/display layer, not by persistence.
+fn first_user_message(messages: &[MessageRecord]) -> String {
+    const TRANSPORT_CHAR_CAP: usize = 200;
+    messages
         .iter()
         .find(|m| matches!(str_to_role(&m.role), Role::User))
         .map(|m| m.content.trim())
         .filter(|s| !s.is_empty())
-        .unwrap_or("(untitled)");
-    truncate_title(title, 50)
-}
-
-fn truncate_title(title: &str, max_chars: usize) -> String {
-    if title.chars().count() <= max_chars {
-        return title.to_string();
-    }
-    let mut out: String = title.chars().take(max_chars).collect();
-    out.push('…');
-    out
+        .map(|s| s.chars().take(TRANSPORT_CHAR_CAP).collect())
+        .unwrap_or_default()
 }
 
 fn message_to_record(msg: &Message) -> MessageRecord {

@@ -8,6 +8,26 @@ use crate::domain::skill::SkillLoader;
 use crate::infrastructure::auth::credential_store::Credential;
 use crate::infrastructure::persistence::skill_loader::FileSkillLoader;
 
+/// Generate a fresh, collision-resistant user-chat session key.
+///
+/// The domain owns the key *shape* ([`crate::domain::session::user_chat_key`]);
+/// this interface helper owns the impure inputs — the wall clock plus a
+/// uniqueness token combining the process id with a per-process counter — so two
+/// launches started in the same second (or two chats within one process) never
+/// collide on a key.
+pub fn generate_chat_key() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    // PID disambiguates separate launches; the counter disambiguates within one.
+    let uniq = ((std::process::id() as u64) << 24) ^ seq;
+    crate::domain::session::user_chat_key(secs, uniq)
+}
+
 /// Load all workspace skills and concatenate their non-empty body content.
 ///
 /// Skills without valid YAML frontmatter are silently skipped.

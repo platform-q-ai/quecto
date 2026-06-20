@@ -63,3 +63,11 @@ async fn send_new_session_requests_fresh_chat_key() {
             == Some("new_session")
     }));
 }
+
+#[test]
+fn format_utc_minutes_formats_known_timestamps() {
+    use super::app_methods::format_utc_minutes;
+    // 1_700_000_000 = 2023-11-14 22:13:20 UTC (the UTC fallback path).
+    assert_eq!(format_utc_minutes(1_700_000_000), "2023-11-14 22:13");
+    assert_eq!(format_utc_minutes(0), "1970-01-01 00:00");
+}

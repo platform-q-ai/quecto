@@ -7,19 +7,14 @@ use super::{error::DomainError, message::Message};
 /// Prefix for user-facing interactive chat sessions.
 pub const USER_CHAT_PREFIX: &str = "chat-";
 
-/// Generate a unique user-chat session key.
-pub fn new_user_chat_key() -> String {
-    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    if n == 0 {
-        format!("{USER_CHAT_PREFIX}{secs}")
-    } else {
-        format!("{USER_CHAT_PREFIX}{secs}-{n:x}")
-    }
+/// Build a user-chat session key from a timestamp and a uniqueness token.
+///
+/// Pure: the interface layer supplies `secs` (wall clock) and a `uniq` value
+/// that is distinct across concurrent launches (e.g. PID combined with a
+/// per-process counter), so two sessions started in the same second never
+/// collide on a key.
+pub fn user_chat_key(secs: u64, uniq: u64) -> String {
+    format!("{USER_CHAT_PREFIX}{secs}-{uniq:x}")
 }
 
 /// Lightweight metadata for a persisted conversation session.
@@ -27,9 +22,9 @@ pub fn new_user_chat_key() -> String {
 pub struct SessionSummary {
     /// Unique key, e.g. "cli:default".
     pub key: String,
-    /// Human-friendly name/title, derived from the first user message for chat sessions.
-    pub name: String,
-    /// Human-friendly title. Kept separate on the wire while mirroring `name` for compatibility.
+    /// Raw title datum — the session's first user message, trimmed (empty when
+    /// none). Presentation (truncation, "(untitled)") is applied by the display
+    /// layer, not by persistence.
     pub title: String,
     /// Number of persisted user/assistant messages.
     pub message_count: usize,
@@ -84,9 +79,13 @@ pub trait SessionStore: Send + Sync {
         key: &str,
     ) -> Pin<Box<dyn Future<Output = Result<bool, DomainError>> + Send + '_>>;
 
-    /// List persisted sessions, newest first when modification times are available.
+    /// List persisted sessions, newest first when modification times are
+    /// available. When `key_prefix` is `Some`, only sessions whose key starts
+    /// with it are returned; the caller supplies this policy and the adapter
+    /// uses it to skip non-matching files cheaply (without reading/parsing them).
     fn list(
         &self,
+        key_prefix: Option<&str>,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<SessionSummary>, DomainError>> + Send + '_>>;
 }
 

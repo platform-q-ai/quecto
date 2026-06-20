@@ -299,7 +299,7 @@ pub fn run_repl<R: BufRead, W: Write>(
     } else if let Some(name) = ctx.flags.session_name.as_deref() {
         Session::build_key("repl", name)
     } else {
-        crate::domain::session::new_user_chat_key()
+        crate::interface::shared::generate_chat_key()
     };
     let spill_store = Arc::new(FileContextSpillStore::new(ctx.base_dir.to_path_buf()));
     registry.register(Arc::new(RecallTool::new(

@@ -400,14 +400,14 @@ async fn test_list_sessions_returns_cli_names_and_message_counts() {
         .await
         .unwrap();
 
-    let summaries = store.list().await.unwrap();
+    let summaries = store.list(None).await.unwrap();
     assert_eq!(summaries.len(), 2);
     let work = summaries.iter().find(|s| s.key == "chat-work").unwrap();
-    assert_eq!(work.name, "question");
+    assert_eq!(work.title, "question");
     assert_eq!(work.title, "question");
     assert_eq!(work.message_count, 2);
     let default = summaries.iter().find(|s| s.key == "chat-default").unwrap();
-    assert_eq!(default.name, "hello");
+    assert_eq!(default.title, "hello");
     assert_eq!(default.message_count, 1);
 }
 
@@ -429,10 +429,10 @@ async fn test_list_sessions_skips_corrupt_json_files() {
         .await
         .unwrap();
 
-    let summaries = store.list().await.unwrap();
+    let summaries = store.list(None).await.unwrap();
     assert_eq!(summaries.len(), 1);
     assert_eq!(summaries[0].key, "chat-good");
-    assert_eq!(summaries[0].name, "hello");
+    assert_eq!(summaries[0].title, "hello");
 }
 
 #[tokio::test]

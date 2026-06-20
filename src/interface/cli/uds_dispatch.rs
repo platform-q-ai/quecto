@@ -141,7 +141,7 @@ pub(super) async fn handle_new_session(
     clear_conversation(ctx.messages);
     ctx.session.clear_usage();
     ctx.session.drain_pending();
-    let key = crate::domain::session::new_user_chat_key();
+    let key = crate::interface::shared::generate_chat_key();
     ctx.session_key.clear();
     ctx.session_key.push_str(&key);
     ctx.session.set_session_key(key.clone());

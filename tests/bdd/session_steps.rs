@@ -209,12 +209,12 @@ fn then_session_list_should_include(world: &mut QuectoWorld, expected_name: Stri
     let store = world.session_store.as_ref().expect("session store not set");
     let summaries = tokio::runtime::Runtime::new()
         .unwrap()
-        .block_on(store.list())
+        .block_on(store.list(None))
         .expect("session list should succeed");
     assert!(
         summaries
             .iter()
-            .any(|summary| summary.name == expected_name),
+            .any(|summary| summary.title == expected_name),
         "expected session list to include {expected_name:?}, got {summaries:?}"
     );
 }

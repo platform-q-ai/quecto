@@ -425,12 +425,27 @@ async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'_>) -> bool
 fn session_summary_to_json(summary: &crate::domain::session::SessionSummary) -> serde_json::Value {
     serde_json::json!({
         "key": summary.key,
-        "name": summary.name,
-        "title": summary.title,
+        "title": display_title(&summary.title),
         "messageCount": summary.message_count,
         "updatedUnixSecs": summary.updated_unix_secs,
         "updatedAt": summary.updated_unix_secs,
     })
+}
+
+/// Apply display policy to a raw session title (the interface owns presentation,
+/// not persistence): blank → "(untitled)", otherwise truncate to 50 chars with
+/// an ellipsis.
+fn display_title(raw: &str) -> String {
+    const MAX_CHARS: usize = 50;
+    if raw.is_empty() {
+        return "(untitled)".to_string();
+    }
+    if raw.chars().count() <= MAX_CHARS {
+        return raw.to_string();
+    }
+    let mut out: String = raw.chars().take(MAX_CHARS).collect();
+    out.push('…');
+    out
 }
 
 fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serde_json::Value> {
@@ -492,7 +507,11 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
     let id = cmd.id();
     let tn = cmd.type_name();
     if matches!(cmd, AgentCommand::ListSessions { .. }) {
-        let event = match ctx.session_store.list().await {
+        let event = match ctx
+            .session_store
+            .list(Some(crate::domain::session::USER_CHAT_PREFIX))
+            .await
+        {
             Ok(sessions) => AgentEvent::ok(
                 id,
                 tn,
