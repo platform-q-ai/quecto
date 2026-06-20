@@ -231,7 +231,7 @@ impl SessionStore for FileSessionStore {
                 };
                 if !file
                     .key
-                    .starts_with(crate::interface::shared::USER_CHAT_PREFIX)
+                    .starts_with(crate::domain::session::USER_CHAT_PREFIX)
                 {
                     continue;
                 }
