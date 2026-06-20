@@ -167,7 +167,6 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
 
     let exit_code = {
         match args[1].as_str() {
-            "onboard" => commands::cmd_onboard(ctx, &mut stdout, &mut stderr),
             "agent" => agent::cmd_agent(ctx, &args[2..], &mut stdout, &mut stderr),
             "status" => commands::cmd_status(ctx, &mut stdout, &mut stderr),
             "auth" => auth::cmd_auth(ctx, &args[2..], &mut stdout, &mut stderr),
@@ -351,11 +350,7 @@ fn cmd_repl_with_progress<R: std::io::BufRead, W: std::io::Write>(
 
     let base_dir = ctx.base_dir();
     let config_path = ctx.config_path();
-    if !config_path.exists() {
-        let _ = writeln!(io.writer, "Config not found at {}", config_path.display());
-        let _ = writeln!(io.writer, "Run 'quecto onboard' first");
-        return 1;
-    }
+    // Zero-config: a missing config file loads defaults (no onboarding step).
 
     let env_overrides: std::collections::HashMap<String, String> = std::env::vars()
         .filter(|(k, _)| k.starts_with("QUECTO_"))
@@ -494,7 +489,6 @@ fn help_text(out: &mut String) {
         "  --config <path>  Override config file path (default: <base_dir>/config.json)\n",
     );
     out.push_str("\nCommands:\n");
-    out.push_str("  onboard     Initialize configuration and workspace\n");
     out.push_str("  agent       Run a one-shot agent session (-m required)\n");
     out.push_str("              Options: -s <name>  Named session (default: \"default\")\n");
     out.push_str("                       --no-session  Ephemeral mode — nothing saved or loaded\n");

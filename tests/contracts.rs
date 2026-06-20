@@ -11,8 +11,6 @@ mod context_spill_store;
 mod extension;
 #[path = "contracts/llm_provider.rs"]
 mod llm_provider;
-#[path = "contracts/onboard_store.rs"]
-mod onboard_store;
 #[path = "contracts/session_store.rs"]
 mod session_store;
 #[path = "contracts/skill_loader.rs"]

@@ -72,7 +72,6 @@ non_behavioral_features = [
   "tests/features/config.feature",
   "tests/features/auth.feature",
   "tests/features/agent_cli.feature",
-  "tests/features/onboard.feature",
   "tests/features/security.feature",
   "tests/features/extensions.feature",
 

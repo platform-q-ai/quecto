@@ -227,7 +227,7 @@ pub struct QuectoWorld {
     pub resolved_workspace: Option<String>,
     /// Environment variable overrides to apply during config loading
     pub env_overrides: HashMap<String, String>,
-    /// CLI context (allows overriding base_dir for onboard etc.)
+    /// CLI context (allows overriding base_dir for tests)
     pub cli_context: CliContext,
     /// Security sandbox for testing path/command validation
     pub sandbox: Option<Sandbox>,

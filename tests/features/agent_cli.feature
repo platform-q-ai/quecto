@@ -19,12 +19,11 @@ Feature: Agent CLI — Headless One-Shot Mode
     Then the exit code should be 1
     And stderr should contain "agent: -m is required for non-interactive mode"
 
-  Scenario: Missing config shows setup instructions
+  Scenario: Missing config runs on defaults (zero-config), needs a provider key
     Given a temp base directory
     When I run quecto agent -m "hello"
     Then the exit code should be 1
-    And stderr should contain "config not found"
-    And stderr should contain "quecto onboard"
+    And stderr should contain "no LLM providers"
 
   Scenario: No configured providers shows clear error
     Given a temp base directory

@@ -42,7 +42,6 @@ fn test_help_command_shows_usage() {
         &out.stdout,
         &[
             "Usage: quecto [command]",
-            "onboard",
             "agent",
             "status",
             "auth",
@@ -89,9 +88,7 @@ fn test_help_text_includes_all_commands() {
     help_text(&mut out);
     assert_contains_all(
         &out,
-        &[
-            "onboard", "agent", "auth", "status", "skills", "help", "version",
-        ],
+        &["agent", "auth", "status", "skills", "help", "version"],
     );
 }
 
@@ -280,7 +277,9 @@ fn test_parse_repl_flags_non_flag_args_ignored() {
 // ===================================================================
 
 #[test]
-fn test_repl_with_output_no_config() {
+fn test_repl_with_output_no_config_uses_defaults() {
+    // Zero-config: no config file loads defaults; with no provider key the REPL
+    // fails on the missing provider, not on a missing config / onboarding step.
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
@@ -288,7 +287,14 @@ fn test_repl_with_output_no_config() {
     };
     let out = run_repl_with_output(&ctx, &[], &[], false);
     assert_eq!(out.exit_code, 1);
-    assert!(out.stdout.contains("Config not found"));
+    assert!(!out.stdout.contains("Config not found"));
+    assert!(
+        out.stdout.contains("no LLM providers configured")
+            || out.stderr.contains("no LLM providers configured"),
+        "stdout: {}, stderr: {}",
+        out.stdout,
+        out.stderr
+    );
 }
 
 #[test]

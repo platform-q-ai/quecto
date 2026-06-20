@@ -49,7 +49,7 @@ fn test_agent_message_flag_missing_value() {
 #[test]
 fn test_agent_no_message_shows_usage_error() {
     let tmp = tempfile::TempDir::new().unwrap();
-    // Write a config so it doesn't fail on "config not found"
+    // Write a config so it doesn't fail on "no LLM providers configured"
     std::fs::write(
         tmp.path().join("config.json"),
         r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#,
@@ -65,28 +65,6 @@ fn test_agent_no_message_shows_usage_error() {
         out.stderr
             .contains("agent: -m is required for non-interactive mode"),
         "expected usage error, got stderr: {}",
-        out.stderr
-    );
-}
-
-#[test]
-fn test_agent_missing_config_shows_instructions() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    // No config file written
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
-    let out = run_with_output(args("agent -m hello"), &ctx);
-    assert_eq!(out.exit_code, 1);
-    assert!(
-        out.stderr.contains("config not found"),
-        "expected 'config not found', got stderr: {}",
-        out.stderr
-    );
-    assert!(
-        out.stderr.contains("quecto onboard"),
-        "expected 'quecto onboard', got stderr: {}",
         out.stderr
     );
 }
@@ -131,7 +109,7 @@ fn test_agent_parses_system_flag() {
         &ctx,
     );
     assert_eq!(out.exit_code, 1);
-    assert!(out.stderr.contains("config not found"));
+    assert!(out.stderr.contains("no LLM providers configured"));
 }
 
 #[test]
@@ -153,7 +131,7 @@ fn test_agent_parses_model_flag() {
         &ctx,
     );
     assert_eq!(out.exit_code, 1);
-    assert!(out.stderr.contains("config not found"));
+    assert!(out.stderr.contains("no LLM providers configured"));
 }
 
 #[test]
@@ -454,7 +432,7 @@ fn test_build_agent_from_config_no_config_file() {
     let cfg = tmp.path().join("config.json");
     let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr, None);
     assert!(result.is_none());
-    assert!(stderr.contains("config not found"));
+    assert!(stderr.contains("no LLM providers configured"));
 }
 
 #[test]
@@ -584,7 +562,10 @@ fn test_agent_with_system_and_model_no_config() {
     ];
     let out = run_with_output(v, &ctx);
     assert_eq!(out.exit_code, 1);
-    assert!(stderr_or_stdout_contains(&out, "config not found"));
+    assert!(stderr_or_stdout_contains(
+        &out,
+        "no LLM providers configured"
+    ));
 }
 
 #[test]
@@ -620,7 +601,10 @@ fn test_agent_with_ephemeral_session_no_config() {
     ];
     let out = run_with_output(v, &ctx);
     assert_eq!(out.exit_code, 1);
-    assert!(stderr_or_stdout_contains(&out, "config not found"));
+    assert!(stderr_or_stdout_contains(
+        &out,
+        "no LLM providers configured"
+    ));
 }
 
 // ===================================================================

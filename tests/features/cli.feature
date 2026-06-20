@@ -13,7 +13,6 @@ Feature: CLI Interface
     When I run quecto with arguments "help"
     Then the exit code should be 0
     And the output should contain "Usage: quecto [command]"
-    And the output should contain "onboard"
     And the output should contain "agent"
     And the output should contain "status"
     And the output should contain "auth"

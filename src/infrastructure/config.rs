@@ -253,9 +253,16 @@ fn default_max_results() -> u32 {
 }
 impl Config {
     /// Load config from a JSON file at the given path.
+    /// Load config from a JSON file. A missing file yields the default config
+    /// (quecto is zero-config: every field has a sensible default, and
+    /// credentials come from env vars or `quecto auth login`). Other IO errors
+    /// and malformed JSON still fail.
     pub fn load(path: &str) -> Result<Self, ConfigError> {
-        let content =
-            std::fs::read_to_string(path).map_err(|e| ConfigError::Io(path.to_string(), e))?;
+        let content = match std::fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Config::default()),
+            Err(e) => return Err(ConfigError::Io(path.to_string(), e)),
+        };
         let config: Config = serde_json::from_str(&content).map_err(ConfigError::Parse)?;
         Ok(config)
     }
@@ -426,11 +433,61 @@ mod tests {
     }
 
     #[test]
-    fn test_load_missing_file() {
-        let result = Config::load("/nonexistent/path/config.json");
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("failed to read config file"));
+    fn test_load_missing_file_returns_default() {
+        // Zero-config: a missing config file yields the default config rather
+        // than an error (no onboarding step required).
+        let config = Config::load("/nonexistent/path/config.json").unwrap();
+        assert_eq!(
+            config.agents.defaults.model,
+            Config::default().agents.defaults.model
+        );
+    }
+
+    #[test]
+    fn test_load_missing_file_with_env_applies_overrides_on_default() {
+        // Env overrides apply on top of defaults even with no config file.
+        let mut env = HashMap::new();
+        env.insert(
+            "QUECTO_AGENTS_DEFAULTS_MODEL".to_string(),
+            "env/model".to_string(),
+        );
+        let config = Config::load_with_env("/nonexistent/path/config.json", &env).unwrap();
+        assert_eq!(config.agents.defaults.model, "env/model");
+    }
+
+    #[test]
+    fn test_env_overrides_cover_all_keys_on_default() {
+        // Exercises every env-override branch on top of the default config
+        // (zero-config path: no file present).
+        let mut env = HashMap::new();
+        env.insert(
+            "QUECTO_AGENTS_DEFAULTS_WORKSPACE".to_string(),
+            "/ws".to_string(),
+        );
+        env.insert(
+            "QUECTO_AGENTS_DEFAULTS_MAX_SESSION_MESSAGES".to_string(),
+            "42".to_string(),
+        );
+        env.insert("QUECTO_MAX_CONTEXT_TOKENS".to_string(), "12345".to_string());
+        env.insert(
+            "QUECTO_PROVIDERS_ANTHROPIC_API_KEY".to_string(),
+            "ant-key".to_string(),
+        );
+        env.insert(
+            "QUECTO_AGENTS_DEFAULTS_EFFORT".to_string(),
+            "high".to_string(),
+        );
+        env.insert(
+            "QUECTO_TOOLS_WEB_BRAVE_API_KEY".to_string(),
+            "brave-key".to_string(),
+        );
+        let cfg = Config::load_with_env("/nonexistent/config.json", &env).unwrap();
+        assert_eq!(cfg.agents.defaults.workspace, "/ws");
+        assert_eq!(cfg.agents.defaults.max_session_messages, 42);
+        assert_eq!(cfg.agents.defaults.max_context_tokens, 12345);
+        assert_eq!(cfg.providers.anthropic.api_key, "ant-key");
+        assert_eq!(cfg.agents.defaults.effort.as_deref(), Some("high"));
+        assert_eq!(cfg.tools.web.brave.api_key, "brave-key");
     }
 
     #[test]
