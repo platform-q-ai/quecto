@@ -42,11 +42,6 @@ impl SelectList {
         }
     }
 
-    pub fn set_items(&mut self, items: Vec<SelectItem>) {
-        self.items = items;
-        self.selected = 0;
-    }
-
     pub fn take_result(&mut self) -> SelectResult {
         std::mem::replace(&mut self.result, SelectResult::Pending)
     }

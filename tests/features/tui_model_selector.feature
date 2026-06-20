@@ -62,7 +62,7 @@ Feature: TUI model selector overlay — scrollable list with fuzzy search
   # ---------------------------------------------------------------------------
 
   Scenario: Current model is marked in the list
-    Given a model selector with current model "claude-sonnet-4-20250514"
+    Given a model selector with current model "claude-sonnet-4-6"
     When rendered
     Then the current model should have a visual indicator
 

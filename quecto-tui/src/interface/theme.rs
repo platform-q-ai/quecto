@@ -67,21 +67,9 @@ pub fn cyan(text: &str) -> String {
     styled(36, text)
 }
 
-pub fn white(text: &str) -> String {
-    styled(37, text)
-}
-
 pub fn gray(text: &str) -> String {
     fg256(245, text)
 }
-
-// ── SGR reset ────────────────────────────────────────────────────────────────
-
-/// Full SGR reset + OSC 8 hyperlink reset.
-pub const RESET: &str = "\x1b[0m\x1b]8;;\x07";
-
-/// SGR reset only.
-pub const SGR_RESET: &str = "\x1b[0m";
 
 // ── Semantic colors ──────────────────────────────────────────────────────────
 

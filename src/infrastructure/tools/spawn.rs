@@ -630,3 +630,7 @@ pub fn shutdown_all(registry: &SubagentRegistry) {
 #[cfg(test)]
 #[path = "spawn_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "spawn_cov_tests.rs"]
+mod cov_tests;

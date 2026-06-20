@@ -431,6 +431,10 @@ impl LlmProvider for OpenAiProvider {
 mod openai_sse;
 
 #[cfg(test)]
+#[path = "openai_cov_tests.rs"]
+mod cov_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::message::Message;

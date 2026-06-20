@@ -648,6 +648,10 @@ mod coverage_tests {
 }
 
 #[cfg(test)]
+#[path = "ensure_tool_cov_tests.rs"]
+mod cov_tests;
+
+#[cfg(test)]
 mod download_coverage_tests {
     use super::*;
     use tempfile::TempDir;

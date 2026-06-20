@@ -732,6 +732,9 @@ fn gc_exited_subagents(
 }
 
 #[cfg(test)]
+#[path = "app_cov_tests.rs"]
+mod app_cov_tests;
+#[cfg(test)]
 #[path = "app_subagent_selection_tests.rs"]
 mod subagent_selection_tests;
 #[cfg(test)]

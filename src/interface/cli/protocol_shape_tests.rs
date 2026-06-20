@@ -108,7 +108,7 @@ fn response_error_matches_spec() {
 #[test]
 fn get_state_data_matches_spec_shape() {
     let state = SessionState {
-        model: "claude-sonnet-4-20250514".into(),
+        model: "claude-sonnet-4-6".into(),
         is_streaming: false,
         session_key: "cli:my-session".into(),
         message_count: 12,
@@ -117,7 +117,7 @@ fn get_state_data_matches_spec_shape() {
         workflow: None,
     };
     let j = round_trip(&state);
-    assert_eq!(j["model"], "claude-sonnet-4-20250514");
+    assert_eq!(j["model"], "claude-sonnet-4-6");
     assert_eq!(j["isStreaming"], false); // camelCase
     assert_eq!(j["sessionKey"], "cli:my-session"); // camelCase
     assert_eq!(j["messageCount"], 12); // camelCase

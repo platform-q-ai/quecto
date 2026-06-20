@@ -279,7 +279,7 @@ Return the current session state.
 
 ```json
 {
-  "model": "anthropic/claude-sonnet-4-20250514",
+  "model": "anthropic/claude-sonnet-4-6",
   "isStreaming": false,
   "sessionKey": "cli:default",
   "messageCount": 6,
@@ -419,7 +419,7 @@ Switch the active model at runtime. The new model takes effect on the next promp
 |---|---|---|---|
 | `type` | `"set_model"` | yes | |
 | `id` | string | no | Correlation ID |
-| `model` | string | option A | Qualified model name, e.g. `"anthropic/claude-sonnet-4-20250514"` |
+| `model` | string | option A | Qualified model name, e.g. `"anthropic/claude-sonnet-4-6"` |
 | `provider` | string | option B | Provider name (used with `modelId`) |
 | `modelId` | string | option B | Model ID within the provider |
 
@@ -436,11 +436,11 @@ You must provide either `model` OR both `provider` + `modelId`. Providing neithe
 **Examples:**
 
 ```json
-{"type":"set_model","id":"sm-1","model":"anthropic/claude-sonnet-4-20250514"}
+{"type":"set_model","id":"sm-1","model":"anthropic/claude-sonnet-4-6"}
 ```
 
 ```json
-{"type":"set_model","id":"sm-2","provider":"anthropic","modelId":"claude-sonnet-4-20250514"}
+{"type":"set_model","id":"sm-2","provider":"anthropic","modelId":"claude-sonnet-4-6"}
 ```
 
 ---

@@ -758,7 +758,7 @@ fn when_send_anthropic_chat(world: &mut QuectoWorld) {
     let req = quecto::domain::provider::ChatRequest {
         messages: &messages,
         tools: &[],
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -884,7 +884,7 @@ fn when_send_anthropic_streaming(world: &mut QuectoWorld) {
     let req = quecto::domain::provider::ChatRequest {
         messages: &messages,
         tools: &[],
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -1050,7 +1050,7 @@ fn when_build_anthropic_request_body(world: &mut QuectoWorld) {
     let req = quecto::domain::provider::ChatRequest {
         messages: msgs,
         tools: &[],
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -1228,7 +1228,7 @@ fn when_build_with_tool_choice(world: &mut QuectoWorld) {
     let req = quecto::domain::provider::ChatRequest {
         messages: msgs,
         tools: &tools,
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -1295,7 +1295,7 @@ fn when_build_with_metadata(world: &mut QuectoWorld) {
     let req = quecto::domain::provider::ChatRequest {
         messages: msgs,
         tools: &[],
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -1661,7 +1661,7 @@ fn make_incremental_request(messages: &[Message]) -> quecto::domain::provider::C
     quecto::domain::provider::ChatRequest {
         messages,
         tools: &[],
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,

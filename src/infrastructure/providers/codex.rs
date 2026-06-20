@@ -352,12 +352,6 @@ impl CodexProvider {
         Self::build_input(messages)
     }
 
-    /// Public accessor for `sanitize_cache_key` (for tests).
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn sanitize_cache_key_public(key: &str) -> String {
-        Self::sanitize_cache_key(key)
-    }
-
     /// Consume SSE body incrementally, emitting `StreamEvent`s per delta.
     async fn pump_codex_sse(
         &self,
@@ -623,3 +617,7 @@ impl SseHandler for CodexSseHandler {
 #[cfg(test)]
 #[path = "codex_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "codex_cov_tests.rs"]
+mod cov_tests;

@@ -180,7 +180,7 @@ mod tests {
     #[test]
     fn footer_shows_model() {
         let mut f = Footer::new();
-        f.set_model("claude-sonnet-4-20250514");
+        f.set_model("claude-sonnet-4-6");
         let lines = f.render(80);
         let joined = lines.join("\n");
         let plain: String = joined
@@ -188,7 +188,7 @@ mod tests {
             .filter(|c| !c.is_control() || *c == '\n')
             .collect();
         assert!(
-            plain.contains("claude-sonnet-4-20250514"),
+            plain.contains("claude-sonnet-4-6"),
             "should contain model: {}",
             plain
         );

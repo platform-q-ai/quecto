@@ -128,12 +128,6 @@ impl TuiHarness {
         self.fulls.push(full);
     }
 
-    /// Lines anywhere on the full screen that appear in exactly one frame and
-    /// are absent from both neighbours (normalized) — a chat-area flash too.
-    pub fn full_transient_lines(&self) -> Vec<(usize, String)> {
-        transient_in(&self.fulls)
-    }
-
     /// Frame-by-frame dump of the FULL screen (for `--nocapture`).
     pub fn dump_full(&self) -> String {
         let mut s = String::new();
@@ -158,12 +152,6 @@ impl TuiHarness {
         self.bottoms.iter().map(|b| b.len()).collect()
     }
 
-    /// Number of frames where the below-chat height differs from the previous
-    /// frame (each one reflows the chat above it).
-    pub fn height_changes(&self) -> usize {
-        self.heights().windows(2).filter(|w| w[0] != w[1]).count()
-    }
-
     /// Frames where the below-chat height spikes up-then-down or dips
     /// down-then-up — a visible single-frame flash. Returns (frame, prev, cur, next).
     pub fn flashes(&self) -> Vec<(usize, usize, usize, usize)> {
@@ -179,13 +167,6 @@ impl TuiHarness {
             }
         }
         out
-    }
-
-    /// Lines that appear in exactly one frame and are absent from both
-    /// neighbours — a transient line that flashes in and out. Spinner glyphs and
-    /// digit runs (elapsed time) are normalized so routine ticks aren't flagged.
-    pub fn transient_lines(&self) -> Vec<(usize, String)> {
-        transient_in(&self.bottoms)
     }
 
     /// Frame-by-frame dump of the below-chat section (for `--nocapture`).

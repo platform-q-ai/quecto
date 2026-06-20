@@ -111,9 +111,9 @@ Feature: TUI Phase 2 — Event Loop, Editor, and Chat Display
   # ---------------------------------------------------------------------------
 
   Scenario: Footer shows model name
-    Given a footer component with model "claude-sonnet-4-20250514"
+    Given a footer component with model "claude-sonnet-4-6"
     When the footer renders at width 80
-    Then the rendered output should contain "claude-sonnet-4-20250514"
+    Then the rendered output should contain "claude-sonnet-4-6"
 
   Scenario: Footer shows git branch
     Given a footer component with git branch "main"

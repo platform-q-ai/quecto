@@ -198,4 +198,40 @@ mod tests {
         assert!(term.width > 0);
         assert!(term.height > 0);
     }
+
+    #[test]
+    fn terminal_default_matches_new() {
+        let term = Terminal::default();
+        assert!(term.width > 0);
+        assert!(term.height > 0);
+    }
+
+    #[test]
+    fn refresh_size_keeps_positive_dimensions() {
+        let mut term = Terminal::new();
+        term.width = 1;
+        term.height = 1;
+        term.refresh_size();
+        assert!(term.width > 0);
+        assert!(term.height > 0);
+    }
+
+    #[test]
+    fn write_helpers_do_not_panic() {
+        let term = Terminal::new();
+        // Benign byte writes — no screen-altering escapes.
+        term.write(b"");
+        term.write_str("");
+        // hide+show cursor is a visual no-op pair.
+        term.hide_cursor();
+        term.show_cursor();
+    }
+
+    #[test]
+    fn exit_raw_mode_without_enter_is_noop() {
+        let mut term = Terminal::new();
+        // No saved termios → exit is a no-op and must not panic.
+        term.exit_raw_mode();
+        assert!(term.saved.is_none());
+    }
 }

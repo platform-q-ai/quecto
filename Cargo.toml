@@ -3,7 +3,7 @@ members = [".", "quecto-tui", "quecto-api", "quecto-mcp", "quecto-runtime-manage
 
 [package]
 name = "quecto"
-version = "0.80.1"
+version = "0.80.2"
 edition = "2024"
 description = "Ultra-lightweight personal AI assistant"
 license = "LicenseRef-Proprietary"
