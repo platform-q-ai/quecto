@@ -298,6 +298,31 @@ async fn dispatch_routes_prompt_runs_agent() {
 }
 
 #[tokio::test]
+async fn prompt_persists_session_after_turn() {
+    // Regression: a completed prompt turn must persist the session so it is
+    // durable without /new or a clean shutdown and appears in /resume.
+    let mut fx = Fixture::new();
+    let cmd = AgentCommand::Prompt {
+        id: Some("p".into()),
+        message: "remember this".into(),
+        streaming_behavior: None,
+    };
+    {
+        let mut ctx = fx.ctx();
+        assert!(!dispatch_command(cmd, &mut ctx).await);
+    }
+    let loaded = fx.store.load("cli:test").await.unwrap();
+    assert!(
+        loaded.is_some(),
+        "a completed prompt turn should have persisted the session"
+    );
+    assert!(
+        !loaded.unwrap().messages.is_empty(),
+        "persisted session should contain the turn's messages"
+    );
+}
+
+#[tokio::test]
 async fn dispatch_routes_follow_up_runs_agent() {
     let mut fx = Fixture::new();
     let cmd = AgentCommand::FollowUp {

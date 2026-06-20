@@ -584,6 +584,12 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
     }
     drain_pending_and_nudge(ctx).await;
+    // Persist after every completed turn so the conversation is durable even if
+    // the agent is terminated ungracefully (e.g. by the TUI on quit) and shows
+    // up in /resume without requiring /new or a clean shutdown.
+    if let Err(err) = uds_dispatch::persist_current_session(ctx).await {
+        tracing::warn!("failed to persist session after turn: {err}");
+    }
     false
 }
 
