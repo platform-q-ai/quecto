@@ -436,6 +436,24 @@ fn test_build_agent_from_config_no_config_file() {
 }
 
 #[test]
+fn resolve_uds_session_key_namespaces() {
+    use crate::domain::session::USER_CHAT_PREFIX;
+    // No --session, not ephemeral → fresh user chat (chat- namespace → /resume).
+    let k = resolve_uds_session_key(false, None);
+    assert!(
+        k.starts_with(USER_CHAT_PREFIX),
+        "expected chat- key, got: {k}"
+    );
+    // Explicit --session → cli: namespace (internal sessions stay out of /resume).
+    assert_eq!(
+        resolve_uds_session_key(false, Some("subagent")),
+        "cli:subagent"
+    );
+    // Ephemeral → empty key (no persistence).
+    assert!(resolve_uds_session_key(true, None).is_empty());
+}
+
+#[test]
 fn test_build_agent_from_config_explicit_missing_errors() {
     let tmp = tempfile::TempDir::new().unwrap();
     let flags = AgentFlags {

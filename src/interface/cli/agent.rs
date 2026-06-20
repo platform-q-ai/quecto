@@ -550,6 +550,22 @@ pub(crate) fn run_with_deadline(
 /// cause a confusing bind error later.
 /// Validates config/provider, then enters the async JSON-lines loop.
 /// Returns an exit code.
+/// Resolve the UDS session key. Ephemeral → empty (no persistence). An explicit
+/// `--session` keeps the `cli:` namespace so internal sessions (sub-agents,
+/// agent-manager) stay out of the user-facing `/resume` list. With no
+/// `--session`, start a fresh per-launch user chat (`chat-` namespace) so each
+/// interactive launch is a distinct, resumable conversation (PRD: new chat per
+/// launch).
+fn resolve_uds_session_key(ephemeral: bool, session_name: Option<&str>) -> String {
+    if ephemeral {
+        String::new()
+    } else if let Some(name) = session_name {
+        crate::domain::session::Session::build_key("cli", name)
+    } else {
+        crate::interface::shared::generate_chat_key()
+    }
+}
+
 fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i32 {
     // Early validation for user-supplied --socket paths: check length before
     // doing any I/O (config load, agent build).  Auto-generated paths are
@@ -594,12 +610,7 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     agent.set_streaming(true);
 
     let ephemeral = flags.no_session || flags.session_name.as_deref() == Some("-");
-    let session_key = if ephemeral {
-        String::new()
-    } else {
-        let name = flags.session_name.as_deref().unwrap_or("default");
-        crate::domain::session::Session::build_key("cli", name)
-    };
+    let session_key = resolve_uds_session_key(ephemeral, flags.session_name.as_deref());
 
     // Keep durable audit logging tied to explicit workflow-driven mode. Normal UDS
     // makes workflow available, but should not add audit I/O/privacy overhead before
