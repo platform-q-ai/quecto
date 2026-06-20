@@ -114,6 +114,7 @@ fn test_build_agent_no_sandbox_emits_warning() {
     let result = build_agent_from_config(
         tmp.path(),
         &tmp.path().join("config.json"),
+        false,
         &flags,
         &mut stderr,
         None,
@@ -194,6 +195,7 @@ fn test_build_agent_with_sandbox_enabled_no_warning() {
     let result = build_agent_from_config(
         tmp.path(),
         &tmp.path().join("config.json"),
+        false,
         &flags,
         &mut stderr,
         None,

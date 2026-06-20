@@ -294,8 +294,10 @@ fn test_agent_config_flag_nonexistent_path() {
     ];
     let out = run_with_output(args, &ctx);
     assert_eq!(out.exit_code, 1);
+    // An explicit --config pointing at a missing file must error, not silently
+    // fall back to zero-config defaults.
     assert!(
-        out.stderr.contains("no LLM providers configured"),
+        out.stderr.contains("config not found"),
         "stderr: {}",
         out.stderr
     );
