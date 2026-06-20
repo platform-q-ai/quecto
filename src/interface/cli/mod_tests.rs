@@ -23,16 +23,11 @@ fn assert_contains_all(haystack: &str, needles: &[&str]) {
     }
 }
 
-#[test]
-fn test_no_args_triggers_repl_mode() {
-    // run_with_output with no args delegates to run_repl_with_output,
-    // which enters REPL mode with empty input (exits immediately on EOF).
-    let out = run_with_output(vec!["quecto".to_string()], &default_ctx());
-    // The default context resolves a usable config, so the empty-input REPL
-    // exits cleanly (0). The no-config case is covered by
-    // test_run_with_output_empty_args, which asserts exit 1.
-    assert_eq!(out.exit_code, 0);
-}
+// NOTE: a `test_no_args_triggers_repl_mode` test was removed here — it called
+// `run_with_output` with `default_ctx()`, whose exit code depends on whether the
+// host has a usable ~/.quecto config (0 with providers, 1 without), so it passed
+// locally but failed in clean CI. The no-args → REPL path is covered
+// hermetically by `test_run_with_output_empty_args` (controlled no-provider ctx).
 
 #[test]
 fn test_help_command_shows_usage() {
@@ -357,6 +352,25 @@ fn test_run_with_output_empty_args() {
     let out = run_with_output(vec!["quecto".into()], &ctx);
     // Without a config it exits with 1
     assert_eq!(out.exit_code, 1);
+}
+
+#[test]
+fn test_run_with_output_empty_args_with_provider_exits_clean() {
+    // No subcommand + a usable config (provider + default model) → REPL mode;
+    // with empty stdin it hits EOF immediately and exits cleanly (0). Hermetic
+    // replacement for the removed env-dependent test_no_args_triggers_repl_mode.
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("config.json"),
+        r#"{"providers":{"openai":{"api_key":"sk-test"}},"agents":{"defaults":{"model":"openai/gpt-5.2"}}}"#,
+    )
+    .unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
+    let out = run_with_output(vec!["quecto".into()], &ctx);
+    assert_eq!(out.exit_code, 0);
 }
 
 #[test]
