@@ -4,14 +4,29 @@ use std::pin::Pin;
 
 use super::{error::DomainError, message::Message};
 
+/// Prefix for user-facing interactive chat sessions.
+pub const USER_CHAT_PREFIX: &str = "chat-";
+
+/// Build a user-chat session key from a timestamp and a uniqueness token.
+///
+/// Pure: the interface layer supplies `secs` (wall clock) and a `uniq` value
+/// that is distinct across concurrent launches (e.g. PID combined with a
+/// per-process counter), so two sessions started in the same second never
+/// collide on a key.
+pub fn user_chat_key(secs: u64, uniq: u64) -> String {
+    format!("{USER_CHAT_PREFIX}{secs}-{uniq:x}")
+}
+
 /// Lightweight metadata for a persisted conversation session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionSummary {
     /// Unique key, e.g. "cli:default".
     pub key: String,
-    /// Human-friendly name, e.g. "default" for "cli:default".
-    pub name: String,
-    /// Number of persisted messages.
+    /// Raw title datum — the session's first user message, trimmed (empty when
+    /// none). Presentation (truncation, "(untitled)") is applied by the display
+    /// layer, not by persistence.
+    pub title: String,
+    /// Number of persisted user/assistant messages.
     pub message_count: usize,
     /// Last modification time in Unix seconds, when available.
     pub updated_unix_secs: Option<u64>,
@@ -64,9 +79,13 @@ pub trait SessionStore: Send + Sync {
         key: &str,
     ) -> Pin<Box<dyn Future<Output = Result<bool, DomainError>> + Send + '_>>;
 
-    /// List persisted sessions, newest first when modification times are available.
+    /// List persisted sessions, newest first when modification times are
+    /// available. When `key_prefix` is `Some`, only sessions whose key starts
+    /// with it are returned; the caller supplies this policy and the adapter
+    /// uses it to skip non-matching files cheaply (without reading/parsing them).
     fn list(
         &self,
+        key_prefix: Option<&str>,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<SessionSummary>, DomainError>> + Send + '_>>;
 }
 

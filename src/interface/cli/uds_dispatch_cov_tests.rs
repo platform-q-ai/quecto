@@ -236,6 +236,26 @@ async fn resume_session_success_loads_messages() {
     assert_eq!(fx.messages.len(), 1);
 }
 
+#[tokio::test]
+async fn resume_loads_chat_session_by_full_key() {
+    // Regression: the /resume picker selects a user chat by its full `chat-…`
+    // key; the handler must load it directly, not re-prefix it to `cli:chat-…`.
+    let mut fx = Fixture::new();
+    let key = "chat-1750000000-abc".to_string();
+    let saved = Session {
+        key: key.clone(),
+        messages: vec![Message::user("restored chat")],
+        workflow_run: None,
+    };
+    fx.store.save(&saved).await.unwrap();
+    {
+        let mut ctx = fx.ctx();
+        assert!(!handle_resume_session(&mut ctx, Some("rs"), "resume_session", key.clone()).await);
+    }
+    assert_eq!(fx.session_key, key);
+    assert_eq!(fx.messages.len(), 1);
+}
+
 // ─── persist_current_session ─────────────────────────────────────────────────
 
 #[tokio::test]
@@ -295,6 +315,31 @@ async fn dispatch_routes_prompt_runs_agent() {
     };
     let mut ctx = fx.ctx();
     assert!(!dispatch_command(cmd, &mut ctx).await);
+}
+
+#[tokio::test]
+async fn prompt_persists_session_after_turn() {
+    // Regression: a completed prompt turn must persist the session so it is
+    // durable without /new or a clean shutdown and appears in /resume.
+    let mut fx = Fixture::new();
+    let cmd = AgentCommand::Prompt {
+        id: Some("p".into()),
+        message: "remember this".into(),
+        streaming_behavior: None,
+    };
+    {
+        let mut ctx = fx.ctx();
+        assert!(!dispatch_command(cmd, &mut ctx).await);
+    }
+    let loaded = fx.store.load("cli:test").await.unwrap();
+    assert!(
+        loaded.is_some(),
+        "a completed prompt turn should have persisted the session"
+    );
+    assert!(
+        !loaded.unwrap().messages.is_empty(),
+        "persisted session should contain the turn's messages"
+    );
 }
 
 #[tokio::test]

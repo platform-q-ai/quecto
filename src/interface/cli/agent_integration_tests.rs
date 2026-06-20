@@ -580,7 +580,7 @@ fn test_build_agent_from_config_with_workspace_path() {
     let flags = test_flags(Some("hi"), None, None);
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr, None);
+    let result = build_agent_from_config(tmp.path(), &cfg, false, &flags, &mut stderr, None);
     assert!(result.is_some(), "stderr: {}", stderr);
 }
 
@@ -596,7 +596,7 @@ fn test_build_agent_from_config_with_max_iterations() {
     flags.max_iterations = Some(7);
     let mut stderr = String::new();
     let cfg = tmp.path().join("config.json");
-    let result = build_agent_from_config(tmp.path(), &cfg, &flags, &mut stderr, None);
+    let result = build_agent_from_config(tmp.path(), &cfg, false, &flags, &mut stderr, None);
     assert!(result.is_some(), "stderr: {}", stderr);
 }
 

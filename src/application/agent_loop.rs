@@ -17,7 +17,6 @@ use crate::domain::tool::ToolRegistry;
 #[path = "agent_loop_pruning.rs"]
 mod agent_loop_pruning;
 
-/// Default maximum tool iterations before the loop is forcibly stopped.
 const DEFAULT_MAX_TOOL_ITERATIONS: u32 = 999_999;
 const MAX_PROVIDER_ATTEMPTS: usize = 3;
 const PROVIDER_RETRY_BACKOFF_MS: u64 = 100;
@@ -53,7 +52,6 @@ pub struct AgentLoopConfig {
     pub audit_log: Option<Arc<dyn AuditSink>>,
 }
 
-/// Concrete implementation of the agent loop.
 pub struct AgentLoopImpl {
     provider: Arc<dyn LlmProvider>,
     tool_registry: Box<dyn ToolRegistry>,
@@ -445,7 +443,11 @@ impl AgentLoopImpl {
     ) -> AgentResult {
         let text = response.content.unwrap_or_default();
         messages.push(Message::assistant(text.clone(), vec![]));
-        let context_tokens = context_pruning::estimate_total_tokens(messages);
+        let context_tokens = if usage.context_input_tokens > 0 {
+            usage.context_input_tokens as usize
+        } else {
+            context_pruning::estimate_total_tokens(messages)
+        };
         AgentResult {
             response: text,
             tool_iterations: iterations,
@@ -738,13 +740,11 @@ impl AgentLoop for AgentLoopImpl {
 }
 
 #[cfg(test)]
-#[path = "agent_loop_tests.rs"]
-mod tests;
-
-#[cfg(test)]
 #[path = "agent_loop_spill_tests.rs"]
 mod spill_tests;
-
 #[cfg(test)]
 #[path = "agent_loop_swap_tests.rs"]
 mod swap_tests;
+#[cfg(test)]
+#[path = "agent_loop_tests.rs"]
+mod tests;

@@ -185,9 +185,6 @@ async fn single_client_loop(
     inject_system_prompt(&mut messages, &system_prompt);
 
     let mut agent_session = AgentSession::new(model, session_key.clone());
-    agent_session.set_context_tokens(crate::application::context_pruning::estimate_total_tokens(
-        &messages,
-    ));
 
     run_command_loop(
         reader,
@@ -428,10 +425,27 @@ async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'_>) -> bool
 fn session_summary_to_json(summary: &crate::domain::session::SessionSummary) -> serde_json::Value {
     serde_json::json!({
         "key": summary.key,
-        "name": summary.name,
+        "title": display_title(&summary.title),
         "messageCount": summary.message_count,
         "updatedUnixSecs": summary.updated_unix_secs,
+        "updatedAt": summary.updated_unix_secs,
     })
+}
+
+/// Apply display policy to a raw session title (the interface owns presentation,
+/// not persistence): blank → "(untitled)", otherwise truncate to 50 chars with
+/// an ellipsis.
+fn display_title(raw: &str) -> String {
+    const MAX_CHARS: usize = 50;
+    if raw.is_empty() {
+        return "(untitled)".to_string();
+    }
+    if raw.chars().count() <= MAX_CHARS {
+        return raw.to_string();
+    }
+    let mut out: String = raw.chars().take(MAX_CHARS).collect();
+    out.push('…');
+    out
 }
 
 fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serde_json::Value> {
@@ -493,14 +507,17 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
     let id = cmd.id();
     let tn = cmd.type_name();
     if matches!(cmd, AgentCommand::ListSessions { .. }) {
-        let event = match ctx.session_store.list().await {
+        let event = match ctx
+            .session_store
+            .list(Some(crate::domain::session::USER_CHAT_PREFIX))
+            .await
+        {
             Ok(sessions) => AgentEvent::ok(
                 id,
                 tn,
                 Some(serde_json::json!({
                     "sessions": sessions
                         .iter()
-                        .filter(|session| session.key.starts_with("cli:"))
                         .map(session_summary_to_json)
                         .collect::<Vec<_>>()
                 })),
@@ -567,6 +584,12 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
     }
     drain_pending_and_nudge(ctx).await;
+    // Persist after every completed turn so the conversation is durable even if
+    // the agent is terminated ungracefully (e.g. by the TUI on quit) and shows
+    // up in /resume without requiring /new or a clean shutdown.
+    if let Err(err) = uds_dispatch::persist_current_session(ctx).await {
+        tracing::warn!("failed to persist session after turn: {err}");
+    }
     false
 }
 

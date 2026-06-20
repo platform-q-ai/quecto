@@ -36,52 +36,127 @@ until the team ships a kernel update.
 
 ## The four extension surfaces (definitive status)
 
-### 1. Skills — ✅ binary-only
-- `workspace/skills/<name>/SKILL.md` with YAML frontmatter (`name`,
-  `description`, …); validated (name format, dir-name match, size cap).
-- Managed via `quecto skills install <owner>/<repo>/<name>` (GitHub), `list`,
-  `remove`. Folder-discovered at startup and injected into the system prompt.
-- **Kernel owns:** the loader + prompt injection. **Community owns:** the skills.
-- **Roadmap:** progressive disclosure — today the full skill *content* is
-  concatenated into the prompt; the agentskills.io model (name+description in the
-  prompt, agent reads `SKILL.md` on demand) is the scaling upgrade.
+Each surface is rated on **two independent axes**, because "the community can do
+it without a recompile" is not the same as "the agent can do it without a human":
 
-### 2. Models / providers — 🟡 binary-only for OpenAI/Anthropic-compatible
-- `providers.openai_compatible.endpoints` (`prefix`, `api_base`, `api_key`,
-  `allow_remote_http`). Any model string; **no allowlist**. Covers Ollama, vLLM,
-  LM Studio, Fireworks, Groq, DeepSeek, and most hosted endpoints.
-- **Recompile triggers:** a genuinely new *wire protocol* (e.g. native Gemini /
-  Cohere, not OpenAI/Anthropic-shaped), or OAuth on a custom provider.
-- **Graceful degradation:** unknown-model metadata (pricing, thinking, context
-  window) is missing but never blocks the request.
-- **Roadmap:** a config-driven model-metadata registry so community models get
-  correct context-window/pricing/capability info.
+- **Capability** — can community content do this *at all* with no recompile?
+- **Auto-load (autonomy)** — does new or changed content take effect on the
+  **next turn**, with **no human restarting the quecto process**? This is the
+  autonomy contract (see below). A surface that needs a restart silently puts a
+  human back in the loop, which is fatal for a self-extending agent.
 
-### 3. Workflows — 🟡 binary-only (config templates)
-- `workflow.templates` in config: arbitrary steps/keys/phases/guidance/guards;
-  the engine is generic (no hardcoded step keys; unknown phases pass through).
-  Covers the large majority of development workflows.
-- **Intentional design:** a community config's `templates` **replace** the
-  kernel defaults. The kernel keeps the `feature` template as the team's
-  reference + internal-dev workflow — it ships as an *example*, and is cleanly
-  out of the way the moment a community config provides its own.
-- **Recompile triggers:** new workflow *tool actions* (beyond the standard
-  check/skip/select/guards set) or new engine progression semantics (approval
-  gates, conditional branches, multi-actor execution).
+Legend: ✅ full · 🟡 partial · ❌ missing.
 
-### 4. Tools / extensions — 🟡 binary-only via UDS + MCP
-- **UDS `register_tools`** (any language): an external process registers tools
-  live; they're callable on the next turn. Documented in `docs/extensions.md`.
-- **`quecto-mcp` sidecar:** point it at any MCP server → its tools are bridged
-  in, zero code.
-- **Core tools** (`read`/`write`/`edit`/`bash`/`grep`/`find`/`ls`/`docs`) are
-  always present; disable per-run with `--disable-tool`; they cannot be shadowed.
-- **No folder/manifest discovery** (script extensions were removed in #353;
-  `reload_extensions` is a no-op).
-- **Recompile triggers:** a new *core* tool, tool-routing changes, or `Tool`
-  trait changes.
-- **Roadmap:** discovery ergonomics (folder-drop / manifest) and an extension
-  SDK/template to lower authoring friction.
+| Surface | Capability (no recompile) | Auto-load on next turn (no restart) |
+|---|---|---|
+| 1. Skills | ✅ full | ❌ **missing** — scanned once when the system prompt is built |
+| 2. Models / providers | 🟡 partial (OpenAI/Anthropic-shaped only) | ❌ **missing** — config read once at startup |
+| 3. Workflows | 🟡 partial (config templates) | 🟡 **partial** — selecting/advancing is live; *adding* a template needs restart |
+| 4. Tools / extensions | 🟡 partial (external process only) | ✅ **full** — UDS `register_tools` is live next turn |
+
+Only surface 4 (tools, via UDS) currently meets the autonomy bar. The other
+three are startup-loaded and need a reload path before an agent can extend
+*itself* mid-run.
+
+### 1. Skills — capability ✅ · auto-load ❌
+- **Implemented today (full capability):** `workspace/skills/<name>/SKILL.md`
+  with validated YAML frontmatter (`name`, `description`, …; name format,
+  dir-name match, size cap). Managed via `quecto skills install
+  <owner>/<repo>/<name>` (GitHub), `list`, `remove`. Folder-discovered and
+  injected into the system prompt. Kernel owns the loader + injection; community
+  owns the skills.
+- **Partial:** progressive disclosure. Today the *full* skill content is
+  concatenated into the prompt; the scaling model (name+description in-prompt,
+  agent reads `SKILL.md` on demand) is not yet implemented.
+- **Missing — auto-load ❌:** `load_skill_prompt` runs **once**, when the
+  agent/REPL builds its system prompt (`src/interface/cli/agent.rs`,
+  `src/interface/repl/mod.rs`). A skill installed *mid-session* — including one
+  the agent installs for itself — is **invisible until the process restarts**.
+  To close: re-scan `workspace/skills/` and rebuild the system prompt at the
+  start of each turn (or on a reload signal), so a freshly-installed skill is in
+  the prompt next turn with no restart.
+
+### 2. Models / providers — capability 🟡 · auto-load ❌
+- **Implemented today (full within scope):** `providers.openai_compatible.endpoints`
+  (`prefix`, `api_base`, `api_key`, `allow_remote_http`). Any model string, **no
+  allowlist** — covers Ollama, vLLM, LM Studio, Fireworks, Groq, DeepSeek, and
+  most hosted endpoints. Graceful degradation: unknown-model metadata (pricing,
+  thinking, context window) is absent but never blocks the request.
+- **Partial:** only OpenAI/Anthropic-shaped wire protocols.
+- **Missing (capability):** a genuinely new *wire protocol* (native Gemini /
+  Cohere) or OAuth on a custom provider forces a recompile; a config-driven
+  model-metadata registry (correct context-window/pricing/capability) does not
+  exist yet.
+- **Missing — auto-load ❌:** providers come from the config file, read **once at
+  startup** (`Config::load`). A provider or model added to config mid-session is
+  **not usable until restart**. To close: re-read the providers section of config
+  at the start of each turn (or on a reload signal) and rebuild the provider set.
+
+### 3. Workflows — capability 🟡 · auto-load 🟡
+- **Implemented today (full):** `workflow.templates` in config — arbitrary
+  steps/keys/phases/guidance/guards; the engine is generic (no hardcoded step
+  keys; unknown phases pass through). A community config's `templates` **replace**
+  the kernel defaults; the kernel keeps the `feature` template only as a
+  reference/internal-dev example that steps aside the moment a community config
+  provides its own. Selecting a template and checking/skipping steps via the
+  `workflow` tool is fully live each turn.
+- **Missing (capability):** new workflow *tool actions* (beyond
+  check/skip/select/guards) or new engine semantics (approval gates, conditional
+  branches, multi-actor execution) force a recompile.
+- **Partial — auto-load 🟡:** runtime *use* of the loaded templates needs no
+  restart, but the template **set** is fixed at startup from config. Adding or
+  editing a template (a config change) is **not picked up until restart**. To
+  close: re-read `workflow.templates` from config on the same reload path as the
+  other surfaces, so a new template is selectable next turn.
+
+### 4. Tools / extensions — capability 🟡 · auto-load ✅
+- **Implemented today (auto-load ✅, the reference model):** UDS `register_tools`
+  (any language) — an external process registers tools into the **live** registry
+  and they are in the tool list on the **next turn**, no restart
+  (`src/infrastructure/tools/registry.rs::register_extension`). The `quecto-mcp`
+  sidecar bridges any MCP server's tools the same way, zero code. Core tools
+  (`read`/`write`/`edit`/`bash`/`grep`/`find`/`ls`/`docs`) are always present,
+  disable per-run with `--disable-tool`, and cannot be shadowed.
+- **Partial (capability):** extension tools must be an *external process* — there
+  is no in-binary authoring and no extension SDK/template yet.
+- **Missing:** folder/manifest discovery (drop a file → registered). Script
+  extensions were removed in #353 and `reload_extensions` is now a **no-op** — so
+  "auto-load" here requires a *running process* that calls `register_tools`, not
+  merely a file on disk. A new *core* tool, tool-routing change, or `Tool`-trait
+  change still forces a recompile.
+- **Why this is the bar:** because registration targets the live registry rather
+  than a startup scan, this surface already satisfies the autonomy contract. The
+  other three surfaces should converge on the same "mutate live state, effective
+  next turn" model.
+
+---
+
+## The autonomy contract: auto-load on the next turn
+
+Quecto's recursion depends on an agent extending **itself** — installing a skill,
+adding a provider, defining a workflow, registering a tool — and then *using* that
+extension on its next turn, with **no human restarting the process**. The moment a
+surface requires a restart to take effect, a human (or an external supervisor) is
+back in the loop and unattended autonomy breaks.
+
+Status today:
+
+- **Tools (UDS/MCP): ✅** content goes into live state and is effective next turn.
+- **Skills, models, workflows-set: ❌/🟡** content is read **once at construction**
+  (system prompt for skills; `Config::load` for providers and the workflow
+  template set), so a self-made change is invisible until the binary is restarted.
+
+To make autonomy hold, every startup-loaded surface needs a **reload path** that
+runs at the top of each turn (or on an explicit reload signal) and is cheap when
+nothing changed:
+
+- re-scan `workspace/skills/` and rebuild the injected system prompt;
+- re-read the `providers` and `workflow.templates` sections of config and rebuild
+  the provider set / template list.
+
+Until those exist, the only fully-autonomous escape hatch is to express a new
+capability as a **UDS tool** (the one live surface) — or to accept that a human
+must restart quecto for skill/provider/workflow changes to land.
 
 ---
 

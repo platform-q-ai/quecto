@@ -318,6 +318,18 @@ struct ReplIo<R: std::io::BufRead, W: std::io::Write> {
     is_tty: bool,
 }
 
+/// Canonical "config not found" check shared by the agent builder and the REPL
+/// launcher. An *explicitly*-provided `--config` path must exist; the default
+/// path may be missing (zero-config). Returns the error message to surface, or
+/// `None` when there's nothing to report. Callers own their output sink.
+pub(crate) fn explicit_config_missing(
+    config_path: &std::path::Path,
+    explicit: bool,
+) -> Option<String> {
+    (explicit && !config_path.exists())
+        .then(|| format!("config not found: {}", config_path.display()))
+}
+
 /// REPL command: parse flags and launch the interactive loop.
 fn cmd_repl<R: std::io::BufRead, W: std::io::Write>(
     ctx: &CliContext,
@@ -350,7 +362,11 @@ fn cmd_repl_with_progress<R: std::io::BufRead, W: std::io::Write>(
 
     let base_dir = ctx.base_dir();
     let config_path = ctx.config_path();
-    // Zero-config: a missing config file loads defaults (no onboarding step).
+    if let Some(msg) = explicit_config_missing(&config_path, ctx.config_path.is_some()) {
+        let _ = writeln!(io.writer, "Error: {msg}");
+        return 1;
+    }
+    // Zero-config: a missing default config file loads defaults (no onboarding step).
 
     let env_overrides: std::collections::HashMap<String, String> = std::env::vars()
         .filter(|(k, _)| k.starts_with("QUECTO_"))

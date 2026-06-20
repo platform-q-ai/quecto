@@ -53,6 +53,11 @@ impl SelectList {
     pub fn item_count(&self) -> usize {
         self.items.len()
     }
+
+    #[cfg(test)]
+    pub fn render_text(&mut self, width: usize) -> String {
+        self.render(width).join("\n")
+    }
 }
 
 impl Component for SelectList {

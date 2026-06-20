@@ -50,7 +50,7 @@ fn active_prompt_mentions_guidance() {
     engine.check(1).unwrap();
     let prompt = engine.prompt_snippet();
     assert!(prompt.contains("CURRENT STEP"));
-    assert!(prompt.contains("updating feature coverage"));
+    assert!(prompt.contains("acceptance criteria"));
 }
 
 #[test]
@@ -73,4 +73,20 @@ fn no_active_template_errors_for_step_actions() {
     let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
     let err = engine.check(1).unwrap_err();
     assert!(matches!(err, WorkflowError::NoActiveTemplate(_)));
+}
+
+#[test]
+fn status_text_shows_guidance_for_incomplete_non_current_steps() {
+    // Regression: the status view used to render guidance only for the CURRENT
+    // step, so an agent reading the workflow ahead of time saw later steps as
+    // bare labels (e.g. the reviewers step). Now every INCOMPLETE step shows its
+    // guidance, while completed steps stay compact.
+    let mut engine = WorkflowEngine::new(WorkflowConfig::default(), false).unwrap();
+    engine.select_template("feature", None).unwrap();
+    // Current step is step 1 (hooks); reviewers is a later, non-current step.
+    let status = engine.status_text();
+    assert!(status.contains("CURRENT STEP"));
+    // An upcoming, non-current step's guidance is visible:
+    assert!(status.contains("INLINE review comments"));
+    assert!(status.contains("addPullRequestReview"));
 }

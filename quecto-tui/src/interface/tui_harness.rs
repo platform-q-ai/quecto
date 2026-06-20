@@ -18,7 +18,8 @@ use super::app_methods::strip_ansi;
 use crate::infrastructure::client::{Client, Event, SubagentInfoEvent, SubagentWorkflow};
 use crate::infrastructure::terminal::Terminal;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::sync::mpsc;
 
 const DEFAULT_WIDTH: usize = 120;
 const DEFAULT_HEIGHT: usize = 40;
@@ -27,20 +28,20 @@ static SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Build an App with a fixed terminal size and a dummy (drained) socket client,
 /// so the render path runs headlessly and deterministically.
-async fn headless_app(width: usize, height: usize) -> App {
+async fn headless_app(width: usize, height: usize) -> (App, mpsc::Receiver<String>) {
     let n = SEQ.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!("quecto-tui-harness-{}-{}", std::process::id(), n));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let socket_path = dir.join("agent.sock");
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+    let (cmd_tx, cmd_rx) = mpsc::channel(64);
     tokio::spawn(async move {
-        if let Ok((mut stream, _)) = listener.accept().await {
-            let mut buf = [0u8; 4096];
-            loop {
-                match stream.read(&mut buf).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(_) => {}
+        if let Ok((stream, _)) = listener.accept().await {
+            let mut lines = BufReader::new(stream).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if cmd_tx.send(line).await.is_err() {
+                    break;
                 }
             }
         }
@@ -49,7 +50,7 @@ async fn headless_app(width: usize, height: usize) -> App {
     let mut term = Terminal::new();
     term.width = width;
     term.height = height;
-    App::new(term, client)
+    (App::new(term, client), cmd_rx)
 }
 
 /// Frame-capturing harness over the real render path.
@@ -61,6 +62,7 @@ pub struct TuiHarness {
     /// Full screen frame per captured frame (ANSI-stripped) — for catching
     /// chat-area transients (e.g. a tool result that flashes in and out).
     fulls: Vec<Vec<String>>,
+    cmd_rx: mpsc::Receiver<String>,
 }
 
 impl TuiHarness {
@@ -69,11 +71,13 @@ impl TuiHarness {
     }
 
     pub async fn sized(width: usize, height: usize) -> Self {
+        let (app, cmd_rx) = headless_app(width, height).await;
         Self {
-            app: headless_app(width, height).await,
+            app,
             width,
             bottoms: Vec::new(),
             fulls: Vec::new(),
+            cmd_rx,
         }
     }
 
@@ -197,6 +201,17 @@ impl TuiHarness {
     /// Escape hatch for driving fields the event API doesn't cover.
     pub fn app_mut(&mut self) -> &mut App {
         &mut self.app
+    }
+
+    pub async fn drain_commands(&mut self) -> Vec<String> {
+        for _ in 0..5 {
+            tokio::task::yield_now().await;
+        }
+        let mut out = Vec::new();
+        while let Ok(line) = self.cmd_rx.try_recv() {
+            out.push(line);
+        }
+        out
     }
 }
 

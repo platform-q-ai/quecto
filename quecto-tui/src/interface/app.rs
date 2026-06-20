@@ -30,10 +30,7 @@ use crate::interface::keys::{self, Key};
 use crate::interface::kitty::KittyProtocol;
 use crate::interface::overlay::OverlayStack;
 
-/// Tick interval for spinner animation (~12fps).
 const SPINNER_TICK: Duration = Duration::from_millis(80);
-
-/// Lines scrolled per mouse wheel tick.
 const MOUSE_SCROLL_LINES: usize = 3;
 
 /// Maximum retry iterations for reassembling multi-fragment escape sequences.
@@ -734,6 +731,9 @@ fn gc_exited_subagents(
 #[cfg(test)]
 #[path = "app_cov_tests.rs"]
 mod app_cov_tests;
+#[cfg(test)]
+#[path = "app_chat_session_tests.rs"]
+mod chat_session_tests;
 #[cfg(test)]
 #[path = "app_subagent_selection_tests.rs"]
 mod subagent_selection_tests;

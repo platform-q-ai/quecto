@@ -62,6 +62,10 @@ pub enum Command {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    NewSession {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
     ResumeSession {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,

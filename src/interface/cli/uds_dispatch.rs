@@ -69,6 +69,7 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             )
             .await
         }
+        AgentCommand::NewSession { .. } => handle_new_session(ctx, id.as_deref(), &type_name).await,
         AgentCommand::ResumeSession { session, .. } => {
             handle_resume_session(ctx, id.as_deref(), &type_name, session).await
         }
@@ -114,6 +115,50 @@ pub(super) async fn persist_current_session(
     ctx.session_store.save(&session).await
 }
 
+pub(super) async fn handle_new_session(
+    ctx: &mut DispatchCtx<'_>,
+    id: Option<&str>,
+    type_name: &str,
+) -> bool {
+    if ctx.session.is_streaming() {
+        let ev = AgentEvent::err(
+            id,
+            type_name,
+            "cannot start a new session while agent is running",
+        );
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
+    if let Err(err) = persist_current_session(ctx).await {
+        let ev = AgentEvent::err(
+            id,
+            type_name,
+            format!("failed to save current session: {err}"),
+        );
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
+    clear_conversation(ctx.messages);
+    ctx.session.clear_usage();
+    ctx.session.drain_pending();
+    let key = crate::interface::shared::generate_chat_key();
+    ctx.session_key.clear();
+    ctx.session_key.push_str(&key);
+    ctx.session.set_session_key(key.clone());
+    if let Some(spill) = ctx.agent.spill_store() {
+        if let Err(e) = spill.clear(ctx.session_key).await {
+            tracing::warn!("new_session: failed to clear spill store: {e}");
+        }
+    }
+    let ev = AgentEvent::ok(
+        id,
+        type_name,
+        Some(serde_json::json!({ "sessionKey": key })),
+    );
+    emit_event_to_broadcast_or_writer(ctx, &ev).await;
+    false
+}
+
 pub(super) async fn handle_resume_session(
     ctx: &mut DispatchCtx<'_>,
     id: Option<&str>,
@@ -144,7 +189,14 @@ pub(super) async fn handle_resume_session(
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
-    let new_key = Session::build_key("cli", name);
+    // The /resume picker selects by full session key (e.g. a `chat-…` user
+    // chat); a typed `/resume <name>` refers to a legacy `cli:<name>` session.
+    // Don't re-prefix an already-qualified user-chat key.
+    let new_key = if name.starts_with(crate::domain::session::USER_CHAT_PREFIX) {
+        name.to_string()
+    } else {
+        Session::build_key("cli", name)
+    };
     if let Err(err) = persist_current_session(ctx).await {
         let ev = AgentEvent::err(
             id,

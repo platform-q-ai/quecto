@@ -382,7 +382,7 @@ async fn test_list_sessions_returns_cli_names_and_message_counts() {
 
     store
         .save(&Session {
-            key: "cli:default".to_string(),
+            key: "chat-default".to_string(),
             messages: vec![make_message(Role::User, "hello")],
             workflow_run: None,
         })
@@ -390,7 +390,7 @@ async fn test_list_sessions_returns_cli_names_and_message_counts() {
         .unwrap();
     store
         .save(&Session {
-            key: "cli:work".to_string(),
+            key: "chat-work".to_string(),
             messages: vec![
                 make_message(Role::User, "question"),
                 make_message(Role::Assistant, "answer"),
@@ -400,12 +400,14 @@ async fn test_list_sessions_returns_cli_names_and_message_counts() {
         .await
         .unwrap();
 
-    let summaries = store.list().await.unwrap();
+    let summaries = store.list(None).await.unwrap();
     assert_eq!(summaries.len(), 2);
-    let work = summaries.iter().find(|s| s.name == "work").unwrap();
-    assert_eq!(work.key, "cli:work");
+    let work = summaries.iter().find(|s| s.key == "chat-work").unwrap();
+    assert_eq!(work.title, "question");
+    assert_eq!(work.title, "question");
     assert_eq!(work.message_count, 2);
-    let default = summaries.iter().find(|s| s.name == "default").unwrap();
+    let default = summaries.iter().find(|s| s.key == "chat-default").unwrap();
+    assert_eq!(default.title, "hello");
     assert_eq!(default.message_count, 1);
 }
 
@@ -416,7 +418,7 @@ async fn test_list_sessions_skips_corrupt_json_files() {
 
     store
         .save(&Session {
-            key: "cli:good".to_string(),
+            key: "chat-good".to_string(),
             messages: vec![make_message(Role::User, "hello")],
             workflow_run: None,
         })
@@ -427,9 +429,10 @@ async fn test_list_sessions_skips_corrupt_json_files() {
         .await
         .unwrap();
 
-    let summaries = store.list().await.unwrap();
+    let summaries = store.list(None).await.unwrap();
     assert_eq!(summaries.len(), 1);
-    assert_eq!(summaries[0].name, "good");
+    assert_eq!(summaries[0].key, "chat-good");
+    assert_eq!(summaries[0].title, "hello");
 }
 
 #[tokio::test]

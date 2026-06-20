@@ -644,6 +644,22 @@ fn test_reap_stale_sockets_leaves_fresh_files() {
     assert!(fresh.exists(), "fresh socket should not be removed");
 }
 
+// ─── display_title presentation policy (moved out of persistence) ───────────
+
+#[test]
+fn display_title_applies_presentation_policy() {
+    // Blank raw title → "(untitled)" placeholder (interface owns this, not persistence).
+    assert_eq!(display_title(""), "(untitled)");
+    // Short title → unchanged.
+    assert_eq!(display_title("short title"), "short title");
+    // Long title → truncated to 50 chars + ellipsis.
+    let long = "a".repeat(80);
+    let out = display_title(&long);
+    assert_eq!(out.chars().count(), 51);
+    assert!(out.ends_with('…'));
+    assert!(out.starts_with(&"a".repeat(50)));
+}
+
 // ─── forward_progress_event forwards ToolStarted/ToolFinished (#318) ─────────
 
 #[path = "uds_progress_clear_tests.rs"]
