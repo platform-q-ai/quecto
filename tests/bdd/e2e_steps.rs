@@ -2156,10 +2156,11 @@ fn then_llm_request_included_tool(world: &mut QuectoWorld, tool_name: String) {
 
 /// Set up a workspace for real-LLM UDS tests.
 ///
-/// Copies `~/.quecto/credentials.json` into the temp base dir and creates
-/// a config with `auth_method: "oauth"` for the anthropic provider (no static
-/// API keys).  The default model is `anthropic/claude-sonnet-4-20250514` for
-/// fast, cheap tests.
+/// Prefers a static Anthropic API key (env `QUECTO_PROVIDERS_ANTHROPIC_API_KEY`
+/// or `ANTHROPIC_API_KEY`) so these tests run in CI without a local
+/// `quecto auth login`. Falls back to copying `~/.quecto/credentials.json` and
+/// `auth_method: "oauth"` for subscription-based local runs. The default model
+/// is `anthropic/claude-haiku-4-5` for fast, cheap tests.
 #[given("a real LLM UDS workspace is configured")]
 fn given_real_llm_uds_workspace(world: &mut QuectoWorld) {
     ensure_temp_dir(world);
@@ -2167,35 +2168,41 @@ fn given_real_llm_uds_workspace(world: &mut QuectoWorld) {
     let workspace = base.join("workspace");
     std::fs::create_dir_all(&workspace).expect("create workspace");
 
-    // Copy credentials from home dir
-    let home_creds = dirs::home_dir()
-        .expect("no home dir")
-        .join(".quecto")
-        .join("credentials.json");
-    if !home_creds.exists() {
-        panic!("~/.quecto/credentials.json not found — run 'quecto auth login' first");
-    }
-    let dest = base.join("credentials.json");
-    std::fs::copy(&home_creds, &dest).expect("copy credentials.json");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o600))
-            .expect("set credentials permissions");
-    }
+    let has_api_key = std::env::var("QUECTO_PROVIDERS_ANTHROPIC_API_KEY").is_ok()
+        || std::env::var("ANTHROPIC_API_KEY").is_ok();
 
-    // Create config with oauth auth_method for anthropic
+    // API-key auth (CI-friendly): the key is supplied via env override at load
+    // time, so no credentials.json is needed in the isolated base dir.
+    // OAuth auth (local subscription): copy the home credential store.
+    let anthropic = if has_api_key {
+        serde_json::json!({ "api_key": "", "api_base": "" })
+    } else {
+        let home_creds = dirs::home_dir()
+            .expect("no home dir")
+            .join(".quecto")
+            .join("credentials.json");
+        if !home_creds.exists() {
+            panic!(
+                "set QUECTO_PROVIDERS_ANTHROPIC_API_KEY / ANTHROPIC_API_KEY, or run \
+                 'quecto auth login' (credentials.json not found)"
+            );
+        }
+        let dest = base.join("credentials.json");
+        std::fs::copy(&home_creds, &dest).expect("copy credentials.json");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o600))
+                .expect("set credentials permissions");
+        }
+        serde_json::json!({ "api_key": "", "api_base": "", "auth_method": "oauth" })
+    };
+
     let config = serde_json::json!({
-        "providers": {
-            "anthropic": {
-                "api_key": "",
-                "api_base": "",
-                "auth_method": "oauth"
-            }
-        },
+        "providers": { "anthropic": anthropic },
         "agents": {
             "defaults": {
-                "model": "anthropic/claude-sonnet-4-20250514",
+                "model": "anthropic/claude-haiku-4-5",
                 "workspace": workspace.to_string_lossy()
             }
         }
