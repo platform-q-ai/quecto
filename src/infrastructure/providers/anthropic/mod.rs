@@ -730,13 +730,6 @@ impl AnthropicProvider {
     pub fn to_claude_code_name_public(name: &str) -> &str {
         to_claude_code_name(name)
     }
-
-    pub fn from_claude_code_name_public(
-        name: &str,
-        tool_defs: &[crate::domain::tool::ToolDefinition],
-    ) -> String {
-        claude_code::from_claude_code_name(name, tool_defs)
-    }
 }
 
 #[cfg(test)]

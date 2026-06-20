@@ -57,12 +57,6 @@ pub struct QuectoToolRegistration {
     pub parameters_schema: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolMapping {
-    pub quecto_name: String,
-    pub mcp_name: String,
-}
-
 #[derive(Debug, Clone)]
 pub struct RegisteredMcpTools {
     pub registrations: Vec<QuectoToolRegistration>,

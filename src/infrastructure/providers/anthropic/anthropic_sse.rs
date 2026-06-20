@@ -487,3 +487,7 @@ async fn emit_tool_call_end(acc: &SseAccumulator, tx: &tokio::sync::mpsc::Sender
             .await;
     }
 }
+
+#[cfg(test)]
+#[path = "anthropic_sse_cov_tests.rs"]
+mod cov_tests;

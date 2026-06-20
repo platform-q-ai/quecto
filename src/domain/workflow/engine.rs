@@ -321,12 +321,6 @@ impl WorkflowEngine {
             .and_then(|idx| self.templates.get(idx))
     }
 
-    pub fn template_guards(&self) -> &[WorkflowGuardRule] {
-        self.active_template()
-            .map(|t| t.guards.as_slice())
-            .unwrap_or(&[])
-    }
-
     pub fn snapshot(&self, enabled: bool) -> WorkflowSnapshot {
         let active_template = self.active_template().map(summary_for_template);
         let steps = self

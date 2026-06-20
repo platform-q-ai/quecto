@@ -58,7 +58,7 @@ cargo clippy --workspace --all-targets --features test-support -- -D warnings \
     -W clippy::too_many_arguments \
     -W clippy::too_many_lines
 
-COV_THRESHOLD="${QUECTO_COV_THRESHOLD:-80}"
+COV_THRESHOLD="${QUECTO_COV_THRESHOLD:-85}"
 
 step "5/7" "Parallel test wave: unit + architecture + contracts + non-real BDD shards"
 

@@ -681,3 +681,7 @@ fn cmd_auth_status(base: &std::path::Path, stdout: &mut String) -> i32 {
 #[cfg(test)]
 #[path = "auth_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "auth_cov_tests.rs"]
+mod cov_tests;

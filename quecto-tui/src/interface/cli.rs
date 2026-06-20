@@ -496,6 +496,10 @@ fn canonical_allowed_socket_roots() -> Vec<PathBuf> {
 }
 
 #[cfg(test)]
+#[path = "cli_cov_tests.rs"]
+mod cli_cov_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

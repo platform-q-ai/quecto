@@ -665,6 +665,9 @@ pub use agent_provider::build_agent_provider;
 #[path = "agent_config_tests.rs"]
 mod config_tests;
 #[cfg(test)]
+#[path = "agent_cov_tests.rs"]
+mod cov_tests;
+#[cfg(test)]
 #[path = "agent_integration_tests.rs"]
 mod integration_tests;
 #[cfg(test)]

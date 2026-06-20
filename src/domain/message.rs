@@ -243,10 +243,6 @@ impl CostInfo {
     pub fn cache_read_cost_usd(&self) -> f64 {
         self.cache_read_cost_micro_usd as f64 / 1_000_000.0
     }
-    /// Cache-write cost in USD.
-    pub fn cache_write_cost_usd(&self) -> f64 {
-        self.cache_write_cost_micro_usd as f64 / 1_000_000.0
-    }
     /// Total cost in USD.
     pub fn total_cost_usd(&self) -> f64 {
         self.total_cost_micro_usd as f64 / 1_000_000.0
@@ -416,7 +412,7 @@ mod tests {
         assert!(model_pricing("claude-haiku-4-5").is_some());
         assert!(model_pricing("claude-haiku-4-5-20251001").is_some());
         // Prefix match covers dated variants of all three supported families
-        assert!(model_pricing("claude-sonnet-4-20250514").is_some());
+        assert!(model_pricing("claude-sonnet-4-6").is_some());
         assert!(model_pricing("claude-opus-4-20250514").is_some());
         assert!(model_pricing("claude-haiku-4-20250514").is_some());
         // Case-insensitive

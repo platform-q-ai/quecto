@@ -1477,10 +1477,20 @@ fn given_openai_mock_http_error(world: &mut QuectoWorld, status: u16) {
 // E2E Subprocess Protocol Steps
 // ===========================================================================
 
-/// Find the quecto binary path relative to the test executable.
-/// The test binary is at `target/debug/deps/bdd-*`,
-/// so `target/debug/quecto` is `../../quecto` relative to it.
+/// Resolve the `quecto` binary the e2e tests spawn.
+///
+/// Prefer `CARGO_BIN_EXE_quecto`: Cargo sets it at test-compile time and
+/// guarantees the `quecto` binary is (re)built before this integration test
+/// runs, so the suite always exercises the *current source* — never a stale
+/// `target/` artifact and never an installed `~/.cargo/bin/quecto`.
+///
+/// Fall back to the path relative to the test executable
+/// (`target/debug/deps/bdd-*` → `target/debug/quecto`) for the rare case of
+/// running the prebuilt test binary directly, outside `cargo test`.
 fn quecto_binary_path() -> PathBuf {
+    if let Some(p) = option_env!("CARGO_BIN_EXE_quecto") {
+        return PathBuf::from(p);
+    }
     let test_exe = std::env::current_exe().expect("get current exe");
     let deps_dir = test_exe.parent().expect("deps dir");
     let debug_dir = deps_dir.parent().expect("debug dir");

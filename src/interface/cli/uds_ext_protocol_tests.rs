@@ -211,6 +211,37 @@ fn test_handle_tool_result_unknown_call_id_is_noop() {
 }
 
 #[test]
+fn test_register_tools_rejects_duplicate_in_same_request() {
+    let ctx = RegCtx::new();
+    let (ok, ev, tools) = ctx.register_id(
+        1,
+        "rt-dup",
+        &[tool_reg("weather", "First"), tool_reg("weather", "Second")],
+    );
+    assert!(!ok);
+    assert!(tools.is_empty());
+    let json = ev.to_json_line();
+    assert!(json.contains("\"success\":false"));
+    assert!(json.contains("registered more than once"));
+}
+
+#[test]
+fn test_register_client_writer_sets_writer_tx() {
+    let r = new_client_tool_registry();
+    let (tx, _rx) = tokio::sync::mpsc::channel::<String>(4);
+    register_client_writer(&r, 99, tx);
+    let locked = r.lock().unwrap();
+    assert!(locked[&99].writer_tx.is_some());
+}
+
+#[test]
+fn test_client_disconnect_unknown_client_returns_empty() {
+    let r = new_client_tool_registry();
+    let removed = handle_client_disconnect(404, &r);
+    assert!(removed.is_empty());
+}
+
+#[test]
 fn test_two_clients_different_tools() {
     let r = new_client_tool_registry();
     let c = core_names();

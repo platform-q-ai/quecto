@@ -33,7 +33,7 @@ async fn test_chat_text_response() {
     let req = ChatRequest {
         messages: &messages,
         tools: &[],
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -85,7 +85,7 @@ async fn test_chat_with_tool_use() {
     let req = ChatRequest {
         messages: &messages,
         tools: &tools,
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -118,7 +118,7 @@ async fn test_chat_server_error() {
     let req = ChatRequest {
         messages: &messages,
         tools: &[],
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -202,7 +202,7 @@ data: {}\n\n";
     let req = ChatRequest {
         messages: &messages,
         tools: &[],
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -241,7 +241,7 @@ async fn test_chat_with_system_prompt() {
     let req = ChatRequest {
         messages: &messages,
         tools: &[],
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -407,7 +407,7 @@ fn test_build_request_body_system_prompt_has_cache_control() {
     let req = ChatRequest {
         messages: &messages,
         tools: &[],
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -446,7 +446,7 @@ fn test_build_request_body_last_user_message_has_cache_control() {
     let req = ChatRequest {
         messages: &messages,
         tools: &[],
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -562,7 +562,7 @@ fn test_build_request_body_includes_tool_choice_auto() {
     let req = ChatRequest {
         messages: &messages,
         tools: &tools,
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -587,7 +587,7 @@ fn test_build_request_body_includes_tool_choice_any() {
     let req = ChatRequest {
         messages: &messages,
         tools: &tools,
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -612,7 +612,7 @@ fn test_build_request_body_includes_tool_choice_specific() {
     let req = ChatRequest {
         messages: &messages,
         tools: &tools,
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -635,7 +635,7 @@ fn test_build_request_body_includes_metadata_user_id() {
     let req = ChatRequest {
         messages: &messages,
         tools: &[],
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -657,7 +657,7 @@ fn test_build_request_body_omits_metadata_when_none() {
     let req = ChatRequest {
         messages: &messages,
         tools: &[],
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -707,3 +707,7 @@ fn test_normalize_messages_does_not_clone_unmodified_messages() {
 // Thinking tests are in anthropic_thinking_tests.rs (split for 750-line limit)
 #[path = "anthropic_thinking_tests.rs"]
 mod thinking_tests;
+
+// mod.rs region-coverage tests (split for 750-line limit)
+#[path = "anthropic_mod_cov_tests.rs"]
+mod mod_cov_tests;

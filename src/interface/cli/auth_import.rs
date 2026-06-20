@@ -224,3 +224,7 @@ pub(crate) fn import_openai(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "auth_import_cov_tests.rs"]
+mod cov_tests;

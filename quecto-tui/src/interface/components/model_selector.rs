@@ -485,7 +485,7 @@ mod tests {
 
     #[test]
     fn current_model_marked() {
-        let mut sel = ModelSelector::new(Some("claude-sonnet-4-20250514"));
+        let mut sel = ModelSelector::new(Some("claude-sonnet-4-6"));
         let lines = sel.render(60);
         let plain: String = lines
             .iter()
@@ -522,7 +522,7 @@ mod tests {
 
     #[test]
     fn respects_width() {
-        let mut sel = ModelSelector::new(Some("claude-sonnet-4-20250514"));
+        let mut sel = ModelSelector::new(Some("claude-sonnet-4-6"));
         let lines = sel.render(40);
         for line in &lines {
             assert!(

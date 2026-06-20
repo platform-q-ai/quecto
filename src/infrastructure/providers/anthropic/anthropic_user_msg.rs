@@ -104,7 +104,7 @@ mod tests {
         assert!(model_supports_vision("claude-3-sonnet-20240229"));
         assert!(model_supports_vision("claude-3-haiku-20240307"));
         assert!(model_supports_vision("claude-3-5-sonnet-20241022"));
-        assert!(model_supports_vision("claude-sonnet-4-20250514"));
+        assert!(model_supports_vision("claude-sonnet-4-6"));
         assert!(model_supports_vision("claude-opus-4-5"));
     }
 

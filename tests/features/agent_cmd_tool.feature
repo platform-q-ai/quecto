@@ -136,7 +136,7 @@ Feature: AgentCmdTool — native UDS interaction with spawned subagents
 
   Scenario: set_model command sends model
     Given an AgentCmdTool with a mock registry entry "w1"
-    When I execute agent_cmd with '{"agent_id":"w1","command":"set_model","model":"anthropic/claude-sonnet-4-20250514"}'
+    When I execute agent_cmd with '{"agent_id":"w1","command":"set_model","model":"anthropic/claude-sonnet-4-6"}'
     Then the agent_cmd should have sent command type "set_model"
 
   Scenario: clear_history command is built correctly

@@ -6,7 +6,7 @@ The workspace also includes companion binaries for terminal UI access (`quecto-t
 
 ## Release Notes
 
-Current version: **0.80.1**.
+Current version: **0.80.2**.
 
 ## Quick Start
 
@@ -608,7 +608,7 @@ If multiple providers are configured, automatic fallback applies:
 - Authentication errors (wrong API key) do not trigger fallback
 - Providers enter a cooldown period after failures
 - Classification is provider-scoped (`DomainError::Provider`), using extracted HTTP status codes first, then semantic message matching
-- Model routing: use `provider/model` syntax (e.g. `anthropic/claude-sonnet-4-20250514`) to target a specific provider
+- Model routing: use `provider/model` syntax (e.g. `anthropic/claude-sonnet-4-6`) to target a specific provider
 
 ### ChatGPT Codex provider
 

@@ -119,22 +119,6 @@ impl RuntimeRegistry {
         true
     }
 
-    pub fn reap_idle(&mut self, idle: Duration) -> usize {
-        let cutoff = Instant::now() - idle;
-        let refs = self
-            .runtimes
-            .iter()
-            .filter(|(_runtime_ref, runtime)| runtime.last_used_at < cutoff)
-            .map(|(runtime_ref, _runtime)| runtime_ref.clone())
-            .collect::<Vec<_>>();
-
-        let count = refs.len();
-        for runtime_ref in refs {
-            self.stop(&runtime_ref);
-        }
-        count
-    }
-
     pub fn reap_one_oldest(&mut self) -> bool {
         let Some(runtime_ref) = self
             .runtimes

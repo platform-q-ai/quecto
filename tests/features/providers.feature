@@ -204,7 +204,7 @@ Feature: LLM Providers
   # --- #175: Extended thinking support ---
 
   Scenario: Anthropic provider sends adaptive thinking for supported models
-    Given an Anthropic request with model "claude-sonnet-4-20250514" and thinking level "medium"
+    Given an Anthropic request with model "claude-sonnet-4-6" and thinking level "medium"
     When I build the Anthropic request body with thinking
     Then the request body should contain thinking type "enabled" with budget_tokens 10000
     And the request body should not contain a temperature field
@@ -215,7 +215,7 @@ Feature: LLM Providers
     Then the request body should contain thinking type "enabled" with budget_tokens 16384
 
   Scenario: Anthropic provider skips thinking when level is none for older models
-    Given an Anthropic request with model "claude-sonnet-4-20250514" and no thinking level
+    Given an Anthropic request with model "claude-sonnet-4-6" and no thinking level
     When I build the Anthropic request body with thinking
     Then the request body should not contain a thinking field
     And the request body should contain a temperature field
@@ -538,7 +538,7 @@ Feature: LLM Providers
 
   # #437-2,3,7,9: Beta headers
   Scenario: API key auth for non-4.6 model sends interleaved-thinking and fine-grained-tool-streaming betas
-    Given an Anthropic beta header for model "claude-sonnet-4-20250514" with is_oauth false
+    Given an Anthropic beta header for model "claude-sonnet-4-6" with is_oauth false
     When I build the beta header
     Then the beta header should contain "fine-grained-tool-streaming-2025-05-14"
     And the beta header should contain "interleaved-thinking-2025-05-14"
@@ -551,7 +551,7 @@ Feature: LLM Providers
     And the beta header should not contain "interleaved-thinking-2025-05-14"
 
   Scenario: OAuth auth includes identity and oauth betas plus streaming betas
-    Given an Anthropic beta header for model "claude-sonnet-4-20250514" with is_oauth true
+    Given an Anthropic beta header for model "claude-sonnet-4-6" with is_oauth true
     When I build the beta header
     Then the beta header should contain "claude-code-20250219"
     And the beta header should contain "oauth-2025-04-20"

@@ -411,3 +411,176 @@ fn sgr_mouse_right_release_ignored() {
     let (key, _) = parse_key(b"\x1b[<2;10;5m").unwrap();
     assert!(matches!(key, Key::Unknown(_)));
 }
+
+// ── Coverage: control bytes, SS3, CSI terminators ─────────────────────
+
+#[test]
+fn cov_ctrl_at_from_nul() {
+    assert_eq!(parse_key(&[0x00]).unwrap().0, Key::Ctrl('@'));
+}
+
+#[test]
+fn cov_ctrl_k_and_l() {
+    assert_eq!(parse_key(&[0x0B]).unwrap().0, Key::Ctrl('k'));
+    assert_eq!(parse_key(&[0x0C]).unwrap().0, Key::Ctrl('l'));
+}
+
+#[test]
+fn cov_del_byte_is_backspace() {
+    assert_eq!(parse_key(&[0x7F]).unwrap().0, Key::Backspace);
+}
+
+#[test]
+fn cov_ss3_arrows_and_home_end() {
+    assert_eq!(parse_key(b"\x1bOA").unwrap().0, Key::Up);
+    assert_eq!(parse_key(b"\x1bOB").unwrap().0, Key::Down);
+    assert_eq!(parse_key(b"\x1bOC").unwrap().0, Key::Right);
+    assert_eq!(parse_key(b"\x1bOD").unwrap().0, Key::Left);
+    assert_eq!(parse_key(b"\x1bOH").unwrap().0, Key::Home);
+    assert_eq!(parse_key(b"\x1bOF").unwrap().0, Key::End);
+}
+
+#[test]
+fn cov_ss3_unknown_and_incomplete() {
+    assert!(matches!(parse_key(b"\x1bOZ").unwrap().0, Key::Unknown(_)));
+    assert!(parse_key(b"\x1bO").is_none());
+}
+
+#[test]
+fn cov_alt_enter_cr_and_lf() {
+    assert_eq!(parse_key(b"\x1b\r").unwrap().0, Key::Alt('\n'));
+    assert_eq!(parse_key(b"\x1b\n").unwrap().0, Key::Alt('\n'));
+}
+
+#[test]
+fn cov_escape_followed_by_unhandled_byte() {
+    let (key, n) = parse_key(b"\x1b\x01").unwrap();
+    assert_eq!(key, Key::Escape);
+    assert_eq!(n, 1);
+}
+
+#[test]
+fn cov_csi_home_end_terminators() {
+    assert_eq!(parse_key(b"\x1b[H").unwrap().0, Key::Home);
+    assert_eq!(parse_key(b"\x1b[F").unwrap().0, Key::End);
+}
+
+#[test]
+fn cov_csi_backtab_terminator() {
+    assert_eq!(parse_key(b"\x1b[Z").unwrap().0, Key::BackTab);
+}
+
+#[test]
+fn cov_csi_tilde_variants() {
+    assert_eq!(parse_key(b"\x1b[1~").unwrap().0, Key::Home);
+    assert_eq!(parse_key(b"\x1b[2~").unwrap().0, Key::Insert);
+    assert_eq!(parse_key(b"\x1b[5~").unwrap().0, Key::PageUp);
+    assert_eq!(parse_key(b"\x1b[6~").unwrap().0, Key::PageDown);
+}
+
+#[test]
+fn cov_csi_unknown_terminator() {
+    assert!(matches!(parse_key(b"\x1b[99X").unwrap().0, Key::Unknown(_)));
+}
+
+#[test]
+fn cov_csi_unknown_tilde_param() {
+    assert!(matches!(parse_key(b"\x1b[99~").unwrap().0, Key::Unknown(_)));
+}
+
+// ── Coverage: kitty keypad/special keys ───────────────────────────────
+
+#[test]
+fn cov_kitty_navigation_keycodes() {
+    assert_eq!(parse_key(b"\x1b[1u").unwrap().0, Key::Up);
+    assert_eq!(parse_key(b"\x1b[2u").unwrap().0, Key::Down);
+    assert_eq!(parse_key(b"\x1b[3u").unwrap().0, Key::Right);
+    assert_eq!(parse_key(b"\x1b[4u").unwrap().0, Key::Left);
+    assert_eq!(parse_key(b"\x1b[5u").unwrap().0, Key::Home);
+    assert_eq!(parse_key(b"\x1b[6u").unwrap().0, Key::End);
+    assert_eq!(parse_key(b"\x1b[7u").unwrap().0, Key::PageUp);
+    assert_eq!(parse_key(b"\x1b[8u").unwrap().0, Key::PageDown);
+}
+
+#[test]
+fn cov_kitty_backspace_and_escape_keycodes() {
+    assert_eq!(parse_key(b"\x1b[127u").unwrap().0, Key::Backspace);
+    assert_eq!(parse_key(b"\x1b[27u").unwrap().0, Key::Escape);
+}
+
+#[test]
+fn cov_kitty_alt_letter() {
+    assert_eq!(parse_key(b"\x1b[97;3u").unwrap().0, Key::Alt('a'));
+}
+
+#[test]
+fn cov_kitty_plain_uppercase_no_modifier() {
+    assert_eq!(parse_key(b"\x1b[65;1u").unwrap().0, Key::Char('A'));
+}
+
+#[test]
+fn cov_kitty_unknown_keycode() {
+    assert!(matches!(
+        parse_key(b"\x1b[200u").unwrap().0,
+        Key::Unknown(_)
+    ));
+}
+
+#[test]
+fn cov_kitty_event_type_release_is_unknown() {
+    // modifier field with event type ":3" (release) is not actionable.
+    assert!(matches!(
+        parse_key(b"\x1b[97;1:3u").unwrap().0,
+        Key::Unknown(_)
+    ));
+}
+
+// ── Coverage: SGR mouse edge cases ────────────────────────────────────
+
+#[test]
+fn cov_sgr_mouse_invalid_char_consumed() {
+    let (key, n) = parse_key(b"\x1b[<0;x").unwrap();
+    assert!(matches!(key, Key::Unknown(_)));
+    assert_eq!(n, 6);
+}
+
+#[test]
+fn cov_sgr_mouse_other_button_consumed() {
+    let (key, _) = parse_key(b"\x1b[<2;5;5M").unwrap();
+    assert!(matches!(key, Key::Unknown(_)));
+}
+
+// ── Coverage: modifyOtherKeys variants ────────────────────────────────
+
+#[test]
+fn cov_modify_other_keys_ctrl_only() {
+    // CSI 27 ; 5 ; 65 ~  → Ctrl modifier (bit 2) on 'A' → Ctrl('a').
+    assert_eq!(parse_key(b"\x1b[27;5;65~").unwrap().0, Key::Ctrl('a'));
+}
+
+#[test]
+fn cov_modify_other_keys_alt_only() {
+    // modifiers 3 → bit 1 (Alt) on 'a' → Alt('a').
+    assert_eq!(parse_key(b"\x1b[27;3;97~").unwrap().0, Key::Alt('a'));
+}
+
+#[test]
+fn cov_modify_other_keys_plain_printable() {
+    assert_eq!(parse_key(b"\x1b[27;1;97~").unwrap().0, Key::Char('a'));
+}
+
+// ── Coverage: utf8 fallback + convenience matchers ────────────────────
+
+#[test]
+fn cov_incomplete_utf8_returns_none() {
+    // Lone UTF-8 continuation/start byte cannot form a char.
+    assert!(parse_key(&[0xE2]).is_none());
+}
+
+#[test]
+fn cov_is_ctrl_c_and_is_char() {
+    assert!(Key::Ctrl('c').is_ctrl_c());
+    assert!(!Key::Ctrl('d').is_ctrl_c());
+    assert!(Key::Char('x').is_char());
+    assert!(!Key::Enter.is_char());
+}

@@ -76,20 +76,6 @@ impl ExecTool {
         Self::with_options(workspace, sandbox, opts)
     }
 
-    pub fn with_limits(
-        workspace: Arc<PathBuf>,
-        sandbox: Arc<Sandbox>,
-        timeout: Duration,
-        max_capture_bytes: usize,
-    ) -> Self {
-        let opts = ExecOptions {
-            timeout,
-            max_capture_bytes,
-            ..ExecOptions::default()
-        };
-        Self::with_options(workspace, sandbox, opts)
-    }
-
     pub fn with_options(
         workspace: Arc<PathBuf>,
         sandbox: Arc<Sandbox>,

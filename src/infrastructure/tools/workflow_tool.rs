@@ -64,10 +64,6 @@ impl WorkflowTool {
         }
     }
 
-    pub fn set_event_emitter(&mut self, emitter: WorkflowEventEmitter) {
-        self.event_emitter = Some(emitter);
-    }
-
     pub fn engine(&self) -> &WorkflowEngineHandle {
         &self.engine
     }

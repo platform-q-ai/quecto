@@ -199,7 +199,7 @@ send(sock, {"type": "prompt", "id": "p1", "message": "Review src/auth.py for bug
 ### Switch models mid-session
 
 ```python
-send(sock, {"type": "set_model", "id": "sm1", "model": "anthropic/claude-sonnet-4-20250514"})
+send(sock, {"type": "set_model", "id": "sm1", "model": "anthropic/claude-sonnet-4-6"})
 # Next prompt uses the new model
 send(sock, {"type": "prompt", "id": "p2", "message": "Explain this code"})
 ```
@@ -299,7 +299,7 @@ The agent stays alive after errors. Common patterns:
 
 ```python
 # Prompt fails with "no configured provider matches model prefix 'gemini'"
-send(sock, {"type": "set_model", "model": "anthropic/claude-sonnet-4-20250514"})
+send(sock, {"type": "set_model", "model": "anthropic/claude-sonnet-4-6"})
 send(sock, {"type": "prompt", "message": "Try again"})
 ```
 

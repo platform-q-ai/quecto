@@ -18,7 +18,7 @@ fn test_build_request_body_with_thinking_adds_thinking_param() {
     let req = ChatRequest {
         messages: &messages,
         tools: &[],
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-5",
         max_tokens: 16000,
         temperature: 0.7,
         session_id: None,
@@ -45,7 +45,7 @@ fn test_build_request_body_without_thinking_includes_temperature_for_older_model
     let req = ChatRequest {
         messages: &messages,
         tools: &[],
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-5",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -689,7 +689,7 @@ async fn test_api_key_auth_sends_interleaved_thinking_for_non_46_models() {
         messages: &messages,
         tools: &[],
         // Non-4.6 model: interleaved-thinking should be present
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-5",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,

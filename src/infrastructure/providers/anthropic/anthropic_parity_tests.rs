@@ -18,7 +18,7 @@ fn test_oauth_prepends_identity_system_prompt() {
     let req = ChatRequest {
         messages: &messages,
         tools: &[],
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-5",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -47,7 +47,7 @@ fn test_oauth_without_system_prompt_still_has_identity() {
     let req = ChatRequest {
         messages: &messages,
         tools: &[],
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-5",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -72,7 +72,7 @@ fn test_api_key_does_not_prepend_identity_system_prompt() {
     let req = ChatRequest {
         messages: &messages,
         tools: &[],
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-5",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -92,7 +92,7 @@ fn test_api_key_does_not_prepend_identity_system_prompt() {
 
 #[test]
 fn test_beta_header_api_key_non_46_model() {
-    let beta = AnthropicProvider::build_beta_header_public("claude-sonnet-4-20250514", false);
+    let beta = AnthropicProvider::build_beta_header_public("claude-sonnet-4-5", false);
     assert!(beta.contains("fine-grained-tool-streaming-2025-05-14"));
     assert!(beta.contains("interleaved-thinking-2025-05-14"));
     assert!(!beta.contains("claude-code-20250219"));
@@ -109,7 +109,7 @@ fn test_beta_header_api_key_46_model() {
 
 #[test]
 fn test_beta_header_oauth_non_46_model() {
-    let beta = AnthropicProvider::build_beta_header_public("claude-sonnet-4-20250514", true);
+    let beta = AnthropicProvider::build_beta_header_public("claude-sonnet-4-5", true);
     assert!(beta.contains("claude-code-20250219"));
     assert!(beta.contains("oauth-2025-04-20"));
     assert!(beta.contains("fine-grained-tool-streaming-2025-05-14"));
@@ -185,7 +185,7 @@ fn test_tool_defs_remapped_in_oauth_mode() {
     let req = ChatRequest {
         messages: &messages,
         tools: &tools,
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-5",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -214,7 +214,7 @@ fn test_tool_defs_not_remapped_in_api_key_mode() {
     let req = ChatRequest {
         messages: &messages,
         tools: &tools,
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-5",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,
@@ -357,7 +357,7 @@ async fn test_accept_header_is_sent() {
     let req = ChatRequest {
         messages: &messages,
         tools: &[],
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-5",
         max_tokens: 1024,
         temperature: 0.7,
         session_id: None,

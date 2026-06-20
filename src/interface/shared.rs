@@ -639,3 +639,7 @@ pub fn xdg_runtime_dir_or_temp() -> std::path::PathBuf {
 #[cfg(test)]
 #[path = "shared_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "shared_cov_tests.rs"]
+mod cov_tests;
