@@ -240,6 +240,184 @@ fn parse_response_skips_reasoning_items() {
     assert!(resp.usage.is_none());
 }
 
+// --- parse_response: multiple output_text parts accumulate (Some(c) arm) ---
+
+#[test]
+fn parse_response_concatenates_multiple_output_text_parts() {
+    // A single message with two output_text parts exercises the `Some(c) =>
+    // c.push_str(text)` accumulation arm (the single-part path hits `None`).
+    let body = serde_json::json!({
+        "output": [
+            { "type": "message", "content": [
+                { "type": "output_text", "text": "Hello " },
+                { "type": "output_text", "text": "world" },
+            ] }
+        ]
+    });
+    let resp = CodexProvider::parse_response(&body).unwrap();
+    assert_eq!(resp.content.unwrap(), "Hello world");
+    assert!(resp.tool_calls.is_empty());
+}
+
+// --- parse_sse_response: non-`data:` lines are skipped ---
+
+#[test]
+fn parse_sse_response_skips_non_data_lines() {
+    // event/comment/blank lines must hit the `continue` branch, then the
+    // surviving data lines assemble normally.
+    let sse = "event: ping\n\
+               : keepalive comment\n\
+               \n\
+               data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hi\"}\n\
+               data: [DONE]\n";
+    let resp = CodexProvider::parse_sse_response(sse).unwrap();
+    assert_eq!(resp.content.unwrap(), "Hi");
+}
+
+// --- public test-support accessors delegate to private builders ---
+
+#[test]
+fn public_accessors_delegate_to_private_builders() {
+    let messages = vec![Message::system("Sys"), Message::user("U")];
+    let tools: Vec<ToolDefinition> = vec![];
+    let body = CodexProvider::build_request_body_public(&req(&messages, &tools, "gpt-5.2", None));
+    assert_eq!(body["model"], "gpt-5.2");
+
+    let (inst, input) = CodexProvider::build_input_public(&messages);
+    assert_eq!(inst.unwrap(), "Sys");
+    assert_eq!(input.len(), 1);
+
+    let resp = CodexProvider::parse_sse_response_public(
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"x\"}\ndata: [DONE]\n",
+    )
+    .unwrap();
+    assert_eq!(resp.content.unwrap(), "x");
+}
+
+// --- SseAccumulator: output_item.added with no "item" field is ignored ---
+
+#[test]
+fn accumulator_item_added_without_item_field_is_ignored() {
+    let mut acc = SseAccumulator::default();
+    acc.handle_event(&serde_json::json!({
+        "type": "response.output_item.added",
+        "output_index": 0,
+    }));
+    assert!(acc.into_response().tool_calls.is_empty());
+}
+
+// --- chat_stream delegates to chat (validation path, no network) ---
+
+#[tokio::test]
+async fn chat_stream_delegates_to_chat_validation() {
+    let provider = CodexProvider::new("k".into(), "acct".into(), None);
+    let messages = vec![Message::user("U")]; // no system message → missing instructions
+    let err = provider
+        .chat_stream(req(&messages, &[], "gpt-5.2", None))
+        .await
+        .expect_err("missing instructions must error");
+    assert!(
+        err.to_string().contains("requires instructions"),
+        "got: {err}"
+    );
+}
+
+// --- handler: output_text.delta event without a "delta" string ---
+
+#[tokio::test]
+async fn handler_output_text_delta_missing_field_emits_no_text() {
+    let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+    let mut handler = CodexSseHandler::new();
+    let out = handler
+        .process_line(r#"data: {"type":"response.output_text.delta"}"#, &tx)
+        .await;
+    assert!(matches!(out, SseLineOutcome::Continue));
+    assert!(rx.try_recv().is_err(), "no TextDelta should be emitted");
+    handler.on_eof(&tx).await;
+    match rx.recv().await.unwrap() {
+        StreamEvent::Done(resp) => assert!(resp.content.is_none()),
+        other => panic!("unexpected: {other:?}"),
+    }
+}
+
+// --- chat_stream_incremental: validation error surfaces over the channel ---
+
+#[tokio::test]
+async fn chat_stream_incremental_emits_error_on_invalid_model() {
+    // Provider-qualified model fails validate_request before any spawn/network,
+    // and the error is delivered via the returned channel.
+    let provider = CodexProvider::new("k".into(), "acct".into(), None);
+    let messages = vec![Message::system("Sys"), Message::user("U")];
+    let mut rx = provider
+        .chat_stream_incremental(req(&messages, &[], "openai/gpt-5.2", None))
+        .await;
+    match rx.recv().await.unwrap() {
+        StreamEvent::Error(e) => assert!(e.contains("bare model id"), "got: {e}"),
+        other => panic!("unexpected: {other:?}"),
+    }
+}
+
+// --- chat_stream_incremental + pump_codex_sse (local mock server) ---
+// These drive the streaming spawn path against a wiremock mock (localhost,
+// deterministic — not a live API), the only way to exercise pump_codex_sse.
+
+#[tokio::test]
+async fn chat_stream_incremental_pumps_sse_to_done() {
+    let server = wiremock::MockServer::start().await;
+    let sse = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hi\"}\n\
+               data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n";
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(sse))
+        .mount(&server)
+        .await;
+    let provider = CodexProvider::new("k".into(), "acct".into(), Some(server.uri()));
+    let messages = vec![Message::system("Sys"), Message::user("U")];
+    let mut rx = provider
+        .chat_stream_incremental(req(&messages, &[], "gpt-5.2", None))
+        .await;
+
+    let mut saw_done = false;
+    while let Some(ev) = rx.recv().await {
+        if let StreamEvent::Done(resp) = ev {
+            assert_eq!(resp.content.as_deref(), Some("Hi"));
+            saw_done = true;
+        }
+    }
+    assert!(saw_done, "expected a Done event");
+}
+
+#[tokio::test]
+async fn chat_stream_incremental_emits_http_error_status() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(wiremock::ResponseTemplate::new(401).set_body_string("nope"))
+        .mount(&server)
+        .await;
+    let provider = CodexProvider::new("k".into(), "acct".into(), Some(server.uri()));
+    let messages = vec![Message::system("Sys"), Message::user("U")];
+    let mut rx = provider
+        .chat_stream_incremental(req(&messages, &[], "gpt-5.2", None))
+        .await;
+    match rx.recv().await.unwrap() {
+        StreamEvent::Error(e) => assert!(e.contains("HTTP 401 from Codex"), "got: {e}"),
+        other => panic!("unexpected: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn chat_stream_incremental_emits_request_failed_on_unreachable() {
+    // Port 1 is unbound → connection refused → the request-failed branch.
+    let provider = CodexProvider::new("k".into(), "acct".into(), Some("http://127.0.0.1:1".into()));
+    let messages = vec![Message::system("Sys"), Message::user("U")];
+    let mut rx = provider
+        .chat_stream_incremental(req(&messages, &[], "gpt-5.2", None))
+        .await;
+    match rx.recv().await.unwrap() {
+        StreamEvent::Error(e) => assert!(e.contains("Codex request failed"), "got: {e}"),
+        other => panic!("unexpected: {other:?}"),
+    }
+}
+
 // --- name() ---
 
 #[test]

@@ -1637,7 +1637,7 @@ dependencies = [
 
 [[package]]
 name = "quecto"
-version = "0.80.2"
+version = "0.80.3"
 dependencies = [
  "base64",
  "cucumber",

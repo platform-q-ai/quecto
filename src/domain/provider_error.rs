@@ -127,3 +127,7 @@ fn parse_status_near(s: &str) -> Option<u16> {
     }
     None
 }
+
+#[cfg(test)]
+#[path = "provider_error_tests.rs"]
+mod tests;

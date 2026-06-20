@@ -352,3 +352,315 @@ fn test_resolve_workspace_for_skills() {
     let result = super::resolve_workspace_for_skills(tmp.path());
     assert!(result.ends_with("workspace"));
 }
+
+#[test]
+fn test_resolve_workspace_for_skills_relative_config() {
+    // A relative workspace path in config is joined onto the base dir.
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("config.json"),
+        r#"{"agents":{"defaults":{"workspace":"relws"}}}"#,
+    )
+    .unwrap();
+    let result = super::resolve_workspace_for_skills(tmp.path());
+    assert_eq!(result, tmp.path().join("relws"));
+}
+
+#[test]
+fn test_resolve_workspace_for_skills_absolute_config() {
+    // An absolute workspace path in config is returned unchanged.
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("config.json"),
+        r#"{"agents":{"defaults":{"workspace":"/tmp/quecto-abs-ws"}}}"#,
+    )
+    .unwrap();
+    let result = super::resolve_workspace_for_skills(tmp.path());
+    assert_eq!(result, std::path::PathBuf::from("/tmp/quecto-abs-ws"));
+}
+
+#[test]
+fn test_resolve_workspace_for_skills_invalid_config_falls_back() {
+    // A present-but-unparseable config falls back to <base>/workspace.
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("config.json"), "{ not valid ").unwrap();
+    let result = super::resolve_workspace_for_skills(tmp.path());
+    assert_eq!(result, tmp.path().join("workspace"));
+}
+
+// ===================================================================
+// cmd_status: config load failure branch
+// ===================================================================
+
+#[test]
+fn test_status_invalid_config_fails() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("config.json"), "{ not valid json ").unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
+    let out = run_with_output(args("status"), &ctx);
+    assert_eq!(out.exit_code, 1);
+    assert!(
+        out.stderr.contains("failed to load config"),
+        "stderr: {}",
+        out.stderr
+    );
+}
+
+// ===================================================================
+// skills install: download + frontmatter validation branches
+// ===================================================================
+
+/// Start a wiremock server that answers every GET with `status`/`body`.
+fn mock_any_get(status: u16, body: String) -> wiremock::MockServer {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(status).set_body_string(body))
+            .mount(&server)
+            .await;
+        server
+    })
+}
+
+#[test]
+fn test_skills_install_download_not_found() {
+    // Empty server → both main and master branches 404 → "skill not found".
+    let tmp = tempfile::TempDir::new().unwrap();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let server = rt.block_on(async { wiremock::MockServer::start().await });
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        github_raw_base_url: Some(server.uri()),
+        ..Default::default()
+    };
+    let out = run_with_output(args("skills install user/repo/weather"), &ctx);
+    assert_eq!(out.exit_code, 1);
+    assert!(
+        out.stderr.contains("failed to download skill"),
+        "stderr: {}",
+        out.stderr
+    );
+}
+
+#[test]
+fn test_skills_install_download_server_error() {
+    // 500 from both branches → last_error carries the HTTP status.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let server = mock_any_get(500, "boom".to_string());
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        github_raw_base_url: Some(server.uri()),
+        ..Default::default()
+    };
+    let out = run_with_output(args("skills install user/repo/weather"), &ctx);
+    assert_eq!(out.exit_code, 1);
+    assert!(
+        out.stderr.contains("failed to download skill"),
+        "stderr: {}",
+        out.stderr
+    );
+}
+
+#[test]
+fn test_skills_install_download_connection_error() {
+    // Unreachable port → request error branch.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        github_raw_base_url: Some("http://127.0.0.1:1".to_string()),
+        ..Default::default()
+    };
+    let out = run_with_output(args("skills install user/repo/weather"), &ctx);
+    assert_eq!(out.exit_code, 1);
+    assert!(
+        out.stderr.contains("failed to download skill"),
+        "stderr: {}",
+        out.stderr
+    );
+}
+
+#[test]
+fn test_skills_install_body_too_large() {
+    // Body exceeds the 256 KiB cap → download aborts.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let big = "x".repeat(300 * 1024);
+    let server = mock_any_get(200, big);
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        github_raw_base_url: Some(server.uri()),
+        ..Default::default()
+    };
+    let out = run_with_output(args("skills install user/repo/weather"), &ctx);
+    assert_eq!(out.exit_code, 1);
+    assert!(
+        out.stderr.contains("failed to download skill"),
+        "stderr: {}",
+        out.stderr
+    );
+}
+
+#[test]
+fn test_skills_install_no_frontmatter() {
+    // Body without `---` delimiters → invalid frontmatter.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let server = mock_any_get(200, "no frontmatter here".to_string());
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        github_raw_base_url: Some(server.uri()),
+        ..Default::default()
+    };
+    let out = run_with_output(args("skills install user/repo/weather"), &ctx);
+    assert_eq!(out.exit_code, 1);
+    assert!(
+        out.stderr.contains("invalid SKILL.md frontmatter"),
+        "stderr: {}",
+        out.stderr
+    );
+}
+
+#[test]
+fn test_skills_install_empty_description_fails_validation() {
+    // Parses (name+description keys present) but description is empty →
+    // validate_frontmatter rejects it.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let server = mock_any_get(
+        200,
+        "---\nname: weather\ndescription:\n---\nBody".to_string(),
+    );
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        github_raw_base_url: Some(server.uri()),
+        ..Default::default()
+    };
+    let out = run_with_output(args("skills install user/repo/weather"), &ctx);
+    assert_eq!(out.exit_code, 1);
+    assert!(
+        out.stderr.contains("invalid SKILL.md frontmatter"),
+        "stderr: {}",
+        out.stderr
+    );
+}
+
+#[test]
+fn test_skills_install_name_mismatch() {
+    // Valid frontmatter, but the declared name differs from the requested one.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let server = mock_any_get(
+        200,
+        "---\nname: other\ndescription: Something\n---\nBody".to_string(),
+    );
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        github_raw_base_url: Some(server.uri()),
+        ..Default::default()
+    };
+    let out = run_with_output(args("skills install user/repo/weather"), &ctx);
+    assert_eq!(out.exit_code, 1);
+    assert!(
+        out.stderr.contains("invalid SKILL.md name"),
+        "stderr: {}",
+        out.stderr
+    );
+}
+
+// ===================================================================
+// skills install / remove: filesystem error arms (Unix permission based)
+// ===================================================================
+
+#[test]
+fn test_skills_install_create_dir_all_fails_when_skills_path_is_file() {
+    // A regular file occupying the `skills` path makes create_dir_all fail.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ws_skills = tmp.path().join("workspace").join("skills");
+    std::fs::create_dir_all(ws_skills.parent().unwrap()).unwrap();
+    std::fs::write(&ws_skills, "i am a file, not a dir").unwrap();
+    let server = mock_any_get(
+        200,
+        "---\nname: weather\ndescription: Weather forecasts\n---\nBody".to_string(),
+    );
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        github_raw_base_url: Some(server.uri()),
+        ..Default::default()
+    };
+    let out = run_with_output(args("skills install user/repo/weather"), &ctx);
+    assert_eq!(out.exit_code, 1);
+    assert!(
+        out.stderr.contains("failed to create skills directory"),
+        "stderr: {}",
+        out.stderr
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_skills_install_create_dir_fails_in_readonly_parent() {
+    use std::os::unix::fs::PermissionsExt;
+    // A read-only `skills` dir lets create_dir_all succeed (already exists) but
+    // makes create_dir(skill_dir) fail with permission denied.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ws_skills = tmp.path().join("workspace").join("skills");
+    std::fs::create_dir_all(&ws_skills).unwrap();
+    std::fs::set_permissions(&ws_skills, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let server = mock_any_get(
+        200,
+        "---\nname: weather\ndescription: Weather forecasts\n---\nBody".to_string(),
+    );
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        github_raw_base_url: Some(server.uri()),
+        ..Default::default()
+    };
+    let out = run_with_output(args("skills install user/repo/weather"), &ctx);
+    // Restore perms so TempDir cleanup works.
+    std::fs::set_permissions(&ws_skills, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(out.exit_code, 1);
+    assert!(
+        out.stderr.contains("failed to create skill directory"),
+        "stderr: {}",
+        out.stderr
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_skills_remove_dir_fails_in_readonly_parent() {
+    use std::os::unix::fs::PermissionsExt;
+    // A read-only parent dir makes remove_dir_all of the skill fail.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let ws_skills = tmp.path().join("workspace").join("skills");
+    let skill_dir = ws_skills.join("weather");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(skill_dir.join("SKILL.md"), "body").unwrap();
+    std::fs::set_permissions(&ws_skills, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
+    let out = run_with_output(args("skills remove weather"), &ctx);
+    // Restore perms so TempDir cleanup works.
+    std::fs::set_permissions(&ws_skills, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(out.exit_code, 1);
+    assert!(
+        out.stderr.contains("failed to remove skill"),
+        "stderr: {}",
+        out.stderr
+    );
+}
+
+#[test]
+fn test_download_skill_markdown_within_runtime_errors() {
+    // download_skill_markdown refuses to spin up a nested runtime.
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let result = rt.block_on(async {
+        super::download_skill_markdown("http://example.invalid", "owner", "repo", "weather")
+    });
+    match result {
+        Err(msg) => assert!(msg.contains("async runtime"), "got: {msg}"),
+        Ok(_) => panic!("expected error inside runtime"),
+    }
+}

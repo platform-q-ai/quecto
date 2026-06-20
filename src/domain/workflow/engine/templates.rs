@@ -12,7 +12,7 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
                 key: "hooks".into(),
                 label: "Install/check local quality hooks".into(),
                 phase: "setup".into(),
-                guidance: Some("Run scripts/install-hooks.sh, then verify pre-commit, pre-push, pre-merge-commit, and the git --no-verify wrapper are installed/active before editing code.".into()),
+                guidance: Some("Run scripts/install-hooks.sh, then verify pre-commit, pre-push, and the git --no-verify wrapper are installed/active before editing code.".into()),
             },
             WorkflowTemplateStep {
                 key: "scenarios".into(),
@@ -94,7 +94,7 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
             },
             WorkflowTemplateStep {
                 key: "pre_merge".into(),
-                label: "Run pre-merge hooks (real-LLM, machete, deny)".into(),
+                label: "Confirm the pre-push gate passed (real-LLM, machete, deny run on push)".into(),
                 phase: "ci_cd".into(),
                 guidance: None,
             },
@@ -126,7 +126,7 @@ pub fn default_templates() -> Vec<WorkflowTemplate> {
             WorkflowGuardRule {
                 commands: vec!["git merge".into(), "gh pr merge".into()],
                 before_step_key: "merge".into(),
-                message: "Complete code review and pre-merge validation before merging.".into(),
+                message: "Complete code review and verify the pre-push gate passed before merging.".into(),
             },
         ],
     }]

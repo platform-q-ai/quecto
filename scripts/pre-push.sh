@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # pre-push.sh — Runs on every git push.
-# Local quality gate: static checks + parallel test wave (lib + architecture + contracts + repo docs + 24-way non-real BDD).
-# Expensive checks (real-LLM, machete, deny) live in pre-merge-commit.sh.
+# Full local quality gate: static checks + parallel test wave (lib + architecture
+# + contracts + repo docs + 24-way non-real BDD) + coverage + machete + deny +
+# the real-LLM end-to-end suite (skippable with QUECTO_SKIP_REAL_LLM=1).
 set -euo pipefail
 
 export PATH="$HOME/.cargo/bin:$PATH"
@@ -9,10 +10,10 @@ export PATH="$HOME/.cargo/bin:$PATH"
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
-# NOTE: pre-push runs only deterministic checks (no real-LLM step — those live in
-# pre-merge-commit.sh). It must NOT load .env: a real provider key in the
+# NOTE: the deterministic wave must NOT load .env — a real provider key in the
 # environment makes the agent see a configured provider, which breaks the many
-# "no providers configured" / default-config tests in the deterministic wave.
+# "no providers configured" / default-config tests. The real-LLM step below
+# sources .env on its own, only after the deterministic wave has run.
 
 E2E_TIMEOUT="${QUECTO_E2E_TIMEOUT:-12m}"
 BDD_SHARDS="${QUECTO_BDD_SHARDS:-24}"
@@ -43,24 +44,24 @@ step() {
 
 # --- Pre-commit checks (belt-and-suspenders) ---
 
-step "1/7" "Quality gate"
+step "1/10" "Quality gate"
 "$ROOT/scripts/check-quality.sh"
 
-step "2/7" "BDD quality gate (stubs, always-pass tests, reimplemented logic)"
+step "2/10" "BDD quality gate (stubs, always-pass tests, reimplemented logic)"
 "$ROOT/scripts/check-bdd-quality.sh"
 
-step "3/7" "cargo fmt --check"
+step "3/10" "cargo fmt --check"
 cargo fmt --all -- --check
 
-step "4/7" "cargo clippy (strict, workspace)"
+step "4/10" "cargo clippy (strict, workspace)"
 cargo clippy --workspace --all-targets --features test-support -- -D warnings \
     -W clippy::cognitive_complexity \
     -W clippy::too_many_arguments \
     -W clippy::too_many_lines
 
-COV_THRESHOLD="${QUECTO_COV_THRESHOLD:-85}"
+COV_THRESHOLD="${QUECTO_COV_THRESHOLD:-87}"
 
-step "5/7" "Parallel test wave: unit + architecture + contracts + non-real BDD shards"
+step "5/10" "Parallel test wave: unit + architecture + contracts + non-real BDD shards"
 
 (
     cargo test --no-fail-fast --lib --test architecture --test contracts --test repo_docs 2>&1 | "$ROOT/scripts/test-filter.sh"
@@ -89,7 +90,7 @@ if [[ "$FAIL" -ne 0 ]]; then
     exit 1
 fi
 
-step "6/7" "Code coverage (cargo llvm-cov, threshold ${COV_THRESHOLD}%)"
+step "6/10" "Code coverage (cargo llvm-cov, threshold ${COV_THRESHOLD}%)"
 
 # Resolve llvm tools — cargo-llvm-cov needs these when llvm-tools-preview
 # isn't installed via rustup (e.g. system Rust on Arch Linux).
@@ -123,7 +124,48 @@ if [[ "$COV_FAIL" -ne 0 ]]; then
     exit 1
 fi
 
-step "7/7" "Pre-push summary"
+step "7/10" "cargo machete (unused dependencies)"
+if command -v cargo-machete &>/dev/null; then
+    cargo machete
+else
+    echo "  cargo-machete not installed, skipping unused dep check"
+    echo "  Install with: cargo install cargo-machete --locked"
+fi
+
+step "8/10" "cargo deny check (licenses, advisories, bans)"
+if command -v cargo-deny &>/dev/null; then
+    cargo deny check
+else
+    echo "  cargo-deny not installed, skipping license/advisory check"
+    echo "  Install with: cargo install cargo-deny --locked"
+fi
+
+step "9/10" "Real-LLM end-to-end tests"
+
+# .env carries provider API keys; source it ONLY here. The deterministic wave
+# above must run WITHOUT provider keys, or the "no providers configured" tests
+# break. Skip cleanly when no key is present (CI, fresh checkout) or on opt-out.
+source "$ROOT/scripts/load-dotenv.sh"
+
+REAL_LLM_SHARDS="${QUECTO_REAL_LLM_SHARDS:-24}"
+REAL_LLM_TIMEOUT="${QUECTO_REAL_LLM_TIMEOUT:-12m}"
+if [[ "${QUECTO_SKIP_REAL_LLM:-0}" == "1" ]]; then
+    echo "  SKIP: QUECTO_SKIP_REAL_LLM=1"
+elif [[ -z "${OPENAI_API_KEY:-}${QUECTO_PROVIDERS_OPENAI_API_KEY:-}" ]]; then
+    echo "  SKIP: no provider API key present (add OPENAI_API_KEY to .env to enable)"
+else
+    if ! bash "$ROOT/scripts/run-bdd-shards.sh" \
+        --suite "real-llm-bdd" \
+        --shards "$REAL_LLM_SHARDS" \
+        --timeout "$REAL_LLM_TIMEOUT" \
+        --tag "real-llm" \
+        --real-llm; then
+        echo -e "${RED}FAIL${NC}: real-LLM end-to-end tests"
+        exit 1
+    fi
+fi
+
+step "10/10" "Pre-push summary"
 echo "All local push gates passed."
 echo "BDD shards: ${BDD_SHARDS}, timeout per shard: ${E2E_TIMEOUT}"
 echo "Coverage threshold: ${COV_THRESHOLD}%"

@@ -538,7 +538,7 @@ fn assert_local_hook_enforces_formatting_and_complexity(hook: &str) {
 fn hook_installation_checker_verifies_all_local_hooks() {
     let content = fs::read_to_string("scripts/check-hooks-installed.sh")
         .expect("read hook installation checker");
-    for hook in ["pre-commit", "pre-push", "pre-merge-commit"] {
+    for hook in ["pre-commit", "pre-push"] {
         assert!(
             content.contains(hook),
             "hook checker must verify {hook} is installed"

@@ -356,3 +356,91 @@ async fn test_chat_forwards_tools_without_cloning() {
         "ProviderRouter should forward the original tools slice without cloning",
     );
 }
+
+// ── Coverage: streaming forward paths + pure helpers ───────────────────────
+
+#[tokio::test]
+async fn chat_stream_forwards_to_resolved_provider() {
+    let primary = TestProvider::succeeding("openai", "streamed");
+    let router = ProviderRouter::new(vec![primary as Arc<dyn LlmProvider>]);
+    let msgs = test_messages();
+    let resp = router
+        .chat_stream(make_request(&msgs, "openai/gpt-5.2"))
+        .await
+        .unwrap();
+    assert_eq!(resp.content.unwrap(), "streamed");
+}
+
+#[tokio::test]
+async fn chat_stream_incremental_emits_done_on_success() {
+    let primary = TestProvider::succeeding("openai", "inc");
+    let router = ProviderRouter::new(vec![primary as Arc<dyn LlmProvider>]);
+    let msgs = test_messages();
+    let mut rx = router
+        .chat_stream_incremental(make_request(&msgs, "openai/gpt-5.2"))
+        .await;
+    match rx.recv().await {
+        Some(StreamEvent::Done(resp)) => assert_eq!(resp.content.unwrap(), "inc"),
+        other => panic!("expected Done, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn chat_stream_incremental_emits_error_on_unresolved_prefix() {
+    let primary = TestProvider::succeeding("openai", "x");
+    let router = ProviderRouter::new(vec![primary as Arc<dyn LlmProvider>]);
+    let msgs = test_messages();
+    let mut rx = router
+        .chat_stream_incremental(make_request(&msgs, "gemini/foo"))
+        .await;
+    match rx.recv().await {
+        Some(StreamEvent::Error(e)) => {
+            assert!(e.contains("no configured provider matches"), "{e}")
+        }
+        other => panic!("expected Error, got {other:?}"),
+    }
+}
+
+#[test]
+fn parse_qualified_model_handles_edges() {
+    assert_eq!(
+        super::parse_qualified_model("openai/gpt-5.2"),
+        Some(("openai", "gpt-5.2"))
+    );
+    // trims surrounding whitespace
+    assert_eq!(
+        super::parse_qualified_model("  openai / gpt-5.2 "),
+        Some(("openai", "gpt-5.2"))
+    );
+    // bare name (no slash)
+    assert_eq!(super::parse_qualified_model("gpt-5.2"), None);
+    // empty provider
+    assert_eq!(super::parse_qualified_model("/gpt-5.2"), None);
+    // empty model
+    assert_eq!(super::parse_qualified_model("openai/"), None);
+    // nested slash rejected
+    assert_eq!(super::parse_qualified_model("openai/a/b"), None);
+}
+
+#[test]
+fn provider_prefix_matches_aliases_and_case() {
+    assert!(super::provider_prefix_matches("OpenAI", "openai"));
+    assert!(super::provider_prefix_matches("anthropic", "anthropic"));
+    // codex aliases
+    assert!(super::provider_prefix_matches("openai", "codex"));
+    assert!(super::provider_prefix_matches("openai-codex", "codex"));
+    assert!(super::provider_prefix_matches("CODEX", "codex"));
+    // non-matches
+    assert!(!super::provider_prefix_matches("anthropic", "codex"));
+    assert!(!super::provider_prefix_matches("gemini", "openai"));
+}
+
+#[test]
+fn truncate_prefix_short_and_multibyte_boundary() {
+    // short string returned as-is
+    assert_eq!(super::truncate_prefix("abc", 64), "abc");
+    // exactly at limit
+    assert_eq!(super::truncate_prefix("abcd", 4), "abcd");
+    // truncation lands mid-multibyte char → backs off to the char boundary
+    assert_eq!(super::truncate_prefix("ééééé", 3), "é");
+}

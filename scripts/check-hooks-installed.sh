@@ -28,14 +28,6 @@ check_hook() {
 
 check_hook pre-commit
 check_hook pre-push
-check_hook pre-merge-commit
-
-if [[ "$(git config --get merge.ff || true)" != "false" ]]; then
-    echo "FAIL: git config merge.ff must be false so pre-merge-commit runs" >&2
-    FAIL=1
-else
-    echo "PASS: merge.ff=false"
-fi
 
 WRAPPER="$(git rev-parse --git-path wrapper-bin/git)"
 if [[ ! -x "$WRAPPER" ]]; then

@@ -174,6 +174,53 @@ fn extract_prefix<'a>(key: &'a str, default_prefix: &'a str) -> &'a str {
     }
 }
 
+use std::io::Write;
+
+/// A writer that redacts API keys from each chunk before forwarding to `inner`.
+struct RedactingWriter<W: Write> {
+    inner: W,
+}
+
+impl<W: Write> Write for RedactingWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let redacted = redact_api_keys(&String::from_utf8_lossy(buf));
+        self.inner.write_all(redacted.as_bytes())?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+/// `MakeWriter` that produces redacting writers over stderr.
+#[derive(Clone, Default)]
+struct RedactingMakeWriter;
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for RedactingMakeWriter {
+    type Writer = RedactingWriter<std::io::Stderr>;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        RedactingWriter {
+            inner: std::io::stderr(),
+        }
+    }
+}
+
+/// Install a global tracing subscriber whose output is scrubbed of API keys.
+///
+/// Filtering uses `EnvFilter::from_default_env()`, so this is a no-op unless
+/// `RUST_LOG` is set — no behaviour change by default. `try_init` never panics
+/// if a subscriber is already installed. Call only from headless entrypoints
+/// (the agent/UDS path); never from the REPL/TUI, where stray stderr output
+/// corrupts the terminal UI.
+pub fn install_redacting_subscriber() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_writer(RedactingMakeWriter)
+        .try_init();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,5 +327,18 @@ mod tests {
         assert!(!result.contains("abcdefghijklmno"));
         assert!(result.starts_with("auth=sk-***"));
         assert!(result.ends_with("next=foo"));
+    }
+
+    #[test]
+    fn redacting_writer_scrubs_keys_from_written_line() {
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut w = RedactingWriter { inner: &mut buf };
+            w.write_all(b"configured with key sk-secret-key-12345\n")
+                .unwrap();
+        }
+        let out = String::from_utf8(buf).unwrap();
+        assert!(!out.contains("sk-secret-key-12345"));
+        assert!(out.contains("sk-***"));
     }
 }

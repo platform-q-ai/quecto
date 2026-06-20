@@ -452,3 +452,92 @@ async fn test_system_is_pinned_default_survives_round_trip() {
         "system message should remain pinned after round-trip"
     );
 }
+
+// ── Coverage: full conversion round-trip + pure mappers ─────────────────────
+
+#[tokio::test]
+async fn roundtrip_preserves_roles_toolcalls_stop_reason_and_thinking() {
+    use crate::domain::message::{StopReason, ThinkingBlock, ToolCall};
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+
+    let mut asst = Message::assistant(
+        "answer",
+        vec![ToolCall {
+            id: "c1".into(),
+            name: "search".into(),
+            arguments: "{}".into(),
+        }],
+    );
+    asst.stop_reason = Some(StopReason::ToolUse);
+    asst.thinking_blocks = vec![
+        ThinkingBlock::Normal {
+            thinking: "reasoning".into(),
+            signature: "sig".into(),
+        },
+        ThinkingBlock::Redacted {
+            data: "redacted".into(),
+        },
+    ];
+    asst.is_pinned = true;
+    asst.is_manifest = true;
+    asst.is_collapsed = true;
+
+    let session = Session {
+        key: "cli:roundtrip".to_string(),
+        messages: vec![
+            Message::system("sys"),
+            Message::user("u"),
+            asst,
+            Message::tool("c1", "tool result"),
+        ],
+        workflow_run: None,
+    };
+    store.save(&session).await.unwrap();
+    let loaded = store.load("cli:roundtrip").await.unwrap().unwrap();
+
+    assert_eq!(loaded.messages.len(), 4);
+    assert_eq!(loaded.messages[0].role, Role::System);
+    assert_eq!(loaded.messages[1].role, Role::User);
+    let a = &loaded.messages[2];
+    assert_eq!(a.role, Role::Assistant);
+    assert_eq!(a.tool_calls.len(), 1);
+    assert_eq!(a.tool_calls[0].id, "c1");
+    assert_eq!(a.stop_reason, Some(StopReason::ToolUse));
+    assert_eq!(a.thinking_blocks.len(), 2);
+    assert!(a.is_pinned);
+    assert!(a.is_manifest);
+    assert!(a.is_collapsed);
+    let t = &loaded.messages[3];
+    assert_eq!(t.role, Role::Tool);
+    assert_eq!(t.tool_call_id.as_deref(), Some("c1"));
+}
+
+#[test]
+fn stop_reason_to_str_covers_all_variants() {
+    use crate::domain::message::StopReason;
+    let cases = [
+        (StopReason::EndTurn, "end_turn"),
+        (StopReason::MaxTokens, "max_tokens"),
+        (StopReason::ToolUse, "tool_use"),
+        (StopReason::Refusal, "refusal"),
+        (StopReason::Error, "error"),
+        (StopReason::Aborted, "aborted"),
+    ];
+    for (sr, s) in cases {
+        assert_eq!(super::stop_reason_to_str(&sr), s);
+        assert_eq!(StopReason::parse(s), sr);
+    }
+    assert_eq!(
+        super::stop_reason_to_str(&StopReason::Unknown("weird".into())),
+        "weird"
+    );
+}
+
+#[test]
+fn role_str_mapping_roundtrips_and_defaults() {
+    for r in [Role::System, Role::User, Role::Assistant, Role::Tool] {
+        assert_eq!(super::str_to_role(super::role_to_str(&r)), r);
+    }
+    assert_eq!(super::str_to_role("not-a-role"), Role::User);
+}

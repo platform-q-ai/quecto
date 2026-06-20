@@ -187,6 +187,9 @@ mod tests {
                 .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '-'))
         );
         assert!(socket_path_within_uds_limit(Path::new("/data/sockets"), &r));
+        // A pathologically long socket root pushes the path past the OS limit.
+        let long_root = "/".to_string() + &"x".repeat(120);
+        assert!(!socket_path_within_uds_limit(Path::new(&long_root), &r));
         assert_ne!(
             r,
             runtime_ref(&EnsureRuntimeRequest {

@@ -24,11 +24,11 @@ pub struct ToolRegistryImpl {
     definitions: Vec<ToolDefinition>,
     guards: Vec<Arc<dyn ToolGuard>>,
     /// Names of tools that came from extensions (not core).
-    /// Used by `sync_extension_tools` to know which tools to remove on reload.
+    /// Tracks which tools `unregister_extension` may remove (vs core tools).
     extension_tool_names: std::collections::HashSet<String>,
     /// Names explicitly removed via `remove()` or `remove_all()`.
     /// These are permanently blocked from re-registration via
-    /// `register()`, `register_extension()`, and `sync_extension_tools()`.
+    /// `register()` and `register_extension()`.
     denied_names: std::collections::HashSet<String>,
 }
 
@@ -124,8 +124,8 @@ impl ToolRegistryImpl {
     /// Remove a tool by name and permanently block re-registration.
     ///
     /// Returns `true` if the tool was found and removed, `false` otherwise.
-    /// The name is added to the denylist so `register()`,
-    /// `register_extension()`, and `sync_extension_tools()` will reject it.
+    /// The name is added to the denylist so `register()` and
+    /// `register_extension()` will reject it.
     pub fn remove(&mut self, name: &str) -> bool {
         self.denied_names.insert(name.to_string());
         if self.tools.remove(name).is_some() {
@@ -169,12 +169,8 @@ impl ToolRegistryImpl {
 
     /// Register a tool as an extension tool (tracked for reload).
     ///
-    /// Extension tools can be removed via `unregister_extension` or
-    /// replaced in bulk via `sync_extension_tools`.
-    ///
-    /// Rejects tools that shadow core tool names (same protection as
-    /// `sync_extension_tools`).  For bulk registration, prefer
-    /// `sync_extension_tools` which batches the `rebuild_definitions` call.
+    /// Extension tools can be removed via `unregister_extension`.
+    /// Rejects tools that shadow core tool names.
     pub fn register_extension(&mut self, tool: Arc<dyn Tool>) {
         let name = tool.definition().name.to_string();
         if self.denied_names.contains(&name) {
@@ -200,38 +196,6 @@ impl ToolRegistryImpl {
         }
         self.extension_tool_names.remove(name);
         self.tools.remove(name);
-        self.rebuild_definitions();
-    }
-
-    /// Synchronise the registry with an `ExtensionRegistry`.
-    ///
-    /// 1. Remove all currently tracked extension tools.
-    /// 2. Add tools from the new `ExtensionRegistry`, rejecting any
-    ///    that shadow core tool names.
-    pub fn sync_extension_tools(
-        &mut self,
-        ext_registry: &crate::infrastructure::extensions::registry::ExtensionRegistry,
-    ) {
-        // Remove all old extension tools
-        for name in std::mem::take(&mut self.extension_tool_names) {
-            self.tools.remove(&name);
-        }
-
-        // Add new extension tools, rejecting denied or core-shadowing names
-        for tool in ext_registry.all_tools() {
-            let name = tool.definition().name.to_string();
-            if self.denied_names.contains(&name) {
-                tracing::warn!(tool = %name, "extension tool rejected: on denylist");
-                continue;
-            }
-            if self.tools.contains_key(&name) {
-                tracing::warn!(tool = %name, "extension tool rejected: shadows core tool");
-                continue;
-            }
-            self.extension_tool_names.insert(name.clone());
-            self.tools.insert(name, tool);
-        }
-
         self.rebuild_definitions();
     }
 

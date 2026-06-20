@@ -224,77 +224,6 @@ fn test_unregister_extension_does_not_remove_core_tools() {
 }
 
 #[test]
-fn test_sync_extension_tools_adds_new() {
-    let (mut reg, _tmp) = test_registry();
-    let initial_count = reg.definitions().len();
-
-    let mut ext_reg = crate::infrastructure::extensions::registry::ExtensionRegistry::new();
-    ext_reg.register(Arc::new(TestExtensionForRegistry {
-        name: "ext1".into(),
-        tool: Arc::new(DummyTestTool::new("ext1")),
-    }));
-
-    reg.sync_extension_tools(&ext_reg);
-    assert_eq!(reg.definitions().len(), initial_count + 1);
-    assert!(reg.get("ext1").is_some());
-    assert!(reg.extension_names().contains(&"ext1".to_string()));
-}
-
-#[test]
-fn test_sync_extension_tools_removes_stale() {
-    let (mut reg, _tmp) = test_registry();
-    let tool: Arc<dyn Tool> = Arc::new(DummyTestTool::new("old_ext"));
-    reg.register_extension(tool);
-    assert!(reg.get("old_ext").is_some());
-
-    // Sync with empty registry — old_ext should be removed
-    let ext_reg = crate::infrastructure::extensions::registry::ExtensionRegistry::new();
-    reg.sync_extension_tools(&ext_reg);
-    assert!(reg.get("old_ext").is_none());
-}
-
-#[test]
-fn test_sync_extension_tools_rejects_shadow() {
-    let (mut reg, _tmp) = test_registry();
-    let initial_count = reg.definitions().len();
-
-    let mut ext_reg = crate::infrastructure::extensions::registry::ExtensionRegistry::new();
-    ext_reg.register(Arc::new(TestExtensionForRegistry {
-        name: "bash".into(), // shadows core tool
-        tool: Arc::new(DummyTestTool::new("bash")),
-    }));
-
-    reg.sync_extension_tools(&ext_reg);
-    // Should NOT have added the shadowing extension
-    assert_eq!(reg.definitions().len(), initial_count);
-    assert!(!reg.extension_names().contains(&"bash".to_string()));
-}
-
-#[test]
-fn test_sync_extension_tools_replaces_existing() {
-    let (mut reg, _tmp) = test_registry();
-
-    // First sync: add ext1
-    let mut ext_reg1 = crate::infrastructure::extensions::registry::ExtensionRegistry::new();
-    ext_reg1.register(Arc::new(TestExtensionForRegistry {
-        name: "ext1".into(),
-        tool: Arc::new(DummyTestTool::new("ext1")),
-    }));
-    reg.sync_extension_tools(&ext_reg1);
-    assert!(reg.get("ext1").is_some());
-
-    // Second sync: replace with ext2 only
-    let mut ext_reg2 = crate::infrastructure::extensions::registry::ExtensionRegistry::new();
-    ext_reg2.register(Arc::new(TestExtensionForRegistry {
-        name: "ext2".into(),
-        tool: Arc::new(DummyTestTool::new("ext2")),
-    }));
-    reg.sync_extension_tools(&ext_reg2);
-    assert!(reg.get("ext1").is_none(), "ext1 should be removed");
-    assert!(reg.get("ext2").is_some(), "ext2 should be added");
-}
-
-#[test]
 fn test_extension_names_empty_by_default() {
     let (reg, _tmp) = test_registry();
     assert!(reg.extension_names().is_empty());
@@ -333,21 +262,6 @@ impl Tool for DummyTestTool {
                 image_blocks: vec![],
             })
         })
-    }
-}
-
-/// Minimal extension for sync_extension_tools tests.
-struct TestExtensionForRegistry {
-    name: String,
-    tool: Arc<dyn Tool>,
-}
-
-impl crate::domain::extension::Extension for TestExtensionForRegistry {
-    fn name(&self) -> &str {
-        &self.name
-    }
-    fn tools(&self) -> Vec<Arc<dyn Tool>> {
-        vec![self.tool.clone()]
     }
 }
 
