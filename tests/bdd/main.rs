@@ -15,7 +15,6 @@ use quecto::infrastructure::auth::credential_store::{
 };
 use quecto::infrastructure::config::Config;
 
-use quecto::infrastructure::persistence::memory_store::{self, MemoryStore};
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::infrastructure::persistence::skill_loader::FileSkillLoader;
 use quecto::infrastructure::providers;
@@ -268,10 +267,6 @@ pub struct QuectoWorld {
     pub session_store: Option<FileSessionStore>,
     /// Loaded session (after a load operation)
     pub loaded_session: Option<Option<Session>>,
-    /// Memory store for memory scenarios
-    pub memory_store: Option<MemoryStore>,
-    /// Loaded identity content
-    pub loaded_identity: Option<String>,
     /// Session keys created during routing scenarios
     pub session_keys: HashMap<String, String>,
     /// Credential store for auth scenarios

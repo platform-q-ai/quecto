@@ -128,3 +128,72 @@ pub trait ToolRegistry: Send + Sync {
         arguments: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Minimal registry exercising the `ToolRegistry` default methods.
+    struct EmptyRegistry {
+        defs: Vec<ToolDefinition>,
+    }
+
+    impl ToolRegistry for EmptyRegistry {
+        fn definitions(&self) -> &[ToolDefinition] {
+            &self.defs
+        }
+        fn execute(
+            &self,
+            _name: &str,
+            _arguments: &str,
+        ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
+            Box::pin(async {
+                Ok(ToolResult {
+                    content: String::new(),
+                    is_error: false,
+                    image_blocks: vec![],
+                })
+            })
+        }
+    }
+
+    fn def(name: &'static str) -> ToolDefinition {
+        ToolDefinition {
+            name: name.into(),
+            description: "".into(),
+            parameters_schema: "{}".into(),
+        }
+    }
+
+    #[test]
+    fn tool_count_defaults_to_definitions_len() {
+        let reg = EmptyRegistry {
+            defs: vec![def("a"), def("b")],
+        };
+        assert_eq!(reg.tool_count(), 2);
+        assert_eq!(reg.tool_count(), reg.definitions().len());
+    }
+
+    #[test]
+    fn extension_defaults_are_inert() {
+        // Default ToolRegistry methods: no extension tracking; register/unregister no-op.
+        let mut reg = EmptyRegistry { defs: vec![] };
+        assert!(reg.extension_names().is_empty());
+        reg.unregister_extension("nope"); // no-op, must not panic
+        assert!(reg.extension_names().is_empty());
+    }
+
+    #[test]
+    fn tool_result_and_image_block_construct() {
+        let r = ToolResult {
+            content: "ok".into(),
+            is_error: false,
+            image_blocks: vec![ImageBlock {
+                mime_type: "image/png",
+                data: "AAAA".into(),
+            }],
+        };
+        assert!(!r.is_error);
+        assert_eq!(r.image_blocks[0].mime_type, "image/png");
+    }
+}
