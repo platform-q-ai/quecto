@@ -3,9 +3,7 @@ use std::io::Write;
 use std::time::Duration;
 
 use super::CliContext;
-use crate::application::onboard;
 use crate::infrastructure::config::Config;
-use crate::infrastructure::persistence::workspace_store::FileOnboardStore;
 
 const DEFAULT_GITHUB_RAW_BASE: &str = "https://raw.githubusercontent.com";
 const SKILL_DOWNLOAD_TIMEOUT_SECS: u64 = 10;
@@ -18,17 +16,13 @@ pub(crate) fn cmd_status(ctx: &CliContext, stdout: &mut String, stderr: &mut Str
     stdout.push_str("quecto Status\n");
     stdout.push_str(&format!("  Config:    {}\n", config_path.display()));
 
-    let config = if config_path.exists() {
-        match Config::load(config_path.to_str().unwrap_or("")) {
-            Ok(c) => c,
-            Err(e) => {
-                stderr.push_str(&format!("failed to load config: {}\n", e));
-                return 1;
-            }
+    // Missing config is not an error: quecto is zero-config (defaults apply).
+    let config = match Config::load(config_path.to_str().unwrap_or("")) {
+        Ok(c) => c,
+        Err(e) => {
+            stderr.push_str(&format!("failed to load config: {}\n", e));
+            return 1;
         }
-    } else {
-        stderr.push_str("config not found; run 'quecto onboard' first\n");
-        return 1;
     };
 
     let ws = config.workspace_path();
@@ -50,31 +44,6 @@ pub(crate) fn cmd_status(ctx: &CliContext, stdout: &mut String, stderr: &mut Str
     stdout.push_str(&format!("  Anthropic API: {}\n", anthropic_status));
 
     0
-}
-
-pub(crate) fn cmd_onboard(ctx: &CliContext, stdout: &mut String, stderr: &mut String) -> i32 {
-    let base_dir = ctx.base_dir();
-    let store = FileOnboardStore::new(&base_dir);
-    match onboard::run_onboard(&store) {
-        Ok(result) => {
-            if result.already_existed {
-                stdout.push_str("Config already exists\n");
-                stdout.push_str(&format!("  path: {}\n", result.config_path.display()));
-            } else {
-                stdout.push_str("quecto is ready!\n");
-                stdout.push_str(&format!("  config:    {}\n", result.config_path.display()));
-                stdout.push_str(&format!(
-                    "  workspace: {}\n",
-                    result.workspace_path.display()
-                ));
-            }
-            0
-        }
-        Err(e) => {
-            stderr.push_str(&format!("onboard failed: {e}\n"));
-            1
-        }
-    }
 }
 
 pub(crate) fn cmd_skills(

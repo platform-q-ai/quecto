@@ -11,4 +11,3 @@ pub mod skill;
 pub mod subagent;
 pub mod tool;
 pub mod workflow;
-pub mod workspace;

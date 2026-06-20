@@ -287,14 +287,7 @@ pub(crate) fn build_agent_from_config(
     stderr: &mut String,
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
 ) -> Option<AgentBuildResult> {
-    if !config_path.exists() {
-        stderr.push_str(&format!(
-            "config not found at {}\nrun 'quecto onboard' first\n",
-            config_path.display()
-        ));
-        return None;
-    }
-
+    // Zero-config: a missing config file loads defaults (no onboarding step).
     let env_overrides: HashMap<String, String> = std::env::vars()
         .filter(|(k, _)| k.starts_with("QUECTO_"))
         .collect();

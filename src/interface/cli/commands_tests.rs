@@ -33,33 +33,6 @@ fn assert_contains_all(haystack: &str, needles: &[&str]) {
 }
 
 #[test]
-fn test_onboard_creates_config() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
-    let out = run_with_output(args("onboard"), &ctx);
-    assert_eq!(out.exit_code, 0);
-    assert!(out.stdout.contains("quecto is ready"));
-    assert!(tmp.path().join("config.json").exists());
-    assert!(tmp.path().join("workspace").exists());
-}
-
-#[test]
-fn test_onboard_existing_config() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    std::fs::write(tmp.path().join("config.json"), "{}").unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
-    let out = run_with_output(args("onboard"), &ctx);
-    assert_eq!(out.exit_code, 0);
-    assert!(out.stdout.contains("Config already exists"));
-}
-
-#[test]
 fn test_status_shows_summary() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config_json = r#"{
@@ -93,15 +66,17 @@ fn test_status_shows_summary() {
 }
 
 #[test]
-fn test_status_no_config() {
+fn test_status_no_config_uses_defaults() {
+    // Zero-config: status with no config file succeeds on defaults.
     let tmp = tempfile::TempDir::new().unwrap();
     let ctx = CliContext {
         base_dir: Some(tmp.path().to_path_buf()),
         ..Default::default()
     };
     let out = run_with_output(args("status"), &ctx);
-    assert_eq!(out.exit_code, 1);
-    assert!(out.stderr.contains("config not found"));
+    assert_eq!(out.exit_code, 0);
+    assert!(out.stdout.contains("quecto Status"));
+    assert!(!out.stderr.contains("config not found"));
 }
 
 #[test]

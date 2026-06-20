@@ -295,7 +295,7 @@ fn test_agent_config_flag_nonexistent_path() {
     let out = run_with_output(args, &ctx);
     assert_eq!(out.exit_code, 1);
     assert!(
-        out.stderr.contains("config not found"),
+        out.stderr.contains("no LLM providers configured"),
         "stderr: {}",
         out.stderr
     );

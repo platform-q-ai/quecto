@@ -358,7 +358,7 @@ fn persist_refreshed_token(
 /// * `config_workspace` — the resolved workspace path from config (already `~`-expanded)
 /// * `no_sandbox` — whether the `--no-sandbox` flag was passed
 pub fn resolve_agent_workspace(config_workspace: &str, no_sandbox: bool) -> std::path::PathBuf {
-    if no_sandbox {
+    let workspace = if no_sandbox {
         match std::env::current_dir() {
             Ok(cwd) => cwd,
             Err(e) => {
@@ -375,7 +375,17 @@ pub fn resolve_agent_workspace(config_workspace: &str, no_sandbox: bool) -> std:
         }
     } else {
         std::path::PathBuf::from(config_workspace)
+    };
+    // Zero-config: ensure the workspace exists (onboarding used to create it).
+    // Best-effort — a failure surfaces later as a clear filesystem error.
+    if let Err(e) = std::fs::create_dir_all(&workspace) {
+        tracing::warn!(
+            error = %e,
+            workspace = %workspace.display(),
+            "failed to create workspace directory"
+        );
     }
+    workspace
 }
 
 /// Build a [`RefreshFn`] for use with [`RefreshableProvider`].
