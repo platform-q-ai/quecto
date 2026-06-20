@@ -13,6 +13,13 @@ Feature: TUI model selector overlay — scrollable list with fuzzy search
     When rendered at width 60
     Then the output should contain at least one model name
 
+  Scenario: Model selector includes latest Anthropic models
+    Given a model selector with known models
+    When rendered at width 80
+    Then the output should contain "anthropic/claude-fable-5"
+    And the output should contain "anthropic/claude-opus-4-8"
+    And the output should contain "anthropic/claude-opus-4-7"
+
   Scenario: Model selector shows selection indicator
     Given a model selector with known models
     When rendered at width 60
