@@ -129,6 +129,15 @@ pub(super) async fn handle_new_session(
         emit_event_to_broadcast_or_writer(ctx, &ev).await;
         return false;
     }
+    if let Err(err) = persist_current_session(ctx).await {
+        let ev = AgentEvent::err(
+            id,
+            type_name,
+            format!("failed to save current session: {err}"),
+        );
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
     clear_conversation(ctx.messages);
     ctx.session.clear_usage();
     ctx.session.drain_pending();
