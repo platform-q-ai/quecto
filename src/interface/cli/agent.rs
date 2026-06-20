@@ -253,7 +253,14 @@ pub(crate) fn cmd_agent(
 
     let base_dir = ctx.base_dir();
     let config_path = ctx.config_path();
-    let build = match build_agent_from_config(&base_dir, &config_path, &flags, stderr, None) {
+    let build = match build_agent_from_config(
+        &base_dir,
+        &config_path,
+        ctx.config_path.is_some(),
+        &flags,
+        stderr,
+        None,
+    ) {
         Some(r) => r,
         None => return 1,
     };
@@ -287,11 +294,18 @@ pub(crate) struct AgentBuildResult {
 pub(crate) fn build_agent_from_config(
     base_dir: &std::path::Path,
     config_path: &std::path::Path,
+    config_explicit: bool,
     flags: &AgentFlags,
     stderr: &mut String,
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
 ) -> Option<AgentBuildResult> {
-    // Zero-config: a missing config file loads defaults (no onboarding step).
+    // An explicitly-provided --config path must exist; only a missing DEFAULT
+    // config falls back to zero-config defaults.
+    if config_explicit && !config_path.exists() {
+        stderr.push_str(&format!("config not found: {}\n", config_path.display()));
+        return None;
+    }
+    // Zero-config: a missing default config file loads defaults (no onboarding step).
     let env_overrides: HashMap<String, String> = std::env::vars()
         .filter(|(k, _)| k.starts_with("QUECTO_"))
         .collect();
@@ -566,6 +580,7 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     let build = match build_agent_from_config(
         &base_dir,
         &config_path,
+        ctx.config_path.is_some(),
         &flags,
         stderr,
         broadcast_tx.clone(),

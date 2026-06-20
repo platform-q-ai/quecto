@@ -350,7 +350,17 @@ fn cmd_repl_with_progress<R: std::io::BufRead, W: std::io::Write>(
 
     let base_dir = ctx.base_dir();
     let config_path = ctx.config_path();
-    // Zero-config: a missing config file loads defaults (no onboarding step).
+    // An explicitly-provided --config path must exist; a missing default config
+    // falls back to zero-config defaults.
+    if ctx.config_path.is_some() && !config_path.exists() {
+        let _ = writeln!(
+            io.writer,
+            "Error: config not found: {}",
+            config_path.display()
+        );
+        return 1;
+    }
+    // Zero-config: a missing default config file loads defaults (no onboarding step).
 
     let env_overrides: std::collections::HashMap<String, String> = std::env::vars()
         .filter(|(k, _)| k.starts_with("QUECTO_"))

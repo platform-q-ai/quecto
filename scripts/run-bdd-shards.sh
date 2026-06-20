@@ -51,7 +51,12 @@ if [[ "$REAL_LLM" == "1" ]]; then
     source "$ROOT/scripts/load-dotenv.sh"
 fi
 
-TMP_DIR="$(mktemp -d "$ROOT/.git/${SUITE_NAME}-shards.XXXXXX")"
+# Use the resolved git dir (not "$ROOT/.git"): in a git worktree, .git is a
+# FILE pointer, not a directory, so mktemp under it fails. --git-common-dir is
+# always a real directory in both the main checkout and worktrees.
+GIT_DIR_RESOLVED="$(git rev-parse --git-common-dir)"
+[[ "$GIT_DIR_RESOLVED" = /* ]] || GIT_DIR_RESOLVED="$ROOT/$GIT_DIR_RESOLVED"
+TMP_DIR="$(mktemp -d "$GIT_DIR_RESOLVED/${SUITE_NAME}-shards.XXXXXX")"
 
 echo "Running ${SUITE_NAME} in ${SHARDS} shard(s); timeout per shard: ${TIMEOUT_PER_SHARD}"
 [[ -n "$TAG" ]] && echo "Tag filter: ${TAG}"

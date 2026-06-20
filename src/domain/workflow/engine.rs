@@ -393,23 +393,28 @@ impl WorkflowEngine {
         }
         for (idx, step) in template.steps.iter().enumerate() {
             let done = *self.run.done.get(idx).unwrap_or(&false);
-            if !done && current_idx == Some(idx + 1) {
-                out.push_str(&format!(
-                    "CURRENT STEP → {}. {} [{}]\n",
-                    idx + 1,
-                    step.label,
-                    phase_display_name(&step.phase)
-                ));
-                if let Some(g) = &step.guidance {
-                    out.push_str(&format!("  Guidance: {}\n", g));
-                }
+            // Completed steps stay compact; every INCOMPLETE step (current and
+            // upcoming) shows its full guidance, so an agent reading the status
+            // ahead of time sees the instructions for steps it hasn't reached
+            // yet (not just the bare label).
+            if done {
+                out.push_str(&format!("  [✓] {}. {}\n", idx + 1, step.label));
+                continue;
+            }
+            let marker = if current_idx == Some(idx + 1) {
+                "CURRENT STEP → "
             } else {
-                out.push_str(&format!(
-                    "  [{}] {}. {}\n",
-                    if done { '✓' } else { ' ' },
-                    idx + 1,
-                    step.label
-                ));
+                "  [ ] "
+            };
+            out.push_str(&format!(
+                "{}{}. {} [{}]\n",
+                marker,
+                idx + 1,
+                step.label,
+                phase_display_name(&step.phase)
+            ));
+            if let Some(g) = &step.guidance {
+                out.push_str(&format!("      Guidance: {}\n", g));
             }
         }
         if mode == WorkflowMode::Complete {

@@ -110,23 +110,23 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
             "key": "hooks",
             "label": "Install/check local quality hooks",
             "phase": "setup",
-            "guidance": "Run scripts/install-hooks.sh, then verify pre-commit, pre-push, and the git --no-verify wrapper are installed/active before editing code."
+            "guidance": "Run scripts/install-hooks.sh, then verify pre-commit, pre-push, and the git --no-verify wrapper are installed/active before editing code. Never bypass hooks with --no-verify."
           },
           {
             "key": "scenarios",
             "label": "Update Scenarios / Add new features",
             "phase": "red",
-            "guidance": "Start by updating feature coverage and task-facing scenarios. Identify acceptance criteria."
+            "guidance": "Update BDD feature files and task-facing scenarios first, and identify explicit, checkable acceptance criteria for the change."
           },
           {
             "key": "tests",
             "label": "Write/update unit tests (run a quick smoke check; full suite runs on push)",
             "phase": "red",
-            "guidance": "Write or update the unit tests for the change. Run a quick targeted smoke check to confirm they compile."
+            "guidance": "Write or update the unit tests for the change. Run a quick targeted smoke check to confirm they compile; the full suite and coverage run on push."
           },
           {
             "key": "red",
-            "label": "Ensure new/modified tests FAIL (RED) \u2014 quick targeted run only, not full suite",
+            "label": "Ensure new/modified tests FAIL (RED) — quick targeted run only, not full suite",
             "phase": "red",
             "guidance": "Run only the new/modified tests to confirm they fail before any implementation."
           },
@@ -134,69 +134,79 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
             "key": "green",
             "label": "Implement code (GREEN)",
             "phase": "green",
-            "guidance": "Write the minimum code needed to satisfy the failing tests. Do NOT worry about the size of a change \u2014 implement it in full."
+            "guidance": "Write the code needed to satisfy the failing tests. Do NOT worry about the size of a change — implement it in full."
           },
           {
             "key": "refactor",
             "label": "Refactor",
-            "phase": "refactor"
+            "phase": "refactor",
+            "guidance": "Tidy only what this change touches — naming, duplication, clarity. Keep it minimal; no speculative abstraction or unrelated cleanup."
           },
           {
             "key": "verify",
             "label": "Ensure tests still pass",
-            "phase": "green"
+            "phase": "green",
+            "guidance": "Re-run the targeted tests and confirm GREEN. Respect the file-size cap and strict clippy before pushing."
           },
           {
             "key": "commit",
             "label": "Commit",
-            "phase": "ci_cd"
+            "phase": "ci_cd",
+            "guidance": "If on the default branch, create a feature branch first. Write a clear, descriptive commit message and include any commit trailers your harness requires."
           },
           {
             "key": "push",
             "label": "Push (pre-push hook will run tests and linting)",
-            "phase": "ci_cd"
+            "phase": "ci_cd",
+            "guidance": "Push triggers the full local gate: fmt, strict clippy, unit/architecture/contracts/repo_docs, the 24-shard non-real BDD suite, region coverage at or above the project threshold (quecto and quecto-tui), machete, deny, and the real-LLM e2e suite (~140s; set QUECTO_SKIP_REAL_LLM=1 only for throwaway WIP pushes). Fix every failure; never use --no-verify."
           },
           {
             "key": "pr",
             "label": "Create PR",
-            "phase": "ci_cd"
+            "phase": "ci_cd",
+            "guidance": "Open the PR against the default branch with gh, with a clear title and a body that summarizes the change. The required Smoke Test check runs in CI."
           },
           {
             "key": "reviewers",
             "label": "Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)",
             "phase": "review",
-            "guidance": "Use the subagent tool in parallel mode to dispatch architecture-reviewer, security-reviewer, and performance-reviewer."
+            "guidance": "Dispatch the reviewers as parallel sub-agents in a SINGLE batch (one message, multiple subagent calls) so they run concurrently — at minimum Architecture, Security, and Performance; add Correctness and Test-quality for larger changes. Each reviewer runs its OWN independent review (NOT this feature workflow): give it only the PR number, the head commit SHA, its single review dimension, and the file scope; it reads the diff with gh pr diff <PR>, forms findings, and posts them. Reviewers must be skeptical (report only real issues) and must NOT modify code. Every reviewer MUST post findings as INLINE review comments on the PR via the GitHub GraphQL API (gh api graphql) — not a summary, not just a returned report: fetch the PR node id and head SHA with gh pr view <PR> --json id,headRefOid, then submit one review carrying inline comments using the addPullRequestReview mutation (event COMMENT, with a comments array of path/line/body entries anchored to the head commit) or addPullRequestReviewThread per finding. If a line anchor is rejected (line outside the diff, or the PR is already merged), fall back to a review comment that still cites file:line for every finding — inline is the default. Each finding states file:line, severity, the problem, and a concrete fix. Record each spawned reviewer's sub-agent id for the cleanup step."
           },
           {
             "key": "fix_reviews",
             "label": "Fix all valid review concerns",
-            "phase": "review"
+            "phase": "review",
+            "guidance": "Triage each inline finding — confirm it is genuinely valid before changing anything (reviewers can be wrong). Fix forward in the same branch. Track which findings you accept versus decline; you reply to all of them in the resolve step."
           },
           {
             "key": "push_fixes",
             "label": "Push changes to remote",
-            "phase": "review"
+            "phase": "review",
+            "guidance": "Push the fixes; the full pre-push gate runs again. Wait for it to pass before resolving threads."
           },
           {
             "key": "resolve_threads",
             "label": "Reply to the reviewers comments on the PR and mark resolved (use graphql)",
             "phase": "review",
-            "guidance": "Reply to every review comment on the PR, then resolve the threads using GraphQL mutations."
+            "guidance": "Reply to EVERY review comment on the PR — for accepted findings note the fix and commit, for declined ones explain why — then resolve each thread with the GraphQL resolveReviewThread mutation. Thread ids come from the PR reviewThreads connection."
           },
           {
             "key": "pre_merge",
             "label": "Confirm the pre-push gate passed (real-LLM, machete, deny run on push)",
-            "phase": "ci_cd"
+            "phase": "ci_cd",
+            "guidance": "Confirm the latest push's pre-push gate passed in full (coverage threshold, real-LLM, machete, deny) and the CI Smoke Test is green before merging."
           },
           {
             "key": "merge",
             "label": "Merge",
-            "phase": "ci_cd"
+            "phase": "ci_cd",
+            "guidance": "Merge with gh pr merge <PR> --merge --auto --delete-branch (auto-merge waits for the required Smoke Test). The default branch is protected with enforce_admins; do not force or bypass."
           },
           {
             "key": "pull",
             "label": "Move to local master and pull",
-            "phase": "ci_cd"
+            "phase": "ci_cd",
+            "guidance": "Run git checkout master and git pull --ff-only to sync the merge locally."
           }
         ],
         "guards": [
