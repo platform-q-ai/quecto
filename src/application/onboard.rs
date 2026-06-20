@@ -1,4 +1,4 @@
-// Onboarding: create config file, workspace directory, template files.
+// Onboarding: create the config file and workspace directory.
 
 use std::path::PathBuf;
 
@@ -26,27 +26,7 @@ pub fn run_onboard(store: &dyn OnboardStore) -> Result<OnboardResult, DomainErro
         });
     }
 
-    let templates = [
-        (
-            "AGENTS.md",
-            "# Agents\n\nDefine your agent configurations here.\n",
-        ),
-        (
-            "IDENTITY.md",
-            "# Identity\n\nDescribe who this AI assistant is.\n",
-        ),
-        (
-            "SOUL.md",
-            "# Soul\n\nDefine the personality and values of your assistant.\n",
-        ),
-        (
-            "TOOLS.md",
-            "# Tools\n\nList of available tools and their usage.\n",
-        ),
-        ("USER.md", "# User\n\nInformation about the user.\n"),
-    ];
-
-    store.initialize(&templates)?;
+    store.initialize()?;
 
     Ok(OnboardResult {
         config_path,
@@ -70,17 +50,6 @@ mod tests {
         assert!(result.config_path.exists());
         assert!(result.workspace_path.exists());
         assert!(result.workspace_path.is_dir());
-    }
-
-    #[test]
-    fn test_onboard_creates_template_files() {
-        let tmp = TempDir::new().unwrap();
-        let store = FileOnboardStore::new(tmp.path());
-        run_onboard(&store).unwrap();
-        let ws = tmp.path().join("workspace");
-        for name in &["AGENTS.md", "IDENTITY.md", "SOUL.md", "TOOLS.md", "USER.md"] {
-            assert!(ws.join(name).exists(), "{} should exist", name);
-        }
     }
 
     #[test]

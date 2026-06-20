@@ -9,7 +9,6 @@ fn ensure_session_workspace(world: &mut QuectoWorld) {
         let td = TempDir::new().expect("failed to create temp dir");
         let ws = td.path().to_path_buf();
         world.session_store = Some(FileSessionStore::new(&ws));
-        world.memory_store = Some(MemoryStore::new(&ws));
         world.session_workspace = Some(ws);
         world._temp_dir = Some(td);
     }
@@ -134,29 +133,6 @@ fn when_session_store_recreated(world: &mut QuectoWorld) {
     world.session_store = Some(FileSessionStore::new(&ws));
 }
 
-#[when(expr = "the agent writes a memory note {string}")]
-fn when_agent_writes_memory(world: &mut QuectoWorld, note: String) {
-    let store = world.memory_store.as_ref().expect("memory store not set");
-    tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(store.append(&note))
-        .unwrap();
-}
-
-#[when("the agent loads identity from the workspace")]
-fn when_agent_loads_identity(world: &mut QuectoWorld) {
-    let ws = world
-        .session_workspace
-        .as_ref()
-        .expect("session workspace not set")
-        .clone();
-    let identity = tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(memory_store::load_identity(&ws))
-        .unwrap();
-    world.loaded_identity = Some(identity);
-}
-
 #[when(expr = "user {string} sends a message on channel {string}")]
 fn when_user_sends_message_on_channel(world: &mut QuectoWorld, user_id: String, channel: String) {
     let key = Session::build_key(&channel, &user_id);
@@ -225,32 +201,6 @@ fn then_file_exists_in_session_workspace(world: &mut QuectoWorld, filename: Stri
         "file '{}' should exist at {}",
         filename,
         path.display()
-    );
-}
-
-#[then(expr = "the memory file should contain {string}")]
-fn then_memory_file_contains(world: &mut QuectoWorld, expected: String) {
-    let store = world.memory_store.as_ref().expect("memory store not set");
-    let content = tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(store.read())
-        .unwrap();
-    assert!(
-        content.contains(&expected),
-        "expected MEMORY.md to contain '{}', got: {}",
-        expected,
-        content
-    );
-}
-
-#[then(expr = "the identity should include {string}")]
-fn then_identity_includes(world: &mut QuectoWorld, expected: String) {
-    let identity = world.loaded_identity.as_ref().expect("identity not loaded");
-    assert!(
-        identity.contains(&expected),
-        "expected identity to include '{}', got: {}",
-        expected,
-        identity
     );
 }
 

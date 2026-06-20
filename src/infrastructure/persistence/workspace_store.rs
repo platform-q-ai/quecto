@@ -14,30 +14,6 @@ impl FileOnboardStore {
             base_dir: base_dir.into(),
         }
     }
-
-    fn write_workspace_file(&self, filename: &str, content: &str) -> Result<(), DomainError> {
-        let file_name = std::path::Path::new(filename)
-            .file_name()
-            .and_then(|s| s.to_str())
-            .ok_or_else(|| {
-                DomainError::Other(format!("invalid workspace filename: {}", filename))
-            })?;
-        if file_name != filename {
-            return Err(DomainError::Other(format!(
-                "workspace filename must be a basename: {}",
-                filename
-            )));
-        }
-
-        let file_path = self.workspace_path().join(filename);
-        std::fs::write(&file_path, content).map_err(|e| {
-            DomainError::Other(format!(
-                "failed to write workspace file '{}': {}",
-                file_path.display(),
-                e
-            ))
-        })
-    }
 }
 
 impl OnboardStore for FileOnboardStore {
@@ -53,7 +29,7 @@ impl OnboardStore for FileOnboardStore {
         Ok(self.config_path().exists())
     }
 
-    fn initialize(&self, templates: &[(&str, &str)]) -> Result<(), DomainError> {
+    fn initialize(&self) -> Result<(), DomainError> {
         std::fs::create_dir_all(&self.base_dir)
             .map_err(|e| DomainError::Other(format!("failed to create base dir: {}", e)))?;
 
@@ -75,10 +51,6 @@ impl OnboardStore for FileOnboardStore {
             ))
         })?;
 
-        for (filename, content) in templates {
-            self.write_workspace_file(filename, content)?;
-        }
-
         Ok(())
     }
 }
@@ -89,14 +61,25 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn test_onboard_store_rejects_non_basename_workspace_file() {
+    fn paths_are_under_base_dir() {
         let tmp = TempDir::new().unwrap();
         let store = FileOnboardStore::new(tmp.path());
-        store.initialize(&[]).unwrap();
+        assert_eq!(store.config_path(), tmp.path().join("config.json"));
+        assert_eq!(store.workspace_path(), tmp.path().join("workspace"));
+    }
 
-        let err = store
-            .write_workspace_file("nested/file.txt", "data")
-            .unwrap_err();
-        assert!(err.to_string().contains("basename"));
+    #[test]
+    fn initialize_creates_config_and_workspace() {
+        let tmp = TempDir::new().unwrap();
+        let store = FileOnboardStore::new(tmp.path());
+        assert!(!store.config_exists().unwrap(), "no config before init");
+
+        store.initialize().unwrap();
+
+        assert!(store.config_exists().unwrap(), "config exists after init");
+        assert!(store.workspace_path().is_dir(), "workspace dir created");
+        // The default config is valid JSON the config layer can parse.
+        let content = std::fs::read_to_string(store.config_path()).unwrap();
+        let _: serde_json::Value = serde_json::from_str(&content).unwrap();
     }
 }

@@ -26,9 +26,7 @@ fn config_exists_is_false_before_initialize_and_true_after() {
         "config must not exist before initialize"
     );
 
-    store
-        .initialize(&[("config.toml", "key = \"value\"\n")])
-        .unwrap();
+    store.initialize().unwrap();
 
     assert!(
         store.config_exists().unwrap(),
@@ -37,18 +35,14 @@ fn config_exists_is_false_before_initialize_and_true_after() {
 }
 
 #[test]
-fn initialize_writes_all_supplied_templates_verbatim() {
+fn initialize_creates_config_and_workspace() {
     let tmp = tempfile::tempdir().unwrap();
     let store = under_test(tmp.path().to_path_buf());
-    store
-        .initialize(&[
-            ("config.toml", "key = \"value\"\n"),
-            ("README.md", "# hi\n"),
-        ])
-        .unwrap();
+    store.initialize().unwrap();
 
-    let cfg = std::fs::read_to_string(store.workspace_path().join("config.toml")).unwrap();
-    assert_eq!(cfg, "key = \"value\"\n");
-    let readme = std::fs::read_to_string(store.workspace_path().join("README.md")).unwrap();
-    assert_eq!(readme, "# hi\n");
+    assert!(store.config_path().exists(), "config file must be created");
+    assert!(
+        store.workspace_path().is_dir(),
+        "workspace dir must be created"
+    );
 }

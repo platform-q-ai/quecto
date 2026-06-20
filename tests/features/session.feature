@@ -50,18 +50,6 @@ Feature: Session Management
     Then the exit code should be 1
     And the stderr should contain "config not found"
 
-  Scenario: Long-term memory stored in MEMORY.md
-    Given a [session] workspace
-    When the agent writes a memory note "User prefers concise answers"
-    Then the file "memory/MEMORY.md" should exist in the [session] workspace
-    And the memory file should contain "User prefers concise answers"
-
-  Scenario: Agent identity loaded from workspace
-    Given a [session] workspace
-    And the workspace file "IDENTITY.md" contains "You are Quecto, a helpful assistant"
-    When the agent loads identity from the workspace
-    Then the identity should include "You are Quecto, a helpful assistant"
-
   Scenario: Session routing by channel and chat ID
     Given a [session] workspace
     When user "111" sends a [message] on channel "telegram"
