@@ -75,6 +75,12 @@ three are startup-loaded and need a reload path before an agent can extend
   To close: re-scan `workspace/skills/` and rebuild the system prompt at the
   start of each turn (or on a reload signal), so a freshly-installed skill is in
   the prompt next turn with no restart.
+- **Proposed direction:** skills may not warrant a separate surface at all. Their
+  only distinct value — an on-demand knowledge library — is the same pattern as
+  the `docs` tool and Context7, so skills could fold into a generalized
+  **knowledge-retrieval tool** (folder/graph/db/remote sources, snippet-level,
+  progressive disclosure). That also closes the auto-load gap for free. See
+  [knowledge-retrieval-surface.md](knowledge-retrieval-surface.md).
 
 ### 2. Models / providers — capability 🟡 · auto-load ❌
 - **Implemented today (full within scope):** `providers.openai_compatible.endpoints`
