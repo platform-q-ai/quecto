@@ -13,6 +13,9 @@ use crate::interface::utils::{truncate_to_width, visible_width};
 /// Well-known model identifiers, used as fallback when the caller
 /// doesn't supply a model list.
 const KNOWN_MODELS: &[(&str, &str)] = &[
+    ("anthropic/claude-fable-5", "Anthropic"),
+    ("anthropic/claude-opus-4-8", "Anthropic"),
+    ("anthropic/claude-opus-4-7", "Anthropic"),
     ("anthropic/claude-opus-4-6", "Anthropic"),
     ("anthropic/claude-opus-4-5", "Anthropic"),
     ("anthropic/claude-sonnet-4-6", "Anthropic"),
@@ -363,6 +366,26 @@ mod tests {
             plain.contains("claude-sonnet-4"),
             "should contain a model: {}",
             plain
+        );
+    }
+
+    #[test]
+    fn known_models_include_latest_anthropic_models() {
+        let known_ids: Vec<&str> = KNOWN_MODELS.iter().map(|(id, _)| *id).collect();
+        assert!(
+            known_ids.contains(&"anthropic/claude-fable-5"),
+            "known models should include Claude Fable 5: {:?}",
+            known_ids
+        );
+        assert!(
+            known_ids.contains(&"anthropic/claude-opus-4-8"),
+            "known models should include Opus 4.8: {:?}",
+            known_ids
+        );
+        assert!(
+            known_ids.contains(&"anthropic/claude-opus-4-7"),
+            "known models should include Opus 4.7: {:?}",
+            known_ids
         );
     }
 
