@@ -6,7 +6,7 @@ The workspace also includes companion binaries for terminal UI access (`quecto-t
 
 ## Release Notes
 
-Current version: **0.80.2**.
+Current version: **0.80.3**.
 
 ## Quick Start
 
@@ -643,7 +643,7 @@ Quecto development uses the repository-local Quecto workflow checklist:
 12 - Fix all valid review concerns
 13 - Push changes to remote
 14 - Reply to the reviewers comments on the PR and mark resolved (use graphql)
-15 - Run pre-merge hooks (real-LLM, machete, deny)
+15 - Confirm the pre-push gate passed (real-LLM, machete, deny run on push)
 16 - Merge
 17 - Move to local master and pull
 18 - Clean up sub agents
@@ -666,7 +666,7 @@ All test commands pipe through `scripts/test-filter.sh` which strips the per-tes
 
 `--no-fail-fast` ensures all failures are reported in a single run, not just the first.
 
-Three-tier hooks: pre-commit (~20-40s: quality+fmt+clippy), pre-push (~30-60s: tests+24-shard BDD), pre-merge (~30-90s: real-LLM+machete+deny). SHA-based caching. Install via `scripts/install-hooks.sh`.
+Two-tier hooks: pre-commit (~20-40s: quality+fmt+clippy) and pre-push (tests + 24-shard BDD + coverage + machete + deny + the real-LLM suite, skippable via QUECTO_SKIP_REAL_LLM=1). SHA-based caching. Install via `scripts/install-hooks.sh`.
 
 ### Sharded BDD (24-way parallel)
 

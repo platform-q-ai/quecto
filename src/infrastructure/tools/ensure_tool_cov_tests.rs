@@ -30,3 +30,15 @@ fn which_path_falls_back_to_bare_name_when_not_found() {
         PathBuf::from("definitely-not-a-real-binary-xyz-123")
     );
 }
+
+#[tokio::test]
+async fn ensure_tool_wrapper_rejects_unknown_tool_without_io() {
+    // Exercises the public `ensure_tool` wrapper (which resolves the default
+    // cache dir via `tools_cache_dir()` and delegates to
+    // `ensure_tool_with_cache`). An unknown tool fails at `find_config` before
+    // any PATH lookup, network, or filesystem access — fully deterministic.
+    let err = ensure_tool("definitely-not-a-tool-xyz")
+        .await
+        .expect_err("unknown tool must error");
+    assert!(err.to_string().contains("Unknown tool"), "got: {err}");
+}

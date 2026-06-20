@@ -506,3 +506,141 @@ fn test_spinner_frames_all_non_empty() {
         assert!(!frame.is_empty());
     }
 }
+
+// ---------------------------------------------------------------------------
+// Status header / detail rendering + multi-line clear
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_new_tty_capture_with_status_renders_header_and_clears() {
+    let buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut renderer =
+        ProgressRenderer::new_tty_capture_with_status(buf.clone(), Some("/work (main)".into()));
+
+    // Thinking sets the status detail too, so render emits header + detail
+    // lines beneath the spinner (current_line_count > 0).
+    renderer.handle_event(sample_thinking_event());
+    let after_render = String::from_utf8_lossy(&buf.lock().unwrap()).into_owned();
+    assert!(
+        after_render.contains("/work (main)"),
+        "status header should render, got: {:?}",
+        after_render
+    );
+
+    // Done must clear the spinner line and the status lines beneath it,
+    // exercising the multi-line clear (cursor-up) branch.
+    buf.lock().unwrap().clear();
+    renderer.handle_event(AgentProgressEvent::Done);
+    let after_done = String::from_utf8_lossy(&buf.lock().unwrap()).into_owned();
+    assert!(after_done.contains('\r'));
+    assert!(
+        after_done.contains("\x1b["),
+        "multi-line clear should emit a cursor-up escape, got: {:?}",
+        after_done
+    );
+}
+
+#[test]
+fn test_new_with_status_none_header_still_renders_tool() {
+    let buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut renderer = ProgressRenderer::new_with_status(true, MutexVecWriter(buf.clone()), None);
+    renderer.handle_event(AgentProgressEvent::ToolStarted {
+        tool_call_id: String::new(),
+        name: "read".into(),
+        arguments: String::new(),
+    });
+    assert!(!buf.lock().unwrap().is_empty());
+}
+
+#[test]
+fn test_new_with_status_empty_header_is_skipped() {
+    // An empty header string sanitizes to "" and is filtered out of the
+    // status lines (no spinner-adjacent header rendered).
+    let buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut renderer =
+        ProgressRenderer::new_with_status(true, MutexVecWriter(buf.clone()), Some(String::new()));
+    renderer.handle_event(AgentProgressEvent::ToolStarted {
+        tool_call_id: String::new(),
+        name: "read".into(),
+        arguments: "x".into(),
+    });
+    assert!(!buf.lock().unwrap().is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Token event (no-op spinner path)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_handle_token_event_is_noop() {
+    let buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut renderer = ProgressRenderer::new_with_writer(true, buf.clone());
+    renderer.handle_event(AgentProgressEvent::Token("hello".into()));
+    assert!(
+        buf.lock().unwrap().is_empty(),
+        "Token events are forwarded elsewhere; spinner writes nothing"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// read_git_branch / build_status_header_line
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_read_git_branch_parses_symbolic_ref() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(".git")).unwrap();
+    std::fs::write(
+        dir.path().join(".git").join("HEAD"),
+        "ref: refs/heads/main\n",
+    )
+    .unwrap();
+    assert_eq!(read_git_branch(dir.path()), Some("main".to_string()));
+}
+
+#[test]
+fn test_read_git_branch_detached_head_is_none() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(".git")).unwrap();
+    std::fs::write(dir.path().join(".git").join("HEAD"), "0123456789abcdef\n").unwrap();
+    assert_eq!(read_git_branch(dir.path()), None);
+}
+
+#[test]
+fn test_read_git_branch_missing_head_is_none() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(read_git_branch(dir.path()), None);
+}
+
+#[test]
+fn test_build_status_header_line_returns_nonempty() {
+    // The current working directory always exists, so this yields Some(path).
+    let line = build_status_header_line();
+    let line = line.expect("cwd should produce a header line");
+    assert!(!line.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// spawn_spinner_thread_with_status: stop + drop lifecycles
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_spawn_spinner_thread_stop_joins_cleanly() {
+    let (callback, handle) = spawn_spinner_thread_with_status(None);
+    callback(sample_thinking_event());
+    // stop() sends Done and joins the background thread.
+    handle.stop();
+}
+
+#[test]
+fn test_spawn_spinner_thread_drop_is_best_effort() {
+    let (callback, handle) = spawn_spinner_thread_with_status(Some("hdr".into()));
+    callback(AgentProgressEvent::ToolStarted {
+        tool_call_id: String::new(),
+        name: "read".into(),
+        arguments: String::new(),
+    });
+    // Dropping the handle (without stop) exercises the Drop cleanup path.
+    drop(callback);
+    drop(handle);
+}

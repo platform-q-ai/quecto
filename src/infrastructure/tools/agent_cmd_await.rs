@@ -377,3 +377,7 @@ impl AgentCmdTool {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "agent_cmd_await_cov_tests.rs"]
+mod cov_tests;

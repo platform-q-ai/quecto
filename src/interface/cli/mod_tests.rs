@@ -586,3 +586,146 @@ fn test_cli_context_config_path_default() {
         std::path::PathBuf::from("/home/test/.quecto/config.json")
     );
 }
+
+// ===================================================================
+// parse_repl_flags: --config handling
+// ===================================================================
+
+#[test]
+fn test_parse_repl_flags_config_requires_path() {
+    let args: Vec<String> = vec!["--config".into()];
+    match parse_repl_flags(&args) {
+        Err(msg) => assert!(msg.contains("--config requires a path"), "got: {msg}"),
+        Ok(_) => panic!("expected error"),
+    }
+}
+
+#[test]
+fn test_parse_repl_flags_config_skips_value() {
+    // --config <path> is consumed globally; parse_repl_flags must skip both
+    // tokens and still parse a trailing session flag correctly.
+    let args: Vec<String> = vec![
+        "--config".into(),
+        "/tmp/custom.json".into(),
+        "-s".into(),
+        "chat".into(),
+    ];
+    let flags = parse_repl_flags(&args).unwrap();
+    assert_eq!(flags.session_name.as_deref(), Some("chat"));
+}
+
+// ===================================================================
+// run() real entrypoint (writes to process stdout/stderr, no TTY/stdin)
+// ===================================================================
+
+#[test]
+fn test_run_entrypoint_version() {
+    // >=2 args avoids the no-arg REPL branch that reads real stdin.
+    let code = run(vec!["quecto".into(), "version".into()]);
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn test_run_entrypoint_unknown_command() {
+    // Exercises the stderr eprint! branch of run().
+    let code = run(vec!["quecto".into(), "definitely-not-a-command".into()]);
+    assert_eq!(code, 1);
+}
+
+// ===================================================================
+// auth_import_openai wrapper (test-only re-export in mod.rs)
+// ===================================================================
+
+#[test]
+fn test_auth_import_openai_wrapper_missing_key() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = crate::infrastructure::auth::credential_store::CredentialStore::new(tmp.path());
+    let rt = build_tokio_runtime().unwrap();
+    let params = OpenAiImportParams {
+        store: &store,
+        rt: &rt,
+        oauth_base_url: None,
+    };
+    let json = serde_json::json!({});
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let result = auth_import_openai(&json, &params, &mut stdout, &mut stderr);
+    // No "openai" key → nothing imported, returns Some(0).
+    assert_eq!(result, Some(0));
+}
+
+// ===================================================================
+// cmd_repl_with_progress: config load failure branch
+// ===================================================================
+
+#[test]
+fn test_repl_with_output_invalid_config_fails() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("config.json"), "{ not valid json ").unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
+    let out = run_repl_with_output(&ctx, &[], &[], false);
+    assert_eq!(out.exit_code, 1);
+    assert!(
+        out.stdout.contains("failed to load config"),
+        "stdout: {}",
+        out.stdout
+    );
+}
+
+// ===================================================================
+// test-support REPL harnesses: provider-build failure path
+// (no config → no providers → exits before starting the REPL loop)
+// ===================================================================
+
+#[test]
+fn test_run_repl_with_tty_captured_no_provider() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("config.json"),
+        r#"{"providers":{"openai":{"api_key":""},"anthropic":{"api_key":""}}}"#,
+    )
+    .unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
+    let out = run_repl_with_tty_captured(&ctx, &[], b"");
+    assert_eq!(out.exit_code, 1);
+    assert!(
+        out.stdout.contains("no LLM providers"),
+        "stdout: {}",
+        out.stdout
+    );
+}
+
+#[test]
+fn test_run_repl_with_progress_recorder_no_provider() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("config.json"),
+        r#"{"providers":{"openai":{"api_key":""},"anthropic":{"api_key":""}}}"#,
+    )
+    .unwrap();
+    let ctx = CliContext {
+        base_dir: Some(tmp.path().to_path_buf()),
+        ..Default::default()
+    };
+    let cb: crate::domain::agent::ProgressCallback = std::sync::Arc::new(|_event| {});
+    let opts = ReplRecorderOptions {
+        ctx: &ctx,
+        args: &[],
+        input: b"",
+        is_tty: false,
+        progress_callback: cb,
+    };
+    let out = run_repl_with_progress_recorder(opts);
+    assert_eq!(out.exit_code, 1);
+    assert!(
+        out.stdout.contains("no LLM providers"),
+        "stdout: {}",
+        out.stdout
+    );
+}

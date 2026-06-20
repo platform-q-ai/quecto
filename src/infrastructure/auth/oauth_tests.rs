@@ -514,6 +514,160 @@ async fn test_exchange_anthropic_code_no_hash_in_input() {
     assert_eq!(result.access_token, "sk-ant-oat01-nohash");
 }
 
+// ===================================================================
+// Parse-error arms (HTTP 200 but body is not valid token JSON)
+// ===================================================================
+
+#[tokio::test]
+async fn test_request_device_code_parse_error() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/device/code"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("not json at all"))
+        .mount(&server)
+        .await;
+
+    let config = OAuthConfig::with_base_url(&server.uri());
+    let err = request_device_code(&config).await.unwrap_err();
+    assert!(
+        err.to_string().contains("parse device code response"),
+        "got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn test_exchange_anthropic_code_parse_error() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{ broken"))
+        .mount(&server)
+        .await;
+
+    let config = OAuthConfig::with_base_url(&server.uri());
+    let err = exchange_anthropic_code(&config, "code#state", "verifier")
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("parse token response"),
+        "got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn test_refresh_anthropic_token_parse_error() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("nope"))
+        .mount(&server)
+        .await;
+
+    let config = OAuthConfig::with_base_url(&server.uri());
+    let err = refresh_anthropic_token(&config, "rt").await.unwrap_err();
+    assert!(
+        err.to_string().contains("parse refresh response"),
+        "got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn test_refresh_openai_token_parse_error() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("<<<"))
+        .mount(&server)
+        .await;
+
+    let config = OAuthConfig::with_base_url(&server.uri());
+    let err = refresh_openai_token(&config, "rt").await.unwrap_err();
+    assert!(
+        err.to_string().contains("parse refresh response"),
+        "got: {err}"
+    );
+}
+
+// ===================================================================
+// Request-failed arms (transport error: connection refused on a closed
+// localhost port — no live network, fails fast and deterministically).
+// ===================================================================
+
+/// Reserve, then immediately release, an ephemeral localhost port so that a
+/// connection to it is refused. No server ever listens here.
+fn closed_localhost_base_url() -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    drop(listener);
+    format!("http://{}", addr)
+}
+
+#[tokio::test]
+async fn test_request_device_code_transport_error() {
+    let config = OAuthConfig::with_base_url(&closed_localhost_base_url());
+    let err = request_device_code(&config).await.unwrap_err();
+    assert!(
+        err.to_string().contains("device code request failed"),
+        "got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn test_exchange_anthropic_code_transport_error() {
+    let config = OAuthConfig::with_base_url(&closed_localhost_base_url());
+    let err = exchange_anthropic_code(&config, "code#state", "verifier")
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("token exchange request failed"),
+        "got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn test_refresh_anthropic_token_transport_error() {
+    let config = OAuthConfig::with_base_url(&closed_localhost_base_url());
+    let err = refresh_anthropic_token(&config, "rt").await.unwrap_err();
+    assert!(
+        err.to_string().contains("token refresh request failed"),
+        "got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn test_exchange_openai_code_transport_error() {
+    let config = OAuthConfig::with_base_url(&closed_localhost_base_url());
+    let err = exchange_openai_code(&config, "code", "verifier")
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("token exchange request failed"),
+        "got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn test_refresh_openai_token_transport_error() {
+    let config = OAuthConfig::with_base_url(&closed_localhost_base_url());
+    let err = refresh_openai_token(&config, "rt").await.unwrap_err();
+    assert!(
+        err.to_string().contains("token refresh request failed"),
+        "got: {err}"
+    );
+}
+
 #[tokio::test]
 async fn test_exchange_anthropic_code_without_refresh_token() {
     use wiremock::matchers::{method, path};

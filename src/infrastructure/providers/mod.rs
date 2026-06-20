@@ -124,15 +124,6 @@ fn validate_provider_api_base_with_options(
     }
 }
 
-/// Create a provider by name and API key.
-pub fn create_provider(
-    name: &str,
-    api_key: String,
-    api_base: Option<String>,
-) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
-    create_provider_with_client(name, api_key, api_base, reqwest::Client::new())
-}
-
 /// Create a provider by name and API key with a shared `reqwest::Client`.
 pub fn create_provider_with_client(
     name: &str,
@@ -235,21 +226,32 @@ mod tests {
 
     #[test]
     fn test_create_openai_provider() {
-        let provider = create_provider("openai", "sk-test".to_string(), None);
+        let provider = create_provider_with_client(
+            "openai",
+            "sk-test".to_string(),
+            None,
+            reqwest::Client::new(),
+        );
         assert!(provider.is_ok());
         assert_eq!(provider.unwrap().name(), "openai");
     }
 
     #[test]
     fn test_create_anthropic_provider() {
-        let provider = create_provider("anthropic", "sk-ant-test".to_string(), None);
+        let provider = create_provider_with_client(
+            "anthropic",
+            "sk-ant-test".to_string(),
+            None,
+            reqwest::Client::new(),
+        );
         assert!(provider.is_ok());
         assert_eq!(provider.unwrap().name(), "anthropic");
     }
 
     #[test]
     fn test_create_unknown_provider() {
-        let provider = create_provider("gemini", "key".to_string(), None);
+        let provider =
+            create_provider_with_client("gemini", "key".to_string(), None, reqwest::Client::new());
         assert!(matches!(
             provider,
             Err(ProviderFactoryError::UnknownProvider(_))
@@ -258,10 +260,11 @@ mod tests {
 
     #[test]
     fn test_create_openai_with_custom_base() {
-        let provider = create_provider(
+        let provider = create_provider_with_client(
             "openai",
             "sk-test".to_string(),
             Some("http://localhost:8080".to_string()),
+            reqwest::Client::new(),
         );
         assert!(provider.is_ok());
     }
@@ -320,10 +323,11 @@ mod tests {
 
     #[test]
     fn test_reject_openai_with_insecure_http_api_base() {
-        let provider = create_provider(
+        let provider = create_provider_with_client(
             "openai",
             "sk-test".to_string(),
             Some("http://attacker.invalid/v1".to_string()),
+            reqwest::Client::new(),
         );
         assert!(matches!(
             provider,
@@ -333,10 +337,11 @@ mod tests {
 
     #[test]
     fn test_reject_anthropic_with_insecure_http_api_base() {
-        let provider = create_provider(
+        let provider = create_provider_with_client(
             "anthropic",
             "sk-ant-test".to_string(),
             Some("http://attacker.invalid".to_string()),
+            reqwest::Client::new(),
         );
         assert!(matches!(
             provider,
@@ -346,10 +351,11 @@ mod tests {
 
     #[test]
     fn test_reject_openai_with_unapproved_https_host() {
-        let provider = create_provider(
+        let provider = create_provider_with_client(
             "openai",
             "sk-test".to_string(),
             Some("https://evil.example/v1".to_string()),
+            reqwest::Client::new(),
         );
         assert!(matches!(
             provider,

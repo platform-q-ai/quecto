@@ -77,6 +77,16 @@ async fn ensure_runtime(
     };
 
     let runtime_ref = envelope.runtime_ref.clone();
+
+    // Reject early if the socket path would exceed the OS UDS path limit —
+    // otherwise the later bind() fails with a cryptic truncation error.
+    if !crate::domain::socket_path_within_uds_limit(&state.config.socket_root, &runtime_ref) {
+        return json_error(
+            StatusCode::BAD_REQUEST,
+            format!("socket path too long for runtime '{runtime_ref}' (exceeds the OS UDS limit)"),
+        );
+    }
+
     {
         let mut registry = state.registry.lock().await;
         if let Some(runtime) = registry.get_mut(&runtime_ref) {

@@ -231,6 +231,10 @@ pub(crate) fn cmd_agent(
     stdout: &mut String,
     stderr: &mut String,
 ) -> i32 {
+    // Headless mode logs to stderr; install the API-key-redacting subscriber so
+    // any secret that reaches a log line is scrubbed. No-op unless RUST_LOG is set.
+    crate::infrastructure::logging::install_redacting_subscriber();
+
     let mut flags = match parse_agent_flags(args, stderr) {
         Some(f) => f,
         None => return 1,

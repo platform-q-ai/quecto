@@ -292,3 +292,70 @@ fn test_import_openai_expired_refresh_failure_none() {
     assert_eq!(import_openai(&json, &params, &mut out), None);
     assert!(e.contains("failed to refresh OpenAI token"));
 }
+
+// --- store-failure branches ---
+
+/// Build a `CredentialStore` whose base dir is actually a regular file, so any
+/// write (create_dir_all on the "base") fails deterministically without perms.
+fn failing_store(tmp: &tempfile::TempDir) -> CredentialStore {
+    let file = tmp.path().join("not-a-dir");
+    std::fs::write(&file, b"x").unwrap();
+    CredentialStore::new(file)
+}
+
+#[test]
+fn test_import_anthropic_store_failure() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = failing_store(&tmp);
+    let rt = new_rt();
+    let json = serde_json::json!({
+        "anthropic": {
+            "type": "oauth",
+            "access": "at-valid",
+            "refresh": "rt-1",
+            "expires": (now_secs() + 7200) * 1000
+        }
+    });
+    let mut o = String::new();
+    let mut e = String::new();
+    let mut out = Output {
+        stdout: &mut o,
+        stderr: &mut e,
+    };
+    assert_eq!(import_anthropic(&json, &store, &rt, &mut out), Some(0));
+    assert!(
+        e.contains("failed to store Anthropic credential"),
+        "stderr: {e}"
+    );
+}
+
+#[test]
+fn test_import_openai_store_failure() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = failing_store(&tmp);
+    let rt = new_rt();
+    let json = serde_json::json!({
+        "openai": {
+            "type": "oauth",
+            "access": "at-valid",
+            "refresh": "rt-1",
+            "expires": (now_secs() + 7200) * 1000
+        }
+    });
+    let params = OpenAiImportParams {
+        store: &store,
+        rt: &rt,
+        oauth_base_url: None,
+    };
+    let mut o = String::new();
+    let mut e = String::new();
+    let mut out = Output {
+        stdout: &mut o,
+        stderr: &mut e,
+    };
+    assert_eq!(import_openai(&json, &params, &mut out), Some(0));
+    assert!(
+        e.contains("failed to store OpenAI credential"),
+        "stderr: {e}"
+    );
+}

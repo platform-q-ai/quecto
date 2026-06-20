@@ -203,3 +203,151 @@ fn resolve_api_key_with_refresh_sync_wrapper_no_oauth_config() {
     let resolved = resolve_api_key_with_refresh("cfg-key", &store, "gemini", &rt);
     assert_eq!(resolved, "cfg-key");
 }
+
+// --- resolve_api_key_with_refresh_async_with_oauth_config: remaining branches ---
+
+/// Build a fake JWT whose payload carries an OpenAI chatgpt_account_id, so
+/// `extract_openai_account_id` returns `Some`.
+fn jwt_with_account_id(account_id: &str) -> String {
+    use base64::Engine;
+    let payload = serde_json::json!({
+        "https://api.openai.com/auth": { "chatgpt_account_id": account_id }
+    });
+    let enc = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(serde_json::to_vec(&payload).unwrap());
+    format!("header.{}.signature", enc)
+}
+
+#[tokio::test]
+async fn with_oauth_config_openai_dispatch_refreshes_and_persists_account_id() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let new_access = jwt_with_account_id("acct-from-refresh");
+    let response = serde_json::json!({
+        "access_token": new_access,
+        "refresh_token": "oai-new-rt",
+        "expires_in": 3600
+    });
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&response))
+        .mount(&server)
+        .await;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    store
+        .store(Credential {
+            provider: "openai".to_string(),
+            token: "oai-expired".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(0),
+            refresh_token: Some("oai-old-rt".to_string()),
+            account_id: None,
+        })
+        .unwrap();
+
+    let resolved = resolve_api_key_with_refresh_async_with_oauth_config(
+        "cfg",
+        &store,
+        "openai",
+        &crate::infrastructure::auth::oauth::OAuthConfig::with_base_url(&server.uri()),
+    )
+    .await;
+    assert_eq!(resolved, new_access);
+
+    // persist_refreshed_token's openai branch should have extracted the account id.
+    let creds = store.load_snapshot().unwrap();
+    let cred = creds.get("openai").unwrap();
+    assert_eq!(cred.account_id.as_deref(), Some("acct-from-refresh"));
+    assert_eq!(cred.refresh_token.as_deref(), Some("oai-new-rt"));
+}
+
+#[tokio::test]
+async fn with_oauth_config_expired_non_oauth_method_falls_back_to_config() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    // Expired but method=Token => refresh branch skipped => config key.
+    store
+        .store(Credential {
+            provider: "anthropic".to_string(),
+            token: "stale".to_string(),
+            method: AuthMethod::Token,
+            expires_at: Some(0),
+            refresh_token: Some("rt".to_string()),
+            account_id: None,
+        })
+        .unwrap();
+
+    let resolved = resolve_api_key_with_refresh_async_with_oauth_config(
+        "cfg-key-token",
+        &store,
+        "anthropic",
+        &crate::infrastructure::auth::oauth::OAuthConfig::with_base_url("http://127.0.0.1:1"),
+    )
+    .await;
+    assert_eq!(resolved, "cfg-key-token");
+}
+
+#[tokio::test]
+async fn with_oauth_config_expired_oauth_without_refresh_token_falls_back() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    // Expired OAuth but no refresh token => cannot refresh => config key.
+    store
+        .store(Credential {
+            provider: "anthropic".to_string(),
+            token: "expired".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(0),
+            refresh_token: None,
+            account_id: None,
+        })
+        .unwrap();
+
+    let resolved = resolve_api_key_with_refresh_async_with_oauth_config(
+        "cfg-no-rt",
+        &store,
+        "anthropic",
+        &crate::infrastructure::auth::oauth::OAuthConfig::with_base_url("http://127.0.0.1:1"),
+    )
+    .await;
+    assert_eq!(resolved, "cfg-no-rt");
+}
+
+#[tokio::test]
+async fn with_oauth_config_valid_token_short_circuits() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    store
+        .store(Credential {
+            provider: "anthropic".to_string(),
+            token: "still-valid".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(i64::MAX),
+            refresh_token: Some("rt".to_string()),
+            account_id: None,
+        })
+        .unwrap();
+
+    let resolved = resolve_api_key_with_refresh_async_with_oauth_config(
+        "cfg",
+        &store,
+        "anthropic",
+        &crate::infrastructure::auth::oauth::OAuthConfig::with_base_url("http://127.0.0.1:1"),
+    )
+    .await;
+    assert_eq!(resolved, "still-valid");
+}
+
+// --- make_provider_factory: OpenAI JWT token takes the Codex branch ---
+
+#[test]
+fn make_provider_factory_openai_jwt_builds_codex_provider() {
+    let factory = make_provider_factory("openai", None, reqwest::Client::new());
+    let provider = factory(&jwt_with_account_id("acct-123"));
+    // A JWT carrying an account id routes to the Codex provider.
+    assert_eq!(provider.name(), "codex");
+}

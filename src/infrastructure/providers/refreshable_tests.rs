@@ -455,3 +455,69 @@ async fn test_streaming_does_not_refresh_when_token_valid() {
         "no refresh should be attempted when the token is still valid"
     );
 }
+
+// ── Coverage: pure helpers ─────────────────────────────────────────────────
+
+#[test]
+fn is_refreshable_auth_error_only_true_for_auth() {
+    assert!(RefreshableProvider::is_refreshable_auth_error(
+        &DomainError::Provider("HTTP 401 unauthorized".into())
+    ));
+    assert!(RefreshableProvider::is_refreshable_auth_error(
+        &DomainError::Provider("invalid api key".into())
+    ));
+    assert!(!RefreshableProvider::is_refreshable_auth_error(
+        &DomainError::Provider("HTTP 500 internal server error".into())
+    ));
+    assert!(!RefreshableProvider::is_refreshable_auth_error(
+        &DomainError::Provider("connection refused".into())
+    ));
+    assert!(!RefreshableProvider::is_refreshable_auth_error(
+        &DomainError::Tool("nope".into())
+    ));
+}
+
+#[test]
+fn owned_request_roundtrip_preserves_fields() {
+    let msgs = vec![crate::domain::message::Message::user("hi")];
+    let req = ChatRequest {
+        messages: &msgs,
+        tools: &[],
+        model: "openai/gpt-5.2",
+        max_tokens: 222,
+        temperature: 0.5,
+        session_id: Some("sess-1"),
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    let owned = OwnedRequest::from(&req);
+    let r2 = owned.as_request();
+    assert_eq!(r2.model, "openai/gpt-5.2");
+    assert_eq!(r2.max_tokens, 222);
+    assert_eq!(r2.session_id, Some("sess-1"));
+    assert_eq!(r2.messages.len(), 1);
+    assert!(r2.tools.is_empty());
+}
+
+#[test]
+fn owned_request_roundtrip_with_none_session() {
+    let msgs = vec![crate::domain::message::Message::user("yo")];
+    let req = ChatRequest {
+        messages: &msgs,
+        tools: &[],
+        model: "anthropic/claude-haiku-4-5",
+        max_tokens: 10,
+        temperature: 0.0,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    let owned = OwnedRequest::from(&req);
+    assert_eq!(owned.as_request().session_id, None);
+}

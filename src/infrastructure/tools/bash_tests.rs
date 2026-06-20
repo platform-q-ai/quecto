@@ -301,3 +301,316 @@ fn test_allowed_shells_contains_common() {
     assert!(super::ALLOWED_SHELLS.contains(&"/bin/sh"));
     assert!(super::ALLOWED_SHELLS.contains(&"/bin/bash"));
 }
+
+// --- build_shell_command (pure builder: program/args/env/cwd selection) ---
+
+fn shell_program(env: &HashMap<String, String>) -> String {
+    let ws = PathBuf::from("/tmp");
+    let cmd = super::build_shell_command(&ws, "echo hi", env);
+    cmd.as_std().get_program().to_string_lossy().into_owned()
+}
+
+#[test]
+fn test_build_shell_command_uses_allowed_shell_from_env() {
+    let mut env = HashMap::new();
+    env.insert("SHELL".to_string(), "/bin/bash".to_string());
+    assert_eq!(shell_program(&env), "/bin/bash");
+}
+
+#[test]
+fn test_build_shell_command_rejects_disallowed_shell() {
+    let mut env = HashMap::new();
+    env.insert("SHELL".to_string(), "/tmp/evil".to_string());
+    // Disallowed shell falls back to /bin/sh.
+    assert_eq!(shell_program(&env), "/bin/sh");
+}
+
+#[test]
+fn test_build_shell_command_defaults_to_sh_without_shell_env() {
+    let env = HashMap::new();
+    assert_eq!(shell_program(&env), "/bin/sh");
+}
+
+#[test]
+fn test_build_shell_command_sets_args_and_cwd() {
+    let ws = PathBuf::from("/tmp/some-workspace");
+    let env = HashMap::new();
+    let cmd = super::build_shell_command(&ws, "echo hello", &env);
+    let std_cmd = cmd.as_std();
+    let args: Vec<String> = std_cmd
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(args, vec!["-c".to_string(), "echo hello".to_string()]);
+    assert_eq!(std_cmd.get_current_dir(), Some(ws.as_path()));
+}
+
+#[test]
+fn test_build_shell_command_passes_through_source_env() {
+    let mut env = HashMap::new();
+    env.insert("MY_VAR".to_string(), "my_value".to_string());
+    env.insert("PATH".to_string(), "/custom/bin".to_string());
+    let cmd = super::build_shell_command(&PathBuf::from("/tmp"), "echo hi", &env);
+    let std_cmd = cmd.as_std();
+    let envs: HashMap<String, String> = std_cmd
+        .get_envs()
+        .filter_map(|(k, v)| {
+            Some((
+                k.to_string_lossy().into_owned(),
+                v?.to_string_lossy().into_owned(),
+            ))
+        })
+        .collect();
+    assert_eq!(envs.get("MY_VAR").map(|s| s.as_str()), Some("my_value"));
+    // Provided PATH is honored verbatim (no inherited-PATH injection).
+    assert_eq!(envs.get("PATH").map(|s| s.as_str()), Some("/custom/bin"));
+}
+
+#[test]
+fn test_build_shell_command_inherits_path_when_absent() {
+    // When source env has no PATH, the process PATH is injected so the shell
+    // can find binaries.
+    let env = HashMap::new();
+    let cmd = super::build_shell_command(&PathBuf::from("/tmp"), "echo hi", &env);
+    let std_cmd = cmd.as_std();
+    let has_path = std_cmd.get_envs().any(|(k, v)| k == "PATH" && v.is_some());
+    // Only asserts when the test process itself has PATH (true in practice).
+    if std::env::var("PATH").is_ok() {
+        assert!(
+            has_path,
+            "PATH should be injected when absent from source env"
+        );
+    }
+}
+
+// --- make_exit_result (status -> ToolResult mapping) ---
+
+#[cfg(unix)]
+#[test]
+fn test_make_exit_result_success() {
+    use std::os::unix::process::ExitStatusExt;
+    let status = std::process::ExitStatus::from_raw(0);
+    let result = super::make_exit_result(status, "output text".to_string());
+    assert!(!result.is_error);
+    assert_eq!(result.content, "output text");
+    assert!(result.image_blocks.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn test_make_exit_result_nonzero_exit_code() {
+    use std::os::unix::process::ExitStatusExt;
+    // raw status with low byte 0 and high byte 1 => exited with code 1.
+    let status = std::process::ExitStatus::from_raw(1 << 8);
+    let result = super::make_exit_result(status, "boom".to_string());
+    assert!(result.is_error);
+    assert!(
+        result.content.starts_with("exit code 1\n"),
+        "got: {}",
+        result.content
+    );
+    assert!(result.content.contains("boom"));
+}
+
+#[cfg(unix)]
+#[test]
+fn test_make_exit_result_killed_by_signal_uses_minus_one() {
+    use std::os::unix::process::ExitStatusExt;
+    // Terminated by signal 9 => code() is None => falls back to -1.
+    let status = std::process::ExitStatus::from_raw(9);
+    let result = super::make_exit_result(status, "".to_string());
+    assert!(result.is_error);
+    assert!(
+        result.content.contains("exit code -1"),
+        "got: {}",
+        result.content
+    );
+}
+
+// --- read_stream_limited (in-memory AsyncRead, no real pipes) ---
+
+#[tokio::test]
+async fn test_read_stream_limited_under_cap() {
+    let data = b"hello world".to_vec();
+    let (content, truncated) = super::read_stream_limited(&data[..], 1024).await;
+    assert_eq!(content, "hello world");
+    assert!(!truncated);
+}
+
+#[tokio::test]
+async fn test_read_stream_limited_truncates_over_cap() {
+    let data = vec![b'x'; 10_000];
+    let (content, truncated) = super::read_stream_limited(&data[..], 100).await;
+    assert_eq!(content.len(), 100, "should keep only the cap");
+    assert!(truncated, "exceeding the cap should set truncated=true");
+}
+
+#[tokio::test]
+async fn test_read_stream_limited_empty_input() {
+    let data: Vec<u8> = Vec::new();
+    let (content, truncated) = super::read_stream_limited(&data[..], 100).await;
+    assert!(content.is_empty());
+    assert!(!truncated);
+}
+
+// --- await_stream_output / await_stream_output_with_timeout ---
+
+#[tokio::test]
+async fn test_await_stream_output_none() {
+    let (s, t) = super::await_stream_output(None).await;
+    assert!(s.is_empty());
+    assert!(!t);
+}
+
+#[tokio::test]
+async fn test_await_stream_output_some() {
+    let handle = tokio::spawn(async { ("captured".to_string(), true) });
+    let (s, t) = super::await_stream_output(Some(handle)).await;
+    assert_eq!(s, "captured");
+    assert!(t);
+}
+
+#[tokio::test]
+async fn test_await_stream_output_with_timeout_none() {
+    let (s, t) = super::await_stream_output_with_timeout(None, Duration::from_millis(50)).await;
+    assert!(s.is_empty());
+    assert!(!t);
+}
+
+#[tokio::test]
+async fn test_await_stream_output_with_timeout_completes() {
+    let handle = tokio::spawn(async { ("done".to_string(), false) });
+    let (s, _t) =
+        super::await_stream_output_with_timeout(Some(handle), Duration::from_secs(5)).await;
+    assert_eq!(s, "done");
+}
+
+#[tokio::test]
+async fn test_await_stream_output_with_timeout_times_out() {
+    let handle = tokio::spawn(async {
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        ("never".to_string(), false)
+    });
+    let (s, t) =
+        super::await_stream_output_with_timeout(Some(handle), Duration::from_millis(20)).await;
+    assert!(s.is_empty(), "timeout should yield empty output");
+    assert!(!t);
+}
+
+// --- collect_and_truncate_output (combining + truncation + temp-file hint) ---
+
+fn stream_tasks_from(
+    stdout: Option<(String, bool)>,
+    stderr: Option<(String, bool)>,
+) -> super::StreamTasks {
+    super::StreamTasks {
+        stdout_task: stdout.map(|v| tokio::spawn(async move { v })),
+        stderr_task: stderr.map(|v| tokio::spawn(async move { v })),
+    }
+}
+
+#[tokio::test]
+async fn test_collect_output_empty_when_no_tasks() {
+    let mut tasks = stream_tasks_from(None, None);
+    let out = super::collect_and_truncate_output(&mut tasks).await;
+    assert!(out.is_empty());
+}
+
+#[tokio::test]
+async fn test_collect_output_stdout_only_no_truncation() {
+    let mut tasks = stream_tasks_from(Some(("just stdout".to_string(), false)), None);
+    let out = super::collect_and_truncate_output(&mut tasks).await;
+    assert_eq!(out, "just stdout");
+}
+
+#[tokio::test]
+async fn test_collect_output_stderr_only_no_truncation() {
+    let mut tasks = stream_tasks_from(None, Some(("just stderr".to_string(), false)));
+    let out = super::collect_and_truncate_output(&mut tasks).await;
+    assert_eq!(out, "just stderr");
+}
+
+#[tokio::test]
+async fn test_collect_output_combines_stdout_and_stderr() {
+    let mut tasks = stream_tasks_from(
+        Some(("OUT".to_string(), false)),
+        Some(("ERR".to_string(), false)),
+    );
+    let out = super::collect_and_truncate_output(&mut tasks).await;
+    assert_eq!(out, "OUT\nERR");
+}
+
+#[tokio::test]
+async fn test_collect_output_byte_truncation_includes_50kb_hint() {
+    // Few lines but well over 50KB => byte truncation => "(50KB limit)" note.
+    let big = "x".repeat(60 * 1024);
+    let mut tasks = stream_tasks_from(Some((big, false)), None);
+    let out = super::collect_and_truncate_output(&mut tasks).await;
+    assert!(
+        out.contains("Showing lines"),
+        "got tail: {}",
+        &out[out.len().saturating_sub(200)..]
+    );
+    assert!(out.contains("(50KB limit)"));
+    assert!(out.contains("Full output"));
+}
+
+#[tokio::test]
+async fn test_collect_output_line_truncation_hint_without_kb_note() {
+    // Many short lines => line truncation => no "(50KB limit)" note.
+    let many: String = (1..=3000).map(|i| format!("l{}\n", i)).collect();
+    let mut tasks = stream_tasks_from(Some((many, false)), None);
+    let out = super::collect_and_truncate_output(&mut tasks).await;
+    assert!(out.contains("Showing lines"));
+    assert!(
+        !out.contains("(50KB limit)"),
+        "line truncation must omit KB note"
+    );
+    assert!(out.contains("l3000"), "tail must keep the last line");
+}
+
+// --- run_command malformed-JSON arm (LLM-addressable error result) ---
+
+#[tokio::test]
+async fn test_exec_invalid_json_returns_error_result() {
+    let (tool, _tmp) = test_exec(false);
+    let result = tool.execute("{ not valid json").await.unwrap();
+    assert!(
+        result.is_error,
+        "malformed JSON should yield is_error result"
+    );
+    assert!(
+        result.content.contains("invalid JSON arguments"),
+        "got: {}",
+        result.content
+    );
+    assert!(result.content.contains("Example"));
+}
+
+// --- ExecTool accessors / Debug / ExecOptions ---
+
+#[test]
+fn test_exec_tool_timeout_getter_and_debug() {
+    let tmp = TempDir::new().unwrap();
+    let sandbox = Sandbox::new(Some(tmp.path().to_path_buf()), false);
+    let tool = ExecTool::with_timeout(
+        Arc::new(tmp.path().to_path_buf()),
+        Arc::new(sandbox),
+        Duration::from_secs(42),
+    );
+    assert_eq!(tool.timeout(), Duration::from_secs(42));
+    let dbg = format!("{:?}", tool);
+    assert!(dbg.contains("ExecTool"));
+    assert!(dbg.contains("42") || dbg.contains("max_capture_bytes"));
+}
+
+#[test]
+fn test_exec_options_default_and_clone() {
+    let opts = ExecOptions::default();
+    assert_eq!(opts.timeout, Duration::MAX);
+    assert!(opts.command_prefix.is_none());
+    let cloned = opts.clone();
+    assert_eq!(cloned.max_capture_bytes, opts.max_capture_bytes);
+    // Debug derive exercised.
+    assert!(format!("{:?}", cloned).contains("ExecOptions"));
+}

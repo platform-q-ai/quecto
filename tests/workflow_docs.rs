@@ -81,7 +81,7 @@ fn readme_lists_full_18_step_reference_workflow() {
         "12 - Fix all valid review concerns",
         "13 - Push changes to remote",
         "14 - Reply to the reviewers comments on the PR and mark resolved (use graphql)",
-        "15 - Run pre-merge hooks (real-LLM, machete, deny)",
+        "15 - Confirm the pre-push gate passed (real-LLM, machete, deny run on push)",
         "16 - Merge",
         "17 - Move to local master and pull",
         "18 - Clean up sub agents",

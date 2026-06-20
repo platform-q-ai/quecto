@@ -110,7 +110,7 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
             "key": "hooks",
             "label": "Install/check local quality hooks",
             "phase": "setup",
-            "guidance": "Run scripts/install-hooks.sh, then verify pre-commit, pre-push, pre-merge-commit, and the git --no-verify wrapper are installed/active before editing code."
+            "guidance": "Run scripts/install-hooks.sh, then verify pre-commit, pre-push, and the git --no-verify wrapper are installed/active before editing code."
           },
           {
             "key": "scenarios",
@@ -185,7 +185,7 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
           },
           {
             "key": "pre_merge",
-            "label": "Run pre-merge hooks (real-LLM, machete, deny)",
+            "label": "Confirm the pre-push gate passed (real-LLM, machete, deny run on push)",
             "phase": "ci_cd"
           },
           {
@@ -214,7 +214,7 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
               "gh pr merge"
             ],
             "before_step_key": "merge",
-            "message": "Complete code review and pre-merge validation before merging."
+            "message": "Complete code review and verify the pre-push gate passed before merging."
           }
         ]
       }

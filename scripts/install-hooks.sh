@@ -19,12 +19,6 @@ EOF
 
 install_hook "pre-commit"
 install_hook "pre-push"
-install_hook "pre-merge-commit"
-
-# Disable fast-forward merges so merge commits are always created.
-# This ensures the pre-merge-commit hook fires on every merge.
-git config merge.ff false
-echo "Set merge.ff=false (no fast-forward merges)"
 
 # Install git wrapper that bans --no-verify.
 WRAPPER_DIR="$ROOT/.git/wrapper-bin"
