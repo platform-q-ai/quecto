@@ -185,9 +185,6 @@ async fn single_client_loop(
     inject_system_prompt(&mut messages, &system_prompt);
 
     let mut agent_session = AgentSession::new(model, session_key.clone());
-    agent_session.set_context_tokens(crate::application::context_pruning::estimate_total_tokens(
-        &messages,
-    ));
 
     run_command_loop(
         reader,
@@ -429,8 +426,10 @@ fn session_summary_to_json(summary: &crate::domain::session::SessionSummary) -> 
     serde_json::json!({
         "key": summary.key,
         "name": summary.name,
+        "title": summary.title,
         "messageCount": summary.message_count,
         "updatedUnixSecs": summary.updated_unix_secs,
+        "updatedAt": summary.updated_unix_secs,
     })
 }
 
@@ -500,7 +499,6 @@ async fn dispatch_fieldless_command(cmd: &AgentCommand, ctx: &mut DispatchCtx<'_
                 Some(serde_json::json!({
                     "sessions": sessions
                         .iter()
-                        .filter(|session| session.key.starts_with("cli:"))
                         .map(session_summary_to_json)
                         .collect::<Vec<_>>()
                 })),

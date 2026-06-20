@@ -4,6 +4,24 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::domain::skill::SkillLoader;
+
+/// Prefix for user-facing interactive chat sessions.
+pub const USER_CHAT_PREFIX: &str = "chat-";
+
+/// Generate a unique user-chat session key.
+pub fn new_user_chat_key() -> String {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if n == 0 {
+        format!("{USER_CHAT_PREFIX}{secs}")
+    } else {
+        format!("{USER_CHAT_PREFIX}{secs}-{n:x}")
+    }
+}
 use crate::infrastructure::auth::credential_store::Credential;
 use crate::infrastructure::persistence::skill_loader::FileSkillLoader;
 

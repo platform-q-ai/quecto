@@ -731,3 +731,6 @@ async fn test_progress_callback_done_fired_on_text_response() {
 
 #[path = "agent_loop_progress_tests.rs"]
 mod progress_tests;
+
+#[path = "agent_loop_context_tokens_tests.rs"]
+mod context_tokens_tests;

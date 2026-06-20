@@ -296,9 +296,10 @@ pub fn run_repl<R: BufRead, W: Write>(
     let ephemeral = ctx.flags.session_name.as_deref() == Some("-");
     let session_key = if ephemeral {
         String::new()
-    } else {
-        let name = ctx.flags.session_name.as_deref().unwrap_or("repl_default");
+    } else if let Some(name) = ctx.flags.session_name.as_deref() {
         Session::build_key("repl", name)
+    } else {
+        crate::interface::shared::new_user_chat_key()
     };
     let spill_store = Arc::new(FileContextSpillStore::new(ctx.base_dir.to_path_buf()));
     registry.register(Arc::new(RecallTool::new(

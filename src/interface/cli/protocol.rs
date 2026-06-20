@@ -73,6 +73,11 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    /// Switch to a fresh user-chat session.
+    NewSession {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
     /// Switch the active UDS session to a persisted CLI session.
     ResumeSession {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -180,6 +185,7 @@ impl AgentCommand {
             Self::GetMessagesTail { id, .. } => id.as_deref(),
             Self::GetSessionStats { id } => id.as_deref(),
             Self::ListSessions { id } => id.as_deref(),
+            Self::NewSession { id } => id.as_deref(),
             Self::ResumeSession { id, .. } => id.as_deref(),
             Self::SetModel { id, .. } => id.as_deref(),
             Self::RegisterTools { id, .. } => id.as_deref(),
@@ -204,6 +210,7 @@ impl AgentCommand {
             Self::GetMessagesTail { .. } => "get_messages_tail",
             Self::GetSessionStats { .. } => "get_session_stats",
             Self::ListSessions { .. } => "list_sessions",
+            Self::NewSession { .. } => "new_session",
             Self::ResumeSession { .. } => "resume_session",
             Self::SetModel { .. } => "set_model",
             Self::GetExtensions { .. } => "get_extensions",

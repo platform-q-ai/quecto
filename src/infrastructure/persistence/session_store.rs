@@ -229,14 +229,23 @@ impl SessionStore for FileSessionStore {
                         continue;
                     }
                 };
+                if !file
+                    .key
+                    .starts_with(crate::interface::shared::USER_CHAT_PREFIX)
+                {
+                    continue;
+                }
+                let title = session_title(&file.messages);
+                let message_count = file
+                    .messages
+                    .iter()
+                    .filter(|m| matches!(str_to_role(&m.role), Role::User | Role::Assistant))
+                    .count();
                 summaries.push(SessionSummary {
-                    name: file
-                        .key
-                        .strip_prefix("cli:")
-                        .unwrap_or(&file.key)
-                        .to_string(),
+                    name: title.clone(),
+                    title,
                     key: file.key,
-                    message_count: file.messages.len(),
+                    message_count,
                     updated_unix_secs,
                 });
             }
@@ -269,6 +278,25 @@ fn str_to_role(s: &str) -> Role {
         "tool" => Role::Tool,
         _ => Role::User,
     }
+}
+
+fn session_title(messages: &[MessageRecord]) -> String {
+    let title = messages
+        .iter()
+        .find(|m| matches!(str_to_role(&m.role), Role::User))
+        .map(|m| m.content.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("(untitled)");
+    truncate_title(title, 50)
+}
+
+fn truncate_title(title: &str, max_chars: usize) -> String {
+    if title.chars().count() <= max_chars {
+        return title.to_string();
+    }
+    let mut out: String = title.chars().take(max_chars).collect();
+    out.push('…');
+    out
 }
 
 fn message_to_record(msg: &Message) -> MessageRecord {
@@ -364,3 +392,7 @@ fn record_to_message(rec: MessageRecord) -> Message {
 #[cfg(test)]
 #[path = "session_store_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "session_store_chat_tests.rs"]
+mod chat_tests;

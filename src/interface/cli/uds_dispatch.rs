@@ -69,6 +69,7 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
             )
             .await
         }
+        AgentCommand::NewSession { .. } => handle_new_session(ctx, id.as_deref(), &type_name).await,
         AgentCommand::ResumeSession { session, .. } => {
             handle_resume_session(ctx, id.as_deref(), &type_name, session).await
         }
@@ -112,6 +113,41 @@ pub(super) async fn persist_current_session(
     };
     inject_system_prompt(ctx.messages, ctx.system_prompt);
     ctx.session_store.save(&session).await
+}
+
+pub(super) async fn handle_new_session(
+    ctx: &mut DispatchCtx<'_>,
+    id: Option<&str>,
+    type_name: &str,
+) -> bool {
+    if ctx.session.is_streaming() {
+        let ev = AgentEvent::err(
+            id,
+            type_name,
+            "cannot start a new session while agent is running",
+        );
+        emit_event_to_broadcast_or_writer(ctx, &ev).await;
+        return false;
+    }
+    clear_conversation(ctx.messages);
+    ctx.session.clear_usage();
+    ctx.session.drain_pending();
+    let key = crate::interface::shared::new_user_chat_key();
+    ctx.session_key.clear();
+    ctx.session_key.push_str(&key);
+    ctx.session.set_session_key(key.clone());
+    if let Some(spill) = ctx.agent.spill_store() {
+        if let Err(e) = spill.clear(ctx.session_key).await {
+            tracing::warn!("new_session: failed to clear spill store: {e}");
+        }
+    }
+    let ev = AgentEvent::ok(
+        id,
+        type_name,
+        Some(serde_json::json!({ "sessionKey": key })),
+    );
+    emit_event_to_broadcast_or_writer(ctx, &ev).await;
+    false
 }
 
 pub(super) async fn handle_resume_session(

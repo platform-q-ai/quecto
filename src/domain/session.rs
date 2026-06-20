@@ -9,9 +9,11 @@ use super::{error::DomainError, message::Message};
 pub struct SessionSummary {
     /// Unique key, e.g. "cli:default".
     pub key: String,
-    /// Human-friendly name, e.g. "default" for "cli:default".
+    /// Human-friendly name/title, derived from the first user message for chat sessions.
     pub name: String,
-    /// Number of persisted messages.
+    /// Human-friendly title. Kept separate on the wire while mirroring `name` for compatibility.
+    pub title: String,
+    /// Number of persisted user/assistant messages.
     pub message_count: usize,
     /// Last modification time in Unix seconds, when available.
     pub updated_unix_secs: Option<u64>,

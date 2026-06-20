@@ -4,6 +4,31 @@ use crate::interface::select_overlay::{
 };
 use crate::interface::theme;
 
+fn format_unix_minutes(secs: u64) -> String {
+    let secs = secs as i64;
+    let days = secs.div_euclid(86_400);
+    let mut rem = secs.rem_euclid(86_400);
+    let hour = rem / 3_600;
+    rem %= 3_600;
+    let minute = rem / 60;
+    let (year, month, day) = civil_from_days(days);
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
+}
+
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + if m <= 2 { 1 } else { 0 };
+    (year, m as u32, d as u32)
+}
+
 impl App {
     // ── Slash command handlers ─────────────────────────────────────────
 
@@ -184,15 +209,25 @@ impl App {
         let items = sessions
             .into_iter()
             .filter_map(|session| {
-                let name = session.get("name").and_then(|v| v.as_str())?;
+                let title = session
+                    .get("title")
+                    .or_else(|| session.get("name"))
+                    .and_then(|v| v.as_str())?;
+                let key = session.get("key").and_then(|v| v.as_str()).unwrap_or(title);
                 let count = session
                     .get("messageCount")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0);
+                let when = session
+                    .get("updatedUnixSecs")
+                    .or_else(|| session.get("updatedAt"))
+                    .and_then(|v| v.as_u64())
+                    .map(format_unix_minutes)
+                    .unwrap_or_else(|| "unknown time".to_string());
                 Some(SelectItem {
-                    value: name.to_string(),
-                    label: name.to_string(),
-                    description: Some(format!("{count} messages")),
+                    value: key.to_string(),
+                    label: title.to_string(),
+                    description: Some(format!("{when}   ({count} msgs)")),
                 })
             })
             .collect::<Vec<_>>();
@@ -555,13 +590,18 @@ impl App {
 
     /// Reset the conversation — clears agent history, chat UI, and context display.
     pub(super) fn reset_session(&mut self, message: &str) {
-        self.send_clear_history();
+        self.send_new_session();
         self.chat.clear();
         self.footer.set_context(None, 0);
         self.context_stats_requested = false;
         self.notify(message, NotifyLevel::Success);
     }
 
+    pub(super) fn send_new_session(&mut self) {
+        self.send_command(Command::NewSession { id: None });
+    }
+
+    #[cfg(test)]
     pub(super) fn send_clear_history(&mut self) {
         self.send_command(Command::ClearHistory { id: None });
     }
