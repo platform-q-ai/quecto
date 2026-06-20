@@ -70,7 +70,7 @@ Feature: E2E Real LLM UDS Agent
   @done @real-llm
   Scenario: UDS set_model to qualified Anthropic model and prompt
     When I start the real LLM UDS agent
-    And I send set_model "anthropic/claude-sonnet-4-20250514"
+    And I send set_model "anthropic/claude-haiku-4-5"
     And I send prompt "Reply with exactly UDS_SONNET_OK"
     And I close the UDS connection
     Then the UDS agent exits with code 0
@@ -81,17 +81,17 @@ Feature: E2E Real LLM UDS Agent
   @done @real-llm
   Scenario: UDS set_model with provider and modelId fields
     When I start the real LLM UDS agent
-    And I send set_model provider "anthropic" modelId "claude-sonnet-4-20250514"
+    And I send set_model provider "anthropic" modelId "claude-haiku-4-5"
     And I send command "get_state" with id "gs-quecto"
     And I close the UDS connection
     Then the UDS agent exits with code 0
     And the agent output should contain a response command "set_model" with success true
-    And the get_state response model should be "anthropic/claude-sonnet-4-20250514"
+    And the get_state response model should be "anthropic/claude-haiku-4-5"
 
   @done @real-llm
   Scenario: UDS switch models and prompt each successfully
     When I start the real LLM UDS agent
-    And I send set_model "anthropic/claude-sonnet-4-20250514"
+    And I send set_model "anthropic/claude-haiku-4-5"
     And I send prompt "Reply with exactly UDS_SWITCH_A"
     And I send set_model "anthropic/claude-opus-4-6"
     And I send prompt "Reply with exactly UDS_SWITCH_B"
@@ -122,7 +122,7 @@ Feature: E2E Real LLM UDS Agent
     When I start the real LLM UDS agent
     And I send set_model "gemini/gemini-pro"
     And I send prompt "first"
-    And I send set_model "anthropic/claude-sonnet-4-20250514"
+    And I send set_model "anthropic/claude-haiku-4-5"
     And I send prompt "Reply with exactly UDS_RECOVER_OK"
     And I close the UDS connection
     Then the UDS agent exits with code 0
@@ -132,9 +132,9 @@ Feature: E2E Real LLM UDS Agent
   @done @real-llm
   Scenario: UDS bare model name errors then recovers with qualified name
     When I start the real LLM UDS agent
-    And I send set_model "claude-sonnet-4-20250514"
+    And I send set_model "claude-haiku-4-5"
     And I send prompt "Reply with exactly UDS_BARE_FAIL"
-    And I send set_model "anthropic/claude-sonnet-4-20250514"
+    And I send set_model "anthropic/claude-haiku-4-5"
     And I send prompt "Reply with exactly UDS_BARE_RECOVER"
     And I close the UDS connection
     Then the UDS agent exits with code 0
@@ -149,11 +149,11 @@ Feature: E2E Real LLM UDS Agent
   @done @real-llm
   Scenario: UDS get_state reflects model change
     When I start the real LLM UDS agent
-    And I send set_model "anthropic/claude-sonnet-4-20250514"
+    And I send set_model "anthropic/claude-haiku-4-5"
     And I send command "get_state" with id "gs-1"
     And I close the UDS connection
     Then the UDS agent exits with code 0
-    And the get_state response model should be "anthropic/claude-sonnet-4-20250514"
+    And the get_state response model should be "anthropic/claude-haiku-4-5"
 
   @done @real-llm
   Scenario: UDS get_state includes all expected fields
