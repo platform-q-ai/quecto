@@ -229,6 +229,20 @@ Feature: LLM Providers
     And the request body should not contain a temperature field
     And the request body should contain output_config effort "low"
 
+  Scenario: Anthropic provider omits deprecated temperature for Opus 4.7
+    Given an Anthropic request with model "claude-opus-4-7" and no thinking level
+    When I build the Anthropic request body with thinking
+    Then the request body should contain thinking type "adaptive"
+    And the request body should not contain a temperature field
+    And the request body should contain output_config effort "low"
+
+  Scenario: Anthropic provider omits deprecated temperature for Opus 4.8
+    Given an Anthropic request with model "claude-opus-4-8" and no thinking level
+    When I build the Anthropic request body with thinking
+    Then the request body should contain thinking type "adaptive"
+    And the request body should not contain a temperature field
+    And the request body should contain output_config effort "low"
+
   Scenario: Anthropic provider auto-enables adaptive thinking for Sonnet 4.6 even with no thinking level
     Given an Anthropic request with model "claude-sonnet-4-6" and no thinking level
     When I build the Anthropic request body with thinking
