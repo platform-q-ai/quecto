@@ -2,7 +2,7 @@ use crate::domain::{EnsureRuntimeRequest, RuntimeEnvelope, runtime_ref, validate
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
-    time::{Duration, Instant},
+    time::Instant,
 };
 use thiserror::Error;
 use tokio::process::Child;
@@ -13,7 +13,6 @@ pub struct ManagerConfig {
     pub socket_root: PathBuf,
     pub api_port_base: u16,
     pub api_port_span: u16,
-    pub idle: Duration,
     pub max_runtimes: usize,
     pub system_prompt_path: PathBuf,
     pub seed_config_path: PathBuf,
@@ -185,6 +184,7 @@ pub enum ManagerError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
     use tempfile::tempdir;
 
     fn config(root: PathBuf) -> ManagerConfig {
@@ -193,7 +193,6 @@ mod tests {
             socket_root: root.join("sockets"),
             api_port_base: 21000,
             api_port_span: 4,
-            idle: Duration::from_secs(60),
             max_runtimes: 1,
             system_prompt_path: root.join("system-prompt.txt"),
             seed_config_path: root.join("config.json"),

@@ -20,6 +20,11 @@ EOF
 install_hook "pre-commit"
 install_hook "pre-push"
 
+# Self-heal clones that still have the removed pre-merge-commit hook: its shim
+# would exec the now-deleted scripts/pre-merge-commit.sh and abort `git merge`.
+rm -f "$HOOKS_DIR/pre-merge-commit"
+git config --unset merge.ff 2>/dev/null || true
+
 # Install git wrapper that bans --no-verify.
 WRAPPER_DIR="$ROOT/.git/wrapper-bin"
 mkdir -p "$WRAPPER_DIR"

@@ -209,14 +209,17 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for RedactingMakeWriter {
 
 /// Install a global tracing subscriber whose output is scrubbed of API keys.
 ///
-/// Filtering uses `EnvFilter::from_default_env()`, so this is a no-op unless
-/// `RUST_LOG` is set — no behaviour change by default. `try_init` never panics
-/// if a subscriber is already installed. Call only from headless entrypoints
+/// The filter defaults to `OFF`, so this is a genuine no-op unless `RUST_LOG`
+/// is set — no behaviour change by default. `try_init` never panics if a
+/// subscriber is already installed. Call only from headless entrypoints
 /// (the agent/UDS path); never from the REPL/TUI, where stray stderr output
 /// corrupts the terminal UI.
 pub fn install_redacting_subscriber() {
+    let filter = tracing_subscriber::EnvFilter::builder()
+        .with_default_directive(tracing_subscriber::filter::LevelFilter::OFF.into())
+        .from_env_lossy();
     let _ = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(filter)
         .with_writer(RedactingMakeWriter)
         .try_init();
 }

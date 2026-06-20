@@ -21,7 +21,21 @@ FORCE_RUN="${QUECTO_PREPUSH_FORCE:-0}"
 
 HEAD_SHA="$(git rev-parse HEAD)"
 SCRIPT_HASH="$(sha256sum "$ROOT/scripts/pre-push.sh" | awk '{print $1}')"
-CACHE_FILE="$ROOT/.git/pre-push.passed.${HEAD_SHA}.${SCRIPT_HASH}"
+# Fold the real-LLM run-state into the cache key, so a cached pass with real-LLM
+# skipped (no key / opt-out) doesn't suppress a later real-LLM run for the same
+# SHA. Probe key presence in a SUBSHELL so .env never leaks into the
+# deterministic wave below.
+if [[ "${QUECTO_SKIP_REAL_LLM:-0}" == "1" ]]; then
+    REAL_LLM_STATE="skip"
+elif (
+    source "$ROOT/scripts/load-dotenv.sh"
+    [[ -n "${OPENAI_API_KEY:-}${QUECTO_PROVIDERS_OPENAI_API_KEY:-}" ]]
+); then
+    REAL_LLM_STATE="run"
+else
+    REAL_LLM_STATE="nokey"
+fi
+CACHE_FILE="$ROOT/.git/pre-push.passed.${HEAD_SHA}.${SCRIPT_HASH}.${REAL_LLM_STATE}"
 LOG_FILE="$ROOT/.git/pre-push.last.log"
 
 if [[ "$FORCE_RUN" != "1" && -f "$CACHE_FILE" ]]; then

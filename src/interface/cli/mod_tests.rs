@@ -27,11 +27,11 @@ fn assert_contains_all(haystack: &str, needles: &[&str]) {
 fn test_no_args_triggers_repl_mode() {
     // run_with_output with no args delegates to run_repl_with_output,
     // which enters REPL mode with empty input (exits immediately on EOF).
-    // Without a config file, the REPL outputs an error.
     let out = run_with_output(vec!["quecto".to_string()], &default_ctx());
-    // Either exits 0 (with config) or 1 (without config, showing config error).
-    // In default context without config, exit code is 1.
-    assert!(out.exit_code == 0 || out.exit_code == 1);
+    // The default context resolves a usable config, so the empty-input REPL
+    // exits cleanly (0). The no-config case is covered by
+    // test_run_with_output_empty_args, which asserts exit 1.
+    assert_eq!(out.exit_code, 0);
 }
 
 #[test]
@@ -360,7 +360,7 @@ fn test_run_with_output_empty_args() {
 }
 
 #[test]
-fn test_run_with_output_multiple_unknown_commands() {
+fn test_run_with_output_unknown_command_shows_usage() {
     let out = run_with_output(args("notacommand"), &default_ctx());
     assert_eq!(out.exit_code, 1);
     assert!(out.stderr.contains("Unknown command"));

@@ -14,7 +14,6 @@ fn test_state(tmp: &tempfile::TempDir, token: Option<String>) -> AppState {
             socket_root: tmp.path().join("sockets"),
             api_port_base: 21000,
             api_port_span: 10,
-            idle: Duration::from_secs(60),
             max_runtimes: 50,
             system_prompt_path: tmp.path().join("system-prompt.txt"),
             seed_config_path: tmp.path().join("config.json"),

@@ -584,3 +584,26 @@ fn lib_rs_has_deny_attributes() {
         "src/lib.rs must contain #![deny(unused_imports)]"
     );
 }
+
+#[test]
+fn runtime_manager_domain_is_pure() {
+    // The quecto-runtime-manager crate has its own domain/application/infrastructure
+    // split; its domain must stay free of outward (infra/app/framework) deps.
+    let src = fs::read_to_string("quecto-runtime-manager/src/domain.rs")
+        .expect("read quecto-runtime-manager/src/domain.rs");
+    // Scan production code only — stop at the test module.
+    let prod = src.split("#[cfg(test)]").next().unwrap_or(&src);
+    for pattern in [
+        "crate::infrastructure",
+        "crate::application",
+        "reqwest",
+        "tokio",
+        "axum",
+        "kube",
+    ] {
+        assert!(
+            !prod.contains(pattern),
+            "quecto-runtime-manager/src/domain.rs must stay pure: found `{pattern}`"
+        );
+    }
+}
