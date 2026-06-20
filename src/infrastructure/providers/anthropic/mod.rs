@@ -58,7 +58,7 @@ impl AnthropicProvider {
     /// `interleaved-thinking-2025-05-14` (except for 4.6 models where
     /// interleaved thinking is built-in and the beta is redundant).
     fn build_beta_header(model: &str, is_oauth: bool) -> String {
-        let adaptive = Self::model_uses_adaptive_thinking(model);
+        let omits_interleaved_beta = Self::model_omits_interleaved_thinking_beta(model);
         let mut betas: Vec<&str> = Vec::new();
 
         if is_oauth {
@@ -69,8 +69,8 @@ impl AnthropicProvider {
         // Still required despite "GA" status.
         betas.push("fine-grained-tool-streaming-2025-05-14");
 
-        // Omit for 4.6 models where interleaved thinking is built-in (#437-9).
-        if !adaptive {
+        // Omit only for models where interleaved thinking is built in (#437-9).
+        if !omits_interleaved_beta {
             betas.push("interleaved-thinking-2025-05-14");
         }
 
@@ -106,11 +106,19 @@ impl AnthropicProvider {
     // Model detection
     // -----------------------------------------------------------------------
 
-    /// Returns `true` for models that use adaptive thinking (Opus 4.6, Sonnet 4.6).
+    /// Returns `true` for models that use adaptive thinking.
     ///
-    /// These models deprecate `thinking: {type: "enabled", budget_tokens: N}` in
-    /// favour of `thinking: {type: "adaptive"}` with `output_config.effort`.
+    /// These models require adaptive thinking and reject deprecated sampling /
+    /// budget-thinking parameters.
     fn model_uses_adaptive_thinking(model: &str) -> bool {
+        use crate::domain::message::starts_with_ci;
+        starts_with_ci(model, "claude-opus-4-6")
+            || starts_with_ci(model, "claude-opus-4-7")
+            || starts_with_ci(model, "claude-opus-4-8")
+            || starts_with_ci(model, "claude-sonnet-4-6")
+    }
+
+    fn model_omits_interleaved_thinking_beta(model: &str) -> bool {
         use crate::domain::message::starts_with_ci;
         starts_with_ci(model, "claude-opus-4-6") || starts_with_ci(model, "claude-sonnet-4-6")
     }

@@ -708,6 +708,10 @@ fn test_normalize_messages_does_not_clone_unmodified_messages() {
 #[path = "anthropic_thinking_tests.rs"]
 mod thinking_tests;
 
+// Latest Opus model tests (split for 750-line limit)
+#[path = "anthropic_latest_opus_tests.rs"]
+mod latest_opus_tests;
+
 // mod.rs region-coverage tests (split for 750-line limit)
 #[path = "anthropic_mod_cov_tests.rs"]
 mod mod_cov_tests;
