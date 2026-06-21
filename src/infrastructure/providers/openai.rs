@@ -180,6 +180,9 @@ impl OpenAiProvider {
             completion_tokens: u["completion_tokens"].as_u64().unwrap_or(0) as u32,
             cache_read_tokens: None,
             cache_write_tokens: None,
+            // OpenAI `prompt_tokens` already counts the full prompt (cached
+            // tokens are a subset), so the gauge falls back to `prompt_tokens`.
+            context_tokens: None,
             cost: None,
         });
 

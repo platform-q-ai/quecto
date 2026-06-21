@@ -617,7 +617,7 @@ impl AgentLoopImpl {
                 let (input_toks, output_toks) = response
                     .usage
                     .as_ref()
-                    .map(|u| (u.prompt_tokens as usize, u.completion_tokens as usize))
+                    .map(|u| (u.context_input_tokens() as _, u.completion_tokens as _))
                     .unwrap_or((context_tokens, 0));
                 let stop = response
                     .stop_reason

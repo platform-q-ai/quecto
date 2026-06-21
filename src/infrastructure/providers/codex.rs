@@ -284,6 +284,9 @@ impl CodexProvider {
                 .and_then(|v| v.as_u64())
                 .map(|v| v as u32),
             cache_write_tokens: None,
+            // Codex/OpenAI `input_tokens` already counts the full prompt
+            // (cached tokens are a subset), so the gauge uses `prompt_tokens`.
+            context_tokens: None,
             cost: None,
         });
 
@@ -442,6 +445,9 @@ impl SseAccumulator {
                             .and_then(|v| v.as_u64())
                             .map(|v| v as u32),
                         cache_write_tokens: None,
+                        // Codex/OpenAI `input_tokens` already counts the full
+                        // prompt, so the gauge uses `prompt_tokens`.
+                        context_tokens: None,
                         cost: None,
                     });
                 }

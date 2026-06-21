@@ -332,6 +332,7 @@ pub(super) fn text_response(content: &str) -> LlmResponse {
             completion_tokens: 20,
             cache_read_tokens: None,
             cache_write_tokens: None,
+            context_tokens: None,
             cost: None,
         }),
         stop_reason: None,
@@ -351,6 +352,7 @@ fn text_response_with_usage(content: &str, fixture: UsageFixture) -> LlmResponse
             completion_tokens: fixture.1,
             cache_read_tokens: Some(fixture.2),
             cache_write_tokens: Some(fixture.3),
+            context_tokens: None,
             cost: Some(crate::domain::message::CostInfo {
                 input_cost_micro_usd: 0,
                 output_cost_micro_usd: 0,
@@ -377,6 +379,7 @@ fn tool_call_response_with_usage(name: &str, args: &str, fixture: UsageFixture) 
             completion_tokens: fixture.1,
             cache_read_tokens: Some(fixture.2),
             cache_write_tokens: Some(fixture.3),
+            context_tokens: None,
             cost: Some(crate::domain::message::CostInfo {
                 input_cost_micro_usd: 0,
                 output_cost_micro_usd: 0,

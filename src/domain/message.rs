@@ -208,8 +208,34 @@ pub struct UsageInfo {
     pub cache_read_tokens: Option<u32>,
     /// Tokens written to prompt cache (Anthropic `cache_creation_input_tokens`).
     pub cache_write_tokens: Option<u32>,
+    /// True context-window occupancy for this turn, normalized across providers.
+    ///
+    /// This exists because providers report prompt size differently when prompt
+    /// caching is active:
+    ///   - OpenAI/Codex: `prompt_tokens`/`input_tokens` already counts the full
+    ///     prompt (cached tokens are a *subset*), so this is left `None` and the
+    ///     context gauge falls back to `prompt_tokens`.
+    ///   - Anthropic: `input_tokens` counts only the *non-cached* delta; the
+    ///     cached portion is reported separately in `cache_read_input_tokens`
+    ///     and `cache_creation_input_tokens`. True occupancy is the sum, set
+    ///     here so the context gauge does not undercount on warm sessions.
+    ///
+    /// Billing (`prompt_tokens` + the discounted cache fields, via
+    /// [`ModelPricing::cost_for`]) intentionally does *not* use this field.
+    pub context_tokens: Option<u32>,
     /// Per-call cost breakdown, if model pricing is available.
     pub cost: Option<CostInfo>,
+}
+
+impl UsageInfo {
+    /// Tokens occupying the model context window for this turn.
+    ///
+    /// Providers that report cached prompt tokens outside `prompt_tokens` set
+    /// `context_tokens`; providers whose `prompt_tokens` already includes the
+    /// full prompt leave it unset and use `prompt_tokens` as the context gauge.
+    pub fn context_input_tokens(&self) -> u32 {
+        self.context_tokens.unwrap_or(self.prompt_tokens)
+    }
 }
 
 /// Per-call cost breakdown calculated from token usage and model pricing.
@@ -358,6 +384,7 @@ mod tests {
             completion_tokens: 500,
             cache_read_tokens: Some(200),
             cache_write_tokens: Some(100),
+            context_tokens: None,
             cost: None,
         };
         let pricing = model_pricing("claude-sonnet-4-6").unwrap();
@@ -383,6 +410,7 @@ mod tests {
             completion_tokens: 100_000,
             cache_read_tokens: None,
             cache_write_tokens: None,
+            context_tokens: None,
             cost: None,
         };
         let pricing = model_pricing("claude-opus-4-6").unwrap();

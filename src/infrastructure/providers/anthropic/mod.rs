@@ -4,12 +4,13 @@
 
 mod claude_code;
 mod normalize;
+mod usage;
 
 use std::future::Future;
 use std::pin::Pin;
 
 use crate::domain::error::DomainError;
-use crate::domain::message::{LlmResponse, Message, Role, StopReason, ToolCall, UsageInfo};
+use crate::domain::message::{LlmResponse, Message, Role, StopReason, ToolCall};
 use crate::domain::provider::{ChatRequest, LlmProvider, StreamEvent};
 use claude_code::{CLAUDE_CODE_VERSION, sanitize_surrogates, to_claude_code_name};
 
@@ -436,19 +437,7 @@ impl AnthropicProvider {
             Some(text_parts.join(""))
         };
 
-        let usage = body["usage"].as_object().map(|u| UsageInfo {
-            prompt_tokens: u["input_tokens"].as_u64().unwrap_or(0) as u32,
-            completion_tokens: u["output_tokens"].as_u64().unwrap_or(0) as u32,
-            cache_read_tokens: u
-                .get("cache_read_input_tokens")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u32),
-            cache_write_tokens: u
-                .get("cache_creation_input_tokens")
-                .and_then(|v| v.as_u64())
-                .map(|v| v as u32),
-            cost: None,
-        });
+        let usage = body["usage"].as_object().map(usage::parse_usage);
 
         let stop_reason = body["stop_reason"].as_str().map(StopReason::parse);
 

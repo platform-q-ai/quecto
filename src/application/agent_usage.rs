@@ -13,7 +13,7 @@ pub(super) struct UsageTotals {
 
 impl UsageTotals {
     pub fn record(&mut self, usage: &UsageInfo) {
-        self.context_input_tokens = usage.prompt_tokens;
+        self.context_input_tokens = usage.context_input_tokens();
         self.output_tokens = self.output_tokens.saturating_add(usage.completion_tokens);
         self.billed_input_tokens = self
             .billed_input_tokens
@@ -48,6 +48,7 @@ mod tests {
             completion_tokens: 2,
             cache_read_tokens: Some(3),
             cache_write_tokens: Some(4),
+            context_tokens: None,
             cost: Some(CostInfo {
                 input_cost_micro_usd: 0,
                 output_cost_micro_usd: 0,
@@ -61,6 +62,7 @@ mod tests {
             completion_tokens: 5,
             cache_read_tokens: None,
             cache_write_tokens: None,
+            context_tokens: None,
             cost: None,
         });
 
@@ -71,6 +73,47 @@ mod tests {
         assert_eq!(totals.cache_read_tokens, 3);
         assert_eq!(totals.cache_write_tokens, 4);
         assert_eq!(totals.cost_micro_usd, 1_000);
+    }
+
+    #[test]
+    fn record_uses_normalized_context_tokens_over_prompt_tokens() {
+        // Anthropic-style: prompt_tokens is the non-cached delta, but
+        // context_tokens carries the true occupancy (delta + cache). The
+        // context gauge must reflect the latter while billing stays on
+        // prompt_tokens.
+        let mut totals = UsageTotals::default();
+        totals.record(&UsageInfo {
+            prompt_tokens: 100,
+            completion_tokens: 5,
+            cache_read_tokens: Some(80),
+            cache_write_tokens: Some(20),
+            context_tokens: Some(200),
+            cost: None,
+        });
+        assert_eq!(
+            totals.context_input_tokens, 200,
+            "gauge uses context_tokens"
+        );
+        assert_eq!(
+            totals.billed_input_tokens, 100,
+            "billing stays on prompt_tokens"
+        );
+    }
+
+    #[test]
+    fn record_falls_back_to_prompt_tokens_when_context_tokens_absent() {
+        // OpenAI-style: context_tokens is None because prompt_tokens already
+        // counts the full prompt.
+        let mut totals = UsageTotals::default();
+        totals.record(&UsageInfo {
+            prompt_tokens: 150,
+            completion_tokens: 5,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
+            context_tokens: None,
+            cost: None,
+        });
+        assert_eq!(totals.context_input_tokens, 150);
     }
 
     #[test]
@@ -89,6 +132,7 @@ mod tests {
             completion_tokens: 1,
             cache_read_tokens: Some(1),
             cache_write_tokens: Some(1),
+            context_tokens: None,
             cost: Some(CostInfo {
                 input_cost_micro_usd: 0,
                 output_cost_micro_usd: 0,
