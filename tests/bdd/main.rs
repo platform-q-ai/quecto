@@ -305,6 +305,10 @@ pub struct QuectoWorld {
     pub agent_id_validation: Option<Result<(), String>>,
     /// Wiremock server URI (kept alive via Box leak)
     pub _wiremock_server_uri: Option<String>,
+    /// Fireworks-compatible mock server URI for provider reload scenarios
+    pub _fireworks_mock_uri: Option<String>,
+    /// Leaked Fireworks-compatible mock server ref for request inspection
+    pub fireworks_mock_server_ref: Option<&'static wiremock::MockServer>,
     /// Leaked wiremock server ref for request inspection (skills e2e)
     pub wiremock_server_ref: Option<&'static wiremock::MockServer>,
     /// Leaked wiremock server for skills install mock API scenarios
@@ -356,6 +360,12 @@ pub struct QuectoWorld {
     pub uds_commands: Vec<String>,
     /// UDS agent: captured event lines after execution
     pub agent_events: Vec<String>,
+    /// UDS agent: captured execution stderr from the helper thread
+    pub uds_execution_error: Option<String>,
+    /// UDS agent: replace config with invalid JSON after building the agent but before the command loop
+    pub uds_invalid_config_before_loop: bool,
+    /// UDS agent: add Fireworks provider after building the agent but before the command loop
+    pub uds_add_fireworks_before_loop: bool,
     /// UDS agent: captured stderr after execution
     pub agent_stderr: String,
     /// UDS agent: exit code after execution

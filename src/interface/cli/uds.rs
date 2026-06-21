@@ -42,6 +42,8 @@ pub struct UdsLoopArgs<'a> {
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,      // #562
     /// Pre-created broadcast channel for workflow event emission (#598).
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    pub provider_reload: Option<&'a mut super::provider_reload::ProviderReload>,
+    pub provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
 }
 pub fn run_uds_loop(args: UdsLoopArgs<'_>) -> i32 {
     let rt = match crate::interface::cli::build_tokio_runtime() {
@@ -74,6 +76,8 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         workflow_state,
         workflow_config,
         broadcast_tx,
+        provider_reload,
+        provider_reload_inputs,
     } = args;
     let file_store;
     let session_store: &dyn SessionStore = match session_store_override {
@@ -109,6 +113,8 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 system_prompt,
                 ext_registry,
                 workflow_state,
+                provider_reload,
+                provider_reload_inputs,
             },
             std_stream,
             session_store,
@@ -140,6 +146,8 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
                 workflow_state,
                 workflow_config,
                 broadcast_tx,
+                provider_reload,
+                provider_reload_inputs,
             },
             listener,
             session_store,
@@ -148,7 +156,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
     }
 }
 
-struct SingleClientArgs {
+struct SingleClientArgs<'a> {
     agent: AgentLoopImpl,
     messages: Vec<Message>,
     model: String,
@@ -157,10 +165,12 @@ struct SingleClientArgs {
     system_prompt: String,
     ext_registry: Option<ExtRegistry>,
     workflow_state: Option<crate::interface::shared::WorkflowStateHandle>,
+    provider_reload: Option<&'a mut super::provider_reload::ProviderReload>,
+    provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
 }
 
 async fn single_client_loop(
-    args: SingleClientArgs,
+    args: SingleClientArgs<'_>,
     std_stream: std::os::unix::net::UnixStream,
     session_store: &dyn SessionStore,
 ) -> i32 {
@@ -173,6 +183,8 @@ async fn single_client_loop(
         system_prompt,
         ext_registry,
         workflow_state,
+        provider_reload,
+        provider_reload_inputs,
     } = args;
     std_stream
         .set_nonblocking(true)
@@ -206,6 +218,8 @@ async fn single_client_loop(
             notification_rx: None,
             workflow_state: workflow_state.clone(),
             workflow_config: None,
+            provider_reload,
+            provider_reload_inputs,
         },
     )
     .await;
@@ -355,6 +369,8 @@ pub(crate) struct DispatchCtx<'a> {
     pub notification_rx: Option<crate::infrastructure::tools::subagent_registry::NotificationRx>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,      // #562
+    pub provider_reload: Option<&'a mut super::provider_reload::ProviderReload>,
+    pub provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
 }
 
 pub(super) async fn emit_event_to_broadcast_or_writer(
@@ -406,6 +422,7 @@ async fn handle_set_model(args: SetModelArgs, ctx: &mut DispatchCtx<'_>) -> bool
         provider,
         model_id,
     } = args;
+    super::uds_reload::poll_provider_reload_for_ctx(ctx).await;
     let resolved_model = match resolve_set_model_target(model, provider, model_id) {
         Ok(m) => m,
         Err(msg) => {
@@ -572,6 +589,7 @@ async fn handle_prompt(ctx: &mut DispatchCtx<'_>, cmd: PromptCommand) -> bool {
         }
         return false;
     }
+    super::uds_reload::poll_provider_reload_for_ctx(ctx).await;
     let Some(cancel_rx) = arm_cancel(&ctx.cancel_handle) else {
         emit_pre_cancelled(ctx).await; // Stale abort (#483).
         drain_and_run_pending(ctx).await;

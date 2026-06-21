@@ -122,10 +122,14 @@ impl AgentLoopImpl {
         }
     }
 
-    /// Switch the model used for all subsequent LLM calls (validated by the
-    /// underlying provider at call time).
+    /// Switch the model used for all subsequent LLM calls.
     pub fn set_model(&mut self, model: String) {
         self.model = model;
+    }
+
+    /// Replace the LLM provider after config reload.
+    pub fn swap_provider(&mut self, provider: Arc<dyn LlmProvider>) {
+        self.provider = provider;
     }
 
     /// Return the currently configured model name.
@@ -133,7 +137,7 @@ impl AgentLoopImpl {
         &self.model
     }
 
-    /// Context-window ceiling (tokens), surfaced for UDS clients (TUI footer).
+    /// Context-window ceiling (tokens), surfaced for UDS clients.
     pub fn max_context_tokens(&self) -> usize {
         self.max_context_tokens
     }
@@ -155,10 +159,6 @@ impl AgentLoopImpl {
     }
 
     /// Replace the tool registry with a new one.
-    ///
-    /// Zero-overhead: one pointer swap, O(1). Called between `process()` calls
-    /// by the UDS dispatch loop when extensions are reloaded. No changes to
-    /// the hot path (`run_loop`, `execute_single_tool_call`).
     pub fn swap_registry(&mut self, registry: Box<dyn ToolRegistry>) {
         self.tool_registry = registry;
     }

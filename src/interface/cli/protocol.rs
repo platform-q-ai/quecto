@@ -104,6 +104,11 @@ pub enum AgentCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
     },
+    /// Force a provider/model config reload.
+    Reload {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
     /// Re-scan extension directories and reload script extensions.
     ReloadExtensions {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -181,6 +186,7 @@ impl AgentCommand {
             Self::GetState { id } => id.as_deref(),
             Self::GetMessages { id } => id.as_deref(),
             Self::GetExtensions { id } => id.as_deref(),
+            Self::Reload { id } => id.as_deref(),
             Self::ReloadExtensions { id } => id.as_deref(),
             Self::GetMessagesTail { id, .. } => id.as_deref(),
             Self::GetSessionStats { id } => id.as_deref(),
@@ -214,6 +220,7 @@ impl AgentCommand {
             Self::ResumeSession { .. } => "resume_session",
             Self::SetModel { .. } => "set_model",
             Self::GetExtensions { .. } => "get_extensions",
+            Self::Reload { .. } => "reload",
             Self::ReloadExtensions { .. } => "reload_extensions",
             Self::RegisterTools { .. } => "register_tools",
             Self::UnregisterTools { .. } => "unregister_tools",

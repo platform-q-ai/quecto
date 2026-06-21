@@ -130,14 +130,24 @@ impl<T: Clone> RuntimeReload<T> {
         self.last_good = Some(initial);
     }
 
-    /// Poll watched sources and rebuild only when at least one content hash changed.
-    pub fn poll(&mut self, rebuild: impl FnOnce() -> Result<T, String>) -> ReloadResult<T> {
+    /// Probe watched sources and return whether at least one content hash changed.
+    pub fn sources_changed(&mut self) -> bool {
         let mut any_changed = false;
         for source in &mut self.sources {
             any_changed |= matches!(source.changed(), SourceChange::Changed);
         }
+        any_changed
+    }
 
-        if !any_changed {
+    /// Record a successful reload.
+    pub fn record_reloaded(&mut self, new: T) -> ReloadResult<T> {
+        self.last_good = Some(new.clone());
+        ReloadResult::Reloaded(new)
+    }
+
+    /// Poll watched sources and rebuild only when at least one content hash changed.
+    pub fn poll(&mut self, rebuild: impl FnOnce() -> Result<T, String>) -> ReloadResult<T> {
+        if !self.sources_changed() {
             return ReloadResult::Unchanged;
         }
 
@@ -146,7 +156,22 @@ impl<T: Clone> RuntimeReload<T> {
 
     /// Force a rebuild regardless of mtime/hash state.
     pub fn poll_forced(&mut self, rebuild: impl FnOnce() -> Result<T, String>) -> ReloadResult<T> {
-        self.rebuild_or_keep_last_good(rebuild, "forced reload failed; keeping last-good")
+        self.poll_forced_result(rebuild)
+            .unwrap_or(ReloadResult::Unchanged)
+    }
+
+    /// Force a rebuild and preserve the rebuild error for command responses.
+    pub fn poll_forced_result(
+        &mut self,
+        rebuild: impl FnOnce() -> Result<T, String>,
+    ) -> Result<ReloadResult<T>, String> {
+        match rebuild() {
+            Ok(new) => Ok(self.record_reloaded(new)),
+            Err(err) => {
+                tracing::warn!(target: "reload", error = %err, "forced reload failed; keeping last-good");
+                Err(err)
+            }
+        }
     }
 
     /// Last successfully rebuilt value.
@@ -160,13 +185,7 @@ impl<T: Clone> RuntimeReload<T> {
         warning: &'static str,
     ) -> ReloadResult<T> {
         match rebuild() {
-            Ok(new) => {
-                for source in &mut self.sources {
-                    source.seed();
-                }
-                self.last_good = Some(new.clone());
-                ReloadResult::Reloaded(new)
-            }
+            Ok(new) => self.record_reloaded(new),
             Err(err) => {
                 tracing::warn!(target: "reload", error = %err, warning);
                 ReloadResult::Unchanged

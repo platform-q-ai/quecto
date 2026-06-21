@@ -289,6 +289,8 @@ pub(crate) struct AgentBuildResult {
         Option<crate::infrastructure::tools::subagent_registry::SubagentRegistry>,
     pub workflow_state: Option<crate::interface::shared::WorkflowStateHandle>, // #562
     pub workflow_prompt_initially_active: bool,
+    pub provider_reload: crate::interface::cli::provider_reload::ProviderReload,
+    pub provider_reload_inputs: crate::interface::cli::provider_reload::ProviderReloadInputs,
 }
 
 pub(crate) fn build_agent_from_config(
@@ -328,6 +330,16 @@ pub(crate) fn build_agent_from_config(
             return None;
         }
     };
+    let provider_reload = crate::interface::cli::provider_reload::seeded_provider_reload(
+        config_path,
+        provider.clone(),
+    );
+    let provider_reload_inputs = crate::interface::cli::provider_reload::ProviderReloadInputs::new(
+        config_path.to_path_buf(),
+        base_dir.to_path_buf(),
+        env_overrides.clone(),
+        http_client.clone(),
+    );
 
     let ToolRegistryBuild {
         registry,
@@ -404,6 +416,8 @@ pub(crate) fn build_agent_from_config(
         subagent_registry,
         workflow_state,
         workflow_prompt_initially_active,
+        provider_reload,
+        provider_reload_inputs,
     })
 }
 
@@ -669,6 +683,7 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         dir.join(format!("quecto-agent-{id}.sock"))
     });
 
+    let mut provider_reload = build.provider_reload;
     crate::interface::cli::uds::run_uds_loop(crate::interface::cli::uds::UdsLoopArgs {
         agent,
         base_dir: &base_dir,
@@ -686,6 +701,8 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
         workflow_state: build.workflow_state,
         workflow_config: build.workflow_config,
         broadcast_tx,
+        provider_reload: Some(&mut provider_reload),
+        provider_reload_inputs: Some(&build.provider_reload_inputs),
     })
 }
 
