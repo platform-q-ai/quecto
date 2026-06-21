@@ -32,6 +32,7 @@ fn registry_loads_pi_shaped_models_json_with_defaults() {
     assert_eq!(model.context_window, 128_000);
     assert_eq!(model.max_tokens, 16_384);
     assert_eq!(model.input, vec!["text".to_string()]);
+    assert!(!model.allow_remote_http);
     assert_eq!(model.cost.input, 0.0);
 }
 
@@ -117,6 +118,7 @@ fn registry_loads_all_protocols_and_model_overrides() {
               "apiKey": "sk-anthropic",
               "api": "anthropic-messages",
               "authHeader": false,
+              "allowRemoteHttp": true,
               "models": [{
                 "id": "claude-custom",
                 "name": "Claude Custom",
@@ -151,6 +153,7 @@ fn registry_loads_all_protocols_and_model_overrides() {
     );
     assert_eq!(anthropic.api_key.as_deref(), Some("sk-anthropic"));
     assert!(!anthropic.auth_header);
+    assert!(anthropic.allow_remote_http);
     assert_eq!(
         anthropic.input,
         vec!["text".to_string(), "image".to_string()]

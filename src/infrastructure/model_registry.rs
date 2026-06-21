@@ -16,6 +16,7 @@ pub struct ModelRecord {
     pub base_url: Option<String>,
     pub api_key: Option<String>,
     pub auth_header: bool,
+    pub allow_remote_http: bool,
     pub input: Vec<String>,
     pub context_window: u32,
     pub max_tokens: u32,
@@ -171,6 +172,7 @@ impl ModelRegistry {
                 .api_key
                 .map(|v| resolve_registry_value(&v, |name| std::env::var(name).ok()));
             let auth_header = provider.auth_header.unwrap_or(true);
+            let allow_remote_http = provider.allow_remote_http.unwrap_or(false);
             for model in provider.models {
                 let mut record = ModelRecord::with_defaults(
                     &provider_key,
@@ -181,6 +183,7 @@ impl ModelRegistry {
                 record.base_url = base_url.clone();
                 record.api_key = api_key.clone();
                 record.auth_header = auth_header;
+                record.allow_remote_http = allow_remote_http;
                 if let Some(input) = model.input {
                     record.input = input;
                 }
@@ -240,6 +243,7 @@ impl ModelRecord {
             base_url: None,
             api_key: None,
             auth_header: true,
+            allow_remote_http: false,
             input: vec!["text".to_string()],
             context_window: 128_000,
             max_tokens: 16_384,
@@ -315,6 +319,8 @@ struct RegistryProvider {
     api: Option<String>,
     #[serde(default)]
     auth_header: Option<bool>,
+    #[serde(default)]
+    allow_remote_http: Option<bool>,
     #[serde(default)]
     models: Vec<RegistryModel>,
 }

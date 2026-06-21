@@ -176,7 +176,7 @@ pub fn build_agent_provider(
                 &model.provider,
                 api_key.clone(),
                 api_base.clone(),
-                true,
+                model.allow_remote_http,
                 http_client.clone(),
             )
             .map_err(|e| format!("models.json provider configuration error: {}", e))?;
