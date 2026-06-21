@@ -86,6 +86,33 @@ fn test_tool_end_success_clears_last_error() {
     assert!(entry.last_error.is_none());
 }
 
+// --- apply_event: agent_error response ---
+
+#[test]
+fn test_agent_error_response_sets_error_and_last_error() {
+    let mut entry = test_entry();
+    entry.status = SubagentStatus::Running;
+    apply_event(
+        &mut entry,
+        r#"{"type":"response","command":"agent_error","success":false,"error":"HTTP 404 model not found"}"#,
+    );
+    assert_eq!(entry.status, SubagentStatus::Error);
+    assert_eq!(
+        entry.last_error.as_deref(),
+        Some("HTTP 404 model not found")
+    );
+}
+
+#[test]
+fn test_agent_start_clears_previous_agent_error() {
+    let mut entry = test_entry();
+    entry.status = SubagentStatus::Error;
+    entry.last_error = Some("HTTP 404 model not found".to_string());
+    apply_event(&mut entry, r#"{"type":"agent_start"}"#);
+    assert_eq!(entry.status, SubagentStatus::Running);
+    assert!(entry.last_error.is_none());
+}
+
 // --- apply_event: unknown / malformed ---
 
 #[test]
@@ -240,6 +267,23 @@ async fn test_no_notify_on_agent_start() {
     let line = r#"{"type":"agent_start"}"#;
     maybe_notify(Some(&tx), "worker", line);
     assert!(rx.try_recv().is_err(), "no notification should be sent");
+}
+
+#[tokio::test]
+async fn test_notify_on_agent_error_response() {
+    let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
+    let line = r#"{"type":"response","command":"agent_error","success":false,"error":"bad model"}"#;
+    maybe_notify(Some(&tx), "worker", line);
+    let notif = rx.try_recv().unwrap();
+    match notif.notification {
+        SubagentNotification::Errored {
+            agent_id, error, ..
+        } => {
+            assert_eq!(agent_id, "worker");
+            assert_eq!(error, "bad model");
+        }
+        _ => panic!("expected Errored"),
+    }
 }
 
 #[tokio::test]
@@ -504,4 +548,77 @@ async fn monitor_loop_forwards_child_workflow_state_to_broadcast() {
             .is_some()
     );
     handle.abort();
+}
+
+#[test]
+fn response_agent_error_sets_run_error_without_conflating_tool_errors() {
+    let mut entry = test_entry();
+    entry.status = SubagentStatus::Running;
+
+    apply_event(
+        &mut entry,
+        r#"{"type":"response","command":"agent_error","success":false,"error":"provider rejected model"}"#,
+    );
+
+    assert_eq!(entry.status, SubagentStatus::Error);
+    assert_eq!(entry.last_error.as_deref(), Some("provider rejected model"));
+    assert_eq!(entry.run_error.as_deref(), Some("provider rejected model"));
+}
+
+#[test]
+fn tool_error_does_not_set_run_error() {
+    let mut entry = test_entry();
+    entry.status = SubagentStatus::Running;
+
+    apply_event(
+        &mut entry,
+        r#"{"type":"tool_execution_end","toolCallId":"c1","toolName":"bash","result":{"content":[]},"isError":true}"#,
+    );
+
+    assert_eq!(entry.status, SubagentStatus::Error);
+    assert!(entry.last_error.as_ref().unwrap().contains("bash"));
+    assert!(entry.run_error.is_none());
+}
+
+#[test]
+fn agent_start_clears_previous_run_error() {
+    let mut entry = test_entry();
+    entry.status = SubagentStatus::Error;
+    entry.last_error = Some("provider rejected model".to_string());
+    entry.run_error = Some("provider rejected model".to_string());
+
+    apply_event(&mut entry, r#"{"type":"agent_start"}"#);
+
+    assert_eq!(entry.status, SubagentStatus::Running);
+    assert!(entry.last_error.is_none());
+    assert!(entry.run_error.is_none());
+}
+
+#[test]
+fn agent_end_does_not_overwrite_run_error_with_idle() {
+    let mut entry = test_entry();
+    entry.status = SubagentStatus::Error;
+    entry.run_error = Some("provider rejected model".to_string());
+
+    apply_event(&mut entry, r#"{"type":"agent_end","messages":[]}"#);
+
+    assert_eq!(entry.status, SubagentStatus::Error);
+    assert_eq!(entry.run_error.as_deref(), Some("provider rejected model"));
+}
+
+#[tokio::test]
+async fn response_agent_error_sends_errored_notification() {
+    let (tx, mut rx) = super::super::subagent_registry::new_notification_channel();
+    let line = r#"{"type":"response","command":"agent_error","success":false,"error":"bad model"}"#;
+
+    maybe_notify(Some(&tx), "bot", line);
+
+    let notification = rx.try_recv().expect("notification sent");
+    match notification.notification {
+        SubagentNotification::Errored { agent_id, error } => {
+            assert_eq!(agent_id, "bot");
+            assert_eq!(error, "bad model");
+        }
+        other => panic!("expected errored notification, got {other:?}"),
+    }
 }

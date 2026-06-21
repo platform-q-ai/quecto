@@ -1,8 +1,8 @@
 # Proposal: a knowledge-retrieval surface (generalize `docs`; fold skills in)
 
-Status: **Proposed** (design note — not yet a commitment). Supersedes the
+Status: **Strongly proposed** (design direction, pending implementation). Supersedes the
 "Skills" surface as described in [`kernel-boundary.md`](kernel-boundary.md) if
-adopted.
+adopted; see ADR-0004 and ADR-0005 in [`kernel-boundary.md`](kernel-boundary.md).
 
 ## Context
 
