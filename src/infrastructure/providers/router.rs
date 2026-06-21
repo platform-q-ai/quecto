@@ -1,5 +1,6 @@
 // Provider router: routes ChatRequests to the correct provider based on
-// `provider/model` syntax. No fallback, no cloning, no cooldown.
+// `provider/model-id` syntax, where model-id is opaque. No fallback, no
+// cloning, no cooldown.
 //
 // Replaces FallbackProvider (#370).
 
@@ -48,7 +49,7 @@ impl ProviderRouter {
             }
             let truncated = truncate_prefix(prefix, MAX_PREFIX_IN_ERROR);
             return Err(DomainError::Provider(format!(
-                "no configured provider matches model prefix '{}'",
+                "no configured provider '{}'",
                 truncated
             )));
         }
@@ -130,16 +131,17 @@ impl LlmProvider for ProviderRouter {
     }
 }
 
-/// Parse a `provider/model` string into its two parts.
+/// Parse a UI/CLI `provider/model-id` string into provider and model id.
 ///
-/// Returns `None` for bare model names (no `/`) or malformed inputs.
-/// Rejects nested slashes in the model segment (`a/b/c`) to avoid
-/// forwarding multi-segment paths like `models/gpt-4o` to providers.
+/// Returns `None` for bare model names (no `/`) or malformed inputs. The split
+/// happens exactly once at the first slash: the provider is a routing key, while
+/// the model id is opaque and may itself contain slashes (for example Fireworks
+/// serverless ids like `accounts/fireworks/models/glm-5p2`).
 fn parse_qualified_model(model: &str) -> Option<(&str, &str)> {
     let (provider, model_id) = model.split_once('/')?;
     let provider = provider.trim();
     let model_id = model_id.trim();
-    if provider.is_empty() || model_id.is_empty() || model_id.contains('/') {
+    if provider.is_empty() || model_id.is_empty() {
         return None;
     }
     Some((provider, model_id))
