@@ -4,6 +4,7 @@ pub mod extensions;
 pub mod logging;
 pub mod persistence;
 pub mod providers;
+pub mod reload;
 pub mod security;
 pub mod time;
 pub mod tools;
