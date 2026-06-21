@@ -32,7 +32,7 @@ static NEXT_CLIENT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-pub(super) struct MultiClientArgs {
+pub(super) struct MultiClientArgs<'a> {
     pub agent: AgentLoopImpl,
     pub messages: Vec<Message>,
     pub model: String,
@@ -58,6 +58,8 @@ pub(super) struct MultiClientArgs {
     pub workflow_config: Option<crate::domain::workflow::WorkflowConfig>,
     /// Pre-created broadcast channel for workflow event emission (#598).
     pub broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    pub provider_reload: Option<&'a mut super::provider_reload::ProviderReload>,
+    pub provider_reload_inputs: Option<&'a super::provider_reload::ProviderReloadInputs>,
 }
 
 /// A command line from a client.
@@ -107,7 +109,7 @@ impl Drop for ClientGuard {
 // ─── Accept loop + dispatch ───────────────────────────────────────────────────
 
 pub(super) async fn multi_client_loop(
-    args: MultiClientArgs,
+    args: MultiClientArgs<'_>,
     listener: tokio::net::UnixListener,
     session_store: &dyn SessionStore,
 ) -> i32 {
@@ -118,6 +120,8 @@ pub(super) async fn multi_client_loop(
     let wf_state = args.workflow_state;
     let wf_config = args.workflow_config;
     let pre_broadcast_tx = args.broadcast_tx;
+    let provider_reload = args.provider_reload;
+    let provider_reload_inputs = args.provider_reload_inputs;
     let MultiClientArgs {
         mut agent,
         mut messages,
@@ -176,6 +180,8 @@ pub(super) async fn multi_client_loop(
         notification_rx,
         workflow_state: wf_state.clone(),
         workflow_config: wf_config,
+        provider_reload,
+        provider_reload_inputs,
     };
 
     run_dispatch_loop(

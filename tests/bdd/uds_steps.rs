@@ -19,7 +19,9 @@ use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::infrastructure::security::sandbox::Sandbox;
 use quecto::infrastructure::tools::registry::ToolRegistryImpl;
 use quecto::interface::cli::build_agent_provider;
+use quecto::interface::cli::provider_reload::{ProviderReloadInputs, seeded_provider_reload};
 use quecto::interface::cli::uds::{UdsLoopArgs, run_uds_loop};
+use wiremock::Request;
 
 // ─── Execution helper ────────────────────────────────────────────────────────
 
@@ -36,6 +38,8 @@ struct UdsAgentContext {
     workflow_state: Option<quecto::interface::shared::WorkflowStateHandle>,
     workflow_config: Option<quecto::domain::workflow::WorkflowConfig>,
     broadcast_tx: Option<tokio::sync::broadcast::Sender<String>>,
+    provider_reload: quecto::interface::cli::provider_reload::ProviderReload,
+    provider_reload_inputs: ProviderReloadInputs,
 }
 
 /// Build the agent and session key from world state + config.
@@ -45,14 +49,16 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         .filter(|(k, _)| k.starts_with("QUECTO_"))
         .collect();
 
-    let config = Config::load_with_env(
-        base.join("config.json").to_str().unwrap_or(""),
-        &env_overrides,
-    )
-    .map_err(|e| format!("failed to load config: {e}"))?;
+    let config_path = base.join("config.json");
+    let config = Config::load_with_env(config_path.to_str().unwrap_or(""), &env_overrides)
+        .map_err(|e| format!("failed to load config: {e}"))?;
 
-    let provider = build_agent_provider(&config, base, &reqwest::Client::new())
+    let http_client = reqwest::Client::new();
+    let provider = build_agent_provider(&config, base, &http_client)
         .map_err(|e| format!("provider error: {e}"))?;
+    let provider_reload = seeded_provider_reload(&config_path, provider.clone());
+    let provider_reload_inputs =
+        ProviderReloadInputs::new(config_path, base.to_path_buf(), env_overrides, http_client);
 
     let workspace = std::path::PathBuf::from(config.workspace_path());
     let model = config.agents.defaults.model.clone();
@@ -155,6 +161,8 @@ fn build_uds_agent(world: &QuectoWorld, base: &std::path::Path) -> Result<UdsAge
         workflow_state,
         workflow_config,
         broadcast_tx,
+        provider_reload,
+        provider_reload_inputs,
     })
 }
 
@@ -190,6 +198,7 @@ fn execute_uds(world: &mut QuectoWorld) {
     let ctx = match build_uds_agent(world, &base) {
         Ok(c) => c,
         Err(e) => {
+            world.uds_execution_error = Some(e.clone());
             world.agent_stderr = e;
             world.uds_exit_code = Some(1);
             return;
@@ -205,7 +214,46 @@ fn execute_uds(world: &mut QuectoWorld) {
         workflow_state,
         workflow_config,
         broadcast_tx: _,
+        mut provider_reload,
+        provider_reload_inputs,
     } = ctx;
+
+    if world.uds_add_fireworks_before_loop {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let fireworks_uri = world
+            ._fireworks_mock_uri
+            .as_ref()
+            .expect("fireworks mock URI not set");
+        let config_path = base.join("config.json");
+        let mut config: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&config_path).expect("read config"))
+                .expect("parse config");
+        let providers = config
+            .as_object_mut()
+            .expect("config object")
+            .entry("providers")
+            .or_insert_with(|| serde_json::json!({}));
+        let providers = providers.as_object_mut().expect("providers object");
+        providers.insert(
+            "openai_compatible".to_string(),
+            serde_json::json!({
+                "endpoints": [{
+                    "prefix": "fireworks",
+                    "api_base": fireworks_uri,
+                    "api_key": "sk-fireworks",
+                    "allow_remote_http": true,
+                }]
+            }),
+        );
+        std::fs::write(
+            &config_path,
+            serde_json::to_string_pretty(&config).expect("serialize config"),
+        )
+        .expect("write Fireworks config");
+    }
+    if world.uds_invalid_config_before_loop {
+        std::fs::write(base.join("config.json"), "{ invalid json").expect("write invalid config");
+    }
 
     // Create a socket path in the temp dir.
     let socket_path = base.join("test-agent.sock");
@@ -251,6 +299,8 @@ fn execute_uds(world: &mut QuectoWorld) {
             workflow_state,
             workflow_config,
             broadcast_tx: None,
+            provider_reload: Some(&mut provider_reload),
+            provider_reload_inputs: Some(&provider_reload_inputs),
         })
     });
 
@@ -269,7 +319,20 @@ fn execute_uds(world: &mut QuectoWorld) {
     let mut response_bytes = Vec::new();
     let _ = client.read_to_end(&mut response_bytes);
 
-    let exit = exit_code.join().unwrap_or(1);
+    let exit = match exit_code.join() {
+        Ok(code) => code,
+        Err(payload) => {
+            let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+                (*s).to_string()
+            } else if let Some(s) = payload.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "UDS helper thread panicked".to_string()
+            };
+            world.uds_execution_error = Some(msg.clone());
+            1
+        }
+    };
 
     let raw = String::from_utf8_lossy(&response_bytes).to_string();
     world.agent_events = raw
@@ -350,6 +413,88 @@ fn given_mock_llm_tool_call_then_text(world: &mut QuectoWorld, text: String) {
         std::mem::forget(server);
     });
     std::mem::forget(rt);
+}
+
+#[given(expr = "the config default model is {string}")]
+fn given_config_default_model(world: &mut QuectoWorld, model: String) {
+    let base = world.cli_context.base_dir.clone().expect("no base dir");
+    let config_path = base.join("config.json");
+    let mut config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config_path).expect("read config"))
+            .expect("parse config");
+    config["agents"]["defaults"]["model"] = serde_json::json!(model);
+    std::fs::write(
+        &config_path,
+        serde_json::to_string_pretty(&config).expect("serialize config"),
+    )
+    .expect("write config");
+}
+
+#[given("the config file will be updated to add a Fireworks provider before the UDS command loop")]
+fn given_config_add_fireworks_before_loop(world: &mut QuectoWorld) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let fireworks = wiremock::MockServer::start().await;
+        let fireworks_uri = fireworks.uri();
+        let fw_body = serde_json::json!({
+            "id": "chatcmpl-fireworks",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": "fireworks ok" },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}
+        });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(fw_body))
+            .mount(&fireworks)
+            .await;
+        world._fireworks_mock_uri = Some(fireworks_uri);
+        world.fireworks_mock_server_ref = Some(Box::leak(Box::new(fireworks)));
+    });
+    std::mem::forget(rt);
+    world.uds_add_fireworks_before_loop = true;
+}
+
+#[given("the config file is replaced with invalid JSON before the UDS command loop")]
+fn given_config_replaced_with_invalid_json(world: &mut QuectoWorld) {
+    world.uds_invalid_config_before_loop = true;
+}
+
+#[then("the Fireworks provider should have received a chat completion request")]
+fn then_fireworks_received_request(world: &mut QuectoWorld) {
+    let server = world
+        .fireworks_mock_server_ref
+        .expect("fireworks mock server not configured");
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let requests = rt
+        .block_on(server.received_requests())
+        .expect("received requests should be available");
+    std::mem::forget(rt);
+    let count = requests
+        .iter()
+        .filter(|request: &&Request| {
+            request.method.as_str() == "POST" && request.url.path() == "/chat/completions"
+        })
+        .count();
+    assert!(
+        count > 0,
+        "expected Fireworks mock to receive a chat completion request; requests: {requests:#?}\nevents: {:#?}\nstderr: {}\nexecution_error: {:?}\nconfig: {}",
+        world.agent_events,
+        world.agent_stderr,
+        world.uds_execution_error,
+        std::fs::read_to_string(
+            world
+                .cli_context
+                .base_dir
+                .as_ref()
+                .unwrap()
+                .join("config.json")
+        )
+        .unwrap_or_default()
+    );
 }
 
 /// Mount a delayed response on the existing wiremock server.  The delay causes
@@ -660,8 +805,11 @@ fn then_agent_output_response_success(world: &mut QuectoWorld, command: String) 
     let resp = find_agent_response(world, &command);
     assert!(
         resp.is_some(),
-        "no response for {command:?}\nlines: {:#?}",
+        "no response for {command:?}\nlines: {:#?}\nexecution_error: {:?}\nstderr: {}\nexit: {:?}",
         world.agent_events,
+        world.uds_execution_error,
+        world.agent_stderr,
+        world.uds_exit_code,
     );
     assert_eq!(
         resp.unwrap()["success"],
@@ -945,6 +1093,8 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
         workflow_state,
         workflow_config,
         broadcast_tx: _,
+        mut provider_reload,
+        provider_reload_inputs,
     } = ctx;
     let base_dir = base.clone();
     let sp = socket_path.clone();
@@ -967,6 +1117,8 @@ fn when_close_real_socket_connection(world: &mut QuectoWorld) {
             workflow_state,
             workflow_config,
             broadcast_tx: None,
+            provider_reload: Some(&mut provider_reload),
+            provider_reload_inputs: Some(&provider_reload_inputs),
         })
     });
 
@@ -1293,6 +1445,8 @@ fn mc_spawn_agent(
         workflow_state,
         workflow_config,
         broadcast_tx,
+        mut provider_reload,
+        provider_reload_inputs,
     } = ctx;
     let base_for_thread = base.to_path_buf();
     let sp = socket_path.clone();
@@ -1314,6 +1468,8 @@ fn mc_spawn_agent(
             workflow_state,
             workflow_config,
             broadcast_tx,
+            provider_reload: Some(&mut provider_reload),
+            provider_reload_inputs: Some(&provider_reload_inputs),
         })
     });
 

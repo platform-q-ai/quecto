@@ -58,6 +58,8 @@ async fn set_workflow_automation_updates_config_and_engine() {
         notification_rx: None,
         workflow_state: Some(workflow.clone()),
         workflow_config: Some(crate::domain::workflow::WorkflowConfig::default()),
+        provider_reload: None,
+        provider_reload_inputs: None,
     };
 
     super::uds_dispatch::handle_set_workflow_automation(
@@ -112,6 +114,8 @@ fn workflow_nudge_message_waits_for_selected_template() {
         notification_rx: None,
         workflow_state: Some(workflow.clone()),
         workflow_config: Some(crate::domain::workflow::WorkflowConfig::default()),
+        provider_reload: None,
+        provider_reload_inputs: None,
     };
 
     assert!(super::workflow_nudge_message(&ctx).is_none());
@@ -167,6 +171,8 @@ fn workflow_progress_fingerprint_changes_with_step_progress() {
         notification_rx: None,
         workflow_state: Some(workflow.clone()),
         workflow_config: Some(crate::domain::workflow::WorkflowConfig::default()),
+        provider_reload: None,
+        provider_reload_inputs: None,
     };
     let before = super::workflow_progress_fingerprint(&ctx).unwrap();
     workflow.lock().unwrap().check(1).unwrap();

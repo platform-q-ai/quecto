@@ -2,11 +2,15 @@ mod agent;
 mod auth;
 mod commands;
 pub mod protocol;
+pub mod provider_reload;
+#[cfg(test)]
+mod provider_reload_tests;
 pub mod uds;
 pub mod uds_cancel;
 mod uds_ext_protocol;
 mod uds_extensions;
 mod uds_multi;
+mod uds_reload;
 pub mod uds_session;
 mod uds_socket;
 

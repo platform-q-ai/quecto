@@ -1,6 +1,6 @@
 # PRD: Runtime-Extensible Models & Providers (auto-load on next turn)
 
-**Status:** Accepted for implementation (Phase 1 first; Gemini protocol fast-follow)
+**Status:** In implementation — Phase 1 shipped; Phase 2 provider/model reload shipped; Phase 3 and Gemini fast-follow not started
 **Owner:** core team (kernel)
 **Surface:** #2 Models / providers (per [kernel-boundary.md](kernel-boundary.md))
 **Related:** #1 Skills auto-load, #3 Workflow-set auto-load (share the reload path)
@@ -10,6 +10,32 @@
 (hybrid reload trigger — Accepted), and
 [ADR-0003](kernel-boundary.md#adr-0003--uds-register_provider-for-dynamic-modelprovider-registration)
 (UDS `register_provider` deferred). This PRD must stay consistent with those ADRs.
+
+---
+
+## 0. Implementation progress
+
+- **Phase 1 — shipped.** Router parsing now splits qualified model strings once
+  at the first `/`, treats the model id as opaque, and no longer rejects nested
+  slashes. Fireworks-style ids such as
+  `fireworks/accounts/fireworks/models/glm-5p2` can route by provider prefix;
+  this is still restart-bound until Phase 2 wiring lands.
+- **Phase 2a — shipped.** The shared `RuntimeReload<T>` foundation exists in
+  `src/infrastructure/reload.rs`, with BDD coverage in
+  `tests/features/runtime_reload.feature` and `tests/bdd/reload_steps.rs`. It
+  supports source seeding, `mtime` + file-length + content-hash change detection,
+  multi-source gates, fail-safe last-good state on rebuild error, recovery after
+  a fixed file, and forced reload.
+- **Phase 2b — shipped.** The models/providers consumer is wired into UDS:
+  top-of-turn provider rebuild before prompts, `set_model` on-consume reload, and
+  an explicit UDS `reload` command. BDD coverage lives in
+  `tests/features/runtime_reload_phase2b.feature`. The FR1 autonomy contract for
+  config-backed providers — "model added mid-session works next turn" — is now
+  complete for surface #2.
+- **Phase 3 — not started.** No runtime `ModelRegistry`, no `~/.quecto/models.json`,
+  no runtime TUI model list, no FR5 value resolution.
+- **Gemini fast-follow — not started.** Native `google-generative-ai` remains a
+  later kernel wire-protocol implementation.
 
 ---
 
@@ -124,8 +150,9 @@ norm.
   reflect configured + registry models at runtime, not a compiled constant.
 - **G5 — Optional metadata:** A config/file-driven model-metadata registry
   supplies pricing/context-window/capabilities; absence never blocks a request.
-- **G6 — Cheap when unchanged:** The reload is a no-op (mtime/hash check) when
-  nothing changed; no measurable per-turn latency.
+- **G6 — Cheap when unchanged:** The reload is a no-op (`mtime` + file-length
+  fast path, with content hash only when metadata changes) when nothing changed;
+  no measurable per-turn latency.
 
 ### Non-goals
 - **NG1 — Community-authored wire protocols.** Per
@@ -307,7 +334,8 @@ norm.
 - **AC5 (metadata optional):** Given a registry entry without pricing, the model
   is usable and the cost line is absent/zeroed; given pricing, cost is computed.
 - **AC6 (cheap no-op):** Given an unchanged config/registry, the per-turn reload
-  performs no rebuild (verified via mtime/hash short-circuit).
+  performs no rebuild (verified via `mtime` + file-length short-circuit; content
+  hash is computed only when metadata changes).
 - **AC7 (fail-safe):** Given a malformed config on reload, the session keeps the
   last-good providers and logs a warning.
 - **AC8 (Gemini native — fast-follow):** *Acceptance for the Gemini fast-follow,
@@ -341,11 +369,13 @@ norm.
   kernel-owned stream implementations (ADR-0001) via an `api`-keyed registry
   (OpenAI/Anthropic exist; **add native `google-generative-ai`**). Unknown `api`
   → validation error.
-- **Reload (ADR-0002):** a single shared `RuntimeReload` component (mtime+hash
-  gate) consulted at **top of turn** (agent loop / REPL) and on registry-consuming
-  ops; rebuilds the registry/provider set behind an `ArcSwap`/`RwLock`. Same
-  component feeds skills (#1) and workflow-set (#3) rebuilds. Fail-safe: keep
-  last-good on error.
+- **Reload (ADR-0002):** a single shared `RuntimeReload` component (`mtime` +
+  file-length + content-hash gate) consulted at **top of turn** (agent loop /
+  REPL) and on registry-consuming ops; rebuilds the registry/provider set behind
+  the session-owned swap point. Same component feeds skills (#1) and workflow-set
+  (#3) rebuilds. Fail-safe: keep last-good on error. **Current implementation
+  note:** the shared gate and the models/providers UDS top-of-turn, `set_model`,
+  and explicit `reload` wiring are shipped.
 - **Value resolution (FR5):** `$ENV`/`${ENV}`/literal with `$$` escapes,
   resolved at request time; `models.json` never executes commands.
 - **Stays out of the kernel:** no community wire protocols (ADR-0001), no UDS
@@ -364,18 +394,23 @@ norm.
 
 ## 7. Rollout / phasing
 
-1. **Phase 1 (unblocks Fireworks now):** FR2 — replace slash-encoding with opaque
-   `(provider, id)` resolution; remove the reject-on-nested-slash rule; first-`/`
-   split only at the UI boundary. Ship via the feature workflow; reinstall.
-   Config-only Fireworks works (still restart-bound until Phase 2).
-2. **Phase 2 (autonomy — ADR-0002):** FR1 shared reload component (top-of-turn +
-   on-consume, mtime/hash gate, fail-safe) for providers/models. Models added
-   mid-session work next turn.
-3. **Phase 3 (discoverability + metadata):** FR3 `models.json` registry
+1. **Phase 1 (unblocks Fireworks now) — shipped:** FR2 — replace slash-encoding
+   with opaque `(provider, id)` resolution; remove the reject-on-nested-slash
+   rule; first-`/` split only at the UI boundary. Config-only Fireworks now routes
+   correctly, but remains restart-bound until Phase 2b.
+2. **Phase 2a (reload foundation — shipped):** shared `RuntimeReload<T>` component
+   for ADR-0002, with source seeding, `mtime` + file-length + content-hash gate,
+   fail-safe last-good state, multi-source support, recovery after fixed config,
+   and forced reload. Covered by the `@runtime-reload` BDD suite.
+3. **Phase 2b (providers/models autonomy wiring — shipped):** the shipped reload
+   gate is wired into providers/models at top-of-turn and `set_model` on-consume;
+   the explicit UDS `reload` command is available. Models added mid-session work
+   next turn for config-backed providers, completing FR1 for surface #2.
+4. **Phase 3 (discoverability + metadata):** FR3 `models.json` registry
    (providers-own-models, `api` field, optional metadata, merge semantics) + FR5
    value resolution; demote `KNOWN_MODELS` to the built-in pack; TUI reads runtime
    list.
-4. **Phase 4 (ergonomics, optional):** FR4 `model` tool action for self-extension;
+5. **Phase 4 (ergonomics, optional):** FR4 `model` tool action for self-extension;
    extend the shared reload component to knowledge (#1) and workflow-set (#3).
    (UDS `register_provider` remains deferred per ADR-0003; sidecar-rewrites-
    `models.json` is the interim dynamic-discovery bridge.)
@@ -398,24 +433,30 @@ inside this PRD's core phases so the registry + reload work ships first.
   (pi-shaped, providers-own-models); **not** a `config.json` section.
 - **Q4 — reload trigger → RESOLVED by
   [ADR-0002](kernel-boundary.md#adr-0002--reload-trigger-for-startup-loaded-surfaces):**
-  hybrid (top-of-turn + on-consume) behind an mtime/hash gate; one shared
-  mechanism. (Note: ADR-0002 is **pull**; tools stay **push** — see ADR-0002's
+  hybrid (top-of-turn + on-consume) behind a `mtime` + file-length + content-hash
+  gate; one shared mechanism. (Note: ADR-0002 is **pull**; tools stay **push** — see ADR-0002's
   push-vs-pull clause. Phase 2 must build the pull trigger; it cannot reuse the
   tool path.)
 - **Q5 — built-in metadata pack → RESOLVED (FR3):** ship a small curated built-in
   pack, overridable by `models.json`.
 - **Q8 — native Gemini scope → RESOLVED (NG1):** **fast-follow** — its own
   feature-workflow change immediately after Phases 1–3; reference pi's `google.ts`.
+- **Q3 / FR4 — RESOLVED: defer.** A first-class `model` tool is not required for
+  autonomy. The supported self-extension path is file-backed data
+  (`config.json` / `models.json`) plus ADR-0002 reload. Reconsider a narrow
+  ergonomic wrapper only after Phase 3 if raw file editing proves too error-prone;
+  if built, it should write the same files rather than mutate hidden live state.
+- **Q6 — RESOLVED: models remain a distinct surface.** Knowledge may document or
+  help discover models, but the authoritative model/provider registry stays
+  separate because it drives routing, auth, endpoint selection, wire-protocol
+  selection, and request safety. Knowledge can describe models; it must not be the
+  execution registry for models.
+- **Q7 / ADR-0007 — RESOLVED as a non-blocking follow-up.** Phase 2b reload remains
+  automatic and fail-safe, not confirmation-gated. For now, endpoint/key/provider
+  changes have the same trust boundary as write access to config: a process that
+  can rewrite config can affect next-turn behavior. Phase 2b should log/audit
+  provider endpoint/key changes and enforce existing HTTP/remote safeguards; a
+  future ADR-0007 may add optional policy for warning or blocking high-risk
+  provider mutations. This does not block Phases 1–3.
 
-**Still open:**
-- **Q3 / FR4:** Is a first-class `model` tool (Phase 4) worth building, or is
-  "agent edits `models.json` via write tool + reload" enough for the foreseeable
-  future? (Autonomy bar is already met without it. Lean: defer.)
-- **Q6:** Fold the model list into the proposed generalized knowledge-retrieval
-  surface, or keep models a distinct surface? (Lean: distinct — models carry
-  request-routing/auth, not just text.)
-- **Q7 → ADR-0007 (reload-trust):** re-reading config each turn (ADR-0002) means a
-  process that can rewrite config can change *endpoints* between turns. Same trust
-  level as writing config at all, but do we want a higher bar
-  (confirmation/trust check) for **endpoint/key changes** vs. **model/knowledge
-  additions**? Tracked as a future **ADR-0007**, not blocking Phases 1–3.
+**Still open:** none.
