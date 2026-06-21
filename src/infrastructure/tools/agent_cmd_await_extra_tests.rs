@@ -192,3 +192,72 @@ async fn execute_await_invalid_json_is_error() {
     let result = tool.execute(r#"{"command":"await""#).await.unwrap();
     assert!(result.is_error);
 }
+
+async fn serve_get_state_once(listener: tokio::net::UnixListener) {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    // One connection is used by the await preflight connect check and then dropped.
+    let _ = listener.accept().await;
+    if let Ok((stream, _)) = listener.accept().await {
+        let (reader, mut writer) = tokio::io::split(stream);
+        let mut lines = BufReader::new(reader).lines();
+        let _ = lines.next_line().await;
+        let _ = writer
+            .write_all(
+                b"{\"type\":\"response\",\"command\":\"get_state\",\"success\":true,\"data\":{}}\n",
+            )
+            .await;
+    }
+}
+
+#[tokio::test]
+async fn execute_await_run_error_returns_structured_error() {
+    use crate::infrastructure::tools::subagent_registry::SubagentStatus;
+    let registry = new_registry();
+    let dir = tempfile::tempdir().unwrap();
+    let sock_path = dir.path().join("run-error.sock");
+    let listener = tokio::net::UnixListener::bind(&sock_path).unwrap();
+    tokio::spawn(serve_get_state_once(listener));
+
+    let mut entry = SubagentEntry::new(sock_path, 0);
+    entry.status = SubagentStatus::Error;
+    entry.last_error = Some("provider rejected model".to_string());
+    entry.run_error = Some("provider rejected model".to_string());
+    registry.lock().unwrap().insert("w1".to_string(), entry);
+
+    let tool = AgentCmdTool::new(registry);
+    let result = tool
+        .execute(r#"{"agent_id":"w1","command":"await","timeout":5,"idle_timeout":0}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    let parsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(parsed["status"], "error");
+    assert_eq!(parsed["reason"], "agent_error");
+    assert_eq!(parsed["result"]["status"], "failed");
+}
+
+#[tokio::test]
+async fn execute_await_tool_error_preserves_existing_idle_behavior() {
+    use crate::infrastructure::tools::subagent_registry::SubagentStatus;
+    let registry = new_registry();
+    let dir = tempfile::tempdir().unwrap();
+    let sock_path = dir.path().join("tool-error.sock");
+    let listener = tokio::net::UnixListener::bind(&sock_path).unwrap();
+    tokio::spawn(serve_get_state_once(listener));
+
+    let mut entry = SubagentEntry::new(sock_path, 0);
+    entry.status = SubagentStatus::Error;
+    entry.last_error = Some("tool 'bash' returned error".to_string());
+    entry.run_error = None;
+    registry.lock().unwrap().insert("w1".to_string(), entry);
+
+    let tool = AgentCmdTool::new(registry);
+    let result = tool
+        .execute(r#"{"agent_id":"w1","command":"await","timeout":5,"idle_timeout":0}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    let parsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(parsed["status"], "idle");
+    assert_eq!(parsed["reason"], "idle");
+}

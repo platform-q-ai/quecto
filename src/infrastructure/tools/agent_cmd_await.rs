@@ -1,6 +1,25 @@
 use super::*;
 use crate::infrastructure::tools::subagent_registry::SubagentStatus;
 
+fn await_tool_result(
+    status: &str,
+    reason: Option<&str>,
+    agent_id: String,
+    elapsed_ms: u64,
+    workflow: Option<WorkflowSnapshot>,
+) -> ToolResult {
+    let result = AwaitResult::new(status, reason, agent_id, elapsed_ms, workflow);
+    ToolResult {
+        content: serde_json::to_string(&result).unwrap(),
+        is_error: false,
+        image_blocks: vec![],
+    }
+}
+
+fn elapsed_ms(start: std::time::Instant) -> u64 {
+    start.elapsed().as_millis() as u64
+}
+
 impl AgentCmdTool {
     pub(super) async fn execute_await(&self, arguments: &str) -> Result<ToolResult, DomainError> {
         // LLM-addressable: malformed JSON and missing fields → Ok(is_error=true)
@@ -59,18 +78,13 @@ impl AgentCmdTool {
                     (entry.socket_path.clone(), rx)
                 }
                 None => {
-                    let result = AwaitResult::new(
+                    return Ok(await_tool_result(
                         "error",
                         Some("agent_not_found"),
                         agent_id.clone(),
                         0,
                         None,
-                    );
-                    return Ok(ToolResult {
-                        content: serde_json::to_string(&result).unwrap(),
-                        is_error: false,
-                        image_blocks: vec![],
-                    });
+                    ));
                 }
             }
         };
@@ -79,18 +93,13 @@ impl AgentCmdTool {
         {
             let mut active = self.active_awaits.lock().unwrap_or_else(|e| e.into_inner());
             if active.contains(&agent_id) {
-                let result = AwaitResult::new(
+                return Ok(await_tool_result(
                     "error",
                     Some("another_await_active"),
                     agent_id.clone(),
                     0,
                     None,
-                );
-                return Ok(ToolResult {
-                    content: serde_json::to_string(&result).unwrap(),
-                    is_error: false,
-                    image_blocks: vec![],
-                });
+                ));
             }
             active.insert(agent_id.clone());
         }
@@ -117,31 +126,21 @@ impl AgentCmdTool {
                 entries.contains_key(&agent_id)
             };
             if still_registered {
-                let result = AwaitResult::new(
+                return Ok(await_tool_result(
                     "error",
                     Some("connection_failed"),
                     agent_id.clone(),
-                    start.elapsed().as_millis() as u64,
+                    elapsed_ms(start),
                     None,
-                );
-                return Ok(ToolResult {
-                    content: serde_json::to_string(&result).unwrap(),
-                    is_error: false,
-                    image_blocks: vec![],
-                });
+                ));
             } else {
-                let result = AwaitResult::new(
+                return Ok(await_tool_result(
                     "error",
                     Some("agent_not_found"),
                     agent_id.clone(),
-                    start.elapsed().as_millis() as u64,
+                    elapsed_ms(start),
                     None,
-                );
-                return Ok(ToolResult {
-                    content: serde_json::to_string(&result).unwrap(),
-                    is_error: false,
-                    image_blocks: vec![],
-                });
+                ));
             }
         }
 
@@ -160,18 +159,13 @@ impl AgentCmdTool {
             // Check if we've exceeded the overall timeout.
             if tokio::time::Instant::now() >= deadline {
                 let workflow = self.fetch_workflow_snapshot(&agent_id).await;
-                let result = AwaitResult::new(
+                return Ok(await_tool_result(
                     "timeout",
                     None,
                     agent_id.clone(),
-                    start.elapsed().as_millis() as u64,
+                    elapsed_ms(start),
                     workflow,
-                );
-                return Ok(ToolResult {
-                    content: serde_json::to_string(&result).unwrap(),
-                    is_error: false,
-                    image_blocks: vec![],
-                });
+                ));
             }
 
             // Wait for either an exit signal (instant wakeup) or the next
@@ -199,18 +193,13 @@ impl AgentCmdTool {
                         } else {
                             Some("exit_code_0".to_string())
                         };
-                        let result = AwaitResult::new(
+                        return Ok(await_tool_result(
                             "exited",
                             reason.as_deref(),
                             agent_id.clone(),
-                            start.elapsed().as_millis() as u64,
+                            elapsed_ms(start),
                             None,
-                        );
-                        return Ok(ToolResult {
-                            content: serde_json::to_string(&result).unwrap(),
-                            is_error: false,
-                            image_blocks: vec![],
-                        });
+                        ));
                     }
                 }
             }
@@ -218,11 +207,13 @@ impl AgentCmdTool {
             // Poll the registry for current status.
             let current_status = {
                 let entries = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-                entries.get(&agent_id).map(|e| e.status.clone())
+                entries
+                    .get(&agent_id)
+                    .map(|e| (e.status.clone(), e.run_error.clone()))
             };
 
             match current_status {
-                None | Some(SubagentStatus::Exited) => {
+                None | Some((SubagentStatus::Exited, _)) => {
                     // Agent removed from registry or marked Exited. Read the
                     // exit signal from the registry entry for the actual exit
                     // code/signal; fall back to exit_code_0 if unavailable.
@@ -246,20 +237,15 @@ impl AgentCmdTool {
                             })
                             .or(Some("exit_code_0".into()))
                     };
-                    let result = AwaitResult::new(
+                    return Ok(await_tool_result(
                         "exited",
                         reason.as_deref(),
                         agent_id.clone(),
-                        start.elapsed().as_millis() as u64,
+                        elapsed_ms(start),
                         None,
-                    );
-                    return Ok(ToolResult {
-                        content: serde_json::to_string(&result).unwrap(),
-                        is_error: false,
-                        image_blocks: vec![],
-                    });
+                    ));
                 }
-                Some(SubagentStatus::Idle) => {
+                Some((SubagentStatus::Idle, _)) => {
                     // Agent is idle — start or continue the idle_timeout countdown.
                     let now = tokio::time::Instant::now();
                     match idle_since {
@@ -267,47 +253,37 @@ impl AgentCmdTool {
                             idle_since = Some(now);
                             if idle_timeout_secs == 0 {
                                 let workflow = self.fetch_workflow_snapshot(&agent_id).await;
-                                let result = AwaitResult::new(
+                                return Ok(await_tool_result(
                                     "idle",
                                     Some("idle"),
                                     agent_id.clone(),
-                                    start.elapsed().as_millis() as u64,
+                                    elapsed_ms(start),
                                     workflow,
-                                );
-                                return Ok(ToolResult {
-                                    content: serde_json::to_string(&result).unwrap(),
-                                    is_error: false,
-                                    image_blocks: vec![],
-                                });
+                                ));
                             }
                         }
                         Some(since) => {
                             if now.duration_since(since) >= Duration::from_secs(idle_timeout_secs) {
                                 let workflow = self.fetch_workflow_snapshot(&agent_id).await;
-                                let result = AwaitResult::new(
+                                return Ok(await_tool_result(
                                     "idle",
                                     Some("idle"),
                                     agent_id.clone(),
-                                    start.elapsed().as_millis() as u64,
+                                    elapsed_ms(start),
                                     workflow,
-                                );
-                                return Ok(ToolResult {
-                                    content: serde_json::to_string(&result).unwrap(),
-                                    is_error: false,
-                                    image_blocks: vec![],
-                                });
+                                ));
                             }
                         }
                     }
                 }
-                Some(SubagentStatus::Running) | Some(SubagentStatus::Starting) => {
+                Some((SubagentStatus::Running, _)) | Some((SubagentStatus::Starting, _)) => {
                     // Agent is actively working — reset idle countdown.
                     idle_since = None;
                 }
-                Some(SubagentStatus::Error) => {
-                    // Agent's last tool returned an error. Treat like idle —
-                    // if it stays in Error for the full idle_timeout, return
-                    // so the caller can inspect and decide what to do.
+                Some((SubagentStatus::Error, Some(_))) => {
+                    // The prompt run failed (for example a provider/model error).
+                    // Return a structured error after the idle window so parents
+                    // can triage instead of waiting for the process to exit.
                     let now = tokio::time::Instant::now();
                     if idle_since.is_none() {
                         idle_since = Some(now);
@@ -318,18 +294,37 @@ impl AgentCmdTool {
                             || elapsed_idle >= Duration::from_secs(idle_timeout_secs)
                         {
                             let workflow = self.fetch_workflow_snapshot(&agent_id).await;
-                            let result = AwaitResult::new(
+                            return Ok(await_tool_result(
+                                "error",
+                                Some("agent_error"),
+                                agent_id.clone(),
+                                elapsed_ms(start),
+                                workflow,
+                            ));
+                        }
+                    }
+                }
+                Some((SubagentStatus::Error, None)) => {
+                    // Recoverable tool-call error. Preserve existing behavior:
+                    // wait for the child to either continue running, become idle,
+                    // exit, or hit the await timeout.
+                    let now = tokio::time::Instant::now();
+                    if idle_since.is_none() {
+                        idle_since = Some(now);
+                    }
+                    if let Some(since) = idle_since {
+                        let elapsed_idle = now.duration_since(since);
+                        if idle_timeout_secs == 0
+                            || elapsed_idle >= Duration::from_secs(idle_timeout_secs)
+                        {
+                            let workflow = self.fetch_workflow_snapshot(&agent_id).await;
+                            return Ok(await_tool_result(
                                 "idle",
                                 Some("idle"),
                                 agent_id.clone(),
-                                start.elapsed().as_millis() as u64,
+                                elapsed_ms(start),
                                 workflow,
-                            );
-                            return Ok(ToolResult {
-                                content: serde_json::to_string(&result).unwrap(),
-                                is_error: false,
-                                image_blocks: vec![],
-                            });
+                            ));
                         }
                     }
                 }

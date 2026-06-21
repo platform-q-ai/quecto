@@ -30,6 +30,7 @@ const STATE_CHANGING_EVENTS: &[&str] = &[
     "\"type\":\"tool_execution_start\"",
     "\"type\":\"tool_execution_end\"",
     "\"type\":\"workflow_state\"",
+    "\"command\":\"agent_error\"",
 ];
 
 /// Apply a single JSON-line event to a SubagentEntry.
@@ -68,10 +69,13 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
         "agent_start" => {
             entry.status = SubagentStatus::Running;
             entry.last_error = None;
+            entry.run_error = None;
             entry.updated_at = Instant::now();
         }
         "agent_end" => {
-            entry.status = SubagentStatus::Idle;
+            if entry.run_error.is_none() {
+                entry.status = SubagentStatus::Idle;
+            }
             entry.updated_at = Instant::now();
         }
         "tool_execution_start" => {
@@ -123,6 +127,19 @@ pub fn apply_event_parsed(entry: &mut SubagentEntry, value: &serde_json::Value) 
                 steps_completed: done,
                 steps_total: total,
             });
+            entry.updated_at = Instant::now();
+        }
+        "response" if value.get("command").and_then(|v| v.as_str()) == Some("agent_error") => {
+            entry.status = SubagentStatus::Error;
+            let error = truncate_string(
+                value
+                    .get("error")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("agent error"),
+                MAX_STORED_STRING,
+            );
+            entry.last_error = Some(error.clone());
+            entry.run_error = Some(error);
             entry.updated_at = Instant::now();
         }
         _ => {}
@@ -372,6 +389,18 @@ fn notify_from_parsed(
             } else {
                 None
             }
+        }
+        "response" if value.get("command").and_then(|v| v.as_str()) == Some("agent_error") => {
+            Some(SubagentNotification::Errored {
+                agent_id: agent_id.to_string(),
+                error: truncate_string(
+                    value
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("agent error"),
+                    MAX_STORED_STRING,
+                ),
+            })
         }
         _ => None,
     };

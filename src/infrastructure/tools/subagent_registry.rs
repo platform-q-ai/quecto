@@ -62,8 +62,12 @@ pub struct SubagentEntry {
     pub status: SubagentStatus,
     /// Name of the last tool being executed (from tool_execution_start).
     pub last_tool: Option<String>,
-    /// Description of the last error (from tool_execution_end with is_error).
+    /// Description of the last error (from tool_execution_end with is_error or agent_error).
     pub last_error: Option<String>,
+    /// Run-level agent error (for example provider/model failure). Unlike a tool
+    /// error, this means the prompt run failed and `agent_cmd await` should
+    /// return a structured error instead of waiting for recovery.
+    pub run_error: Option<String>,
     /// When this entry was last updated by the monitor.
     pub updated_at: Instant,
     /// Abort handle for the monitor task (if running).
@@ -88,6 +92,7 @@ impl SubagentEntry {
             status: SubagentStatus::Starting,
             last_tool: None,
             last_error: None,
+            run_error: None,
             updated_at: Instant::now(),
             monitor_handle: None,
             notification_sequence: 0,
