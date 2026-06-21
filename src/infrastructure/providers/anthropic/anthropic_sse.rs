@@ -194,11 +194,19 @@ impl SseAccumulator {
             Some(self.content)
         };
         let usage = if self.prompt_tokens.is_some() || self.completion_tokens.is_some() {
+            let prompt_tokens = self.prompt_tokens.unwrap_or(0);
             Some(UsageInfo {
-                prompt_tokens: self.prompt_tokens.unwrap_or(0),
+                prompt_tokens,
                 completion_tokens: self.completion_tokens.unwrap_or(0),
                 cache_read_tokens: self.cache_read_tokens,
                 cache_write_tokens: self.cache_write_tokens,
+                // Anthropic reports `input_tokens` as the non-cached delta only;
+                // true context occupancy adds the cached read + creation tokens.
+                context_tokens: Some(super::usage::context_input_tokens(
+                    prompt_tokens,
+                    self.cache_read_tokens,
+                    self.cache_write_tokens,
+                )),
                 cost: None,
             })
         } else {

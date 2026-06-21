@@ -1038,6 +1038,13 @@ fn then_usage_has_cache_tokens(world: &mut QuectoWorld, expected_read: u32, expe
     assert_eq!(usage.cache_write_tokens, Some(expected_write));
 }
 
+#[then(expr = "context_tokens should be {int} for the context usage counter")]
+fn then_context_tokens_for_counter(world: &mut QuectoWorld, expected: u32) {
+    let response = world.streaming_response.as_ref().expect("no response");
+    let usage = response.usage.as_ref().expect("response has no usage");
+    assert_eq!(usage.context_tokens, Some(expected));
+}
+
 // ===========================================================================
 // #176: Prompt caching (cache_control markers)
 // ===========================================================================
@@ -1596,6 +1603,7 @@ fn when_calculate_cost(world: &mut QuectoWorld) {
         completion_tokens: completion,
         cache_read_tokens: None,
         cache_write_tokens: None,
+        context_tokens: None,
         cost: None,
     };
     if let Some(pricing) = quecto::domain::message::model_pricing(&model) {

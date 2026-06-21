@@ -12,6 +12,7 @@ fn response_with_prompt_tokens(content: &str, prompt_tokens: u32) -> LlmResponse
             completion_tokens: 7,
             cache_read_tokens: None,
             cache_write_tokens: None,
+            context_tokens: None,
             cost: None,
         }),
         stop_reason: None,

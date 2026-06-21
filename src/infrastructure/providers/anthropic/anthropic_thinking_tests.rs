@@ -525,6 +525,7 @@ fn test_opus_4_6_pricing_is_five_dollars_input() {
         completion_tokens: 0,
         cache_read_tokens: None,
         cache_write_tokens: None,
+        context_tokens: None,
         cost: None,
     };
     let cost = pricing.cost_for(&usage);
@@ -542,6 +543,7 @@ fn test_opus_4_6_cache_read_pricing() {
         completion_tokens: 0,
         cache_read_tokens: Some(1_000_000),
         cache_write_tokens: None,
+        context_tokens: None,
         cost: None,
     };
     let cost = pricing.cost_for(&usage);
@@ -579,6 +581,7 @@ fn test_haiku_4_5_pricing_present_and_correct() {
         completion_tokens: 1_000_000,
         cache_read_tokens: None,
         cache_write_tokens: None,
+        context_tokens: None,
         cost: None,
     };
     let cost = pricing.cost_for(&usage);

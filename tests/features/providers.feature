@@ -148,6 +148,12 @@ Feature: LLM Providers
     When I send an Anthropic streaming chat request
     Then the response usage should have cache_read_tokens 80 and cache_write_tokens 20
 
+  Scenario: Anthropic provider reports cached input as context occupancy, not billable prompt tokens
+    Given an Anthropic mock server that streams cache usage with read 80 and write 20
+    When I send an Anthropic streaming chat request
+    Then the response usage should have prompt_tokens 100 and completion_tokens 50
+    And context_tokens should be 200 for the context usage counter
+
   # --- #176: Prompt caching (cache_control markers) ---
 
   Scenario: Anthropic provider adds cache_control to system prompt

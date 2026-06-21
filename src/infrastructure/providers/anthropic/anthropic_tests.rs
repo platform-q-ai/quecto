@@ -379,6 +379,9 @@ data: {}\n";
     let usage = result.usage.expect("should have usage");
     assert_eq!(usage.cache_read_tokens, Some(80));
     assert_eq!(usage.cache_write_tokens, Some(20));
+    // #(bug): context occupancy must include cached tokens, not just the
+    // non-cached `input_tokens` delta (100 + 80 + 20 = 200).
+    assert_eq!(usage.context_tokens, Some(200));
 }
 
 #[test]
@@ -397,6 +400,11 @@ fn test_parse_response_extracts_cache_usage() {
     let usage = response.usage.expect("should have usage");
     assert_eq!(usage.cache_read_tokens, Some(80));
     assert_eq!(usage.cache_write_tokens, Some(20));
+    // Context occupancy = input_tokens + cache_read + cache_creation.
+    assert_eq!(usage.context_tokens, Some(200));
+    // Billing inputs stay separate: prompt_tokens must NOT absorb cache tokens,
+    // otherwise cache reads would be double-charged in `ModelPricing::cost_for`.
+    assert_eq!(usage.prompt_tokens, 100);
 }
 
 // --- #176: Prompt caching (cache_control markers) ---

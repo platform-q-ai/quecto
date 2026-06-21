@@ -99,6 +99,7 @@ fn response_with_usage() -> LlmResponse {
             completion_tokens: 1000,
             cache_read_tokens: None,
             cache_write_tokens: None,
+            context_tokens: None,
             cost: None,
         }),
         stop_reason: None,
