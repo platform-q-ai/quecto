@@ -138,8 +138,8 @@ norm.
   remain kernel changes, bridged meanwhile by an OpenAI-compatible shim.
 - **NG2 — OAuth for custom providers.** Custom-provider OAuth stays kernel-owned.
 - **NG3 — Secret management overhaul.** Keys continue to live in config /
-  credential store / env; no new vault. (We *do* adopt `$ENV`/`!command` value
-  resolution for keys — see FR5 — but introduce no new secret store.)
+  credential store / env; no new vault. (We *do* adopt `$ENV` value resolution
+  for keys — see FR5 — but introduce no new secret store or command execution.)
 - **NG4 — Per-project/folder config discovery.** Tracked separately on the
   roadmap; this PRD assumes the existing single-config path (+ optional registry
   file) and is compatible with folder discovery later.
@@ -268,17 +268,21 @@ norm.
 ### FR5 — Validation, value resolution & safety
 - Endpoint validation unchanged (HTTPS required unless `allow_remote_http`;
   reserved provider keys rejected; max providers/endpoints).
-- **Value resolution (adopt pi's):** `apiKey` and header values support
-  `$ENV_VAR` / `${ENV_VAR}` interpolation, `!command` execution (resolved at
-  request time), and literals; `$$`/`$!` escape. This is how a key in the
-  environment (e.g. `$FIREWORKS_API_KEY`) is referenced from `models.json` without
-  embedding the secret. Auth *status* checks must not execute commands.
+- **Value resolution:** `apiKey` and header values support `$ENV_VAR` /
+  `${ENV_VAR}` interpolation and literals; `$$` escapes a literal dollar. This is
+  how a key in the environment (e.g. `$FIREWORKS_API_KEY`) is referenced from
+  `models.json` without embedding the secret.
+- **No command execution from `models.json`:** the registry is user/agent-writable
+  and auto-reloaded, so `!command`-style credential helpers are deliberately out
+  of scope for this file. If command-backed credentials are ever needed, they must
+  live in a trusted, non-agent-writable credential-helper configuration with
+  explicit opt-in, no shell evaluation, timeout, and audit logging.
 - Registry entries whose `provider` has no resolved key/endpoint are **listed but
   flagged** "no credentials/endpoint configured" rather than silently failing at
   request time.
 - **Secrets never stored in `models.json` as literals when avoidable:** prefer
-  `$ENV`/`!command`; keys may still live in `providers.*`/credential store.
-  `models.json` is not a new secret store (NG3).
+  `$ENV` or the existing credential store; keys may still live in `providers.*` /
+  credential store. `models.json` is not a new secret store (NG3).
 
 ---
 
@@ -316,8 +320,8 @@ norm.
   validation with a clear error and the session keeps last-good state (community
   wire protocols are not run).
 - **AC10 (value resolution):** Given `apiKey: "$FIREWORKS_API_KEY"`, the key is
-  resolved from the environment at request time; auth-status checks do not execute
-  `!command` values.
+  resolved from the environment at request time; `models.json` values never execute
+  shell commands.
 
 ---
 
@@ -342,8 +346,8 @@ norm.
   ops; rebuilds the registry/provider set behind an `ArcSwap`/`RwLock`. Same
   component feeds skills (#1) and workflow-set (#3) rebuilds. Fail-safe: keep
   last-good on error.
-- **Value resolution (FR5):** `$ENV`/`${ENV}`/`!command`/literal with `$$`/`$!`
-  escapes, resolved at request time; status checks never execute commands.
+- **Value resolution (FR5):** `$ENV`/`${ENV}`/literal with `$$` escapes,
+  resolved at request time; `models.json` never executes commands.
 - **Stays out of the kernel:** no community wire protocols (ADR-0001), no UDS
   `register_provider` (ADR-0003), no `LlmProvider` trait change. Everything new is
   data + a reload path + one new (kernel-owned) wire impl.
