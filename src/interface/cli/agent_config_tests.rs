@@ -302,3 +302,41 @@ fn test_agent_config_flag_nonexistent_path() {
         out.stderr
     );
 }
+
+#[test]
+fn test_build_agent_provider_rejects_models_json_remote_http_by_default() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"fireworks":{"baseUrl":"http://example.com/v1","apiKey":"sk-fw","api":"openai-completions","models":[{"id":"m"}]}}}"#,
+    )
+    .unwrap();
+    let config = config_from_str(r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
+
+    let result = build_agent_provider(&config, tmp.path(), &reqwest::Client::new());
+
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("models.json provider configuration error"),
+        "{err}"
+    );
+    assert!(
+        err.contains("http is allowed only for loopback hosts"),
+        "{err}"
+    );
+}
+
+#[test]
+fn test_build_agent_provider_allows_models_json_remote_http_when_explicit() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"fireworks":{"baseUrl":"http://example.com/v1","apiKey":"sk-fw","api":"openai-completions","allowRemoteHttp":true,"models":[{"id":"m"}]}}}"#,
+    )
+    .unwrap();
+    let config = config_from_str(r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
+
+    let result = build_agent_provider(&config, tmp.path(), &reqwest::Client::new());
+
+    assert!(result.is_ok(), "{result:?}");
+}

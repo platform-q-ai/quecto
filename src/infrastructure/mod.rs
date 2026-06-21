@@ -2,6 +2,7 @@ pub mod auth;
 pub mod config;
 pub mod extensions;
 pub mod logging;
+pub mod model_registry;
 pub mod persistence;
 pub mod providers;
 pub mod reload;

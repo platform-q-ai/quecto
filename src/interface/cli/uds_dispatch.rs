@@ -84,6 +84,7 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
         }
         // Exhaustive: variants handled by dispatch_fieldless_command above.
         AgentCommand::ClearHistory { .. }
+        | AgentCommand::ListModels { .. }
         | AgentCommand::GetExtensions { .. }
         | AgentCommand::GetSubagents { .. }
         | AgentCommand::GetState { .. }

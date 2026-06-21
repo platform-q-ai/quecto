@@ -34,6 +34,7 @@ static NEXT_CLIENT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU
 
 pub(super) struct MultiClientArgs<'a> {
     pub agent: AgentLoopImpl,
+    pub base_dir: &'a std::path::Path,
     pub messages: Vec<Message>,
     pub model: String,
     pub session_key: String,
@@ -124,6 +125,7 @@ pub(super) async fn multi_client_loop(
     let provider_reload_inputs = args.provider_reload_inputs;
     let MultiClientArgs {
         mut agent,
+        base_dir,
         mut messages,
         model,
         mut session_key,
@@ -163,6 +165,7 @@ pub(super) async fn multi_client_loop(
     let mut null_writer: Box<dyn tokio::io::AsyncWrite + Send + Unpin> =
         Box::new(tokio::io::sink());
     let mut ctx = DispatchCtx {
+        base_dir,
         agent: &mut agent,
         messages: &mut messages,
         session: &mut agent_session,

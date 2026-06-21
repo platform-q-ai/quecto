@@ -310,30 +310,6 @@ impl App {
         });
     }
 
-    // ── Model selector ──────────────────────────────────────────────
-
-    pub(super) fn open_model_selector(&mut self) {
-        let selector = ModelSelector::new(self.current_model.as_deref());
-        self.model_selector = Some(selector);
-    }
-
-    pub(super) fn handle_model_selector_key(&mut self, key: &Key) {
-        if let Some(selector) = &mut self.model_selector {
-            selector.handle_input(key);
-
-            match selector.take_result() {
-                ModelSelectorResult::Selected(model) => {
-                    self.model_selector = None;
-                    self.send_set_model(&model);
-                }
-                ModelSelectorResult::Cancelled => {
-                    self.model_selector = None;
-                }
-                ModelSelectorResult::Pending => {}
-            }
-        }
-    }
-
     // ── Notifications ─────────────────────────────────────────────────
 
     pub(super) fn notify(&mut self, message: &str, level: NotifyLevel) {

@@ -66,7 +66,19 @@ pub fn seeded_provider_reload(
     config_path: impl Into<PathBuf>,
     initial_provider: Arc<dyn LlmProvider>,
 ) -> ProviderReload {
-    let mut reload = RuntimeReload::new(vec![ReloadSource::new(config_path.into())]);
+    seeded_provider_reload_with_base(config_path, None, initial_provider)
+}
+
+pub fn seeded_provider_reload_with_base(
+    config_path: impl Into<PathBuf>,
+    base_dir: Option<PathBuf>,
+    initial_provider: Arc<dyn LlmProvider>,
+) -> ProviderReload {
+    let mut sources = vec![ReloadSource::new(config_path.into())];
+    if let Some(base_dir) = base_dir {
+        sources.push(ReloadSource::new(base_dir.join("models.json")));
+    }
+    let mut reload = RuntimeReload::new(sources);
     reload.seed(initial_provider);
     reload
 }

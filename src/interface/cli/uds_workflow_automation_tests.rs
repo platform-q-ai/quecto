@@ -41,6 +41,7 @@ async fn set_workflow_automation_updates_config_and_engine() {
         .unwrap(),
     ));
     let mut ctx = DispatchCtx {
+        base_dir: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
         session: &mut session,
@@ -97,6 +98,7 @@ fn workflow_nudge_message_waits_for_selected_template() {
         .unwrap(),
     ));
     let ctx = DispatchCtx {
+        base_dir: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
         session: &mut session,
@@ -154,6 +156,7 @@ fn workflow_progress_fingerprint_changes_with_step_progress() {
         .select_template("feature", None)
         .unwrap();
     let ctx = DispatchCtx {
+        base_dir: tmp.path(),
         agent: &mut agent,
         messages: &mut messages,
         session: &mut session,

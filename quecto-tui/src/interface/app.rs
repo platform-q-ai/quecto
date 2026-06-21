@@ -19,7 +19,9 @@ use crate::interface::components::chat::ChatEntry;
 use crate::interface::components::editor::Editor;
 use crate::interface::components::files_autocomplete::FilesAutocomplete;
 use crate::interface::components::footer::Footer;
-use crate::interface::components::model_selector::{ModelSelector, ModelSelectorResult};
+use crate::interface::components::model_selector::{
+    ModelEntry, ModelSelector, ModelSelectorResult,
+};
 use crate::interface::components::notification::{Notification, NotificationStack, NotifyLevel};
 use crate::interface::components::select_list::{SelectItem, SelectList, SelectResult};
 use crate::interface::components::spinner::Spinner;
@@ -123,22 +125,17 @@ pub struct App {
     widgets_above: WidgetContainer,
     widgets_below: WidgetContainer,
     kitty: KittyProtocol,
-    /// Agent run state with generation counter to prevent stale
-    /// AgentEnd events from corrupting state after abort (#502).
     agent_state: AgentRunState,
-    /// Whether the app should exit.
     should_exit: bool,
-    /// Proper stdin buffer for escape sequence parsing.
     stdin_buffer: crate::interface::stdin_buffer::StdinBuffer,
-    /// Whether the agent connection is still alive.
     agent_connected: bool,
-    /// Current model name (from get_state), sanitized.
     current_model: Option<String>,
     /// Connected agent's own id (from get_state sessionKey); distinguishes its
     /// own workflow_state from descendants' forwarded events. None when unnamed.
     connected_agent_id: Option<String>,
     /// The model selector component (created on demand, pushed onto overlay stack).
     model_selector: Option<ModelSelector>,
+    model_registry: (Vec<ModelEntry>, bool),
     /// Session resume selector shown after `/resume` lists persisted sessions.
     resume_selector: Option<SelectList>,
     /// Rewind selector shown after idle double-Escape lists prior user turns.
@@ -211,6 +208,7 @@ impl App {
             current_model: None,
             connected_agent_id: None,
             model_selector: None,
+            model_registry: (Vec::new(), false),
             resume_selector: None,
             rewind_selector: None,
             last_idle_escape: None,
@@ -265,6 +263,8 @@ mod app_events;
 mod app_git;
 #[path = "app_methods.rs"]
 mod app_methods;
+#[path = "app_models.rs"]
+mod app_models;
 #[path = "app_response.rs"]
 mod app_response;
 #[path = "app_rewind.rs"]
