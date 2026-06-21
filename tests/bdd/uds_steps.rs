@@ -329,7 +329,7 @@ fn execute_uds(world: &mut QuectoWorld) {
             } else {
                 "UDS helper thread panicked".to_string()
             };
-            world.uds_execution_error = Some(msg);
+            world.uds_execution_error = Some(msg.clone());
             1
         }
     };
@@ -411,97 +411,6 @@ fn given_mock_llm_tool_call_then_text(world: &mut QuectoWorld, text: String) {
 
         e2e_steps::rewrite_config_to_uri(world, &new_uri);
         std::mem::forget(server);
-    });
-    std::mem::forget(rt);
-}
-
-#[given(
-    expr = "the mock LLM returns a tool call that adds a Fireworks provider then text {string}"
-)]
-fn given_mock_llm_adds_fireworks_then_text(world: &mut QuectoWorld, text: String) {
-    assert!(
-        world._wiremock_server_uri.is_some(),
-        "mock server URI not set"
-    );
-    let base = world.cli_context.base_dir.clone().expect("no base dir");
-    let config_path = base.join("config.json");
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
-        let fireworks = wiremock::MockServer::start().await;
-        let fireworks_uri = fireworks.uri();
-        let fw_body = serde_json::json!({
-            "id": "chatcmpl-fireworks",
-            "object": "chat.completion",
-            "choices": [{
-                "index": 0,
-                "message": { "role": "assistant", "content": "fireworks ok" },
-                "finish_reason": "stop"
-            }],
-            "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}
-        });
-        wiremock::Mock::given(wiremock::matchers::method("POST"))
-            .and(wiremock::matchers::path("/chat/completions"))
-            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(fw_body))
-            .mount(&fireworks)
-            .await;
-        world._fireworks_mock_uri = Some(fireworks_uri.clone());
-        world.fireworks_mock_server_ref = Some(Box::leak(Box::new(fireworks)));
-
-        let openai = wiremock::MockServer::start().await;
-        let openai_uri = openai.uri();
-        let escaped_config = serde_json::to_string(&config_path.display().to_string()).unwrap();
-        let escaped_fireworks_uri = serde_json::to_string(&fireworks_uri).unwrap();
-        let command = format!(
-            "python3 - <<'PY'\nimport json\nfrom pathlib import Path\npath = Path({escaped_config})\ncfg = json.loads(path.read_text())\nproviders = cfg.setdefault('providers', {{}})\nproviders.setdefault('openai_compatible', {{}})['endpoints'] = [{{'prefix':'fireworks','api_base':{escaped_fireworks_uri},'api_key':'sk-fireworks','allow_remote_http': True}}]\npath.write_text(json.dumps(cfg, indent=2))\nPY"
-        );
-        let args = serde_json::json!({"command": command}).to_string();
-        let tool_call_body = serde_json::json!({
-            "id": "chatcmpl-add-fireworks",
-            "object": "chat.completion",
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": null,
-                    "tool_calls": [{
-                        "id": "call_add_fireworks",
-                        "type": "function",
-                        "function": {
-                            "name": "bash",
-                            "arguments": args
-                        }
-                    }]
-                },
-                "finish_reason": "tool_calls"
-            }],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
-        });
-        let text_body = serde_json::json!({
-            "id": "chatcmpl-configured",
-            "object": "chat.completion",
-            "choices": [{
-                "index": 0,
-                "message": { "role": "assistant", "content": text },
-                "finish_reason": "stop"
-            }],
-            "usage": {"prompt_tokens": 15, "completion_tokens": 5, "total_tokens": 20}
-        });
-        wiremock::Mock::given(wiremock::matchers::method("POST"))
-            .and(wiremock::matchers::path("/chat/completions"))
-            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(tool_call_body))
-            .up_to_n_times(1)
-            .with_priority(1)
-            .mount(&openai)
-            .await;
-        wiremock::Mock::given(wiremock::matchers::method("POST"))
-            .and(wiremock::matchers::path("/chat/completions"))
-            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(text_body))
-            .with_priority(2)
-            .mount(&openai)
-            .await;
-
-        e2e_steps::rewrite_config_to_uri(world, &openai_uri);
-        std::mem::forget(openai);
     });
     std::mem::forget(rt);
 }
