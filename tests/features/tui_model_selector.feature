@@ -23,8 +23,8 @@ Feature: TUI model selector overlay — scrollable list with fuzzy search
   Scenario: Model selector includes Fireworks serverless models
     Given a model selector with known models
     When rendered at width 80
-    Then the output should contain "fireworks/glm-5.2"
-    And the output should contain "fireworks/kimi-k2.7-code-fast"
+    Then the output should contain "fireworks/accounts/fireworks/models/glm-5p2"
+    And the output should contain "fireworks/accounts/fireworks/models/kimi-k2p7-code"
 
   Scenario: Model selector shows selection indicator
     Given a model selector with known models
