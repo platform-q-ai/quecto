@@ -13,7 +13,7 @@ use std::time::SystemTime;
 /// Result of probing a watched file-backed source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceChange {
-    /// The cached mtime matched the filesystem mtime, so the file was not read.
+    /// The cached mtime and length matched the filesystem metadata, so the file was not read.
     UnchangedNoRead,
     /// The mtime moved, but the content hash was unchanged.
     Unchanged,
@@ -28,6 +28,7 @@ pub enum SourceChange {
 pub struct ReloadSource {
     path: PathBuf,
     last_mtime: Option<SystemTime>,
+    last_len: Option<u64>,
     last_hash: u64,
 }
 
@@ -37,20 +38,29 @@ impl ReloadSource {
         Self {
             path: path.into(),
             last_mtime: None,
+            last_len: None,
             last_hash: 0,
         }
     }
 
     /// Seed the source fingerprint from disk without reporting a change.
     pub fn seed(&mut self) {
-        let Ok((mtime, hash)) = read_fingerprint(&self.path) else {
+        let Ok((mtime, len, hash)) = read_fingerprint(&self.path) else {
             return;
         };
         self.last_mtime = Some(mtime);
+        self.last_len = Some(len);
         self.last_hash = hash;
     }
 
     /// Probe the source and report whether its content changed.
+    ///
+    /// The cheap no-read path requires both mtime and file length to match the
+    /// last observation. Length is included so same-mtime rewrites that add or
+    /// remove provider config bytes are still read and detected even on coarse
+    /// timestamp filesystems. Same-mtime same-length rewrites remain a tolerated
+    /// edge case for this small local-file gate; callers that need a stronger
+    /// guarantee can use `poll_forced`.
     ///
     /// The observed fingerprint advances on every successful read. In
     /// particular, a touch-only update advances the mtime cache so subsequent
@@ -63,7 +73,8 @@ impl ReloadSource {
             return SourceChange::MissingOrUnreadable;
         };
 
-        if self.last_mtime == Some(mtime) {
+        let len = metadata.len();
+        if self.last_mtime == Some(mtime) && self.last_len == Some(len) {
             return SourceChange::UnchangedNoRead;
         }
 
@@ -73,6 +84,7 @@ impl ReloadSource {
         let hash = hash_bytes(&bytes);
 
         self.last_mtime = Some(mtime);
+        self.last_len = Some(len);
         if self.last_hash == hash {
             SourceChange::Unchanged
         } else {
@@ -163,11 +175,12 @@ impl<T: Clone> RuntimeReload<T> {
     }
 }
 
-fn read_fingerprint(path: &PathBuf) -> Result<(SystemTime, u64), std::io::Error> {
+fn read_fingerprint(path: &PathBuf) -> Result<(SystemTime, u64, u64), std::io::Error> {
     let metadata = fs::metadata(path)?;
     let mtime = metadata.modified()?;
+    let len = metadata.len();
     let bytes = fs::read(path)?;
-    Ok((mtime, hash_bytes(&bytes)))
+    Ok((mtime, len, hash_bytes(&bytes)))
 }
 
 fn hash_bytes(bytes: &[u8]) -> u64 {

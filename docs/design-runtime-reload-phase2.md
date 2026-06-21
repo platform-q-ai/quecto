@@ -64,29 +64,31 @@ pub struct ReloadSource {
     path: PathBuf,
     /// Last observed mtime (None = not yet seeded).
     last_mtime: Option<SystemTime>,
+    /// Last observed file length (None = not yet seeded).
+    last_len: Option<u64>,
     /// Last observed content hash.
     last_hash: u64,
 }
 
-/// The result of probing one source. The observed fingerprint (mtime/hash)
+/// The result of probing one source. The observed fingerprint (mtime/len/hash)
 /// is advanced whenever we successfully read the file, *independent* of
 /// whether the caller's rebuild later succeeds — so a malformed file is not
 /// re-parsed every turn until it changes again.
 #[derive(Debug)]
 enum SourceChange {
-    /// mtime identical to last poll — no read, no hash (cheap path).
+    /// mtime and length identical to last poll — no read, no hash (cheap path).
     UnchangedNoRead,
-    /// mtime moved but content hash is identical — mtime cache updated, no
-    /// rebuild needed (touch-only).
+    /// mtime or length moved, but content hash is identical — metadata cache
+    /// updated, no rebuild needed (touch-only).
     Unchanged,
-    /// mtime moved and content hash differs — rebuild needed.
+    /// mtime or length moved and content hash differs — rebuild needed.
     Changed,
     /// stat or read failed / file missing — keep last-good, do not touch cache.
     MissingOrUnreadable,
 }
 
 impl ReloadSource {
-    /// Construct an unseeded source (last_mtime=None, last_hash=0).
+    /// Construct an unseeded source (last_mtime=None, last_len=None, last_hash=0).
     pub fn new(path: impl Into<PathBuf>) -> Self { /* ... */ }
 
     /// Seed the fingerprint from the file's current state without flagging
@@ -94,18 +96,21 @@ impl ReloadSource {
     /// not spuriously rebuild from the just-loaded config.
     pub fn seed(&mut self) { /* stat + read + hash, store, return no change */ }
 
-    /// Probe the source, advancing the observed mtime/hash cache per the
+    /// Probe the source, advancing the observed mtime/len/hash cache per the
     /// state machine below. Returns whether the caller should rebuild.
     pub fn changed(&mut self) -> SourceChange {
-        // 1. stat → mtime.
+        // 1. stat → (mtime, len).
         //    - fail/missing → MissingOrUnreadable (cache untouched, keep last-good).
-        //    - mtime == last_mtime → UnchangedNoRead (no hash, cheapest path).
-        //    - mtime != last_mtime → read + hash (below).
+        //    - mtime == last_mtime && len == last_len → UnchangedNoRead
+        //      (no hash, cheapest path).
+        //    - mtime or len differs → read + hash (below). Including len makes
+        //      same-mtime rewrites that add/remove config bytes detectable on
+        //      coarse timestamp filesystems.
         // 2. read bytes → hash.
         //    - read fail → MissingOrUnreadable.
-        // 3. Compare hash to last_hash; ALWAYS update last_mtime to the new mtime
-        //    (so a touched-but-identical file does not re-hash forever).
-        //    - hash == last_hash → Unchanged (mtime cache advanced).
+        // 3. Compare hash to last_hash; ALWAYS update last_mtime/last_len to the
+        //    new metadata (so a touched-but-identical file does not re-hash forever).
+        //    - hash == last_hash → Unchanged (metadata cache advanced).
         //    - hash != last_hash → Changed (update last_hash too).
     }
 }
@@ -114,7 +119,7 @@ impl ReloadSource {
 /// last-good snapshot of whatever the caller rebuilt from them.
 ///
 /// Two caches are kept distinct:
-///   - `sources[i].last_mtime/last_hash`  → the last *observed* file content
+///   - `sources[i].last_mtime/last_len/last_hash`  → the last *observed* file content
 ///     (advanced on every successful read, even when rebuild fails, so a
 ///     malformed file is not retried every turn until it changes again).
 ///   - `last_good: Option<T>`             → the last *successfully rebuilt*
@@ -246,8 +251,9 @@ default* config as zero-config but errors on a *missing explicit* `--config`
 (`explicit_config_missing`). Seeding handles both: if the default config is
 absent at startup, `ReloadSource::seed()` treats the missing file as
 `MissingOrUnreadable` (cache untouched); if the file is created later, the next
-poll sees `last_mtime == None` vs a real mtime → `Changed` → rebuild. An explicit
-config that is missing never reaches reload (startup errors first).
+poll sees `last_mtime == None` / `last_len == None` vs real metadata → `Changed`
+→ rebuild. An explicit config that is missing never reaches reload (startup
+errors first).
 
 ### 3.3 Top-of-turn reload (the guarantee)
 
