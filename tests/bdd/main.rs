@@ -647,6 +647,22 @@ pub struct QuectoWorld {
     pub _await_mock_tmp: Option<TempDir>,
     /// Mock listener for await scenarios (kept alive)
     pub _await_mock_listener: Option<std::os::unix::net::UnixListener>,
+    /// RuntimeReload BDD: temp dir holding the watched source file(s)
+    pub _reload_tmp: Option<TempDir>,
+    /// RuntimeReload BDD: path → file label map (for multi-source scenarios)
+    pub reload_files: HashMap<String, PathBuf>,
+    /// RuntimeReload BDD: the reload gate under test (string last-good)
+    pub reload_gate: Option<quecto::infrastructure::reload::RuntimeReload<String>>,
+    /// RuntimeReload BDD: single reload source under test
+    pub reload_source: Option<quecto::infrastructure::reload::ReloadSource>,
+    /// RuntimeReload BDD: captured mtime before a touch, for cache-advance asserts
+    pub reload_mtime_before: Option<std::time::SystemTime>,
+    /// RuntimeReload BDD: whether the rebuild closure was invoked
+    pub reload_rebuild_called: Arc<Mutex<bool>>,
+    /// RuntimeReload BDD: result of the last poll/force-poll
+    pub reload_poll_result: Option<quecto::infrastructure::reload::ReloadResult<String>>,
+    /// RuntimeReload BDD: result of the last source probe
+    pub reload_source_change: Option<quecto::infrastructure::reload::SourceChange>,
 }
 
 /// Ensure world has a temp dir and CliContext pointing to it.
@@ -916,6 +932,7 @@ mod path_utils_steps;
 mod provider_steps;
 mod read_tool_steps;
 mod release_profile_steps;
+mod reload_steps;
 mod repl_steps;
 mod repo_docs_steps;
 mod sandbox_steps;
