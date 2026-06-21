@@ -26,8 +26,11 @@ const KNOWN_MODELS: &[(&str, &str)] = &[
     ("gpt-5.3-codex", "OpenAI"),
     ("gpt-5.3-codex-spark", "OpenAI"),
     ("gpt-5.2-codex", "OpenAI"),
-    ("fireworks/glm-5.2", "Fireworks"),
-    ("fireworks/kimi-k2.7-code-fast", "Fireworks"),
+    ("fireworks/accounts/fireworks/models/glm-5p2", "Fireworks"),
+    (
+        "fireworks/accounts/fireworks/models/kimi-k2p7-code",
+        "Fireworks",
+    ),
 ];
 
 /// Maximum query length to prevent unbounded growth.
@@ -395,13 +398,13 @@ mod tests {
     fn known_models_include_fireworks_serverless_models() {
         let known_ids: Vec<&str> = KNOWN_MODELS.iter().map(|(id, _)| *id).collect();
         assert!(
-            known_ids.contains(&"fireworks/glm-5.2"),
+            known_ids.contains(&"fireworks/accounts/fireworks/models/glm-5p2"),
             "known models should include Fireworks GLM 5.2: {:?}",
             known_ids
         );
         assert!(
-            known_ids.contains(&"fireworks/kimi-k2.7-code-fast"),
-            "known models should include Fireworks Kimi K2.7 Code Fast: {:?}",
+            known_ids.contains(&"fireworks/accounts/fireworks/models/kimi-k2p7-code"),
+            "known models should include Fireworks Kimi K2.7 Code: {:?}",
             known_ids
         );
     }
