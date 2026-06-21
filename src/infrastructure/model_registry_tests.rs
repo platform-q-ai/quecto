@@ -88,3 +88,116 @@ fn registry_custom_models_override_builtin_by_provider_and_id() {
     assert_eq!(model.display_name.as_deref(), Some("Custom GPT"));
     assert_eq!(model.context_window, 42);
 }
+
+#[test]
+fn registry_missing_file_returns_builtin_models() {
+    let tmp = tempfile::tempdir().unwrap();
+    let registry = ModelRegistry::load_from_path(&tmp.path().join("missing-models.json")).unwrap();
+
+    assert!(registry.find("anthropic", "claude-fable-5").is_some());
+    assert_eq!(
+        registry
+            .find("openai", "gpt-5.5-mini")
+            .unwrap()
+            .qualified_id(),
+        "openai/gpt-5.5-mini"
+    );
+}
+
+#[test]
+fn registry_loads_all_protocols_and_model_overrides() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("models.json");
+    std::fs::write(
+        &path,
+        r#"{
+          "providers": {
+            "anthropicish": {
+              "apiBase": "https://anthropic.example/v1",
+              "apiKey": "sk-anthropic",
+              "api": "anthropic-messages",
+              "authHeader": false,
+              "models": [{
+                "id": "claude-custom",
+                "name": "Claude Custom",
+                "reasoning": true,
+                "input": ["text", "image"],
+                "contextWindow": 200000,
+                "maxTokens": 32000,
+                "cost": { "input": 1.25, "output": 2.5, "cacheRead": 0.1, "cacheWrite": 0.2 }
+              }]
+            },
+            "googleish": {
+              "api": "google-generative-ai",
+              "models": [{
+                "id": "gemini-custom",
+                "cost": { "cache_read": 0.3, "cache_write": 0.4 }
+              }]
+            },
+            "defaultish": {
+              "models": [{ "id": "openai-default-api" }]
+            }
+          }
+        }"#,
+    )
+    .unwrap();
+
+    let registry = ModelRegistry::load_from_path(&path).unwrap();
+    let anthropic = registry.find("anthropicish", "claude-custom").unwrap();
+    assert_eq!(anthropic.api, ProviderApi::AnthropicMessages);
+    assert_eq!(
+        anthropic.base_url.as_deref(),
+        Some("https://anthropic.example/v1")
+    );
+    assert_eq!(anthropic.api_key.as_deref(), Some("sk-anthropic"));
+    assert!(!anthropic.auth_header);
+    assert_eq!(
+        anthropic.input,
+        vec!["text".to_string(), "image".to_string()]
+    );
+    assert_eq!(anthropic.context_window, 200000);
+    assert_eq!(anthropic.max_tokens, 32000);
+    assert!(anthropic.reasoning);
+    assert_eq!(anthropic.cost.input, 1.25);
+    assert_eq!(anthropic.cost.output, 2.5);
+    assert_eq!(anthropic.cost.cache_read, 0.1);
+    assert_eq!(anthropic.cost.cache_write, 0.2);
+
+    let google = registry.find("googleish", "gemini-custom").unwrap();
+    assert_eq!(google.api, ProviderApi::GoogleGenerativeAi);
+    assert_eq!(google.cost.cache_read, 0.3);
+    assert_eq!(google.cost.cache_write, 0.4);
+
+    let default_api = registry.find("defaultish", "openai-default-api").unwrap();
+    assert_eq!(default_api.api, ProviderApi::OpenAiCompletions);
+}
+
+#[test]
+fn registry_reports_parse_and_read_errors() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bad_json = tmp.path().join("bad.json");
+    std::fs::write(&bad_json, "not json").unwrap();
+    assert!(
+        ModelRegistry::load_from_path(&bad_json)
+            .unwrap_err()
+            .to_string()
+            .contains("failed to parse models registry")
+    );
+
+    assert!(
+        ModelRegistry::load_from_path(tmp.path())
+            .unwrap_err()
+            .to_string()
+            .contains("failed to read models registry")
+    );
+}
+
+#[test]
+fn registry_value_resolution_handles_missing_and_literal_dollars() {
+    let missing = |_name: &str| None::<String>;
+
+    assert_eq!(resolve_registry_value("$MISSING", missing), "");
+    assert_eq!(resolve_registry_value("${MISSING", missing), "${MISSING");
+    assert_eq!(resolve_registry_value("cost is $5", missing), "cost is ");
+    assert_eq!(resolve_registry_value("plain", missing), "plain");
+}
