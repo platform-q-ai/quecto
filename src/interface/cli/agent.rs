@@ -330,8 +330,9 @@ pub(crate) fn build_agent_from_config(
             return None;
         }
     };
-    let provider_reload = crate::interface::cli::provider_reload::seeded_provider_reload(
+    let provider_reload = crate::interface::cli::provider_reload::seeded_provider_reload_with_base(
         config_path,
+        Some(base_dir.to_path_buf()),
         provider.clone(),
     );
     let provider_reload_inputs = crate::interface::cli::provider_reload::ProviderReloadInputs::new(

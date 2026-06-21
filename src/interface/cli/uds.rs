@@ -4,6 +4,7 @@ use super::uds_cancel::{
     disarm_cancel, fire_cancel, run_agent_message, run_agent_prompt,
 };
 use super::uds_extensions::build_extension_list;
+use super::uds_models::list_models_response;
 use super::uds_multi::{MultiClientArgs, PromptArgsBroadcast, run_agent_prompt_broadcast};
 #[cfg(test)]
 use super::uds_session::compute_session_stats;
@@ -106,6 +107,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         single_client_loop(
             SingleClientArgs {
                 agent,
+                base_dir,
                 messages,
                 model,
                 session_key,
@@ -134,6 +136,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
         super::uds_multi::multi_client_loop(
             MultiClientArgs {
                 agent,
+                base_dir,
                 messages,
                 model,
                 session_key,
@@ -158,6 +161,7 @@ async fn uds_loop_async(args: UdsLoopArgs<'_>) -> i32 {
 
 struct SingleClientArgs<'a> {
     agent: AgentLoopImpl,
+    base_dir: &'a std::path::Path,
     messages: Vec<Message>,
     model: String,
     session_key: String,
@@ -176,6 +180,7 @@ async fn single_client_loop(
 ) -> i32 {
     let SingleClientArgs {
         agent,
+        base_dir,
         mut messages,
         model,
         mut session_key,
@@ -201,6 +206,7 @@ async fn single_client_loop(
     run_command_loop(
         reader,
         &mut DispatchCtx {
+            base_dir,
             agent: &mut { agent },
             messages: &mut messages,
             session: &mut agent_session,
@@ -351,6 +357,7 @@ mod uds_session_load;
 use uds_session_load::load_session;
 
 pub(crate) struct DispatchCtx<'a> {
+    pub base_dir: &'a std::path::Path,
     pub agent: &'a mut AgentLoopImpl,
     pub messages: &'a mut Vec<Message>,
     pub session: &'a mut AgentSession,
@@ -507,6 +514,7 @@ fn query_response_data(cmd: &AgentCommand, ctx: &DispatchCtx<'_>) -> Option<serd
         AgentCommand::GetExtensions { .. } => {
             Some(serde_json::json!({ "extensions": build_extension_list(ctx) }))
         }
+        AgentCommand::ListModels { .. } => Some(list_models_response(ctx)),
         AgentCommand::GetSubagents { .. } => {
             let list = super::protocol::build_subagent_info_list(&ctx.subagent_registry);
             Some(serde_json::json!({ "subagents": list }))

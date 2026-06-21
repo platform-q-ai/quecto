@@ -153,6 +153,36 @@ pub fn build_agent_provider(
         ));
     }
     let mut custom_prefixes = HashSet::new();
+    let model_registry = crate::infrastructure::model_registry::ModelRegistry::load_from_path(
+        &base_dir.join("models.json"),
+    )
+    .map_err(|e| e.to_string())?;
+    for model in model_registry.models() {
+        let Some(api_key) = model.api_key.as_ref().filter(|k| !k.is_empty()) else {
+            continue;
+        };
+        let Some(api_base) = model.base_url.as_ref().filter(|b| !b.trim().is_empty()) else {
+            continue;
+        };
+        let canonical_prefix = model.provider.to_ascii_lowercase();
+        if !custom_prefixes.insert(canonical_prefix) {
+            continue;
+        }
+        if matches!(
+            model.api,
+            crate::infrastructure::model_registry::ProviderApi::OpenAiCompletions
+        ) {
+            let provider = providers::create_openai_compatible_provider(
+                &model.provider,
+                api_key.clone(),
+                api_base.clone(),
+                true,
+                http_client.clone(),
+            )
+            .map_err(|e| format!("models.json provider configuration error: {}", e))?;
+            provider_list.push(provider);
+        }
+    }
     for endpoint in &config.providers.openai_compatible.endpoints {
         if endpoint.api_key.is_empty() {
             continue;
@@ -164,7 +194,7 @@ pub fn build_agent_provider(
         let canonical_prefix = prefix.to_ascii_lowercase();
         if !custom_prefixes.insert(canonical_prefix) {
             return Err(format!(
-                "duplicate openai_compatible endpoint prefix '{}'",
+                "duplicate openai_compatible/provider prefix '{}'",
                 prefix
             ));
         }

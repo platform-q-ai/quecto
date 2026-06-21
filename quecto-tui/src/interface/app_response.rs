@@ -1,5 +1,4 @@
 use super::*;
-
 impl App {
     pub(super) fn handle_response(
         &mut self,
@@ -21,6 +20,11 @@ impl App {
                 if let Some(data) = data {
                     self.show_session_stats(&data);
                 }
+            }
+            "list_models" if success => self.handle_list_models(data),
+            "list_models" => {
+                self.model_registry.1 = false;
+                self.notify_response_error("Could not list models", error);
             }
             "list_sessions" if success => {
                 if let Some(data) = data {

@@ -72,6 +72,7 @@ impl Fixture {
 
     fn ctx(&mut self) -> DispatchCtx<'_> {
         DispatchCtx {
+            base_dir: self._tmp.path(),
             agent: &mut self.agent,
             messages: &mut self.messages,
             session: &mut self.session,

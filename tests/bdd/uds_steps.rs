@@ -430,6 +430,54 @@ fn given_config_default_model(world: &mut QuectoWorld, model: String) {
     .expect("write config");
 }
 
+#[given(expr = "a models registry with Fireworks model {string}")]
+fn given_models_registry_with_fireworks_model(world: &mut QuectoWorld, model_id: String) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let fireworks = wiremock::MockServer::start().await;
+        let fireworks_uri = fireworks.uri();
+        let fw_body = serde_json::json!({
+            "id": "chatcmpl-fireworks",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": "fireworks registry ok" },
+                "finish_reason": "stop"
+            }],
+            "usage": { "prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5 }
+        });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/chat/completions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(fw_body))
+            .mount(&fireworks)
+            .await;
+        world._fireworks_mock_uri = Some(fireworks_uri.clone());
+        world.fireworks_mock_server_ref = Some(Box::leak(Box::new(fireworks)));
+    });
+    std::mem::forget(rt);
+
+    let base = world
+        .cli_context
+        .base_dir
+        .as_ref()
+        .expect("temp base directory not set");
+    let registry = serde_json::json!({
+        "providers": {
+            "fireworks": {
+                "baseUrl": world._fireworks_mock_uri.as_ref().unwrap(),
+                "apiKey": "sk-fireworks",
+                "api": "openai-completions",
+                "models": [{ "id": model_id, "name": "Fireworks Test Model" }]
+            }
+        }
+    });
+    std::fs::write(
+        base.join("models.json"),
+        serde_json::to_string_pretty(&registry).unwrap(),
+    )
+    .expect("write models.json");
+}
+
 #[given("the config file will be updated to add a Fireworks provider before the UDS command loop")]
 fn given_config_add_fireworks_before_loop(world: &mut QuectoWorld) {
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -798,6 +846,31 @@ pub fn find_agent_response(world: &QuectoWorld, command: &str) -> Option<serde_j
             None
         }
     })
+}
+
+#[then(expr = "the agent output should contain a response command {string} with model {string}")]
+fn then_agent_output_response_contains_model(
+    world: &mut QuectoWorld,
+    command: String,
+    model: String,
+) {
+    let resp = find_agent_response(world, &command).unwrap_or_else(|| {
+        panic!(
+            "no response for {command:?}\nlines: {:#?}",
+            world.agent_events
+        )
+    });
+    let models = resp
+        .get("data")
+        .and_then(|d| d.get("models"))
+        .and_then(|v| v.as_array())
+        .expect("response data.models array");
+    assert!(
+        models
+            .iter()
+            .any(|m| m.get("model").and_then(|v| v.as_str()) == Some(model.as_str())),
+        "expected response command {command:?} to contain model {model:?}\nresponse: {resp:#?}"
+    );
 }
 
 #[then(expr = "the agent output should contain a response command {string} with success true")]
