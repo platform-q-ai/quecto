@@ -492,6 +492,7 @@ fn then_streaming_response_content(world: &mut QuectoWorld, expected: String) {
 struct RoutingTracker {
     name: String,
     response: Mutex<Result<LlmResponse, String>>,
+    received_model: Mutex<Option<String>>,
 }
 
 impl RoutingTracker {
@@ -505,6 +506,7 @@ impl RoutingTracker {
                 stop_reason: None,
                 thinking_blocks: vec![],
             })),
+            received_model: Mutex::new(None),
         })
     }
 }
@@ -516,15 +518,22 @@ impl LlmProvider for RoutingTracker {
 
     fn chat(
         &self,
-        _request: quecto::domain::provider::ChatRequest<'_>,
+        request: quecto::domain::provider::ChatRequest<'_>,
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
+        *self.received_model.lock().unwrap() = Some(request.model.to_string());
         let result = self.response.lock().unwrap().clone();
         let name = self.name.clone();
+        let model = request.model.to_string();
         Box::pin(async move {
             match result {
                 Ok(mut r) => {
-                    // Embed handler name in content for step verification: "[provider_name] ..."
-                    r.content = Some(format!("[{}] {}", name, r.content.unwrap_or_default()));
+                    // Embed handler name and effective model for step verification.
+                    r.content = Some(format!(
+                        "[{}]{{{}}} {}",
+                        name,
+                        model,
+                        r.content.unwrap_or_default()
+                    ));
                     Ok(r)
                 }
                 Err(e) => Err(DomainError::Provider(e)),
@@ -538,6 +547,14 @@ fn given_router_openai_then_anthropic(world: &mut QuectoWorld) {
     let openai = RoutingTracker::succeeding("openai", "response") as Arc<dyn LlmProvider>;
     let anthropic = RoutingTracker::succeeding("anthropic", "response") as Arc<dyn LlmProvider>;
     let router = ProviderRouter::new(vec![openai, anthropic]);
+    world.provider_router = Some(Arc::new(router));
+}
+
+#[given("a provider router with OpenAI first and Fireworks second")]
+fn given_router_openai_then_fireworks(world: &mut QuectoWorld) {
+    let openai = RoutingTracker::succeeding("openai", "response") as Arc<dyn LlmProvider>;
+    let fireworks = RoutingTracker::succeeding("fireworks", "response") as Arc<dyn LlmProvider>;
+    let router = ProviderRouter::new(vec![openai, fireworks]);
     world.provider_router = Some(Arc::new(router));
 }
 
@@ -657,9 +674,12 @@ fn when_send_chat_with_model(world: &mut QuectoWorld, model: String) {
             world.routing_succeeded = Some(true);
             world.routing_response = Some(response);
         }
-        Err(_) => {
+        Err(e) => {
             world.routing_handled_by = None;
             world.routing_succeeded = Some(false);
+            world
+                .env_overrides
+                .insert("_routing_error".into(), e.to_string());
         }
     }
 }
@@ -674,6 +694,46 @@ fn then_handled_by_provider(world: &mut QuectoWorld, expected: String) {
         handled_by, expected,
         "expected model to be routed to '{}' but was handled by '{}'",
         expected, handled_by
+    );
+}
+
+#[then(expr = "the request should not be handled by the {string} provider")]
+fn then_not_handled_by_provider(world: &mut QuectoWorld, unexpected: String) {
+    assert_ne!(
+        world.routing_handled_by.as_deref(),
+        Some(unexpected.as_str()),
+        "request should not have been routed to '{}'",
+        unexpected
+    );
+}
+
+#[then(expr = "the provider should receive model {string}")]
+fn then_provider_received_model(world: &mut QuectoWorld, expected: String) {
+    let content = world
+        .routing_response
+        .as_ref()
+        .and_then(|response| response.content.as_deref())
+        .expect("no routing response content");
+    let start = content
+        .find('{')
+        .expect("response should include model start marker")
+        + 1;
+    let end = content
+        .find('}')
+        .expect("response should include model end marker");
+    assert_eq!(&content[start..end], expected);
+}
+
+#[then(expr = "the request should fail with no configured provider {string}")]
+fn then_request_fails_no_configured_provider(world: &mut QuectoWorld, provider: String) {
+    assert_eq!(world.routing_succeeded, Some(false));
+    let error = world
+        .env_overrides
+        .get("_routing_error")
+        .expect("expected routing error");
+    assert!(
+        error.contains(&format!("no configured provider '{}'", provider)),
+        "unexpected routing error: {error}"
     );
 }
 

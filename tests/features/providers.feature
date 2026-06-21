@@ -78,6 +78,18 @@ Feature: LLM Providers
     When I send a chat request with model "openai/gpt-4o"
     Then the request should be handled by the "openai" provider
 
+  Scenario: Opaque multi-segment model IDs route by first provider slash only
+    Given a provider router with OpenAI first and Fireworks second
+    When I send a chat request with model "fireworks/accounts/fireworks/models/glm-5p2"
+    Then the request should be handled by the "fireworks" provider
+    And the provider should receive model "accounts/fireworks/models/glm-5p2"
+
+  Scenario: Unknown provider prefix does not fall back for multi-segment model IDs
+    Given a provider router with OpenAI first and Anthropic second
+    When I send a chat request with model "fireworks/accounts/fireworks/models/glm-5p2"
+    Then the request should fail with no configured provider "fireworks"
+    And the request should not be handled by the "openai" provider
+
   Scenario: Bare model name goes to first provider in order
     Given a provider router with OpenAI first and Anthropic second
     When I send a chat request with model "claude-opus-4-5"

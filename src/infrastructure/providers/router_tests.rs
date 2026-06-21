@@ -252,19 +252,51 @@ async fn test_openai_prefix_matches_codex_provider() {
 }
 
 #[tokio::test]
-async fn test_nested_slash_treated_as_bare_name() {
+async fn test_nested_slash_model_id_splits_once_and_routes_by_provider() {
+    let openai = TrackingProvider::succeeding("openai", "OpenAI");
+    let fireworks = TrackingProvider::succeeding("fireworks", "Fireworks");
+    let router = ProviderRouter::new(vec![
+        openai.clone() as Arc<dyn LlmProvider>,
+        fireworks.clone(),
+    ]);
+
+    let messages = test_messages();
+    let resp = router
+        .chat(make_request(
+            &messages,
+            "fireworks/accounts/fireworks/models/glm-5p2",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.content.unwrap(), "Fireworks");
+    assert_eq!(
+        fireworks.received_model().as_deref(),
+        Some("accounts/fireworks/models/glm-5p2")
+    );
+    assert!(!openai.was_called());
+}
+
+#[tokio::test]
+async fn test_unknown_nested_prefix_fails_without_default_fallback() {
     let openai = TrackingProvider::succeeding("openai", "OpenAI");
     let router = ProviderRouter::new(vec![openai.clone() as Arc<dyn LlmProvider>]);
 
     let messages = test_messages();
-    let _ = router
-        .chat(make_request(&messages, "openai/models/gpt-4o"))
-        .await
-        .unwrap();
-    assert_eq!(
-        openai.received_model().as_deref(),
-        Some("openai/models/gpt-4o")
+    let result = router
+        .chat(make_request(
+            &messages,
+            "fireworks/accounts/fireworks/models/glm-5p2",
+        ))
+        .await;
+
+    assert!(result.is_err());
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("no configured provider 'fireworks'"),
     );
+    assert!(!openai.was_called());
 }
 
 // ── Zero-copy forwarding (#370) ────────────────────────────────────────
@@ -395,7 +427,7 @@ async fn chat_stream_incremental_emits_error_on_unresolved_prefix() {
         .await;
     match rx.recv().await {
         Some(StreamEvent::Error(e)) => {
-            assert!(e.contains("no configured provider matches"), "{e}")
+            assert!(e.contains("no configured provider 'gemini'"), "{e}")
         }
         other => panic!("expected Error, got {other:?}"),
     }
@@ -418,8 +450,11 @@ fn parse_qualified_model_handles_edges() {
     assert_eq!(super::parse_qualified_model("/gpt-5.2"), None);
     // empty model
     assert_eq!(super::parse_qualified_model("openai/"), None);
-    // nested slash rejected
-    assert_eq!(super::parse_qualified_model("openai/a/b"), None);
+    // model id is opaque after the first slash
+    assert_eq!(
+        super::parse_qualified_model("openai/a/b"),
+        Some(("openai", "a/b"))
+    );
 }
 
 #[test]
