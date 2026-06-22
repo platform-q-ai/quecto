@@ -343,6 +343,11 @@ async fn handle_submit_new_starts_new_session() {
     });
     a.handle_submit("/new");
     assert_eq!(a.chat.entry_count(), 0, "/new should clear chat");
+    let sent = h.drain_commands().await;
+    assert!(
+        sent.iter()
+            .any(|cmd| cmd.contains("\"type\":\"new_session\""))
+    );
 }
 
 #[tokio::test]

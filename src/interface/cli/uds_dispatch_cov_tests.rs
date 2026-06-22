@@ -11,7 +11,8 @@ use super::{
 };
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::message::Message;
-use crate::domain::session::{Session, SessionStore};
+use crate::domain::session::{ContextSpillStore, Session, SessionStore, SpillEntry, SpillIndex};
+use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 use crate::infrastructure::persistence::session_store::FileSessionStore;
 use crate::interface::cli::protocol::{AgentCommand, ToolRegistration};
 use crate::interface::cli::uds::DispatchCtx;
@@ -19,14 +20,126 @@ use crate::interface::cli::uds_cancel::{CancelHandle, CancelSlot};
 use crate::interface::cli::uds_ext_protocol::{ClientToolRegistry, new_client_tool_registry};
 use crate::interface::cli::uds_session::AgentSession;
 
+#[derive(Debug, Default)]
+struct RecordingSpillStore {
+    cleared: std::sync::Mutex<Vec<String>>,
+}
+
+impl ContextSpillStore for RecordingSpillStore {
+    fn append(
+        &self,
+        _session_key: &str,
+        _entry: &SpillEntry,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<(), crate::domain::error::DomainError>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn recall(
+        &self,
+        _session_key: &str,
+        _id: &str,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<Option<SpillEntry>, crate::domain::error::DomainError>,
+                > + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async { Ok(None) })
+    }
+
+    fn list_entries(
+        &self,
+        _session_key: &str,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<Vec<SpillIndex>, crate::domain::error::DomainError>,
+                > + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    fn clear(
+        &self,
+        session_key: &str,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<(), crate::domain::error::DomainError>>
+                + Send
+                + '_,
+        >,
+    > {
+        self.cleared.lock().unwrap().push(session_key.to_string());
+        Box::pin(async { Ok(()) })
+    }
+}
+
+#[derive(Debug, Default)]
+struct SessionAwareTool {
+    seen: std::sync::Mutex<Vec<String>>,
+}
+
+impl Tool for SessionAwareTool {
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "session_aware".into(),
+            description: "test".into(),
+            parameters_schema: r#"{"type":"object"}"#.into(),
+        }
+    }
+
+    fn set_session_key(&self, session_key: String) {
+        self.seen.lock().unwrap().push(session_key);
+    }
+
+    fn execute(
+        &self,
+        _arguments: &str,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<ToolResult, crate::domain::error::DomainError>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async {
+            Ok(ToolResult {
+                content: String::new(),
+                is_error: false,
+                image_blocks: vec![],
+            })
+        })
+    }
+}
+
 fn make_agent() -> AgentLoopImpl {
+    make_agent_with(
+        Box::new(crate::infrastructure::tools::registry::ToolRegistryImpl::new()),
+        None,
+    )
+}
+
+fn make_agent_with(
+    tool_registry: Box<dyn crate::domain::tool::ToolRegistry>,
+    spill_store: Option<std::sync::Arc<dyn ContextSpillStore>>,
+) -> AgentLoopImpl {
     AgentLoopImpl::new(AgentLoopConfig {
         provider: crate::interface::test_support::make_stub_provider(),
-        tool_registry: Box::new(crate::infrastructure::tools::registry::ToolRegistryImpl::new()),
+        tool_registry,
         model: "stub".into(),
         max_tokens: 100,
         temperature: 0.0,
-        spill_store: None,
+        spill_store,
         session_key: "cli:test".into(),
         context_collapse_after_turns: u32::MAX,
         max_context_tokens: 190_000,
@@ -186,6 +299,27 @@ async fn rewind_valid_truncates_and_persists() {
     assert!(fx.messages.is_empty());
 }
 
+#[tokio::test]
+async fn rewind_valid_clears_spill_store_for_current_key() {
+    let spill = std::sync::Arc::new(RecordingSpillStore::default());
+    let mut fx = Fixture::new();
+    fx.agent = make_agent_with(
+        Box::new(crate::infrastructure::tools::registry::ToolRegistryImpl::new()),
+        Some(spill.clone()),
+    );
+    fx.messages.push(Message::user("first"));
+    fx.messages.push(Message::assistant("answer", vec![]));
+    {
+        let mut ctx = fx.ctx();
+        assert!(!handle_rewind_to(&mut ctx, None, "rewind_to", 0).await);
+    }
+
+    assert_eq!(
+        spill.cleared.lock().unwrap().as_slice(),
+        &["cli:test".to_string()]
+    );
+}
+
 // ─── handle_new_session ──────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -201,6 +335,25 @@ async fn new_session_uses_fresh_key_and_clears_old_messages() {
     assert!(fx.messages.is_empty());
     assert_ne!(fx.session_key, old_key);
     assert!(fx.session_key.starts_with("chat-"));
+}
+
+#[tokio::test]
+async fn new_session_updates_tools_and_clears_new_spill_key() {
+    let tool = std::sync::Arc::new(SessionAwareTool::default());
+    let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
+    registry.register(tool.clone());
+    let spill = std::sync::Arc::new(RecordingSpillStore::default());
+    let mut fx = Fixture::new();
+    fx.agent = make_agent_with(Box::new(registry), Some(spill.clone()));
+    {
+        let mut ctx = fx.ctx();
+        assert!(!handle_new_session(&mut ctx, None, "new_session").await);
+    }
+
+    let tool_keys = tool.seen.lock().unwrap();
+    assert_eq!(tool_keys.as_slice(), &[fx.session_key.clone()]);
+    let cleared = spill.cleared.lock().unwrap();
+    assert_eq!(cleared.as_slice(), &[fx.session_key.clone()]);
 }
 
 // ─── handle_resume_session ───────────────────────────────────────────────────
@@ -254,6 +407,33 @@ async fn resume_session_success_loads_messages() {
     }
     assert_eq!(fx.session_key, key);
     assert_eq!(fx.messages.len(), 1);
+}
+
+#[tokio::test]
+async fn resume_updates_session_aware_tools() {
+    let tool = std::sync::Arc::new(SessionAwareTool::default());
+    let mut registry = crate::infrastructure::tools::registry::ToolRegistryImpl::new();
+    registry.register(tool.clone());
+    let mut fx = Fixture::new();
+    fx.agent = make_agent_with(Box::new(registry), None);
+    let key = Session::build_key("cli", "saved");
+    fx.store
+        .save(&Session {
+            key: key.clone(),
+            messages: vec![Message::user("restored")],
+            workflow_run: None,
+        })
+        .await
+        .unwrap();
+    {
+        let mut ctx = fx.ctx();
+        assert!(
+            !handle_resume_session(&mut ctx, Some("rs"), "resume_session", "saved".into()).await
+        );
+    }
+
+    let tool_keys = tool.seen.lock().unwrap();
+    assert_eq!(tool_keys.as_slice(), &[key]);
 }
 
 #[tokio::test]
