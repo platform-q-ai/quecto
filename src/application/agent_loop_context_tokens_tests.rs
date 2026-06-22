@@ -3,12 +3,12 @@ use crate::domain::message::{LlmResponse, Message, UsageInfo};
 use crate::domain::provider::StreamEvent;
 use std::sync::Arc;
 
-fn response_with_prompt_tokens(content: &str, prompt_tokens: u32) -> LlmResponse {
+fn response_with_provider_input_tokens(content: &str, provider_input_tokens: u32) -> LlmResponse {
     LlmResponse {
         content: Some(content.to_string()),
         tool_calls: vec![],
         usage: Some(UsageInfo {
-            prompt_tokens,
+            prompt_tokens: provider_input_tokens,
             completion_tokens: 7,
             cache_read_tokens: None,
             cache_write_tokens: None,
@@ -21,14 +21,24 @@ fn response_with_prompt_tokens(content: &str, prompt_tokens: u32) -> LlmResponse
 }
 
 #[tokio::test]
-async fn non_streaming_result_context_tokens_uses_provider_prompt_tokens() {
-    let (agent, _) = make_agent(vec![response_with_prompt_tokens("hello", 2_246)], vec![]);
+async fn non_streaming_result_context_tokens_uses_active_conversation_estimate_not_provider_usage()
+{
+    let (agent, _) = make_agent(
+        vec![response_with_provider_input_tokens("hello", 280_000)],
+        vec![],
+    );
     let mut messages = vec![Message::user("Hi")];
 
     let result = agent.run_loop(&mut messages).await.unwrap();
+    let active_conversation_tokens = context_pruning::estimate_total_tokens(&messages);
 
-    assert_eq!(result.context_tokens, 2_246);
-    assert_eq!(result.input_tokens, 2_246);
+    assert_eq!(result.context_tokens, active_conversation_tokens);
+    assert!(
+        result.context_tokens < agent.max_context_tokens(),
+        "small active conversation should stay below the configured window"
+    );
+    assert_eq!(result.input_tokens, 280_000);
+    assert_eq!(result.billed_input_tokens, 280_000);
 }
 
 #[tokio::test]
@@ -54,9 +64,9 @@ async fn non_streaming_result_context_tokens_falls_back_to_estimate_without_usag
 }
 
 #[tokio::test]
-async fn streaming_result_context_tokens_uses_provider_prompt_tokens() {
+async fn streaming_result_context_tokens_uses_active_conversation_estimate_not_provider_usage() {
     let provider = Arc::new(MockStreamingProvider::new(vec![vec![StreamEvent::Done(
-        response_with_prompt_tokens("hello", 2_246),
+        response_with_provider_input_tokens("hello", 280_000),
     )]]));
     let agent = AgentLoopImpl::new(AgentLoopConfig {
         provider,
@@ -77,7 +87,13 @@ async fn streaming_result_context_tokens_uses_provider_prompt_tokens() {
     let mut messages = vec![Message::user("Hi")];
 
     let result = agent.run_loop(&mut messages).await.unwrap();
+    let active_conversation_tokens = context_pruning::estimate_total_tokens(&messages);
 
-    assert_eq!(result.context_tokens, 2_246);
-    assert_eq!(result.input_tokens, 2_246);
+    assert_eq!(result.context_tokens, active_conversation_tokens);
+    assert!(
+        result.context_tokens < agent.max_context_tokens(),
+        "small active conversation should stay below the configured window"
+    );
+    assert_eq!(result.input_tokens, 280_000);
+    assert_eq!(result.billed_input_tokens, 280_000);
 }
