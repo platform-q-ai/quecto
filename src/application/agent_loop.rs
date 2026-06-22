@@ -443,11 +443,7 @@ impl AgentLoopImpl {
     ) -> AgentResult {
         let text = response.content.unwrap_or_default();
         messages.push(Message::assistant(text.clone(), vec![]));
-        let context_tokens = if usage.context_input_tokens > 0 {
-            usage.context_input_tokens as usize
-        } else {
-            context_pruning::estimate_total_tokens(messages)
-        };
+        let context_tokens = context_pruning::estimate_total_tokens(messages);
         AgentResult {
             response: text,
             tool_iterations: iterations,
