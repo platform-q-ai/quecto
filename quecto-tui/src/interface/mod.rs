@@ -14,5 +14,4 @@ pub mod overlay;
 pub mod select_overlay;
 pub mod stdin_buffer;
 pub mod theme;
-pub mod themes;
 pub mod utils;
