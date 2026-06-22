@@ -135,6 +135,24 @@ pub fn wrap_text(s: &str, max_width: usize) -> Vec<String> {
         return vec![s.to_string()];
     }
 
+    // Honor explicit line breaks first. A literal newline embedded in the
+    // input (e.g. a multi-line paste or a hyphenated list typed in the editor)
+    // is a hard break, not ordinary whitespace. Treating it as whitespace let
+    // the newline survive inside a rendered line, which the terminal then
+    // printed as a real cursor move — producing the staircased, corrupted
+    // output. Split on newlines and word-wrap each segment independently.
+    let mut lines = Vec::new();
+    for segment in s.split('\n') {
+        // `split('\n')` drops the delimiters and yields an empty segment for a
+        // trailing newline, which we preserve as a blank line. Word-wrap each
+        // segment independently; empty segments become a single blank line.
+        lines.extend(wrap_segment(segment, max_width));
+    }
+    lines
+}
+
+/// Word-wrap a single newline-free segment to `max_width` columns.
+fn wrap_segment(s: &str, max_width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut current_line = String::new();
     let mut current_width = 0;
@@ -319,6 +337,43 @@ mod tests {
     fn wrap_with_ansi() {
         let lines = wrap_text("\x1b[31mhello world\x1b[0m", 6);
         assert!(lines.len() >= 2);
+    }
+
+    #[test]
+    fn wrap_splits_on_embedded_newlines() {
+        // A multi-line hyphenated list must become separate lines, never a
+        // single line with embedded '\n' that the terminal staircases.
+        let lines = wrap_text("- hi\n- how\n- you", 80);
+        assert_eq!(lines, vec!["- hi", "- how", "- you"]);
+        for line in &lines {
+            assert!(
+                !line.contains('\n'),
+                "wrapped line leaked a newline: {line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn wrap_preserves_blank_lines_between_paragraphs() {
+        let lines = wrap_text("a\n\nb", 80);
+        assert_eq!(lines, vec!["a", "", "b"]);
+    }
+
+    #[test]
+    fn wrap_trailing_newline_yields_trailing_blank() {
+        let lines = wrap_text("a\n", 80);
+        assert_eq!(lines, vec!["a", ""]);
+    }
+
+    #[test]
+    fn wrap_each_segment_still_word_wraps() {
+        // Newline splitting must not bypass width wrapping of long segments.
+        let lines = wrap_text("hello world\nfoo", 6);
+        assert!(lines.len() >= 3, "expected wrapped segments: {lines:?}");
+        assert_eq!(lines.last().unwrap(), "foo");
+        for line in &lines {
+            assert!(visible_width(line) <= 6);
+        }
     }
 
     #[test]

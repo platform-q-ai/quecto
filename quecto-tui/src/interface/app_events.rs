@@ -82,9 +82,12 @@ impl App {
         ) {
             self.footer.update_context_usage(used, window);
             self.context_stats_requested = true;
+            // Context came inline, but cost does not ride the turn_end event —
+            // refresh session stats (quietly) so the footer cost stays current.
+            self.send_session_stats_footer();
         } else if total > 0 && !self.context_stats_requested {
             self.context_stats_requested = true;
-            self.send_session_stats();
+            self.send_session_stats_footer();
         }
     }
 
