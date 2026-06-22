@@ -147,6 +147,30 @@ async fn send_set_model_records_current_model() {
     assert!(!a.context_stats_requested);
 }
 
+#[tokio::test]
+async fn update_footer_stats_sets_context_and_clears_zero_cost() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.update_footer_stats(&serde_json::json!({
+        "contextTokens": 42,
+        "maxContextTokens": 100,
+        "cost": 0.0
+    }));
+    assert!(a.context_stats_requested);
+    let footer = a.footer.render(120).join("\n");
+    assert!(footer.contains("42"), "{footer}");
+}
+
+#[tokio::test]
+async fn update_footer_stats_sets_positive_cost_without_context() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.update_footer_stats(&serde_json::json!({ "cost": 1.25 }));
+    assert!(!a.context_stats_requested);
+    let footer = a.footer.render(120).join("\n");
+    assert!(footer.contains("$"), "{footer}");
+}
+
 // ── app_methods: resume selector ─────────────────────────────────────
 
 #[tokio::test]
@@ -373,6 +397,27 @@ async fn compose_bottom_shows_subagent_activity_when_idle_with_active_child() {
     let bottom = h.app_mut().compose_bottom(120);
     let joined = bottom.join("\n");
     assert!(joined.contains("working"), "{joined}");
+}
+
+#[test]
+fn format_time_helpers_cover_epoch_leap_and_pre_epoch_paths() {
+    assert_eq!(
+        super::app_methods::format_utc_minutes(0),
+        "1970-01-01 00:00"
+    );
+    assert_eq!(
+        super::app_methods::format_utc_minutes(1_582_934_400),
+        "2020-02-29 00:00"
+    );
+    assert_eq!(super::app_methods::civil_from_days(-719_468), (0, 3, 1));
+}
+
+#[test]
+fn subagent_activity_line_singular_plural_and_frame_wrap() {
+    let one = super::app_methods::subagent_activity_line(1, 0);
+    let many = super::app_methods::subagent_activity_line(2, 999);
+    assert!(super::app_methods::strip_ansi(&one).contains("1 subagent working"));
+    assert!(super::app_methods::strip_ansi(&many).contains("2 subagents working"));
 }
 
 #[test]

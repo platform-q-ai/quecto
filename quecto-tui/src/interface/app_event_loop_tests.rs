@@ -13,6 +13,14 @@ async fn harness() -> TuiHarness {
     TuiHarness::new().await
 }
 
+#[tokio::test]
+async fn run_with_preexisting_exit_flag_performs_startup_and_cleanup() {
+    let mut h = harness().await;
+    let app = h.app_mut();
+    app.should_exit = true;
+    assert_eq!(app.run().await, 0);
+}
+
 // ── process_key_sequence ──────────────────────────────────────────────
 
 #[tokio::test]
