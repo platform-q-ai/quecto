@@ -249,6 +249,9 @@ async fn open_and_cancel_model_selector() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.open_model_selector();
+    // Selector now opens only after the fresh model list arrives (ADR-0002
+    // on-consume reload), so simulate the list_models response.
+    a.handle_list_models(Some(serde_json::json!({ "models": [] })));
     assert!(a.model_selector.is_some());
     a.handle_model_selector_key(&Key::Escape);
     assert!(a.model_selector.is_none());
@@ -259,6 +262,7 @@ async fn model_selector_enter_selects_and_sets_model() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.open_model_selector();
+    a.handle_list_models(Some(serde_json::json!({ "models": [] })));
     a.handle_model_selector_key(&Key::Enter);
     assert!(a.model_selector.is_none());
     assert!(a.current_model.is_some());
@@ -269,6 +273,7 @@ async fn model_selector_pending_keeps_open() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.open_model_selector();
+    a.handle_list_models(Some(serde_json::json!({ "models": [] })));
     a.handle_model_selector_key(&Key::Down);
     assert!(a.model_selector.is_some());
 }

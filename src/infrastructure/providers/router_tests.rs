@@ -238,13 +238,13 @@ async fn test_unknown_prefix_fails_fast() {
 }
 
 #[tokio::test]
-async fn test_openai_prefix_matches_codex_provider() {
+async fn test_openai_codex_prefix_matches_codex_provider() {
     let codex = TrackingProvider::succeeding("codex", "Codex");
     let router = ProviderRouter::new(vec![codex.clone() as Arc<dyn LlmProvider>]);
 
     let messages = test_messages();
     let resp = router
-        .chat(make_request(&messages, "openai/gpt-4o"))
+        .chat(make_request(&messages, "openai-codex/gpt-4o"))
         .await
         .unwrap();
     assert_eq!(resp.content.unwrap(), "Codex");
@@ -461,8 +461,9 @@ fn parse_qualified_model_handles_edges() {
 fn provider_prefix_matches_aliases_and_case() {
     assert!(super::provider_prefix_matches("OpenAI", "openai"));
     assert!(super::provider_prefix_matches("anthropic", "anthropic"));
-    // codex aliases
-    assert!(super::provider_prefix_matches("openai", "codex"));
+    // codex aliases are explicit; bare openai no longer aliases to codex because
+    // API/OAuth billing modes must not be selected silently.
+    assert!(!super::provider_prefix_matches("openai", "codex"));
     assert!(super::provider_prefix_matches("openai-codex", "codex"));
     assert!(super::provider_prefix_matches("CODEX", "codex"));
     // non-matches

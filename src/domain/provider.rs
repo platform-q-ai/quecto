@@ -195,6 +195,14 @@ pub trait LlmProvider: Send + Sync + std::fmt::Debug {
     /// Human-readable provider name (e.g. "openai", "anthropic").
     fn name(&self) -> &str;
 
+    /// Downcast support for introspection (e.g. recovering a concrete
+    /// `ProviderRouter` for diagnostics and tests). Implementors that need to be
+    /// downcast override this to return `self`; the default returns a reference
+    /// that downcasts to nothing useful.
+    fn as_any(&self) -> &dyn std::any::Any {
+        &()
+    }
+
     /// Send a chat request and return the LLM response.
     ///
     /// The lifetime `'a` ties `&self`, the request's borrowed data, and

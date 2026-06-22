@@ -23,8 +23,14 @@ impl App {
             }
             "list_models" if success => self.handle_list_models(data),
             "list_models" => {
+                let was_pending = self.model_registry.1;
                 self.model_registry.1 = false;
                 self.notify_response_error("Could not list models", error);
+                // Refresh failed but the user asked to open the selector: fall
+                // back to whatever models we already have cached.
+                if was_pending {
+                    self.open_model_selector_now();
+                }
             }
             "list_sessions" if success => {
                 if let Some(data) = data {

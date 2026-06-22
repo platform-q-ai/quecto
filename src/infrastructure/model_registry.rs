@@ -22,6 +22,27 @@ pub struct ModelRecord {
     pub max_tokens: u32,
     pub cost: ModelCost,
     pub reasoning: bool,
+    /// How this provider authenticates. `ApiKey` uses the resolved `api_key`;
+    /// `OAuth` resolves a credential from the kernel credential store keyed by
+    /// `oauth_provider`.
+    pub auth: AuthMode,
+    /// For `AuthMode::OAuth`, the kernel-known OAuth provider identity to resolve
+    /// the credential against (e.g. "anthropic", "openai"). `None` for ApiKey.
+    pub oauth_provider: Option<String>,
+}
+
+/// Authentication mode for a registry provider.
+///
+/// Explicit and orthogonal to the wire protocol (`ProviderApi`): the same
+/// vendor can be configured twice (once per mode) under distinct provider keys,
+/// and the kernel never silently switches between them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AuthMode {
+    /// Authenticate with a literal/resolved API key (token billing).
+    #[default]
+    ApiKey,
+    /// Authenticate with an OAuth credential from the kernel credential store.
+    OAuth,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -55,6 +76,7 @@ pub enum ModelRegistryError {
     Io(std::io::Error),
     Parse(serde_json::Error),
     UnknownApi(String),
+    UnknownAuthMode(String),
 }
 
 impl std::fmt::Display for ModelRegistryError {
@@ -63,6 +85,9 @@ impl std::fmt::Display for ModelRegistryError {
             Self::Io(e) => write!(f, "failed to read models registry: {e}"),
             Self::Parse(e) => write!(f, "failed to parse models registry: {e}"),
             Self::UnknownApi(api) => write!(f, "unknown api '{api}' in models registry"),
+            Self::UnknownAuthMode(mode) => {
+                write!(f, "unknown auth mode '{mode}' in models registry")
+            }
         }
     }
 }
@@ -72,87 +97,236 @@ impl std::error::Error for ModelRegistryError {}
 impl ModelRegistry {
     pub fn builtin() -> Self {
         let mut r = Self { models: Vec::new() };
-        for (provider, id, name, api) in [
+        for (provider, id, name, api, auth, oauth_provider) in [
             (
-                "anthropic",
+                "anthropic-api",
                 "claude-fable-5",
-                "Claude Fable 5",
+                "Claude Fable 5 (API key)",
                 ProviderApi::AnthropicMessages,
+                AuthMode::ApiKey,
+                None,
             ),
             (
-                "anthropic",
+                "anthropic-api",
                 "claude-opus-4-8",
-                "Claude Opus 4.8",
+                "Claude Opus 4.8 (API key)",
                 ProviderApi::AnthropicMessages,
+                AuthMode::ApiKey,
+                None,
             ),
             (
-                "anthropic",
+                "anthropic-api",
                 "claude-opus-4-7",
-                "Claude Opus 4.7",
+                "Claude Opus 4.7 (API key)",
                 ProviderApi::AnthropicMessages,
+                AuthMode::ApiKey,
+                None,
             ),
             (
-                "anthropic",
+                "anthropic-api",
                 "claude-opus-4-6",
-                "Claude Opus 4.6",
+                "Claude Opus 4.6 (API key)",
                 ProviderApi::AnthropicMessages,
+                AuthMode::ApiKey,
+                None,
             ),
             (
-                "anthropic",
+                "anthropic-api",
                 "claude-opus-4-5",
-                "Claude Opus 4.5",
+                "Claude Opus 4.5 (API key)",
                 ProviderApi::AnthropicMessages,
+                AuthMode::ApiKey,
+                None,
             ),
             (
-                "anthropic",
+                "anthropic-api",
                 "claude-sonnet-4-6",
-                "Claude Sonnet 4.6",
+                "Claude Sonnet 4.6 (API key)",
                 ProviderApi::AnthropicMessages,
+                AuthMode::ApiKey,
+                None,
             ),
             (
-                "anthropic",
+                "anthropic-api",
                 "claude-sonnet-4-5",
-                "Claude Sonnet 4.5",
+                "Claude Sonnet 4.5 (API key)",
                 ProviderApi::AnthropicMessages,
+                AuthMode::ApiKey,
+                None,
             ),
             (
-                "openai",
+                "anthropic-oauth",
+                "claude-fable-5",
+                "Claude Fable 5 (OAuth)",
+                ProviderApi::AnthropicMessages,
+                AuthMode::OAuth,
+                Some("anthropic"),
+            ),
+            (
+                "anthropic-oauth",
+                "claude-opus-4-8",
+                "Claude Opus 4.8 (OAuth)",
+                ProviderApi::AnthropicMessages,
+                AuthMode::OAuth,
+                Some("anthropic"),
+            ),
+            (
+                "anthropic-oauth",
+                "claude-opus-4-7",
+                "Claude Opus 4.7 (OAuth)",
+                ProviderApi::AnthropicMessages,
+                AuthMode::OAuth,
+                Some("anthropic"),
+            ),
+            (
+                "anthropic-oauth",
+                "claude-opus-4-6",
+                "Claude Opus 4.6 (OAuth)",
+                ProviderApi::AnthropicMessages,
+                AuthMode::OAuth,
+                Some("anthropic"),
+            ),
+            (
+                "anthropic-oauth",
+                "claude-opus-4-5",
+                "Claude Opus 4.5 (OAuth)",
+                ProviderApi::AnthropicMessages,
+                AuthMode::OAuth,
+                Some("anthropic"),
+            ),
+            (
+                "anthropic-oauth",
+                "claude-sonnet-4-6",
+                "Claude Sonnet 4.6 (OAuth)",
+                ProviderApi::AnthropicMessages,
+                AuthMode::OAuth,
+                Some("anthropic"),
+            ),
+            (
+                "anthropic-oauth",
+                "claude-sonnet-4-5",
+                "Claude Sonnet 4.5 (OAuth)",
+                ProviderApi::AnthropicMessages,
+                AuthMode::OAuth,
+                Some("anthropic"),
+            ),
+            (
+                "openai-api",
                 "gpt-5.5",
-                "GPT 5.5",
+                "GPT 5.5 (API key)",
                 ProviderApi::OpenAiCompletions,
+                AuthMode::ApiKey,
+                None,
             ),
             (
-                "openai",
+                "openai-api",
                 "gpt-5.5-mini",
-                "GPT 5.5 Mini",
+                "GPT 5.5 Mini (API key)",
                 ProviderApi::OpenAiCompletions,
+                AuthMode::ApiKey,
+                None,
             ),
             (
-                "openai",
+                "openai-api",
                 "gpt-5.5-nano",
-                "GPT 5.5 Nano",
+                "GPT 5.5 Nano (API key)",
                 ProviderApi::OpenAiCompletions,
+                AuthMode::ApiKey,
+                None,
             ),
             (
-                "openai",
+                "openai-api",
                 "gpt-5.3-codex",
-                "GPT 5.3 Codex",
+                "GPT 5.3 Codex (API key)",
                 ProviderApi::OpenAiCompletions,
+                AuthMode::ApiKey,
+                None,
             ),
             (
-                "openai",
+                "openai-api",
                 "gpt-5.3-codex-spark",
-                "GPT 5.3 Codex Spark",
+                "GPT 5.3 Codex Spark (API key)",
                 ProviderApi::OpenAiCompletions,
+                AuthMode::ApiKey,
+                None,
             ),
             (
-                "openai",
+                "openai-api",
                 "gpt-5.2-codex",
-                "GPT 5.2 Codex",
+                "GPT 5.2 Codex (API key)",
                 ProviderApi::OpenAiCompletions,
+                AuthMode::ApiKey,
+                None,
+            ),
+            (
+                "openai-oauth",
+                "gpt-5.5",
+                "GPT 5.5 (OAuth)",
+                ProviderApi::OpenAiCompletions,
+                AuthMode::OAuth,
+                Some("openai"),
+            ),
+            (
+                "openai-oauth",
+                "gpt-5.5-mini",
+                "GPT 5.5 Mini (OAuth)",
+                ProviderApi::OpenAiCompletions,
+                AuthMode::OAuth,
+                Some("openai"),
+            ),
+            (
+                "openai-oauth",
+                "gpt-5.5-nano",
+                "GPT 5.5 Nano (OAuth)",
+                ProviderApi::OpenAiCompletions,
+                AuthMode::OAuth,
+                Some("openai"),
+            ),
+            (
+                "openai-oauth",
+                "gpt-5.3-codex",
+                "GPT 5.3 Codex (OAuth)",
+                ProviderApi::OpenAiCompletions,
+                AuthMode::OAuth,
+                Some("openai"),
+            ),
+            (
+                "openai-oauth",
+                "gpt-5.3-codex-spark",
+                "GPT 5.3 Codex Spark (OAuth)",
+                ProviderApi::OpenAiCompletions,
+                AuthMode::OAuth,
+                Some("openai"),
+            ),
+            (
+                "openai-oauth",
+                "gpt-5.2-codex",
+                "GPT 5.2 Codex (OAuth)",
+                ProviderApi::OpenAiCompletions,
+                AuthMode::OAuth,
+                Some("openai"),
+            ),
+            (
+                "fireworks",
+                "accounts/fireworks/models/glm-5p2",
+                "GLM 5.2",
+                ProviderApi::OpenAiCompletions,
+                AuthMode::ApiKey,
+                None,
+            ),
+            (
+                "fireworks",
+                "accounts/fireworks/models/kimi-k2p7-code",
+                "Kimi K2.7 Code",
+                ProviderApi::OpenAiCompletions,
+                AuthMode::ApiKey,
+                None,
             ),
         ] {
-            r.upsert(ModelRecord::with_defaults(provider, id, Some(name), api));
+            let mut record = ModelRecord::with_defaults(provider, id, Some(name), api);
+            record.auth = auth;
+            record.oauth_provider = oauth_provider.map(str::to_string);
+            r.upsert(record);
         }
         r
     }
@@ -167,10 +341,32 @@ impl ModelRegistry {
             serde_json::from_str(&content).map_err(ModelRegistryError::Parse)?;
         for (provider_key, provider) in file.providers {
             let api = ProviderApi::parse(provider.api.as_deref().unwrap_or("openai-completions"))?;
+
+            // Resolve the auth mode. An explicit `auth` block wins; otherwise we
+            // default to ApiKey (the historical behaviour). The block's apiKey
+            // (when present) takes precedence over the legacy top-level apiKey.
+            let env = |name: &str| std::env::var(name).ok();
+            let (auth, oauth_provider, block_api_key) = match provider.auth {
+                Some(block) => {
+                    let mode = block.mode.as_deref().unwrap_or("apiKey");
+                    match mode {
+                        "apiKey" | "api_key" => (
+                            AuthMode::ApiKey,
+                            None,
+                            block.api_key.map(|v| resolve_registry_value(&v, env)),
+                        ),
+                        "oauth" => (AuthMode::OAuth, block.oauth_provider, None),
+                        other => {
+                            return Err(ModelRegistryError::UnknownAuthMode(other.to_string()));
+                        }
+                    }
+                }
+                None => (AuthMode::ApiKey, None, None),
+            };
+
             let base_url = provider.base_url.or(provider.api_base);
-            let api_key = provider
-                .api_key
-                .map(|v| resolve_registry_value(&v, |name| std::env::var(name).ok()));
+            let api_key =
+                block_api_key.or_else(|| provider.api_key.map(|v| resolve_registry_value(&v, env)));
             let auth_header = provider.auth_header.unwrap_or(true);
             let allow_remote_http = provider.allow_remote_http.unwrap_or(false);
             for model in provider.models {
@@ -184,6 +380,8 @@ impl ModelRegistry {
                 record.api_key = api_key.clone();
                 record.auth_header = auth_header;
                 record.allow_remote_http = allow_remote_http;
+                record.auth = auth;
+                record.oauth_provider = oauth_provider.clone();
                 if let Some(input) = model.input {
                     record.input = input;
                 }
@@ -249,6 +447,8 @@ impl ModelRecord {
             max_tokens: 16_384,
             cost: ModelCost::default(),
             reasoning: false,
+            auth: AuthMode::ApiKey,
+            oauth_provider: None,
         }
     }
 
@@ -322,7 +522,24 @@ struct RegistryProvider {
     #[serde(default)]
     allow_remote_http: Option<bool>,
     #[serde(default)]
+    auth: Option<RegistryAuth>,
+    #[serde(default)]
     models: Vec<RegistryModel>,
+}
+
+/// Explicit auth declaration for a registry provider.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RegistryAuth {
+    /// "apiKey" (default) or "oauth".
+    #[serde(default)]
+    mode: Option<String>,
+    /// For `apiKey` mode: the key (supports `$ENV` interpolation).
+    #[serde(default)]
+    api_key: Option<String>,
+    /// For `oauth` mode: the kernel OAuth provider identity to resolve against.
+    #[serde(default)]
+    oauth_provider: Option<String>,
 }
 
 #[derive(Deserialize)]

@@ -18,6 +18,11 @@ fn list_models_data(base_dir: &std::path::Path) -> serde_json::Value {
                     crate::infrastructure::model_registry::ProviderApi::AnthropicMessages => "anthropic-messages",
                     crate::infrastructure::model_registry::ProviderApi::GoogleGenerativeAi => "google-generative-ai",
                 },
+                "auth": match m.auth {
+                    crate::infrastructure::model_registry::AuthMode::ApiKey => "apiKey",
+                    crate::infrastructure::model_registry::AuthMode::OAuth => "oauth",
+                },
+                "oauthProvider": m.oauth_provider,
                 "contextWindow": m.context_window,
                 "maxTokens": m.max_tokens,
                 "input": m.input,
@@ -76,6 +81,7 @@ mod tests {
 
         let anthropic = find("claude-custom");
         assert_eq!(anthropic["api"], "anthropic-messages");
+        assert_eq!(anthropic["auth"], "apiKey");
         assert_eq!(anthropic["configured"], true);
         assert_eq!(anthropic["reasoning"], true);
 

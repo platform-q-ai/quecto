@@ -13,19 +13,32 @@ use crate::interface::utils::{truncate_to_width, visible_width};
 /// Well-known model identifiers, used as fallback when the caller
 /// doesn't supply a model list.
 const KNOWN_MODELS: &[(&str, &str)] = &[
-    ("anthropic/claude-fable-5", "Anthropic"),
-    ("anthropic/claude-opus-4-8", "Anthropic"),
-    ("anthropic/claude-opus-4-7", "Anthropic"),
-    ("anthropic/claude-opus-4-6", "Anthropic"),
-    ("anthropic/claude-opus-4-5", "Anthropic"),
-    ("anthropic/claude-sonnet-4-6", "Anthropic"),
-    ("anthropic/claude-sonnet-4-5", "Anthropic"),
-    ("gpt-5.5", "OpenAI"),
-    ("gpt-5.5-mini", "OpenAI"),
-    ("gpt-5.5-nano", "OpenAI"),
-    ("gpt-5.3-codex", "OpenAI"),
-    ("gpt-5.3-codex-spark", "OpenAI"),
-    ("gpt-5.2-codex", "OpenAI"),
+    ("anthropic-api/claude-fable-5", "Anthropic API"),
+    ("anthropic-oauth/claude-fable-5", "Anthropic OAuth"),
+    ("anthropic-api/claude-opus-4-8", "Anthropic API"),
+    ("anthropic-oauth/claude-opus-4-8", "Anthropic OAuth"),
+    ("anthropic-api/claude-opus-4-7", "Anthropic API"),
+    ("anthropic-oauth/claude-opus-4-7", "Anthropic OAuth"),
+    ("anthropic-api/claude-opus-4-6", "Anthropic API"),
+    ("anthropic-oauth/claude-opus-4-6", "Anthropic OAuth"),
+    ("anthropic-api/claude-opus-4-5", "Anthropic API"),
+    ("anthropic-oauth/claude-opus-4-5", "Anthropic OAuth"),
+    ("anthropic-api/claude-sonnet-4-6", "Anthropic API"),
+    ("anthropic-oauth/claude-sonnet-4-6", "Anthropic OAuth"),
+    ("anthropic-api/claude-sonnet-4-5", "Anthropic API"),
+    ("anthropic-oauth/claude-sonnet-4-5", "Anthropic OAuth"),
+    ("openai-api/gpt-5.5", "OpenAI API"),
+    ("openai-oauth/gpt-5.5", "OpenAI OAuth"),
+    ("openai-api/gpt-5.5-mini", "OpenAI API"),
+    ("openai-oauth/gpt-5.5-mini", "OpenAI OAuth"),
+    ("openai-api/gpt-5.5-nano", "OpenAI API"),
+    ("openai-oauth/gpt-5.5-nano", "OpenAI OAuth"),
+    ("openai-api/gpt-5.3-codex", "OpenAI API"),
+    ("openai-oauth/gpt-5.3-codex", "OpenAI OAuth"),
+    ("openai-api/gpt-5.3-codex-spark", "OpenAI API"),
+    ("openai-oauth/gpt-5.3-codex-spark", "OpenAI OAuth"),
+    ("openai-api/gpt-5.2-codex", "OpenAI API"),
+    ("openai-oauth/gpt-5.2-codex", "OpenAI OAuth"),
     ("fireworks/accounts/fireworks/models/glm-5p2", "Fireworks"),
     (
         "fireworks/accounts/fireworks/models/kimi-k2p7-code",
@@ -48,6 +61,8 @@ fn sanitize_model_name(name: &str) -> String {
 pub struct ModelEntry {
     pub id: String,
     pub provider: String,
+    /// Human-readable auth label shown in the selector (e.g. "oauth" or "api").
+    pub auth: Option<String>,
     pub is_current: bool,
 }
 
@@ -91,6 +106,7 @@ impl ModelSelector {
             .map(|(id, provider)| ModelEntry {
                 id: id.to_string(),
                 provider: provider.to_string(),
+                auth: None,
                 is_current: false,
             })
             .collect();
@@ -119,6 +135,7 @@ impl ModelSelector {
                     ModelEntry {
                         id: safe_current,
                         provider: "Custom".to_string(),
+                        auth: None,
                         is_current: true,
                     },
                 );
@@ -257,7 +274,11 @@ impl Component for ModelSelector {
             let label_vis = visible_width(&model.id);
             let gap = max_label_width.saturating_sub(label_vis) + 2;
             let spacing = " ".repeat(gap);
-            let provider_str = theme::dim(&model.provider);
+            let provider_label = match model.auth.as_deref() {
+                Some(auth) if !auth.is_empty() => format!("{} [{}]", model.provider, auth),
+                _ => model.provider.clone(),
+            };
+            let provider_str = theme::dim(&provider_label);
 
             let line = format!(
                 "  {}{}{}{}{}",
@@ -378,17 +399,17 @@ mod tests {
     fn known_models_include_latest_anthropic_models() {
         let known_ids: Vec<&str> = KNOWN_MODELS.iter().map(|(id, _)| *id).collect();
         assert!(
-            known_ids.contains(&"anthropic/claude-fable-5"),
+            known_ids.contains(&"anthropic-api/claude-fable-5"),
             "known models should include Claude Fable 5: {:?}",
             known_ids
         );
         assert!(
-            known_ids.contains(&"anthropic/claude-opus-4-8"),
+            known_ids.contains(&"anthropic-api/claude-opus-4-8"),
             "known models should include Opus 4.8: {:?}",
             known_ids
         );
         assert!(
-            known_ids.contains(&"anthropic/claude-opus-4-7"),
+            known_ids.contains(&"anthropic-api/claude-opus-4-7"),
             "known models should include Opus 4.7: {:?}",
             known_ids
         );
@@ -615,11 +636,13 @@ mod tests {
             ModelEntry {
                 id: "model-a".to_string(),
                 provider: "ProviderA".to_string(),
+                auth: None,
                 is_current: false,
             },
             ModelEntry {
                 id: "model-b".to_string(),
                 provider: "ProviderB".to_string(),
+                auth: None,
                 is_current: false,
             },
         ];

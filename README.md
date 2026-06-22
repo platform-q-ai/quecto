@@ -531,9 +531,65 @@ Each endpoint registers an OpenAI-compatible provider named by `prefix`, so `spa
 
 For tailnet/LAN HTTP endpoints, set `allow_remote_http: true` on that endpoint or set `QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS=1`. HTTPS custom hosts are allowed for `openai_compatible` endpoints.
 
-If you intentionally want to use the built-in `openai` slot for a custom endpoint while an OpenAI OAuth credential exists, set `providers.openai.disable_codex_routing: true`; this makes the config `api_key` win for that slot and suppresses ChatGPT Codex routing.
+### Runtime model/provider registry (`models.json`)
 
-Credential precedence for built-in providers is otherwise: credential store (`quecto auth login`) > environment variable > config file. Environment overrides are applied while loading config, so `disable_codex_routing` uses the post-env config value. An existing valid `openai` OAuth credential overrides `providers.openai.api_key` unless `disable_codex_routing` is enabled.
+Use `~/.quecto/models.json` for community-extensible providers and model metadata. The running agent watches both `config.json` and `models.json`; opening `/model`, changing model, or sending the next turn reloads changes without restarting quecto or quecto-tui.
+
+Auth modes are explicit provider keys. The built-in vendor slots are split so quecto never silently switches between OAuth monthly-plan credentials and token-billed API keys:
+
+- `openai-api/...` uses `providers.openai.api_key` / `QUECTO_PROVIDERS_OPENAI_API_KEY`.
+- `openai-oauth/...` uses the stored `quecto auth login openai` credential.
+- `anthropic-api/...` uses `providers.anthropic.api_key` / `QUECTO_PROVIDERS_ANTHROPIC_API_KEY`.
+- `anthropic-oauth/...` uses the stored `quecto auth login anthropic` credential.
+
+Community providers use the same explicit model. API-key providers are fully data-driven. OAuth providers may reference only kernel-known OAuth identities (`openai`, `anthropic`); adding a brand-new OAuth identity requires kernel code because OAuth client IDs, scopes, token URLs, and refresh handling are security-sensitive.
+
+Example: Anthropic API key alongside Anthropic OAuth:
+
+```json
+{
+  "providers": {
+    "anthropic-api": {
+      "api": "anthropic-messages",
+      "baseUrl": "https://api.anthropic.com",
+      "auth": { "mode": "apiKey", "apiKey": "$ANTHROPIC_API_KEY" },
+      "models": [
+        { "id": "claude-opus-4-8", "name": "Claude Opus 4.8 (API)" }
+      ]
+    },
+    "anthropic-oauth": {
+      "api": "anthropic-messages",
+      "auth": { "mode": "oauth", "oauthProvider": "anthropic" },
+      "models": [
+        { "id": "claude-opus-4-8", "name": "Claude Opus 4.8 (OAuth)" }
+      ]
+    }
+  }
+}
+```
+
+Example: OpenAI-compatible API provider with slashful model IDs:
+
+```json
+{
+  "providers": {
+    "fireworks": {
+      "api": "openai-completions",
+      "baseUrl": "https://api.fireworks.ai/inference/v1",
+      "auth": { "mode": "apiKey", "apiKey": "$FIREWORKS_API_KEY" },
+      "models": [
+        { "id": "accounts/fireworks/models/glm-5p2", "name": "GLM 5.2" }
+      ]
+    }
+  }
+}
+```
+
+Supported provider fields: `api` (`openai-completions` or `anthropic-messages`), `baseUrl`/`apiBase`, `auth`, `authHeader`, `allowRemoteHttp`, and `models`. API keys support `$ENV` and `${ENV}` interpolation. Supported model fields include `id`, `name`, `reasoning`, `input`, `contextWindow`, `maxTokens`, and `cost` (`input`, `output`, `cacheRead`, `cacheWrite`).
+
+To use an OAuth-backed registry provider, first run `quecto auth login openai` or `quecto auth login anthropic`, then select the registry provider key (for example `/model anthropic-oauth/claude-opus-4-8`). The `/model` selector shows `[apiKey]` or `[oauth]` so the billing/auth mode is visible before selection.
+
+`providers.openai_compatible.endpoints` remains supported for OpenAI-compatible API-key endpoints, but `models.json` is preferred when you want those models to appear in `/model`.
 
 ### Exec behaviour
 

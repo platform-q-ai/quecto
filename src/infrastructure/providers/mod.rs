@@ -151,6 +151,28 @@ pub fn create_provider_with_client(
     }
 }
 
+/// Create an OpenAI-compatible/built-in provider with an explicit router prefix.
+pub fn create_named_openai_provider_with_client(
+    provider_name: &str,
+    api_key: String,
+    api_base: Option<String>,
+    client: reqwest::Client,
+    include_oauth_headers: bool,
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    if let Some(ref base) = api_base {
+        validate_provider_api_base("openai", base)?;
+    }
+    Ok(Arc::new(
+        openai::OpenAiProvider::with_client_and_name_and_oauth_headers(
+            provider_name,
+            api_key,
+            api_base,
+            client,
+            include_oauth_headers,
+        ),
+    ))
+}
+
 /// Create the built-in OpenAI provider with explicit OAuth-header control.
 pub fn create_openai_provider_with_client(
     api_key: String,
@@ -202,6 +224,36 @@ pub fn create_openai_compatible_provider(
             client,
             false,
         ),
+    ))
+}
+
+/// Create an Anthropic-compatible provider with a custom router prefix.
+///
+/// This uses the kernel-owned Anthropic Messages wire protocol while letting
+/// `models.json` expose distinct provider keys such as `anthropic-api` and
+/// `anthropic-oauth`.
+pub fn create_anthropic_compatible_provider(
+    prefix: &str,
+    api_key: String,
+    api_base: Option<String>,
+    allow_remote_http: bool,
+    client: reqwest::Client,
+) -> Result<Arc<dyn LlmProvider>, ProviderFactoryError> {
+    let prefix = prefix.trim();
+    if prefix.is_empty()
+        || prefix.contains('/')
+        || RESERVED_PROVIDER_PREFIXES
+            .iter()
+            .any(|reserved| prefix.eq_ignore_ascii_case(reserved))
+    {
+        return Err(ProviderFactoryError::UnknownProvider(prefix.to_string()));
+    }
+    if let Some(ref base) = api_base {
+        let allow_remote_http = allow_remote_http || allow_custom_provider_hosts();
+        validate_provider_api_base_with_options(prefix, base, allow_remote_http, true)?;
+    }
+    Ok(Arc::new(
+        anthropic::AnthropicProvider::with_client_and_name(api_key, api_base, client, prefix),
     ))
 }
 

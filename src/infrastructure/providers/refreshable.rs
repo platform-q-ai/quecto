@@ -44,8 +44,14 @@ pub struct RefreshableConfig {
     pub inner: Arc<dyn LlmProvider>,
     /// Credential store for checking/persisting tokens.
     pub store: Arc<CredentialStore>,
-    /// Provider name (e.g. "anthropic", "openai").
+    /// Router-facing provider name (e.g. "anthropic", "anthropic-oauth").
+    /// This is the routing prefix returned by `name()`.
     pub provider_name: String,
+    /// Credential-store identity used to look up and refresh the OAuth token
+    /// (e.g. "anthropic"). For built-in slots this equals `provider_name`; for
+    /// registry providers it is the referenced kernel OAuth provider, which may
+    /// differ from the router prefix.
+    pub credential_provider: String,
     /// Function to refresh the OAuth token.
     pub refresh_fn: RefreshFn,
     /// Function to rebuild the provider with a new API key.
@@ -58,6 +64,7 @@ pub struct RefreshableProvider {
     inner: RwLock<Arc<dyn LlmProvider>>,
     store: Arc<CredentialStore>,
     provider_name: String,
+    credential_provider: String,
     refresh_fn: RefreshFn,
     factory: ProviderFactory,
 }
@@ -66,6 +73,7 @@ impl std::fmt::Debug for RefreshableProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RefreshableProvider")
             .field("provider_name", &self.provider_name)
+            .field("credential_provider", &self.credential_provider)
             .finish()
     }
 }
@@ -77,6 +85,7 @@ impl RefreshableProvider {
             inner: RwLock::new(config.inner),
             store: config.store,
             provider_name: config.provider_name,
+            credential_provider: config.credential_provider,
             refresh_fn: config.refresh_fn,
             factory: config.factory,
         }
@@ -91,7 +100,7 @@ impl RefreshableProvider {
     /// Check if the provider has an OAuth credential with a refresh token.
     fn has_refreshable_credential(&self) -> bool {
         let creds = self.store.load_snapshot().unwrap_or_default();
-        if let Some(cred) = creds.get(&self.provider_name) {
+        if let Some(cred) = creds.get(&self.credential_provider) {
             cred.method == AuthMethod::OAuth && cred.refresh_token.is_some()
         } else {
             false
@@ -102,7 +111,7 @@ impl RefreshableProvider {
     /// expired (or within the persisted expiry margin).
     fn credential_needs_refresh(&self) -> bool {
         let creds = self.store.load_snapshot().unwrap_or_default();
-        if let Some(cred) = creds.get(&self.provider_name) {
+        if let Some(cred) = creds.get(&self.credential_provider) {
             cred.method == AuthMethod::OAuth && cred.refresh_token.is_some() && cred.is_expired()
         } else {
             false
@@ -130,7 +139,7 @@ impl RefreshableProvider {
             "stored OAuth token expired before stream — attempting pre-emptive refresh"
         );
 
-        match (self.refresh_fn)(self.store.clone(), &self.provider_name).await {
+        match (self.refresh_fn)(self.store.clone(), &self.credential_provider).await {
             Ok(new_token) => {
                 tracing::info!(
                     provider = self.provider_name.as_str(),
@@ -290,7 +299,7 @@ impl RefreshableProvider {
                 // can use it independently of the original borrow.
                 let owned = OwnedRequest::from(&request);
 
-                match (self.refresh_fn)(self.store.clone(), &self.provider_name).await {
+                match (self.refresh_fn)(self.store.clone(), &self.credential_provider).await {
                     Ok(new_token) => {
                         tracing::info!(
                             provider = self.provider_name.as_str(),

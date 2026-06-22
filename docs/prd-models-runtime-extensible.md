@@ -32,8 +32,9 @@
   `tests/features/runtime_reload_phase2b.feature`. The FR1 autonomy contract for
   config-backed providers — "model added mid-session works next turn" — is now
   complete for surface #2.
-- **Phase 3 — not started.** No runtime `ModelRegistry`, no `~/.quecto/models.json`,
-  no runtime TUI model list, no FR5 value resolution.
+- **Phase 3 — implemented.** Runtime `ModelRegistry`, `~/.quecto/models.json`,
+  TUI `/model` hot reload, explicit API-key/OAuth auth modes, and FR5 value
+  resolution are shipped.
 - **Gemini fast-follow — not started.** Native `google-generative-ai` remains a
   later kernel wire-protocol implementation.
 
@@ -240,7 +241,7 @@ norm.
   becomes that built-in pack, not a hardcoded selector constant.
 - `~/.quecto/models.json` **follows pi's providers-own-their-models shape**:
   providers are keyed objects carrying their own `models[]`, an explicit `api`
-  (wire protocol), `baseUrl`, and key/headers. Model `id` is opaque; metadata is
+  (wire protocol), `baseUrl`, and explicit `auth` (`apiKey` or `oauth`). Model `id` is opaque; metadata is
   optional with graceful defaults.
   ```json
   {
@@ -377,7 +378,7 @@ norm.
   note:** the shared gate and the models/providers UDS top-of-turn, `set_model`,
   and explicit `reload` wiring are shipped.
 - **Value resolution (FR5):** `$ENV`/`${ENV}`/literal with `$$` escapes,
-  resolved at request time; `models.json` never executes commands.
+  resolved when the registry is loaded/reloaded; `models.json` never executes commands.
 - **Stays out of the kernel:** no community wire protocols (ADR-0001), no UDS
   `register_provider` (ADR-0003), no `LlmProvider` trait change. Everything new is
   data + a reload path + one new (kernel-owned) wire impl.

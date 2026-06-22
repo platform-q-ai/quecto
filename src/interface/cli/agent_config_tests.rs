@@ -91,7 +91,7 @@ fn test_build_agent_provider_rejects_unapproved_api_base_host() {
     assert!(
         result
             .unwrap_err()
-            .contains("openai provider configuration error")
+            .contains("openai-api provider configuration error")
     );
 }
 
@@ -214,7 +214,7 @@ fn test_build_agent_provider_disable_codex_routing_prefers_config_key() {
     let provider = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap();
     let messages = vec![Message::user("Hi")];
     let response = rt
-        .block_on(provider.chat(chat_request(&messages, "openai/custom-model")))
+        .block_on(provider.chat(chat_request(&messages, "openai-api/custom-model")))
         .unwrap();
     assert_eq!(
         response.content.as_deref(),
@@ -339,4 +339,175 @@ fn test_build_agent_provider_allows_models_json_remote_http_when_explicit() {
     let result = build_agent_provider(&config, tmp.path(), &reqwest::Client::new());
 
     assert!(result.is_ok(), "{result:?}");
+}
+
+/// Downcast the built provider to a `ProviderRouter` and return its provider names.
+fn router_provider_names(
+    provider: &std::sync::Arc<dyn crate::domain::provider::LlmProvider>,
+) -> Vec<String> {
+    let router = provider
+        .as_any()
+        .downcast_ref::<crate::infrastructure::providers::router::ProviderRouter>()
+        .expect("build_agent_provider should return a ProviderRouter");
+    router
+        .provider_names()
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+#[test]
+fn test_build_agent_provider_registry_anthropic_api_key_provider() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"anthropic-api":{"api":"anthropic-messages","baseUrl":"https://api.anthropic.com","auth":{"mode":"apiKey","apiKey":"sk-ant-direct"},"models":[{"id":"claude-opus-4-8"}]}}}"#,
+    )
+    .unwrap();
+    let config = config_from_str(r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
+
+    let provider = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap();
+    let names = router_provider_names(&provider);
+    assert!(
+        names.iter().any(|n| n == "anthropic-api"),
+        "expected anthropic-api provider, got: {names:?}"
+    );
+}
+
+#[test]
+fn test_build_agent_provider_registry_oauth_provider() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    store
+        .store(Credential {
+            provider: "anthropic".to_string(),
+            token: "sk-ant-oat01-valid".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(i64::MAX),
+            refresh_token: Some("rt".to_string()),
+            account_id: None,
+        })
+        .unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"anthropic-oauth":{"api":"anthropic-messages","auth":{"mode":"oauth","oauthProvider":"anthropic"},"models":[{"id":"claude-opus-4-8"}]}}}"#,
+    )
+    .unwrap();
+    let config = config_from_str(r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
+
+    let provider = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap();
+    let names = router_provider_names(&provider);
+    assert!(
+        names.iter().any(|n| n == "anthropic-oauth"),
+        "expected anthropic-oauth provider, got: {names:?}"
+    );
+}
+
+#[test]
+fn test_build_agent_provider_registry_oauth_unknown_provider_rejected() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"cohere-oauth":{"api":"openai-completions","auth":{"mode":"oauth","oauthProvider":"cohere"},"models":[{"id":"m"}]}}}"#,
+    )
+    .unwrap();
+    let config = config_from_str(r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
+
+    let result = build_agent_provider(&config, tmp.path(), &reqwest::Client::new());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("not a kernel OAuth provider"),
+        "expected kernel-OAuth rejection, got: {err}"
+    );
+}
+
+#[test]
+fn test_build_agent_provider_registry_oauth_rejects_non_canonical_base_url() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    store
+        .store(Credential {
+            provider: "anthropic".to_string(),
+            token: "sk-ant-oat01-valid".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(i64::MAX),
+            refresh_token: Some("rt".to_string()),
+            account_id: None,
+        })
+        .unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"evil-oauth":{"api":"anthropic-messages","baseUrl":"https://attacker.example","auth":{"mode":"oauth","oauthProvider":"anthropic"},"models":[{"id":"claude-opus-4-8"}]}}}"#,
+    )
+    .unwrap();
+    let config = config_from_str(r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
+
+    let result = build_agent_provider(&config, tmp.path(), &reqwest::Client::new());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("not the canonical OAuth host"),
+        "expected canonical-host rejection, got: {err}"
+    );
+}
+
+#[test]
+fn test_build_agent_provider_registry_openai_oauth_uses_default_base_url() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    store
+        .store(Credential {
+            provider: "openai".to_string(),
+            token: "sk-oauth-token".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(i64::MAX),
+            refresh_token: Some("rt".to_string()),
+            account_id: None,
+        })
+        .unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{"openai-oauth-custom":{"api":"openai-completions","auth":{"mode":"oauth","oauthProvider":"openai"},"models":[{"id":"gpt-5.5"}]}}}"#,
+    )
+    .unwrap();
+    let config = config_from_str(r#"{"providers":{"anthropic":{"api_key":"sk-ant"}}}"#);
+
+    let provider = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap();
+    let names = router_provider_names(&provider);
+    assert!(
+        names.iter().any(|n| n == "openai-oauth-custom"),
+        "got: {names:?}"
+    );
+}
+
+#[test]
+fn test_build_agent_provider_oauth_and_api_key_coexist_for_same_vendor() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store = CredentialStore::new(tmp.path());
+    store
+        .store(Credential {
+            provider: "anthropic".to_string(),
+            token: "sk-ant-oat01-valid".to_string(),
+            method: AuthMethod::OAuth,
+            expires_at: Some(i64::MAX),
+            refresh_token: Some("rt".to_string()),
+            account_id: None,
+        })
+        .unwrap();
+    std::fs::write(
+        tmp.path().join("models.json"),
+        r#"{"providers":{
+            "anthropic-oauth":{"api":"anthropic-messages","auth":{"mode":"oauth","oauthProvider":"anthropic"},"models":[{"id":"claude-opus-4-8"}]},
+            "anthropic-api":{"api":"anthropic-messages","baseUrl":"https://api.anthropic.com","auth":{"mode":"apiKey","apiKey":"sk-ant-direct"},"models":[{"id":"claude-opus-4-8"}]}
+        }}"#,
+    )
+    .unwrap();
+    let config = config_from_str(r#"{"providers":{"openai":{"api_key":"sk-test"}}}"#);
+
+    let provider = build_agent_provider(&config, tmp.path(), &reqwest::Client::new()).unwrap();
+    let names = router_provider_names(&provider);
+    assert!(
+        names.iter().any(|n| n == "anthropic-oauth"),
+        "got: {names:?}"
+    );
+    assert!(names.iter().any(|n| n == "anthropic-api"), "got: {names:?}");
 }
