@@ -151,6 +151,31 @@ impl App {
         });
     }
 
+    /// Request session stats for a quiet footer-only refresh (no chat Status
+    /// line). Routed by the "stats-footer" id in the response handler.
+    pub(super) fn send_session_stats_footer(&mut self) {
+        self.send_command(Command::GetSessionStats {
+            id: Some("stats-footer".into()),
+        });
+    }
+
+    /// Update the footer's context/cost indicators from a session-stats
+    /// payload without emitting a chat entry.
+    pub(super) fn update_footer_stats(&mut self, data: &serde_json::Value) {
+        let context_tokens = data.get("contextTokens").and_then(|v| v.as_u64());
+        let max_context_tokens = data
+            .get("maxContextTokens")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize);
+        if let (Some(used), Some(window)) = (context_tokens, max_context_tokens) {
+            self.footer.update_context_usage(used, window);
+            self.context_stats_requested = true;
+        }
+        let cost = data.get("cost").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        self.footer
+            .set_cost(if cost > 0.0 { Some(cost) } else { None });
+    }
+
     pub(super) fn send_list_sessions(&mut self) {
         self.send_command(Command::ListSessions {
             id: Some("resume-list".into()),
@@ -197,6 +222,8 @@ impl App {
             self.footer.update_context_usage(used, window);
             self.context_stats_requested = true;
         }
+        self.footer
+            .set_cost(if cost > 0.0 { Some(cost) } else { None });
 
         self.chat.add_entry(ChatEntry::Status {
             text: format!(
