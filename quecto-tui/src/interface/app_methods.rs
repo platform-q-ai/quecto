@@ -369,7 +369,7 @@ impl App {
     }
 
     /// Build the below-chat section (sub-agent panel → workflow bar → spinner →
-    /// autocomplete → editor → widgets-below → notifications → footer). This is
+    /// autocomplete → editor → notifications → footer). This is
     /// the region whose height changes reflow the chat, so the headless harness
     /// captures it directly to assert on layout stability.
     pub(super) fn compose_bottom(&mut self, width: usize) -> Vec<String> {
@@ -415,8 +415,6 @@ impl App {
         bottom.extend(self.files_autocomplete.render(width));
         // Editor.
         bottom.extend(self.editor.render(width));
-        // Widgets below editor.
-        bottom.extend(self.widgets_below.render(width));
         // Notifications.
         bottom.extend(self.notifications.render(width));
         // Footer.

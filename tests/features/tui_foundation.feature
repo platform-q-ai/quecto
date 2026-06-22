@@ -98,12 +98,6 @@ Feature: TUI Foundation
     Then the rendered output should have more than 1 line
     And every rendered line should be at most 30 visible characters
 
-  @tui @pending
-  Scenario: Container renders children in order
-    Given a container with child text "Line A" and child text "Line B"
-    When the component renders at width 80
-    Then the rendered output should contain "Line A" before "Line B"
-
   # ---------------------------------------------------------------------------
   # Differential Renderer
   # ---------------------------------------------------------------------------
