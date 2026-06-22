@@ -18,6 +18,7 @@ with no name to list them.
 | Need | Read first (`docs` name) |
 |---|---|
 | Understand Quecto's agent loop, built-in tools, configuration, sessions, or provider behavior | `readme` |
+| Add, edit, or explain runtime models/providers in `~/.quecto/models.json` (API key vs OAuth, hot reload, provider keys) | `models-providers` |
 | Manage long-running context, persisted sessions, spill/recall, pruning, or conversation recovery | `sessions` |
 | Add or reason about new agent tools and prompt snippets through extensions | `extensions` |
 | Delegate work, spawn child agents, steer/follow up, inspect child state, or recover subagent output | `subagents` |
