@@ -53,6 +53,22 @@ pub fn estimate_total_tokens(messages: &[Message]) -> usize {
 /// Estimate tokens for a single message including image blocks.
 pub fn estimate_message_tokens(msg: &Message) -> usize {
     let text_tokens = estimate_tokens(&msg.content);
+    // Assistant tool-call requests: the function name and JSON-encoded
+    // arguments are serialized into every subsequent request, so they
+    // occupy real context. Streaming OpenAI-compatible providers (e.g.
+    // Fireworks) report no `usage`, so this estimate is the only signal —
+    // omitting tool calls under-reports tool-heavy turns dramatically.
+    let tool_call_tokens: usize = msg
+        .tool_calls
+        .iter()
+        .map(|tc| estimate_tokens(&tc.name) + estimate_tokens(&tc.arguments))
+        .sum();
+    // Tool-result messages carry the tool_call_id they respond to.
+    let tool_call_id_tokens = msg
+        .tool_call_id
+        .as_deref()
+        .map(estimate_tokens)
+        .unwrap_or(0);
     // Count user-message inline images.
     let user_image_tokens: usize = msg
         .user_image_blocks
@@ -64,7 +80,7 @@ pub fn estimate_message_tokens(msg: &Message) -> usize {
         .iter()
         .map(|img| estimate_tokens(&img.data))
         .sum();
-    text_tokens + image_tokens + user_image_tokens
+    text_tokens + tool_call_tokens + tool_call_id_tokens + image_tokens + user_image_tokens
 }
 
 /// Truncate a string to at most `max_chars` characters, appending "..."
@@ -422,7 +438,8 @@ mod tests {
             mime_type: "image/png",
             data: "x".repeat(300), // div_ceil(300,4)=75 tokens image
         }];
-        assert_eq!(estimate_message_tokens(&msg), 76); // 1 text + 75 image
+        // 1 text + 75 image + 2 for tool_call_id "call_1" (div_ceil(6,4)=2)
+        assert_eq!(estimate_message_tokens(&msg), 78);
     }
 
     #[test]

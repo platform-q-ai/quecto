@@ -63,10 +63,15 @@ impl App {
 
     fn handle_turn_end(&mut self, message: serde_json::Value) {
         self.chat.finalize_assistant();
-        let Some(usage) = message.get("usage") else {
-            return;
-        };
-        let total = usage.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+        // `usage` is absent on streaming OpenAI-compatible providers (e.g.
+        // Fireworks) because their SSE stream does not carry token counts.
+        // Don't gate context-gauge updates on it — `contextTokens` is emitted
+        // independently and must still drive the footer.
+        let total = message
+            .get("usage")
+            .and_then(|u| u.get("total"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         let context_tokens = message.get("contextTokens").and_then(|v| v.as_u64());
         if let (Some(used), Some(window)) = (
             context_tokens,
@@ -354,6 +359,27 @@ mod tests {
             tool_results: vec![],
         });
         assert!(app.context_stats_requested);
+    }
+
+    #[tokio::test]
+    async fn handles_turn_end_context_tokens_without_usage_field() {
+        // Streaming OpenAI-compatible providers (e.g. Fireworks) emit
+        // `contextTokens`/`maxContextTokens` but no `usage`. The footer must
+        // still update rather than bailing out early on the missing `usage`.
+        let mut app = test_app().await;
+        app.handle_event(Event::TurnEnd {
+            message: serde_json::json!({
+                "contextTokens": 40,
+                "maxContextTokens": 100
+            }),
+            tool_results: vec![],
+        });
+        assert!(app.context_stats_requested);
+        let rendered = app.footer.render(80).join("\n");
+        assert!(
+            rendered.contains("40/100"),
+            "footer should use contextTokens even without usage: {rendered}"
+        );
     }
 
     #[tokio::test]

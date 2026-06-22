@@ -3,7 +3,7 @@
 //! Extracted from `openai.rs` to keep both files under the 750-line limit.
 //! Uses the shared SSE pump from [`sse_common`].
 
-use crate::domain::message::{LlmResponse, ToolCall};
+use crate::domain::message::{LlmResponse, ToolCall, UsageInfo};
 use crate::domain::provider::StreamEvent;
 use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome, pump_sse};
 
@@ -13,6 +13,7 @@ use super::OpenAiProvider;
 struct OpenAiSseHandler {
     content: String,
     tool_calls: Vec<ToolCall>,
+    usage: Option<UsageInfo>,
 }
 
 impl OpenAiSseHandler {
@@ -20,6 +21,7 @@ impl OpenAiSseHandler {
         Self {
             content: String::new(),
             tool_calls: Vec::new(),
+            usage: None,
         }
     }
 
@@ -32,7 +34,7 @@ impl OpenAiSseHandler {
         LlmResponse {
             content,
             tool_calls: std::mem::take(&mut self.tool_calls),
-            usage: None,
+            usage: self.usage.take(),
             stop_reason: None,
             thinking_blocks: vec![],
         }
@@ -53,6 +55,18 @@ impl SseHandler for OpenAiSseHandler {
             return SseLineOutcome::Done;
         }
         if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(data) {
+            // Final usage chunk (requested via stream_options.include_usage).
+            // Emitted with an empty `choices` array and a populated `usage`.
+            if let Some(usage) = chunk.get("usage").and_then(|u| u.as_object()) {
+                self.usage = Some(UsageInfo {
+                    prompt_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0) as u32,
+                    completion_tokens: usage["completion_tokens"].as_u64().unwrap_or(0) as u32,
+                    cache_read_tokens: None,
+                    cache_write_tokens: None,
+                    context_tokens: None,
+                    cost: None,
+                });
+            }
             if let Some(choices) = chunk["choices"].as_array() {
                 for choice in choices {
                     let delta = &choice["delta"];
@@ -129,6 +143,38 @@ mod tests {
         handler.on_eof(&tx).await;
         match rx.recv().await.unwrap() {
             StreamEvent::Done(response) => assert!(response.content.is_none()),
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn handler_captures_usage_chunk_into_response() {
+        // With stream_options.include_usage, OpenAI-compatible providers emit
+        // a final chunk with empty choices and a populated usage object.
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        let mut handler = OpenAiSseHandler::new();
+
+        handler
+            .process_line(r#"data: {"choices":[{"delta":{"content":"hi"}}]}"#, &tx)
+            .await;
+        let _ = rx.recv().await; // TextDelta
+
+        let outcome = handler
+            .process_line(
+                r#"data: {"choices":[],"usage":{"prompt_tokens":1234,"completion_tokens":56,"total_tokens":1290}}"#,
+                &tx,
+            )
+            .await;
+        assert!(matches!(outcome, SseLineOutcome::Continue));
+
+        handler.on_eof(&tx).await;
+        match rx.recv().await.unwrap() {
+            StreamEvent::Done(response) => {
+                let usage = response.usage.expect("usage should be captured");
+                assert_eq!(usage.prompt_tokens, 1234);
+                assert_eq!(usage.completion_tokens, 56);
+                assert_eq!(response.content.as_deref(), Some("hi"));
+            }
             other => panic!("unexpected event: {other:?}"),
         }
     }
