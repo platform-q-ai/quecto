@@ -202,7 +202,7 @@ pub fn build_agent_provider(
             &store_arc,
             &refresh_fn,
             http_client,
-            refresh_runtime(&mut refresh_rt)?,
+            &mut refresh_rt,
         )?
         else {
             continue;
@@ -258,16 +258,9 @@ fn registry_provider_factory(
     Arc::new(move |new_token: &str| -> Arc<dyn LlmProvider> {
         match provider_api {
             ProviderApi::OpenAiCompletions => {
-                let Some(base) = base.clone() else {
-                    return providers::create_openai_compatible_provider(
-                        &provider_prefix,
-                        new_token.to_string(),
-                        "https://api.openai.com/v1".to_string(),
-                        false,
-                        client.clone(),
-                    )
-                    .expect("default OpenAI-compatible provider should build");
-                };
+                let base = base
+                    .clone()
+                    .expect("OpenAI-compatible registry provider base should be validated");
                 providers::create_openai_compatible_provider(
                     &provider_prefix,
                     new_token.to_string(),
@@ -290,17 +283,75 @@ fn registry_provider_factory(
     })
 }
 
+fn oauth_registry_base_url(
+    model: &crate::infrastructure::model_registry::ModelRecord,
+    oauth_provider: &str,
+) -> Result<Option<String>, String> {
+    use crate::infrastructure::model_registry::ProviderApi;
+
+    let configured = model.base_url.as_ref().filter(|b| !b.trim().is_empty());
+    match (model.api, oauth_provider) {
+        (ProviderApi::OpenAiCompletions, "openai") => validate_oauth_base_url(
+            &model.provider,
+            oauth_provider,
+            configured,
+            "https://api.openai.com/v1",
+        )
+        .map(Some),
+        (ProviderApi::AnthropicMessages, "anthropic") => validate_oauth_base_url(
+            &model.provider,
+            oauth_provider,
+            configured,
+            "https://api.anthropic.com",
+        )
+        .map(Some),
+        (ProviderApi::OpenAiCompletions | ProviderApi::AnthropicMessages, _) => Err(format!(
+            "models.json provider '{}' uses oauthProvider '{}' with incompatible api {:?}",
+            model.provider, oauth_provider, model.api
+        )),
+        (ProviderApi::GoogleGenerativeAi, _) => Ok(configured.cloned()),
+    }
+}
+
+fn validate_oauth_base_url(
+    provider_key: &str,
+    oauth_provider: &str,
+    configured: Option<&String>,
+    canonical: &str,
+) -> Result<String, String> {
+    let Some(configured) = configured else {
+        return Ok(canonical.to_string());
+    };
+    let configured_url = reqwest::Url::parse(configured).map_err(|e| {
+        format!(
+            "models.json provider '{}' has invalid OAuth baseUrl '{}': {}",
+            provider_key, configured, e
+        )
+    })?;
+    let canonical_url = reqwest::Url::parse(canonical).expect("canonical OAuth base URL is valid");
+    if configured_url.scheme() == canonical_url.scheme()
+        && configured_url.host_str() == canonical_url.host_str()
+        && configured_url.port_or_known_default() == canonical_url.port_or_known_default()
+    {
+        return Ok(configured.clone());
+    }
+    Err(format!(
+        "models.json provider '{}' uses oauth auth for '{}' but baseUrl '{}' is not the canonical OAuth host '{}'",
+        provider_key, oauth_provider, configured, canonical
+    ))
+}
+
 fn build_registry_provider(
     model: &crate::infrastructure::model_registry::ModelRecord,
     _base_dir: &std::path::Path,
     store: &Arc<CredentialStore>,
     refresh_fn: &crate::infrastructure::providers::refreshable::RefreshFn,
     http_client: &reqwest::Client,
-    refresh_rt: &tokio::runtime::Runtime,
+    refresh_rt: &mut Option<tokio::runtime::Runtime>,
 ) -> Result<Option<Arc<dyn LlmProvider>>, String> {
     use crate::infrastructure::model_registry::{AuthMode, ProviderApi};
 
-    let api_base = model.base_url.clone();
+    let mut api_base = model.base_url.clone();
     let auth_key = match model.auth {
         AuthMode::ApiKey => {
             let Some(key) = model.api_key.as_ref().filter(|k| !k.is_empty()) else {
@@ -329,11 +380,12 @@ fn build_registry_provider(
             if cred.method != crate::infrastructure::auth::credential_store::AuthMethod::OAuth {
                 return Ok(None);
             }
+            api_base = oauth_registry_base_url(model, oauth_provider)?;
             crate::interface::shared::resolve_api_key_with_refresh(
                 "",
                 store,
                 oauth_provider,
-                refresh_rt,
+                refresh_runtime(refresh_rt)?,
             )
         }
     };
