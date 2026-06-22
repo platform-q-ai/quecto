@@ -47,6 +47,12 @@ impl Spinner {
     pub fn frame_index(&self) -> usize {
         self.frame
     }
+
+    /// Current status message text (for tests / diagnostics).
+    #[cfg(test)]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
 }
 
 impl Component for Spinner {

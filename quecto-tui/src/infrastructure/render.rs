@@ -297,4 +297,120 @@ mod tests {
         assert!(output.contains("y"));
         assert!(output.contains("z"));
     }
+
+    // ── invalidate() ───────────────────────────────────────────────────
+
+    #[test]
+    fn invalidate_forces_full_redraw_on_next_render() {
+        use std::sync::{Arc, Mutex};
+
+        struct SharedWriter(Arc<Mutex<Vec<u8>>>);
+        impl Write for SharedWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let mut r = DiffRenderer::new(SharedWriter(buf.clone()));
+
+        // Initial render.
+        r.render(&lines(&["alpha", "beta"]), 80);
+        buf.lock().unwrap().clear();
+
+        // Render identical content → should be a no-op diff (no content).
+        r.render(&lines(&["alpha", "beta"]), 80);
+        let diff_output = {
+            let data = buf.lock().unwrap().clone();
+            String::from_utf8_lossy(&data).to_string()
+        };
+        assert!(
+            !diff_output.contains("alpha"),
+            "identical render should not re-emit: {diff_output}"
+        );
+
+        // Invalidate → next render must be full.
+        r.invalidate();
+        buf.lock().unwrap().clear();
+
+        r.render(&lines(&["alpha", "beta"]), 80);
+        let full_output = {
+            let data = buf.lock().unwrap().clone();
+            String::from_utf8_lossy(&data).to_string()
+        };
+        assert!(
+            full_output.contains("alpha"),
+            "after invalidate, identical content must be fully redrawn: {full_output}"
+        );
+        assert!(
+            full_output.contains("beta"),
+            "after invalidate, all lines must be redrawn: {full_output}"
+        );
+    }
+
+    #[test]
+    fn invalidate_clears_width_change_detection() {
+        // After invalidate, a render at the same width as before should still
+        // do a full render (because previous_width was reset to 0).
+        let output = captured_render_with_invalidate(&["hello"], 80, &["hello"], 80);
+        assert!(
+            output.contains("hello"),
+            "after invalidate, same-width render should be full: {output}"
+        );
+    }
+
+    #[test]
+    fn invalidate_after_width_change_still_full_redraw() {
+        // If width changed AND invalidate was called, should still full-render.
+        // After invalidate, previous_width is reset to 0, so the width-changed
+        // path (which requires previous_width != 0) is NOT taken — instead
+        // the first-render path fires, which does NOT clear the screen.
+        let output = captured_render_with_invalidate(&["hello"], 80, &["hello"], 120);
+        assert!(
+            output.contains("hello"),
+            "after invalidate + width change, should be full: {output}"
+        );
+        // first-render path does NOT emit \x1b[2J (no screen clear).
+        assert!(
+            !output.contains("\x1b[2J"),
+            "after invalidate, first-render path should NOT clear screen: {output}"
+        );
+    }
+
+    /// Helper: render `prev` at `width_prev`, invalidate, then render `next`
+    /// at `width_next`, returning only the second render's output.
+    fn captured_render_with_invalidate(
+        prev: &[&str],
+        width_prev: usize,
+        next: &[&str],
+        width_next: usize,
+    ) -> String {
+        use std::sync::{Arc, Mutex};
+
+        struct SharedWriter(Arc<Mutex<Vec<u8>>>);
+        impl Write for SharedWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let mut r = DiffRenderer::new(SharedWriter(buf.clone()));
+
+        r.render(&lines(prev), width_prev);
+        r.invalidate();
+        buf.lock().unwrap().clear();
+        r.render(&lines(next), width_next);
+
+        let data = buf.lock().unwrap().clone();
+        String::from_utf8_lossy(&data).to_string()
+    }
 }

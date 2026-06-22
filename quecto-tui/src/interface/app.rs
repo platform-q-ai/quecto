@@ -8,6 +8,8 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use app_selection::TextSelection;
+
 use tokio::sync::mpsc;
 
 use crate::infrastructure::client::{Client, Command, Event};
@@ -92,22 +94,6 @@ fn builtin_commands() -> Vec<SlashCommand> {
             description: "Toggle workflow completion nudge".into(),
         },
     ]
-}
-
-/// Mouse selection anchor for click-and-drag text copy (#528).
-#[derive(Debug, Clone, Copy)]
-struct SelectionAnchor {
-    col: u16,
-    row: u16,
-}
-
-/// Active text selection (from mouse press to release) (#528).
-#[derive(Debug, Clone)]
-struct TextSelection {
-    /// Where the mouse was pressed.
-    start: SelectionAnchor,
-    /// Current drag position (updated on mouse motion).
-    end: SelectionAnchor,
 }
 
 /// Application state.
@@ -269,6 +255,8 @@ mod app_models;
 mod app_response;
 #[path = "app_rewind.rs"]
 mod app_rewind;
+#[path = "app_selection.rs"]
+mod app_selection;
 #[path = "app_subagents.rs"]
 mod app_subagents;
 
@@ -319,106 +307,6 @@ fn base64_encode(data: &[u8]) -> String {
         } else {
             result.push('=');
         }
-    }
-    result
-}
-
-/// Normalize a selection into (start_row, start_col, end_row, end_col) order (#546).
-/// Ensures start ≤ end regardless of drag direction.
-fn selection_range(sel: &TextSelection) -> (u16, u16, u16, u16) {
-    let (sr, sc, er, ec) = if sel.start.row < sel.end.row
-        || (sel.start.row == sel.end.row && sel.start.col <= sel.end.col)
-    {
-        (sel.start.row, sel.start.col, sel.end.row, sel.end.col)
-    } else {
-        (sel.end.row, sel.end.col, sel.start.row, sel.start.col)
-    };
-    (sr, sc, er, ec)
-}
-
-/// Apply mouse selection highlight to rendered lines (#546).
-fn apply_selection_highlight(selection: &Option<TextSelection>, lines: &mut [String]) {
-    let Some(sel) = selection else { return };
-    let (sr, sc, er, ec) = selection_range(sel);
-    for row_idx in sr..=er {
-        if (row_idx as usize) < lines.len() {
-            let line_start = if row_idx == sr { sc } else { 0 };
-            let line_end = if row_idx == er {
-                ec
-            } else {
-                crate::interface::utils::visible_width(&lines[row_idx as usize]) as u16
-            };
-            lines[row_idx as usize] =
-                apply_line_highlight(&lines[row_idx as usize], line_start, line_end);
-        }
-    }
-}
-
-/// Apply reverse-video highlighting to a range of visible columns in a line (#546).
-///
-/// Takes a rendered line (may contain ANSI escapes) and highlights columns
-/// `start_col..end_col` (0-indexed, exclusive end) by wrapping visible chars
-/// in that range with `\x1b[7m` (reverse) and `\x1b[27m` (reverse off).
-fn apply_line_highlight(line: &str, start_col: u16, end_col: u16) -> String {
-    if start_col >= end_col {
-        return line.to_string();
-    }
-    let mut result = String::with_capacity(line.len() + 20);
-    let mut vis_col: u16 = 0;
-    let mut in_esc = false;
-    let mut in_osc = false;
-    let mut highlighted = false;
-    let chars: Vec<char> = line.chars().collect();
-    let mut i = 0;
-
-    while i < chars.len() {
-        let ch = chars[i];
-        // Pass through ANSI escape sequences without counting columns.
-        if in_osc {
-            result.push(ch);
-            if ch == '\x07' {
-                in_osc = false;
-            } else if ch == '\x1b' && i + 1 < chars.len() && chars[i + 1] == '\\' {
-                result.push(chars[i + 1]);
-                i += 2;
-                in_osc = false;
-                continue;
-            }
-            i += 1;
-            continue;
-        }
-        if in_esc {
-            result.push(ch);
-            if ch.is_ascii_alphabetic() || ch == '~' {
-                in_esc = false;
-            }
-            i += 1;
-            continue;
-        }
-        if ch == '\x1b' {
-            result.push(ch);
-            in_osc = i + 1 < chars.len() && chars[i + 1] == ']';
-            if !in_osc {
-                in_esc = true;
-            }
-            i += 1;
-            continue;
-        }
-        // Visible character — apply highlight bracketing.
-        if vis_col == start_col && !highlighted {
-            result.push_str("\x1b[7m");
-            highlighted = true;
-        }
-        result.push(ch);
-        vis_col += 1;
-        if vis_col == end_col && highlighted {
-            result.push_str("\x1b[27m");
-            highlighted = false;
-        }
-        i += 1;
-    }
-    if highlighted {
-        result.push_str("\x1b[27m");
     }
     result
 }
@@ -648,11 +536,7 @@ impl TrackedSubagent {
     fn new(info: crate::infrastructure::client::SubagentInfoEvent) -> Self {
         let now = tokio::time::Instant::now();
         let active = subagent_status_is_active(&info.status);
-        let exited_at = if info.status == STATUS_EXITED {
-            Some(now)
-        } else {
-            None
-        };
+        let exited_at = (info.status == STATUS_EXITED).then_some(now);
         Self {
             info,
             started_at: now,
@@ -697,7 +581,6 @@ impl TrackedSubagent {
 
 /// Remove exited subagents whose grace period has elapsed (#540).
 /// Returns `true` if any entries were removed.
-///
 /// While any sibling is still active, finished agents are kept on screen so the
 /// panel doesn't shrink mid-batch and jolt the chat above it — reclamation is
 /// deferred until the whole batch is quiescent (the panel then grows once and
@@ -714,16 +597,15 @@ fn gc_exited_subagents(
         return false;
     }
     let mut removed = false;
-    map.retain(|_, entry| {
-        if let Some(exited_at) = entry.exited_at {
+    map.retain(|_, entry| match entry.exited_at {
+        Some(exited_at) => {
             let keep = now.saturating_duration_since(exited_at) < grace;
             if !keep {
                 removed = true;
             }
             keep
-        } else {
-            true
         }
+        None => true,
     });
     removed
 }
@@ -731,6 +613,21 @@ fn gc_exited_subagents(
 #[cfg(test)]
 #[path = "app_cov_tests.rs"]
 mod app_cov_tests;
+#[cfg(test)]
+#[path = "app_event_loop_tests.rs"]
+mod app_event_loop_tests;
+#[cfg(test)]
+#[path = "app_methods_tests.rs"]
+mod app_methods_tests;
+#[cfg(test)]
+#[path = "app_rewind_response_tests.rs"]
+mod app_rewind_response_tests;
+#[cfg(test)]
+#[path = "app_selection_tests.rs"]
+mod app_selection_tests;
+#[cfg(test)]
+#[path = "app_subagents_tests.rs"]
+mod app_subagents_tests;
 #[cfg(test)]
 #[path = "app_chat_session_tests.rs"]
 mod chat_session_tests;

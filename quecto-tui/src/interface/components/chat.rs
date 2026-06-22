@@ -296,6 +296,9 @@ impl Component for Chat {
 mod chat_render;
 use chat_render::*;
 #[cfg(test)]
+#[path = "chat_render_tests.rs"]
+mod chat_render_tests;
+#[cfg(test)]
 #[path = "chat_integration_tests.rs"]
 mod integration_tests;
 #[cfg(test)]
