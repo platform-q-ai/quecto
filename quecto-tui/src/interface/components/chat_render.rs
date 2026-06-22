@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use super::*;
 
 pub(super) struct ToolRenderArgs<'a> {
@@ -605,10 +607,10 @@ pub(super) fn sanitize(s: &str) -> String {
 /// `visible_width` counts them as zero columns. Expanding to spaces against the
 /// visible column position keeps the background contiguous and width math
 /// correct. ANSI escape sequences are passed through without consuming columns.
-pub(super) fn expand_tabs(s: &str) -> String {
+pub(super) fn expand_tabs(s: &str) -> Cow<'_, str> {
     const TAB_STOP: usize = 8;
     if !s.contains('\t') {
-        return s.to_string();
+        return Cow::Borrowed(s);
     }
     let mut out = String::with_capacity(s.len());
     let mut col = 0;
@@ -650,7 +652,7 @@ pub(super) fn expand_tabs(s: &str) -> String {
         out.push(ch);
         col += unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
     }
-    out
+    Cow::Owned(out)
 }
 
 /// Truncate a string to max_chars, appending "..." if truncated.
