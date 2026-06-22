@@ -440,10 +440,13 @@ impl AgentLoopImpl {
         response: LlmResponse,
         iterations: u32,
         usage: UsageTotals,
+        pre_response_context_tokens: usize,
     ) -> AgentResult {
         let text = response.content.unwrap_or_default();
-        messages.push(Message::assistant(text.clone(), vec![]));
-        let context_tokens = context_pruning::estimate_total_tokens(messages);
+        let assistant_message = Message::assistant(text.clone(), vec![]);
+        let context_tokens = pre_response_context_tokens
+            .saturating_add(context_pruning::estimate_message_tokens(&assistant_message));
+        messages.push(assistant_message);
         AgentResult {
             response: text,
             tool_iterations: iterations,
@@ -654,6 +657,7 @@ impl AgentLoopImpl {
                     response,
                     iterations,
                     usage_totals,
+                    context_tokens,
                 ));
             }
 

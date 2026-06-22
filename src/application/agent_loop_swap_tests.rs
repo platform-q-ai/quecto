@@ -148,8 +148,14 @@ fn finalize_text_response_builds_result_and_appends_message() {
         stop_reason: None,
         thinking_blocks: vec![],
     };
-    let result =
-        AgentLoopImpl::finalize_text_response(&mut messages, resp, 3, UsageTotals::default());
+    let pre_response_tokens = context_pruning::estimate_total_tokens(&messages);
+    let result = AgentLoopImpl::finalize_text_response(
+        &mut messages,
+        resp,
+        3,
+        UsageTotals::default(),
+        pre_response_tokens,
+    );
     assert_eq!(result.response, "answer");
     assert_eq!(result.tool_iterations, 3);
     assert!(!result.iteration_limit_reached);
@@ -166,8 +172,14 @@ fn finalize_text_response_defaults_empty_content() {
         stop_reason: None,
         thinking_blocks: vec![],
     };
-    let result =
-        AgentLoopImpl::finalize_text_response(&mut messages, resp, 0, UsageTotals::default());
+    let pre_response_tokens = context_pruning::estimate_total_tokens(&messages);
+    let result = AgentLoopImpl::finalize_text_response(
+        &mut messages,
+        resp,
+        0,
+        UsageTotals::default(),
+        pre_response_tokens,
+    );
     assert!(result.response.is_empty());
     assert_eq!(messages.len(), 1);
 }
