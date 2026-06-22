@@ -1199,6 +1199,7 @@ fn given_provider_401_first(world: &mut QuectoWorld) {
         inner,
         store: store_arc,
         provider_name: "anthropic".to_string(),
+        credential_provider: "anthropic".to_string(),
         refresh_fn: make_bdd_refresh("sk-ant-oat01-fresh".to_string()),
         factory,
     });
@@ -1223,6 +1224,7 @@ fn given_provider_500(world: &mut QuectoWorld) {
         inner,
         store: store_arc,
         provider_name: "anthropic".to_string(),
+        credential_provider: "anthropic".to_string(),
         refresh_fn: make_bdd_refresh("unused".to_string()),
         factory,
     });
@@ -1242,6 +1244,7 @@ fn given_provider_success(world: &mut QuectoWorld) {
         inner,
         store: store_arc,
         provider_name: "anthropic".to_string(),
+        credential_provider: "anthropic".to_string(),
         refresh_fn: make_bdd_refresh("unused".to_string()),
         factory,
     });

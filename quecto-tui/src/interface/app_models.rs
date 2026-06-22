@@ -24,9 +24,15 @@ pub(super) fn parse_model_entries(data: &serde_json::Value) -> Vec<ModelEntry> {
                 .chars()
                 .filter(|c| !c.is_control())
                 .collect();
+            let auth = m
+                .get("auth")
+                .and_then(|v| v.as_str())
+                .map(|s| s.chars().filter(|c| !c.is_control()).collect::<String>())
+                .filter(|s| !s.is_empty());
             Some(ModelEntry {
                 id,
                 provider,
+                auth,
                 is_current: false,
             })
         })
@@ -35,13 +41,18 @@ pub(super) fn parse_model_entries(data: &serde_json::Value) -> Vec<ModelEntry> {
 
 impl App {
     pub(super) fn open_model_selector(&mut self) {
-        if self.model_registry.0.is_empty() && !self.model_registry.1 {
+        // On-consume reload (ADR-0002): always re-request the model list when the
+        // selector is opened so edits to `models.json` are reflected, not just on
+        // the first open. The kernel gates the underlying file read by mtime/hash,
+        // so this is cheap when nothing changed. We defer opening the selector
+        // until the fresh list arrives (handled in `handle_list_models`) so the
+        // list is always correct rather than a stale cached snapshot.
+        if !self.model_registry.1 {
             self.model_registry.1 = true;
             self.send_command(Command::ListModels {
                 id: Some("model-selector".into()),
             });
         }
-        self.open_model_selector_now();
     }
 
     pub(super) fn open_model_selector_now(&mut self) {
@@ -71,7 +82,15 @@ impl App {
     }
 
     pub(super) fn handle_list_models(&mut self, data: Option<serde_json::Value>) {
-        let Some(data) = data else { return };
+        let Some(data) = data else {
+            // No data on the response: clear the pending flag so a later open can
+            // re-request, and fall back to opening with whatever we have cached.
+            if self.model_registry.1 {
+                self.model_registry.1 = false;
+                self.open_model_selector_now();
+            }
+            return;
+        };
         self.model_registry.0 = parse_model_entries(&data);
         if self.model_registry.1 {
             self.model_registry.1 = false;

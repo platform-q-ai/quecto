@@ -43,105 +43,131 @@ pub fn build_agent_provider(
     let store_arc = Arc::new(CredentialStore::new(base_dir));
     let refresh_fn = crate::interface::shared::make_oauth_refresh_fn();
 
-    // Try OpenAI (with auto-refresh for expired OAuth tokens unless explicitly disabled).
-    // `disable_codex_routing` is an escape hatch for users who keep an OpenAI
-    // OAuth credential but intentionally point the built-in `openai` slot at a
-    // custom OpenAI-compatible endpoint.
-    let openai_key = if config.providers.openai.disable_codex_routing {
+    // Built-in providers are explicit by billing/auth mode. We deliberately do
+    // not resolve a single `openai`/`anthropic` slot by precedence because that
+    // can silently switch a request between monthly-plan OAuth and token-billed
+    // API-key auth. Users select `openai-api`, `openai-oauth`, `anthropic-api`,
+    // or `anthropic-oauth` explicitly (or define their own keys in models.json).
+    let openai_base = non_empty(config.providers.openai.api_base.clone());
+    let openai_api_key = if !config.providers.openai.api_key.is_empty() {
         config.providers.openai.api_key.clone()
     } else {
-        let has_stored_openai = store.get("openai").ok().flatten().is_some();
-        if config.providers.openai.api_key.is_empty() && !has_stored_openai {
-            String::new()
-        } else {
-            crate::interface::shared::resolve_api_key_with_refresh(
-                &config.providers.openai.api_key,
-                &store,
-                "openai",
-                refresh_runtime(&mut refresh_rt)?,
-            )
-        }
+        store
+            .get("openai")
+            .ok()
+            .flatten()
+            .filter(|c| {
+                c.method == crate::infrastructure::auth::credential_store::AuthMethod::Token
+            })
+            .filter(|c| !c.is_expired())
+            .map(|c| c.token)
+            .unwrap_or_default()
     };
-    if !openai_key.is_empty() {
-        let is_oauth = !config.providers.openai.disable_codex_routing
-            && store.get("openai").ok().flatten().is_some_and(|c| {
-                c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
-            });
-        let openai_base = if config.providers.openai.api_base.is_empty() {
-            None
-        } else {
-            Some(config.providers.openai.api_base.clone())
-        };
-        let inner = build_single_provider(
+    if !openai_api_key.is_empty() {
+        provider_list.push(
+            providers::create_named_openai_provider_with_client(
+                "openai-api",
+                openai_api_key,
+                openai_base.clone(),
+                http_client.clone(),
+                false,
+            )
+            .map_err(|e| format!("openai-api provider configuration error: {}", e))?,
+        );
+    }
+    if store.get("openai").ok().flatten().is_some_and(|c| {
+        c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
+    }) {
+        let openai_oauth_key = crate::interface::shared::resolve_api_key_with_refresh(
+            "",
+            &store,
             "openai",
-            &openai_key,
-            &openai_base,
-            http_client,
-            config.providers.openai.disable_codex_routing,
-        )?;
-        if is_oauth {
+            refresh_runtime(&mut refresh_rt)?,
+        );
+        if !openai_oauth_key.is_empty() {
+            let inner = build_single_provider(
+                "openai",
+                &openai_oauth_key,
+                &openai_base,
+                http_client,
+                false,
+            )?;
             let factory = crate::interface::shared::make_provider_factory(
                 "openai",
-                openai_base,
+                openai_base.clone(),
                 http_client.clone(),
             );
             provider_list.push(Arc::new(RefreshableProvider::new(RefreshableConfig {
                 inner,
                 store: store_arc.clone(),
-                provider_name: "openai".to_string(),
+                provider_name: "openai-oauth".to_string(),
+                credential_provider: "openai".to_string(),
                 refresh_fn: refresh_fn.clone(),
                 factory,
             })));
-        } else {
-            provider_list.push(inner);
         }
     }
 
-    // Try Anthropic (with auto-refresh for expired OAuth tokens)
-    let anthropic_key = {
-        let has_stored_anthropic = store.get("anthropic").ok().flatten().is_some();
-        if config.providers.anthropic.api_key.is_empty() && !has_stored_anthropic {
-            String::new()
-        } else {
-            crate::interface::shared::resolve_api_key_with_refresh(
-                &config.providers.anthropic.api_key,
-                &store,
-                "anthropic",
-                refresh_runtime(&mut refresh_rt)?,
-            )
-        }
+    let anthropic_base = non_empty(config.providers.anthropic.api_base.clone());
+    let anthropic_api_key = if !config.providers.anthropic.api_key.is_empty() {
+        config.providers.anthropic.api_key.clone()
+    } else {
+        store
+            .get("anthropic")
+            .ok()
+            .flatten()
+            .filter(|c| {
+                c.method == crate::infrastructure::auth::credential_store::AuthMethod::Token
+            })
+            .filter(|c| !c.is_expired())
+            .map(|c| c.token)
+            .unwrap_or_default()
     };
-    if !anthropic_key.is_empty() {
-        let is_oauth = store.get("anthropic").ok().flatten().is_some_and(|c| {
-            c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
-        });
-        let anthropic_base = if config.providers.anthropic.api_base.is_empty() {
-            None
-        } else {
-            Some(config.providers.anthropic.api_base.clone())
-        };
-        let inner = build_single_provider(
+    if !anthropic_api_key.is_empty() {
+        provider_list.push(
+            providers::create_anthropic_compatible_provider(
+                "anthropic-api",
+                anthropic_api_key,
+                anthropic_base.clone(),
+                false,
+                http_client.clone(),
+            )
+            .map_err(|e| format!("anthropic-api provider configuration error: {}", e))?,
+        );
+    }
+    if store.get("anthropic").ok().flatten().is_some_and(|c| {
+        c.method == crate::infrastructure::auth::credential_store::AuthMethod::OAuth
+    }) {
+        let anthropic_oauth_key = crate::interface::shared::resolve_api_key_with_refresh(
+            "",
+            &store,
             "anthropic",
-            &anthropic_key,
-            &anthropic_base,
-            http_client,
-            false,
-        )?;
-        if is_oauth {
-            let factory = crate::interface::shared::make_provider_factory(
-                "anthropic",
-                anthropic_base,
+            refresh_runtime(&mut refresh_rt)?,
+        );
+        if !anthropic_oauth_key.is_empty() {
+            let inner = providers::create_anthropic_compatible_provider(
+                "anthropic-oauth",
+                anthropic_oauth_key,
+                anthropic_base.clone(),
+                false,
+                http_client.clone(),
+            )
+            .map_err(|e| format!("anthropic-oauth provider configuration error: {}", e))?;
+            let factory = registry_provider_factory(
+                crate::infrastructure::model_registry::ProviderApi::AnthropicMessages,
+                "anthropic-oauth".to_string(),
+                anthropic_base.clone(),
+                false,
                 http_client.clone(),
             );
             provider_list.push(Arc::new(RefreshableProvider::new(RefreshableConfig {
                 inner,
                 store: store_arc.clone(),
-                provider_name: "anthropic".to_string(),
+                provider_name: "anthropic-oauth".to_string(),
+                credential_provider: "anthropic".to_string(),
                 refresh_fn: refresh_fn.clone(),
                 factory,
             })));
-        } else {
-            provider_list.push(inner);
         }
     }
 
@@ -157,31 +183,34 @@ pub fn build_agent_provider(
         &base_dir.join("models.json"),
     )
     .map_err(|e| e.to_string())?;
+    // Build at most one provider per distinct registry provider key. Each key
+    // carries its own wire protocol (`api`) and explicit auth mode; we never
+    // silently switch a vendor between OAuth and API-key billing.
+    let mut seen_registry_prefixes = HashSet::new();
     for model in model_registry.models() {
-        let Some(api_key) = model.api_key.as_ref().filter(|k| !k.is_empty()) else {
-            continue;
-        };
-        let Some(api_base) = model.base_url.as_ref().filter(|b| !b.trim().is_empty()) else {
-            continue;
-        };
         let canonical_prefix = model.provider.to_ascii_lowercase();
-        if !custom_prefixes.insert(canonical_prefix) {
+        if seen_registry_prefixes.contains(&canonical_prefix)
+            || provider_list
+                .iter()
+                .any(|p| p.name().eq_ignore_ascii_case(&model.provider))
+        {
             continue;
         }
-        if matches!(
-            model.api,
-            crate::infrastructure::model_registry::ProviderApi::OpenAiCompletions
-        ) {
-            let provider = providers::create_openai_compatible_provider(
-                &model.provider,
-                api_key.clone(),
-                api_base.clone(),
-                model.allow_remote_http,
-                http_client.clone(),
-            )
-            .map_err(|e| format!("models.json provider configuration error: {}", e))?;
-            provider_list.push(provider);
-        }
+        let Some(provider) = build_registry_provider(
+            model,
+            base_dir,
+            &store_arc,
+            &refresh_fn,
+            http_client,
+            refresh_runtime(&mut refresh_rt)?,
+        )?
+        else {
+            continue;
+        };
+        seen_registry_prefixes.insert(canonical_prefix.clone());
+        // Reserve the prefix so an openai_compatible endpoint cannot collide.
+        custom_prefixes.insert(canonical_prefix);
+        provider_list.push(provider);
     }
     for endpoint in &config.providers.openai_compatible.endpoints {
         if endpoint.api_key.is_empty() {
@@ -216,6 +245,159 @@ pub fn build_agent_provider(
     }
 
     Ok(Arc::new(ProviderRouter::new(provider_list)))
+}
+
+fn registry_provider_factory(
+    provider_api: crate::infrastructure::model_registry::ProviderApi,
+    provider_prefix: String,
+    base: Option<String>,
+    allow_remote_http: bool,
+    client: reqwest::Client,
+) -> crate::infrastructure::providers::refreshable::ProviderFactory {
+    use crate::infrastructure::model_registry::ProviderApi;
+    Arc::new(move |new_token: &str| -> Arc<dyn LlmProvider> {
+        match provider_api {
+            ProviderApi::OpenAiCompletions => {
+                let Some(base) = base.clone() else {
+                    return providers::create_openai_compatible_provider(
+                        &provider_prefix,
+                        new_token.to_string(),
+                        "https://api.openai.com/v1".to_string(),
+                        false,
+                        client.clone(),
+                    )
+                    .expect("default OpenAI-compatible provider should build");
+                };
+                providers::create_openai_compatible_provider(
+                    &provider_prefix,
+                    new_token.to_string(),
+                    base,
+                    allow_remote_http,
+                    client.clone(),
+                )
+                .expect("refreshed OpenAI-compatible registry provider should rebuild")
+            }
+            ProviderApi::AnthropicMessages => providers::create_anthropic_compatible_provider(
+                &provider_prefix,
+                new_token.to_string(),
+                base.clone(),
+                allow_remote_http,
+                client.clone(),
+            )
+            .expect("refreshed Anthropic registry provider should rebuild"),
+            ProviderApi::GoogleGenerativeAi => unreachable!("validated before factory creation"),
+        }
+    })
+}
+
+fn build_registry_provider(
+    model: &crate::infrastructure::model_registry::ModelRecord,
+    _base_dir: &std::path::Path,
+    store: &Arc<CredentialStore>,
+    refresh_fn: &crate::infrastructure::providers::refreshable::RefreshFn,
+    http_client: &reqwest::Client,
+    refresh_rt: &tokio::runtime::Runtime,
+) -> Result<Option<Arc<dyn LlmProvider>>, String> {
+    use crate::infrastructure::model_registry::{AuthMode, ProviderApi};
+
+    let api_base = model.base_url.clone();
+    let auth_key = match model.auth {
+        AuthMode::ApiKey => {
+            let Some(key) = model.api_key.as_ref().filter(|k| !k.is_empty()) else {
+                return Ok(None);
+            };
+            key.clone()
+        }
+        AuthMode::OAuth => {
+            let oauth_provider = model.oauth_provider.as_deref().ok_or_else(|| {
+                format!(
+                    "models.json provider '{}' uses oauth auth but is missing oauthProvider",
+                    model.provider
+                )
+            })?;
+            if crate::infrastructure::auth::oauth::OAuthConfig::for_provider(oauth_provider)
+                .is_none()
+            {
+                return Err(format!(
+                    "models.json provider '{}' references oauthProvider '{}' which is not a kernel OAuth provider",
+                    model.provider, oauth_provider
+                ));
+            }
+            let Some(cred) = store.get(oauth_provider).map_err(|e| e.to_string())? else {
+                return Ok(None);
+            };
+            if cred.method != crate::infrastructure::auth::credential_store::AuthMethod::OAuth {
+                return Ok(None);
+            }
+            crate::interface::shared::resolve_api_key_with_refresh(
+                "",
+                store,
+                oauth_provider,
+                refresh_rt,
+            )
+        }
+    };
+
+    let inner: Arc<dyn LlmProvider> = match model.api {
+        ProviderApi::OpenAiCompletions => {
+            let Some(base) = api_base.clone().filter(|b| !b.trim().is_empty()) else {
+                return Ok(None);
+            };
+            providers::create_openai_compatible_provider(
+                &model.provider,
+                auth_key.clone(),
+                base,
+                model.allow_remote_http,
+                http_client.clone(),
+            )
+            .map_err(|e| format!("models.json provider configuration error: {}", e))?
+        }
+        ProviderApi::AnthropicMessages => providers::create_anthropic_compatible_provider(
+            &model.provider,
+            auth_key.clone(),
+            api_base.clone(),
+            model.allow_remote_http,
+            http_client.clone(),
+        )
+        .map_err(|e| format!("models.json provider configuration error: {}", e))?,
+        ProviderApi::GoogleGenerativeAi => {
+            return Err(format!(
+                "models.json provider '{}' uses google-generative-ai, but that wire protocol is not implemented yet",
+                model.provider
+            ));
+        }
+    };
+
+    if model.auth == AuthMode::OAuth {
+        let oauth_provider = model.oauth_provider.clone().expect("validated above");
+        let factory = registry_provider_factory(
+            model.api,
+            model.provider.clone(),
+            api_base.clone(),
+            model.allow_remote_http,
+            http_client.clone(),
+        );
+        return Ok(Some(Arc::new(RefreshableProvider::new(
+            RefreshableConfig {
+                inner,
+                store: store.clone(),
+                provider_name: model.provider.clone(),
+                credential_provider: oauth_provider,
+                refresh_fn: refresh_fn.clone(),
+                factory,
+            },
+        ))));
+    }
+
+    Ok(Some(inner))
+}
+
+fn non_empty(value: String) -> Option<String> {
+    if value.trim().is_empty() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 /// Build a single provider from name, key, and base URL.

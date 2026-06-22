@@ -170,6 +170,7 @@ async fn test_refreshable_retries_on_401() {
         inner,
         store: store.clone(),
         provider_name: "anthropic".to_string(),
+        credential_provider: "anthropic".to_string(),
         refresh_fn: make_mock_refresh("sk-ant-oat01-fresh"),
         factory,
     });
@@ -193,6 +194,7 @@ async fn test_refreshable_passes_through_non_401_errors() {
         inner,
         store,
         provider_name: "anthropic".to_string(),
+        credential_provider: "anthropic".to_string(),
         refresh_fn: make_mock_refresh("unused"),
         factory: noop_factory(),
     });
@@ -213,6 +215,7 @@ async fn test_refreshable_passes_through_success() {
         inner,
         store,
         provider_name: "anthropic".to_string(),
+        credential_provider: "anthropic".to_string(),
         refresh_fn: make_mock_refresh("unused"),
         factory: noop_factory(),
     });
@@ -234,6 +237,7 @@ async fn test_refreshable_does_not_retry_when_no_oauth_credential() {
         inner,
         store,
         provider_name: "anthropic".to_string(),
+        credential_provider: "anthropic".to_string(),
         refresh_fn: make_mock_refresh("unused"),
         factory,
     });
@@ -271,6 +275,7 @@ async fn test_refreshable_rebuilds_provider_with_new_token() {
         inner,
         store: store.clone(),
         provider_name: "anthropic".to_string(),
+        credential_provider: "anthropic".to_string(),
         refresh_fn: make_mock_refresh("new-api-token"),
         factory,
     });
@@ -324,6 +329,7 @@ async fn test_refreshable_forwards_without_cloning_on_happy_path() {
         inner: inner.clone() as Arc<dyn LlmProvider>,
         store,
         provider_name: "test".to_string(),
+        credential_provider: "test".to_string(),
         refresh_fn: make_mock_refresh("unused"),
         factory: noop_factory(),
     });
@@ -399,6 +405,7 @@ async fn test_streaming_preemptively_refreshes_expired_token() {
         inner,
         store: store.clone(),
         provider_name: "anthropic".to_string(),
+        credential_provider: "anthropic".to_string(),
         refresh_fn: make_mock_refresh("sk-ant-oat01-fresh"),
         factory: noop_factory(),
     });
@@ -443,6 +450,7 @@ async fn test_streaming_does_not_refresh_when_token_valid() {
         inner: Arc::new(MockSuccessProvider),
         store,
         provider_name: "anthropic".to_string(),
+        credential_provider: "anthropic".to_string(),
         refresh_fn,
         factory: noop_factory(),
     });

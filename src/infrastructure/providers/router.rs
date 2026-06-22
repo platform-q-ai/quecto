@@ -30,6 +30,14 @@ impl ProviderRouter {
         Self { providers }
     }
 
+    /// Names of the configured providers, in routing order.
+    ///
+    /// Exposed for introspection (provider construction tests, diagnostics);
+    /// the router itself routes by prefix match against these names.
+    pub fn provider_names(&self) -> Vec<&str> {
+        self.providers.iter().map(|p| p.name()).collect()
+    }
+
     /// Resolve which provider and effective model to use for a request.
     ///
     /// - `provider/model` syntax → match by provider name, strip prefix
@@ -91,6 +99,10 @@ impl ProviderRouter {
 impl LlmProvider for ProviderRouter {
     fn name(&self) -> &str {
         "router"
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 
     fn chat<'a>(
@@ -156,11 +168,11 @@ fn provider_prefix_matches(prefix: &str, provider_name: &str) -> bool {
     if prefix.eq_ignore_ascii_case(provider_name) {
         return true;
     }
-    if provider_name.eq_ignore_ascii_case("codex") {
-        return prefix.eq_ignore_ascii_case("openai")
-            || prefix.eq_ignore_ascii_case("openai-codex");
-    }
-    false
+    // OAuth/API billing modes are explicit (`openai-api`, `openai-oauth`,
+    // `anthropic-api`, `anthropic-oauth`). Do not alias bare vendor prefixes to
+    // either mode: that can silently select token-billed API when the user meant
+    // OAuth, or vice versa. Keep only the historical Codex self-alias.
+    prefix.eq_ignore_ascii_case("openai-codex") && provider_name.eq_ignore_ascii_case("codex")
 }
 
 /// Maximum length of a provider prefix included in error messages.
