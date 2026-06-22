@@ -397,6 +397,10 @@ impl LlmProvider for OpenAiProvider {
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         let mut body = Self::build_request_body(&request);
         body["stream"] = serde_json::Value::Bool(true);
+        // Ask OpenAI-compatible providers (OpenAI, Fireworks, …) to emit a
+        // final usage chunk so we report exact context tokens instead of a
+        // heuristic estimate.
+        body["stream_options"] = serde_json::json!({ "include_usage": true });
         let url = format!("{}/chat/completions", self.api_base);
         Box::pin(async move { self.stream_chat_with_body(body, &url).await })
     }
@@ -407,6 +411,8 @@ impl LlmProvider for OpenAiProvider {
     ) -> Pin<Box<dyn Future<Output = tokio::sync::mpsc::Receiver<StreamEvent>> + Send + '_>> {
         let mut body = Self::build_request_body(&request);
         body["stream"] = serde_json::Value::Bool(true);
+        // Request a final usage chunk (see `chat_stream`).
+        body["stream_options"] = serde_json::json!({ "include_usage": true });
         let url = format!("{}/chat/completions", self.api_base);
         let provider_name = self.provider_name.clone();
         let api_key = self.api_key.clone();
