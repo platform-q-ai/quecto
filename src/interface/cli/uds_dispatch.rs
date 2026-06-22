@@ -100,6 +100,21 @@ pub(crate) async fn dispatch_command(cmd: AgentCommand, ctx: &mut DispatchCtx<'_
     }
 }
 
+fn set_workflow_run(
+    ctx: &mut DispatchCtx<'_>,
+    workflow_run: Option<crate::domain::workflow::WorkflowRunPersisted>,
+) {
+    if let Some(workflow) = &ctx.workflow_state
+        && let Ok(mut engine) = workflow.lock()
+    {
+        if let Some(run) = workflow_run {
+            engine.restore_run(run);
+        } else {
+            engine.reset();
+        }
+    }
+}
+
 pub(super) async fn persist_current_session(
     ctx: &mut DispatchCtx<'_>,
 ) -> Result<(), crate::domain::error::DomainError> {
@@ -149,6 +164,8 @@ pub(super) async fn handle_new_session(
     ctx.session_key.clear();
     ctx.session_key.push_str(&key);
     ctx.session.set_session_key(key.clone());
+    ctx.agent.set_session_key(key.clone());
+    set_workflow_run(ctx, None);
     if let Some(spill) = ctx.agent.spill_store() {
         if let Err(e) = spill.clear(ctx.session_key).await {
             tracing::warn!("new_session: failed to clear spill store: {e}");
@@ -225,9 +242,12 @@ pub(super) async fn handle_resume_session(
     };
     *ctx.session_key = new_key.clone();
     ctx.session.set_session_key(new_key.clone());
+    ctx.agent.set_session_key(new_key.clone());
     ctx.session.clear_usage();
     ctx.session.drain_pending();
+    let workflow_run = loaded.workflow_run;
     *ctx.messages = loaded.messages;
+    set_workflow_run(ctx, workflow_run);
     inject_system_prompt(ctx.messages, ctx.system_prompt);
     let ev = AgentEvent::ok(
         id,

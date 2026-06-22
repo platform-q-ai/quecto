@@ -626,6 +626,7 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
 
     let ephemeral = flags.no_session || flags.session_name.as_deref() == Some("-");
     let session_key = resolve_uds_session_key(ephemeral, flags.session_name.as_deref());
+    agent.set_session_key(session_key.clone());
 
     // Keep durable audit logging tied to explicit workflow-driven mode. Normal UDS
     // makes workflow available, but should not add audit I/O/privacy overhead before

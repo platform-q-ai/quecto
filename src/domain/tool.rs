@@ -66,6 +66,9 @@ pub trait Tool: Send + Sync {
     /// Return the tool's definition for the LLM.
     fn definition(&self) -> ToolDefinition;
 
+    /// Notify stateful tools that the active session key changed.
+    fn set_session_key(&self, _session_key: String) {}
+
     /// Execute the tool with JSON-encoded arguments.
     ///
     /// See the trait-level docs for the error-handling contract:
@@ -110,6 +113,9 @@ pub trait ToolRegistry: Send + Sync {
     fn extension_names(&self) -> Vec<String> {
         vec![]
     }
+
+    /// Notify stateful tools that the active session key changed.
+    fn set_session_key(&self, _session_key: &str) {}
 
     /// Register a single extension tool.
     ///

@@ -228,6 +228,13 @@ impl ToolRegistryImpl {
         self.tools.keys().cloned().collect()
     }
 
+    /// Notify all registered tools that the active session key changed.
+    pub fn set_session_key(&self, session_key: &str) {
+        for tool in self.tools.values() {
+            tool.set_session_key(session_key.to_string());
+        }
+    }
+
     /// Execute a tool by name with JSON arguments.
     ///
     /// Runs all registered guards before execution.  The first guard that
@@ -270,6 +277,10 @@ impl ToolRegistry for ToolRegistryImpl {
 
     fn extension_names(&self) -> Vec<String> {
         self.extension_names()
+    }
+
+    fn set_session_key(&self, session_key: &str) {
+        self.set_session_key(session_key);
     }
 
     fn register_extension(&mut self, tool: Arc<dyn Tool>) {

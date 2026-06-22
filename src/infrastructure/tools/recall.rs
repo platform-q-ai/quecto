@@ -16,7 +16,7 @@ use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
 /// Tool that retrieves previously collapsed tool outputs by their spill ID.
 pub struct RecallTool {
     spill_store: Arc<dyn ContextSpillStore>,
-    session_key: String,
+    session_key: Mutex<String>,
     /// Tracks recall counts per ID for diagnostic warnings.
     recall_counts: Mutex<HashMap<String, u32>>,
 }
@@ -25,7 +25,7 @@ impl RecallTool {
     pub fn new(spill_store: Arc<dyn ContextSpillStore>, session_key: String) -> Self {
         Self {
             spill_store,
-            session_key,
+            session_key: Mutex::new(session_key),
             recall_counts: Mutex::new(HashMap::new()),
         }
     }
@@ -34,7 +34,7 @@ impl RecallTool {
 impl std::fmt::Debug for RecallTool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RecallTool")
-            .field("session_key", &self.session_key)
+            .field("session_key", &self.session_key.lock().ok().as_deref())
             .finish()
     }
 }
@@ -51,11 +51,17 @@ impl Tool for RecallTool {
         }
     }
 
+    fn set_session_key(&self, session_key: String) {
+        *self.session_key.lock().unwrap() = session_key;
+        self.recall_counts.lock().unwrap().clear();
+    }
+
     fn execute(
         &self,
         arguments: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
         let id = extract_id(arguments);
+        let session_key = self.session_key.lock().unwrap().clone();
         Box::pin(async move {
             if id == "list" {
                 return self.handle_list().await;
@@ -79,7 +85,7 @@ impl Tool for RecallTool {
                 }
             }
 
-            match self.spill_store.recall(&self.session_key, &id).await? {
+            match self.spill_store.recall(&session_key, &id).await? {
                 Some(entry) => Ok(ToolResult {
                     content: entry.content,
                     is_error: false,
@@ -97,7 +103,8 @@ impl Tool for RecallTool {
 
 impl RecallTool {
     async fn handle_list(&self) -> Result<ToolResult, DomainError> {
-        let entries = self.spill_store.list_entries(&self.session_key).await?;
+        let session_key = self.session_key.lock().unwrap().clone();
+        let entries = self.spill_store.list_entries(&session_key).await?;
 
         if entries.is_empty() {
             return Ok(ToolResult {
@@ -209,6 +216,84 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct KeyedMemorySpillStore {
+        entries: Mutex<HashMap<String, Vec<SpillEntry>>>,
+    }
+
+    impl KeyedMemorySpillStore {
+        fn new() -> Self {
+            Self {
+                entries: Mutex::new(HashMap::new()),
+            }
+        }
+
+        fn add(&self, session_key: &str, entry: SpillEntry) {
+            self.entries
+                .lock()
+                .unwrap()
+                .entry(session_key.to_string())
+                .or_default()
+                .push(entry);
+        }
+    }
+
+    impl ContextSpillStore for KeyedMemorySpillStore {
+        fn append(
+            &self,
+            session_key: &str,
+            entry: &SpillEntry,
+        ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
+            self.add(session_key, entry.clone());
+            Box::pin(async { Ok(()) })
+        }
+
+        fn recall(
+            &self,
+            session_key: &str,
+            id: &str,
+        ) -> Pin<Box<dyn Future<Output = Result<Option<SpillEntry>, DomainError>> + Send + '_>>
+        {
+            let result = self
+                .entries
+                .lock()
+                .unwrap()
+                .get(session_key)
+                .and_then(|entries| entries.iter().find(|e| e.id == id).cloned());
+            Box::pin(async move { Ok(result) })
+        }
+
+        fn list_entries(
+            &self,
+            session_key: &str,
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<SpillIndex>, DomainError>> + Send + '_>>
+        {
+            let entries: Vec<SpillIndex> = self
+                .entries
+                .lock()
+                .unwrap()
+                .get(session_key)
+                .into_iter()
+                .flatten()
+                .map(|e| SpillIndex {
+                    id: e.id.clone(),
+                    tool: e.tool.clone(),
+                    input_preview: e.input_preview.clone(),
+                    tokens: e.tokens,
+                })
+                .collect();
+            Box::pin(async move { Ok(entries) })
+        }
+
+        fn clear(
+            &self,
+            session_key: &str,
+        ) -> Pin<Box<dyn Future<Output = Result<(), DomainError>> + Send + '_>> {
+            self.entries.lock().unwrap().remove(session_key);
+            Box::pin(async { Ok(()) })
+        }
+    }
+
     fn test_store_with_entry() -> Arc<MemorySpillStore> {
         let store = Arc::new(MemorySpillStore::new());
         store.add(SpillEntry {
@@ -228,6 +313,38 @@ mod tests {
         let result = tool.execute(r#"{"id":"turn5:bash:0"}"#).await.unwrap();
         assert!(!result.is_error);
         assert_eq!(result.content, "hello world output");
+    }
+
+    #[tokio::test]
+    async fn test_recall_uses_updated_session_key() {
+        let store = Arc::new(KeyedMemorySpillStore::new());
+        store.add(
+            "old-session",
+            SpillEntry {
+                id: "turn1:bash:0".to_string(),
+                tool: "bash".to_string(),
+                input_preview: "old".to_string(),
+                tokens: 1,
+                content: "old output".to_string(),
+            },
+        );
+        store.add(
+            "new-session",
+            SpillEntry {
+                id: "turn1:bash:0".to_string(),
+                tool: "bash".to_string(),
+                input_preview: "new".to_string(),
+                tokens: 1,
+                content: "new output".to_string(),
+            },
+        );
+        let tool = RecallTool::new(store, "old-session".to_string());
+
+        tool.set_session_key("new-session".to_string());
+
+        let result = tool.execute(r#"{"id":"turn1:bash:0"}"#).await.unwrap();
+        assert!(!result.is_error);
+        assert_eq!(result.content, "new output");
     }
 
     #[tokio::test]

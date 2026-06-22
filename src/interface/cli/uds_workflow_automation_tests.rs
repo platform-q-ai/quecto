@@ -1,4 +1,23 @@
 use super::*;
+use crate::domain::session::{Session, SessionStore};
+
+fn persisted_feature_run(done: Vec<bool>) -> crate::domain::workflow::WorkflowRunPersisted {
+    crate::domain::workflow::WorkflowRunPersisted {
+        template_id: Some("feature".into()),
+        done,
+        active_issue: None,
+    }
+}
+
+fn make_workflow() -> crate::interface::shared::WorkflowStateHandle {
+    std::sync::Arc::new(std::sync::Mutex::new(
+        crate::domain::workflow::WorkflowEngine::new(
+            crate::domain::workflow::WorkflowConfig::default(),
+            false,
+        )
+        .unwrap(),
+    ))
+}
 
 fn make_dispatch_test_agent() -> crate::application::agent_loop::AgentLoopImpl {
     crate::application::agent_loop::AgentLoopImpl::new(
@@ -21,6 +40,167 @@ fn make_dispatch_test_agent() -> crate::application::agent_loop::AgentLoopImpl {
             audit_log: None,
         },
     )
+}
+
+#[tokio::test]
+async fn new_session_resets_workflow_run_state() {
+    let mut agent = make_dispatch_test_agent();
+    let mut messages = vec![crate::domain::message::Message::user("old")];
+    let mut session = AgentSession::new("stub".into(), "cli:test".into());
+    let mut session_key = "cli:test".to_string();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store =
+        crate::infrastructure::persistence::session_store::FileSessionStore::new(tmp.path());
+    let mut writer = tokio::io::sink();
+    let workflow = make_workflow();
+    workflow
+        .lock()
+        .unwrap()
+        .select_template("feature", None)
+        .unwrap();
+    workflow.lock().unwrap().check(1).unwrap();
+    assert!(workflow.lock().unwrap().persisted_run().is_some());
+    let mut ctx = DispatchCtx {
+        base_dir: tmp.path(),
+        agent: &mut agent,
+        messages: &mut messages,
+        session: &mut session,
+        stdout: &mut writer,
+        session_key: &mut session_key,
+        session_store: &store,
+        ephemeral: false,
+        system_prompt: "",
+        cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
+        broadcast_tx: None,
+        ext_registry: None,
+        client_tool_registry: crate::interface::cli::uds_ext_protocol::new_client_tool_registry(),
+        current_client_id: 0,
+        subagent_registry: None,
+        notification_rx: None,
+        workflow_state: Some(workflow.clone()),
+        workflow_config: Some(crate::domain::workflow::WorkflowConfig::default()),
+        provider_reload: None,
+        provider_reload_inputs: None,
+    };
+
+    super::uds_dispatch::handle_new_session(&mut ctx, Some("n"), "new_session").await;
+
+    assert!(workflow.lock().unwrap().persisted_run().is_none());
+}
+
+#[tokio::test]
+async fn resume_session_restores_target_workflow_run_state() {
+    let mut agent = make_dispatch_test_agent();
+    let mut messages = vec![crate::domain::message::Message::user("current")];
+    let mut session = AgentSession::new("stub".into(), "cli:test".into());
+    let mut session_key = "cli:test".to_string();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store =
+        crate::infrastructure::persistence::session_store::FileSessionStore::new(tmp.path());
+    let key = Session::build_key("cli", "saved");
+    store
+        .save(&Session {
+            key: key.clone(),
+            messages: vec![crate::domain::message::Message::user("restored")],
+            workflow_run: Some(persisted_feature_run(vec![true, false, false])),
+        })
+        .await
+        .unwrap();
+    let mut writer = tokio::io::sink();
+    let workflow = make_workflow();
+    let mut ctx = DispatchCtx {
+        base_dir: tmp.path(),
+        agent: &mut agent,
+        messages: &mut messages,
+        session: &mut session,
+        stdout: &mut writer,
+        session_key: &mut session_key,
+        session_store: &store,
+        ephemeral: false,
+        system_prompt: "",
+        cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
+        broadcast_tx: None,
+        ext_registry: None,
+        client_tool_registry: crate::interface::cli::uds_ext_protocol::new_client_tool_registry(),
+        current_client_id: 0,
+        subagent_registry: None,
+        notification_rx: None,
+        workflow_state: Some(workflow.clone()),
+        workflow_config: Some(crate::domain::workflow::WorkflowConfig::default()),
+        provider_reload: None,
+        provider_reload_inputs: None,
+    };
+
+    super::uds_dispatch::handle_resume_session(
+        &mut ctx,
+        Some("r"),
+        "resume_session",
+        "saved".into(),
+    )
+    .await;
+
+    let persisted = workflow.lock().unwrap().persisted_run().unwrap();
+    assert_eq!(persisted.template_id.as_deref(), Some("feature"));
+    assert!(persisted.done[0]);
+}
+
+#[tokio::test]
+async fn resume_session_clears_workflow_when_target_has_none() {
+    let mut agent = make_dispatch_test_agent();
+    let mut messages = vec![crate::domain::message::Message::user("current")];
+    let mut session = AgentSession::new("stub".into(), "cli:test".into());
+    let mut session_key = "cli:test".to_string();
+    let tmp = tempfile::TempDir::new().unwrap();
+    let store =
+        crate::infrastructure::persistence::session_store::FileSessionStore::new(tmp.path());
+    store
+        .save(&Session {
+            key: Session::build_key("cli", "plain"),
+            messages: vec![crate::domain::message::Message::user("plain")],
+            workflow_run: None,
+        })
+        .await
+        .unwrap();
+    let mut writer = tokio::io::sink();
+    let workflow = make_workflow();
+    workflow
+        .lock()
+        .unwrap()
+        .select_template("feature", None)
+        .unwrap();
+    workflow.lock().unwrap().check(1).unwrap();
+    let mut ctx = DispatchCtx {
+        base_dir: tmp.path(),
+        agent: &mut agent,
+        messages: &mut messages,
+        session: &mut session,
+        stdout: &mut writer,
+        session_key: &mut session_key,
+        session_store: &store,
+        ephemeral: false,
+        system_prompt: "",
+        cancel_handle: std::sync::Arc::new(std::sync::Mutex::new(CancelSlot::Idle)),
+        broadcast_tx: None,
+        ext_registry: None,
+        client_tool_registry: crate::interface::cli::uds_ext_protocol::new_client_tool_registry(),
+        current_client_id: 0,
+        subagent_registry: None,
+        notification_rx: None,
+        workflow_state: Some(workflow.clone()),
+        workflow_config: Some(crate::domain::workflow::WorkflowConfig::default()),
+        provider_reload: None,
+        provider_reload_inputs: None,
+    };
+
+    super::uds_dispatch::handle_resume_session(
+        &mut ctx,
+        Some("r"),
+        "resume_session",
+        "plain".into(),
+    )
+    .await;
+
+    assert!(workflow.lock().unwrap().persisted_run().is_none());
 }
 
 #[tokio::test]

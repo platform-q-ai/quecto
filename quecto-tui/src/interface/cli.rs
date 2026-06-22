@@ -168,15 +168,8 @@ async fn run_tui(flags: CliFlags) -> i32 {
     exit_code
 }
 
-/// Spawn a quecto agent in UDS mode and return the socket path and child handle.
-///
-/// The caller MUST store the child handle and call `child.kill()` + `child.wait()`
-/// on TUI exit. Tokio's `Child` does NOT kill the process on drop — dropping it
-/// creates an orphan. See the security review for PR #442.
-async fn spawn_agent(flags: &CliFlags) -> Result<(PathBuf, tokio::process::Child), String> {
-    use tokio::io::AsyncBufReadExt;
-    use tokio::process::Command;
-
+/// Build the `quecto agent` argv used for an owned TUI child process.
+fn build_agent_args(flags: &CliFlags) -> Vec<String> {
     let mut args = vec!["agent".to_string(), "--mode".to_string(), "uds".to_string()];
     if flags.no_sandbox {
         args.push("--no-sandbox".to_string());
@@ -195,7 +188,19 @@ async fn spawn_agent(flags: &CliFlags) -> Result<(PathBuf, tokio::process::Child
         args.push("--system".to_string());
         args.push(prompt.clone());
     }
+    args
+}
 
+/// Spawn a quecto agent in UDS mode and return the socket path and child handle.
+///
+/// The caller MUST store the child handle and call `child.kill()` + `child.wait()`
+/// on TUI exit. Tokio's `Child` does NOT kill the process on drop — dropping it
+/// creates an orphan. See the security review for PR #442.
+async fn spawn_agent(flags: &CliFlags) -> Result<(PathBuf, tokio::process::Child), String> {
+    use tokio::io::AsyncBufReadExt;
+    use tokio::process::Command;
+
+    let args = build_agent_args(flags);
     let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     let mut child = Command::new("quecto")
         .args(&args_ref)
