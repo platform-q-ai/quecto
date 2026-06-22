@@ -6,7 +6,7 @@
 //! events are written to the sink (or dropped). The socket accept loop itself
 //! is covered by BDD tests, not here.
 use super::{
-    dispatch_command, dispatch_ext_command, handle_abort, handle_clear_history,
+    dispatch_command, dispatch_ext_command, handle_abort, handle_clear_history, handle_new_session,
     handle_resume_session, handle_rewind_to, handle_steer, persist_current_session,
 };
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
@@ -184,6 +184,23 @@ async fn rewind_valid_truncates_and_persists() {
         assert!(!handle_rewind_to(&mut ctx, None, "rewind_to", 0).await);
     }
     assert!(fx.messages.is_empty());
+}
+
+// ─── handle_new_session ──────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn new_session_uses_fresh_key_and_clears_old_messages() {
+    let mut fx = Fixture::new();
+    fx.messages.push(Message::user("old turn"));
+    let old_key = fx.session_key.clone();
+    {
+        let mut ctx = fx.ctx();
+        assert!(!handle_new_session(&mut ctx, None, "new_session").await);
+    }
+
+    assert!(fx.messages.is_empty());
+    assert_ne!(fx.session_key, old_key);
+    assert!(fx.session_key.starts_with("chat-"));
 }
 
 // ─── handle_resume_session ───────────────────────────────────────────────────

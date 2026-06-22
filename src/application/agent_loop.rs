@@ -16,6 +16,7 @@ use crate::domain::tool::ToolRegistry;
 
 #[path = "agent_loop_pruning.rs"]
 mod agent_loop_pruning;
+mod agent_loop_session;
 
 const DEFAULT_MAX_TOOL_ITERATIONS: u32 = 999_999;
 const MAX_PROVIDER_ATTEMPTS: usize = 3;
@@ -136,7 +137,6 @@ impl AgentLoopImpl {
     pub fn model(&self) -> &str {
         &self.model
     }
-
     /// Context-window ceiling (tokens), surfaced for UDS clients.
     pub fn max_context_tokens(&self) -> usize {
         self.max_context_tokens

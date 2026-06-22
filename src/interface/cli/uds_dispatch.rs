@@ -149,6 +149,7 @@ pub(super) async fn handle_new_session(
     ctx.session_key.clear();
     ctx.session_key.push_str(&key);
     ctx.session.set_session_key(key.clone());
+    ctx.agent.set_session_key(key.clone());
     if let Some(spill) = ctx.agent.spill_store() {
         if let Err(e) = spill.clear(ctx.session_key).await {
             tracing::warn!("new_session: failed to clear spill store: {e}");
@@ -225,6 +226,7 @@ pub(super) async fn handle_resume_session(
     };
     *ctx.session_key = new_key.clone();
     ctx.session.set_session_key(new_key.clone());
+    ctx.agent.set_session_key(new_key.clone());
     ctx.session.clear_usage();
     ctx.session.drain_pending();
     *ctx.messages = loaded.messages;
