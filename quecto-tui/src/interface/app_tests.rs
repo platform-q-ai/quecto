@@ -606,7 +606,7 @@ fn max_clipboard_bytes_is_reasonable() {
 
 #[test]
 fn selection_anchor_copy() {
-    let a = super::SelectionAnchor { col: 10, row: 5 };
+    let a = super::app_selection::SelectionAnchor { col: 10, row: 5 };
     let b = a; // Copy
     assert_eq!(a.col, b.col);
     assert_eq!(a.row, b.row);
@@ -614,9 +614,9 @@ fn selection_anchor_copy() {
 
 #[test]
 fn text_selection_clone() {
-    let sel = super::TextSelection {
-        start: super::SelectionAnchor { col: 0, row: 0 },
-        end: super::SelectionAnchor { col: 10, row: 5 },
+    let sel = super::app_selection::TextSelection {
+        start: super::app_selection::SelectionAnchor { col: 0, row: 0 },
+        end: super::app_selection::SelectionAnchor { col: 10, row: 5 },
     };
     let sel2 = sel.clone();
     assert_eq!(sel2.start.col, 0);

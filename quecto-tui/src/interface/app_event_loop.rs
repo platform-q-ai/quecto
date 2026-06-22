@@ -1,3 +1,4 @@
+use super::app_selection::{SelectionAnchor, TextSelection};
 use super::*;
 
 impl App {

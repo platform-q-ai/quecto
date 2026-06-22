@@ -461,4 +461,98 @@ mod tests {
     fn skip_visible_chars_basic() {
         assert_eq!(skip_visible_chars("hello world", 6), "world");
     }
+
+    #[test]
+    fn remove_by_index() {
+        let mut stack = OverlayStack::new();
+        let i0 = stack.push(Box::new(Text::new("a")), OverlayOptions::default());
+        let _i1 = stack.push(Box::new(Text::new("b")), OverlayOptions::default());
+        stack.remove(i0);
+        assert_eq!(stack.len(), 1, "remove should shrink stack");
+        // The remaining entry should be "b".
+        let mut base = vec!["base".to_string()];
+        stack.composite(&mut base, 40, 1);
+        assert!(base[0].contains("b"), "remaining entry should be 'b'");
+    }
+
+    #[test]
+    fn set_hidden_toggle() {
+        let mut stack = OverlayStack::new();
+        let idx = stack.push(Box::new(Text::new("overlay")), OverlayOptions::default());
+        assert!(stack.has_visible());
+        stack.set_hidden(idx, true);
+        assert!(!stack.has_visible(), "hidden overlay should not be visible");
+        stack.set_hidden(idx, false);
+        assert!(stack.has_visible(), "unhiding should make it visible again");
+    }
+
+    #[test]
+    fn pop_from_empty_returns_none() {
+        let mut stack = OverlayStack::new();
+        assert!(stack.pop().is_none(), "pop on empty stack returns None");
+    }
+
+    #[test]
+    fn len_after_push_and_pop() {
+        let mut stack = OverlayStack::new();
+        assert_eq!(stack.len(), 0);
+        stack.push(Box::new(Text::new("x")), OverlayOptions::default());
+        assert_eq!(stack.len(), 1);
+        stack.pop();
+        assert_eq!(stack.len(), 0);
+    }
+
+    #[test]
+    fn is_empty_after_all_popped() {
+        let mut stack = OverlayStack::new();
+        stack.push(Box::new(Text::new("x")), OverlayOptions::default());
+        stack.push(Box::new(Text::new("y")), OverlayOptions::default());
+        stack.pop();
+        assert!(!stack.is_empty());
+        stack.pop();
+        assert!(stack.is_empty());
+    }
+
+    #[test]
+    fn splice_line_preserves_surrounding_content() {
+        // Overlay 2 chars at col 3, width 10 → chars 0-2, overlay, chars 5+
+        let result = splice_line("AAAAAAAAAA", "XX", 3, 2, 10);
+        let plain: String = result.chars().filter(|c| !c.is_control()).collect();
+        assert!(
+            plain.starts_with("AAA"),
+            "prefix should be preserved: {plain}"
+        );
+        assert!(plain.contains("XX"), "overlay should appear: {plain}");
+        assert!(
+            plain.ends_with("AAAAA"),
+            "suffix should be preserved: {plain}"
+        );
+    }
+
+    #[test]
+    fn splice_line_with_ansi_base() {
+        let base = "\x1b[31mAAAAAAAAAA\x1b[0m";
+        let result = splice_line(base, "XX", 3, 2, 10);
+        let plain: String = result.chars().filter(|c| !c.is_control()).collect();
+        assert!(
+            plain.contains("XX"),
+            "overlay should appear through ANSI: {plain}"
+        );
+    }
+
+    #[test]
+    fn topmost_entry_mut_returns_some() {
+        let mut stack = OverlayStack::new();
+        stack.push(Box::new(Text::new("a")), OverlayOptions::default());
+        assert!(stack.topmost_entry_mut().is_some(), "should return topmost");
+    }
+
+    #[test]
+    fn topmost_entry_mut_none_when_empty() {
+        let mut stack = OverlayStack::new();
+        assert!(
+            stack.topmost_entry_mut().is_none(),
+            "empty stack returns None"
+        );
+    }
 }

@@ -1,3 +1,4 @@
+use super::app_selection::{SelectionAnchor, apply_selection_highlight};
 use super::*;
 use crate::interface::select_overlay::{
     build_resume_selector_overlay, build_rewind_selector_overlay,
@@ -41,7 +42,7 @@ pub(super) fn format_utc_minutes(secs: u64) -> String {
     format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
 }
 
-fn civil_from_days(days: i64) -> (i64, u32, u32) {
+pub(super) fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
     let doe = z - era * 146_097;
@@ -698,7 +699,7 @@ impl App {
 
 /// Animated "N subagent(s) working…" line shown in the reserved spinner slot
 /// while the parent is idle but children are still active.
-fn subagent_activity_line(active: usize, frame: usize) -> String {
+pub(super) fn subagent_activity_line(active: usize, frame: usize) -> String {
     use crate::interface::theme::SPINNER_FRAMES;
     let spin = theme::spinner(SPINNER_FRAMES[frame % SPINNER_FRAMES.len()]);
     let noun = if active == 1 { "subagent" } else { "subagents" };
