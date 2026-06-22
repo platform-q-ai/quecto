@@ -117,7 +117,13 @@ pub(super) fn render_tool_execution(args: ToolRenderArgs<'_>) -> Vec<String> {
     let mut result_lines = Vec::with_capacity(content.len() + 2);
     result_lines.push(empty_bg_line.clone());
     for line in &content {
-        let padded = format!(" {} ", truncate_to_width(line, inner_width, None));
+        // Expand tabs to spaces before width/background handling. A literal
+        // tab advances the terminal cursor without painting the background,
+        // leaving dark gaps mid-box, and `visible_width` counts it as zero
+        // columns, throwing off the padding math. Expanding here keeps the
+        // box background contiguous and width calculations correct.
+        let expanded = expand_tabs(line);
+        let padded = format!(" {} ", truncate_to_width(&expanded, inner_width, None));
         result_lines.push(theme::apply_bg(&padded, width, bg_fn));
     }
     result_lines.push(empty_bg_line);
@@ -590,6 +596,61 @@ pub(super) fn style_diff_line(line: &str) -> String {
 /// Sanitize a string by stripping control characters.
 pub(super) fn sanitize(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).collect()
+}
+
+/// Expand tab characters to spaces using 8-column tab stops, ANSI-aware.
+///
+/// Tabs in tool output (e.g. source code, `git` output) otherwise advance the
+/// terminal cursor without painting the box background, leaving dark gaps, and
+/// `visible_width` counts them as zero columns. Expanding to spaces against the
+/// visible column position keeps the background contiguous and width math
+/// correct. ANSI escape sequences are passed through without consuming columns.
+pub(super) fn expand_tabs(s: &str) -> String {
+    const TAB_STOP: usize = 8;
+    if !s.contains('\t') {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut col = 0;
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            // Copy the full escape sequence without advancing the column.
+            out.push(ch);
+            if chars.peek() == Some(&']') {
+                out.push(chars.next().unwrap());
+                while let Some(c) = chars.next() {
+                    out.push(c);
+                    if c == '\x07' {
+                        break;
+                    }
+                    if c == '\x1b' && chars.peek() == Some(&'\\') {
+                        out.push(chars.next().unwrap());
+                        break;
+                    }
+                }
+            } else {
+                for c in chars.by_ref() {
+                    out.push(c);
+                    if c.is_ascii_alphabetic() || c == '~' {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        if ch == '\t' {
+            let spaces = TAB_STOP - (col % TAB_STOP);
+            for _ in 0..spaces {
+                out.push(' ');
+            }
+            col += spaces;
+            continue;
+        }
+        out.push(ch);
+        col += unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+    }
+    out
 }
 
 /// Truncate a string to max_chars, appending "..." if truncated.

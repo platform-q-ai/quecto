@@ -555,3 +555,41 @@ fn viewport_clamps_to_full_oldest_page_instead_of_blank() {
     assert_eq!(after.len(), height, "streaming should not shrink to blank");
     assert_eq!(after, before, "oldest full page should remain anchored");
 }
+
+// ── Tab expansion in tool output ─────────────────────────────────
+
+#[test]
+fn expand_tabs_no_tab_is_unchanged() {
+    assert_eq!(expand_tabs("hello world"), "hello world");
+}
+
+#[test]
+fn expand_tabs_leading_tab_fills_to_stop() {
+    // Column 0 → next 8-col stop is 8 spaces.
+    assert_eq!(expand_tabs("\tx"), format!("{}x", " ".repeat(8)));
+}
+
+#[test]
+fn expand_tabs_mid_line_advances_to_next_stop() {
+    // "ab" occupies cols 0-1; tab fills to col 8 (6 spaces).
+    assert_eq!(expand_tabs("ab\tc"), format!("ab{}c", " ".repeat(6)));
+}
+
+#[test]
+fn expand_tabs_multiple_tabs() {
+    // col0 tab → 8 spaces (col 8); next tab → 8 spaces (col 16).
+    assert_eq!(expand_tabs("\t\tx"), format!("{}x", " ".repeat(16)));
+}
+
+#[test]
+fn expand_tabs_preserves_ansi_without_consuming_columns() {
+    // The color escape must pass through and not affect tab-stop math.
+    let input = "\x1b[31m\tx";
+    assert_eq!(expand_tabs(input), format!("\x1b[31m{}x", " ".repeat(8)));
+}
+
+#[test]
+fn expand_tabs_result_has_no_tab_characters() {
+    let out = expand_tabs("a\tb\tc\td");
+    assert!(!out.contains('\t'));
+}
