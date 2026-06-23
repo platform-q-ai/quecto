@@ -286,6 +286,31 @@ pub struct CommandSender {
     tx: mpsc::Sender<String>,
 }
 
+impl Command {
+    /// Non-sensitive command kind for user-facing diagnostics.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Prompt { .. } => "prompt",
+            Self::Steer { .. } => "steer",
+            Self::FollowUp { .. } => "follow_up",
+            Self::Abort { .. } => "abort",
+            Self::GetState { .. } => "get_state",
+            Self::GetMessages { .. } => "get_messages",
+            Self::GetMessagesTail { .. } => "get_messages_tail",
+            Self::GetSessionStats { .. } => "get_session_stats",
+            Self::ListModels { .. } => "list_models",
+            Self::ListSessions { .. } => "list_sessions",
+            Self::NewSession { .. } => "new_session",
+            Self::ResumeSession { .. } => "resume_session",
+            Self::SetModel { .. } => "set_model",
+            Self::SetWorkflowAutomation { .. } => "set_workflow_automation",
+            Self::ClearHistory { .. } => "clear_history",
+            Self::RewindTo { .. } => "rewind_to",
+            Self::GetSubagents { .. } => "get_subagents",
+        }
+    }
+}
+
 impl CommandSender {
     /// Send a command to the agent.
     pub async fn send(&mut self, cmd: &Command) -> Result<(), ClientError> {
@@ -417,6 +442,14 @@ impl Client {
     /// Try to receive an event without blocking.
     pub fn try_recv(&mut self) -> Option<Event> {
         self.event_rx.try_recv().ok()
+    }
+
+    #[cfg(test)]
+    pub fn disconnected_for_tests() -> Self {
+        let (cmd_tx, cmd_rx) = mpsc::channel::<String>(1);
+        drop(cmd_rx);
+        let (_event_tx, event_rx) = mpsc::channel::<Event>(1);
+        Self { cmd_tx, event_rx }
     }
 }
 

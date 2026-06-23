@@ -138,8 +138,9 @@ Feature: TUI Foundation
     Then each component should remove terminal control sequences before display
     And normal printable Unicode text should remain visible
 
-  @tui @pending
+  @tui
   Scenario: Command send failures are observable
     Given the TUI command channel is disconnected
     When the TUI tries to send a command to the agent
-    Then the send failure should be reported instead of silently ignored
+    Then the TUI should show an error notification for the failed command send
+    And the send failure should not be handled only through stderr

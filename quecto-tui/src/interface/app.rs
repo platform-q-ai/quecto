@@ -166,6 +166,14 @@ pub struct App {
     /// Whether we've already requested session stats as a fallback to learn
     /// the real context window for the current session/model.
     context_stats_requested: bool,
+    /// Internal notifications for asynchronous command-send failures.
+    command_send_failure_tx: mpsc::Sender<CommandSendFailure>,
+    command_send_failure_rx: mpsc::Receiver<CommandSendFailure>,
+}
+
+struct CommandSendFailure {
+    command_kind: &'static str,
+    error: String,
 }
 
 impl App {
@@ -174,6 +182,7 @@ impl App {
         let git_repo = std::env::current_dir().ok();
         let git_branch = git_repo.as_deref().and_then(app_git::read_git_branch_from);
         footer.set_git_branch(git_branch.clone());
+        let (command_send_failure_tx, command_send_failure_rx) = mpsc::channel(16);
 
         Self {
             terminal,
@@ -215,6 +224,8 @@ impl App {
             git_repo,
             last_rendered_lines: Vec::new(),
             context_stats_requested: false,
+            command_send_failure_tx,
+            command_send_failure_rx,
         }
     }
 

@@ -622,3 +622,31 @@ async fn update_tool_spinner_formats_generic_tool_message() {
         );
     }
 }
+
+#[tokio::test]
+async fn command_send_failure_becomes_error_notification() {
+    let client = Client::disconnected_for_tests();
+    let mut app = App::new(Terminal::new(), client);
+
+    app.send_command(Command::GetState {
+        id: Some("test".into()),
+    });
+    let failure = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        app.command_send_failure_rx.recv(),
+    )
+    .await
+    .expect("send failure should be routed to app")
+    .expect("failure channel should stay open");
+
+    app.handle_command_send_failure(failure);
+    let rendered = app.notifications.render(120).join("\n");
+    assert!(
+        rendered.contains("Failed to send get_state command"),
+        "notification should identify failed command without payload: {rendered}"
+    );
+    assert!(
+        rendered.contains("disconnected"),
+        "notification should include the send error: {rendered}"
+    );
+}

@@ -572,11 +572,28 @@ impl App {
 
     pub(super) fn send_command(&mut self, cmd: Command) {
         let mut sender = self.client.clone_sender();
+        let failure_tx = self.command_send_failure_tx.clone();
+        let command_kind = cmd.kind();
         tokio::spawn(async move {
             if let Err(e) = sender.send(&cmd).await {
-                eprintln!("quecto-tui: failed to send command: {e}");
+                let _ = failure_tx
+                    .send(CommandSendFailure {
+                        command_kind,
+                        error: e.to_string(),
+                    })
+                    .await;
             }
         });
+    }
+
+    pub(super) fn handle_command_send_failure(&mut self, failure: CommandSendFailure) {
+        self.notify(
+            &format!(
+                "Failed to send {} command: {}",
+                failure.command_kind, failure.error
+            ),
+            NotifyLevel::Error,
+        );
     }
 
     // ── Mouse text selection (#528) ───────────────────────────────────
