@@ -30,7 +30,7 @@ fn strip_terminal_control_inner(s: &str, preserve_newlines: bool) -> String {
             continue;
         }
 
-        if ch >= '\u{0020}' && ch != '\u{007F}' {
+        if !ch.is_control() {
             result.push(ch);
         }
     }
@@ -79,6 +79,11 @@ mod tests {
     #[test]
     fn strips_control_chars() {
         assert_eq!(strip_terminal_control("a\x00b\x7fc"), "abc");
+    }
+
+    #[test]
+    fn strips_c1_control_chars() {
+        assert_eq!(strip_terminal_control("a\u{009B}31mb\u{009D}c"), "a31mbc");
     }
 
     #[test]

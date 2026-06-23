@@ -67,9 +67,13 @@ impl<W: Write> DiffRenderer<W> {
     fn full_render(&mut self, lines: &[String], clear: bool) {
         let mut buf = String::new();
         buf.push_str(SYNC_START);
+        // Establish a known origin for the renderer's cursor cache. The first
+        // render can occur after terminal setup/query escape writes, so do not
+        // assume the real cursor already starts at row 0/column 0.
+        buf.push_str("\x1b[H");
 
         if clear {
-            // Clear screen and home cursor
+            // Clear screen and home cursor.
             buf.push_str("\x1b[2J\x1b[H\x1b[3J");
         }
 
