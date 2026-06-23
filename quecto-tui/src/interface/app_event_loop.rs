@@ -9,20 +9,15 @@ impl App {
         // Query Kitty keyboard protocol support.
         self.kitty.query();
 
-        // Query initial state from agent.
-        let _ = self
-            .client
-            .send(&Command::GetState {
-                id: Some("init".into()),
-            })
-            .await;
+        // Query initial state from agent through the shared command path so
+        // startup send failures surface in the UI like user-initiated sends.
+        self.send_command(Command::GetState {
+            id: Some("init".into()),
+        });
         // Query initial subagent state (#525).
-        let _ = self
-            .client
-            .send(&Command::GetSubagents {
-                id: Some("init-subagents".into()),
-            })
-            .await;
+        self.send_command(Command::GetSubagents {
+            id: Some("init-subagents".into()),
+        });
 
         // Set up SIGWINCH handler.
         let mut resize_rx = crate::infrastructure::signals::sigwinch_stream().await;
