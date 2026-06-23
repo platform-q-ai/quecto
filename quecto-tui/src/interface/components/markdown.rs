@@ -7,6 +7,9 @@
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
 use crate::interface::component::Component;
+use crate::interface::components::sanitize::{
+    strip_terminal_control, strip_terminal_control_preserve_newlines,
+};
 use crate::interface::theme;
 use crate::interface::utils::{truncate_to_width, visible_width, wrap_text};
 
@@ -557,25 +560,7 @@ fn render_table(rows: &[Vec<String>], max_width: usize) -> Vec<String> {
 /// This keeps `\n` intact so block/list structure still reaches pulldown-cmark,
 /// while removing terminal escapes before they can affect display.
 fn sanitize_markdown_source(s: &str) -> String {
-    sanitize_for_display_preserving_newlines(s)
-}
-
-fn sanitize_for_display_preserving_newlines(s: &str) -> String {
-    let mut result = String::new();
-    let mut chars = s.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' {
-            consume_escape_sequence(&mut chars);
-            continue;
-        }
-
-        if ch == '\n' || (ch >= '\u{0020}' && ch != '\u{007F}') {
-            result.push(ch);
-        }
-    }
-
-    result
+    strip_terminal_control_preserve_newlines(s)
 }
 
 /// Strip ANSI escape sequences and control characters from text for safe display.
@@ -583,59 +568,7 @@ fn sanitize_for_display_preserving_newlines(s: &str) -> String {
 /// Removes complete CSI sequences (ESC[...letter), OSC sequences
 /// (ESC]...BEL/ST), bare ESC, and all C0/C1 control characters.
 fn sanitize_for_display(s: &str) -> String {
-    let mut result = String::new();
-    let mut chars = s.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' {
-            consume_escape_sequence(&mut chars);
-            continue;
-        }
-
-        // Filter out control characters (C0: 0x00-0x1F, DEL: 0x7F).
-        if ch >= '\u{0020}' && ch != '\u{007F}' {
-            result.push(ch);
-        }
-    }
-
-    result
-}
-
-fn consume_escape_sequence<I>(chars: &mut std::iter::Peekable<I>)
-where
-    I: Iterator<Item = char>,
-{
-    match chars.peek() {
-        Some(&'[') => {
-            // CSI sequence: ESC [ ... (letter or ~)
-            chars.next();
-            loop {
-                match chars.next() {
-                    Some(c) if c.is_ascii_alphabetic() || c == '~' => break,
-                    None => break,
-                    _ => {}
-                }
-            }
-        }
-        Some(&']') => {
-            // OSC sequence: ESC ] ... (BEL or ST)
-            chars.next();
-            loop {
-                match chars.next() {
-                    Some('\x07') => break,
-                    Some('\x1b') if chars.peek() == Some(&'\\') => {
-                        chars.next();
-                        break;
-                    }
-                    None => break,
-                    _ => {}
-                }
-            }
-        }
-        _ => {
-            // Bare ESC or unknown — skip ESC and continue.
-        }
-    }
+    strip_terminal_control(s)
 }
 
 fn push_wrapped_with_hanging_indent(

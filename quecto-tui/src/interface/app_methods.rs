@@ -573,8 +573,6 @@ impl App {
     /// Compose the current frame and write it to the terminal.
     pub(super) fn render(&mut self) {
         let mut lines = self.compose_frame();
-        let height = self.terminal.height;
-
         // Diagnostic: dump the WHOLE frame (chat + below-chat) so a transient
         // line (too fast to see) can be replayed from the log.
         if let Some(path) = self.render_log_path.as_deref() {
@@ -585,33 +583,13 @@ impl App {
         // the extraction buffer (`last_rendered_lines`) stays clean.
         apply_selection_highlight(&self.selection, &mut lines);
 
-        // Write to terminal.
-        let mut buf = String::new();
-        buf.push_str("\x1b[?2026h");
-        buf.push_str("\x1b[H");
-
-        for (i, line) in lines.iter().enumerate() {
-            if i > 0 {
-                buf.push_str("\r\n");
-            }
-            buf.push_str("\x1b[2K");
-            buf.push_str(line);
-        }
-
-        let rendered = lines.len();
-        if rendered < height {
-            for _ in rendered..height {
-                buf.push_str("\r\n\x1b[2K");
-            }
-        }
-
-        buf.push_str("\x1b[?2026l");
-
-        let _ = std::io::stdout().write_all(buf.as_bytes());
-        let _ = std::io::stdout().flush();
+        // Write only changed terminal lines; the renderer tracks the previous
+        // frame and performs a full draw on first use or after invalidation.
+        self.renderer.render(&lines, self.terminal.width);
     }
 
     pub(super) fn render_full(&mut self) {
+        self.renderer.invalidate();
         self.terminal.clear_screen();
         self.render();
     }
@@ -639,7 +617,9 @@ impl App {
     pub(super) fn send_command(&mut self, cmd: Command) {
         let mut sender = self.client.clone_sender();
         tokio::spawn(async move {
-            let _ = sender.send(&cmd).await;
+            if let Err(e) = sender.send(&cmd).await {
+                eprintln!("quecto-tui: failed to send command: {e}");
+            }
         });
     }
 
