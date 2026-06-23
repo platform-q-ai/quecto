@@ -15,6 +15,7 @@ use tokio::sync::mpsc;
 use crate::infrastructure::client::{Client, Command, Event};
 use crate::infrastructure::render::DiffRenderer;
 use crate::infrastructure::terminal::Terminal;
+use crate::infrastructure::workspace_files::list_workspace_files;
 use crate::interface::component::Component;
 use crate::interface::components::autocomplete::{Autocomplete, AutocompleteResult, SlashCommand};
 use crate::interface::components::chat::Chat;
@@ -239,6 +240,25 @@ impl App {
             let branch = app_git::read_git_branch_from(&repo);
             let _ = tx.blocking_send(branch);
         });
+    }
+
+    fn start_files_autocomplete_load(&self, tx: &mpsc::Sender<Vec<String>>, in_flight: &mut bool) {
+        if *in_flight {
+            return;
+        }
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        *in_flight = true;
+        let tx = tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let files = list_workspace_files(&cwd);
+            let _ = tx.blocking_send(files);
+        });
+    }
+
+    fn refresh_files_autocomplete_from_editor(&mut self) {
+        let line = self.editor.current_line().to_string();
+        let col = self.editor.cursor_col();
+        self.files_autocomplete.update(&line, col);
     }
 }
 
