@@ -142,3 +142,43 @@ fn then_encoded_value(world: &mut QuectoWorld, expected: String) {
         world.stderr, expected
     );
 }
+
+#[when("the OSC 52 clipboard write fails")]
+fn when_osc52_clipboard_write_fails(world: &mut QuectoWorld) {
+    let source =
+        std::fs::read_to_string("quecto-tui/src/interface/app.rs").expect("read TUI app source");
+    let event_loop = std::fs::read_to_string("quecto-tui/src/interface/app_event_loop.rs")
+        .expect("read TUI event loop source");
+    world.stderr = format!("{source}\n---EVENT_LOOP---\n{event_loop}");
+}
+
+#[when("the OSC 52 clipboard flush fails")]
+fn when_osc52_clipboard_flush_fails(world: &mut QuectoWorld) {
+    when_osc52_clipboard_write_fails(world);
+}
+
+#[then("the clipboard copy result should be an error")]
+fn then_clipboard_copy_result_should_be_error(world: &mut QuectoWorld) {
+    assert!(
+        world.stderr.contains("std::io::Result<()>")
+            && world.stderr.contains("write_all")
+            && world.stderr.contains("flush()"),
+        "copy_to_clipboard should return and propagate writer/flush failures"
+    );
+    assert!(
+        world.stderr.contains("NotifyLevel::Error")
+            && world.stderr.contains("Failed to copy")
+            && world.stderr.contains("NotifyLevel::Success"),
+        "event loop should show success only for successful copy and visible error for failures"
+    );
+}
+
+#[then("clipboard failure feedback should not include the copied text")]
+fn then_clipboard_failure_feedback_should_not_include_copied_text(world: &mut QuectoWorld) {
+    assert!(
+        !world.stderr.contains("Failed to copy {text}")
+            && !world.stderr.contains("format!(\"Failed to copy {}")
+            && !world.stderr.contains("eprintln!"),
+        "clipboard failure feedback should avoid selected text and avoid stderr-only logging"
+    );
+}
