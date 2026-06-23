@@ -28,3 +28,25 @@ Feature: TUI @files mention autocomplete
     When the user types "@main" in the editor
     And the user accepts the file mention
     Then the selected file is "src/main.rs"
+
+  @issue-735
+  Scenario: first @ activation shows loading while files load in the background
+    Given workspace file loading is pending
+    When the user types "@" in the editor
+    Then the file mention popup is active
+    And the file mention popup lists "loading files"
+
+  @issue-735
+  Scenario: loaded workspace files replace the loading state
+    Given workspace file loading is pending
+    When the user types "@" in the editor
+    And workspace files finish loading "src/main.rs, src/lib.rs, README.md"
+    Then the file mention popup is active
+    And the file mention popup lists "@src/main.rs"
+
+  @issue-735
+  Scenario: stale workspace files request a non-blocking reload
+    Given workspace files were loaded more than 30 seconds ago
+    When the user types "@" in the editor
+    Then workspace file loading should be requested
+    And the file mention popup is active

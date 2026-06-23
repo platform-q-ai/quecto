@@ -326,6 +326,8 @@ pub struct QuectoWorld {
     /// TUI @files BDD: file-mention autocomplete under test.
     pub tui_files_autocomplete:
         Option<quecto_tui::interface::components::files_autocomplete::FilesAutocomplete>,
+    /// TUI @files BDD: last consumed background-load request.
+    pub tui_files_load_requested: bool,
     /// TUI scrollback BDD: viewport captured before streaming growth.
     pub tui_viewport_before_stream: Vec<String>,
     /// TUI scrollback BDD: viewport captured after streaming growth.
