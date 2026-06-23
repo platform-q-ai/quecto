@@ -190,6 +190,64 @@ its result rather than picking a new workflow.
 {"name": "agent_cmd", "arguments": {"agent_id": "security-reviewer", "command": "steer", "message": "Focus on auth vulnerabilities only"}}
 ```
 
+## Notification model
+
+Spawned agents do **not** push completion, error, or exit notifications to the
+parent. After `spawn` returns, the parent's agent loop continues — it has no
+automatic signal that the child has finished, failed, or crashed.
+
+The only reliable way to learn about a child's terminal state is to `await` it.
+Without `await`, errors are silent unless the parent happens to poll with
+`get_state` or `get_messages_tail` at the right moment.
+
+### What you can see without `await`
+
+- **Workflow state changes** are forwarded onto the parent's event stream
+  (identity-tagged with `agent_id` + `parent_id`). See "Observing the unit
+  tree" below.
+- **Point-in-time snapshots** via `get_state`, `get_messages`, and
+  `get_messages_tail` reflect the child's state at the moment of the call —
+  but they don't register as notifications. A single call that catches the
+  agent mid-run tells you nothing about what happens next.
+
+### What you cannot see without `await`
+
+- Process-level errors, crashes, or clean exits.
+- The final assistant message after a run completes.
+- The `workflow` completion snapshot (steps completed vs total).
+
+**Rule of thumb:** if you care about the outcome, `await` the child, then
+inspect its output with `get_messages_tail`. If you don't care, fire-and-forget
+is fine — but treat any un-awaited child as "result unknown."
+
+### Canonical pattern: await + tail
+
+The correct sequence is always `await` followed by `get_messages_tail`,
+regardless of whether `await` reports success or failure:
+
+```json
+// 1. Spawn (fire-and-forget)
+{"name": "spawn", "arguments": {"agent_id": "worker", "task": "do the thing"}}
+
+// 2. Await completion (blocks until idle, exited, error, or timeout)
+{"name": "agent_cmd", "arguments": {"agent_id": "worker", "command": "await", "timeout": 60}}
+
+// 3. Inspect output (check the actual result or error)
+{"name": "agent_cmd", "arguments": {"agent_id": "worker", "command": "get_messages_tail", "count": 5}}
+```
+
+**Why both steps matter:**
+
+- `await` tells you *that* something happened (status: idle/exited/error/timeout),
+  but not *what* happened. An `agent_error` status tells you the agent failed,
+  but not why.
+- `get_messages_tail` shows you the conversation history, including the final
+  assistant message or error details. Without it, you're flying blind.
+
+**Common mistake:** calling `await` and assuming success because it returned
+without a timeout. Always tail the output to verify the agent actually
+completed its task and to see the result.
+
 ### `await` — block until a subagent finishes
 
 The `await` command blocks the calling tool until the target subagent reaches
