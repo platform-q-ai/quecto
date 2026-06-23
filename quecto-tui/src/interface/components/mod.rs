@@ -3,6 +3,7 @@ pub mod chat;
 pub mod editor;
 pub mod files_autocomplete;
 pub mod footer;
+pub mod list_navigator;
 pub mod markdown;
 pub mod model_selector;
 pub mod notification;

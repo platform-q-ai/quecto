@@ -498,6 +498,73 @@ fn rust_fn_body(content: &str, name: &str) -> Option<String> {
     None
 }
 
+#[then("the TUI components layer should expose a shared ListNavigator")]
+fn then_tui_components_expose_list_navigator(_world: &mut QuectoWorld) {
+    let nav_path = Path::new(TUI_ROOT)
+        .join("interface")
+        .join("components")
+        .join("list_navigator.rs");
+    assert!(
+        nav_path.is_file(),
+        "shared list navigation helper must live at {}",
+        nav_path.display()
+    );
+    let content = std::fs::read_to_string(&nav_path).expect("read ListNavigator source");
+    assert!(
+        content.contains("pub struct ListNavigator")
+            && content.contains("pub fn move_next")
+            && content.contains("pub fn move_previous")
+            && content.contains("pub fn clamp"),
+        "ListNavigator should own selected index movement and clamping"
+    );
+}
+
+#[then(
+    "slash autocomplete, files autocomplete, model selector, and select list should use ListNavigator"
+)]
+fn then_selector_components_use_list_navigator(_world: &mut QuectoWorld) {
+    for file in [
+        "autocomplete.rs",
+        "files_autocomplete.rs",
+        "model_selector.rs",
+        "select_list.rs",
+    ] {
+        let path = Path::new(TUI_ROOT)
+            .join("interface")
+            .join("components")
+            .join(file);
+        let content = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        assert!(
+            content.contains("navigator: ListNavigator"),
+            "{file} should store selected-index state in a ListNavigator field"
+        );
+        assert!(
+            content.contains("navigator.move_next")
+                && content.contains("navigator.move_previous")
+                && content.contains("navigator.visible_range"),
+            "{file} should delegate movement and visible-window calculation to ListNavigator"
+        );
+    }
+}
+
+#[then("ListNavigator should own wraparound and visible-window selection behavior")]
+fn then_list_navigator_owns_wraparound_and_window_behavior(_world: &mut QuectoWorld) {
+    let content = std::fs::read_to_string(
+        Path::new(TUI_ROOT)
+            .join("interface")
+            .join("components")
+            .join("list_navigator.rs"),
+    )
+    .expect("read ListNavigator source");
+    assert!(
+        content.contains("pub fn selected")
+            && content.contains("pub fn visible_range")
+            && content.contains("saturating_sub"),
+        "ListNavigator should expose selected index and visible-window computation"
+    );
+}
+
 fn assert_no_tui_patterns(layer: &str, forbidden: &[&str]) {
     let dir = Path::new(TUI_ROOT).join(layer);
     let mut files = Vec::new();
