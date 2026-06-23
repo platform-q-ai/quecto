@@ -429,6 +429,75 @@ fn then_tui_architecture_feature_not_pending(_world: &mut QuectoWorld) {
     );
 }
 
+#[then("the TUI application layer should parse session stats payloads into typed values")]
+fn then_tui_application_parses_session_stats(_world: &mut QuectoWorld) {
+    let content = std::fs::read_to_string("quecto-tui/src/application/session_payloads.rs")
+        .expect("read TUI session payload parser");
+    assert!(
+        content.contains("pub struct SessionStats")
+            && content.contains("pub fn parse_session_stats")
+            && content.contains("context_usage"),
+        "session stats JSON parsing should live in an application-layer typed value"
+    );
+}
+
+#[then("the TUI application layer should parse resumed chat payloads into typed messages")]
+fn then_tui_application_parses_resumed_chat(_world: &mut QuectoWorld) {
+    let content = std::fs::read_to_string("quecto-tui/src/application/session_payloads.rs")
+        .expect("read TUI session payload parser");
+    assert!(
+        content.contains("pub enum ResumedChatMessage")
+            && content.contains("pub fn parse_resumed_messages")
+            && content.contains("pub fn parse_resume_sessions"),
+        "resumed chat/session-list JSON parsing should live in application-layer typed values"
+    );
+}
+
+#[then("the TUI App methods should delegate session payload parsing to the application layer")]
+fn then_tui_app_methods_delegate_session_payload_parsing(_world: &mut QuectoWorld) {
+    let content = std::fs::read_to_string("quecto-tui/src/interface/app_methods.rs")
+        .expect("read TUI app methods source");
+    assert!(
+        content.contains("session_payloads::parse_session_stats")
+            && content.contains("session_payloads::parse_resume_sessions")
+            && content.contains("session_payloads::parse_resumed_messages"),
+        "App session methods should call application-layer parsers instead of hand-parsing raw JSON"
+    );
+    for fn_name in [
+        "update_footer_stats",
+        "show_session_stats",
+        "open_resume_selector",
+        "replace_chat_with_messages",
+    ] {
+        let body = rust_fn_body(&content, fn_name)
+            .unwrap_or_else(|| panic!("expected function {fn_name} in app_methods.rs"));
+        assert!(
+            !body.contains(".get(\"") && !body.contains("as_array") && !body.contains("as_u64"),
+            "{fn_name} should not parse raw serde_json::Value fields directly; body was:\n{body}"
+        );
+    }
+}
+
+fn rust_fn_body(content: &str, name: &str) -> Option<String> {
+    let marker = format!("fn {name}");
+    let start = content.find(&marker)?;
+    let open = content[start..].find('{')? + start;
+    let mut depth = 0usize;
+    for (offset, ch) in content[open..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(content[open + 1..open + offset].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn assert_no_tui_patterns(layer: &str, forbidden: &[&str]) {
     let dir = Path::new(TUI_ROOT).join(layer);
     let mut files = Vec::new();

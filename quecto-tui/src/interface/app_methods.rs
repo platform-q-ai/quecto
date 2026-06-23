@@ -1,5 +1,6 @@
 use super::app_selection::{SelectionAnchor, apply_selection_highlight};
 use super::*;
+use crate::application::session_payloads::{self, ResumedChatMessage};
 use crate::interface::select_overlay::{
     build_resume_selector_overlay, build_rewind_selector_overlay,
 };
@@ -163,18 +164,16 @@ impl App {
     /// Update the footer's context/cost indicators from a session-stats
     /// payload without emitting a chat entry.
     pub(super) fn update_footer_stats(&mut self, data: &serde_json::Value) {
-        let context_tokens = data.get("contextTokens").and_then(|v| v.as_u64());
-        let max_context_tokens = data
-            .get("maxContextTokens")
-            .and_then(|v| v.as_u64())
-            .map(|v| v as usize);
-        if let (Some(used), Some(window)) = (context_tokens, max_context_tokens) {
+        let stats = session_payloads::parse_session_stats(data);
+        if let Some((used, window)) = stats.context_usage {
             self.footer.update_context_usage(used, window);
             self.context_stats_requested = true;
         }
-        let cost = data.get("cost").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        self.footer
-            .set_cost(if cost > 0.0 { Some(cost) } else { None });
+        self.footer.set_cost(if stats.cost > 0.0 {
+            Some(stats.cost)
+        } else {
+            None
+        });
     }
 
     pub(super) fn send_list_sessions(&mut self) {
@@ -195,41 +194,25 @@ impl App {
     }
 
     pub(super) fn show_session_stats(&mut self, data: &serde_json::Value) {
-        let key = data
-            .get("sessionKey")
-            .and_then(|v| v.as_str())
-            .unwrap_or("?");
-        let msgs = data
-            .get("totalMessages")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        let input = data
-            .get("tokens")
-            .and_then(|t| t.get("input"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        let output = data
-            .get("tokens")
-            .and_then(|t| t.get("output"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        let cost = data.get("cost").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let context_tokens = data.get("contextTokens").and_then(|v| v.as_u64());
-        let max_context_tokens = data
-            .get("maxContextTokens")
-            .and_then(|v| v.as_u64())
-            .map(|v| v as usize);
-        if let (Some(used), Some(window)) = (context_tokens, max_context_tokens) {
+        let stats = session_payloads::parse_session_stats(data);
+        if let Some((used, window)) = stats.context_usage {
             self.footer.update_context_usage(used, window);
             self.context_stats_requested = true;
         }
-        self.footer
-            .set_cost(if cost > 0.0 { Some(cost) } else { None });
+        self.footer.set_cost(if stats.cost > 0.0 {
+            Some(stats.cost)
+        } else {
+            None
+        });
 
         self.chat.add_entry(ChatEntry::Status {
             text: format!(
                 "Session: {} | Messages: {} | Tokens: ↑{} ↓{} | Cost: ${:.4}",
-                key, msgs, input, output, cost
+                stats.session_key,
+                stats.total_messages,
+                stats.input_tokens,
+                stats.output_tokens,
+                stats.cost
             ),
         });
     }
@@ -249,48 +232,32 @@ impl App {
     // ── Resume selector ─────────────────────────────────────────────
 
     pub(super) fn open_resume_selector(&mut self, data: &serde_json::Value) {
-        let sessions = data
-            .get("sessions")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
+        let sessions = session_payloads::parse_resume_sessions(data);
         if sessions.is_empty() {
+            let text = if session_payloads::has_session_entries(data) {
+                "No resumable CLI sessions found."
+            } else {
+                "No persisted sessions found."
+            };
             self.chat.add_entry(ChatEntry::Status {
-                text: "No persisted sessions found.".to_string(),
+                text: text.to_string(),
             });
             return;
         }
         let items = sessions
             .into_iter()
-            .filter_map(|session| {
-                let title = session
-                    .get("title")
-                    .or_else(|| session.get("name"))
-                    .and_then(|v| v.as_str())?;
-                let key = session.get("key").and_then(|v| v.as_str()).unwrap_or(title);
-                let count = session
-                    .get("messageCount")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
+            .map(|session| {
                 let when = session
-                    .get("updatedUnixSecs")
-                    .or_else(|| session.get("updatedAt"))
-                    .and_then(|v| v.as_u64())
+                    .updated_unix_secs
                     .map(format_unix_minutes)
                     .unwrap_or_else(|| "unknown time".to_string());
-                Some(SelectItem {
-                    value: key.to_string(),
-                    label: title.to_string(),
-                    description: Some(format!("{when}   ({count} msgs)")),
-                })
+                SelectItem {
+                    value: session.key,
+                    label: session.title,
+                    description: Some(format!("{when}   ({} msgs)", session.message_count)),
+                }
             })
             .collect::<Vec<_>>();
-        if items.is_empty() {
-            self.chat.add_entry(ChatEntry::Status {
-                text: "No resumable CLI sessions found.".to_string(),
-            });
-            return;
-        }
         self.resume_selector = Some(SelectList::new(items, 10));
     }
 
@@ -311,26 +278,15 @@ impl App {
     }
 
     pub(super) fn replace_chat_with_messages(&mut self, data: &serde_json::Value) {
-        let messages = data
-            .get("messages")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
+        let messages = session_payloads::parse_resumed_messages(data);
         self.chat.clear();
         for message in messages {
-            let role = message.get("role").and_then(|v| v.as_str()).unwrap_or("");
-            let content = message
-                .get("content")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            match role {
-                "user" => self.chat.add_entry(ChatEntry::User { text: content }),
-                "assistant" if !content.is_empty() => self.chat.add_entry(ChatEntry::Assistant {
-                    text: content,
+            match message {
+                ResumedChatMessage::User(text) => self.chat.add_entry(ChatEntry::User { text }),
+                ResumedChatMessage::Assistant(text) => self.chat.add_entry(ChatEntry::Assistant {
+                    text,
                     streaming: false,
                 }),
-                _ => {}
             }
         }
         self.chat.add_entry(ChatEntry::Status {
