@@ -307,7 +307,7 @@ fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
     write_osc52_clipboard_sequence(text, &mut stdout)
 }
 
-fn write_osc52_clipboard_sequence(text: &str, writer: &mut impl Write) -> std::io::Result<()> {
+pub fn write_osc52_clipboard_sequence(text: &str, writer: &mut impl Write) -> std::io::Result<()> {
     // Cap payload size to avoid overwhelming terminals with large selections.
     let bytes = text.as_bytes();
     let capped = &bytes[..bytes.len().min(MAX_CLIPBOARD_BYTES)];
