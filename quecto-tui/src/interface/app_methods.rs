@@ -547,6 +547,10 @@ impl App {
     }
 
     pub(super) fn handle_render_failure(&mut self, error: &std::io::Error) {
+        // A failed write/flush can leave the terminal cursor and synchronized
+        // output state unknown. Do not trust the diff cache after that; force
+        // the next successful frame to redraw from a known origin.
+        self.renderer.invalidate();
         self.notify(
             &format!("Failed to render frame: {error}"),
             NotifyLevel::Error,
