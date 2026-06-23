@@ -37,6 +37,12 @@ Feature: TUI Clean Architecture and executable BDD enforcement
     Then the BDD runner should execute TUI scenarios tagged wip or done
     And the TUI architecture feature should not contain pending scenarios
 
+  @issue-741
+  Scenario: TUI session payload parsing lives outside the App interface
+    Then the TUI application layer should parse session stats payloads into typed values
+    And the TUI application layer should parse resumed chat payloads into typed messages
+    And the TUI App methods should delegate session payload parsing to the application layer
+
   Scenario: TUI scrollback remains stable while an assistant response streams
     Given a quecto-tui chat view is scrolled into history
     When streaming assistant content extends the conversation
