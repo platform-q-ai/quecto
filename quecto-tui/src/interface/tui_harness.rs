@@ -213,6 +213,18 @@ impl TuiHarness {
         }
         out
     }
+
+    pub async fn close_agent_and_drain(&mut self) {
+        self.cmd_rx.close();
+        while self.cmd_rx.recv().await.is_some() {}
+        for _ in 0..5 {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    pub fn drain_command_errors(&mut self) {
+        self.app.drain_command_errors_for_test();
+    }
 }
 
 /// Lines present (normalized) in exactly one frame and absent from both

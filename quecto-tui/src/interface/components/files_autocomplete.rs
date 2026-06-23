@@ -3,20 +3,18 @@
 //!
 //! Mirrors the slash-command [`Autocomplete`](super::autocomplete::Autocomplete)
 //! (same navigation, selection, and render style) but triggers on an `@` at the
-//! cursor and sources candidates from the workspace file list — loaded lazily on
-//! first activation via `git ls-files` (tracked + untracked-not-ignored),
+//! cursor and sources candidates from a workspace file list loaded lazily on a
+//! background worker via `git ls-files` (tracked + untracked-not-ignored),
 //! falling back to a bounded filesystem walk when git is unavailable.
 
-use std::path::Path;
-use std::time::{Duration, Instant};
-
-use crate::infrastructure::workspace_files::list_workspace_files;
 use crate::interface::component::Component;
 use crate::interface::components::autocomplete::{AutocompleteResult, Suggestion};
 use crate::interface::fuzzy::fuzzy_filter;
 use crate::interface::keys::Key;
 use crate::interface::theme;
 use crate::interface::utils::truncate_to_width;
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 /// How long a loaded file list stays fresh before the next activation reloads
 /// it — so files the agent creates mid-session eventually appear.
@@ -31,6 +29,10 @@ pub struct FilesAutocomplete {
     injected: bool,
     /// When the list was last loaded; `None` until the first load.
     loaded_at: Option<Instant>,
+    /// A background workspace enumeration should be started for this directory.
+    pending_load: Option<PathBuf>,
+    /// Background workspace enumeration is already in flight.
+    loading: bool,
     suggestions: Vec<Suggestion>,
     selected: usize,
     max_visible: usize,
@@ -50,6 +52,8 @@ impl FilesAutocomplete {
             files: Vec::new(),
             injected: false,
             loaded_at: None,
+            pending_load: None,
+            loading: false,
             suggestions: Vec::new(),
             selected: 0,
             max_visible,
@@ -84,7 +88,55 @@ impl FilesAutocomplete {
         self.token_start = Some(start);
         self.ensure_loaded();
 
-        let new: Vec<Suggestion> = fuzzy_filter(&self.files, prefix, |f| f.as_str())
+        if self.files.is_empty() {
+            self.set_suggestions(Vec::new());
+            return;
+        }
+
+        self.set_suggestions(self.suggestions_for_prefix(prefix));
+    }
+
+    /// Request a workspace file load on first use, and reload when the cache has
+    /// gone stale. The actual git/filesystem work is performed by the app event
+    /// loop on a blocking worker thread, never by `update` on the UI thread.
+    fn ensure_loaded(&mut self) {
+        let age = self.loaded_at.map(|t| t.elapsed());
+        if !should_reload(self.injected, age, CACHE_TTL) || self.loading {
+            return;
+        }
+        self.pending_load = Some(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        self.loading = true;
+    }
+
+    /// Take a pending background load request, if `update` determined one is
+    /// needed. The caller owns dispatching the expensive enumeration work.
+    pub fn take_load_request(&mut self) -> Option<PathBuf> {
+        self.pending_load.take()
+    }
+
+    /// Apply a completed background file list and recompute the active token's
+    /// suggestions from the cached editor state.
+    pub fn complete_load(&mut self, files: Vec<String>) {
+        self.files = files;
+        self.loaded_at = Some(Instant::now());
+        self.loading = false;
+        self.refresh_suggestions();
+    }
+
+    fn refresh_suggestions(&mut self) {
+        let Some((cursor_col, line)) = parse_last_key(&self.last_key) else {
+            return;
+        };
+        let Some((start, prefix)) = at_token(line, cursor_col) else {
+            self.deactivate();
+            return;
+        };
+        self.token_start = Some(start);
+        self.set_suggestions(self.suggestions_for_prefix(prefix));
+    }
+
+    fn suggestions_for_prefix(&self, prefix: &str) -> Vec<Suggestion> {
+        fuzzy_filter(&self.files, prefix, |f| f.as_str())
             .into_iter()
             // Bound the work; the render windows to `max_visible` anyway.
             .take(self.max_visible * 4)
@@ -93,21 +145,7 @@ impl FilesAutocomplete {
                 label: f.clone(),
                 description: String::new(),
             })
-            .collect();
-        self.set_suggestions(new);
-    }
-
-    /// Load the workspace file list from the cwd on first use, and reload it
-    /// when the cache has gone stale (so files created mid-session appear).
-    /// Injected (test) lists are never reloaded.
-    fn ensure_loaded(&mut self) {
-        let age = self.loaded_at.map(|t| t.elapsed());
-        if !should_reload(self.injected, age, CACHE_TTL) {
-            return;
-        }
-        let cwd = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
-        self.files = list_workspace_files(&cwd);
-        self.loaded_at = Some(Instant::now());
+            .collect()
     }
 
     fn set_suggestions(&mut self, new: Vec<Suggestion>) {
@@ -175,6 +213,11 @@ fn at_token(line: &str, cursor_col: usize) -> Option<(usize, &str)> {
 
 fn suggestions_match(a: &[Suggestion], b: &[Suggestion]) -> bool {
     a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.value == y.value)
+}
+
+fn parse_last_key(key: &str) -> Option<(usize, &str)> {
+    let (cursor, line) = key.split_once('\0')?;
+    Some((cursor.parse().ok()?, line))
 }
 
 /// Whether the file cache should be (re)loaded: never for injected test lists;
@@ -392,5 +435,37 @@ mod tests {
         assert!(should_reload(false, None, ttl));
         assert!(!should_reload(false, Some(Duration::from_secs(5)), ttl));
         assert!(should_reload(false, Some(Duration::from_secs(31)), ttl));
+    }
+
+    #[test]
+    fn production_update_requests_background_load_without_showing_stale_popup() {
+        let mut f = FilesAutocomplete::new(5);
+
+        f.update("@src", 4);
+
+        assert!(
+            f.take_load_request().is_some(),
+            "first production activation should request a background workspace load"
+        );
+        assert!(
+            !f.is_active(),
+            "without cached files, update must return without blocking or showing empty suggestions"
+        );
+        assert!(
+            f.take_load_request().is_none(),
+            "a load already in flight should not be requested repeatedly"
+        );
+    }
+
+    #[test]
+    fn completed_background_load_populates_current_token_suggestions() {
+        let mut f = FilesAutocomplete::new(5);
+        f.update("@src", 4);
+        let _ = f.take_load_request();
+
+        f.complete_load(vec!["src/main.rs".into(), "README.md".into()]);
+
+        assert!(f.is_active());
+        assert_eq!(f.suggestions[0].value, "src/main.rs");
     }
 }

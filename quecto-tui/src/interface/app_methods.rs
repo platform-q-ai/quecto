@@ -616,11 +616,21 @@ impl App {
 
     pub(super) fn send_command(&mut self, cmd: Command) {
         let mut sender = self.client.clone_sender();
+        let command_error_tx = self.command_error_tx.clone();
         tokio::spawn(async move {
             if let Err(e) = sender.send(&cmd).await {
+                let message = format!("Failed to send command: {e}");
                 eprintln!("quecto-tui: failed to send command: {e}");
+                let _ = command_error_tx.send(message).await;
             }
         });
+    }
+
+    #[cfg(test)]
+    pub(super) fn drain_command_errors_for_test(&mut self) {
+        while let Ok(message) = self.command_error_rx.try_recv() {
+            self.notify(&message, NotifyLevel::Error);
+        }
     }
 
     // ── Mouse text selection (#528) ───────────────────────────────────

@@ -157,34 +157,18 @@ impl App {
                 }
                 // Spinner tick.
                 _ = spinner_interval.tick() => {
-                    let mut needs_render = false;
-                    if let Some(spinner) = &mut self.spinner {
-                        if spinner.tick() {
-                            needs_render = true;
-                        }
-                    }
-                    // GC expired notifications.
-                    if self.notifications.gc() {
-                        needs_render = true;
-                    }
-                    // GC exited subagent bars (#540).
-                    if self.gc_exited_subagents() {
-                        needs_render = true;
-                    }
-                    // Animate the subagent spinner / advance elapsed-time clocks.
-                    if self.tick_subagent_animation() {
-                        needs_render = true;
-                    }
-                    // Kitty fallback — enable modifyOtherKeys if no response.
-                    if !kitty_fallback_done && tokio::time::Instant::now() >= kitty_deadline {
-                        if !self.kitty.active {
-                            self.kitty.enable_modify_other_keys();
-                        }
-                        kitty_fallback_done = true;
-                    }
-                    if needs_render {
+                    if self.handle_periodic_tick(&mut kitty_fallback_done, kitty_deadline) {
                         self.render();
                     }
+                }
+                Some(files) = self.files_load_rx.recv() => {
+                    self.files_load_in_flight = false;
+                    self.files_autocomplete.complete_load(files);
+                    self.render();
+                }
+                Some(message) = self.command_error_rx.recv() => {
+                    self.notify(&message, NotifyLevel::Error);
+                    self.render();
                 }
                 Some(branch) = git_branch_rx.recv() => {
                     git_branch_refresh_in_flight = false;
@@ -210,6 +194,23 @@ impl App {
         self.terminal.exit_raw_mode();
         self.terminal.write_str("\r\n");
         0
+    }
+
+    fn handle_periodic_tick(
+        &mut self,
+        kitty_fallback_done: &mut bool,
+        kitty_deadline: tokio::time::Instant,
+    ) -> bool {
+        let spinner_changed = self.spinner.as_mut().is_some_and(|spinner| spinner.tick());
+        let notifications_changed = self.notifications.gc();
+        let subagents_changed = self.gc_exited_subagents() || self.tick_subagent_animation();
+        if !*kitty_fallback_done && tokio::time::Instant::now() >= kitty_deadline {
+            if !self.kitty.active {
+                self.kitty.enable_modify_other_keys();
+            }
+            *kitty_fallback_done = true;
+        }
+        spinner_changed || notifications_changed || subagents_changed
     }
 
     // ── Input handling ────────────────────────────────────────────────
@@ -479,6 +480,7 @@ impl App {
             let line = self.editor.current_line().to_string();
             let col = self.editor.cursor_col();
             self.files_autocomplete.update(&line, col);
+            self.maybe_start_files_load();
         }
 
         // Check if editor submitted.

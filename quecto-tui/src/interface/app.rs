@@ -15,6 +15,7 @@ use tokio::sync::mpsc;
 use crate::infrastructure::client::{Client, Command, Event};
 use crate::infrastructure::render::DiffRenderer;
 use crate::infrastructure::terminal::Terminal;
+use crate::infrastructure::workspace_files::list_workspace_files;
 use crate::interface::component::Component;
 use crate::interface::components::autocomplete::{Autocomplete, AutocompleteResult, SlashCommand};
 use crate::interface::components::chat::Chat;
@@ -165,6 +166,13 @@ pub struct App {
     /// Whether we've already requested session stats as a fallback to learn
     /// the real context window for the current session/model.
     context_stats_requested: bool,
+    /// Completed background workspace file lists for `@files` autocomplete.
+    files_load_rx: mpsc::Receiver<Vec<String>>,
+    files_load_tx: mpsc::Sender<Vec<String>>,
+    files_load_in_flight: bool,
+    /// Command delivery failures from spawned send tasks.
+    command_error_rx: mpsc::Receiver<String>,
+    command_error_tx: mpsc::Sender<String>,
 }
 
 impl App {
@@ -173,6 +181,8 @@ impl App {
         let git_repo = std::env::current_dir().ok();
         let git_branch = git_repo.as_deref().and_then(app_git::read_git_branch_from);
         footer.set_git_branch(git_branch.clone());
+        let (files_load_tx, files_load_rx) = mpsc::channel(1);
+        let (command_error_tx, command_error_rx) = mpsc::channel(8);
 
         Self {
             terminal,
@@ -214,6 +224,11 @@ impl App {
             git_repo,
             last_rendered_lines: Vec::new(),
             context_stats_requested: false,
+            files_load_rx,
+            files_load_tx,
+            files_load_in_flight: false,
+            command_error_rx,
+            command_error_tx,
         }
     }
 
@@ -238,6 +253,21 @@ impl App {
         tokio::task::spawn_blocking(move || {
             let branch = app_git::read_git_branch_from(&repo);
             let _ = tx.blocking_send(branch);
+        });
+    }
+
+    fn maybe_start_files_load(&mut self) {
+        if self.files_load_in_flight {
+            return;
+        }
+        let Some(cwd) = self.files_autocomplete.take_load_request() else {
+            return;
+        };
+        self.files_load_in_flight = true;
+        let tx = self.files_load_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let files = list_workspace_files(&cwd);
+            let _ = tx.blocking_send(files);
         });
     }
 }

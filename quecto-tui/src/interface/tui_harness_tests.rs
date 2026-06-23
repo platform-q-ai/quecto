@@ -5,7 +5,7 @@
 //! manual eyeballing of a live session required.
 
 use super::tui_harness::*;
-use crate::infrastructure::client::Event;
+use crate::infrastructure::client::{Command, Event};
 
 /// A batch of sub-agents spawning and running workflows must not produce a
 /// single-frame "flash" (height spike/dip) or a transient line in the below-chat
@@ -275,4 +275,43 @@ async fn event_line_invalid_json_panics_with_context() {
         h.event_line("not-json");
     }));
     assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn command_send_failure_notifies_user() {
+    let mut h = TuiHarness::new().await;
+    h.close_agent_and_drain().await;
+
+    // The first send may still enqueue before the writer task observes EOF;
+    // a subsequent command must report the closed command channel.
+    h.app_mut().send_command(Command::GetState {
+        id: Some("prime".into()),
+    });
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    h.app_mut().send_command(Command::GetState {
+        id: Some("break-writer".into()),
+    });
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    h.app_mut().send_command(Command::GetState {
+        id: Some("fail".into()),
+    });
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    h.drain_command_errors();
+
+    assert!(
+        !h.app_mut().notifications.is_empty(),
+        "send failure should create a user-visible notification"
+    );
+    h.capture();
+    assert!(
+        h.last().contains("Failed to send command"),
+        "send failure should be visible to the user:\n{}",
+        h.last()
+    );
 }
