@@ -155,6 +155,10 @@ impl App {
                         self.render();
                     }
                 }
+                Some(failure) = self.command_send_failure_rx.recv() => {
+                    self.handle_command_send_failure(failure);
+                    self.render();
+                }
                 Some(files) = files_autocomplete_rx.recv() => {
                     files_autocomplete_load_in_flight = false;
                     self.files_autocomplete.apply_loaded_files(files);
