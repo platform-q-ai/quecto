@@ -4,11 +4,11 @@
 **Owner:** core team (kernel)
 **Surface:** #2 Models / providers (per [kernel-boundary.md](kernel-boundary.md))
 **Related:** #1 Skills auto-load, #3 Workflow-set auto-load (share the reload path)
-**Decisions:** governed by [ADR-0001](kernel-boundary.md#adr-0001--wire-protocols-stay-kernel-owned)
+**Decisions:** governed by [ADR-0001](architecture-design-records/adr-0001-wire-protocols-stay-kernel-owned.md)
 (wire protocols kernel-owned, 3 impls),
-[ADR-0002](kernel-boundary.md#adr-0002--reload-trigger-for-startup-loaded-surfaces)
+[ADR-0002](architecture-design-records/adr-0002-reload-trigger-for-startup-loaded-surfaces.md)
 (hybrid reload trigger — Accepted), and
-[ADR-0003](kernel-boundary.md#adr-0003--uds-register_provider-for-dynamic-modelprovider-registration)
+[ADR-0003](architecture-design-records/adr-0003-uds-register-provider-for-dynamic-model-provider-registration.md)
 (UDS `register_provider` deferred). This PRD must stay consistent with those ADRs.
 
 ---
@@ -157,7 +157,7 @@ norm.
 
 ### Non-goals
 - **NG1 — Community-authored wire protocols.** Per
-  [ADR-0001](kernel-boundary.md#adr-0001--wire-protocols-stay-kernel-owned), wire
+  [ADR-0001](architecture-design-records/adr-0001-wire-protocols-stay-kernel-owned.md), wire
   protocols stay kernel-owned. This PRD does **not** add a community/extension
   path for new wire protocols. The third kernel protocol
   (`google-generative-ai`, native Gemini) is a **fast-follow** (its own
@@ -172,7 +172,7 @@ norm.
   roadmap; this PRD assumes the existing single-config path (+ optional registry
   file) and is compatible with folder discovery later.
 - **NG5 — UDS `register_provider`.** Deferred per
-  [ADR-0003](kernel-boundary.md#adr-0003--uds-register_provider-for-dynamic-modelprovider-registration);
+  [ADR-0003](architecture-design-records/adr-0003-uds-register-provider-for-dynamic-model-provider-registration.md);
   not in this PRD's scope. Dynamic discovery is bridged by a sidecar that
   regenerates `models.json` (picked up by the FR1 reload).
 
@@ -194,7 +194,7 @@ norm.
 
 ### FR1 — Provider/model reload path (auto-load) — per ADR-0002
 - Implements the **hybrid trigger** from
-  [ADR-0002](kernel-boundary.md#adr-0002--reload-trigger-for-startup-loaded-surfaces):
+  [ADR-0002](architecture-design-records/adr-0002-reload-trigger-for-startup-loaded-surfaces.md):
   - **Top-of-turn reload (guarantee):** at the start of each turn (agent loop and
     REPL), re-read the `providers` and (new) `models` sources and rebuild the
     provider set / model registry **iff** a source changed (mtime, then content
@@ -433,7 +433,7 @@ inside this PRD's core phases so the registry + reload work ships first.
 - **Q2 — registry shape/location → RESOLVED (FR3):** single `~/.quecto/models.json`
   (pi-shaped, providers-own-models); **not** a `config.json` section.
 - **Q4 — reload trigger → RESOLVED by
-  [ADR-0002](kernel-boundary.md#adr-0002--reload-trigger-for-startup-loaded-surfaces):**
+  [ADR-0002](architecture-design-records/adr-0002-reload-trigger-for-startup-loaded-surfaces.md):**
   hybrid (top-of-turn + on-consume) behind a `mtime` + file-length + content-hash
   gate; one shared mechanism. (Note: ADR-0002 is **pull**; tools stay **push** — see ADR-0002's
   push-vs-pull clause. Phase 2 must build the pull trigger; it cannot reuse the

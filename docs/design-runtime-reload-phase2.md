@@ -2,7 +2,7 @@
 
 **Status:** Draft for review (post-review revisions applied)
 **PRD:** [prd-models-runtime-extensible.md](prd-models-runtime-extensible.md) Phase 2 / FR1
-**ADR:** [ADR-0002](kernel-boundary.md#adr-0002--reload-trigger-for-startup-loaded-surfaces) (hybrid trigger, pull mechanism)
+**ADR:** [ADR-0002](architecture-design-records/adr-0002-reload-trigger-for-startup-loaded-surfaces.md) (hybrid trigger, pull mechanism)
 **Scope:** This design covers **only** the models/providers consumer (Phase 2). The
 shared `RuntimeReload` component is shaped so knowledge (#1) and workflow-set (#3)
 can plug in later without rework, but those consumers are out of scope here.
