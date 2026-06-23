@@ -1912,6 +1912,43 @@ fn then_llm_received_system_message(world: &mut QuectoWorld, expected: String) {
     );
 }
 
+/// Assert that the LLM did not receive any request containing a system
+/// message with the given substring.
+#[then(expr = "the LLM should not have received a system message containing {string}")]
+fn then_llm_did_not_receive_system_message(world: &mut QuectoWorld, unexpected: String) {
+    let server = world
+        .wiremock_server_ref
+        .expect("no capturing mock LLM configured");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let requests = rt.block_on(async { server.received_requests().await });
+    std::mem::forget(rt);
+    let requests = requests.expect("request recording not enabled");
+    assert!(
+        !requests.is_empty(),
+        "expected at least one request to the LLM"
+    );
+    let found = requests.iter().any(|req| {
+        let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
+        body["messages"]
+            .as_array()
+            .map(|msgs| {
+                msgs.iter().any(|m| {
+                    m["role"] == "system"
+                        && m["content"]
+                            .as_str()
+                            .map(|c| c.contains(&unexpected))
+                            .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false)
+    });
+    assert!(
+        !found,
+        "expected no system message containing '{}' in LLM requests",
+        unexpected
+    );
+}
+
 /// Assert that the LLM did NOT receive any system message.
 #[then("the LLM should not have received a system message")]
 fn then_llm_no_system_message(world: &mut QuectoWorld) {

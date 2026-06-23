@@ -134,10 +134,10 @@ Feature: E2E Real LLM Agent Matrix
       """
     When I run the real LLM agent with [message] "Say hello"
     Then the exit code should be 0
-    And stdout should contain "AGENT_SKILL_MARK"
+    And stdout should not contain "AGENT_SKILL_MARK"
 
   @done @real-llm
-  Scenario: Two skills combine in agent response
+  Scenario: Two legacy skills do not combine in agent response
     Given a workspace [skill] "agent-prefix" with frontmatter:
       """
       ---
@@ -156,8 +156,8 @@ Feature: E2E Real LLM Agent Matrix
       """
     When I run the real LLM agent with [message] "Respond briefly"
     Then the exit code should be 0
-    And stdout should contain "COMBO_PREFIX"
-    And stdout should contain "COMBO_SUFFIX"
+    And stdout should not contain "COMBO_PREFIX"
+    And stdout should not contain "COMBO_SUFFIX"
 
   @done @real-llm
   Scenario: Invalid raw skill does not break agent run

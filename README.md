@@ -333,9 +333,9 @@ quecto auth logout --provider openai
 
 Credentials are stored in `~/.quecto/credentials.json`. The credential store takes priority over keys in `config.json`.
 
-### `quecto skills` — Manage skills
+### `quecto skills` — Manage legacy skills
 
-Skills are SKILL.md files with YAML frontmatter that extend the agent's system prompt with domain knowledge or instructions.
+Skills are legacy `SKILL.md` files with YAML frontmatter. `quecto skills` remains as a temporary compatibility curation command, but skill bodies are no longer injected into the agent's system prompt.
 
 ```bash
 quecto skills list       # Shows name and description for each skill
@@ -361,7 +361,7 @@ You can still add a skill manually by creating a directory under your workspace 
 <workspace>/skills/my-skill/SKILL.md
 ```
 
-The `SKILL.md` file must contain YAML frontmatter with `name` and `description` fields. The body content (everything after the closing `---`) is prepended to the system prompt on every agent run. Multiple skills are concatenated.
+The `SKILL.md` file must contain YAML frontmatter with `name` and `description` fields. The body content (everything after the closing `---`) is preserved on disk for migration, but is not prepended to the system prompt.
 
 ```markdown
 ---

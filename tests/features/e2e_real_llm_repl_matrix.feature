@@ -182,7 +182,7 @@ Feature: E2E Real LLM REPL Matrix
     And stdout should contain "repl-list-b.txt"
 
   @done @real-llm
-  Scenario: REPL uses two skills together
+  Scenario: REPL does not inject two legacy skills together
     Given a workspace [skill] "repl-combo-1" with frontmatter:
       """
       ---
@@ -203,8 +203,8 @@ Feature: E2E Real LLM REPL Matrix
     And I type "Give a short reply"
     And I type "/exit"
     Then the exit code should be 0
-    And stdout should contain "REPL_COMBO_ONE"
-    And stdout should contain "REPL_COMBO_TWO"
+    And stdout should not contain "REPL_COMBO_ONE"
+    And stdout should not contain "REPL_COMBO_TWO"
 
   @done @real-llm
   Scenario: REPL invalid skill frontmatter ignored
