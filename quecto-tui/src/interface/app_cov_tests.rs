@@ -259,12 +259,45 @@ async fn replace_chat_with_messages_renders_roles() {
 }
 
 #[tokio::test]
-async fn replace_chat_with_messages_empty_still_adds_status() {
+async fn replace_chat_with_messages_missing_messages_preserves_chat_and_reports_error() {
     let mut h = harness().await;
     let data = serde_json::json!({});
     let a = h.app_mut();
+    a.chat.add_entry(ChatEntry::User {
+        text: "keep me".into(),
+    });
+
     a.replace_chat_with_messages(&data);
-    assert!(chat_text(a).contains("Session resumed"));
+
+    let text = chat_text(a);
+    assert!(text.contains("keep me"));
+    assert!(!text.contains("Session resumed"));
+    assert!(text.contains("Invalid resume payload"));
+    let notification_text = a
+        .notifications
+        .render(120)
+        .iter()
+        .map(|line| super::app_methods::strip_ansi(line))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(notification_text.contains("Invalid resume payload"));
+}
+
+#[tokio::test]
+async fn replace_chat_with_messages_non_array_messages_preserves_chat_and_reports_error() {
+    let mut h = harness().await;
+    let data = serde_json::json!({"messages": "bad"});
+    let a = h.app_mut();
+    a.chat.add_entry(ChatEntry::User {
+        text: "keep me".into(),
+    });
+
+    a.replace_chat_with_messages(&data);
+
+    let text = chat_text(a);
+    assert!(text.contains("keep me"));
+    assert!(!text.contains("Session resumed"));
+    assert!(text.contains("Invalid resume payload"));
 }
 
 // ── app_methods: model selector ──────────────────────────────────────

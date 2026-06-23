@@ -441,15 +441,45 @@ fn then_tui_application_parses_session_stats(_world: &mut QuectoWorld) {
     );
 }
 
-#[then("the TUI application layer should parse resumed chat payloads into typed messages")]
-fn then_tui_application_parses_resumed_chat(_world: &mut QuectoWorld) {
+#[then("the TUI application layer should validate resumed chat payloads into typed messages")]
+fn then_tui_application_validates_resumed_chat(_world: &mut QuectoWorld) {
     let content = std::fs::read_to_string("quecto-tui/src/application/session_payloads.rs")
         .expect("read TUI session payload parser");
     assert!(
         content.contains("pub enum ResumedChatMessage")
+            && content.contains("pub enum ResumeMessagesError")
             && content.contains("pub fn parse_resumed_messages")
+            && content.contains("Result<Vec<ResumedChatMessage>, ResumeMessagesError>")
             && content.contains("pub fn parse_resume_sessions"),
-        "resumed chat/session-list JSON parsing should live in application-layer typed values"
+        "resumed chat/session-list JSON validation should live in application-layer typed values"
+    );
+}
+
+#[then("the TUI should validate resumed messages before replacing chat history")]
+fn then_tui_validates_resumed_messages_before_replacing_chat(_world: &mut QuectoWorld) {
+    let parser = std::fs::read_to_string("quecto-tui/src/application/session_payloads.rs")
+        .expect("read TUI session payload parser");
+    assert!(
+        parser.contains("ResumeMessagesError::MissingMessages")
+            && parser.contains("ResumeMessagesError::MalformedMessages"),
+        "resumed-message parser should distinguish missing and malformed messages payloads"
+    );
+
+    let methods = std::fs::read_to_string("quecto-tui/src/interface/app_methods.rs")
+        .expect("read TUI app methods source");
+    let body = rust_fn_body(&methods, "replace_chat_with_messages")
+        .expect("expected replace_chat_with_messages in app_methods.rs");
+    let parse_pos = body
+        .find("session_payloads::parse_resumed_messages")
+        .expect("replace_chat_with_messages should call the application-layer parser");
+    let clear_pos = body
+        .find("self.chat.clear()")
+        .expect("replace_chat_with_messages should still clear chat after valid resume data");
+    assert!(
+        parse_pos < clear_pos
+            && body.contains("Err(error)")
+            && body.contains("Invalid resume payload"),
+        "replace_chat_with_messages should parse/validate before clearing and report invalid payloads; body was:\n{body}"
     );
 }
 
