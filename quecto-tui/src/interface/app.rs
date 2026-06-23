@@ -302,24 +302,21 @@ const MAX_CLIPBOARD_BYTES: usize = 100 * 1024;
 /// OSC 52 is supported by most modern terminals (kitty, iTerm2, WezTerm,
 /// Alacritty, tmux, etc.) and works over SSH without needing xclip/xsel.
 /// Falls back silently if the terminal doesn't support it.
-fn copy_to_clipboard(text: &str) {
+fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
+    let mut stdout = std::io::stdout();
+    write_osc52_clipboard_sequence(text, &mut stdout)
+}
+
+pub fn write_osc52_clipboard_sequence(text: &str, writer: &mut impl Write) -> std::io::Result<()> {
     // Cap payload size to avoid overwhelming terminals with large selections.
-    let capped = if text.len() > MAX_CLIPBOARD_BYTES {
-        &text[..MAX_CLIPBOARD_BYTES]
-    } else {
-        text
-    };
+    let bytes = text.as_bytes();
+    let capped = &bytes[..bytes.len().min(MAX_CLIPBOARD_BYTES)];
     // Base64-encode the text for OSC 52.
     // OSC 52 format: \x1b]52;c;<base64>\x07
-    let encoded = base64_encode(capped.as_bytes());
+    let encoded = base64_encode(capped);
     let osc = format!("\x1b]52;c;{}\x07", encoded);
-    if let Err(e) = std::io::stdout().write_all(osc.as_bytes()) {
-        eprintln!("quecto-tui: failed to write OSC52 clipboard sequence: {e}");
-        return;
-    }
-    if let Err(e) = std::io::stdout().flush() {
-        eprintln!("quecto-tui: failed to flush OSC52 clipboard sequence: {e}");
-    }
+    writer.write_all(osc.as_bytes())?;
+    writer.flush()
 }
 
 /// Simple base64 encoder (no external dependency).
@@ -646,6 +643,9 @@ fn gc_exited_subagents(
     removed
 }
 
+#[cfg(test)]
+#[path = "app_clipboard_tests.rs"]
+mod app_clipboard_tests;
 #[cfg(test)]
 #[path = "app_cov_tests.rs"]
 mod app_cov_tests;

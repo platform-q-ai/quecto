@@ -476,12 +476,21 @@ impl App {
                     if sel.start.row != end.row || sel.start.col != end.col {
                         let text = self.extract_selection(&sel.start, &end);
                         if !text.is_empty() {
-                            copy_to_clipboard(&text);
-                            let chars = text.chars().count();
-                            self.notify(
-                                &format!("Copied {} chars to clipboard", chars),
-                                NotifyLevel::Success,
-                            );
+                            match copy_to_clipboard(&text) {
+                                Ok(()) => {
+                                    let chars = text.chars().count();
+                                    self.notify(
+                                        &format!("Copied {} chars to clipboard", chars),
+                                        NotifyLevel::Success,
+                                    );
+                                }
+                                Err(error) => {
+                                    self.notify(
+                                        &format!("Failed to copy selection to clipboard: {error}"),
+                                        NotifyLevel::Error,
+                                    );
+                                }
+                            }
                         }
                     }
                 }
