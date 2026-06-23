@@ -471,6 +471,67 @@ fn chat_with_streaming_history() -> Chat {
 }
 
 #[test]
+fn render_cache_reuses_unchanged_assistant_entry() {
+    let mut chat = Chat::new();
+    chat.add_entry(ChatEntry::Assistant {
+        text: "# Cached\n\nunchanged markdown".to_string(),
+        streaming: false,
+    });
+
+    let first = chat.render(80);
+    let cached_after_first = chat.render_cache[0]
+        .as_ref()
+        .expect("first render should cache entry")
+        .clone();
+    let second = chat.render(80);
+
+    assert_eq!(second, first);
+    let cached_after_second = chat.render_cache[0]
+        .as_ref()
+        .expect("second render should keep cache");
+    assert_eq!(cached_after_second.width, 80);
+    assert_eq!(cached_after_second.lines, cached_after_first.lines);
+}
+
+#[test]
+fn render_cache_invalidates_streaming_entry_when_token_appends() {
+    let mut chat = Chat::new();
+    chat.append_token("first");
+    let _ = chat.render(80);
+    assert!(chat.render_cache[0].is_some());
+
+    chat.append_token(" second");
+
+    assert!(
+        chat.render_cache[0].is_none(),
+        "appending to a streaming assistant entry must invalidate cached markdown"
+    );
+    let rendered = render_plain(&mut chat, 80);
+    assert!(rendered.contains("first second"));
+}
+
+#[test]
+fn render_cache_invalidates_tool_entry_on_completion() {
+    let mut chat = Chat::new();
+    chat.start_tool(
+        "tool-1".into(),
+        "bash".into(),
+        r#"{"command":"echo hi"}"#.into(),
+    );
+    let _ = chat.render(80);
+    assert!(chat.render_cache[0].is_some());
+
+    chat.complete_tool("tool-1", "hi", false, Some(7));
+
+    assert!(
+        chat.render_cache[0].is_none(),
+        "completed tool output must invalidate the pending tool render"
+    );
+    let rendered = render_plain(&mut chat, 80);
+    assert!(rendered.contains("hi"));
+}
+
+#[test]
 fn scroll_down_from_scrolled_position() {
     let mut chat = Chat::new();
     for i in 0..30 {

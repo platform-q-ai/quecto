@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
 use super::*;
+use crate::interface::components::sanitize::strip_terminal_control;
 
 pub(super) struct ToolRenderArgs<'a> {
     pub tool_name: &'a str,
@@ -595,9 +596,9 @@ pub(super) fn style_diff_line(line: &str) -> String {
     }
 }
 
-/// Sanitize a string by stripping control characters.
+/// Sanitize a string by stripping terminal control sequences.
 pub(super) fn sanitize(s: &str) -> String {
-    s.chars().filter(|c| !c.is_control()).collect()
+    strip_terminal_control(s)
 }
 
 /// Expand tab characters to spaces using 8-column tab stops, ANSI-aware.

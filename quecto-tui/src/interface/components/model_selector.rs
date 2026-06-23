@@ -5,6 +5,7 @@
 //! Selecting a model sends a `set_model` command to the agent.
 
 use crate::interface::component::Component;
+use crate::interface::components::sanitize::strip_terminal_control;
 use crate::interface::fuzzy::fuzzy_filter;
 use crate::interface::keys::Key;
 use crate::interface::theme;
@@ -53,7 +54,7 @@ const MAX_QUERY_LEN: usize = 64;
 ///
 /// Prevents terminal escape injection via agent-sourced model names.
 fn sanitize_model_name(name: &str) -> String {
-    name.chars().filter(|c| !c.is_control()).collect()
+    strip_terminal_control(name)
 }
 
 /// A model entry in the selector.

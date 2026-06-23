@@ -13,6 +13,7 @@ use app_selection::TextSelection;
 use tokio::sync::mpsc;
 
 use crate::infrastructure::client::{Client, Command, Event};
+use crate::infrastructure::render::DiffRenderer;
 use crate::infrastructure::terminal::Terminal;
 use crate::interface::component::Component;
 use crate::interface::components::autocomplete::{Autocomplete, AutocompleteResult, SlashCommand};
@@ -99,6 +100,7 @@ fn builtin_commands() -> Vec<SlashCommand> {
 /// Application state.
 pub struct App {
     terminal: Terminal,
+    renderer: DiffRenderer<std::io::Stdout>,
     client: Client,
     editor: Editor,
     chat: Chat,
@@ -174,6 +176,7 @@ impl App {
 
         Self {
             terminal,
+            renderer: DiffRenderer::new(std::io::stdout()),
             client,
             editor: Editor::new(),
             chat: Chat::new(),
@@ -269,7 +272,6 @@ const MAX_CLIPBOARD_BYTES: usize = 100 * 1024;
 /// Alacritty, tmux, etc.) and works over SSH without needing xclip/xsel.
 /// Falls back silently if the terminal doesn't support it.
 fn copy_to_clipboard(text: &str) {
-    use std::io::Write;
     // Cap payload size to avoid overwhelming terminals with large selections.
     let capped = if text.len() > MAX_CLIPBOARD_BYTES {
         &text[..MAX_CLIPBOARD_BYTES]
@@ -280,8 +282,13 @@ fn copy_to_clipboard(text: &str) {
     // OSC 52 format: \x1b]52;c;<base64>\x07
     let encoded = base64_encode(capped.as_bytes());
     let osc = format!("\x1b]52;c;{}\x07", encoded);
-    let _ = std::io::stdout().write_all(osc.as_bytes());
-    let _ = std::io::stdout().flush();
+    if let Err(e) = std::io::stdout().write_all(osc.as_bytes()) {
+        eprintln!("quecto-tui: failed to write OSC52 clipboard sequence: {e}");
+        return;
+    }
+    if let Err(e) = std::io::stdout().flush() {
+        eprintln!("quecto-tui: failed to flush OSC52 clipboard sequence: {e}");
+    }
 }
 
 /// Simple base64 encoder (no external dependency).

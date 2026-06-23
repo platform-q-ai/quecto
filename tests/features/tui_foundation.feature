@@ -116,3 +116,30 @@ Feature: TUI Foundation
     When it renders lines "line1" and "CHANGED" at width 80
     Then the capture buffer should contain "CHANGED"
     And the capture buffer should not re-emit "line1"
+
+  @tui @pending
+  Scenario: App render path uses differential output
+    Given the TUI has composed and rendered a frame
+    When only one visible line changes
+    Then the terminal writer should rewrite only the changed line
+    And unchanged chat history lines should not be emitted again
+
+  @tui @pending
+  Scenario: Chat markdown rendering is cached per entry
+    Given chat history contains an unchanged assistant markdown message
+    When the chat component renders multiple frames at the same width
+    Then the assistant markdown entry should be reused from cache
+    And markdown parsing should only run again after the entry text or width changes
+
+  @tui @pending
+  Scenario: Terminal control sanitizing is shared across rendered components
+    Given agent-sourced text contains ANSI CSI, OSC, and control characters
+    When markdown, tool output, subagent rows, and model names render that text
+    Then each component should remove terminal control sequences before display
+    And normal printable Unicode text should remain visible
+
+  @tui @pending
+  Scenario: Command send failures are observable
+    Given the TUI command channel is disconnected
+    When the TUI tries to send a command to the agent
+    Then the send failure should be reported instead of silently ignored
