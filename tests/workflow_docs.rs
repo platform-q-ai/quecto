@@ -30,15 +30,17 @@ fn workflow_guards(config: &Value) -> &[Value] {
 }
 
 fn assert_reference_steps(steps: &[Value]) {
-    assert_eq!(steps.len(), 18);
+    assert_eq!(steps.len(), 19);
     assert_eq!(steps.first().unwrap()["key"], "hooks");
     assert_eq!(
         steps.first().unwrap()["label"],
         "Install/check local quality hooks"
     );
     assert_eq!(steps[1]["key"], "scenarios");
-    assert_eq!(steps[16]["key"], "pull");
-    assert_eq!(steps[16]["label"], "Move to local master and pull");
+    assert_eq!(steps[4]["key"], "red");
+    assert_eq!(steps[5]["key"], "bdd_review");
+    assert_eq!(steps[17]["key"], "pull");
+    assert_eq!(steps[17]["label"], "Move to local master and pull");
     assert_eq!(steps.last().unwrap()["key"], "cleanup");
     assert_eq!(steps.last().unwrap()["label"], "Clean up sub agents");
 }
@@ -63,7 +65,7 @@ fn readme_workflow_config_uses_guards_not_deprecated_fields() {
 }
 
 #[test]
-fn readme_lists_full_18_step_reference_workflow() {
+fn readme_lists_full_19_step_reference_workflow() {
     let readme = read_repo_file("README.md");
 
     for expected in [
@@ -71,20 +73,21 @@ fn readme_lists_full_18_step_reference_workflow() {
         "2 - Update Scenarios / Add new features",
         "3 - Write/update unit tests (run a quick smoke check; full suite runs on push)",
         "4 - Ensure new/modified tests FAIL (RED) — quick targeted run only, not full suite",
-        "5 - Implement code (GREEN)",
-        "6 - Refactor (perf, security, clean arch)",
-        "7 - Ensure tests still pass (GREEN)",
-        "8 - Commit",
-        "9 - Push (pre-push hook will run tests and linting)",
-        "10 - Create PR",
-        "11 - Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)",
-        "12 - Fix all valid review concerns",
-        "13 - Push changes to remote",
-        "14 - Reply to the reviewers comments on the PR and mark resolved (use graphql)",
-        "15 - Confirm the pre-push gate passed (real-LLM, machete, deny run on push)",
-        "16 - Merge",
-        "17 - Move to local master and pull",
-        "18 - Clean up sub agents",
+        "5 - Despatch BDD sub-agent to review BDD feature, step tests and unit tests",
+        "6 - Implement code (GREEN)",
+        "7 - Refactor (perf, security, clean arch)",
+        "8 - Ensure tests still pass (GREEN)",
+        "9 - Commit",
+        "10 - Push (pre-push hook will run tests and linting)",
+        "11 - Create PR",
+        "12 - Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)",
+        "13 - Fix all valid review concerns",
+        "14 - Push changes to remote",
+        "15 - Reply to the reviewers comments on the PR and mark resolved (use graphql)",
+        "16 - Confirm the pre-push gate passed (real-LLM, machete, deny run on push)",
+        "17 - Merge",
+        "18 - Move to local master and pull",
+        "19 - Clean up sub agents",
     ] {
         assert!(
             readme.contains(expected),
