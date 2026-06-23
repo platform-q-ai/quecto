@@ -44,22 +44,18 @@ fn test_expires_at_with_margin_zero_expiry() {
     );
 }
 
-fn frontmatter(name: &str, desc: &str, body: &str) -> String {
-    format!("---\nname: {}\ndescription: {}\n---\n{}", name, desc, body)
-}
-
 #[test]
-fn test_load_skill_prompt_with_skills() {
+fn test_load_skill_prompt_ignores_legacy_skills() {
     let tmp = tempfile::TempDir::new().unwrap();
     let skill_dir = tmp.path().join("workspace").join("skills").join("weather");
     std::fs::create_dir_all(&skill_dir).unwrap();
     std::fs::write(
         skill_dir.join("SKILL.md"),
-        frontmatter("weather", "Weather forecasts", "Fetch weather data"),
+        "---\nname: weather\ndescription: Weather forecasts\n---\nFetch weather data",
     )
     .unwrap();
     let prompt = load_skill_prompt(tmp.path());
-    assert_eq!(prompt, "Fetch weather data");
+    assert!(prompt.is_empty());
 }
 
 #[test]
@@ -80,21 +76,21 @@ fn test_load_skill_prompt_skips_invalid_frontmatter() {
 }
 
 #[test]
-fn test_merge_prompts_skill_only() {
+fn test_merge_prompts_ignores_legacy_skill_prompt() {
     let result = merge_prompts("Skill content", &None);
-    assert_eq!(result, "Skill content");
+    assert!(result.is_empty());
 }
 
 #[test]
-fn test_merge_prompts_skill_and_user() {
+fn test_merge_prompts_user_only() {
     let result = merge_prompts("Skill content", &Some("User prompt".to_string()));
-    assert_eq!(result, "Skill content\n\nUser prompt");
+    assert_eq!(result, "User prompt");
 }
 
 #[test]
 fn test_merge_prompts_skill_with_empty_user() {
     let result = merge_prompts("Skill content", &Some(String::new()));
-    assert_eq!(result, "Skill content");
+    assert!(result.is_empty());
 }
 
 #[test]
@@ -132,18 +128,18 @@ fn test_build_system_prompt_datetime_only() {
 }
 
 #[test]
-fn test_build_system_prompt_with_skills() {
+fn test_build_system_prompt_ignores_legacy_skill_prompt() {
     let result = build_system_prompt("Skill content", &None);
     assert!(result.starts_with("Current date and time:"));
     assert!(result.contains("`docs` tool"));
-    assert!(result.contains("Skill content"));
+    assert!(!result.contains("Skill content"));
 }
 
 #[test]
-fn test_build_system_prompt_with_skills_and_user() {
+fn test_build_system_prompt_with_user_ignores_legacy_skill_prompt() {
     let result = build_system_prompt("Skill content", &Some("Be helpful".to_string()));
     assert!(result.starts_with("Current date and time:"));
-    assert!(result.contains("Skill content"));
+    assert!(!result.contains("Skill content"));
     assert!(result.contains("Be helpful"));
 }
 

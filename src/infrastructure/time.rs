@@ -38,7 +38,7 @@ pub fn format_local_datetime() -> String {
             let trimmed = s.trim();
             // Guard: reject output containing literal '%' (BSD didn't expand the format)
             if !trimmed.is_empty() && !trimmed.contains('%') {
-                return trimmed.to_string();
+                return trimmed.replace(" am ", " AM ").replace(" pm ", " PM ");
             }
         }
     }

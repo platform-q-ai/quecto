@@ -3,10 +3,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::domain::skill::SkillLoader;
-
 use crate::infrastructure::auth::credential_store::Credential;
-use crate::infrastructure::persistence::skill_loader::FileSkillLoader;
 
 /// Generate a fresh, collision-resistant user-chat session key.
 ///
@@ -28,29 +25,19 @@ pub fn generate_chat_key() -> String {
     crate::domain::session::user_chat_key(secs, uniq)
 }
 
-/// Load all workspace skills and concatenate their non-empty body content.
+/// Compatibility shim for the dissolved skills surface.
 ///
-/// Skills without valid YAML frontmatter are silently skipped.
-pub fn load_skill_prompt(base_dir: &Path) -> String {
-    let workspace = base_dir.join("workspace");
-    let loader = FileSkillLoader::new(&workspace);
-    let skills = match loader.list() {
-        Ok(s) => s,
-        Err(_) => return String::new(),
-    };
-    skills
-        .iter()
-        .filter(|s| !s.content.is_empty())
-        .map(|s| s.content.as_str())
-        .collect::<Vec<_>>()
-        .join("\n\n")
+/// ADR-0004 keeps `quecto skills` as temporary filesystem curation, but skill
+/// bodies are no longer injected into the agent system prompt at startup.
+pub fn load_skill_prompt(_base_dir: &Path) -> String {
+    String::new()
 }
 
-/// Merge skill content with an optional user-provided system prompt.
-pub fn merge_prompts(skill_prompt: &str, user_prompt: &Option<String>) -> String {
+/// Merge an optional user-provided system prompt.
+pub fn merge_prompts(_legacy_skill_prompt: &str, user_prompt: &Option<String>) -> String {
     match user_prompt {
-        Some(up) if !up.is_empty() => format!("{}\n\n{}", skill_prompt, up),
-        _ => skill_prompt.to_string(),
+        Some(up) if !up.is_empty() => up.to_string(),
+        _ => String::new(),
     }
 }
 
@@ -82,24 +69,23 @@ pub fn agent_docs_retrieval_policy() -> &'static str {
 }
 
 /// Build a complete system prompt with datetime preamble, Quecto docs policy,
-/// skills, and user prompt.
+/// and user prompt.
 ///
 /// Always prepends the current date/time/timezone so the agent knows
 /// what "today" and "now" mean — critical for cron scheduling and
 /// time-aware tasks. Combines:
 /// 1. Datetime preamble (always present, see [`datetime_preamble`])
 /// 2. Quecto capability docs retrieval policy
-/// 3. Skill content (if any skills are loaded)
-/// 4. User-provided system prompt (if any)
+/// 3. User-provided system prompt (if any)
 ///
 /// Note: Some LLM providers inject their own date metadata (e.g. "Current
 /// date: 2026-03-01"). The quecto preamble is richer (day-of-week, full
 /// time, timezone) and takes precedence for time-aware operations.
 /// This duplication is intentional — see issue #104.
-pub fn build_system_prompt(skill_prompt: &str, user_prompt: &Option<String>) -> String {
+pub fn build_system_prompt(_legacy_skill_prompt: &str, user_prompt: &Option<String>) -> String {
     let preamble = datetime_preamble();
     let docs_policy = agent_docs_retrieval_policy();
-    let merged = merge_prompts(skill_prompt, user_prompt);
+    let merged = merge_prompts("", user_prompt);
     if merged.is_empty() {
         format!("{}\n\n{}", preamble, docs_policy)
     } else {

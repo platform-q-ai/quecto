@@ -482,7 +482,7 @@ fn test_remove_system_prompt_removes_dynamic_workflow_variant() {
 //      but the manifest remains at messages[0].
 //   4. Session is saved with manifest at [0].
 //   5. Agent restarts, loads session → inject_system_prompt sees System at [0]
-//      and bails out.  The actual system prompt (datetime, skills, --system
+//      and bails out.  The actual system prompt (datetime, --system
 //      flag, workflow) is NEVER injected.  The agent runs blind.
 
 #[test]
@@ -498,7 +498,7 @@ fn test_inject_system_prompt_works_when_manifest_at_position_zero() {
         Message::assistant("previous answer", vec![]),
     ];
 
-    // This is what cmd_agent_uds builds: datetime + skills + --system flag.
+    // This is what cmd_agent_uds builds: datetime + --system flag.
     let system_prompt = "Current date and time: Friday, March 13, 2026 at 10:34 PM GMT\n\nYou are a helpful assistant.";
 
     inject_system_prompt(&mut messages, system_prompt);

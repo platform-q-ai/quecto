@@ -1,11 +1,11 @@
 @done
 Feature: E2E Skill Loading
   As a user
-  I want skills installed on disk to influence the agent's behavior
-  So that I can extend and customize what the agent knows and does
+  I want legacy skills installed on disk to be manageable
+  So that existing content has a compatibility path during migration
 
   Skills use YAML frontmatter in SKILL.md files. The body (after the
-  closing ---) is injected into the agent's system prompt.
+  closing ---) is no longer injected into the agent's system prompt.
 
   Background:
     Given a temp base directory
@@ -51,9 +51,9 @@ Feature: E2E Skill Loading
     Then the exit code should be 1
     And the stderr should contain "not found"
 
-  # --- Skill content injection into agent ---
+  # --- Legacy skills are not injected into agent prompts ---
 
-  Scenario: Skill body is prepended to agent system prompt
+  Scenario: Skill body is not prepended to agent system prompt
     Given a workspace [skill] "code-review" with frontmatter:
       """
       ---
@@ -66,9 +66,9 @@ Feature: E2E Skill Loading
     When I run quecto agent -s - -m "Review my code"
     Then the exit code should be 0
     And the output should contain "I will review your code"
-    And the LLM should have received a system [message] containing "code review expert"
+    And the LLM should not have received a system [message] containing "code review expert"
 
-  Scenario: Multiple skills are concatenated into system prompt
+  Scenario: Multiple skills are not concatenated into system prompt
     Given a workspace [skill] "code-review" with frontmatter:
       """
       ---
@@ -88,8 +88,8 @@ Feature: E2E Skill Loading
     And a mock LLM that captures requests and returns text "I can help with both"
     When I run quecto agent -s - -m "Help me"
     Then the exit code should be 0
-    And the LLM should have received a system [message] containing "code review expert"
-    And the LLM should have received a system [message] containing "testing specialist"
+    And the LLM should not have received a system [message] containing "code review expert"
+    And the LLM should not have received a system [message] containing "testing specialist"
 
 
   Scenario: Agent works normally with no skills installed

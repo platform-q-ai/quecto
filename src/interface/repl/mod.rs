@@ -435,14 +435,13 @@ fn resolve_effort_from_config(config: &Config) -> Option<crate::domain::provider
     })
 }
 
-/// Build the system prompt by loading skills and merging with user prompt.
+/// Build the system prompt by merging the core preamble with the user prompt.
 ///
 /// Always includes a datetime preamble so the agent knows the current
 /// date/time/timezone — important for scheduling and time-aware tasks.
 fn build_system_prompt(ctx: &ReplContext<'_>) -> Option<String> {
-    let skill_prompt = super::shared::load_skill_prompt(ctx.base_dir);
     Some(super::shared::build_system_prompt(
-        &skill_prompt,
+        "",
         &ctx.flags.system_prompt,
     ))
 }

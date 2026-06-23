@@ -110,24 +110,25 @@ Feature: E2E Real LLM
     Then the exit code should be 0
     And stdout should contain "Arrr!"
 
-  # --- Skill loading ---
+  # --- Legacy skill compatibility ---
 
   @done @real-llm @real-llm-smoke
-  Scenario: Skill content influences real LLM behavior
+  Scenario: Skill content does not influence real LLM behavior
     Given a workspace [skill] "format" with frontmatter:
       """
       ---
       name: format
       description: Formatting skill
       ---
-      Always format your response as a bullet list using dashes.
+      Include LEGACY_SKILL_FORMAT_MARK in every response.
       """
-    When I run the real LLM agent with [message] "Name three colors."
+    When I run the real LLM agent with [message] "Reply with exactly COLORS_INLINE"
     Then the exit code should be 0
-    And stdout should contain "- "
+    And stdout should contain "COLORS_INLINE"
+    And stdout should not contain "LEGACY_SKILL_FORMAT_MARK"
 
   @done @real-llm @real-llm-smoke
-  Scenario: Multiple skills influence real LLM behavior together
+  Scenario: Multiple skills do not influence real LLM behavior together
     Given a workspace [skill] "prefix" with frontmatter:
       """
       ---
@@ -146,8 +147,9 @@ Feature: E2E Real LLM
       """
     When I run the real LLM agent with [message] "Reply with the word READY"
     Then the exit code should be 0
-    And stdout should contain "SKILL_PREFIX"
-    And stdout should contain "SKILL_SUFFIX"
+    And stdout should contain "READY"
+    And stdout should not contain "SKILL_PREFIX"
+    And stdout should not contain "SKILL_SUFFIX"
 
   @done @real-llm
   Scenario: Invalid skill frontmatter is ignored by real LLM runs
