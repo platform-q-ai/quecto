@@ -541,7 +541,16 @@ impl App {
 
         // Write only changed terminal lines; the renderer tracks the previous
         // frame and performs a full draw on first use or after invalidation.
-        self.renderer.render(&lines, self.terminal.width);
+        if let Err(e) = self.renderer.render(&lines, self.terminal.width) {
+            self.handle_render_failure(&e);
+        }
+    }
+
+    pub(super) fn handle_render_failure(&mut self, error: &std::io::Error) {
+        self.notify(
+            &format!("Failed to render frame: {error}"),
+            NotifyLevel::Error,
+        );
     }
 
     pub(super) fn render_full(&mut self) {

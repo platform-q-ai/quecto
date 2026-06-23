@@ -144,3 +144,10 @@ Feature: TUI Foundation
     When the TUI tries to send a command to the agent
     Then the TUI should show an error notification for the failed command send
     And the send failure should not be handled only through stderr
+
+  @tui
+  Scenario: DiffRenderer write and flush failures are observable
+    Given the TUI renderer output fails while writing or flushing
+    When the TUI renders a frame
+    Then the DiffRenderer should return the render error instead of ignoring it
+    And the TUI should show an error notification for the failed render

@@ -1,6 +1,38 @@
 //! Tests for pure helper functions in `app_methods.rs` (issue #729).
 
 use super::app_methods;
+use crate::infrastructure::client::Client;
+use crate::infrastructure::terminal::Terminal;
+use crate::interface::component::Component;
+use tokio::io::AsyncReadExt;
+
+async fn test_app_for_methods() -> super::App {
+    let dir = std::env::temp_dir().join(format!(
+        "quecto-tui-app-methods-test-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let socket_path = dir.join("agent.sock");
+    let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+    tokio::spawn(async move {
+        if let Ok((mut stream, _)) = listener.accept().await {
+            let mut buf = [0u8; 4096];
+            loop {
+                match stream.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+            }
+        }
+    });
+    let client = Client::connect(&socket_path).await.unwrap();
+    super::App::new(Terminal::new(), client)
+}
 
 // ── format_utc_minutes ──────────────────────────────────────────────────
 
@@ -213,4 +245,18 @@ fn strip_ansi_removes_osc_with_bel() {
 #[test]
 fn strip_ansi_removes_osc_with_st() {
     assert_eq!(app_methods::strip_ansi("\x1b]0;title\x1b\\text"), "text");
+}
+
+#[tokio::test]
+async fn render_failure_becomes_error_notification() {
+    let mut app = test_app_for_methods().await;
+    let err = std::io::Error::other("terminal closed");
+
+    app.handle_render_failure(&err);
+
+    let rendered = app.notifications.render(120).join("\n");
+    assert!(
+        rendered.contains("Failed to render frame: terminal closed"),
+        "render failure should be visible in notifications: {rendered}"
+    );
 }
