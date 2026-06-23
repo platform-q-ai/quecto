@@ -278,7 +278,17 @@ impl App {
     }
 
     pub(super) fn replace_chat_with_messages(&mut self, data: &serde_json::Value) {
-        let messages = session_payloads::parse_resumed_messages(data);
+        let messages = match session_payloads::parse_resumed_messages(data) {
+            Ok(messages) => messages,
+            Err(error) => {
+                let text = format!("Invalid resume payload: {}", error.description());
+                self.chat
+                    .add_entry(ChatEntry::Status { text: text.clone() });
+                self.notify(&text, NotifyLevel::Error);
+                return;
+            }
+        };
+
         self.chat.clear();
         for message in messages {
             match message {

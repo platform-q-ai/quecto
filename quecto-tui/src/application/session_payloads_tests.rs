@@ -1,7 +1,8 @@
 use serde_json::json;
 
 use super::{
-    ResumedChatMessage, parse_resume_sessions, parse_resumed_messages, parse_session_stats,
+    ResumeMessagesError, ResumedChatMessage, parse_resume_sessions, parse_resumed_messages,
+    parse_session_stats,
 };
 
 #[test]
@@ -65,7 +66,8 @@ fn parse_resumed_messages_keeps_only_displayable_chat_messages() {
             {"role": "assistant", "content": ""},
             {"role": "tool", "content": "hidden"}
         ]
-    }));
+    }))
+    .expect("valid messages array should parse");
 
     assert_eq!(
         messages,
@@ -73,5 +75,21 @@ fn parse_resumed_messages_keeps_only_displayable_chat_messages() {
             ResumedChatMessage::User("hello".to_string()),
             ResumedChatMessage::Assistant("world".to_string()),
         ]
+    );
+}
+
+#[test]
+fn parse_resumed_messages_rejects_missing_messages() {
+    assert_eq!(
+        parse_resumed_messages(&json!({})),
+        Err(ResumeMessagesError::MissingMessages)
+    );
+}
+
+#[test]
+fn parse_resumed_messages_rejects_non_array_messages() {
+    assert_eq!(
+        parse_resumed_messages(&json!({"messages": "bad"})),
+        Err(ResumeMessagesError::MalformedMessages)
     );
 }

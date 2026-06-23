@@ -31,6 +31,22 @@ pub enum ResumedChatMessage {
     Assistant(String),
 }
 
+/// Why a resumed-session messages payload could not be used safely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumeMessagesError {
+    MissingMessages,
+    MalformedMessages,
+}
+
+impl ResumeMessagesError {
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::MissingMessages => "missing messages array",
+            Self::MalformedMessages => "messages field is not an array",
+        }
+    }
+}
+
 /// Parse a `get_session_stats` response payload into a typed value with the
 /// same forgiving defaults the TUI historically used.
 pub fn parse_session_stats(data: &serde_json::Value) -> SessionStats {
@@ -96,8 +112,11 @@ pub fn parse_resume_sessions(data: &serde_json::Value) -> Vec<ResumeSessionSumma
 /// Parse a `get_messages` payload after session resume into displayable chat
 /// messages. Unknown roles and empty assistant messages are intentionally
 /// omitted to preserve previous TUI behavior.
-pub fn parse_resumed_messages(data: &serde_json::Value) -> Vec<ResumedChatMessage> {
-    message_values(data)
+pub fn parse_resumed_messages(
+    data: &serde_json::Value,
+) -> Result<Vec<ResumedChatMessage>, ResumeMessagesError> {
+    let messages = message_values(data)?;
+    Ok(messages
         .iter()
         .filter_map(|message| {
             let role = message.get("role").and_then(|v| v.as_str()).unwrap_or("");
@@ -112,7 +131,7 @@ pub fn parse_resumed_messages(data: &serde_json::Value) -> Vec<ResumedChatMessag
                 _ => None,
             }
         })
-        .collect()
+        .collect())
 }
 
 /// Whether the payload explicitly contained session entries, even if none are
@@ -129,11 +148,14 @@ fn session_values(data: &serde_json::Value) -> &[serde_json::Value] {
         .unwrap_or(&[])
 }
 
-fn message_values(data: &serde_json::Value) -> &[serde_json::Value] {
-    data.get("messages")
-        .and_then(|v| v.as_array())
+fn message_values(data: &serde_json::Value) -> Result<&[serde_json::Value], ResumeMessagesError> {
+    let Some(messages) = data.get("messages") else {
+        return Err(ResumeMessagesError::MissingMessages);
+    };
+    messages
+        .as_array()
         .map(Vec::as_slice)
-        .unwrap_or(&[])
+        .ok_or(ResumeMessagesError::MalformedMessages)
 }
 
 #[cfg(test)]

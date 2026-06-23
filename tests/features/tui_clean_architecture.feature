@@ -40,8 +40,12 @@ Feature: TUI Clean Architecture and executable BDD enforcement
   @issue-741
   Scenario: TUI session payload parsing lives outside the App interface
     Then the TUI application layer should parse session stats payloads into typed values
-    And the TUI application layer should parse resumed chat payloads into typed messages
+    And the TUI application layer should validate resumed chat payloads into typed messages
     And the TUI App methods should delegate session payload parsing to the application layer
+
+  @issue-739
+  Scenario: TUI keeps current chat when resumed messages are malformed
+    Then the TUI should validate resumed messages before replacing chat history
 
   @issue-740
   Scenario: TUI selector components share list navigation
