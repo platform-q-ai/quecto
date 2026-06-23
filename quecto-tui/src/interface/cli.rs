@@ -12,6 +12,7 @@ struct CliFlags {
     no_sandbox: bool,
     workflow: bool,
     workflow_guards: bool,
+    workflow_disabled: bool,
     config_path: Option<PathBuf>,
     system_prompt: Option<String>,
 }
@@ -37,6 +38,7 @@ fn parse_flags(args: &[String]) -> CliFlags {
         no_sandbox: false,
         workflow: false,
         workflow_guards: false,
+        workflow_disabled: false,
         config_path: None,
         system_prompt: None,
     };
@@ -61,11 +63,13 @@ fn parse_flags(args: &[String]) -> CliFlags {
             }
             "--workflow" => {
                 flags.workflow = true;
+                flags.workflow_disabled = false;
                 i += 1;
             }
             "--no-workflow" => {
                 flags.workflow = false;
                 flags.workflow_guards = false;
+                flags.workflow_disabled = true;
                 i += 1;
             }
             "--workflow-guards" => {
@@ -176,6 +180,9 @@ fn build_agent_args(flags: &CliFlags) -> Vec<String> {
     }
     if flags.workflow {
         args.push("--workflow".to_string());
+    }
+    if flags.workflow_disabled {
+        args.push("--no-workflow".to_string());
     }
     if flags.workflow_guards {
         args.push("--workflow-guards".to_string());
@@ -528,6 +535,16 @@ mod tests {
         let flags = parse_flags(&args("--workflow --workflow-guards --no-workflow"));
         assert!(!flags.workflow);
         assert!(!flags.workflow_guards);
+        assert!(flags.workflow_disabled);
+    }
+
+    #[test]
+    fn build_args_forward_no_workflow_to_owned_agent() {
+        let flags = parse_flags(&args("--no-workflow"));
+        let agent_args = build_agent_args(&flags);
+        assert!(agent_args.contains(&"--no-workflow".to_string()));
+        assert!(!agent_args.contains(&"--workflow".to_string()));
+        assert!(!agent_args.contains(&"--workflow-guards".to_string()));
     }
 
     #[test]

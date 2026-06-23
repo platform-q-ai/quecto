@@ -211,6 +211,7 @@ fn parse_no_workflow_before_workflow_allows_reenable() {
     let flags = parse_flags(&args("--workflow-guards --no-workflow --workflow"));
     assert!(flags.workflow);
     assert!(!flags.workflow_guards);
+    assert!(!flags.workflow_disabled);
 }
 
 #[test]
