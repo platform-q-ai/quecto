@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use crate::interface::component::Component;
 use crate::interface::components::autocomplete::{AutocompleteResult, Suggestion};
+use crate::interface::components::list_navigator::ListNavigator;
 use crate::interface::fuzzy::fuzzy_filter;
 use crate::interface::keys::Key;
 use crate::interface::theme;
@@ -34,7 +35,7 @@ pub struct FilesAutocomplete {
     /// Latched request bit consumed by the app event loop.
     load_requested: bool,
     suggestions: Vec<Suggestion>,
-    selected: usize,
+    navigator: ListNavigator,
     max_visible: usize,
     active: bool,
     result: AutocompleteResult,
@@ -55,7 +56,7 @@ impl FilesAutocomplete {
             loading: false,
             load_requested: false,
             suggestions: Vec::new(),
-            selected: 0,
+            navigator: ListNavigator::new(),
             max_visible,
             active: false,
             result: AutocompleteResult::Pending,
@@ -147,13 +148,11 @@ impl FilesAutocomplete {
 
     fn set_suggestions(&mut self, new: Vec<Suggestion>) {
         if !suggestions_match(&self.suggestions, &new) {
-            self.selected = 0;
+            self.navigator.reset();
         }
         self.suggestions = new;
         self.active = !self.suggestions.is_empty();
-        if self.selected >= self.suggestions.len() && !self.suggestions.is_empty() {
-            self.selected = self.suggestions.len() - 1;
-        }
+        self.navigator.clamp(self.suggestions.len());
     }
 
     fn deactivate(&mut self) {
@@ -240,17 +239,13 @@ impl Component for FilesAutocomplete {
 
         let mut lines = Vec::new();
         let total = self.suggestions.len();
-        let visible = total.min(self.max_visible);
-        let start = if self.selected >= visible {
-            (self.selected + 1).saturating_sub(visible)
-        } else {
-            0
-        };
-        let end = (start + visible).min(total);
+        let range = self.navigator.visible_range(total, self.max_visible);
+        let start = range.start;
+        let end = range.end;
 
         for i in start..end {
             let s = &self.suggestions[i];
-            let is_sel = i == self.selected;
+            let is_sel = i == self.navigator.selected();
             let prefix = if is_sel { "→ " } else { "  " };
             let name = if self.loading && self.files.is_empty() {
                 theme::dim(&s.label)
@@ -263,7 +258,11 @@ impl Component for FilesAutocomplete {
         }
 
         if start > 0 || end < total {
-            lines.push(theme::dim(&format!("  ({}/{})", self.selected + 1, total)));
+            lines.push(theme::dim(&format!(
+                "  ({}/{})",
+                self.navigator.selected() + 1,
+                total
+            )));
         }
 
         lines
@@ -275,24 +274,16 @@ impl Component for FilesAutocomplete {
         }
         match key {
             Key::Up => {
-                if self.selected == 0 {
-                    self.selected = self.suggestions.len().saturating_sub(1);
-                } else {
-                    self.selected -= 1;
-                }
+                self.navigator.move_previous(self.suggestions.len());
                 true
             }
             Key::Down => {
-                if self.selected >= self.suggestions.len().saturating_sub(1) {
-                    self.selected = 0;
-                } else {
-                    self.selected += 1;
-                }
+                self.navigator.move_next(self.suggestions.len());
                 true
             }
             Key::Tab | Key::Enter => {
                 if !self.loading || !self.files.is_empty() {
-                    if let Some(s) = self.suggestions.get(self.selected) {
+                    if let Some(s) = self.suggestions.get(self.navigator.selected()) {
                         self.result = AutocompleteResult::Selected(s.value.clone());
                         self.active = false;
                     }
@@ -447,9 +438,9 @@ mod tests {
     fn navigate_down_changes_selection() {
         let mut f = fa();
         f.update("@", 1);
-        assert_eq!(f.selected, 0);
+        assert_eq!(f.navigator.selected(), 0);
         f.handle_input(&Key::Down);
-        assert_eq!(f.selected, 1);
+        assert_eq!(f.navigator.selected(), 1);
     }
 
     #[test]

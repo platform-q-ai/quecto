@@ -43,6 +43,12 @@ Feature: TUI Clean Architecture and executable BDD enforcement
     And the TUI application layer should parse resumed chat payloads into typed messages
     And the TUI App methods should delegate session payload parsing to the application layer
 
+  @issue-740
+  Scenario: TUI selector components share list navigation
+    Then the TUI components layer should expose a shared ListNavigator
+    And slash autocomplete, files autocomplete, model selector, and select list should use ListNavigator
+    And ListNavigator should own wraparound and visible-window selection behavior
+
   Scenario: TUI scrollback remains stable while an assistant response streams
     Given a quecto-tui chat view is scrolled into history
     When streaming assistant content extends the conversation
