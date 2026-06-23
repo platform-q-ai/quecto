@@ -131,6 +131,12 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
             "guidance": "Run only the new/modified tests to confirm they fail before any implementation."
           },
           {
+            "key": "bdd_review",
+            "label": "Despatch BDD sub-agent to review BDD feature, step tests and unit tests",
+            "phase": "review",
+            "guidance": "Launch a sub-agent with `spawn` and bind it to a dedicated BDD review workflow by passing `workflow_spec` with a `template` (e.g., `bdd-review`) containing steps: read the changed BDD feature files, step tests, and unit tests; verify they follow BDD best practice; return a report with file:line findings. Use `agent_id='bdd-review'`, then use `agent_cmd` with `command: 'await'` (and a suitable `timeout`) to wait for it to finish, followed by `get_messages_tail` to read its findings. The reviewer runs its OWN independent review (NOT this feature workflow): give it the issue details, the changed files, and the single review dimension 'BDD/test quality'. It must verify that scenarios follow BDD best practice (clear Given-When-Then structure, explicit and testable acceptance criteria, one logical scenario per feature, no implementation details in scenario steps, appropriate step abstraction and reusability), and that unit tests are behavioural, well-named, focused, and assert the right things. The reviewer must be skeptical (report only real issues), must NOT modify code, and must return a report with file:line findings, severity, the problem, and a concrete fix. Fix any valid BDD/test-quality concerns before moving to the GREEN step."
+          },
+          {
             "key": "green",
             "label": "Implement code (GREEN)",
             "phase": "green",
@@ -170,7 +176,7 @@ A repo-local config that uses OpenAI with the Quecto workflow template:
             "key": "reviewers",
             "label": "Despatch sub agents in parallel as reviewers (Architecture, Security and Performance)",
             "phase": "review",
-            "guidance": "Dispatch the reviewers as parallel sub-agents in a SINGLE batch (one message, multiple subagent calls) so they run concurrently — at minimum Architecture, Security, and Performance; add Correctness and Test-quality for larger changes. Each reviewer runs its OWN independent review (NOT this feature workflow): give it only the PR number, the head commit SHA, its single review dimension, and the file scope; it reads the diff with gh pr diff <PR>, forms findings, and posts them. Reviewers must be skeptical (report only real issues) and must NOT modify code. Every reviewer MUST post findings as INLINE review comments on the PR via the GitHub GraphQL API (gh api graphql) — not a summary, not just a returned report: fetch the PR node id and head SHA with gh pr view <PR> --json id,headRefOid, then submit one review carrying inline comments using the addPullRequestReview mutation (event COMMENT, with a comments array of path/line/body entries anchored to the head commit) or addPullRequestReviewThread per finding. If a line anchor is rejected (line outside the diff, or the PR is already merged), fall back to a review comment that still cites file:line for every finding — inline is the default. Each finding states file:line, severity, the problem, and a concrete fix. Record each spawned reviewer's sub-agent id for the cleanup step."
+            "guidance": "Dispatch the reviewers as parallel sub-agents in a SINGLE batch (one message, multiple subagent calls) so they run concurrently. Bind each reviewer to a dedicated review workflow by passing `workflow_spec` with a `template` (e.g., `review-pr`) containing steps: fetch the PR diff, analyze the assigned dimension, and post findings as inline PR comments. At minimum Architecture, Security, and Performance; add Correctness and Test-quality for larger changes. Each reviewer runs its OWN independent review (NOT this feature workflow): give it only the PR number, the head commit SHA, its single review dimension, and the file scope; it reads the diff with gh pr diff <PR>, forms findings, and posts them. Reviewers must be skeptical (report only real issues) and must NOT modify code. Every reviewer MUST post findings as INLINE review comments on the PR via the GitHub GraphQL API (gh api graphql) — not a summary, not just a returned report: fetch the PR node id and head SHA with gh pr view <PR> --json id,headRefOid, then submit one review carrying inline comments using the addPullRequestReview mutation (event COMMENT, with a comments array of path/line/body entries anchored to the head commit) or addPullRequestReviewThread per finding. If a line anchor is rejected (line outside the diff, or the PR is already merged), fall back to a review comment that still cites file:line for every finding — inline is the default. Each finding states file:line, severity, the problem, and a concrete fix. After spawning, await each reviewer with `agent_cmd` `command: 'await'` (and a suitable `timeout`) so the parent is notified when every review has finished; verify the posted findings on the PR before moving to the fix step. Record each spawned reviewer's sub-agent id for the cleanup step."
           },
           {
             "key": "fix_reviews",
@@ -304,7 +310,7 @@ When `templates` is empty (or omitted), one default is loaded:
 
 | ID | Label | Steps | Guards |
 |----|-------|-------|--------|
-| `feature` | Feature | 18-step Quecto workflow (hooks → scenarios → tests → RED → GREEN → refactor → verify → commit → push → PR → review → merge/pull → cleanup) | `git commit`/`git push` before commit step; merge before merge step |
+| `feature` | Feature | 19-step Quecto workflow (hooks → scenarios → tests → RED → BDD review → GREEN → refactor → verify → commit → push → PR → review → merge/pull → cleanup) | `git commit`/`git push` before commit step; merge before merge step |
 
 To override built-ins, define at least one template in `templates`. When any
 custom templates are present, **only** the custom templates are available —
