@@ -147,7 +147,7 @@ impl App {
         let Some(agent_id) = args.get("agent_id").and_then(|v| v.as_str()) else {
             return;
         };
-        let sanitized: String = agent_id.chars().filter(|c| !c.is_control()).collect();
+        let sanitized = crate::interface::ansi::sanitize_control(agent_id);
         self.subagent_local.insert(
             sanitized.clone(),
             TrackedSubagent::new(crate::infrastructure::client::SubagentInfoEvent {
@@ -196,7 +196,7 @@ impl App {
             return;
         };
         let agent_id = &result_text[start + 1..start + 1 + end];
-        let sanitized: String = agent_id.chars().filter(|c| !c.is_control()).collect();
+        let sanitized = crate::interface::ansi::sanitize_control(agent_id);
         if let Some(entry) = self.subagent_local.get_mut(&sanitized) {
             entry.info.status = "running".to_string();
         }
@@ -252,12 +252,9 @@ struct WorkflowStateEvent {
 }
 
 fn sanitized_arg(args: &serde_json::Value, key: &str, fallback: &str) -> String {
-    args.get(key)
-        .and_then(|v| v.as_str())
-        .unwrap_or(fallback)
-        .chars()
-        .filter(|c| !c.is_control())
-        .collect()
+    crate::interface::ansi::sanitize_control(
+        args.get(key).and_then(|v| v.as_str()).unwrap_or(fallback),
+    )
 }
 
 /// Whether a tool's chat box should be hidden (its output is shown elsewhere or

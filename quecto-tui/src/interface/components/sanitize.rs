@@ -7,69 +7,12 @@
 /// Strip ANSI/OSC escape sequences and control characters, preserving normal
 /// printable Unicode text.
 pub fn strip_terminal_control(s: &str) -> String {
-    strip_terminal_control_inner(s, false)
+    crate::interface::ansi::sanitize_control(s)
 }
 
 /// Strip terminal control while preserving `\n` for markdown source parsing.
 pub fn strip_terminal_control_preserve_newlines(s: &str) -> String {
-    strip_terminal_control_inner(s, true)
-}
-
-fn strip_terminal_control_inner(s: &str, preserve_newlines: bool) -> String {
-    let mut result = String::new();
-    let mut chars = s.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' {
-            consume_escape_sequence(&mut chars);
-            continue;
-        }
-
-        if preserve_newlines && ch == '\n' {
-            result.push(ch);
-            continue;
-        }
-
-        if !ch.is_control() {
-            result.push(ch);
-        }
-    }
-
-    result
-}
-
-fn consume_escape_sequence<I>(chars: &mut std::iter::Peekable<I>)
-where
-    I: Iterator<Item = char>,
-{
-    match chars.peek() {
-        Some(&'[') => {
-            chars.next();
-            for c in chars.by_ref() {
-                if ('\u{0040}'..='\u{007E}').contains(&c) {
-                    break;
-                }
-            }
-        }
-        Some(&']') => {
-            chars.next();
-            loop {
-                match chars.next() {
-                    Some('\u{0007}') => break,
-                    Some('\x1b') if chars.peek() == Some(&'\\') => {
-                        chars.next();
-                        break;
-                    }
-                    None => break,
-                    _ => {}
-                }
-            }
-        }
-        Some(_) => {
-            chars.next();
-        }
-        None => {}
-    }
+    crate::interface::ansi::sanitize_control_keep_newlines(s)
 }
 
 #[cfg(test)]

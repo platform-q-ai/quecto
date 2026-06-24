@@ -55,62 +55,34 @@ pub(super) fn apply_selection_highlight(selection: &Option<TextSelection>, lines
 /// `start_col..end_col` (0-indexed, exclusive end) by wrapping visible chars
 /// in that range with `\x1b[7m` (reverse) and `\x1b[27m` (reverse off).
 pub(super) fn apply_line_highlight(line: &str, start_col: u16, end_col: u16) -> String {
+    use crate::interface::ansi::{AnsiSegment, ansi_segments};
+
     if start_col >= end_col {
         return line.to_string();
     }
     let mut result = String::with_capacity(line.len() + 20);
     let mut vis_col: u16 = 0;
-    let mut in_esc = false;
-    let mut in_osc = false;
     let mut highlighted = false;
-    let chars: Vec<char> = line.chars().collect();
-    let mut i = 0;
 
-    while i < chars.len() {
-        let ch = chars[i];
-        // Pass through ANSI escape sequences without counting columns.
-        if in_osc {
-            result.push(ch);
-            if ch == '\x07' {
-                in_osc = false;
-            } else if ch == '\x1b' && i + 1 < chars.len() && chars[i + 1] == '\\' {
-                result.push(chars[i + 1]);
-                i += 2;
-                in_osc = false;
-                continue;
+    for seg in ansi_segments(line) {
+        match seg {
+            // Pass through ANSI escape sequences without counting columns.
+            AnsiSegment::Escape(esc) => result.push_str(esc),
+            AnsiSegment::Text(text) => {
+                for ch in text.chars() {
+                    if vis_col == start_col && !highlighted {
+                        result.push_str("\x1b[7m");
+                        highlighted = true;
+                    }
+                    result.push(ch);
+                    vis_col += 1;
+                    if vis_col == end_col && highlighted {
+                        result.push_str("\x1b[27m");
+                        highlighted = false;
+                    }
+                }
             }
-            i += 1;
-            continue;
         }
-        if in_esc {
-            result.push(ch);
-            if ch.is_ascii_alphabetic() || ch == '~' {
-                in_esc = false;
-            }
-            i += 1;
-            continue;
-        }
-        if ch == '\x1b' {
-            result.push(ch);
-            in_osc = i + 1 < chars.len() && chars[i + 1] == ']';
-            if !in_osc {
-                in_esc = true;
-            }
-            i += 1;
-            continue;
-        }
-        // Visible character — apply highlight bracketing.
-        if vis_col == start_col && !highlighted {
-            result.push_str("\x1b[7m");
-            highlighted = true;
-        }
-        result.push(ch);
-        vis_col += 1;
-        if vis_col == end_col && highlighted {
-            result.push_str("\x1b[27m");
-            highlighted = false;
-        }
-        i += 1;
     }
     if highlighted {
         result.push_str("\x1b[27m");

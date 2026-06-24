@@ -343,37 +343,7 @@ fn base64_encode(data: &[u8]) -> String {
 
 /// Strip ANSI escape sequences from a string to get visible text.
 fn strip_ansi_for_selection(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut in_escape = false;
-    let mut in_osc = false;
-    let chars: Vec<char> = s.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        if in_osc {
-            // OSC ends with BEL (\x07) or ST (\x1b\\)
-            if chars[i] == '\x07' {
-                in_osc = false;
-            } else if chars[i] == '\x1b' && i + 1 < chars.len() && chars[i + 1] == '\\' {
-                in_osc = false;
-                i += 1;
-            }
-        } else if in_escape {
-            if chars[i].is_ascii_alphabetic() || chars[i] == '~' {
-                in_escape = false;
-            }
-        } else if chars[i] == '\x1b' {
-            if i + 1 < chars.len() && chars[i + 1] == ']' {
-                in_osc = true;
-                i += 1;
-            } else {
-                in_escape = true;
-            }
-        } else {
-            result.push(chars[i]);
-        }
-        i += 1;
-    }
-    result
+    crate::interface::ansi::strip_ansi(s)
 }
 
 /// Truncate tool arguments for spinner display.
@@ -524,12 +494,9 @@ const EXITED_SUBAGENT_GRACE: Duration = Duration::from_secs(5);
 
 /// Strip control characters from an agent_id for safe use as a map key.
 fn sanitize_workflow_status_text(text: &str, max_chars: usize) -> String {
-    let clean: String = text
-        .chars()
-        .filter(|c| !c.is_control())
-        .take(max_chars)
-        .collect();
-    if text.chars().filter(|c| !c.is_control()).count() > max_chars {
+    let sanitized = crate::interface::ansi::sanitize_control(text);
+    let clean: String = sanitized.chars().take(max_chars).collect();
+    if sanitized.chars().count() > max_chars {
         format!("{clean}…")
     } else {
         clean
@@ -537,7 +504,7 @@ fn sanitize_workflow_status_text(text: &str, max_chars: usize) -> String {
 }
 
 fn sanitize_agent_id(id: &str) -> String {
-    id.chars().filter(|c| !c.is_control()).collect()
+    crate::interface::ansi::sanitize_control(id)
 }
 
 /// Subagent entry with optional expiry timestamp (#540).

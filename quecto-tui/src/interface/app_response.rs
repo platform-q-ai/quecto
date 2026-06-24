@@ -78,7 +78,7 @@ impl App {
     fn handle_get_state(&mut self, data: Option<serde_json::Value>) {
         let Some(data) = data else { return };
         if let Some(model) = data.get("model").and_then(|m| m.as_str()) {
-            let sanitized: String = model.chars().filter(|c| !c.is_control()).collect();
+            let sanitized = crate::interface::ansi::sanitize_control(model);
             self.footer.set_model(&sanitized);
             self.current_model = Some(sanitized);
         }
@@ -91,7 +91,7 @@ impl App {
             let name = key.rsplit(':').next().unwrap_or("");
             self.connected_agent_id = match name {
                 "" | "default" => None,
-                other => Some(other.chars().filter(|c| !c.is_control()).collect()),
+                other => Some(crate::interface::ansi::sanitize_control(other)),
             };
         }
         if let Some(wf) = data.get("workflow") {

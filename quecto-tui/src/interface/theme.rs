@@ -177,49 +177,28 @@ fn bg_code_from_fn(bg_fn: fn(&str) -> String) -> &'static str {
 /// *set* a background (an inner highlight like `48;2;…`) are left intact so
 /// deliberate highlights survive.
 fn apply_bg_code(text: &str, width: usize, bg_code: &str) -> String {
+    use crate::interface::ansi::{AnsiSegment, ansi_segments};
+
     let mut out = String::with_capacity(text.len() + bg_code.len() * 4 + width);
     out.push_str(bg_code);
 
-    let mut chars = text.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch != '\x1b' {
-            out.push(ch);
-            continue;
-        }
-        out.push(ch);
-        match chars.peek() {
-            // CSI: copy params + terminator; re-assert bg after a bg-clearing SGR.
-            Some('[') => {
-                out.push(chars.next().unwrap());
-                let mut params = String::new();
-                let mut terminator = '\0';
-                for c in chars.by_ref() {
-                    out.push(c);
-                    if c.is_ascii_alphabetic() || c == '~' {
-                        terminator = c;
-                        break;
-                    }
-                    params.push(c);
-                }
-                if terminator == 'm' && sgr_clears_bg(&params) {
-                    out.push_str(bg_code);
-                }
-            }
-            // OSC: copy through BEL or ST; never affects the background.
-            Some(']') => {
-                out.push(chars.next().unwrap());
-                while let Some(c) = chars.next() {
-                    out.push(c);
-                    if c == '\x07' {
-                        break;
-                    }
-                    if c == '\x1b' && chars.peek() == Some(&'\\') {
-                        out.push(chars.next().unwrap());
-                        break;
+    for seg in ansi_segments(text) {
+        match seg {
+            AnsiSegment::Text(t) => out.push_str(t),
+            AnsiSegment::Escape(esc) => {
+                out.push_str(esc);
+                // CSI ending in `m` (an SGR) may clear the background; re-assert
+                // the box bg after one that does. OSC and other escapes never
+                // touch the background, so they pass through untouched.
+                if let Some(params) = esc
+                    .strip_prefix("\x1b[")
+                    .and_then(|rest| rest.strip_suffix('m'))
+                {
+                    if sgr_clears_bg(params) {
+                        out.push_str(bg_code);
                     }
                 }
             }
-            _ => {}
         }
     }
 

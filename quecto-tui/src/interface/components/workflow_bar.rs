@@ -219,7 +219,7 @@ fn truncate_line(text: &str, width: usize) -> String {
 }
 
 fn sanitize_text(text: &str) -> String {
-    text.chars().filter(|c| !c.is_control()).collect()
+    crate::interface::ansi::sanitize_control(text)
 }
 
 fn ellipsize_clean(text: &str, max_chars: usize) -> String {
