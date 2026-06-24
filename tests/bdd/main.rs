@@ -311,6 +311,10 @@ pub struct QuectoWorld {
     pub exec_env_vars: HashMap<String, String>,
     /// TUI scrollback BDD: chat view under test.
     pub tui_chat: Option<quecto_tui::interface::components::chat::Chat>,
+    /// TUI footer BDD (#760): footer render while marked as streaming.
+    pub tui_footer_streaming_render: Vec<String>,
+    /// TUI footer BDD (#760): footer render while idle (not streaming).
+    pub tui_footer_idle_render: Vec<String>,
     /// TUI @files BDD: file-mention autocomplete under test.
     pub tui_files_autocomplete:
         Option<quecto_tui::interface::components::files_autocomplete::FilesAutocomplete>,
@@ -507,6 +511,11 @@ pub struct QuectoWorld {
     pub gateway_expires_in: Option<u64>,
     /// Computed expires_at for margin assertions (issue #256)
     pub gateway_computed_expires_at: Option<i64>,
+    /// `now` captured at the moment expires_at was computed, so the assertion
+    /// is race-free under cucumber's concurrent scenario execution (the old
+    /// code recomputed `now` in the Then step, which could drift seconds past
+    /// the tolerance under CPU contention).
+    pub gateway_expires_at_reference_now: Option<i64>,
     /// Auth.json for import scenarios (issue #258)
     pub gateway_import_auth_json: Option<serde_json::Value>,
     /// Import stdout output (issue #258)

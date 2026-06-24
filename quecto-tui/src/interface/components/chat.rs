@@ -216,6 +216,8 @@ impl Chat {
         self.scroll_offset = self.scroll_offset.saturating_sub(amount);
     }
 
+    /// Number of chat entries (tests only — production never reads this).
+    #[cfg(test)]
     pub fn entry_count(&self) -> usize {
         self.entries.len()
     }

@@ -372,8 +372,12 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-// ─── Convenience matchers ─────────────────────────────────────────────────────
+// ─── Convenience matchers (tests only) ────────────────────────────────────────
+// Production matches `Key::Ctrl('c')` / `Key::Char(_)` directly; these helpers
+// exist purely for test readability, so they are gated out of production builds
+// to keep `deny(dead_code)` honest (#760).
 
+#[cfg(test)]
 impl Key {
     /// Check if this key matches Ctrl+C.
     pub fn is_ctrl_c(&self) -> bool {

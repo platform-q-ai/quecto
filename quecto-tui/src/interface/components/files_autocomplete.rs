@@ -130,7 +130,8 @@ impl FilesAutocomplete {
         std::mem::take(&mut self.load_requested)
     }
 
-    /// Whether a background load is currently pending.
+    /// Whether a background load is currently pending (tests only).
+    #[cfg(test)]
     pub fn is_loading(&self) -> bool {
         self.loading
     }

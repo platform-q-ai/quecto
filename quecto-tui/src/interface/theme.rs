@@ -6,6 +6,12 @@
 /// spinner, sub-agent rows, the idle "N working" line) cycles identically.
 pub const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
+/// Static glyph marking the footer model as actively streaming. Deliberately a
+/// non-spinner symbol: the footer renders without access to the animation tick,
+/// so a spinner frame here would read as frozen. Frame-cycling stays owned by
+/// the `Spinner` component.
+pub const STREAMING_INDICATOR: &str = "●";
+
 /// Apply an SGR code around text, with reset after.
 fn styled(code: u8, text: &str) -> String {
     format!("\x1b[{}m{}\x1b[0m", code, text)
@@ -34,11 +40,6 @@ pub fn italic(text: &str) -> String {
 /// Underline text.
 pub fn underline(text: &str) -> String {
     styled(4, text)
-}
-
-/// Reverse video (swap fg/bg).
-pub fn reverse(text: &str) -> String {
-    styled(7, text)
 }
 
 // ── Standard colors ──────────────────────────────────────────────────────────

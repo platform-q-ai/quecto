@@ -4,7 +4,6 @@
 //! The widget container renders all active widgets in insertion order.
 
 use crate::interface::component::Component;
-use crate::interface::components::text::Text;
 use std::collections::BTreeMap;
 
 /// A single widget entry.
@@ -32,29 +31,9 @@ impl WidgetContainer {
             .insert(key.to_string(), WidgetEntry { component });
     }
 
-    /// Set a simple text widget by key.
-    pub fn set_text(&mut self, key: &str, text: &str) {
-        self.set(key, Box::new(Text::new(text)));
-    }
-
     /// Remove a widget by key.
     pub fn clear(&mut self, key: &str) {
         self.widgets.remove(key);
-    }
-
-    /// Remove all widgets.
-    pub fn clear_all(&mut self) {
-        self.widgets.clear();
-    }
-
-    /// Whether there are any widgets.
-    pub fn is_empty(&self) -> bool {
-        self.widgets.is_empty()
-    }
-
-    /// Number of widgets.
-    pub fn len(&self) -> usize {
-        self.widgets.len()
     }
 }
 
@@ -83,11 +62,16 @@ impl Component for WidgetContainer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interface::components::text::Text;
+
+    fn text_widget(text: &str) -> Box<dyn Component> {
+        Box::new(Text::new(text))
+    }
 
     #[test]
     fn widget_set_and_render() {
         let mut wc = WidgetContainer::new();
-        wc.set_text("status", "Build: OK");
+        wc.set("status", text_widget("Build: OK"));
         let lines = wc.render(40);
         assert!(!lines.is_empty());
         assert!(lines[0].contains("Build: OK"));
@@ -96,27 +80,17 @@ mod tests {
     #[test]
     fn widget_clear() {
         let mut wc = WidgetContainer::new();
-        wc.set_text("status", "Build: OK");
+        wc.set("status", text_widget("Build: OK"));
         wc.clear("status");
-        assert!(wc.is_empty());
         let lines = wc.render(40);
         assert!(lines.is_empty());
     }
 
     #[test]
-    fn widget_clear_all() {
-        let mut wc = WidgetContainer::new();
-        wc.set_text("a", "1");
-        wc.set_text("b", "2");
-        wc.clear_all();
-        assert!(wc.is_empty());
-    }
-
-    #[test]
     fn widgets_render_in_sorted_order() {
         let mut wc = WidgetContainer::new();
-        wc.set_text("b", "Second");
-        wc.set_text("a", "First");
+        wc.set("b", text_widget("Second"));
+        wc.set("a", text_widget("First"));
         let lines = wc.render(40);
         let joined = lines.join("\n");
         let first_pos = joined.find("First").unwrap();
@@ -127,10 +101,10 @@ mod tests {
     #[test]
     fn widget_replace() {
         let mut wc = WidgetContainer::new();
-        wc.set_text("status", "old");
-        wc.set_text("status", "new");
-        assert_eq!(wc.len(), 1);
+        wc.set("status", text_widget("old"));
+        wc.set("status", text_widget("new"));
         let lines = wc.render(40);
+        assert_eq!(lines.len(), 1, "replace keeps a single widget");
         assert!(lines[0].contains("new"));
     }
 }

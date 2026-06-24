@@ -140,3 +140,13 @@ Feature: TUI Clean Architecture and executable BDD enforcement
   Scenario: TUI built-in slash commands have one source of truth
     Then the quecto-tui builtin command set should be the single source of truth
     And quecto-tui show_help and command dispatch should derive from builtin_commands
+
+  @issue-760
+  Scenario: TUI footer shows a streaming indicator while a response streams
+    Given a quecto-tui footer marked as streaming
+    Then the quecto-tui footer should render a streaming indicator
+
+  @issue-760
+  Scenario: TUI footer hides the streaming indicator while idle
+    Given a quecto-tui footer that is idle
+    Then the quecto-tui footer should not render a streaming indicator

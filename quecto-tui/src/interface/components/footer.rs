@@ -1,5 +1,7 @@
 //! Footer component — status bar showing model, context, git branch.
 
+use std::borrow::Cow;
+
 use crate::interface::component::Component;
 use crate::interface::theme;
 use crate::interface::utils::{truncate_to_width, visible_width};
@@ -8,7 +10,6 @@ use crate::interface::utils::{truncate_to_width, visible_width};
 pub struct Footer {
     model: String,
     git_branch: Option<String>,
-    session_name: Option<String>,
     context_percent: Option<f64>,
     context_window: usize,
     /// Tokens currently occupying the context window (last turn's input count).
@@ -40,7 +41,6 @@ impl Footer {
         Self {
             model: "unknown".to_string(),
             git_branch: None,
-            session_name: None,
             context_percent: None,
             context_window: 0,
             context_used: None,
@@ -56,10 +56,6 @@ impl Footer {
 
     pub fn set_git_branch(&mut self, branch: Option<String>) {
         self.git_branch = branch;
-    }
-
-    pub fn set_session_name(&mut self, name: Option<String>) {
-        self.session_name = name;
     }
 
     pub fn set_context(&mut self, percent: Option<f64>, window: usize) {
@@ -97,14 +93,11 @@ impl Footer {
 
 impl Component for Footer {
     fn render(&mut self, width: usize) -> Vec<String> {
-        // Line 1: pwd + git branch + session name
+        // Line 1: pwd + git branch
         let mut pwd = self.pwd.clone();
 
         if let Some(branch) = &self.git_branch {
             pwd = format!("{} ({})", pwd, branch);
-        }
-        if let Some(name) = &self.session_name {
-            pwd = format!("{} • {}", pwd, name);
         }
 
         let pwd_line = truncate_to_width(&theme::dim(&pwd), width, Some("..."));
@@ -129,7 +122,16 @@ impl Component for Footer {
             Some(cost) if cost > 0.0 => format!("{} · ${:.4}", context_str, cost),
             _ => context_str,
         };
-        let right = &self.model;
+        // Prefix the model with a streaming indicator while a response is
+        // streaming so the toggled flag is actually visible (issue #760). Borrow
+        // the model unchanged in the dominant idle path to avoid a per-frame
+        // allocation.
+        let right: Cow<str> = if self.is_streaming {
+            Cow::Owned(format!("{} {}", theme::STREAMING_INDICATOR, self.model))
+        } else {
+            Cow::Borrowed(&self.model)
+        };
+        let right = right.as_ref();
         let left_width = visible_width(&left);
         let right_width = visible_width(right);
         let min_padding = 2;
@@ -287,15 +289,6 @@ mod tests {
     }
 
     #[test]
-    fn footer_shows_session_name() {
-        let mut f = Footer::new();
-        f.set_session_name(Some("my-session".to_string()));
-        let lines = f.render(80);
-        let joined = lines.join("\n");
-        assert!(joined.contains("my-session"));
-    }
-
-    #[test]
     fn footer_shows_context_percent() {
         let mut f = Footer::new();
         f.set_context(Some(42.5), 200_000);
@@ -357,13 +350,31 @@ mod tests {
         }
     }
 
+    /// The streaming flag must be reflected in `render()` (issue #760): the four
+    /// production callers of `set_streaming` previously toggled a write-only
+    /// field that nothing rendered. Streaming must show a spinner indicator.
     #[test]
-    fn footer_streaming_flag() {
+    fn footer_renders_streaming_indicator() {
         let mut f = Footer::new();
+        f.set_model("claude-sonnet-4-6");
         f.set_streaming(true);
-        assert!(f.is_streaming);
+        let joined = f.render(80).join("\n");
+        assert!(
+            joined.contains(theme::STREAMING_INDICATOR),
+            "streaming footer should render a streaming indicator: {joined:?}"
+        );
+    }
+
+    #[test]
+    fn footer_hides_streaming_indicator_when_idle() {
+        let mut f = Footer::new();
+        f.set_model("claude-sonnet-4-6");
         f.set_streaming(false);
-        assert!(!f.is_streaming);
+        let joined = f.render(80).join("\n");
+        assert!(
+            !joined.contains(theme::STREAMING_INDICATOR),
+            "idle footer should not render a streaming indicator: {joined:?}"
+        );
     }
 
     #[test]
@@ -378,14 +389,12 @@ mod tests {
         let mut f = Footer::new();
         f.set_model("gpt-4o");
         f.set_git_branch(Some("feature".to_string()));
-        f.set_session_name(Some("sess-1".to_string()));
         f.set_context(Some(30.0), 128_000);
         f.set_streaming(true);
         let lines = f.render(100);
         assert_eq!(lines.len(), 2);
         let joined = lines.join("\n");
         assert!(joined.contains("feature"));
-        assert!(joined.contains("sess-1"));
     }
 
     #[test]

@@ -44,6 +44,8 @@ impl Spinner {
         self.active
     }
 
+    /// Current animation frame index (tests only).
+    #[cfg(test)]
     pub fn frame_index(&self) -> usize {
         self.frame
     }

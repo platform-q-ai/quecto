@@ -560,6 +560,54 @@ fn then_tui_keeps_workflow_bar_render_widget(_world: &mut QuectoWorld) {
     }
 }
 
+// ── issue-760: footer streaming indicator ──
+//
+// The footer's `is_streaming` flag was write-only: four production callers
+// toggled it but `render()` never read it, so nothing showed. These scenarios
+// pin the behaviour through the public render surface. We assert against the
+// real `STREAMING_INDICATOR` glyph (a dedicated non-spinner marker) rather than
+// a hardcoded literal so the step tracks the source of truth.
+
+fn render_footer(streaming: bool) -> Vec<String> {
+    use quecto_tui::interface::components::footer::Footer;
+    let mut footer = Footer::new();
+    footer.set_model("claude-sonnet-4-6");
+    footer.set_streaming(streaming);
+    footer.render(80)
+}
+
+fn streaming_glyph() -> &'static str {
+    quecto_tui::interface::theme::STREAMING_INDICATOR
+}
+
+#[given("a quecto-tui footer marked as streaming")]
+fn given_tui_footer_streaming(world: &mut QuectoWorld) {
+    world.tui_footer_streaming_render = render_footer(true);
+}
+
+#[given("a quecto-tui footer that is idle")]
+fn given_tui_footer_idle(world: &mut QuectoWorld) {
+    world.tui_footer_idle_render = render_footer(false);
+}
+
+#[then("the quecto-tui footer should render a streaming indicator")]
+fn then_tui_footer_renders_streaming_indicator(world: &mut QuectoWorld) {
+    let joined = world.tui_footer_streaming_render.join("\n");
+    assert!(
+        joined.contains(streaming_glyph()),
+        "footer must render a streaming indicator while streaming: {joined:?}"
+    );
+}
+
+#[then("the quecto-tui footer should not render a streaming indicator")]
+fn then_tui_footer_hides_streaming_indicator(world: &mut QuectoWorld) {
+    let joined = world.tui_footer_idle_render.join("\n");
+    assert!(
+        !joined.contains(streaming_glyph()),
+        "footer must not render a streaming indicator when idle: {joined:?}"
+    );
+}
+
 #[then("the TUI architecture feature should not contain pending scenarios")]
 fn then_tui_architecture_feature_not_pending(_world: &mut QuectoWorld) {
     let content = std::fs::read_to_string("tests/features/tui_clean_architecture.feature")
