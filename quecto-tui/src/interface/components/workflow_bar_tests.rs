@@ -34,107 +34,6 @@ fn make_state(issue: Option<u32>, done: u32, total: u32) -> WorkflowBarState {
 }
 
 #[test]
-fn hidden_when_no_issue() {
-    let state = make_state(None, 0, 14);
-    assert!(render(&state, 80).is_empty());
-}
-
-#[test]
-fn visible_with_issue() {
-    let state = make_state(Some(559), 4, 14);
-    let lines = render(&state, 80);
-    assert_eq!(lines.len(), 4, "blank + content + stage/tips + blank");
-}
-
-#[test]
-fn contains_issue_number() {
-    let state = make_state(Some(559), 4, 14);
-    let line = &render(&state, 80)[1];
-    assert!(
-        line.contains("559"),
-        "should contain issue number: {}",
-        line
-    );
-}
-
-#[test]
-fn contains_progress_fraction() {
-    let state = make_state(Some(100), 7, 14);
-    let line = &render(&state, 80)[1];
-    assert!(line.contains("07/14"), "should contain progress: {}", line);
-}
-
-#[test]
-fn contains_phase_name() {
-    let state = make_state(Some(100), 3, 14);
-    let line = &render(&state, 80)[1];
-    assert!(line.contains("GREEN"), "step 4 is green phase: {}", line);
-}
-
-#[test]
-fn contains_progress_bar_chars() {
-    let state = make_state(Some(100), 7, 14);
-    let line = &render(&state, 80)[1];
-    assert!(line.contains('▓'), "should contain filled block");
-    assert!(line.contains('░'), "should contain empty block");
-}
-
-#[test]
-fn contains_box_drawing() {
-    let state = make_state(Some(100), 4, 14);
-    let line = &render(&state, 80)[1];
-    assert!(line.contains('─'), "should contain box drawing dash");
-    assert!(line.contains('▐'), "should contain right half block sigil");
-}
-
-#[test]
-fn contains_angle_brackets() {
-    let state = make_state(Some(100), 4, 14);
-    let line = &render(&state, 80)[1];
-    assert!(line.contains('⟨'), "should contain left angle bracket");
-    assert!(line.contains('⟩'), "should contain right angle bracket");
-}
-
-#[test]
-fn contains_true_colour_bg() {
-    let state = make_state(Some(100), 0, 14);
-    let line = &render(&state, 80)[1];
-    // RED phase bg
-    assert!(
-        line.contains("\x1b[48;2;"),
-        "should contain true-colour bg escape"
-    );
-}
-
-#[test]
-fn renders_stage_status_with_hotkey_tips() {
-    let mut state = make_state(Some(100), 3, 14);
-    state.workflow_auto_continue = true;
-    state.workflow_completion_nudge = false;
-    let lines = render(&state, 120);
-    let stage_line = lines
-        .iter()
-        .find(|line| line.contains("RED") && line.contains("GREEN"))
-        .expect("stage status line should render");
-    assert!(
-        stage_line.contains("●") && stage_line.contains("GREEN"),
-        "current phase should be marked: {stage_line}"
-    );
-    assert!(
-        stage_line.contains("✓") && stage_line.contains("RED"),
-        "done stages should be marked: {stage_line}"
-    );
-    assert!(
-        stage_line.contains("A:auto on"),
-        "auto-continue status missing: {stage_line}"
-    );
-    assert!(
-        stage_line.contains("N:nudge off"),
-        "nudge status missing: {stage_line}"
-    );
-}
-
-#[test]
 fn workflow_widget_renders_plain_text_like_quecto() {
     let mut state = make_state(Some(100), 3, 14);
     state.workflow_auto_continue = true;
@@ -252,17 +151,6 @@ fn workflow_widget_complete_shows_done() {
 }
 
 #[test]
-fn all_done_shows_done() {
-    let state = make_state(Some(100), 14, 14);
-    let line = &render(&state, 80)[1];
-    assert!(
-        line.contains("DONE") || line.contains("Complete"),
-        "should show done state: {}",
-        line
-    );
-}
-
-#[test]
 fn parse_workflow_event_basic() {
     let event = serde_json::json!({
         "type": "workflow_state",
@@ -367,47 +255,9 @@ fn current_phase_none_when_all_done() {
 }
 
 #[test]
-fn active_mode_renders_template_name() {
-    let mut state = make_state(Some(100), 3, 14);
-    state.template_name = Some("my-template".into());
-    let line = &render(&state, 80)[1];
-    assert!(line.contains("my-template"));
-}
-
-#[test]
-fn selector_mode_renders_select_template() {
-    let mut state = make_state(None, 0, 0);
-    state.mode = Some("selecting_template".into());
-    state.template_count = 4;
-    let line = &render(&state, 80)[1];
-    assert!(line.contains("SELECT TEMPLATE"));
-    assert!(line.contains("4 available"));
-}
-
-#[test]
 fn selector_mode_visible_even_without_issue() {
     let mut state = make_state(None, 0, 0);
     state.mode = Some("selecting_template".into());
     state.template_count = 2;
     assert!(state.is_visible());
-}
-
-#[test]
-fn selector_mode_has_blank_line_above_and_below() {
-    let mut state = make_state(None, 0, 0);
-    state.mode = Some("selecting_template".into());
-    state.template_count = 2;
-    let lines = render(&state, 80);
-    assert_eq!(lines.len(), 4);
-    assert!(lines[0].is_empty());
-    assert!(lines[3].is_empty());
-}
-
-#[test]
-fn active_bar_has_blank_line_above_and_below() {
-    let state = make_state(Some(100), 3, 14);
-    let lines = render(&state, 80);
-    assert_eq!(lines.len(), 4);
-    assert!(lines[0].is_empty());
-    assert!(lines[3].is_empty());
 }

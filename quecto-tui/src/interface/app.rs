@@ -34,7 +34,6 @@ use crate::interface::components::widget::WidgetContainer;
 use crate::interface::components::workflow_bar;
 use crate::interface::keys::{self, Key};
 use crate::interface::kitty::KittyProtocol;
-use crate::interface::overlay::OverlayStack;
 
 const SPINNER_TICK: Duration = Duration::from_millis(80);
 const MOUSE_SCROLL_LINES: usize = 3;
@@ -110,7 +109,6 @@ pub struct App {
     autocomplete: Autocomplete,
     files_autocomplete: FilesAutocomplete,
     notifications: NotificationStack,
-    overlay_stack: OverlayStack,
     widgets_above: WidgetContainer,
     kitty: KittyProtocol,
     agent_state: AgentRunState,
@@ -195,7 +193,6 @@ impl App {
             autocomplete: Autocomplete::new(builtin_commands(), 8),
             files_autocomplete: FilesAutocomplete::new(8),
             notifications: NotificationStack::new(),
-            overlay_stack: OverlayStack::new(),
             widgets_above: WidgetContainer::new(),
             kitty: KittyProtocol::new(),
             agent_state: AgentRunState::new(),

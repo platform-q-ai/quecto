@@ -419,6 +419,123 @@ fn then_tui_does_not_expose_ctrl_shift_w_workflow_overlay(_world: &mut QuectoWor
     );
 }
 
+#[then("quecto-tui should not retain the dead OverlayStack overlay machinery")]
+fn then_tui_drops_dead_overlay_stack(_world: &mut QuectoWorld) {
+    let overlay = std::fs::read_to_string("quecto-tui/src/interface/overlay.rs")
+        .expect("read quecto-tui overlay source");
+    let app = std::fs::read_to_string("quecto-tui/src/interface/app.rs").expect("read app source");
+    let app_methods = std::fs::read_to_string("quecto-tui/src/interface/app_methods.rs")
+        .expect("read app_methods source");
+    let event_loop = std::fs::read_to_string("quecto-tui/src/interface/app_event_loop.rs")
+        .expect("read app_event_loop source");
+    for needle in [
+        "struct OverlayStack",
+        "fn composite",
+        "enum Anchor",
+        "struct OverlayOptions",
+        "struct OverlayEntry",
+        "fn resolve_position",
+    ] {
+        assert!(
+            !overlay.contains(needle),
+            "dead OverlayStack machinery should be removed from overlay.rs: found `{needle}`"
+        );
+    }
+    assert!(
+        !app.contains("OverlayStack") && !app.contains("overlay_stack"),
+        "app.rs should not hold or construct the dead overlay_stack field"
+    );
+    assert!(
+        !app_methods.contains("overlay_stack"),
+        "app_methods.rs should not composite via the dead overlay_stack"
+    );
+    assert!(
+        !event_loop.contains("overlay_stack"),
+        "app_event_loop.rs should not route input through the dead overlay_stack"
+    );
+}
+
+#[then("quecto-tui should not keep tests that pin the dead OverlayStack machinery alive")]
+fn then_tui_drops_dead_overlay_stack_tests(_world: &mut QuectoWorld) {
+    // The dead machinery only survived `#![deny(dead_code)]` because the
+    // overlay.rs `#[cfg(test)]` module exercised it; that resurrection must go.
+    let overlay = std::fs::read_to_string("quecto-tui/src/interface/overlay.rs")
+        .expect("read quecto-tui overlay source");
+    for needle in ["OverlayStack::new()", ".composite(", "OverlayOptions"] {
+        assert!(
+            !overlay.contains(needle),
+            "overlay.rs tests must not resurrect the dead OverlayStack machinery: found `{needle}`"
+        );
+    }
+}
+
+#[then("quecto-tui should keep the live splice_line overlay helpers")]
+fn then_tui_keeps_splice_line_helpers(_world: &mut QuectoWorld) {
+    let overlay = std::fs::read_to_string("quecto-tui/src/interface/overlay.rs")
+        .expect("read quecto-tui overlay source");
+    for needle in [
+        "pub fn splice_line",
+        "fn take_visible_chars",
+        "fn skip_visible_chars",
+    ] {
+        assert!(
+            overlay.contains(needle),
+            "live overlay helper must be kept: missing `{needle}`"
+        );
+    }
+}
+
+#[then("quecto-tui should not retain the legacy workflow_bar render function")]
+fn then_tui_drops_legacy_workflow_bar_render(_world: &mut QuectoWorld) {
+    let bar = std::fs::read_to_string("quecto-tui/src/interface/components/workflow_bar.rs")
+        .expect("read workflow bar source");
+    for needle in [
+        "pub fn render(",
+        "fn render_stage_status_line",
+        "fn pad_or_truncate_with_bg",
+        "fn phase_bg",
+        "fn short_step_label",
+    ] {
+        assert!(
+            !bar.contains(needle),
+            "legacy workflow_bar render path should be removed: found `{needle}`"
+        );
+    }
+}
+
+#[then("quecto-tui should not keep tests that pin the legacy workflow_bar render path alive")]
+fn then_tui_drops_legacy_workflow_bar_render_tests(_world: &mut QuectoWorld) {
+    // The legacy `render` + helpers only survived `#![deny(dead_code)]` because
+    // workflow_bar_tests.rs called them; those tests must be deleted too.
+    let tests =
+        std::fs::read_to_string("quecto-tui/src/interface/components/workflow_bar_tests.rs")
+            .expect("read workflow bar tests source");
+    for needle in [
+        "render(&state",
+        "render_stage_status_line",
+        "pad_or_truncate_with_bg",
+        "phase_bg",
+        "short_step_label",
+    ] {
+        assert!(
+            !tests.contains(needle),
+            "workflow_bar_tests.rs must not resurrect the legacy render path: found `{needle}`"
+        );
+    }
+}
+
+#[then("quecto-tui should keep the live workflow_bar render_widget path")]
+fn then_tui_keeps_workflow_bar_render_widget(_world: &mut QuectoWorld) {
+    let bar = std::fs::read_to_string("quecto-tui/src/interface/components/workflow_bar.rs")
+        .expect("read workflow bar source");
+    for needle in ["pub fn render_widget", "pub fn parse_workflow_event"] {
+        assert!(
+            bar.contains(needle),
+            "live workflow_bar function must be kept: missing `{needle}`"
+        );
+    }
+}
+
 #[then("the TUI architecture feature should not contain pending scenarios")]
 fn then_tui_architecture_feature_not_pending(_world: &mut QuectoWorld) {
     let content = std::fs::read_to_string("tests/features/tui_clean_architecture.feature")

@@ -449,11 +449,6 @@ impl App {
             lines.push(String::new());
         }
 
-        // Composite overlays on top.
-        if self.overlay_stack.has_visible() {
-            self.overlay_stack.composite(&mut lines, width, height);
-        }
-
         // Composite resume selector overlay if active.
         // Uses ANSI-aware splice_line to avoid escape code bleeding.
         if let Some(selector) = &mut self.resume_selector {

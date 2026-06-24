@@ -303,19 +303,6 @@ impl App {
             return;
         }
 
-        // If an overlay is active, route input there.
-        if self.overlay_stack.has_visible() {
-            self.last_idle_escape = None;
-            if let Some(entry) = self.overlay_stack.topmost_entry_mut() {
-                entry.component.handle_input(&key);
-            }
-            // Check if overlay wants to close (Escape).
-            if matches!(key, Key::Escape) {
-                self.overlay_stack.pop();
-            }
-            return;
-        }
-
         // If autocomplete is active, route navigation keys there.
         if self.autocomplete.is_active() {
             match &key {
