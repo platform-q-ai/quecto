@@ -126,28 +126,98 @@ pub fn strip_ansi(s: &str) -> String {
 /// This is the single shared replacement for the ~8 inlined
 /// `chars().filter(|c| !c.is_control())` sites and the `strip_terminal_control`
 /// wrapper.
+///
+/// # Intentional semantics changes vs. the old inlined filters
+///
+/// The replaced sites used `chars().filter(|c| !c.is_control())`, which kept the
+/// printable bytes that followed a malformed escape (e.g. a bare `ESC` plus a
+/// letter left the letter visible). Routed through the canonical scanner, a
+/// two-byte escape (`ESC` + one byte) now consumes that following byte too, so
+/// `sanitize_control("a\x1bbc")` is `"ac"`, not `"abc"`. This uniform tightening
+/// is intentional: these sites display untrusted ids/model names and do not key
+/// or dedupe on the sanitized string, so dropping the stray byte is strictly
+/// safer.
+///
+/// In addition to control characters, this also drops Unicode bidirectional
+/// formatting/override characters (LRM/RLM, embeddings, overrides, and isolates)
+/// to prevent Trojan-Source-style display spoofing of rendered ids and names.
 pub fn sanitize_control(s: &str) -> String {
-    sanitize_control_inner(s, false)
-}
-
-/// Like [`sanitize_control`] but keeps `\n` (for markdown source parsing); all
-/// other control characters and escape sequences are still dropped.
-pub fn sanitize_control_keep_newlines(s: &str) -> String {
-    sanitize_control_inner(s, true)
-}
-
-fn sanitize_control_inner(s: &str, keep_newlines: bool) -> String {
     let mut out = String::with_capacity(s.len());
     for seg in ansi_segments(s) {
         if let AnsiSegment::Text(text) = seg {
             for ch in text.chars() {
-                if (keep_newlines && ch == '\n') || !ch.is_control() {
+                if keep_char(ch, false) {
                     out.push(ch);
                 }
             }
         }
     }
     out
+}
+
+/// Like [`sanitize_control`] but keeps `\n` (for markdown source parsing); all
+/// other control characters, escape sequences and bidi-control characters are
+/// still dropped.
+pub fn sanitize_control_keep_newlines(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for seg in ansi_segments(s) {
+        if let AnsiSegment::Text(text) = seg {
+            for ch in text.chars() {
+                if keep_char(ch, true) {
+                    out.push(ch);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Like [`sanitize_control`] but stops after `max_chars` surviving characters.
+///
+/// Returns the (possibly truncated) sanitized string and whether truncation
+/// occurred. This does in one pass and one allocation what callers previously
+/// did with a full `sanitize_control` followed by a second `take(max_chars)`
+/// collect plus a `.count()`.
+pub fn sanitize_control_truncated(s: &str, max_chars: usize) -> (String, bool) {
+    let mut out = String::with_capacity(s.len().min(max_chars.saturating_add(1)));
+    let mut kept = 0usize;
+    for seg in ansi_segments(s) {
+        if let AnsiSegment::Text(text) = seg {
+            for ch in text.chars() {
+                if keep_char(ch, false) {
+                    if kept == max_chars {
+                        return (out, true);
+                    }
+                    out.push(ch);
+                    kept += 1;
+                }
+            }
+        }
+    }
+    (out, false)
+}
+
+/// Whether `ch` survives control/escape sanitization.
+///
+/// Drops ASCII/Unicode control characters (optionally keeping `\n`) and the
+/// bidirectional formatting/override characters used in Trojan-Source display
+/// spoofing.
+fn keep_char(ch: char, keep_newlines: bool) -> bool {
+    if keep_newlines && ch == '\n' {
+        return true;
+    }
+    !ch.is_control() && !is_bidi_control(ch)
+}
+
+/// Unicode bidirectional control characters that can visually reorder text.
+///
+/// Covers the marks (LRM/RLM/ALM), embeddings/overrides (LRE..PDF + RLO/LRO),
+/// and the directional isolates (LRI..PDI) — the full Trojan-Source set.
+fn is_bidi_control(ch: char) -> bool {
+    matches!(ch,
+        '\u{200E}' | '\u{200F}' | '\u{061C}'
+        | '\u{202A}'..='\u{202E}'
+        | '\u{2066}'..='\u{2069}')
 }
 
 #[cfg(test)]

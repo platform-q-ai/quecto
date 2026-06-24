@@ -5,7 +5,8 @@
 //! implemented in the GREEN phase.
 
 use super::{
-    AnsiSegment, ansi_segments, sanitize_control, sanitize_control_keep_newlines, strip_ansi,
+    AnsiSegment, ansi_segments, sanitize_control, sanitize_control_keep_newlines,
+    sanitize_control_truncated, strip_ansi,
 };
 
 // ── ansi_segments: classification ─────────────────────────────────────────
@@ -148,4 +149,43 @@ fn sanitize_control_keep_newlines_keeps_only_newlines() {
 #[test]
 fn sanitize_control_strips_osc_with_st() {
     assert_eq!(sanitize_control("\x1b]8;;url\x1b\\link"), "link");
+}
+
+#[test]
+fn sanitize_control_two_byte_escape_consumes_following_byte() {
+    // Documented intentional shift from the old `is_control()` filter: a bare
+    // ESC plus a non-`[`/`]` byte now consumes that byte too.
+    assert_eq!(sanitize_control("a\x1bbc"), "ac");
+}
+
+#[test]
+fn sanitize_control_strips_bidi_override_and_isolates() {
+    // Trojan-Source display-spoofing characters must not reach the renderer.
+    assert_eq!(sanitize_control("a\u{202E}b\u{2066}c\u{200F}d"), "abcd");
+}
+
+#[test]
+fn sanitize_control_keep_newlines_still_strips_bidi() {
+    assert_eq!(sanitize_control_keep_newlines("a\u{202E}\nb"), "a\nb");
+}
+
+#[test]
+fn sanitize_control_truncated_reports_overflow_and_truncates() {
+    let (s, truncated) = sanitize_control_truncated("\x1b[31mhello\x1b[0m world", 5);
+    assert_eq!(s, "hello");
+    assert!(truncated);
+}
+
+#[test]
+fn sanitize_control_truncated_no_overflow() {
+    let (s, truncated) = sanitize_control_truncated("a\x00b\x1b[0mc", 10);
+    assert_eq!(s, "abc");
+    assert!(!truncated);
+}
+
+#[test]
+fn sanitize_control_truncated_exact_fit_not_truncated() {
+    let (s, truncated) = sanitize_control_truncated("abc", 3);
+    assert_eq!(s, "abc");
+    assert!(!truncated);
 }

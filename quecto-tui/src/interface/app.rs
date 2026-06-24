@@ -494,9 +494,8 @@ const EXITED_SUBAGENT_GRACE: Duration = Duration::from_secs(5);
 
 /// Strip control characters from an agent_id for safe use as a map key.
 fn sanitize_workflow_status_text(text: &str, max_chars: usize) -> String {
-    let sanitized = crate::interface::ansi::sanitize_control(text);
-    let clean: String = sanitized.chars().take(max_chars).collect();
-    if sanitized.chars().count() > max_chars {
+    let (clean, truncated) = crate::interface::ansi::sanitize_control_truncated(text, max_chars);
+    if truncated {
         format!("{clean}…")
     } else {
         clean
