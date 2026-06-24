@@ -63,6 +63,10 @@ impl Component for Notification {
     fn invalidate(&mut self) {}
 }
 
+/// Maximum number of notifications kept on the stack; the oldest is evicted
+/// once this limit is exceeded.
+const MAX_NOTIFICATIONS: usize = 5;
+
 /// Manages a stack of notifications (newest on top).
 pub struct NotificationStack {
     notifications: Vec<Notification>,
@@ -83,7 +87,7 @@ impl NotificationStack {
 
     pub fn push(&mut self, notification: Notification) {
         // Limit stack size.
-        if self.notifications.len() >= 5 {
+        if self.notifications.len() >= MAX_NOTIFICATIONS {
             self.notifications.remove(0);
         }
         self.notifications.push(notification);
@@ -185,6 +189,6 @@ mod tests {
         for i in 0..10 {
             stack.push(Notification::new(&format!("msg{}", i), NotifyLevel::Info));
         }
-        assert!(stack.notifications.len() <= 5);
+        assert!(stack.notifications.len() <= MAX_NOTIFICATIONS);
     }
 }

@@ -580,12 +580,12 @@ impl App {
                     return;
                 }
                 _ if trimmed.starts_with("/resume ") => {
-                    let session = trimmed.strip_prefix("/resume").unwrap().trim();
+                    let session = trimmed["/resume".len()..].trim();
                     self.send_resume_session(session);
                     return;
                 }
                 _ if trimmed.starts_with("/model") => {
-                    let model_name = trimmed.strip_prefix("/model").unwrap().trim();
+                    let model_name = trimmed["/model".len()..].trim();
                     if !model_name.is_empty() {
                         self.send_set_model(model_name);
                     } else {

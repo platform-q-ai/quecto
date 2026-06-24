@@ -378,11 +378,10 @@ impl Client {
                     Ok(_) => {
                         // Enforce max line size to prevent OOM from malicious/buggy agents.
                         if line.len() > MAX_LINE_BYTES {
-                            eprintln!(
-                                "quecto-tui: dropping oversized line ({} bytes, max {})",
-                                line.len(),
-                                MAX_LINE_BYTES
-                            );
+                            // Drop oversized lines silently. The TUI owns the
+                            // terminal, so printing to stderr here would smear
+                            // diagnostics over the UI (same policy as the
+                            // unparseable-event branch below).
                             continue;
                         }
                         let trimmed = line.trim();
@@ -405,8 +404,11 @@ impl Client {
                             }
                         }
                     }
-                    Err(e) => {
-                        eprintln!("quecto-tui: error reading from agent socket: {e}");
+                    Err(_e) => {
+                        // Stop reading silently on a socket error; printing to
+                        // stderr here would paint over the TUI (see no-stderr
+                        // policy above). The closed channel will surface the
+                        // disconnect to the UI on the next send.
                         break;
                     }
                 }

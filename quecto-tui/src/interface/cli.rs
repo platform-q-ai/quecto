@@ -298,7 +298,7 @@ fn remember_stderr_line(lines: &mut Vec<String>, line: &str) {
 
 fn truncate_stderr_line(line: &str) -> String {
     let mut truncated: String = line.chars().take(MAX_STARTUP_STDERR_LINE_CHARS).collect();
-    if truncated.len() < line.len() {
+    if truncated.chars().count() < line.chars().count() {
         truncated.push('…');
     }
     truncated

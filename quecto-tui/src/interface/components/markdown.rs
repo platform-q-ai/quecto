@@ -254,15 +254,14 @@ impl Markdown {
                 }
 
                 Event::Code(code) => {
+                    let sanitized = sanitize_for_display(&code);
                     if in_table {
                         // Append code text to the table cell (#550).
                         // Backticks preserved for display as plain text.
-                        let sanitized = sanitize_for_display(&code);
                         current_cell.push('`');
                         current_cell.push_str(&sanitized);
                         current_cell.push('`');
                     } else {
-                        let sanitized = sanitize_for_display(&code);
                         let styled = theme::cyan(&format!("`{}`", sanitized));
                         current_line.push_str(&styled);
                     }

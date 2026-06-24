@@ -8,6 +8,9 @@
 /// Grace period between SIGTERM and SIGKILL (milliseconds).
 pub const TERMINATE_GRACE_MS: u64 = 200;
 
+/// Interval between `try_wait()` polls while waiting for graceful exit.
+const TERMINATE_POLL_TICK_MS: u64 = 10;
+
 /// Error returned when a PID cannot be safely used for signalling.
 #[derive(Debug, PartialEq)]
 pub enum QuectodError {
@@ -58,7 +61,7 @@ pub(crate) fn kill_process_group(pid: i32, signal: libc::c_int) -> libc::c_int {
 /// Terminate a child agent and its entire process group.
 ///
 /// 1. SIGTERM the process group (graceful shutdown).
-/// 2. Poll `child.try_wait()` in 10ms ticks up to `grace_ms`.
+/// 2. Poll `child.try_wait()` in `TERMINATE_POLL_TICK_MS` ticks up to `grace_ms`.
 /// 3. If still alive after the grace period, SIGKILL the process group.
 ///
 /// If the PID cannot be safely converted, falls back to killing only the
@@ -86,7 +89,8 @@ pub async fn terminate_child(child: &mut tokio::process::Child, grace_ms: u64) {
                     if tokio::time::Instant::now() >= deadline {
                         break;
                     }
-                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(TERMINATE_POLL_TICK_MS))
+                        .await;
                 }
 
                 // Still alive — force kill the group.

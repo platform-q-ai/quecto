@@ -62,7 +62,7 @@ impl Component for Spinner {
         if !self.active {
             return vec![];
         }
-        let spinner = theme::spinner(FRAMES[self.frame % FRAMES.len()]);
+        let spinner = theme::spinner(FRAMES[self.frame]);
         let msg = theme::muted(&self.message);
         // 2-space gutter so the spinner sits under the `▸` column of the
         // subagent/workflow panels in the bottom section (shared left margin).
