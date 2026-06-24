@@ -101,3 +101,42 @@ Feature: TUI Clean Architecture and executable BDD enforcement
     Then quecto-tui should not retain the legacy workflow_bar render function
     And quecto-tui should not keep tests that pin the legacy workflow_bar render path alive
     And quecto-tui should keep the live workflow_bar render_widget path
+
+  @issue-759
+  Scenario: TUI compose_frame splices centered overlays through one helper
+    Then the quecto-tui render compositing should expose a composite_centered helper
+    And the quecto-tui resume, rewind, and model overlays should splice through composite_centered
+
+  @issue-759
+  Scenario: TUI footer stats update has a single owner
+    Then the quecto-tui show_session_stats should delegate to update_footer_stats
+    And the quecto-tui footer context-usage update should appear once in app_methods
+
+  @issue-759
+  Scenario: TUI slash and file autocomplete share one suggestion list
+    Then the quecto-tui components layer should expose a shared SuggestionList
+    And SuggestionList should own suggestions_match and set_suggestions
+    And slash autocomplete and files autocomplete should use SuggestionList
+
+  @issue-759
+  Scenario: TUI chat renderers share preview and header helpers
+    Then the quecto-tui chat_render should expose push_preview and push_header helpers
+    And the quecto-tui chat tool renderers should build previews and headers through the helpers
+
+  @issue-759
+  Scenario: TUI workflow widget has a single phase label map
+    Then the quecto-tui workflow_bar should expose exactly one phase-to-label map
+    And the quecto-tui workflow_bar should not keep the phase_label_for_widget forwarder
+
+  @issue-759
+  Scenario: TUI client command serialization lives in one place
+    Then the quecto-tui client serialize-and-newline rule should appear once
+
+  @issue-759
+  Scenario: TUI markdown rendering extracts per-block flush handlers
+    Then the quecto-tui markdown renderer should extract table and code-block flush handlers
+
+  @issue-759
+  Scenario: TUI built-in slash commands have one source of truth
+    Then the quecto-tui builtin command set should be the single source of truth
+    And quecto-tui show_help and command dispatch should derive from builtin_commands

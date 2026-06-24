@@ -3,7 +3,7 @@
 //! Provides fuzzy-matched suggestions for slash commands and model names.
 
 use crate::interface::component::Component;
-use crate::interface::components::list_navigator::ListNavigator;
+use crate::interface::components::suggestion_list::SuggestionList;
 use crate::interface::fuzzy::fuzzy_filter;
 use crate::interface::keys::Key;
 use crate::interface::theme;
@@ -38,10 +38,7 @@ pub enum AutocompleteResult {
 /// Autocomplete dropdown component.
 pub struct Autocomplete {
     commands: Vec<SlashCommand>,
-    suggestions: Vec<Suggestion>,
-    navigator: ListNavigator,
-    max_visible: usize,
-    active: bool,
+    list: SuggestionList,
     result: AutocompleteResult,
     /// Last text passed to update(), for skip-if-unchanged optimization.
     last_update_text: String,
@@ -51,10 +48,7 @@ impl Autocomplete {
     pub fn new(commands: Vec<SlashCommand>, max_visible: usize) -> Self {
         Self {
             commands,
-            suggestions: Vec::new(),
-            navigator: ListNavigator::new(),
-            max_visible,
-            active: false,
+            list: SuggestionList::new(max_visible),
             result: AutocompleteResult::Pending,
             last_update_text: String::new(),
         }
@@ -85,10 +79,9 @@ impl Autocomplete {
                         description: c.description.clone(),
                     })
                     .collect();
-                self.set_suggestions(new);
+                self.list.set_suggestions(new);
             } else {
-                self.active = false;
-                self.suggestions.clear();
+                self.list.clear();
             }
             return;
         }
@@ -97,8 +90,7 @@ impl Autocomplete {
         let prefix = &trimmed[1..];
         // Don't autocomplete if there's a space (command has args).
         if prefix.contains(' ') {
-            self.active = false;
-            self.suggestions.clear();
+            self.list.clear();
             return;
         }
 
@@ -112,28 +104,17 @@ impl Autocomplete {
                 description: c.description.clone(),
             })
             .collect();
-        self.set_suggestions(new);
-    }
-
-    /// Replace suggestions, preserving selection if the list hasn't changed.
-    fn set_suggestions(&mut self, new: Vec<Suggestion>) {
-        if !suggestions_match(&self.suggestions, &new) {
-            self.navigator.reset();
-        }
-        self.suggestions = new;
-        self.active = !self.suggestions.is_empty();
-        self.navigator.clamp(self.suggestions.len());
+        self.list.set_suggestions(new);
     }
 
     /// Whether the autocomplete dropdown is currently visible.
     pub fn is_active(&self) -> bool {
-        self.active
+        self.list.is_active()
     }
 
     /// Dismiss the autocomplete.
     pub fn dismiss(&mut self) {
-        self.active = false;
-        self.suggestions.clear();
+        self.list.clear();
     }
 
     /// Take the result of the autocomplete interaction.
@@ -142,26 +123,21 @@ impl Autocomplete {
     }
 }
 
-/// Check if two suggestion lists have the same entries (compared by value).
-fn suggestions_match(a: &[Suggestion], b: &[Suggestion]) -> bool {
-    a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.value == y.value)
-}
-
 impl Component for Autocomplete {
     fn render(&mut self, width: usize) -> Vec<String> {
-        if !self.active || self.suggestions.is_empty() {
+        if !self.list.is_active() || self.list.is_empty() {
             return vec![];
         }
 
         let mut lines = Vec::new();
-        let total = self.suggestions.len();
-        let range = self.navigator.visible_range(total, self.max_visible);
+        let total = self.list.len();
+        let range = self.list.visible_range();
         let start = range.start;
         let end = range.end;
 
         for i in start..end {
-            let s = &self.suggestions[i];
-            let is_sel = i == self.navigator.selected();
+            let s = &self.list.suggestions()[i];
+            let is_sel = i == self.list.selected();
             let prefix = if is_sel { "→ " } else { "  " };
             let name = if is_sel {
                 theme::accent(&format!("/{}", s.label))
@@ -176,7 +152,7 @@ impl Component for Autocomplete {
         if start > 0 || end < total {
             lines.push(theme::dim(&format!(
                 "  ({}/{})",
-                self.navigator.selected() + 1,
+                self.list.selected() + 1,
                 total
             )));
         }
@@ -185,29 +161,29 @@ impl Component for Autocomplete {
     }
 
     fn handle_input(&mut self, key: &Key) -> bool {
-        if !self.active {
+        if !self.list.is_active() {
             return false;
         }
 
         match key {
             Key::Up => {
-                self.navigator.move_previous(self.suggestions.len());
+                self.list.move_previous();
                 true
             }
             Key::Down => {
-                self.navigator.move_next(self.suggestions.len());
+                self.list.move_next();
                 true
             }
             Key::Tab | Key::Enter => {
-                if let Some(s) = self.suggestions.get(self.navigator.selected()) {
+                if let Some(s) = self.list.selected_suggestion() {
                     self.result = AutocompleteResult::Selected(s.value.clone());
-                    self.active = false;
+                    self.list.close();
                 }
                 true
             }
             Key::Escape => {
                 self.result = AutocompleteResult::Dismissed;
-                self.active = false;
+                self.list.close();
                 true
             }
             _ => false,
@@ -247,7 +223,7 @@ mod tests {
         let mut ac = Autocomplete::new(test_commands(), 5);
         ac.update("/");
         assert!(ac.is_active());
-        assert_eq!(ac.suggestions.len(), 4);
+        assert_eq!(ac.list.len(), 4);
     }
 
     #[test]
@@ -255,8 +231,8 @@ mod tests {
         let mut ac = Autocomplete::new(test_commands(), 5);
         ac.update("/mo");
         assert!(ac.is_active());
-        assert_eq!(ac.suggestions.len(), 1);
-        assert_eq!(ac.suggestions[0].label, "model");
+        assert_eq!(ac.list.len(), 1);
+        assert_eq!(ac.list.suggestions()[0].label, "model");
     }
 
     #[test]
@@ -297,9 +273,9 @@ mod tests {
     fn navigate_down_up() {
         let mut ac = Autocomplete::new(test_commands(), 5);
         ac.update("/");
-        let first = ac.suggestions[0].label.clone();
+        let first = ac.list.suggestions()[0].label.clone();
         ac.handle_input(&Key::Down);
-        let second = ac.suggestions[ac.navigator.selected()].label.clone();
+        let second = ac.list.suggestions()[ac.list.selected()].label.clone();
         assert_ne!(first, second);
     }
 
@@ -332,13 +308,13 @@ mod tests {
     fn down_arrow_advances_sequentially() {
         let mut ac = Autocomplete::new(test_commands(), 5);
         ac.update("/");
-        assert_eq!(ac.navigator.selected(), 0);
+        assert_eq!(ac.list.selected(), 0);
         ac.handle_input(&Key::Down);
-        assert_eq!(ac.navigator.selected(), 1);
+        assert_eq!(ac.list.selected(), 1);
         ac.handle_input(&Key::Down);
-        assert_eq!(ac.navigator.selected(), 2);
+        assert_eq!(ac.list.selected(), 2);
         ac.handle_input(&Key::Down);
-        assert_eq!(ac.navigator.selected(), 3);
+        assert_eq!(ac.list.selected(), 3);
     }
 
     #[test]
@@ -347,9 +323,9 @@ mod tests {
         ac.update("/");
         ac.handle_input(&Key::Down);
         ac.handle_input(&Key::Down);
-        assert_eq!(ac.navigator.selected(), 2);
+        assert_eq!(ac.list.selected(), 2);
         ac.handle_input(&Key::Up);
-        assert_eq!(ac.navigator.selected(), 1);
+        assert_eq!(ac.list.selected(), 1);
     }
 
     #[test]
@@ -358,11 +334,11 @@ mod tests {
         ac.update("/");
         ac.handle_input(&Key::Down);
         ac.handle_input(&Key::Down);
-        assert_eq!(ac.navigator.selected(), 2);
+        assert_eq!(ac.list.selected(), 2);
         // Calling update with same text should NOT reset selection.
         ac.update("/");
         assert_eq!(
-            ac.navigator.selected(),
+            ac.list.selected(),
             2,
             "update with same text should preserve selection"
         );
@@ -374,11 +350,11 @@ mod tests {
         ac.update("/");
         ac.handle_input(&Key::Down);
         ac.handle_input(&Key::Down);
-        assert_eq!(ac.navigator.selected(), 2);
+        assert_eq!(ac.list.selected(), 2);
         // Changing text should reset selection.
         ac.update("/mo");
         assert_eq!(
-            ac.navigator.selected(),
+            ac.list.selected(),
             0,
             "update with new text should reset selection"
         );

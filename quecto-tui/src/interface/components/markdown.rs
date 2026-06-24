@@ -156,12 +156,7 @@ impl Markdown {
 
                 Event::End(tag_end) => match tag_end {
                     TagEnd::Table => {
-                        // Render the collected table.
-                        if !table_rows.is_empty() {
-                            let rendered = render_table(&table_rows, content_width);
-                            lines.extend(rendered.into_iter().map(RenderedLine::plain));
-                            lines.push(RenderedLine::blank());
-                        }
+                        flush_table(&table_rows, content_width, &mut lines);
                         in_table = false;
                         table_rows.clear();
                     }
@@ -194,14 +189,7 @@ impl Markdown {
                         lines.push(RenderedLine::blank()); // spacing after paragraph
                     }
                     TagEnd::CodeBlock => {
-                        // Render the code block with borders.
-                        let border_text = format!("```{}", code_block_lang);
-                        lines.push(RenderedLine::plain(theme::dim(&border_text)));
-                        for code_line in code_block_content.lines() {
-                            lines.push(RenderedLine::plain(format!("  {}", theme::dim(code_line))));
-                        }
-                        lines.push(RenderedLine::plain(theme::dim("```")));
-                        lines.push(RenderedLine::blank());
+                        flush_code_block(&code_block_lang, &code_block_content, &mut lines);
                         in_code_block = false;
                         code_block_content.clear();
                     }
@@ -494,6 +482,29 @@ fn shrink_columns(widths: &mut [usize], avail: usize) {
             break;
         }
     }
+}
+
+/// Flush a collected markdown table into rendered lines (with trailing blank).
+/// No-op when there are no rows.
+fn flush_table(table_rows: &[Vec<String>], content_width: usize, lines: &mut Vec<RenderedLine>) {
+    if table_rows.is_empty() {
+        return;
+    }
+    let rendered = render_table(table_rows, content_width);
+    lines.extend(rendered.into_iter().map(RenderedLine::plain));
+    lines.push(RenderedLine::blank());
+}
+
+/// Flush a fenced code block into rendered lines: a dimmed `\`\`\`lang` border,
+/// the indented dimmed code body, a closing border, and a trailing blank.
+fn flush_code_block(lang: &str, content: &str, lines: &mut Vec<RenderedLine>) {
+    let border_text = format!("```{lang}");
+    lines.push(RenderedLine::plain(theme::dim(&border_text)));
+    for code_line in content.lines() {
+        lines.push(RenderedLine::plain(format!("  {}", theme::dim(code_line))));
+    }
+    lines.push(RenderedLine::plain(theme::dim("```")));
+    lines.push(RenderedLine::blank());
 }
 
 /// Render a table as aligned text columns.

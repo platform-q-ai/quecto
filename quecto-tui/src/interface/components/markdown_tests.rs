@@ -545,3 +545,38 @@ fn render_cache_hit_matches_miss_output() {
     );
     assert_eq!(second, third, "repeated cache-hit renders must be stable");
 }
+
+#[test]
+fn flush_code_block_emits_bordered_body() {
+    let mut lines: Vec<RenderedLine> = Vec::new();
+    flush_code_block("rust", "let x = 1;\nlet y = 2;", &mut lines);
+    let texts: Vec<String> = lines.iter().map(|l| strip_ansi(&l.text)).collect();
+    assert_eq!(texts.first().map(String::as_str), Some("```rust"));
+    assert!(texts.iter().any(|t| t == "  let x = 1;"));
+    assert!(texts.iter().any(|t| t == "  let y = 2;"));
+    // Closing fence then a trailing blank line.
+    assert_eq!(texts[texts.len() - 2], "```");
+    assert_eq!(texts[texts.len() - 1], "");
+}
+
+#[test]
+fn flush_table_renders_rows_and_is_noop_when_empty() {
+    let mut empty: Vec<RenderedLine> = Vec::new();
+    flush_table(&[], 80, &mut empty);
+    assert!(empty.is_empty(), "no rows must produce no output");
+
+    let rows = vec![
+        vec!["Name".to_string(), "Role".to_string()],
+        vec!["Ada".to_string(), "Eng".to_string()],
+    ];
+    let mut lines: Vec<RenderedLine> = Vec::new();
+    flush_table(&rows, 80, &mut lines);
+    let texts: Vec<String> = lines.iter().map(|l| strip_ansi(&l.text)).collect();
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.contains("Name") && t.contains("Role"))
+    );
+    assert!(texts.iter().any(|t| t.contains("Ada") && t.contains("Eng")));
+    assert_eq!(texts.last().map(String::as_str), Some(""));
+}

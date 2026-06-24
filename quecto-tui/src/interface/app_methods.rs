@@ -70,40 +70,34 @@ impl App {
     }
 
     pub(super) fn show_help(&mut self) {
-        self.chat.add_entry(ChatEntry::Status {
-            text: [
-                "Keyboard shortcuts:",
-                "  Enter          Send message",
-                "  Shift+Enter    Insert newline",
-                "  Alt+Enter      Insert newline",
-                "  Escape         Abort agent / clear editor",
-                "  Esc Esc        Choose a previous turn to go back to",
-                "  Ctrl+C         Clear editor first, abort if empty",
-                "  Ctrl+D         Exit",
-                "  Ctrl+L         Open model selector",
-                "  Ctrl+O         Toggle tool output expansion",
-                "  Ctrl+Shift+A   Toggle workflow auto-continue",
-                "  Ctrl+Shift+N   Toggle workflow completion nudge",
-                "  Ctrl+Z         Suspend (resume with fg)",
-                "  PageUp/Down    Scroll chat",
-                "  Up/Down        Input history",
-                "",
-                "Slash commands:",
-                "  /model         Open model selector",
-                "  /model <name>  Switch to model directly",
-                "  /clear         Clear conversation",
-                "  /new           New session",
-                "  /session       Show session info",
-                "  /workflow      Show workflow status",
-                "  /resume        Pick a persisted session to resume",
-                "  /resume <name> Resume a persisted session directly",
-                "  /workflow-auto Toggle workflow auto-continue",
-                "  /workflow-nudge Toggle workflow completion nudge",
-                "  /help,/hotkeys This help",
-                "  /quit,/exit    Exit",
-            ]
-            .join("\n"),
-        });
+        let mut text = String::from(
+            "Keyboard shortcuts:\n\
+             \x20 Enter          Send message\n\
+             \x20 Shift+Enter    Insert newline\n\
+             \x20 Alt+Enter      Insert newline\n\
+             \x20 Escape         Abort agent / clear editor\n\
+             \x20 Esc Esc        Choose a previous turn to go back to\n\
+             \x20 Ctrl+C         Clear editor first, abort if empty\n\
+             \x20 Ctrl+D         Exit\n\
+             \x20 Ctrl+L         Open model selector\n\
+             \x20 Ctrl+O         Toggle tool output expansion\n\
+             \x20 Ctrl+Shift+A   Toggle workflow auto-continue\n\
+             \x20 Ctrl+Shift+N   Toggle workflow completion nudge\n\
+             \x20 Ctrl+Z         Suspend (resume with fg)\n\
+             \x20 PageUp/Down    Scroll chat\n\
+             \x20 Up/Down        Input history\n\
+             \n\
+             Slash commands:",
+        );
+        // Derive the slash-command listing from the single source of truth so it
+        // can never drift from the autocomplete set or the dispatch handler.
+        for command in builtin_commands() {
+            text.push_str(&format!(
+                "\n  /{:<14} {}",
+                command.name, command.description
+            ));
+        }
+        self.chat.add_entry(ChatEntry::Status { text });
     }
 
     pub(super) fn show_workflow_status(&mut self) {
@@ -194,17 +188,9 @@ impl App {
     }
 
     pub(super) fn show_session_stats(&mut self, data: &serde_json::Value) {
+        // Footer context/cost update has a single owner; this adds the chat line.
+        self.update_footer_stats(data);
         let stats = session_payloads::parse_session_stats(data);
-        if let Some((used, window)) = stats.context_usage {
-            self.footer.update_context_usage(used, window);
-            self.context_stats_requested = true;
-        }
-        self.footer.set_cost(if stats.cost > 0.0 {
-            Some(stats.cost)
-        } else {
-            None
-        });
-
         self.chat.add_entry(ChatEntry::Status {
             text: format!(
                 "Session: {} | Messages: {} | Tokens: ↑{} ↓{} | Cost: ${:.4}",
@@ -449,72 +435,23 @@ impl App {
             lines.push(String::new());
         }
 
-        // Composite resume selector overlay if active.
-        // Uses ANSI-aware splice_line to avoid escape code bleeding.
+        // Composite the active centered overlay (only one is ever active at a
+        // time). All three splice through the same ANSI-aware helper so the
+        // centering and escape-safe splice rule lives in one place.
         if let Some(selector) = &mut self.resume_selector {
             let (selector_lines, overlay_width) =
                 build_resume_selector_overlay(selector, width, height);
-            let overlay_height = selector_lines.len().min(height.saturating_sub(4));
-            let start_row = height.saturating_sub(overlay_height) / 2;
-            let start_col = width.saturating_sub(overlay_width) / 2;
-            for i in 0..overlay_height {
-                let row = start_row + i;
-                if row < lines.len() && i < selector_lines.len() {
-                    lines[row] = crate::interface::overlay::splice_line(
-                        &lines[row],
-                        &selector_lines[i],
-                        start_col,
-                        overlay_width,
-                        width,
-                    );
-                }
-            }
+            Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
-
-        // Composite rewind selector overlay if active.
         if let Some(selector) = &mut self.rewind_selector {
             let (selector_lines, overlay_width) =
                 build_rewind_selector_overlay(selector, width, height);
-            let overlay_height = selector_lines.len().min(height.saturating_sub(4));
-            let start_row = height.saturating_sub(overlay_height) / 2;
-            let start_col = width.saturating_sub(overlay_width) / 2;
-            for i in 0..overlay_height {
-                let row = start_row + i;
-                if row < lines.len() && i < selector_lines.len() {
-                    lines[row] = crate::interface::overlay::splice_line(
-                        &lines[row],
-                        &selector_lines[i],
-                        start_col,
-                        overlay_width,
-                        width,
-                    );
-                }
-            }
+            Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
-
-        // Composite model selector overlay if active.
-        // Uses ANSI-aware splice_line to avoid escape code bleeding.
         if let Some(selector) = &mut self.model_selector {
             let overlay_width = width.saturating_sub(4).min(60);
             let selector_lines = selector.render(overlay_width);
-            let overlay_height = selector_lines.len().min(height.saturating_sub(4));
-
-            // Center the overlay.
-            let start_row = height.saturating_sub(overlay_height) / 2;
-            let start_col = width.saturating_sub(overlay_width) / 2;
-
-            for i in 0..overlay_height {
-                let row = start_row + i;
-                if row < lines.len() && i < selector_lines.len() {
-                    lines[row] = crate::interface::overlay::splice_line(
-                        &lines[row],
-                        &selector_lines[i],
-                        start_col,
-                        overlay_width,
-                        width,
-                    );
-                }
-            }
+            Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
 
         // Enforce width on every line.
@@ -536,6 +473,36 @@ impl App {
             self.last_rendered_lines.clear();
         }
         lines
+    }
+
+    /// Splice a centered overlay into the frame `lines`, in place.
+    ///
+    /// Centers `overlay_lines` (clamped to leave a 4-row margin) and splices
+    /// each row through the ANSI-aware splice helper so escape codes
+    /// from the underlying frame can't bleed into or out of the overlay. Shared
+    /// by every centered overlay (resume / rewind / model selectors).
+    pub(super) fn composite_centered(
+        lines: &mut [String],
+        overlay_lines: &[String],
+        overlay_width: usize,
+        width: usize,
+        height: usize,
+    ) {
+        let overlay_height = overlay_lines.len().min(height.saturating_sub(4));
+        let start_row = height.saturating_sub(overlay_height) / 2;
+        let start_col = width.saturating_sub(overlay_width) / 2;
+        for i in 0..overlay_height {
+            let row = start_row + i;
+            if row < lines.len() && i < overlay_lines.len() {
+                lines[row] = crate::interface::overlay::splice_line(
+                    &lines[row],
+                    &overlay_lines[i],
+                    start_col,
+                    overlay_width,
+                    width,
+                );
+            }
+        }
     }
 
     /// Compose the current frame and write it to the terminal.
