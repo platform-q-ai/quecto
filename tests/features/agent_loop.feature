@@ -43,4 +43,3 @@ Feature: Agent Loop
     Given a fully initialized agent
     When I query the startup info
     Then it should report the number of loaded tools
-    And it should report the number of available skills

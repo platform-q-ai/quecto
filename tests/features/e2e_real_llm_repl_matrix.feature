@@ -96,38 +96,6 @@ Feature: E2E Real LLM REPL Matrix
     And stdout should contain "melon-22"
 
   @done @real-llm
-  Scenario: REPL skill marker S-A
-    Given a workspace [skill] "repl-skill-a" with frontmatter:
-      """
-      ---
-      name: repl-skill-a
-      description: REPL marker A
-      ---
-      Include REPL_SKILL_A in every response.
-      """
-    When I start quecto in REPL mode
-    And I type "Hello"
-    And I type "/exit"
-    Then the exit code should be 0
-    And stdout should contain "REPL_SKILL_A"
-
-  @done @real-llm
-  Scenario: REPL skill marker S-B
-    Given a workspace [skill] "repl-skill-b" with frontmatter:
-      """
-      ---
-      name: repl-skill-b
-      description: REPL marker B
-      ---
-      Include REPL_SKILL_B in every response.
-      """
-    When I start quecto in REPL mode
-    And I type "Hello"
-    And I type "/exit"
-    Then the exit code should be 0
-    And stdout should contain "REPL_SKILL_B"
-
-  @done @real-llm
   Scenario: REPL with model override still responds
     When I start quecto in REPL mode with flags "--model gpt-5.2"
     And I type "Include REPL_MODEL_OK"
@@ -180,37 +148,3 @@ Feature: E2E Real LLM REPL Matrix
     Then the exit code should be 0
     And stdout should contain "repl-list-a.txt"
     And stdout should contain "repl-list-b.txt"
-
-  @done @real-llm
-  Scenario: REPL does not inject two legacy skills together
-    Given a workspace [skill] "repl-combo-1" with frontmatter:
-      """
-      ---
-      name: repl-combo-1
-      description: combo one
-      ---
-      Include REPL_COMBO_ONE in every response.
-      """
-    And a workspace [skill] "repl-combo-2" with frontmatter:
-      """
-      ---
-      name: repl-combo-2
-      description: combo two
-      ---
-      Include REPL_COMBO_TWO in every response.
-      """
-    When I start quecto in REPL mode
-    And I type "Give a short reply"
-    And I type "/exit"
-    Then the exit code should be 0
-    And stdout should not contain "REPL_COMBO_ONE"
-    And stdout should not contain "REPL_COMBO_TWO"
-
-  @done @real-llm
-  Scenario: REPL invalid skill frontmatter ignored
-    Given a workspace [skill] directory "repl-bad" with raw content "invalid skill body"
-    When I start quecto in REPL mode
-    And I type "Reply with REPL_BAD_IGNORED"
-    And I type "/exit"
-    Then the exit code should be 0
-    And stdout should contain "REPL_BAD_IGNORED"

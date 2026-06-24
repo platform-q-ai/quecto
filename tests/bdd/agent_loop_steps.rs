@@ -263,7 +263,7 @@ fn when_agent_sends_request(world: &mut QuectoWorld) {
 
 #[when("I query the startup info")]
 fn when_query_startup_info(world: &mut QuectoWorld) {
-    let agent = build_agent_loop(world, None).with_skill_count(2);
+    let agent = build_agent_loop(world, None);
     world.agent_info = Some(agent.info());
 }
 
@@ -370,16 +370,6 @@ fn then_report_tool_count(world: &mut QuectoWorld) {
         info.tool_count > 0,
         "expected tool_count > 0, got {}",
         info.tool_count
-    );
-}
-
-#[then("it should report the number of available skills")]
-fn then_report_skill_count(world: &mut QuectoWorld) {
-    let info = world.agent_info.as_ref().expect("no agent info");
-    assert!(
-        info.skill_count > 0,
-        "expected skill_count > 0, got {}",
-        info.skill_count
     );
 }
 

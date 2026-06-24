@@ -89,7 +89,6 @@ Zero deps except `thiserror` and `serde` (derive). Defines system vocabulary.
 | `tool.rs` | `Tool` trait, `ToolRegistry` trait, `ToolGuard` trait, `ToolDefinition` (with `Cow<'static, str>` fields), `ToolResult` (with `image_blocks` for base64 images), `ImageBlock` |
 | `agent.rs` | `AgentLoop` trait, `AgentInfo`, `AgentResult`, `AgentProgressEvent` (with `tool_call_id` on `ToolStarted`/`ToolFinished`, `Token` for streaming, `Thinking` with context stats), `ProgressCallback` |
 | `session.rs` | `Session`, `SessionStore` trait, `SpillEntry`, `SpillIndex`, `ContextSpillStore` trait, `strip_tool_history()`, `filter_orphan_tool_pairs()` (with `OrphanDiag`) |
-| `skill.rs` | `Skill`, `SkillSource`, `SkillFrontmatter`, `SkillLoader` trait, `split_skill_md()`, `validate_frontmatter()`, `is_valid_skill_name()` |
 | `extension.rs` | `Extension` trait (`name()`, `tools()`, `system_prompt_snippet()`) |
 | `subagent.rs` | `SubagentConfig`, `validate_agent_id()` |
 | `workflow.rs` | `WorkflowEngine`, `WorkflowConfig` (`auto_continue`, `completion_nudge`, `templates`), `WorkflowTemplate`, `WorkflowTemplateStep`, `WorkflowGuardRule`, `WorkflowRun`, `WorkflowRunPersisted`, `WorkflowMode` (SelectingTemplate/Active/Complete), `WorkflowSnapshot`, `WorkflowError`, `default_templates()` (single `feature` Quecto workflow). UDS-only; available by default in UDS as a dormant tool, prompt-driven via `--workflow`, disabled via `--no-workflow` |
@@ -115,7 +114,7 @@ Implements domain traits with real I/O (serde, reqwest, tokio, filesystem).
 | `config.rs` | `Config` with serde, env overrides (`QUECTO_AGENTS_DEFAULTS_EFFORT` validated at load), `WorkflowConfig` (template library, optional custom templates). Tolerates unknown fields (forward-compatible) |
 | `providers/` | `OpenAiProvider` (SSE streaming via `openai_sse`), `AnthropicProvider` (SSE streaming via `anthropic_sse`, extended thinking support with `signature_delta` capture, auto-enables adaptive thinking for 4.6 models, effort default `low` for 4.6 models, OAuth identity for tokens — system prompt prefix + tool name remapping + beta headers, `interleaved-thinking` + `fine-grained-tool-streaming` betas, thinking block replay in multi-turn via `ThinkingBlock`, `claude_code.rs` for tool name canonical casing), `CodexProvider` (Responses API, SSE, `prompt_cache_key`, orphan pair repair), `RefreshableProvider` (OAuth 401 → auto-refresh → retry), `FallbackProvider` (cooldown + error classification + `provider/model` routing syntax). URL validation: https required for non-loopback (override with `QUECTO_ALLOW_CUSTOM_PROVIDER_HOSTS=1`) |
 | `tools/` | `bash/` (shell, 1MiB cap, per-invocation timeout, `commandPrefix`, native exec), `filesystem/` (`ReadTool` with image base64+auto-resize, `WriteTool`, `EditTool` with fuzzy match+CRLF/BOM+LCS diff, `LsTool` with limit+case-insensitive sort), `grep.rs` (rg JSON output, file-cache context), `find.rs` (fd, nested .gitignore, path-segment globs via `--full-path`), `ensure_tool.rs` (auto-download rg/fd from GitHub), `spawn.rs` (background UDS-mode subagent spawning), `agent_cmd.rs` (send commands to spawned UDS agents — `steer`, `follow_up`, `abort`, `get_state`), `web_search.rs` (Brave+DDG), `web_fetch.rs` (URL fetch with HTML stripping, per-host SSRF allowlist for tests), `recall.rs` (spill retrieval), `docs.rs` (`DocsTool` — quecto's capability docs embedded via `include_str!`, served by the `docs` tool from any directory), `workflow_tool.rs` (`WorkflowTool` thin façade over `WorkflowEngine`, available by default in UDS unless `--no-workflow`; `WorkflowGuard` template-aware `ToolGuard` impl — mutating actions emit `workflow_state` events, guard registration gated by `--workflow-guards`), `path_utils.rs`, `truncate.rs`, `command_match.rs`, `registry.rs` (`ToolRegistryImpl`, `guard_count()`) |
-| `persistence/` | `FileSessionStore` (round-trips all Message fields including `thinking_blocks` for multi-turn thinking replay), `FileSkillLoader`, `FileContextSpillStore` (JSONL append-only) |
+| `persistence/` | `FileSessionStore` (round-trips all Message fields including `thinking_blocks` for multi-turn thinking replay), `FileContextSpillStore` (JSONL append-only) |
 | `security/` | `Sandbox` — workspace path validation + command filtering |
 | `extensions/` | `ExtensionRegistry` (register extensions, aggregate tools + system prompt snippets), `NativeExtension` (compiled-in config-gated tools, e.g. `web_search`, `web_fetch`), `UdsExtensionTool` (routes tool execution to connected UDS clients via mpsc/oneshot channels). See [Extensions guide](docs/extensions.md) |
 | `auth/` | `CredentialStore` (file-based, `AuthMethod::Token`/`OAuth`), `oauth.rs` (browser + device code flows, Anthropic OAuth, OpenAI account ID extraction from JWT) |
@@ -137,7 +136,6 @@ Manual arg parsing (no clap). Entry point: `cli::run(args) -> i32`.
 | `quecto` | Interactive REPL (`-s` session, `--system` prompt, `--model` override, `--no-sandbox`; global `--config <path>`) with live progress spinner |
 | `quecto agent -m <msg>` | Headless one-shot (`-s`, `--no-session`, `--system`, `--model`, `--max-iterations`, `--max-time`, `--effort`, `--disable-tool`, `--no-sandbox`; global `--config <path>`) |
 | `quecto agent --mode uds` | Persistent UDS event bus: multi-client JSON-lines protocol over Unix domain socket (`--socket <path>` for explicit path, auto-generated otherwise; `--persist`, `--workflow`, `--workflow-guards`, `--no-workflow` supported) |
-| `quecto skills list\|remove\|install` | Skill management |
 | `quecto status` | Config summary, provider availability |
 | `quecto auth login\|logout\|status` | Credential management (token/OAuth/device-code) |
 | `quecto help\|version` | Self-explanatory |
@@ -333,58 +331,6 @@ quecto auth logout --provider openai
 
 Credentials are stored in `~/.quecto/credentials.json`. The credential store takes priority over keys in `config.json`.
 
-### `quecto skills` — Manage legacy skills
-
-Skills are legacy `SKILL.md` files with YAML frontmatter. `quecto skills` remains as a temporary compatibility curation command, but skill bodies are no longer injected into the agent's system prompt.
-
-```bash
-quecto skills list       # Shows name and description for each skill
-quecto skills remove my-skill
-quecto skills install user/repo/my-skill
-```
-
-`skills install` downloads `SKILL.md` from GitHub raw content using `<owner>/<repo>/<skill-name>` and writes it to your configured workspace:
-
-```
-<workspace>/skills/<skill-name>/SKILL.md
-```
-
-Install fails when:
-- the skill path is missing or invalid
-- the skill already exists locally
-- the remote `SKILL.md` cannot be downloaded from `main` or `master`
-- `SKILL.md` frontmatter is invalid or the skill `name` does not match `<skill-name>`
-
-You can still add a skill manually by creating a directory under your workspace with a `SKILL.md` file:
-
-```
-<workspace>/skills/my-skill/SKILL.md
-```
-
-The `SKILL.md` file must contain YAML frontmatter with `name` and `description` fields. The body content (everything after the closing `---`) is preserved on disk for migration, but is not prepended to the system prompt.
-
-```markdown
----
-name: my-skill
-description: Short description of what this skill does
-license: MIT                    # optional
-compatibility: quecto           # optional
-metadata:                       # optional
-  audience: developers
----
-You are an expert at ...
-
-## Instructions
-- Do this
-- Do that
-```
-
-**Frontmatter rules:**
-- `name` and `description` are required (description max 1024 chars)
-- `name` must match the directory name
-- Names must be lowercase alphanumeric with hyphens only, 1–64 chars (e.g. `code-review`, `git-release`)
-- Skills with missing or invalid frontmatter are silently skipped
-
 ### `quecto status` — Check configuration
 
 Shows the current config, workspace path, model, and API key status. Secret values are redacted in status/debug output.
@@ -397,14 +343,13 @@ quecto status
 
 quecto needs no setup step. With no config file it runs on defaults; supply a
 key via `quecto auth login` or `QUECTO_*` env vars. A config file is optional —
-when present it's read from `~/.quecto/config.json`, and the workspace
-(`~/.quecto/workspace/`, holding `skills/` etc.) is created on demand:
+when present it's read from `~/.quecto/config.json`, and the workspace is
+created on demand:
 
 ```
 ~/.quecto/
   config.json     # optional — defaults apply when absent
-  workspace/
-    skills/        # community skills (one dir per skill, each with SKILL.md)
+  workspace/       # agent working directory
 ```
 
 ### `quecto help` — Show usage
@@ -792,11 +737,7 @@ Coverage is intentionally not part of git hooks. Run coverage in nightly CI (rec
   sessions/                # Persisted conversation history (safe filename mapping)
     cli_default.json
     repl_repl_default.json
-  workspace/
-    skills/                # Skill definitions (YAML frontmatter required)
-      my-skill/
-        SKILL.md
-    ...                    # Agent working directory (files created by the agent)
+  workspace/                # Agent working directory (files created by the agent)
 ```
 
 Tool binary cache (auto-downloaded `rg`, `fd`):

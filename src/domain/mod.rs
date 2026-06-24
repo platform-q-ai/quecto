@@ -7,7 +7,6 @@ pub mod message;
 pub mod provider;
 pub mod provider_error;
 pub mod session;
-pub mod skill;
 pub mod subagent;
 pub mod tool;
 pub mod workflow;

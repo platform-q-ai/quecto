@@ -41,19 +41,3 @@ Feature: E2E Real LLM REPL
     And I type "/exit"
     Then the exit code should be 0
     And stdout should not be empty
-
-  @done @real-llm @real-llm-smoke
-  Scenario: Skills influence REPL behavior with real LLM
-    Given a workspace [skill] "repl-format" with frontmatter:
-      """
-      ---
-      name: repl-format
-      description: REPL formatting skill
-      ---
-      Include the token REPL_SKILL_OK in every response.
-      """
-    When I start quecto in REPL mode
-    And I type "Say hello"
-    And I type "/exit"
-    Then the exit code should be 0
-    And stdout should contain "REPL_SKILL_OK"

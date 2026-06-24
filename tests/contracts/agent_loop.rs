@@ -83,12 +83,10 @@ fn agent_loop(reply: &str) -> Arc<dyn AgentLoop> {
 }
 
 #[tokio::test]
-async fn info_surfaces_tool_and_skill_counts() {
-    // Empty registry, zero skills — the agent reflects the truth.
+async fn info_surfaces_tool_count() {
     let agent = agent_loop("hi");
     let info = agent.info();
     assert_eq!(info.tool_count, 0);
-    assert_eq!(info.skill_count, 0);
 }
 
 #[tokio::test]

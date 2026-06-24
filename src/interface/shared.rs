@@ -1,8 +1,6 @@
 //! Shared utility functions used by CLI and REPL modules.
 
 use std::collections::HashMap;
-use std::path::Path;
-
 use crate::infrastructure::auth::credential_store::Credential;
 
 /// Generate a fresh, collision-resistant user-chat session key.
@@ -25,16 +23,8 @@ pub fn generate_chat_key() -> String {
     crate::domain::session::user_chat_key(secs, uniq)
 }
 
-/// Compatibility shim for the dissolved skills surface.
-///
-/// ADR-0004 keeps `quecto skills` as temporary filesystem curation, but skill
-/// bodies are no longer injected into the agent system prompt at startup.
-pub fn load_skill_prompt(_base_dir: &Path) -> String {
-    String::new()
-}
-
 /// Merge an optional user-provided system prompt.
-pub fn merge_prompts(_legacy_skill_prompt: &str, user_prompt: &Option<String>) -> String {
+pub fn merge_prompts(user_prompt: &Option<String>) -> String {
     match user_prompt {
         Some(up) if !up.is_empty() => up.to_string(),
         _ => String::new(),
@@ -82,10 +72,10 @@ pub fn agent_docs_retrieval_policy() -> &'static str {
 /// date: 2026-03-01"). The quecto preamble is richer (day-of-week, full
 /// time, timezone) and takes precedence for time-aware operations.
 /// This duplication is intentional — see issue #104.
-pub fn build_system_prompt(_legacy_skill_prompt: &str, user_prompt: &Option<String>) -> String {
+pub fn build_system_prompt(user_prompt: &Option<String>) -> String {
     let preamble = datetime_preamble();
     let docs_policy = agent_docs_retrieval_policy();
-    let merged = merge_prompts("", user_prompt);
+    let merged = merge_prompts(user_prompt);
     if merged.is_empty() {
         format!("{}\n\n{}", preamble, docs_policy)
     } else {

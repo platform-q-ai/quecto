@@ -266,7 +266,7 @@ pub(crate) fn cmd_agent(
     };
 
     // Build system prompt: datetime preamble + docs policy + extensions + user prompt.
-    let mut system = crate::interface::shared::build_system_prompt("", &flags.system_prompt);
+    let mut system = crate::interface::shared::build_system_prompt(&flags.system_prompt);
     crate::interface::shared::append_extension_prompt(
         &mut system,
         &build.extension_prompt_snippets,
@@ -647,7 +647,7 @@ fn cmd_agent_uds(ctx: &CliContext, flags: AgentFlags, stderr: &mut String) -> i3
     let model = build.model.clone();
 
     // Build the base system prompt; workflow is appended dynamically before each UDS turn.
-    let mut system_prompt = crate::interface::shared::build_system_prompt("", &flags.system_prompt);
+    let mut system_prompt = crate::interface::shared::build_system_prompt(&flags.system_prompt);
     crate::interface::shared::append_extension_prompt(
         &mut system_prompt,
         &build.extension_prompt_snippets,

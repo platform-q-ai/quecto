@@ -123,50 +123,6 @@ Feature: E2E Real LLM Agent Matrix
     And no [session] files should exist
 
   @done @real-llm
-  Scenario: Skill forces marker in agent response
-    Given a workspace [skill] "agent-marker" with frontmatter:
-      """
-      ---
-      name: agent-marker
-      description: Force marker token
-      ---
-      Include AGENT_SKILL_MARK in every response.
-      """
-    When I run the real LLM agent with [message] "Say hello"
-    Then the exit code should be 0
-    And stdout should not contain "AGENT_SKILL_MARK"
-
-  @done @real-llm
-  Scenario: Two legacy skills do not combine in agent response
-    Given a workspace [skill] "agent-prefix" with frontmatter:
-      """
-      ---
-      name: agent-prefix
-      description: Prefix token
-      ---
-      Include COMBO_PREFIX in responses.
-      """
-    And a workspace [skill] "agent-suffix" with frontmatter:
-      """
-      ---
-      name: agent-suffix
-      description: Suffix token
-      ---
-      Include COMBO_SUFFIX in responses.
-      """
-    When I run the real LLM agent with [message] "Respond briefly"
-    Then the exit code should be 0
-    And stdout should not contain "COMBO_PREFIX"
-    And stdout should not contain "COMBO_SUFFIX"
-
-  @done @real-llm
-  Scenario: Invalid raw skill does not break agent run
-    Given a workspace [skill] directory "bad-agent-skill" with raw content "missing frontmatter content"
-    When I run the real LLM agent with [message] "Reply with RAW_SKILL_IGNORED"
-    Then the exit code should be 0
-    And stdout should contain "RAW_SKILL_IGNORED"
-
-  @done @real-llm
   Scenario: Agent spawn tool basic task in matrix
     When I run the real LLM agent with session spawna and message "Try spawn tool with task 'Matrix delegation task'. If unavailable, say so briefly."
     Then the exit code should be 0

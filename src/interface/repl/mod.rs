@@ -440,10 +440,7 @@ fn resolve_effort_from_config(config: &Config) -> Option<crate::domain::provider
 /// Always includes a datetime preamble so the agent knows the current
 /// date/time/timezone — important for scheduling and time-aware tasks.
 fn build_system_prompt(ctx: &ReplContext<'_>) -> Option<String> {
-    Some(super::shared::build_system_prompt(
-        "",
-        &ctx.flags.system_prompt,
-    ))
+    Some(super::shared::build_system_prompt(&ctx.flags.system_prompt))
 }
 
 /// Context for constructing a REPL session.

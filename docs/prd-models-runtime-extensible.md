@@ -3,7 +3,7 @@
 **Status:** In implementation — Phase 1 shipped; Phase 2 provider/model reload shipped; Phase 3 and Gemini fast-follow not started
 **Owner:** core team (kernel)
 **Surface:** #2 Models / providers (per [kernel-boundary.md](kernel-boundary.md))
-**Related:** #1 Skills auto-load, #3 Workflow-set auto-load (share the reload path)
+**Related:** Workflow-set auto-load (shares the reload path)
 **Decisions:** governed by [ADR-0001](architecture-design-records/adr-0001-wire-protocols-stay-kernel-owned.md)
 (wire protocols kernel-owned, 3 impls),
 [ADR-0002](architecture-design-records/adr-0002-reload-trigger-for-startup-loaded-surfaces.md)
@@ -206,9 +206,9 @@ norm.
   the **last-good** provider/registry state (never crashes the session).
 - Expose an explicit `reload` trigger too (convenience, not the only path; the
   no-op `reload_extensions` is the precedent).
-- **Shared mechanism** with Skills (#1) and Workflow-set (#3): one "sources
-  changed → rebuild affected live state" component, three consumers — not three
-  bespoke reloads. This shared component is the concrete realization of ADR-0002.
+- **Shared mechanism** with Workflow-set reload: one "sources changed → rebuild
+  affected live state" component, not bespoke reloads. This shared component is
+  the concrete realization of ADR-0002.
 
 ### FR2 — Opaque model IDs: provider is a key, not a string prefix (capability fix)
 - **Adopt pi's data model.** A model is a record `{ provider, id, … }`. The
@@ -287,7 +287,7 @@ norm.
   next turn. No new tool or protocol verb required for the autonomy bar.
 - **Optional ergonomic add (discuss, may defer):** a small first-class `model`
   tool action (`add`/`list`/`remove`/`set_default`) that validates and writes the
-  registry, mirroring `quecto skills install` — nicer than raw JSON surgery and
+  registry, avoiding raw JSON surgery and
   gives validation/error messages.
 - **Out of scope here:** a UDS `register_provider` verb for live/dynamic
   registration is **deferred per ADR-0003**; the interim bridge is a sidecar that
@@ -373,7 +373,7 @@ norm.
 - **Reload (ADR-0002):** a single shared `RuntimeReload` component (`mtime` +
   file-length + content-hash gate) consulted at **top of turn** (agent loop /
   REPL) and on registry-consuming ops; rebuilds the registry/provider set behind
-  the session-owned swap point. Same component feeds skills (#1) and workflow-set
+  the session-owned swap point. Same component feeds workflow-set
   (#3) rebuilds. Fail-safe: keep last-good on error. **Current implementation
   note:** the shared gate and the models/providers UDS top-of-turn, `set_model`,
   and explicit `reload` wiring are shipped.

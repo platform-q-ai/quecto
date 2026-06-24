@@ -49,8 +49,8 @@ than pasted wholesale into prompts.
 
 The kernel owns the retrieval contract, discovery rules, and any minimal
 bootstrap documentation needed for the agent to understand itself. The community
-owns knowledge content: markdown folders, migrated skill/reference material,
-project notes, graph-backed sources, database-backed sources, and remote sources.
+owns knowledge content: markdown folders, project notes, graph-backed sources,
+database-backed sources, and remote sources.
 
 Graph, database, embedding, ranking, and remote retrieval systems are tools or
 external services, not kernel features.
@@ -164,6 +164,5 @@ They are append-only: supersede rather than rewrite.
 - [ADR-0001 — Wire protocols stay kernel-owned](architecture-design-records/adr-0001-wire-protocols-stay-kernel-owned.md)
 - [ADR-0002 — Reload trigger for startup-loaded surfaces](architecture-design-records/adr-0002-reload-trigger-for-startup-loaded-surfaces.md)
 - [ADR-0003 — UDS `register_provider` for dynamic model/provider registration](architecture-design-records/adr-0003-uds-register-provider-for-dynamic-model-provider-registration.md)
-- [ADR-0004 — Dissolve the Skills surface](architecture-design-records/adr-0004-dissolve-the-skills-surface.md)
 - [ADR-0005 — Knowledge as a retrieval surface](architecture-design-records/adr-0005-knowledge-as-a-retrieval-surface.md)
 - [ADR-0006 — Composable unit contract is kernel; orchestration is an external tool](architecture-design-records/adr-0006-composable-unit-contract-is-kernel-orchestration-is-an-external-tool.md)

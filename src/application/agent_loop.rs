@@ -59,7 +59,6 @@ pub struct AgentLoopImpl {
     max_tokens: u32,
     temperature: f32,
     max_tool_iterations: u32,
-    skill_count: usize,
     spill_store: Option<Arc<dyn ContextSpillStore>>,
     session_key: String,
     context_collapse_after_turns: u32,
@@ -109,7 +108,6 @@ impl AgentLoopImpl {
             max_tokens: config.max_tokens,
             temperature: config.temperature,
             max_tool_iterations: DEFAULT_MAX_TOOL_ITERATIONS,
-            skill_count: 0,
             spill_store: config.spill_store,
             session_key: config.session_key,
             context_collapse_after_turns: config.context_collapse_after_turns,
@@ -228,12 +226,6 @@ impl AgentLoopImpl {
                 tracing::warn!(target: "audit", error = %e, "audit log write failed");
             }
         }
-    }
-
-    /// Set the skill count (for startup info).
-    pub fn with_skill_count(mut self, count: usize) -> Self {
-        self.skill_count = count;
-        self
     }
 
     /// Access the context spill store (if configured).
@@ -734,7 +726,6 @@ impl AgentLoop for AgentLoopImpl {
     fn info(&self) -> AgentInfo {
         AgentInfo {
             tool_count: self.tool_registry.tool_count(),
-            skill_count: self.skill_count,
         }
     }
 }
