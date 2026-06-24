@@ -1,5 +1,7 @@
 //! Footer component — status bar showing model, context, git branch.
 
+use std::borrow::Cow;
+
 use crate::interface::component::Component;
 use crate::interface::theme;
 use crate::interface::utils::{truncate_to_width, visible_width};
@@ -120,14 +122,16 @@ impl Component for Footer {
             Some(cost) if cost > 0.0 => format!("{} · ${:.4}", context_str, cost),
             _ => context_str,
         };
-        // Prefix the model with a spinner frame while a response is streaming so
-        // the toggled flag is actually visible (issue #760).
-        let right = if self.is_streaming {
-            format!("{} {}", theme::SPINNER_FRAMES[0], self.model)
+        // Prefix the model with a streaming indicator while a response is
+        // streaming so the toggled flag is actually visible (issue #760). Borrow
+        // the model unchanged in the dominant idle path to avoid a per-frame
+        // allocation.
+        let right: Cow<str> = if self.is_streaming {
+            Cow::Owned(format!("{} {}", theme::STREAMING_INDICATOR, self.model))
         } else {
-            self.model.clone()
+            Cow::Borrowed(&self.model)
         };
-        let right = &right;
+        let right = right.as_ref();
         let left_width = visible_width(&left);
         let right_width = visible_width(right);
         let min_padding = 2;
@@ -356,8 +360,8 @@ mod tests {
         f.set_streaming(true);
         let joined = f.render(80).join("\n");
         assert!(
-            joined.contains(theme::SPINNER_FRAMES[0]),
-            "streaming footer should render a spinner indicator: {joined:?}"
+            joined.contains(theme::STREAMING_INDICATOR),
+            "streaming footer should render a streaming indicator: {joined:?}"
         );
     }
 
@@ -368,8 +372,8 @@ mod tests {
         f.set_streaming(false);
         let joined = f.render(80).join("\n");
         assert!(
-            !joined.contains(theme::SPINNER_FRAMES[0]),
-            "idle footer should not render a spinner indicator: {joined:?}"
+            !joined.contains(theme::STREAMING_INDICATOR),
+            "idle footer should not render a streaming indicator: {joined:?}"
         );
     }
 

@@ -565,8 +565,8 @@ fn then_tui_keeps_workflow_bar_render_widget(_world: &mut QuectoWorld) {
 // The footer's `is_streaming` flag was write-only: four production callers
 // toggled it but `render()` never read it, so nothing showed. These scenarios
 // pin the behaviour through the public render surface. We assert against the
-// real `SPINNER_FRAMES[0]` glyph (the static render always uses frame 0) rather
-// than a hardcoded literal so the step tracks the source of truth.
+// real `STREAMING_INDICATOR` glyph (a dedicated non-spinner marker) rather than
+// a hardcoded literal so the step tracks the source of truth.
 
 fn render_footer(streaming: bool) -> Vec<String> {
     use quecto_tui::interface::components::footer::Footer;
@@ -577,7 +577,7 @@ fn render_footer(streaming: bool) -> Vec<String> {
 }
 
 fn streaming_glyph() -> &'static str {
-    quecto_tui::interface::theme::SPINNER_FRAMES[0]
+    quecto_tui::interface::theme::STREAMING_INDICATOR
 }
 
 #[given("a quecto-tui footer marked as streaming")]
