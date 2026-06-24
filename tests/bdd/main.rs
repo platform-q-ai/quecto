@@ -511,6 +511,11 @@ pub struct QuectoWorld {
     pub gateway_expires_in: Option<u64>,
     /// Computed expires_at for margin assertions (issue #256)
     pub gateway_computed_expires_at: Option<i64>,
+    /// `now` captured at the moment expires_at was computed, so the assertion
+    /// is race-free under cucumber's concurrent scenario execution (the old
+    /// code recomputed `now` in the Then step, which could drift seconds past
+    /// the tolerance under CPU contention).
+    pub gateway_expires_at_reference_now: Option<i64>,
     /// Auth.json for import scenarios (issue #258)
     pub gateway_import_auth_json: Option<serde_json::Value>,
     /// Import stdout output (issue #258)

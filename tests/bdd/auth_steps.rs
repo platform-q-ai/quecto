@@ -997,13 +997,21 @@ fn given_oauth_token_expires_in(world: &mut QuectoWorld, expires_in: u64) {
 #[when("expires_at_with_margin is calculated")]
 fn when_expires_at_with_margin(world: &mut QuectoWorld) {
     let expires_in = world.gateway_expires_in.expect("expires_in not set");
+    // Capture `now` adjacent to the computation so the Then step can assert
+    // against the same reference instant. Recomputing `now` later raced with
+    // cucumber's concurrent scenario scheduling and intermittently drifted past
+    // the tolerance under CPU contention.
+    let now = quecto::infrastructure::time::unix_timestamp_secs();
     let result = quecto::interface::shared::expires_at_with_margin(expires_in);
+    world.gateway_expires_at_reference_now = Some(now);
     world.gateway_computed_expires_at = Some(result);
 }
 
 #[then(expr = "the resulting expires_at should be {int} seconds from now")]
 fn then_expires_at_is_seconds_from_now(world: &mut QuectoWorld, expected_offset: i64) {
-    let now = quecto::infrastructure::time::unix_timestamp_secs();
+    let now = world
+        .gateway_expires_at_reference_now
+        .expect("reference now not captured");
     let actual = world
         .gateway_computed_expires_at
         .expect("expires_at not computed");
