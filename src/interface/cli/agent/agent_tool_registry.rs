@@ -51,7 +51,7 @@ pub(super) fn build_tool_registry(args: ToolRegistryArgs<'_>) -> ToolRegistryBui
     if flags.no_sandbox {
         stderr.push_str("WARNING: --no-sandbox is active — workspace path restriction disabled\n");
     }
-    let sandbox = Sandbox::new(Some(workspace.clone()), restrict_to_workspace);
+    let sandbox = Sandbox::for_agent_workspace(config, workspace.clone(), flags.no_sandbox);
     let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(config);
     let mut registry =
         ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);

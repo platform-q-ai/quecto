@@ -58,6 +58,75 @@ fn when_validate_path_resolved(world: &mut QuectoWorld, path: String) {
 
 // --- Allowlist steps ---
 
+#[given(expr = "a workspace at {string}")]
+fn given_workspace_at(world: &mut QuectoWorld, path: String) {
+    world.tool_workspace = Some(PathBuf::from(path));
+}
+
+#[given("the agent has no command allowlist configured")]
+fn given_agent_no_allowlist(world: &mut QuectoWorld) {
+    let sb = Sandbox::new(world.tool_workspace.clone(), false);
+    world.sandbox = Some(sb);
+}
+
+#[given(expr = "the agent has command allowlist {string}")]
+fn given_agent_command_allowlist(world: &mut QuectoWorld, allowlist: String) {
+    let commands: Vec<String> = if allowlist.is_empty() {
+        vec![]
+    } else {
+        allowlist
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .split(',')
+            .map(|s| s.trim().trim_matches('"').to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    };
+    let sb =
+        Sandbox::new(world.tool_workspace.clone(), false).with_command_allowlist(Some(commands));
+    world.sandbox = Some(sb);
+}
+
+#[when(expr = "the agent validates the command {string}")]
+fn when_agent_validates_command(world: &mut QuectoWorld, command: String) {
+    let sb = world.sandbox.as_ref().expect("sandbox not set");
+    world.validation_result = Some(
+        sb.validate_command(&command)
+            .map(|_| ())
+            .map_err(|e| e.to_string()),
+    );
+}
+
+#[then(expr = "the command should be rejected with {string}")]
+fn then_command_rejected_with(world: &mut QuectoWorld, expected: String) {
+    let result = world
+        .validation_result
+        .as_ref()
+        .expect("no validation result");
+    let err = result
+        .as_ref()
+        .expect_err("expected command to be rejected");
+    assert!(
+        err.to_string().contains(&expected),
+        "expected error to contain '{}', got: {}",
+        expected,
+        err
+    );
+}
+
+#[then("the command should be permitted")]
+fn then_command_permitted(world: &mut QuectoWorld) {
+    let result = world
+        .validation_result
+        .as_ref()
+        .expect("no validation result");
+    assert!(
+        result.is_ok(),
+        "expected command to be permitted, got: {:?}",
+        result
+    );
+}
+
 #[given(expr = "a sandbox with command allowlist {string}")]
 fn given_sandbox_with_allowlist(world: &mut QuectoWorld, allowlist: String) {
     let commands: Vec<String> = if allowlist.is_empty() {
@@ -65,8 +134,7 @@ fn given_sandbox_with_allowlist(world: &mut QuectoWorld, allowlist: String) {
     } else {
         allowlist.split(',').map(|s| s.trim().to_string()).collect()
     };
-    let mut sb = Sandbox::new(None, false);
-    sb.command_allowlist = Some(commands);
+    let sb = Sandbox::new(None, false).with_command_allowlist(Some(commands));
     world.sandbox = Some(sb);
 }
 

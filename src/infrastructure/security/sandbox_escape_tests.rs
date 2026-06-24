@@ -9,15 +9,15 @@ fn sandbox(path: &str, restrict: bool) -> Sandbox {
 
 #[test]
 fn test_allowlist_permits_listed_command() {
-    let mut sb = Sandbox::new(None, false);
-    sb.command_allowlist = Some(vec!["echo".to_string(), "ls".to_string()]);
+    let sb = Sandbox::new(None, false)
+        .with_command_allowlist(Some(vec!["echo".to_string(), "ls".to_string()]));
     assert!(sb.validate_command("echo hello").is_ok());
 }
 
 #[test]
 fn test_allowlist_rejects_unlisted_command() {
-    let mut sb = Sandbox::new(None, false);
-    sb.command_allowlist = Some(vec!["echo".to_string(), "ls".to_string()]);
+    let sb = Sandbox::new(None, false)
+        .with_command_allowlist(Some(vec!["echo".to_string(), "ls".to_string()]));
     let result = sb.validate_command("curl http://evil.com");
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("not in allowlist"));
@@ -25,8 +25,8 @@ fn test_allowlist_rejects_unlisted_command() {
 
 #[test]
 fn test_allowlist_rejects_semicolon_bypass() {
-    let mut sb = Sandbox::new(None, false);
-    sb.command_allowlist = Some(vec!["echo".to_string(), "ls".to_string()]);
+    let sb = Sandbox::new(None, false)
+        .with_command_allowlist(Some(vec!["echo".to_string(), "ls".to_string()]));
     let result = sb.validate_command("echo hello; curl evil.com");
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("not in allowlist"));
@@ -34,8 +34,8 @@ fn test_allowlist_rejects_semicolon_bypass() {
 
 #[test]
 fn test_allowlist_rejects_command_substitution() {
-    let mut sb = Sandbox::new(None, false);
-    sb.command_allowlist = Some(vec!["echo".to_string(), "ls".to_string()]);
+    let sb = Sandbox::new(None, false)
+        .with_command_allowlist(Some(vec!["echo".to_string(), "ls".to_string()]));
     let result = sb.validate_command("echo $(cat /etc/shadow)");
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("not in allowlist"));
@@ -43,8 +43,8 @@ fn test_allowlist_rejects_command_substitution() {
 
 #[test]
 fn test_allowlist_rejects_backtick_substitution() {
-    let mut sb = Sandbox::new(None, false);
-    sb.command_allowlist = Some(vec!["echo".to_string(), "ls".to_string()]);
+    let sb = Sandbox::new(None, false)
+        .with_command_allowlist(Some(vec!["echo".to_string(), "ls".to_string()]));
     let result = sb.validate_command("echo `id`");
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("not in allowlist"));
@@ -52,8 +52,8 @@ fn test_allowlist_rejects_backtick_substitution() {
 
 #[test]
 fn test_allowlist_rejects_pipe_to_disallowed() {
-    let mut sb = Sandbox::new(None, false);
-    sb.command_allowlist = Some(vec!["echo".to_string(), "ls".to_string()]);
+    let sb = Sandbox::new(None, false)
+        .with_command_allowlist(Some(vec!["echo".to_string(), "ls".to_string()]));
     let result = sb.validate_command("ls | bash");
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("not in allowlist"));
@@ -61,8 +61,7 @@ fn test_allowlist_rejects_pipe_to_disallowed() {
 
 #[test]
 fn test_empty_allowlist_blocks_all() {
-    let mut sb = Sandbox::new(None, false);
-    sb.command_allowlist = Some(vec![]);
+    let sb = Sandbox::new(None, false).with_command_allowlist(Some(vec![]));
     let result = sb.validate_command("echo hello");
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("not in allowlist"));
@@ -76,8 +75,8 @@ fn test_no_allowlist_falls_back_to_denylist() {
 
 #[test]
 fn test_allowlist_still_blocks_dangerous_patterns() {
-    let mut sb = Sandbox::new(None, false);
-    sb.command_allowlist = Some(vec!["rm".to_string(), "echo".to_string()]);
+    let sb = Sandbox::new(None, false)
+        .with_command_allowlist(Some(vec!["rm".to_string(), "echo".to_string()]));
     let result = sb.validate_command("rm -rf /");
     assert!(result.is_err());
     assert!(

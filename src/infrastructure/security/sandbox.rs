@@ -1,6 +1,7 @@
 // Security sandbox: workspace path validation, dangerous command blocklist, and command allowlist.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 /// Shell metacharacters that indicate command chaining/substitution.
 /// Includes `\n` because bash treats newlines as command separators equivalent to `;`.
@@ -45,7 +46,7 @@ const DANGEROUS_PATTERNS: &[&str] = &[
 ];
 
 /// Security sandbox that validates file paths and commands.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Sandbox {
     /// The workspace directory that tools are restricted to.
     pub workspace: Option<PathBuf>,
@@ -53,27 +54,65 @@ pub struct Sandbox {
     pub restrict_to_workspace: bool,
     /// Optional command allowlist. When set, only commands whose first token
     /// is in this list are permitted. When `None`, falls back to the denylist.
-    pub command_allowlist: Option<Vec<String>>,
-    /// Cached canonical workspace path (computed once at construction).
-    canonical_workspace: Option<PathBuf>,
+    command_allowlist: Option<Vec<String>>,
+    /// Lazily computed canonical workspace path. We avoid doing the filesystem
+    /// work at construction so that missing directories do not fail, and cache
+    /// it so repeated `validate_path` calls are not penalized.
+    canonical_workspace: OnceLock<PathBuf>,
+}
+
+impl Clone for Sandbox {
+    fn clone(&self) -> Self {
+        Self {
+            workspace: self.workspace.clone(),
+            restrict_to_workspace: self.restrict_to_workspace,
+            command_allowlist: self.command_allowlist.clone(),
+            canonical_workspace: OnceLock::new(),
+        }
+    }
 }
 
 impl Sandbox {
+    /// Builder method to set the command allowlist after construction.
+    pub fn with_command_allowlist(mut self, allowlist: Option<Vec<String>>) -> Self {
+        self.command_allowlist = allowlist;
+        self
+    }
+
     /// Create a new sandbox with the given workspace and restriction setting.
     pub fn new(workspace: Option<PathBuf>, restrict_to_workspace: bool) -> Self {
-        let canonical_workspace = workspace.as_ref().and_then(|ws| {
-            if ws.exists() {
-                ws.canonicalize().ok()
-            } else {
-                Some(ws.clone())
-            }
-        });
+        Self::with_allowlist(workspace, restrict_to_workspace, None)
+    }
+
+    /// Create a new sandbox with an explicit allowlist.
+    pub fn with_allowlist(
+        workspace: Option<PathBuf>,
+        restrict_to_workspace: bool,
+        command_allowlist: Option<Vec<String>>,
+    ) -> Self {
         Self {
             workspace,
             restrict_to_workspace,
-            command_allowlist: None,
-            canonical_workspace,
+            command_allowlist,
+            canonical_workspace: OnceLock::new(),
         }
+    }
+
+    /// Build a sandbox for an agent/repl entry point from the parsed config.
+    ///
+    /// This centralises the policy decisions so the CLI/REPL interface layers
+    /// do not need to know which `AgentDefaults` fields map to sandbox policy.
+    pub fn for_agent_workspace(
+        config: &crate::infrastructure::config::Config,
+        workspace: PathBuf,
+        no_sandbox: bool,
+    ) -> Self {
+        let restrict_to_workspace = !no_sandbox && config.agents.defaults.restrict_to_workspace;
+        Self::with_allowlist(
+            Some(workspace),
+            restrict_to_workspace,
+            config.agents.defaults.command_allowlist.clone(),
+        )
     }
 
     /// Validate that a file path is within the workspace (if restriction is enabled).
@@ -99,10 +138,20 @@ impl Sandbox {
             return Ok(path.to_path_buf());
         }
 
-        let canonical_workspace = self
-            .canonical_workspace
-            .as_ref()
-            .ok_or(SandboxError::NoWorkspace)?;
+        let workspace = self.workspace.as_ref().ok_or(SandboxError::NoWorkspace)?;
+
+        // Canonicalize the workspace lazily on first use, then cache. If it
+        // doesn't exist yet, resolve it textually so the prefix check is still
+        // meaningful, but avoid repeated filesystem work on subsequent calls.
+        let canonical_workspace = self.canonical_workspace.get_or_init(|| {
+            if workspace.exists() {
+                workspace
+                    .canonicalize()
+                    .unwrap_or_else(|_| resolve_path(workspace))
+            } else {
+                resolve_path(workspace)
+            }
+        });
 
         // Try to canonicalize the target path to resolve symlinks.
         // If the full path doesn't exist, try canonicalizing the parent
@@ -521,206 +570,5 @@ impl std::fmt::Display for SandboxError {
 impl std::error::Error for SandboxError {}
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    fn sandbox(workspace: &str, restrict: bool) -> Sandbox {
-        Sandbox::new(Some(PathBuf::from(workspace)), restrict)
-    }
-
-    #[test]
-    fn test_path_inside_workspace_allowed() {
-        let sb = sandbox("/tmp/quecto-test", true);
-        assert!(sb.validate_path("/tmp/quecto-test/notes.txt").is_ok());
-    }
-
-    #[test]
-    fn test_path_outside_workspace_blocked() {
-        let sb = sandbox("/tmp/quecto-test", true);
-        let result = sb.validate_path("/etc/passwd");
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("outside working dir"),
-            "error should mention 'outside working dir'"
-        );
-    }
-
-    #[test]
-    fn test_path_traversal_blocked() {
-        let sb = sandbox("/tmp/quecto-test", true);
-        let result = sb.validate_path("/tmp/quecto-test/../evil.txt");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_restriction_disabled_allows_any_path() {
-        let sb = sandbox("/tmp/quecto-test", false);
-        assert!(sb.validate_path("/etc/passwd").is_ok());
-        assert!(sb.validate_path("/tmp/anywhere/file.txt").is_ok());
-    }
-
-    #[test]
-    fn test_dangerous_command_rm_rf() {
-        let sb = sandbox("/tmp/quecto-test", false);
-        let result = sb.validate_command("rm -rf /");
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("dangerous pattern")
-        );
-    }
-
-    #[test]
-    fn test_dangerous_command_mkfs() {
-        let sb = sandbox("/tmp/quecto-test", false);
-        assert!(sb.validate_command("mkfs /dev/sda").is_err());
-    }
-
-    #[test]
-    fn test_dangerous_command_dd() {
-        let sb = sandbox("/tmp/quecto-test", false);
-        assert!(sb.validate_command("dd if=/dev/zero of=/dev/sda").is_err());
-    }
-
-    #[test]
-    fn test_dangerous_command_shutdown() {
-        let sb = sandbox("/tmp/quecto-test", false);
-        assert!(sb.validate_command("shutdown -h now").is_err());
-    }
-
-    #[test]
-    fn test_dangerous_command_reboot() {
-        let sb = sandbox("/tmp/quecto-test", false);
-        assert!(sb.validate_command("reboot").is_err());
-    }
-
-    #[test]
-    fn test_dangerous_command_fork_bomb() {
-        let sb = sandbox("/tmp/quecto-test", false);
-        assert!(sb.validate_command(":(){ :|:& };:").is_err());
-    }
-
-    #[test]
-    fn test_safe_command_allowed() {
-        let sb = sandbox("/tmp/quecto-test", false);
-        assert!(sb.validate_command("echo hello").is_ok());
-        assert!(sb.validate_command("ls -la").is_ok());
-        assert!(sb.validate_command("cat file.txt").is_ok());
-    }
-
-    #[test]
-    fn test_subdirectory_path_allowed() {
-        let sb = sandbox("/tmp/quecto-test", true);
-        assert!(
-            sb.validate_path("/tmp/quecto-test/sub/deep/file.txt")
-                .is_ok()
-        );
-    }
-
-    #[test]
-    fn test_resolve_path_normalizes_dotdot() {
-        let resolved = resolve_path(Path::new("/a/b/../c"));
-        assert_eq!(resolved, PathBuf::from("/a/c"));
-    }
-
-    #[test]
-    fn test_resolve_path_normalizes_dot() {
-        let resolved = resolve_path(Path::new("/a/./b/./c"));
-        assert_eq!(resolved, PathBuf::from("/a/b/c"));
-    }
-
-    // --- Sandbox hardening: symlink tests ---
-
-    #[test]
-    fn test_symlink_outside_workspace_blocked() {
-        let tmp = TempDir::new().unwrap();
-        let ws = tmp.path().to_path_buf();
-        let sb = Sandbox::new(Some(ws.clone()), true);
-
-        // Create a symlink inside workspace pointing to /etc/passwd
-        let link = ws.join("link.txt");
-        #[cfg(unix)]
-        std::os::unix::fs::symlink("/etc/passwd", &link).unwrap();
-
-        let result = sb.validate_path(link.to_str().unwrap());
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("outside working dir")
-        );
-    }
-
-    #[test]
-    fn test_symlink_inside_workspace_allowed() {
-        let tmp = TempDir::new().unwrap();
-        let ws = tmp.path().to_path_buf();
-        let sb = Sandbox::new(Some(ws.clone()), true);
-
-        // Create a real file and a symlink to it within the workspace
-        let real_file = ws.join("real.txt");
-        std::fs::write(&real_file, "test").unwrap();
-        let link = ws.join("link.txt");
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&real_file, &link).unwrap();
-
-        let result = sb.validate_path(link.to_str().unwrap());
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_nested_symlink_chain_blocked() {
-        let tmp = TempDir::new().unwrap();
-        let ws = tmp.path().to_path_buf();
-        let sb = Sandbox::new(Some(ws.clone()), true);
-
-        // Create a symlink to /tmp (outside workspace)
-        let step1 = ws.join("step1");
-        #[cfg(unix)]
-        std::os::unix::fs::symlink("/tmp", &step1).unwrap();
-
-        // Trying to access step1/some-file.txt should be blocked
-        let target = ws.join("step1/some-file.txt");
-        let result = sb.validate_path(target.to_str().unwrap());
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("outside working dir")
-        );
-    }
-
-    // --- Sandbox hardening: allowlist tests ---
-
-    // Allowlist, escape bypass, and token extraction tests in sandbox_escape_tests.rs
-
-    // --- #304: Narrowed chown denylist ---
-
-    #[test]
-    fn test_chown_system_root_blocked() {
-        let sb = sandbox("/tmp/quecto-test", false);
-        assert!(sb.validate_command("chown -R root:root /").is_err());
-    }
-
-    #[test]
-    fn test_chown_workspace_scoped_allowed() {
-        // Legitimate workspace-scoped chown should not be blocked
-        let sb = sandbox("/tmp/quecto-test", false);
-        assert!(sb.validate_command("chown -R user:group ./src").is_ok());
-    }
-
-    #[test]
-    fn test_chown_no_space_variant_blocked() {
-        // chown -Rroot (no space) previously bypassed the trailing-space pattern
-        let sb = sandbox("/tmp/quecto-test", false);
-        assert!(sb.validate_command("chown -Rroot /").is_err());
-    }
-}
+#[path = "sandbox_tests.rs"]
+mod tests;

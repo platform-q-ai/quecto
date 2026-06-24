@@ -47,6 +47,11 @@ pub struct AgentDefaults {
     /// Defaults to `None`; provider applies `low` for 4.6 models when unset.
     #[serde(default)]
     pub effort: Option<String>,
+    /// Optional command allowlist. When set, only commands whose first token
+    /// is in this list are permitted by the sandbox. When `None`, the sandbox
+    /// falls back to the dangerous-command denylist only.
+    #[serde(default)]
+    pub command_allowlist: Option<Vec<String>>,
 }
 
 impl Default for AgentDefaults {
@@ -63,6 +68,7 @@ impl Default for AgentDefaults {
             context_collapse_after_turns: default_context_collapse_after_turns(),
             max_context_tokens: default_max_context_tokens(),
             effort: None,
+            command_allowlist: None,
         }
     }
 }
@@ -398,6 +404,32 @@ mod tests {
         assert_eq!(config.agents.defaults.workspace, "~/.quecto/workspace");
         assert_eq!(config.agents.defaults.max_tool_iterations, 999_999);
         assert!(config.agents.defaults.restrict_to_workspace);
+    }
+
+    #[test]
+    fn test_agent_defaults_has_no_command_allowlist() {
+        let defaults = AgentDefaults::default();
+        assert_eq!(defaults.command_allowlist, None);
+    }
+
+    #[test]
+    fn test_command_allowlist_deserializes_from_config() {
+        let json = r#"{
+            "agents": {
+                "defaults": {
+                    "command_allowlist": ["echo", "ls", "cat"]
+                }
+            }
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            config.agents.defaults.command_allowlist,
+            Some(vec![
+                "echo".to_string(),
+                "ls".to_string(),
+                "cat".to_string()
+            ])
+        );
     }
 
     #[test]
