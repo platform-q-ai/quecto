@@ -654,3 +654,51 @@ fn expand_tabs_result_has_no_tab_characters() {
     let out = expand_tabs("a\tb\tc\td");
     assert!(!out.contains('\t'));
 }
+
+// ── Concatenation cache output-equivalence regression guard (#757) ───
+//
+// `Chat::render` rebuilds and re-clones the full conversation buffer on every
+// frame. Caching the concatenated `all_lines` and invalidating only the
+// changed tail (streaming/tool updates touch the suffix) must not change the
+// rendered output: a cache-hit render must equal a cache-miss render, and a
+// streamed token must only extend the tail while leaving prior lines intact.
+#[test]
+fn render_is_stable_across_repeated_calls() {
+    let mut chat = Chat::new();
+    chat.add_entry(ChatEntry::User {
+        text: "hello".into(),
+    });
+    chat.add_entry(ChatEntry::Assistant {
+        text: "world".into(),
+        streaming: false,
+    });
+    let first = chat.render(80); // cache miss
+    let second = chat.render(80); // cache hit (no changes)
+    assert_eq!(
+        first, second,
+        "unchanged conversation must render identically"
+    );
+}
+
+#[test]
+fn streaming_append_only_extends_the_tail() {
+    let mut chat = Chat::new();
+    chat.add_entry(ChatEntry::User { text: "ask".into() });
+    chat.append_token("partial answer");
+    let before = render_plain(&mut chat, 80);
+    chat.append_token(" continued");
+    let after = render_plain(&mut chat, 80);
+    // Every line above the streamed assistant tail (the user turn and the
+    // blank separators) must be preserved verbatim; only the last assistant
+    // line grows as tokens arrive. Comparing line vectors avoids coupling to
+    // the trailing streaming-cursor glyph that lives on that final line.
+    let before_lines: Vec<&str> = before.lines().collect();
+    let after_lines: Vec<&str> = after.lines().collect();
+    let head = before_lines.len() - 1;
+    assert_eq!(
+        before_lines[..head],
+        after_lines[..head],
+        "streaming should extend the tail, not rewrite prior history:\nbefore={before:?}\nafter={after:?}"
+    );
+    assert!(after.contains("partial answer continued"));
+}

@@ -524,3 +524,24 @@ fn table_narrow_width_still_shows_tool_names() {
         plain
     );
 }
+
+// ── Render cache output-equivalence regression guard (#757) ──────────
+//
+// The markdown render cache saves the parse but historically re-cloned the
+// whole `Vec<String>` on both the cache-hit and cache-miss paths. Reworking
+// the cache to avoid the per-frame clone must keep the rendered output
+// byte-identical between the first (miss) render and subsequent (hit)
+// renders at the same width.
+#[test]
+fn render_cache_hit_matches_miss_output() {
+    let text = "# Title\n\nSome **bold** paragraph text that wraps across a width.\n\n- item one\n- item two";
+    let mut md = Markdown::new(text, 0);
+    let first = md.render(72); // cache miss
+    let second = md.render(72); // cache hit
+    let third = md.render(72); // cache hit
+    assert_eq!(
+        first, second,
+        "cache-hit render must equal cache-miss render"
+    );
+    assert_eq!(second, third, "repeated cache-hit renders must be stable");
+}
