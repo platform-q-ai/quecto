@@ -126,6 +126,11 @@ pub struct AwaitResult {
     pub elapsed_ms: u64,
     pub workflow: Option<WorkflowSnapshot>,
     pub result: WorkflowResult,
+    /// Actual run-level error cause (for example a provider/model failure),
+    /// surfaced so a parent can triage without reading logs (#752). Only
+    /// present when the await terminated because the child's run failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 impl AwaitResult {
@@ -138,7 +143,24 @@ impl AwaitResult {
         elapsed_ms: u64,
         workflow: Option<WorkflowSnapshot>,
     ) -> Self {
-        let result = WorkflowResult::derive(status, reason, workflow.as_ref());
+        Self::with_error(status, reason, agent_id, elapsed_ms, workflow, None)
+    }
+
+    /// Like [`AwaitResult::new`], but carries the actual run-level error cause
+    /// (#752). When `error` is present it is echoed into `result.summary` so
+    /// the cause is visible in both the structured field and the prose verdict.
+    pub fn with_error(
+        status: &str,
+        reason: Option<&str>,
+        agent_id: String,
+        elapsed_ms: u64,
+        workflow: Option<WorkflowSnapshot>,
+        error: Option<&str>,
+    ) -> Self {
+        let mut result = WorkflowResult::derive(status, reason, workflow.as_ref());
+        if let Some(cause) = error {
+            result.summary = format!("subagent run failed: {cause}");
+        }
         Self {
             status: status.to_string(),
             reason: reason.map(str::to_string),
@@ -146,6 +168,7 @@ impl AwaitResult {
             elapsed_ms,
             workflow,
             result,
+            error: error.map(str::to_string),
         }
     }
 }

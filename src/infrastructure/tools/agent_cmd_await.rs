@@ -16,6 +16,24 @@ fn await_tool_result(
     }
 }
 
+/// Like [`await_tool_result`], but carries the actual run-level error cause so
+/// it is visible in the `await` response (#752).
+fn await_tool_result_with_error(
+    status: &str,
+    reason: Option<&str>,
+    agent_id: String,
+    elapsed_ms: u64,
+    workflow: Option<WorkflowSnapshot>,
+    error: Option<&str>,
+) -> ToolResult {
+    let result = AwaitResult::with_error(status, reason, agent_id, elapsed_ms, workflow, error);
+    ToolResult {
+        content: serde_json::to_string(&result).unwrap(),
+        is_error: false,
+        image_blocks: vec![],
+    }
+}
+
 fn elapsed_ms(start: std::time::Instant) -> u64 {
     start.elapsed().as_millis() as u64
 }
@@ -280,10 +298,12 @@ impl AgentCmdTool {
                     // Agent is actively working — reset idle countdown.
                     idle_since = None;
                 }
-                Some((SubagentStatus::Error, Some(_))) => {
+                Some((SubagentStatus::Error, Some(run_error))) => {
                     // The prompt run failed (for example a provider/model error).
                     // Return a structured error after the idle window so parents
-                    // can triage instead of waiting for the process to exit.
+                    // can triage instead of waiting for the process to exit. The
+                    // actual cause is surfaced so parents can triage without
+                    // reading the child's logs (#752).
                     let now = tokio::time::Instant::now();
                     if idle_since.is_none() {
                         idle_since = Some(now);
@@ -294,12 +314,13 @@ impl AgentCmdTool {
                             || elapsed_idle >= Duration::from_secs(idle_timeout_secs)
                         {
                             let workflow = self.fetch_workflow_snapshot(&agent_id).await;
-                            return Ok(await_tool_result(
+                            return Ok(await_tool_result_with_error(
                                 "error",
                                 Some("agent_error"),
                                 agent_id.clone(),
                                 elapsed_ms(start),
                                 workflow,
+                                Some(&run_error),
                             ));
                         }
                     }

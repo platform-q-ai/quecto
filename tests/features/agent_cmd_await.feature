@@ -131,6 +131,19 @@ Feature: agent_cmd await — block until sub-agent reaches terminal state
     Then the agent_cmd await result status should be "idle"
     And the agent_cmd await result workflow should be null
 
+  # --- Run error surfacing (#752) ---
+
+  Scenario: await surfaces the actual run error message and cause
+    Given an AgentCmdTool with a mock await registry
+    And the mock subagent "w1" has status "error"
+    And the mock subagent "w1" has run error "HTTP 429 from Codex: usage_limit_reached"
+    When I execute agent_cmd with '{"agent_id":"w1","command":"await","timeout":5,"idle_timeout":0}'
+    Then the agent_cmd await result status should be "error"
+    And the agent_cmd await result reason should be "agent_error"
+    And the agent_cmd await result error should be "HTTP 429 from Codex: usage_limit_reached"
+    And the agent_cmd await result verdict should be "failed"
+    And the agent_cmd await result summary should contain "usage_limit_reached"
+
   # --- Default values ---
 
   Scenario: await uses default timeout of 300 seconds
