@@ -30,7 +30,7 @@ fn await_tool_result_with_error(
     }
 }
 
-fn elapsed_ms(start: std::time::Instant) -> u64 {
+fn elapsed_ms(start: tokio::time::Instant) -> u64 {
     start.elapsed().as_millis() as u64
 }
 
@@ -81,7 +81,7 @@ impl AgentCmdTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(AWAIT_DEFAULT_IDLE_TIMEOUT);
 
-        let start = std::time::Instant::now();
+        let start = tokio::time::Instant::now();
 
         // Check if agent exists in registry.
         let (socket_path, exit_signal_rx) = {

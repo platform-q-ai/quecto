@@ -62,7 +62,12 @@ async fn changed_poll_reloads_new_provider() {
         r#"{"providers":{"openai":{"api_key":"sk-test","api_base":"http://127.0.0.1:9"}}}"#,
     );
     let mut reload = seeded_provider_reload(&path, provider());
-    std::thread::sleep(std::time::Duration::from_millis(20));
+
+    // Move the file mtime forward deterministically so the reload sees a
+    // changed file without depending on wall-clock timing.
+    let later = std::time::SystemTime::now() + std::time::Duration::from_secs(10);
+    filetime::set_file_mtime(&path, filetime::FileTime::from_system_time(later)).unwrap();
+
     std::fs::write(&path, config_with_fireworks("http://127.0.0.1:9")).unwrap();
     let inputs = inputs(path, &dir);
 

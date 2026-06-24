@@ -428,8 +428,8 @@ fn test_sse_batch_no_remap_without_tool_defs() {
     assert_eq!(resp.tool_calls[0].name, "bash");
 }
 
-#[test]
-fn test_sse_events_reverse_maps_tool_name_in_start_and_end() {
+#[tokio::test]
+async fn test_sse_events_reverse_maps_tool_name_in_start_and_end() {
     use std::borrow::Cow;
     let sse = "\
         event: content_block_start\n\
@@ -445,7 +445,7 @@ fn test_sse_events_reverse_maps_tool_name_in_start_and_end() {
         description: Cow::Borrowed("Run command"),
         parameters_schema: Cow::Borrowed("{}"),
     }];
-    let events = AnthropicProvider::parse_sse_events_with_tools_public(sse, &tool_defs);
+    let events = AnthropicProvider::parse_sse_events_with_tools_public(sse, &tool_defs).await;
     use crate::domain::provider::StreamEvent;
 
     // ToolCallStart should have remapped name
@@ -481,8 +481,8 @@ fn test_sse_events_reverse_maps_tool_name_in_start_and_end() {
     assert_eq!(done_name, "bash");
 }
 
-#[test]
-fn test_sse_events_no_remap_without_tool_defs() {
+#[tokio::test]
+async fn test_sse_events_no_remap_without_tool_defs() {
     let sse = "\
         event: content_block_start\n\
         data: {\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_01\",\"name\":\"bash\"}}\n\n\
@@ -492,7 +492,7 @@ fn test_sse_events_no_remap_without_tool_defs() {
         data: {}\n\n\
         event: message_stop\n\
         data: {}\n\n";
-    let events = AnthropicProvider::parse_sse_events_public(sse);
+    let events = AnthropicProvider::parse_sse_events_public(sse).await;
     use crate::domain::provider::StreamEvent;
     let start = events
         .iter()

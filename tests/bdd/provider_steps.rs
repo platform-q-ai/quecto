@@ -1829,7 +1829,7 @@ fn given_sse_tool_block_stop(world: &mut QuectoWorld, name: String, id: String, 
 }
 
 #[when("I parse the SSE chunk as a stream event")]
-fn when_parse_sse_chunk_as_stream_event(world: &mut QuectoWorld) {
+async fn when_parse_sse_chunk_as_stream_event(world: &mut QuectoWorld) {
     use quecto::infrastructure::providers::anthropic::AnthropicProvider;
 
     let ev_type = world
@@ -1918,7 +1918,7 @@ fn when_parse_sse_chunk_as_stream_event(world: &mut QuectoWorld) {
         _ => String::new(),
     };
 
-    let events = AnthropicProvider::parse_sse_events_public(&sse);
+    let events = AnthropicProvider::parse_sse_events_public(&sse).await;
     world.stream_events = events;
 }
 
@@ -3335,7 +3335,7 @@ fn then_tool_call_name_in_response(world: &mut QuectoWorld, expected: String) {
 }
 
 #[when("I parse the SSE events with OAuth tool remapping")]
-fn when_parse_sse_events_with_oauth_remap(world: &mut QuectoWorld) {
+async fn when_parse_sse_events_with_oauth_remap(world: &mut QuectoWorld) {
     let sse = world
         .env_overrides
         .get("_sse438_payload")
@@ -3352,11 +3352,11 @@ fn when_parse_sse_events_with_oauth_remap(world: &mut QuectoWorld) {
         parameters_schema: "{}".into(),
     }];
     world.stream_events =
-        quecto::infrastructure::providers::anthropic::AnthropicProvider::parse_sse_events_with_tools_public(&sse, &tool_defs);
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::parse_sse_events_with_tools_public(&sse, &tool_defs).await;
 }
 
 #[when("I parse the SSE events without OAuth tool remapping")]
-fn when_parse_sse_events_without_oauth_remap(world: &mut QuectoWorld) {
+async fn when_parse_sse_events_without_oauth_remap(world: &mut QuectoWorld) {
     let sse = world
         .env_overrides
         .get("_sse438_payload")
@@ -3365,7 +3365,8 @@ fn when_parse_sse_events_without_oauth_remap(world: &mut QuectoWorld) {
     world.stream_events =
         quecto::infrastructure::providers::anthropic::AnthropicProvider::parse_sse_events_public(
             &sse,
-        );
+        )
+        .await;
 }
 
 #[then(expr = "the ToolCallStart event name should be {string}")]
