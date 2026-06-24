@@ -36,11 +36,6 @@ pub fn underline(text: &str) -> String {
     styled(4, text)
 }
 
-/// Reverse video (swap fg/bg).
-pub fn reverse(text: &str) -> String {
-    styled(7, text)
-}
-
 // ── Standard colors ──────────────────────────────────────────────────────────
 
 pub fn red(text: &str) -> String {

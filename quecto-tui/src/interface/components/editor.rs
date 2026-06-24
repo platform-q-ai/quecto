@@ -120,7 +120,9 @@ impl Editor {
         self.history_index = -1;
     }
 
-    /// Whether we're in bash mode (text starts with !).
+    /// Whether we're in bash mode (text starts with !). Tests only — production
+    /// reads `bash_mode` directly during render.
+    #[cfg(test)]
     pub fn is_bash_mode(&self) -> bool {
         self.bash_mode
     }

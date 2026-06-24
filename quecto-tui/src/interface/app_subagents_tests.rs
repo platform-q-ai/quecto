@@ -161,7 +161,10 @@ async fn rebuild_subagent_bar_with_no_agents_clears_widget() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.rebuild_subagent_bar();
-    assert!(a.widgets_above.is_empty(), "no agents → no subagent widget");
+    assert!(
+        a.widgets_above.render(80).is_empty(),
+        "no agents → no subagent widget"
+    );
 }
 
 #[tokio::test]
@@ -171,7 +174,7 @@ async fn rebuild_subagent_bar_with_agents_sets_widget() {
     a.update_subagent_bar(vec![info("w1", "running")]);
     a.rebuild_subagent_bar();
     assert!(
-        !a.widgets_above.is_empty(),
+        !a.widgets_above.render(80).is_empty(),
         "agents present → widget should be set"
     );
 }
@@ -182,12 +185,12 @@ async fn rebuild_subagent_bar_clears_widget_when_agents_drop_to_zero() {
     let a = h.app_mut();
     a.update_subagent_bar(vec![info("w1", "running")]);
     a.rebuild_subagent_bar();
-    assert!(!a.widgets_above.is_empty());
+    assert!(!a.widgets_above.render(80).is_empty());
     // Remove all agents.
     a.subagent_local.clear();
     a.rebuild_subagent_bar();
     assert!(
-        a.widgets_above.is_empty(),
+        a.widgets_above.render(80).is_empty(),
         "widget should be cleared when no agents"
     );
 }

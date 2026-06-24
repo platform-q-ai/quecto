@@ -445,7 +445,8 @@ impl Client {
         self.event_rx.recv().await
     }
 
-    /// Try to receive an event without blocking.
+    /// Try to receive an event without blocking (tests only).
+    #[cfg(test)]
     pub fn try_recv(&mut self) -> Option<Event> {
         self.event_rx.try_recv().ok()
     }

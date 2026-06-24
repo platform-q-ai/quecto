@@ -311,6 +311,10 @@ pub struct QuectoWorld {
     pub exec_env_vars: HashMap<String, String>,
     /// TUI scrollback BDD: chat view under test.
     pub tui_chat: Option<quecto_tui::interface::components::chat::Chat>,
+    /// TUI footer BDD (#760): footer render while marked as streaming.
+    pub tui_footer_streaming_render: Vec<String>,
+    /// TUI footer BDD (#760): footer render while idle (not streaming).
+    pub tui_footer_idle_render: Vec<String>,
     /// TUI @files BDD: file-mention autocomplete under test.
     pub tui_files_autocomplete:
         Option<quecto_tui::interface::components::files_autocomplete::FilesAutocomplete>,
