@@ -65,6 +65,28 @@ fn skip_if_false(v: &bool) -> bool {
     !v
 }
 
+/// Lightweight view of a session file used by `list()` to derive the title,
+/// message count and key WITHOUT deserializing the full message bodies
+/// (#765). Only the fields actually needed for a summary are described, so
+/// heavy or even malformed per-message details (tool calls, thinking blocks,
+/// pruning metadata) are skipped entirely by serde rather than parsed and
+/// discarded — turning per-turn O(total_chars) list work into O(messages).
+#[derive(serde::Deserialize)]
+struct SessionHeader {
+    key: String,
+    #[serde(default)]
+    messages: Vec<MessageHeader>,
+}
+
+/// Per-message header: just the role (for counting/title selection) and the
+/// content (for the title). Every other field is ignored by serde.
+#[derive(serde::Deserialize)]
+struct MessageHeader {
+    role: String,
+    #[serde(default)]
+    content: String,
+}
+
 /// Uses the same strings that `StopReason::parse` accepts so that
 /// round-trips are lossless regardless of which provider produced the value.
 
@@ -220,8 +242,8 @@ impl SessionStore for FileSessionStore {
                         continue;
                     }
                 };
-                let file: SessionFile = match serde_json::from_str(&content) {
-                    Ok(file) => file,
+                let header: SessionHeader = match serde_json::from_str(&content) {
+                    Ok(header) => header,
                     Err(err) => {
                         tracing::warn!(
                             path = %path.display(),
@@ -233,19 +255,19 @@ impl SessionStore for FileSessionStore {
                 };
                 // Authoritative backstop on the real key.
                 if let Some(ref prefix) = key_prefix {
-                    if !file.key.starts_with(prefix.as_str()) {
+                    if !header.key.starts_with(prefix.as_str()) {
                         continue;
                     }
                 }
-                let title = first_user_message(&file.messages);
-                let message_count = file
+                let title = first_user_message(&header.messages);
+                let message_count = header
                     .messages
                     .iter()
                     .filter(|m| matches!(str_to_role(&m.role), Role::User | Role::Assistant))
                     .count();
                 summaries.push(SessionSummary {
                     title,
-                    key: file.key,
+                    key: header.key,
                     message_count,
                     updated_unix_secs,
                 });
@@ -285,7 +307,7 @@ fn str_to_role(s: &str) -> Role {
 /// Returns an empty string when there is none, bounded to a transport-safe
 /// length (no ellipsis). Display truncation and the "(untitled)" placeholder
 /// are applied by the interface/display layer, not by persistence.
-fn first_user_message(messages: &[MessageRecord]) -> String {
+fn first_user_message(messages: &[MessageHeader]) -> String {
     const TRANSPORT_CHAR_CAP: usize = 200;
     messages
         .iter()

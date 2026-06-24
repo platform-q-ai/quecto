@@ -69,6 +69,50 @@ fn given_corrupt_session_file(world: &mut QuectoWorld, filename: String) {
         .expect("write corrupt session");
 }
 
+/// Persist a session on disk whose assistant message carries a per-message
+/// detail the full message model cannot parse (an unrecognised thinking-block
+/// kind). The on-disk JSON shape is an implementation detail kept here, out of
+/// the Gherkin: the scenario only speaks of an "unrecognised detail field".
+#[given(expr = "a session {string} whose assistant message carries an unrecognised detail field")]
+fn given_session_with_unrecognised_detail(world: &mut QuectoWorld, key: String) {
+    ensure_session_workspace(world);
+    let ws = world
+        .session_workspace
+        .as_ref()
+        .expect("session workspace not set");
+    let sessions_dir = ws.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("create sessions dir");
+    let json = format!(
+        r#"{{"key":"{key}","messages":[{{"role":"user","content":"what is the answer"}},{{"role":"assistant","content":"42","thinking_blocks":[{{"type":"totally-unknown-variant","x":1}}]}}]}}"#
+    );
+    std::fs::write(sessions_dir.join(format!("{key}.json")), json).expect("write session");
+}
+
+fn session_list_entry(world: &QuectoWorld, key: &str) -> quecto::domain::session::SessionSummary {
+    let store = world.session_store.as_ref().expect("session store not set");
+    let summaries = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(store.list(None))
+        .expect("session list should succeed");
+    summaries
+        .into_iter()
+        .find(|s| s.key == key)
+        .unwrap_or_else(|| panic!("expected session list to include {key:?}"))
+}
+
+#[then(expr = "the session list entry {string} should have title {string}")]
+fn then_session_list_entry_title(world: &mut QuectoWorld, key: String, expected_title: String) {
+    assert_eq!(session_list_entry(world, &key).title, expected_title);
+}
+
+#[then(expr = "the session list entry {string} should report {int} messages")]
+fn then_session_list_entry_count(world: &mut QuectoWorld, key: String, expected_count: usize) {
+    assert_eq!(
+        session_list_entry(world, &key).message_count,
+        expected_count
+    );
+}
+
 #[given(expr = "the workspace file {string} contains {string}")]
 fn given_workspace_file_contains(world: &mut QuectoWorld, filename: String, content: String) {
     let ws = world

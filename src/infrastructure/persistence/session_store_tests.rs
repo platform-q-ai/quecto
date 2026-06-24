@@ -541,3 +541,52 @@ fn role_str_mapping_roundtrips_and_defaults() {
     }
     assert_eq!(super::str_to_role("not-a-role"), Role::User);
 }
+
+// --- #765: list() derives summaries from a lightweight header only ---
+//
+// Acceptance: list() computes title/count without fully deserializing the
+// `messages` array (heavy per-message fields like thinking_blocks). This is
+// pinned structurally: the fixture carries a thinking_blocks entry with a tag
+// the full MessageRecord/ThinkingBlockRecord model *rejects* (the enum has no
+// catch-all). The companion assertion below proves a full parse (load()) does
+// reject this exact file, so list() can only succeed by NOT paying the
+// full-deserialize cost — a catch-all on ThinkingBlockRecord would break the
+// load() assertion and so cannot game this test.
+const HEAVY_UNPARSEABLE_SESSION: &str = r#"{
+    "key": "chat-heavy",
+    "messages": [
+        {"role": "user", "content": "what is the answer"},
+        {"role": "assistant", "content": "42",
+         "thinking_blocks": [{"type": "totally-unknown-variant", "x": 1}]}
+    ]
+}"#;
+
+#[tokio::test]
+async fn test_list_ignores_unparseable_heavy_message_fields() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+
+    let sessions_dir = tmp.path().join("sessions");
+    tokio::fs::create_dir_all(&sessions_dir).await.unwrap();
+    tokio::fs::write(
+        sessions_dir.join("chat-heavy.json"),
+        HEAVY_UNPARSEABLE_SESSION,
+    )
+    .await
+    .unwrap();
+
+    // A full parse (load) MUST reject the unknown heavy field; otherwise the
+    // listing assertion would not prove the header path skips message bodies.
+    assert!(
+        store.load("chat-heavy").await.is_err(),
+        "fixture must be unparseable by the full message model"
+    );
+
+    let summaries = store.list(None).await.unwrap();
+    let s = summaries
+        .iter()
+        .find(|s| s.key == "chat-heavy")
+        .expect("session with unparseable heavy field should still be listed");
+    assert_eq!(s.title, "what is the answer");
+    assert_eq!(s.message_count, 2);
+}
