@@ -36,6 +36,17 @@ Feature: Session Management
     And a corrupt [session] file "cli_bad.json"
     Then the [session] list should include session "cli:good"
 
+  @session
+  Scenario: Sessions with unrecognised message detail fields still appear in the listing (#765)
+    # Listing summarises sessions from their first user message and message
+    # count; it must tolerate per-message details the full parser would reject,
+    # since those details are never needed to build a summary.
+    Given a [session] workspace
+    And a session "chat-heavy" whose assistant message carries an unrecognised detail field
+    Then the [session] list should include session "chat-heavy"
+    And the [session] list entry "chat-heavy" should have title "what is the answer"
+    And the [session] list entry "chat-heavy" should report 2 messages
+
   # NOTE: CLI session key scenarios moved to e2e_session.feature
   # because they now require a mock LLM server (cmd_agent is no longer a stub).
 
