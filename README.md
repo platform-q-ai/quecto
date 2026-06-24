@@ -680,15 +680,14 @@ done
 wait)
 ```
 
-Real-LLM (requires `OPENAI_API_KEY`):
+Provider smoke (paid, opt-in, minimal live request):
 ```bash
-(for i in $(seq 0 23); do
-  (timeout 12m env QUECTO_REAL_LLM=1 QUECTO_TAG=real-llm QUECTO_BDD_SHARD_INDEX=$i QUECTO_BDD_SHARD_TOTAL=24 cargo test --no-fail-fast --features test-support --test bdd 2>&1 | scripts/test-filter.sh) &
-done
-wait)
+QUECTO_PROVIDER_SMOKE=1 QUECTO_TAG=provider-smoke cargo test --no-fail-fast --features test-support --test bdd 2>&1 | scripts/test-filter.sh
 ```
 
-Use `QUECTO_TAG=real-llm-smoke` for quicker paid smoke runs.
+Provider smoke requires either `QUECTO_PROVIDERS_OPENAI_API_KEY` or `OPENAI_API_KEY`. CI maps both secret names and skips the paid smoke step when neither secret is configured.
+
+Legacy real-LLM suites are still gated by `QUECTO_REAL_LLM=1`, but behavioral e2e coverage should prefer mocked provider responses so normal test runs do not incur provider costs.
 
 ### Running individual features or scenarios
 
@@ -707,10 +706,10 @@ cargo test --test bdd
 # Core suite (24-way sharded, fastest local full run)
 bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 12m
 
-# Real-LLM smoke subset (CI-sized)
-bash scripts/run-bdd-shards.sh --suite real-llm-smoke --shards 24 --timeout 12m --tag real-llm-smoke --real-llm
+# Provider smoke subset (paid, opt-in)
+QUECTO_PROVIDER_SMOKE=1 QUECTO_TAG=provider-smoke cargo test --no-fail-fast --features test-support --test bdd
 
-# Real-LLM full suite
+# Legacy Real-LLM full suite
 bash scripts/run-bdd-shards.sh --suite real-llm-bdd --shards 24 --timeout 12m --tag real-llm --real-llm
 ```
 
@@ -722,6 +721,8 @@ Pre-push controls:
 - `QUECTO_PREPUSH_FORCE=1` to bypass cache and rerun all checks
 
 Pre-merge controls (real-LLM lane):
+- `QUECTO_PROVIDER_SMOKE=1` enables `@provider-smoke` live provider checks (excluded by default)
+- `QUECTO_PROVIDERS_OPENAI_API_KEY` or `OPENAI_API_KEY` supplies the OpenAI credential for the current provider smoke scenario
 - `QUECTO_REAL_LLM_TIMEOUT` timeout per real-LLM shard (default `12m`)
 - `QUECTO_REAL_LLM_SHARDS` shard count for real-LLM BDD (default `24`)
 - `QUECTO_REAL_LLM_TAG` scenario tag to run (default `real-llm`; use `real-llm-smoke` for smoke)

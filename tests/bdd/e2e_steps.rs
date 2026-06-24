@@ -22,6 +22,33 @@ fn given_config_with_openai_mock(world: &mut QuectoWorld) {
     let workspace = base.join("workspace");
     std::fs::create_dir_all(&workspace).expect("create workspace dir");
     rewrite_config_to_uri(world, &uri);
+    world.mock_provider_kind = Some("openai".to_string());
+
+    std::mem::forget(server);
+    std::mem::forget(rt);
+}
+
+#[given("a mocked OpenAI workspace is configured")]
+fn given_mocked_openai_workspace(world: &mut QuectoWorld) {
+    configure_mock_provider_workspace(world, "openai");
+}
+
+#[given("a mocked Anthropic workspace is configured")]
+fn given_mocked_anthropic_workspace(world: &mut QuectoWorld) {
+    configure_mock_provider_workspace(world, "anthropic");
+}
+
+fn configure_mock_provider_workspace(world: &mut QuectoWorld, provider: &str) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let server = rt.block_on(wiremock::MockServer::start());
+    let uri = server.uri();
+
+    ensure_temp_dir(world);
+    let base = base_path(world);
+    let workspace = base.join("workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace dir");
+    rewrite_config_to_provider_uri(world, provider, &uri);
+    world.mock_provider_kind = Some(provider.to_string());
 
     std::mem::forget(server);
     std::mem::forget(rt);
@@ -64,6 +91,49 @@ fn given_mock_llm_text_response(world: &mut QuectoWorld, content: String) {
             .await;
 
         rewrite_config_to_uri(world, &new_uri);
+        std::mem::forget(server);
+    });
+    std::mem::forget(rt);
+}
+
+#[given(expr = "the mock provider returns a text response {string}")]
+fn given_mock_provider_text_response(world: &mut QuectoWorld, content: String) {
+    assert!(
+        world._wiremock_server_uri.is_some(),
+        "mock server URI not set — ensure a mock provider workspace step ran first"
+    );
+    let provider = world
+        .mock_provider_kind
+        .as_deref()
+        .unwrap_or("openai")
+        .to_string();
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+        let (path, response_body) = match provider.as_str() {
+            "anthropic" => (
+                "/v1/messages",
+                serde_json::json!({
+                    "id": "msg_mock",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{ "type": "text", "text": content }],
+                    "stop_reason": "end_turn",
+                    "usage": { "input_tokens": 10, "output_tokens": 5 }
+                }),
+            ),
+            _ => ("/chat/completions", openai_text_json(&content)),
+        };
+
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path(path))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(response_body))
+            .mount(&server)
+            .await;
+
+        rewrite_config_to_provider_uri(world, &provider, &new_uri);
         std::mem::forget(server);
     });
     std::mem::forget(rt);
@@ -182,6 +252,28 @@ fn when_run_agent_with_model_and_message(world: &mut QuectoWorld, model: String,
     world.stderr = output.stderr;
 }
 
+#[when(expr = "I run quecto agent --model {string} -s - -m {string}")]
+fn when_run_agent_with_model_ephemeral_session(
+    world: &mut QuectoWorld,
+    model: String,
+    message: String,
+) {
+    let args = vec![
+        "quecto".to_string(),
+        "agent".to_string(),
+        "--model".to_string(),
+        model,
+        "-s".to_string(),
+        "-".to_string(),
+        "-m".to_string(),
+        message,
+    ];
+    let output = cli::run_with_output(args, &world.cli_context);
+    world.exit_code = output.exit_code;
+    world.stdout = output.stdout;
+    world.stderr = output.stderr;
+}
+
 #[when("I set QUECTO_BASE_DIR to the temp directory")]
 fn when_set_quecto_base_dir_env(world: &mut QuectoWorld) {
     // Do not mutate process-global env in BDD runner.
@@ -271,6 +363,14 @@ fn openai_text_json(content: &str) -> serde_json::Value {
 /// Preserves any existing config fields (e.g. health, channels) by reading
 /// the current config, merging the provider/workspace fields, and writing back.
 pub(crate) fn rewrite_config_to_uri(world: &mut QuectoWorld, new_uri: &str) {
+    rewrite_config_to_provider_uri(world, "openai", new_uri);
+}
+
+pub(crate) fn rewrite_config_to_provider_uri(
+    world: &mut QuectoWorld,
+    provider: &str,
+    new_uri: &str,
+) {
     let base = base_path(world);
     let workspace = base.join("workspace");
     let config_path = base.join("config.json");
@@ -282,8 +382,13 @@ pub(crate) fn rewrite_config_to_uri(world: &mut QuectoWorld, new_uri: &str) {
         .unwrap_or_else(|| serde_json::json!({}));
 
     // Merge provider and workspace settings.
-    config["providers"]["openai"]["api_key"] = serde_json::json!("sk-test-key");
-    config["providers"]["openai"]["api_base"] = serde_json::json!(new_uri);
+    let api_key = if provider == "anthropic" {
+        "sk-ant-test-key"
+    } else {
+        "sk-test-key"
+    };
+    config["providers"][provider]["api_key"] = serde_json::json!(api_key);
+    config["providers"][provider]["api_base"] = serde_json::json!(new_uri);
     config["agents"]["defaults"]["workspace"] = serde_json::json!(workspace.display().to_string());
 
     let config_json = serde_json::to_string_pretty(&config).expect("serialize config");
@@ -295,6 +400,7 @@ pub(crate) fn rewrite_config_to_uri(world: &mut QuectoWorld, new_uri: &str) {
     }
 
     world._wiremock_server_uri = Some(new_uri.to_string());
+    world.mock_provider_kind = Some(provider.to_string());
 }
 
 /// Helper: mount a two-response wiremock sequence — first a tool call, then a text response.
@@ -1650,24 +1756,32 @@ fn then_subprocess_stderr_contains(world: &mut QuectoWorld, expected: String) {
 // E2E Real LLM Steps
 // ===========================================================================
 
-/// Resolve OPENAI_API_KEY: check env var first, then fall back to `.env` file.
+/// Resolve an OpenAI API key: check env vars first, then fall back to `.env`.
 fn resolve_openai_api_key() -> String {
-    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
-        return key;
+    for var in ["QUECTO_PROVIDERS_OPENAI_API_KEY", "OPENAI_API_KEY"] {
+        if let Ok(key) = std::env::var(var) {
+            if !key.trim().is_empty() {
+                return key;
+            }
+        }
     }
     // Fall back to .env file at repo root
     if let Ok(contents) = std::fs::read_to_string(".env") {
         for line in contents.lines() {
             let line = line.trim();
-            if let Some(value) = line.strip_prefix("OPENAI_API_KEY=") {
-                let value = value.trim();
-                if !value.is_empty() {
-                    return value.to_string();
+            for var in ["QUECTO_PROVIDERS_OPENAI_API_KEY", "OPENAI_API_KEY"] {
+                if let Some(value) = line.strip_prefix(&format!("{var}=")) {
+                    let value = value.trim();
+                    if !value.is_empty() {
+                        return value.to_string();
+                    }
                 }
             }
         }
     }
-    panic!("OPENAI_API_KEY must be set (via env var or .env file)");
+    panic!(
+        "QUECTO_PROVIDERS_OPENAI_API_KEY or OPENAI_API_KEY must be set (via env var or .env file)"
+    );
 }
 
 /// Set up a workspace configured to use a real OpenAI endpoint.
@@ -1752,6 +1866,30 @@ fn given_real_llm_workspace_workflow(world: &mut QuectoWorld) {
     std::fs::write(base.join("config.json"), config_json).expect("write real LLM config");
 }
 
+#[given("an OpenAI provider smoke workspace is configured")]
+fn given_openai_provider_smoke_workspace(world: &mut QuectoWorld) {
+    ensure_temp_dir(world);
+    let base = base_path(world);
+    let workspace = base.join("workspace");
+    std::fs::create_dir_all(&workspace).expect("create workspace");
+
+    let api_key = resolve_openai_api_key();
+    let config = serde_json::json!({
+        "providers": {
+            "openai": { "api_key": api_key }
+        },
+        "agents": {
+            "defaults": {
+                "workspace": workspace.to_string_lossy(),
+                "max_tokens": 4,
+                "temperature": 0.0
+            }
+        }
+    });
+    let config_json = serde_json::to_string_pretty(&config).expect("serialize config");
+    std::fs::write(base.join("config.json"), config_json).expect("write smoke config");
+}
+
 /// Run the agent against the real OpenAI endpoint with a cheap model, bounded iterations,
 /// and a wall-clock timeout to prevent hung HTTP requests from blocking the suite.
 #[when(expr = "I run the real LLM agent with message {string}")]
@@ -1823,6 +1961,28 @@ fn when_run_real_llm_agent_system(world: &mut QuectoWorld, system: String, messa
     world.stdout = output.stdout;
     world.stderr = output.stderr;
 }
+#[when(expr = "I run the OpenAI provider smoke agent with message {string}")]
+fn when_run_openai_provider_smoke_agent(world: &mut QuectoWorld, message: String) {
+    let args = vec![
+        "quecto".to_string(),
+        "agent".to_string(),
+        "--model".to_string(),
+        "openai-api/gpt-4o-mini".to_string(),
+        "--max-iterations".to_string(),
+        "1".to_string(),
+        "--max-time".to_string(),
+        "30".to_string(),
+        "-s".to_string(),
+        "-".to_string(),
+        "-m".to_string(),
+        message,
+    ];
+    let output = cli::run_with_output(args, &world.cli_context);
+    world.exit_code = output.exit_code;
+    world.stdout = output.stdout;
+    world.stderr = output.stderr;
+}
+
 /// Start a wiremock server that captures requests and returns a text response.
 /// Stores a leaked reference so we can inspect received requests later.
 #[given(expr = "a mock LLM that captures requests and returns text {string}")]

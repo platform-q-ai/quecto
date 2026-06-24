@@ -295,6 +295,8 @@ pub struct QuectoWorld {
     pub agent_id_validation: Option<Result<(), String>>,
     /// Wiremock server URI (kept alive via Box leak)
     pub _wiremock_server_uri: Option<String>,
+    /// Provider protocol currently backed by the generic mock provider helpers.
+    pub mock_provider_kind: Option<String>,
     /// Fireworks-compatible mock server URI for provider reload scenarios
     pub _fireworks_mock_uri: Option<String>,
     /// Leaked Fireworks-compatible mock server ref for request inspection
@@ -967,6 +969,7 @@ mod workflow_event_identity_steps;
 
 fn main() {
     let real_llm_enabled = std::env::var("QUECTO_REAL_LLM").unwrap_or_default() == "1";
+    let provider_smoke_enabled = std::env::var("QUECTO_PROVIDER_SMOKE").unwrap_or_default() == "1";
     // Optional tag filter: QUECTO_TAG=real-llm runs only scenarios with that tag.
     let tag_filter = std::env::var("QUECTO_TAG").ok();
     // Optional deterministic scenario sharding across separate bdd processes.
@@ -1008,6 +1011,10 @@ fn main() {
                 }
                 // Exclude @real-llm scenarios unless QUECTO_REAL_LLM=1
                 if sc.tags.iter().any(|t| t == "real-llm") && !real_llm_enabled {
+                    return false;
+                }
+                // Exclude live provider smoke scenarios unless explicitly enabled.
+                if sc.tags.iter().any(|t| t == "provider-smoke") && !provider_smoke_enabled {
                     return false;
                 }
                 // If a tag filter is set, require matching scenarios, but still
