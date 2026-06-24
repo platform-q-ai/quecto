@@ -590,3 +590,64 @@ async fn test_list_ignores_unparseable_heavy_message_fields() {
     assert_eq!(s.title, "what is the answer");
     assert_eq!(s.message_count, 2);
 }
+
+// Sync guard for the duplicated lightweight schema (#765 review). The header
+// is an independent serde view of the full SessionFile/MessageRecord model;
+// nothing at the type level links `key`/`messages`/`role`/`content`. This test
+// serializes REAL records (exactly what save() writes) and asserts the header
+// reads back identical `key`/`role`/`content`. If a field is renamed or its
+// representation changes on the authoritative model, the header would fall back
+// to its serde defaults and this test fails — instead of silently producing
+// blank titles in production.
+#[test]
+fn test_session_header_stays_in_sync_with_full_record() {
+    let file = SessionFile {
+        key: "chat-sync".to_string(),
+        messages: vec![
+            message_to_record(&make_message(Role::User, "first user line")),
+            message_to_record(&make_message(Role::Assistant, "assistant reply")),
+        ],
+        workflow_run: None,
+    };
+    let json = serde_json::to_string(&file).unwrap();
+
+    let header: SessionHeader = serde_json::from_str(&json).unwrap();
+    assert_eq!(header.key, "chat-sync");
+    assert_eq!(header.messages.len(), 2);
+    assert_eq!(header.messages[0].role, "user");
+    assert_eq!(header.messages[0].content, "first user line");
+    assert_eq!(header.messages[1].role, "assistant");
+    assert_eq!(header.messages[1].content, "assistant reply");
+}
+
+// list() is summary-only and is NOT a load guarantee (#765 review): a session
+// whose message bodies are malformed is still surfaced by list() but rejected
+// by load(). Callers must degrade gracefully. This pins that exact contract.
+#[tokio::test]
+async fn test_listed_session_with_malformed_body_fails_to_load() {
+    let tmp = TempDir::new().unwrap();
+    let store = FileSessionStore::new(tmp.path());
+
+    let sessions_dir = tmp.path().join("sessions");
+    tokio::fs::create_dir_all(&sessions_dir).await.unwrap();
+    tokio::fs::write(
+        sessions_dir.join("chat-heavy.json"),
+        HEAVY_UNPARSEABLE_SESSION,
+    )
+    .await
+    .unwrap();
+
+    // It is listed (summary derivable from the header)...
+    let summaries = store.list(None).await.unwrap();
+    assert!(
+        summaries.iter().any(|s| s.key == "chat-heavy"),
+        "summary-only listing should surface the session"
+    );
+
+    // ...but opening it returns an error, NOT a panic or silent success. The
+    // caller is expected to handle this gracefully.
+    assert!(
+        store.load("chat-heavy").await.is_err(),
+        "a listed session is not guaranteed to load"
+    );
+}

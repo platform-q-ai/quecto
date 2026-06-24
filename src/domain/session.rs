@@ -83,6 +83,13 @@ pub trait SessionStore: Send + Sync {
     /// available. When `key_prefix` is `Some`, only sessions whose key starts
     /// with it are returned; the caller supplies this policy and the adapter
     /// uses it to skip non-matching files cheaply (without reading/parsing them).
+    ///
+    /// This is a SUMMARY-ONLY view and is NOT a load guarantee: an
+    /// implementation may derive summaries from a lightweight projection of
+    /// each session and therefore surface entries whose full bodies are
+    /// malformed. A returned [`SessionSummary`] does not guarantee that the
+    /// corresponding [`Self::load`] will succeed — callers that open a listed
+    /// session must handle a subsequent load failure gracefully.
     fn list(
         &self,
         key_prefix: Option<&str>,

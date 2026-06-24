@@ -66,25 +66,41 @@ fn skip_if_false(v: &bool) -> bool {
 }
 
 /// Lightweight view of a session file used by `list()` to derive the title,
-/// message count and key WITHOUT deserializing the full message bodies
+/// message count and key WITHOUT constructing the full message records
 /// (#765). Only the fields actually needed for a summary are described, so
-/// heavy or even malformed per-message details (tool calls, thinking blocks,
-/// pruning metadata) are skipped entirely by serde rather than parsed and
-/// discarded — turning per-turn O(total_chars) list work into O(messages).
+/// heavy per-message details (tool calls, thinking blocks, pruning metadata)
+/// are not materialized — they are skipped by serde rather than parsed into
+/// owned structs and discarded.
+///
+/// This does NOT reduce parse/I/O to sub-linear: `list()` still reads the
+/// whole file and serde still tokenizes the entire JSON document (ignored
+/// fields are consumed via `IgnoredAny`, which lexes every byte). The win is
+/// a constant-factor reduction: no allocation/construction of the heavy
+/// `MessageRecord` graph (its `Vec<ThinkingBlockRecord>`, `Vec<ToolCallRecord>`,
+/// owned strings and optional metadata). `role`/`content` borrow from the
+/// input buffer (zero-copy when no JSON escapes are present), so even the
+/// per-message body strings are not copied in the common case.
+///
+/// NOTE: the lightweight model is an independent serde view of [`SessionFile`]
+/// / [`MessageRecord`]. The `session_header_*` tests pin the shared field
+/// names (`key`, `messages`, `role`, `content`) so the two cannot silently
+/// drift apart.
 #[derive(serde::Deserialize)]
-struct SessionHeader {
-    key: String,
-    #[serde(default)]
-    messages: Vec<MessageHeader>,
+struct SessionHeader<'a> {
+    #[serde(borrow)]
+    key: std::borrow::Cow<'a, str>,
+    #[serde(default, borrow)]
+    messages: Vec<MessageHeader<'a>>,
 }
 
 /// Per-message header: just the role (for counting/title selection) and the
 /// content (for the title). Every other field is ignored by serde.
 #[derive(serde::Deserialize)]
-struct MessageHeader {
-    role: String,
-    #[serde(default)]
-    content: String,
+struct MessageHeader<'a> {
+    #[serde(borrow)]
+    role: std::borrow::Cow<'a, str>,
+    #[serde(default, borrow)]
+    content: std::borrow::Cow<'a, str>,
 }
 
 /// Uses the same strings that `StopReason::parse` accepts so that
@@ -267,7 +283,7 @@ impl SessionStore for FileSessionStore {
                     .count();
                 summaries.push(SessionSummary {
                     title,
-                    key: header.key,
+                    key: header.key.into_owned(),
                     message_count,
                     updated_unix_secs,
                 });
@@ -307,7 +323,7 @@ fn str_to_role(s: &str) -> Role {
 /// Returns an empty string when there is none, bounded to a transport-safe
 /// length (no ellipsis). Display truncation and the "(untitled)" placeholder
 /// are applied by the interface/display layer, not by persistence.
-fn first_user_message(messages: &[MessageHeader]) -> String {
+fn first_user_message(messages: &[MessageHeader<'_>]) -> String {
     const TRANSPORT_CHAR_CAP: usize = 200;
     messages
         .iter()
