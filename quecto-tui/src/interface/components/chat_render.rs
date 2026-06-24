@@ -384,7 +384,6 @@ pub(super) fn render_subagent(
     }
 }
 
-/// Render generic/unknown tools.
 /// Render workflow tool: styled action + result summary.
 pub(super) fn render_workflow(
     lines: &mut Vec<String>,
@@ -455,6 +454,7 @@ pub(super) fn render_workflow(
     }
 }
 
+/// Render generic/unknown tools.
 #[expect(
     clippy::too_many_arguments,
     reason = "renderer helper groups display context without heap allocation"

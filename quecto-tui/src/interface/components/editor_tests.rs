@@ -1,4 +1,5 @@
 use super::*;
+use crate::interface::ansi::strip_ansi;
 
 #[test]
 fn insert_characters() {
@@ -424,4 +425,27 @@ fn cursor_col_and_current_line_reflect_state() {
     e.set_text("hello");
     assert_eq!(e.current_line(), "hello");
     assert_eq!(e.cursor_col(), 5);
+}
+
+#[test]
+fn render_line_with_cursor_does_not_panic_on_mid_char_column() {
+    // "é" is a 2-byte UTF-8 char. A cursor column landing on byte 1 is
+    // *inside* the char; slicing &line[..1] would panic without a defensive
+    // snap to the previous char boundary.
+    let out = render_line_with_cursor("é", 1, 40);
+    assert!(!out.is_empty());
+    // The single multi-byte char must survive the defensive boundary snap.
+    let visible = strip_ansi(&out.join(""));
+    assert_eq!(visible, "é");
+}
+
+#[test]
+fn render_line_with_cursor_mid_char_keeps_text_intact() {
+    // Multi-byte content with an interior cursor column must still render
+    // the full text (no garbling) and not panic.
+    let out = render_line_with_cursor("naïve", 3, 40);
+    // Strip the reverse-video markers and assert the full text round-trips,
+    // including the at-cursor multi-byte char `ï` that the boundary bug touches.
+    let visible = strip_ansi(&out.join(""));
+    assert_eq!(visible, "naïve");
 }

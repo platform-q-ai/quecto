@@ -374,9 +374,9 @@ impl Component for Editor {
         let indicator_styled = border_color(indicator);
         let indicator_width = visible_width(indicator);
         let remaining = width.saturating_sub(indicator_width);
-        let top_border = border_color(&border_char.repeat(remaining.min(3)))
+        let top_border = border_color(&border_char.repeat(remaining.min(indicator_width)))
             + &indicator_styled
-            + &border_color(&border_char.repeat(remaining.saturating_sub(3)));
+            + &border_color(&border_char.repeat(remaining.saturating_sub(indicator_width)));
         output.push(truncate_to_width(&top_border, width, None));
 
         // Content lines with cursor.
@@ -505,7 +505,13 @@ impl Component for Editor {
 
 /// Render a single line with a block cursor at the given column.
 fn render_line_with_cursor(line: &str, cursor_col: usize, max_width: usize) -> Vec<String> {
-    let col = cursor_col.min(line.len());
+    // `cursor_col` is normally kept on a char boundary by the editor's
+    // mutators, but slicing on a mid-char column would panic. Snap to the
+    // previous boundary defensively so any future caller stays safe.
+    let mut col = cursor_col.min(line.len());
+    if !line.is_char_boundary(col) {
+        col = prev_char_boundary(line, col);
+    }
     let before = &line[..col];
     let at_cursor = if col < line.len() {
         let next = next_char_boundary(line, col);
