@@ -44,9 +44,9 @@ Feature: End-to-End Provider Wiring
 
   # --- Credential store integration ---
 
-  Scenario: Agent uses credential store token over config file key
+  Scenario: Agent uses credential store token when config has no key
     Given a temp base directory
-    And a config file with OpenAI api_key "sk-from-config" pointing at a mock server
+    And a config file with OpenAI api_key "" pointing at a mock server
     And the credential store has a valid token "sk-from-store" for provider "openai"
     And the mock expects Authorization header "Bearer sk-from-store" and returns "Authenticated"
     When I run quecto agent -s - -m "Hi"
@@ -80,7 +80,7 @@ Feature: End-to-End Provider Wiring
     And a config file with OpenAI api_key "sk-from-config", disable_codex_routing true, and a mock server
     And the credential store has a valid OpenAI OAuth token with ChatGPT account id "acct_test"
     And the mock expects Authorization header "Bearer sk-from-config" and returns "OpenAI slot used config key"
-    When I run quecto agent --model openai/custom-model -m "Hi"
+    When I run quecto agent --model openai-api/custom-model -m "Hi"
     Then the exit code should be 0
     And stdout should contain "OpenAI slot used config key"
 

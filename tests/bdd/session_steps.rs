@@ -212,9 +212,7 @@ fn then_session_list_should_include(world: &mut QuectoWorld, expected_name: Stri
         .block_on(store.list(None))
         .expect("session list should succeed");
     assert!(
-        summaries
-            .iter()
-            .any(|summary| summary.title == expected_name),
+        summaries.iter().any(|summary| summary.key == expected_name),
         "expected session list to include {expected_name:?}, got {summaries:?}"
     );
 }

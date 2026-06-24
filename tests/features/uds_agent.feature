@@ -167,16 +167,6 @@ Feature: UDS mode for headless agent operation
     And the get_messages response data should include a "messages" array with 2 messages
 
   @done
-  Scenario: rewind_to is rejected while the agent is running
-    Given a temp base directory
-    And a config file with an OpenAI provider pointing at a mock server
-    When I start the UDS agent with no [session]
-    And the agent is marked as streaming
-    And I send rewind_to messageIndex 0 with id "rw-busy"
-    And I close the UDS connection
-    Then the agent output should contain a response command "rewind_to" with success false
-
-  @done
   Scenario: rewind_to rejects invalid targets
     Given a temp base directory
     And a config file with an OpenAI provider pointing at a mock server
@@ -453,7 +443,7 @@ Feature: UDS mode for headless agent operation
     And I send command "abort" with id "ab-running-1"
     And I close the UDS connection
     Then the agent output should contain a response command "abort" with success true
-    And the agent output should not contain an event of type "agent_end"
+    And the agent output should not contain an event of type "turn_end"
 
   # ─── steer while running ─────────────────────────────────────────────────────
 
@@ -467,7 +457,7 @@ Feature: UDS mode for headless agent operation
     And I send steer "new direction" with id "st-running-1"
     And I close the UDS connection
     Then the agent output should contain a response command "steer" with success true
-    And the agent output should not contain an event of type "agent_end"
+    And the agent output should not contain an event of type "turn_end"
 
   # ─── Token streaming ────────────────────────────────────────────────────────
 

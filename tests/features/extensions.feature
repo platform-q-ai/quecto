@@ -65,14 +65,14 @@ Feature: Extension system
     And the registry should contain tool "web_search"
 
   Scenario: NativeExtension registered via ToolRegistryImpl as extension tool
-    Given a tool registry with core tools
+    Given a tool workspace
     And a native extension "web_search" registered as an extension tool
     Then the tool registry should contain "web_search"
     And the tool registry extension names should include "web_search"
     And the tool registry extension names should not include "bash"
 
   Scenario: NativeExtension cannot shadow core tools
-    Given a tool registry with core tools
+    Given a tool workspace
     And a native extension "bash" registered as an extension tool
     Then the tool registry extension names should not include "bash"
 

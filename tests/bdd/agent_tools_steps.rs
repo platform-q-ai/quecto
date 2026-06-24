@@ -154,6 +154,7 @@ fn when_agent_executes_tool(world: &mut QuectoWorld, tool_name: String, step: &g
 
 #[then(expr = "the tool result should contain {string}")]
 fn then_tool_result_contains(world: &mut QuectoWorld, expected: String) {
+    let expected = interpret_escapes(&expected);
     let result = world.tool_result.as_ref().expect("no tool result");
     match result {
         Ok(tr) => assert!(
