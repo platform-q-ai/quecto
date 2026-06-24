@@ -216,9 +216,151 @@ fn hash_bytes(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn hash_changes_with_content() {
         assert_ne!(hash_bytes(b"a"), hash_bytes(b"b"));
+    }
+
+    #[test]
+    fn runtime_reload_poll_rebuilds_on_changed_source() {
+        let mut tmp = NamedTempFile::new().unwrap();
+        tmp.write_all(b"initial").unwrap();
+        tmp.flush().unwrap();
+
+        let source = ReloadSource::new(tmp.path().to_path_buf());
+        let mut gate = RuntimeReload::new(vec![source]);
+        gate.seed(0usize);
+
+        // First poll: unchanged (seed matches current content).
+        let result = gate.poll(|| Ok(1usize));
+        assert!(matches!(result, ReloadResult::Unchanged));
+
+        // Change file.
+        tmp.write_all(b"modified").unwrap();
+        tmp.flush().unwrap();
+        let result = gate.poll(|| Ok(2usize));
+        assert!(matches!(result, ReloadResult::Reloaded(2)));
+        assert_eq!(gate.last_good(), Some(&2));
+    }
+
+    #[test]
+    fn reload_source_changed_detects_content_change() {
+        let mut tmp = NamedTempFile::new().unwrap();
+        tmp.write_all(b"initial").unwrap();
+        tmp.flush().unwrap();
+
+        let mut source = ReloadSource::new(tmp.path().to_path_buf());
+        source.seed();
+        assert!(matches!(
+            source.changed(),
+            SourceChange::UnchangedNoRead | SourceChange::Unchanged
+        ));
+
+        tmp.write_all(b"modified").unwrap();
+        tmp.flush().unwrap();
+        assert!(matches!(source.changed(), SourceChange::Changed));
+    }
+
+    #[test]
+    fn reload_source_changed_returns_unchanged_for_same_mtime_length_and_hash() {
+        let mut tmp = NamedTempFile::new().unwrap();
+        tmp.write_all(b"initial").unwrap();
+        tmp.flush().unwrap();
+
+        let mut source = ReloadSource::new(tmp.path().to_path_buf());
+        source.seed();
+        // Reading again with same content returns unchanged without reading.
+        assert!(matches!(source.changed(), SourceChange::UnchangedNoRead));
+    }
+
+    #[test]
+    fn reload_source_changed_returns_missing_or_unreadable_for_missing_file() {
+        let mut source = ReloadSource::new(PathBuf::from("/tmp/nonexistent-reload-12345"));
+        assert!(matches!(
+            source.changed(),
+            SourceChange::MissingOrUnreadable
+        ));
+    }
+
+    #[test]
+    fn reload_source_changed_same_mtime_but_different_content() {
+        use filetime::{FileTime, set_file_mtime};
+        use std::io::Seek;
+
+        let mut tmp = NamedTempFile::new().unwrap();
+        tmp.write_all(b"alpha").unwrap();
+        tmp.flush().unwrap();
+        let mtime = FileTime::from_system_time(SystemTime::now());
+        set_file_mtime(tmp.path(), mtime).unwrap();
+
+        let mut source = ReloadSource::new(tmp.path().to_path_buf());
+        source.seed();
+        assert!(matches!(
+            source.changed(),
+            SourceChange::UnchangedNoRead | SourceChange::Unchanged
+        ));
+
+        // Same mtime, different length/content.
+        tmp.rewind().unwrap();
+        tmp.write_all(b"longer-beta").unwrap();
+        tmp.flush().unwrap();
+        set_file_mtime(tmp.path(), mtime).unwrap();
+        assert!(matches!(source.changed(), SourceChange::Changed));
+    }
+
+    #[test]
+    fn runtime_reload_poll_keeps_last_good_on_rebuild_error() {
+        let mut tmp = NamedTempFile::new().unwrap();
+        tmp.write_all(b"initial").unwrap();
+
+        let source = ReloadSource::new(tmp.path().to_path_buf());
+        let mut gate = RuntimeReload::new(vec![source]);
+        gate.seed(0usize);
+
+        tmp.write_all(b"modified").unwrap();
+        let result = gate.poll(|| Err("boom".to_string()));
+        assert!(matches!(result, ReloadResult::Unchanged));
+        assert_eq!(gate.last_good(), Some(&0));
+    }
+
+    #[test]
+    fn runtime_reload_poll_forced_rebuilds_even_when_unchanged() {
+        let mut tmp = NamedTempFile::new().unwrap();
+        tmp.write_all(b"initial").unwrap();
+
+        let source = ReloadSource::new(tmp.path().to_path_buf());
+        let mut gate = RuntimeReload::new(vec![source]);
+        gate.seed(0usize);
+
+        let result = gate.poll_forced(|| Ok(1usize));
+        assert!(matches!(result, ReloadResult::Reloaded(1)));
+    }
+
+    #[test]
+    fn runtime_reload_poll_forced_result_preserves_error() {
+        let mut tmp = NamedTempFile::new().unwrap();
+        tmp.write_all(b"initial").unwrap();
+
+        let source = ReloadSource::new(tmp.path().to_path_buf());
+        let mut gate = RuntimeReload::new(vec![source]);
+        gate.seed(0usize);
+
+        let result = gate.poll_forced_result(|| Err("boom".to_string()));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn reload_source_last_mtime_matches_file() {
+        let mut tmp = NamedTempFile::new().unwrap();
+        tmp.write_all(b"x").unwrap();
+
+        let mut source = ReloadSource::new(tmp.path().to_path_buf());
+        source.seed();
+        let mtime = source.last_mtime().unwrap();
+        let meta = std::fs::metadata(tmp.path()).unwrap();
+        assert_eq!(mtime, meta.modified().unwrap());
     }
 }
