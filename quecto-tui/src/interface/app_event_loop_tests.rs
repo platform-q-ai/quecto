@@ -45,9 +45,14 @@ async fn process_key_sequence_parses_escape_sequence() {
 async fn process_key_sequence_handles_incomplete_escape() {
     let mut h = harness().await;
     let a = h.app_mut();
-    // A bare ESC byte alone is parsed as Escape key.
+    // A bare ESC byte alone is parsed as Escape key. When idle with an empty
+    // editor, that arms the rewind affordance (same as Key::Escape).
     a.process_key_sequence(b"\x1b");
-    // Escape when idle with empty editor arms rewind — just verify no panic.
+    assert!(
+        a.last_idle_escape.is_some(),
+        "bare ESC should be parsed as Escape and arm rewind"
+    );
+    assert_eq!(a.editor.text(), "", "bare ESC must not insert text");
 }
 
 #[tokio::test]
@@ -175,10 +180,14 @@ async fn handle_key_escape_clears_editor_with_text() {
 #[tokio::test]
 async fn handle_key_ctrl_l_opens_model_selector() {
     let mut h = harness().await;
-    let a = h.app_mut();
-    a.handle_key(Key::Ctrl('l'));
-    // open_model_selector sends a ListModels request; the selector opens
-    // after the response. Just verify it didn't panic.
+    h.app_mut().handle_key(Key::Ctrl('l'));
+    // open_model_selector defers opening until the fresh list arrives, so it
+    // sends a list_models request rather than opening the selector synchronously.
+    let cmds = h.drain_commands().await;
+    assert!(
+        cmds.iter().any(|c| c.contains("\"type\":\"list_models\"")),
+        "Ctrl+L should request the model list: {cmds:?}"
+    );
 }
 
 #[tokio::test]
@@ -193,33 +202,50 @@ async fn handle_key_ctrl_o_toggles_tool_expand() {
     );
 }
 
+// The four scroll keys all move `chat.scroll_offset`: PageUp/ScrollUp increase
+// it (scroll back into history), PageDown/ScrollDown decrease it (toward the
+// latest output, saturating at 0). Table-driven so the four cases share setup.
 #[tokio::test]
-async fn handle_key_page_up_scrolls_chat() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    // Just verify no panic.
-    a.handle_key(Key::PageUp);
-}
+async fn scroll_keys_move_chat_offset() {
+    // (key, scrolls_back) — scrolls_back == true means offset should grow.
+    let up_keys = [Key::PageUp, Key::ScrollUp];
+    let down_keys = [Key::PageDown, Key::ScrollDown];
 
-#[tokio::test]
-async fn handle_key_page_down_scrolls_chat() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    a.handle_key(Key::PageDown);
-}
+    for key in up_keys {
+        let label = format!("{key:?}");
+        let mut h = harness().await;
+        let a = h.app_mut();
+        // Seed more content than the viewport so scrolling back is observable
+        // (render clamps offset to scrollable range, not just the raw setter).
+        for i in 0..20 {
+            a.chat.add_entry(ChatEntry::User {
+                text: format!("line {i}"),
+            });
+        }
+        a.chat.set_viewport_height(3);
+        a.chat.render(80);
+        assert_eq!(a.chat.scroll_offset(), 0, "fresh chat is pinned to bottom");
+        a.handle_key(key);
+        a.chat.render(80);
+        assert!(
+            a.chat.scroll_offset() > 0,
+            "{label} should scroll chat back (offset > 0)"
+        );
+    }
 
-#[tokio::test]
-async fn handle_key_scroll_up_scrolls_chat() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    a.handle_key(Key::ScrollUp);
-}
-
-#[tokio::test]
-async fn handle_key_scroll_down_scrolls_chat() {
-    let mut h = harness().await;
-    let a = h.app_mut();
-    a.handle_key(Key::ScrollDown);
+    for key in down_keys {
+        let label = format!("{key:?}");
+        let mut h = harness().await;
+        let a = h.app_mut();
+        // First scroll back so there is something to scroll forward from.
+        a.chat.scroll_up(20);
+        let before = a.chat.scroll_offset();
+        a.handle_key(key);
+        assert!(
+            a.chat.scroll_offset() < before,
+            "{label} should scroll chat toward the latest output (offset shrinks)"
+        );
+    }
 }
 
 #[tokio::test]
@@ -283,8 +309,14 @@ async fn handle_key_backspace_goes_to_editor() {
 async fn handle_key_tab_goes_to_editor() {
     let mut h = harness().await;
     let a = h.app_mut();
+    // With no slash/@ token active, Tab has nothing to autocomplete and must
+    // not insert a literal tab or otherwise mutate the editor.
     a.handle_key(Key::Tab);
-    // Tab may trigger autocomplete; just verify no panic.
+    assert_eq!(
+        a.editor.text(),
+        "",
+        "Tab with no active autocomplete should leave the editor empty"
+    );
 }
 
 #[tokio::test]
@@ -398,10 +430,14 @@ async fn handle_submit_model_with_name_sends_set_model() {
 #[tokio::test]
 async fn handle_submit_model_without_name_opens_selector() {
     let mut h = harness().await;
-    let a = h.app_mut();
-    a.handle_submit("/model");
-    // open_model_selector sends ListModels request.
-    // Just verify it didn't panic.
+    h.app_mut().handle_submit("/model");
+    // `/model` with no argument opens the selector, which defers the open and
+    // requests a fresh model list.
+    let cmds = h.drain_commands().await;
+    assert!(
+        cmds.iter().any(|c| c.contains("\"type\":\"list_models\"")),
+        "/model with no name should request the model list: {cmds:?}"
+    );
 }
 
 #[tokio::test]
@@ -427,17 +463,27 @@ async fn handle_submit_steer_when_agent_running() {
 #[tokio::test]
 async fn handle_submit_resume_sends_list_sessions() {
     let mut h = harness().await;
-    let a = h.app_mut();
-    a.handle_submit("/resume");
-    // Just verify no panic.
+    h.app_mut().handle_submit("/resume");
+    // Bare `/resume` lists sessions so the user can pick one.
+    let cmds = h.drain_commands().await;
+    assert!(
+        cmds.iter()
+            .any(|c| c.contains("\"type\":\"list_sessions\"")),
+        "/resume with no name should list sessions: {cmds:?}"
+    );
 }
 
 #[tokio::test]
 async fn handle_submit_resume_with_name_sends_resume() {
     let mut h = harness().await;
-    let a = h.app_mut();
-    a.handle_submit("/resume my-session");
-    // Just verify no panic.
+    h.app_mut().handle_submit("/resume my-session");
+    // `/resume <name>` resumes that named session directly.
+    let cmds = h.drain_commands().await;
+    assert!(
+        cmds.iter()
+            .any(|c| c.contains("\"type\":\"resume_session\"")),
+        "/resume <name> should send a resume_session command: {cmds:?}"
+    );
 }
 
 #[tokio::test]

@@ -499,7 +499,14 @@ fn canonical_allowed_socket_roots() -> Vec<PathBuf> {
     if let Some(home) = std::env::var_os("HOME") {
         roots.push(PathBuf::from(home));
     }
+    canonicalize_socket_roots(roots)
+}
 
+/// Keep only absolute, canonicalizable roots. Split out from
+/// [`canonical_allowed_socket_roots`] so the relative-path rejection can be
+/// tested without mutating the process environment (which races with other
+/// tests that read `TMPDIR`/`XDG_RUNTIME_DIR` under parallel execution).
+fn canonicalize_socket_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {
     roots
         .into_iter()
         .filter(|root| root.is_absolute())

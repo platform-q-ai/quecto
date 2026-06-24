@@ -174,26 +174,9 @@ fn start_clears_pending_aborts() {
 }
 
 // ── Render order tests (issue #534) ──────────────────────────────
-
-#[test]
-fn spinner_renders_after_widgets_above_in_bottom_section() {
-    // Verify the render order: widgets_above → spinner → autocomplete → editor
-    // This is a structural test — we verify the render() method's bottom
-    // section is built in the correct order by checking code structure.
-    // The actual render method builds `bottom` with:
-    //   1. widgets_above.render()
-    //   2. spinner.render()
-    //   3. autocomplete.render()
-    //   4. editor.render()
-    // We confirm this by reading the source (compile-time verification).
-    // The important invariant: subagent bars appear BEFORE the spinner.
-    //
-    // We can't easily instantiate App in tests (requires Terminal + Client),
-    // but the render order is verified by the code structure and the
-    // integration BDD scenarios.
-    // Render order verified by code review: widgets_above before spinner.
-    // See render() method — subagent bars appear BEFORE the spinner.
-}
+// The render-order invariant (sub-agent bar above the spinner) is now a real
+// harness test: see `subagent_bar_renders_above_spinner_in_bottom_section` in
+// `app_cov_tests.rs`. The old assertion-free placeholder here was deleted.
 
 // ── Base64 encoding tests (issue #528) ────────────────────────────
 

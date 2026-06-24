@@ -236,24 +236,22 @@ fn redact_value_after_name_handles_repeated_names() {
 
 #[test]
 fn allowed_socket_roots_ignores_relative_env_values() {
-    let old_tmp = std::env::var_os("TMPDIR");
-    let old_xdg = std::env::var_os("XDG_RUNTIME_DIR");
-    // SAFETY: This unit test updates process environment synchronously and restores it before returning.
-    unsafe {
-        std::env::set_var("TMPDIR", "relative-tmp");
-        std::env::set_var("XDG_RUNTIME_DIR", "relative-xdg");
-    }
-    let roots = canonical_allowed_socket_roots();
+    // Exercise the pure filter directly so we never mutate the process
+    // environment — `std::env::set_var` races with the many other tests that
+    // read TMPDIR/XDG_RUNTIME_DIR under cargo's parallel runner.
+    let roots = canonicalize_socket_roots(vec![
+        PathBuf::from("relative-tmp"),
+        PathBuf::from("relative-xdg"),
+        PathBuf::from("/tmp"),
+    ]);
+    // Relative roots are dropped; the surviving roots are all absolute.
     assert!(roots.iter().all(|p| p.is_absolute()));
-    // SAFETY: Restore the environment values changed above before returning.
-    unsafe {
-        match old_tmp {
-            Some(v) => std::env::set_var("TMPDIR", v),
-            None => std::env::remove_var("TMPDIR"),
-        }
-        match old_xdg {
-            Some(v) => std::env::set_var("XDG_RUNTIME_DIR", v),
-            None => std::env::remove_var("XDG_RUNTIME_DIR"),
-        }
-    }
+    assert!(
+        !roots.iter().any(|p| p.ends_with("relative-tmp")),
+        "relative TMPDIR value must be rejected: {roots:?}"
+    );
+    assert!(
+        !roots.iter().any(|p| p.ends_with("relative-xdg")),
+        "relative XDG_RUNTIME_DIR value must be rejected: {roots:?}"
+    );
 }

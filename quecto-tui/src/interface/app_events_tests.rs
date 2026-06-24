@@ -167,12 +167,25 @@ async fn handles_agent_cmd_spinner_and_subagent_refresh() {
         tool_name: "agent_cmd".into(),
         args: serde_json::json!({"agent_id":"worker-1", "command":"await"}),
     });
+    // An `await` agent_cmd marks the awaited agent and rewrites the spinner to
+    // the generic interruptible message (the awaited agent shows on its own row).
+    assert_eq!(
+        app.spinner.as_ref().unwrap().message(),
+        "Working... (Esc to interrupt)",
+        "await should set the generic spinner message"
+    );
     app.handle_event(Event::ToolExecutionEnd {
         tool_call_id: "cmd-1".into(),
         tool_name: "agent_cmd".into(),
         result: serde_json::json!({"content":[{"type":"text","text":"done"}]}),
         is_error: false,
     });
+    // Tool end keeps the spinner alive and resets it to the working message.
+    assert_eq!(
+        app.spinner.as_ref().unwrap().message(),
+        "Working... (Esc to interrupt)",
+        "tool end should keep the spinner on the working message"
+    );
 }
 
 #[tokio::test]
