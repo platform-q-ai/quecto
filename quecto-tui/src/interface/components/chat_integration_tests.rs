@@ -301,3 +301,119 @@ fn workflow_tool_renders_set_issue() {
         "should contain issue number"
     );
 }
+
+// ── Incremental combined-buffer cache (#757) ─────────────────────────────
+
+fn seed_history(chat: &mut Chat) {
+    chat.add_entry(ChatEntry::User {
+        text: "first question".into(),
+    });
+    chat.add_entry(ChatEntry::Assistant {
+        text: "first answer with several words".into(),
+        streaming: false,
+    });
+    chat.start_tool("t1".into(), "bash".into(), r#"{"command":"ls -la"}"#.into());
+    chat.complete_tool("t1", "a\nb\nc", false, Some(7));
+    chat.add_entry(ChatEntry::User {
+        text: "second question".into(),
+    });
+}
+
+#[test]
+fn unchanged_history_is_not_recloned_each_frame() {
+    let mut chat = Chat::new();
+    seed_history(&mut chat);
+
+    let first = chat.render(80);
+    chat.entry_builds = 0;
+    chat.combined_extends = 0;
+
+    let second = chat.render(80);
+
+    assert_eq!(
+        first, second,
+        "identical input must produce identical output"
+    );
+    assert_eq!(
+        chat.entry_builds, 0,
+        "no entry should be re-rendered when nothing changed"
+    );
+    assert_eq!(
+        chat.combined_extends, 0,
+        "the concatenated buffer must not be rebuilt when nothing changed"
+    );
+}
+
+#[test]
+fn streaming_token_only_rebuilds_the_tail_entry() {
+    let mut chat = Chat::new();
+    seed_history(&mut chat);
+    chat.append_token("streaming start ");
+    let _ = chat.render(80);
+
+    let tail_lines = chat.render(80).len();
+    chat.entry_builds = 0;
+    chat.combined_extends = 0;
+
+    chat.append_token("more streamed text added to the tail");
+    let _ = chat.render(80);
+
+    assert_eq!(
+        chat.entry_builds, 1,
+        "only the streaming tail entry should be re-rendered"
+    );
+    assert!(
+        chat.combined_extends > 0 && chat.combined_extends <= tail_lines,
+        "only the tail's lines should be re-extended, not the whole history \
+         (extended {}, history ~{})",
+        chat.combined_extends,
+        tail_lines
+    );
+}
+
+#[test]
+fn width_change_rebuilds_whole_buffer_but_stays_consistent() {
+    let mut chat = Chat::new();
+    seed_history(&mut chat);
+    let _ = chat.render(80);
+
+    chat.entry_builds = 0;
+    chat.combined_extends = 0;
+    let narrow = chat.render(40);
+
+    assert!(
+        chat.combined_extends > 0,
+        "a width change must rebuild the concatenated buffer"
+    );
+    // Rendering again at the same width reuses the cache.
+    chat.combined_extends = 0;
+    let narrow_again = chat.render(40);
+    assert_eq!(narrow, narrow_again);
+    assert_eq!(
+        chat.combined_extends, 0,
+        "second render at the same width must reuse the buffer"
+    );
+}
+
+#[test]
+fn completing_a_middle_tool_keeps_output_correct() {
+    let mut chat = Chat::new();
+    chat.start_tool(
+        "mid".into(),
+        "bash".into(),
+        r#"{"command":"echo hi"}"#.into(),
+    );
+    chat.add_entry(ChatEntry::User {
+        text: "after the tool".into(),
+    });
+    let _ = chat.render(80);
+
+    chat.complete_tool("mid", "hi", false, Some(2));
+    let after = render_plain(&mut chat, 80);
+
+    assert!(after.contains("hi"), "completed tool output must appear");
+    assert!(
+        after.contains("after the tool"),
+        "the trailing entry must survive a mid-history rebuild"
+    );
+}

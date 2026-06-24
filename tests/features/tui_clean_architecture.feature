@@ -63,6 +63,12 @@ Feature: TUI Clean Architecture and executable BDD enforcement
     When streaming assistant content extends the conversation
     Then the quecto-tui chat viewport should still show a full historical page
 
+  @issue-757
+  Scenario: TUI chat render is stable across repeated frames
+    Given a quecto-tui chat view with conversation history
+    When the chat is rendered twice without changes
+    Then both quecto-tui chat renders should be identical
+
   Scenario: TUI slash autocomplete exposes session resume
     Then the quecto-tui slash autocomplete should include command "resume"
 

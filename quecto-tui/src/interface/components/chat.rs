@@ -58,6 +58,23 @@ struct CachedEntryRender {
 pub struct Chat {
     entries: Vec<ChatEntry>,
     render_cache: Vec<Option<CachedEntryRender>>,
+    /// Concatenation of every entry's cached lines, rebuilt incrementally so an
+    /// unchanged history is never re-cloned per frame (#757). Only the dirty
+    /// suffix (e.g. the streaming tail) is re-extended each render.
+    combined_cache: Vec<String>,
+    /// Cumulative start line of each entry within `combined_cache`; length is
+    /// `covered_entries + 1` with a trailing total. Used to truncate back to
+    /// the first dirty entry before re-extending.
+    combined_offsets: Vec<usize>,
+    /// Width the `combined_cache` was built for; a width change invalidates it.
+    combined_width: Option<usize>,
+    /// Tool-expand state the `combined_cache` was built for.
+    combined_tool_expanded: bool,
+    /// Test-only counters proving the incremental cache avoids redundant work.
+    #[cfg(test)]
+    pub entry_builds: usize,
+    #[cfg(test)]
+    pub combined_extends: usize,
     /// Scroll offset from the bottom (0 = at bottom, showing most recent).
     scroll_offset: usize,
     /// Width used for the most recent full chat render.
@@ -81,6 +98,14 @@ impl Chat {
         Self {
             entries: Vec::new(),
             render_cache: Vec::new(),
+            combined_cache: Vec::new(),
+            combined_offsets: Vec::new(),
+            combined_width: None,
+            combined_tool_expanded: false,
+            #[cfg(test)]
+            entry_builds: 0,
+            #[cfg(test)]
+            combined_extends: 0,
             scroll_offset: 0,
             last_render_width: None,
             last_render_line_count: 0,
@@ -276,23 +301,74 @@ impl Component for Chat {
             self.render_cache.resize(self.entries.len(), None);
         }
 
-        let mut all_lines: Vec<String> = Vec::new();
+        // Rebuild only the dirty suffix of the concatenated buffer. A width or
+        // tool-expand change invalidates everything; otherwise the first entry
+        // whose per-entry cache is stale (e.g. the streaming tail, or a tool
+        // entry completed in the middle) marks where re-extension begins.
+        let dims_changed =
+            self.combined_width != Some(width) || self.combined_tool_expanded != tool_expanded;
+
+        let mut first_dirty = self.entries.len();
         for idx in 0..self.entries.len() {
-            if let Some(cached) = &self.render_cache[idx] {
-                if cached.width == width && cached.tool_expanded == tool_expanded {
-                    all_lines.extend(cached.lines.clone());
-                    continue;
+            let fresh = matches!(
+                &self.render_cache[idx],
+                Some(c) if c.width == width && c.tool_expanded == tool_expanded
+            );
+            if !fresh {
+                first_dirty = idx;
+                break;
+            }
+        }
+
+        let covered = self.combined_offsets.len().saturating_sub(1);
+        let rebuild_from = if dims_changed {
+            0
+        } else {
+            first_dirty.min(covered)
+        };
+
+        let keep_lines = self
+            .combined_offsets
+            .get(rebuild_from)
+            .copied()
+            .unwrap_or(0);
+        self.combined_cache.truncate(keep_lines);
+        self.combined_offsets.truncate(rebuild_from + 1);
+        if self.combined_offsets.is_empty() {
+            self.combined_offsets.push(0);
+        }
+
+        for idx in rebuild_from..self.entries.len() {
+            let fresh = matches!(
+                &self.render_cache[idx],
+                Some(c) if c.width == width && c.tool_expanded == tool_expanded
+            );
+            if !fresh {
+                let lines = Self::render_entry(&self.entries[idx], width, tool_expanded);
+                self.render_cache[idx] = Some(CachedEntryRender {
+                    width,
+                    tool_expanded,
+                    lines,
+                });
+                #[cfg(test)]
+                {
+                    self.entry_builds += 1;
                 }
             }
-
-            let lines = Self::render_entry(&self.entries[idx], width, tool_expanded);
-            self.render_cache[idx] = Some(CachedEntryRender {
-                width,
-                tool_expanded,
-                lines: lines.clone(),
-            });
-            all_lines.extend(lines);
+            let cached = self.render_cache[idx]
+                .as_ref()
+                .expect("entry cache populated above");
+            self.combined_cache.extend_from_slice(&cached.lines);
+            #[cfg(test)]
+            {
+                self.combined_extends += cached.lines.len();
+            }
+            self.combined_offsets.push(self.combined_cache.len());
         }
+
+        self.combined_width = Some(width);
+        self.combined_tool_expanded = tool_expanded;
+        let all_lines = &self.combined_cache;
 
         // If the user is scrolled into history, keep the visible viewport anchored
         // while new streaming/tool lines are appended below it. A fixed
@@ -328,11 +404,11 @@ impl Component for Chat {
             let max_scroll = all_lines.len().saturating_sub(1);
             let effective = self.scroll_offset.min(max_scroll);
             self.scroll_offset = effective;
-            let end = all_lines.len().saturating_sub(effective);
-            all_lines.truncate(end.max(1));
+            let end = all_lines.len().saturating_sub(effective).max(1);
+            return all_lines[..end].to_vec();
         }
 
-        all_lines
+        all_lines.clone()
     }
 
     fn invalidate(&mut self) {}

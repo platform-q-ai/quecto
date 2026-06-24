@@ -41,8 +41,11 @@ pub struct FilesAutocomplete {
     result: AutocompleteResult,
     /// Byte offset of the `@` that begins the current token on the cursor line.
     token_start: Option<usize>,
-    /// Last (cursor, line) seen by `update`, for skip-if-unchanged.
-    last_key: String,
+    /// Last `(cursor_col, line)` seen by `update`, for skip-if-unchanged.
+    /// Stored as separate fields so the unchanged-input fast path compares
+    /// them directly instead of allocating a composite key every keystroke.
+    last_cursor_col: Option<usize>,
+    last_line: String,
 }
 
 impl FilesAutocomplete {
@@ -61,7 +64,8 @@ impl FilesAutocomplete {
             active: false,
             result: AutocompleteResult::Pending,
             token_start: None,
-            last_key: String::new(),
+            last_cursor_col: None,
+            last_line: String::new(),
         }
     }
 
@@ -77,11 +81,12 @@ impl FilesAutocomplete {
     /// Recompute suggestions for the `@token` ending at `cursor_col` on `line`.
     /// Deactivates when there is no `@token` at the cursor.
     pub fn update(&mut self, line: &str, cursor_col: usize) {
-        let key = format!("{cursor_col}\u{0}{line}");
-        if key == self.last_key {
+        if self.last_cursor_col == Some(cursor_col) && self.last_line == line {
             return;
         }
-        self.last_key = key;
+        self.last_cursor_col = Some(cursor_col);
+        self.last_line.clear();
+        self.last_line.push_str(line);
 
         let Some((start, prefix)) = at_token(line, cursor_col) else {
             self.deactivate();
@@ -116,7 +121,8 @@ impl FilesAutocomplete {
         self.load_requested = false;
         // Force the next update to recompute the currently visible token with
         // the newly supplied files, even if the editor text did not change.
-        self.last_key.clear();
+        self.last_cursor_col = None;
+        self.last_line.clear();
     }
 
     /// Test helper: mark the cache stale without sleeping.
@@ -169,7 +175,8 @@ impl FilesAutocomplete {
     /// Dismiss the dropdown and force the next `update` to re-evaluate.
     pub fn dismiss(&mut self) {
         self.deactivate();
-        self.last_key.clear();
+        self.last_cursor_col = None;
+        self.last_line.clear();
     }
 
     /// Byte offset of the `@` starting the active token (for insertion).

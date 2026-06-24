@@ -5,6 +5,7 @@
 //! Wraps output in synchronized output markers (`CSI ?2026h` / `CSI ?2026l`)
 //! to prevent tearing on terminals that support it.
 
+use std::fmt::Write as _;
 use std::io::{self, Write};
 
 /// ANSI escape: begin synchronized update.
@@ -122,9 +123,9 @@ impl<W: Write> DiffRenderer<W> {
         // Move cursor from current position to first changed line
         let delta = first as isize - self.cursor_row as isize;
         if delta > 0 {
-            buf.push_str(&format!("\x1b[{}B", delta));
+            let _ = write!(buf, "\x1b[{delta}B");
         } else if delta < 0 {
-            buf.push_str(&format!("\x1b[{}A", -delta));
+            let _ = write!(buf, "\x1b[{}A", -delta);
         }
         buf.push('\r');
 
@@ -149,7 +150,7 @@ impl<W: Write> DiffRenderer<W> {
             // Move back up
             let extra = self.previous_lines.len() - new_lines.len();
             if extra > 0 {
-                buf.push_str(&format!("\x1b[{}A", extra));
+                let _ = write!(buf, "\x1b[{extra}A");
             }
         }
 

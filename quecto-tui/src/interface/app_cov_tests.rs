@@ -4,7 +4,7 @@
 //! drained socket) and assert on state transitions for the slash-command
 //! handlers, selectors, rewind flow, and UDS response dispatch.
 
-use super::app_selection::SelectionAnchor;
+use super::app_selection::{SelectionAnchor, TextSelection};
 use super::tui_harness::TuiHarness;
 use super::*;
 
@@ -386,6 +386,78 @@ async fn extract_selection_handles_out_of_range_rows() {
     let end = SelectionAnchor { col: 50, row: 9 };
     let sel = a.extract_selection(&start, &end);
     assert_eq!(sel, "only");
+}
+
+// ── app_methods: render hot-path allocation guard (#757) ─────────────
+//
+// The render path runs on every keystroke, streamed token, and spinner
+// tick. `compose_frame` used to deep-clone the entire screen buffer into
+// `last_rendered_lines` on EVERY frame, even though that clean copy is only
+// ever consumed by mouse text-selection extraction (#528). The clone must be
+// guarded behind an active (is/was) selection so idle/streaming frames do not
+// allocate a full-screen `Vec<String>` every tick.
+
+#[tokio::test]
+async fn compose_frame_skips_full_clone_when_no_selection_active() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.chat.add_entry(ChatEntry::User {
+        text: "a line of chat that would be cloned every frame".into(),
+    });
+    // No selection is or was active.
+    assert!(a.selection.is_none());
+    let _ = a.compose_frame();
+    assert!(
+        a.last_rendered_lines.is_empty(),
+        "compose_frame must NOT deep-clone the full screen buffer when no \
+         text selection is active (#757); last_rendered_lines was populated \
+         with {} lines",
+        a.last_rendered_lines.len()
+    );
+}
+
+#[tokio::test]
+async fn compose_frame_populates_clone_while_selection_active() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.chat.add_entry(ChatEntry::User {
+        text: "selectable text".into(),
+    });
+    // A drag is in progress: selection is Some.
+    a.selection = Some(TextSelection {
+        start: SelectionAnchor { col: 0, row: 0 },
+        end: SelectionAnchor { col: 5, row: 0 },
+    });
+    let _ = a.compose_frame();
+    assert!(
+        !a.last_rendered_lines.is_empty(),
+        "compose_frame must keep a clean extraction buffer while a selection \
+         is active so mouse-release copy still works (#757/#528)"
+    );
+}
+
+#[tokio::test]
+async fn selection_extraction_works_after_drag_render() {
+    let mut h = harness().await;
+    let a = h.app_mut();
+    a.chat.add_entry(ChatEntry::User {
+        text: "hello world".into(),
+    });
+    // Simulate press+drag keeping the selection live, then a frame renders.
+    a.selection = Some(TextSelection {
+        start: SelectionAnchor { col: 0, row: 0 },
+        end: SelectionAnchor { col: 80, row: 30 },
+    });
+    let _ = a.compose_frame();
+    // The extraction buffer captured during the live drag must let a copy
+    // recover visible text even though the optimization skips idle frames.
+    let start = SelectionAnchor { col: 0, row: 0 };
+    let end = SelectionAnchor { col: 80, row: 30 };
+    let text = a.extract_selection(&start, &end);
+    assert!(
+        text.contains("hello world"),
+        "selection extraction should recover rendered text after a drag; got {text:?}"
+    );
 }
 
 // ── app_methods: compose_frame overlay branches ──────────────────────

@@ -76,9 +76,10 @@ impl Component for SelectList {
         let start = range.start;
         let end = range.end;
 
-        // Calculate primary column width for alignment.
-        let primary_width = self
-            .items
+        // Calculate primary column width for alignment over the visible window
+        // only — the off-screen items are never drawn, so widening the column
+        // for them would just waste a full-list scan every frame (#757).
+        let primary_width = self.items[start..end]
             .iter()
             .map(|i| visible_width(&i.label))
             .max()

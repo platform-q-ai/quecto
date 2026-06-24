@@ -277,6 +277,30 @@ fn then_tui_chat_viewport_keeps_showing_same_history(world: &mut QuectoWorld) {
     );
 }
 
+#[given("a quecto-tui chat view with conversation history")]
+fn given_tui_chat_view_with_history(world: &mut QuectoWorld) {
+    world.tui_chat = Some(streaming_history_chat());
+}
+
+#[when("the chat is rendered twice without changes")]
+fn when_tui_chat_rendered_twice(world: &mut QuectoWorld) {
+    let chat = world
+        .tui_chat
+        .as_mut()
+        .expect("TUI chat view should be initialized by the Given step");
+    world.tui_viewport_before_stream = chat.render(TUI_SCROLLBACK_WIDTH);
+    world.tui_viewport_after_stream = chat.render(TUI_SCROLLBACK_WIDTH);
+}
+
+#[then("both quecto-tui chat renders should be identical")]
+fn then_tui_chat_renders_identical(world: &mut QuectoWorld) {
+    assert_eq!(
+        world.tui_viewport_before_stream, world.tui_viewport_after_stream,
+        "an unchanged conversation must render identically across frames; \
+         caching the concatenated buffer must not alter output (#757)"
+    );
+}
+
 fn streaming_history_chat() -> Chat {
     let mut chat = Chat::new();
     for i in 0..30 {

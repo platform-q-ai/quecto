@@ -524,10 +524,17 @@ impl App {
             }
         }
 
-        // Store rendered lines for text selection extraction (#528).
+        // Store rendered lines for text selection extraction (#528), but only
+        // while a selection is (or was) active. The clean copy is consumed
+        // exclusively by mouse text-selection extraction, so idle/streaming
+        // frames must not deep-clone the whole screen buffer every tick (#757).
         // Must happen BEFORE highlight injection to avoid leaking
         // reverse-video escapes into the extraction buffer (#546 review).
-        self.last_rendered_lines = lines.clone();
+        if self.selection.is_some() {
+            self.last_rendered_lines = lines.clone();
+        } else {
+            self.last_rendered_lines.clear();
+        }
         lines
     }
 
