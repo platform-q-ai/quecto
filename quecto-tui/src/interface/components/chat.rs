@@ -208,6 +208,12 @@ impl Chat {
         self.viewport_height = Some(height);
     }
 
+    /// Current scrollback offset (0 == pinned to the latest output). Exposed so
+    /// tests can assert that scroll keys actually moved the viewport.
+    pub fn scroll_offset(&self) -> usize {
+        self.scroll_offset
+    }
+
     pub fn scroll_up(&mut self, amount: usize) {
         self.scroll_offset = self.scroll_offset.saturating_add(amount);
     }

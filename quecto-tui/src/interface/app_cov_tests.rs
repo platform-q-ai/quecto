@@ -87,28 +87,63 @@ async fn show_workflow_status_complete_when_all_steps_done() {
 }
 
 #[tokio::test]
-async fn toggle_workflow_flags_do_not_panic() {
+async fn toggle_workflow_flags_send_automation_commands() {
     let mut h = harness().await;
-    let a = h.app_mut();
-    a.toggle_workflow_auto_continue();
-    a.toggle_workflow_completion_nudge();
+    h.app_mut().toggle_workflow_auto_continue();
+    h.app_mut().toggle_workflow_completion_nudge();
+    let cmds = h.drain_commands().await;
+    // Each toggle sends a distinct automation flag, flipped on from the default off.
+    assert!(
+        cmds.iter()
+            .any(|c| c.contains("\"type\":\"set_workflow_automation\"")
+                && c.contains("\"autoContinue\":true")),
+        "auto-continue toggle should set autoContinue:true: {cmds:?}"
+    );
+    assert!(
+        cmds.iter()
+            .any(|c| c.contains("\"type\":\"set_workflow_automation\"")
+                && c.contains("\"completionNudge\":true")),
+        "completion-nudge toggle should set completionNudge:true: {cmds:?}"
+    );
 }
 
 #[tokio::test]
-async fn send_session_and_list_commands_do_not_panic() {
+async fn send_session_and_list_commands_emit_expected_types() {
     let mut h = harness().await;
     let a = h.app_mut();
     a.send_session_stats();
     a.send_list_sessions();
     a.send_clear_history();
+    let cmds = h.drain_commands().await;
+    for expected in [
+        "\"type\":\"get_session_stats\"",
+        "\"type\":\"list_sessions\"",
+        "\"type\":\"clear_history\"",
+    ] {
+        assert!(
+            cmds.iter().any(|c| c.contains(expected)),
+            "expected a {expected} command: {cmds:?}"
+        );
+    }
 }
 
 #[tokio::test]
 async fn send_resume_session_empty_falls_back_to_list() {
     let mut h = harness().await;
-    let a = h.app_mut();
-    a.send_resume_session("   ");
-    a.send_resume_session("my-session");
+    h.app_mut().send_resume_session("   ");
+    h.app_mut().send_resume_session("my-session");
+    let cmds = h.drain_commands().await;
+    // drain_commands is FIFO: assert positionally so the blank→list and
+    // named→resume mapping can't pass if the two were swapped.
+    assert_eq!(cmds.len(), 2, "exactly two commands expected: {cmds:?}");
+    assert!(
+        cmds[0].contains("\"type\":\"list_sessions\""),
+        "blank resume name should fall back to list_sessions: {cmds:?}"
+    );
+    assert!(
+        cmds[1].contains("\"type\":\"resume_session\""),
+        "named resume should send resume_session: {cmds:?}"
+    );
 }
 
 #[tokio::test]
@@ -502,6 +537,41 @@ async fn compose_bottom_shows_subagent_activity_when_idle_with_active_child() {
     let bottom = h.app_mut().compose_bottom(120);
     let joined = bottom.join("\n");
     assert!(joined.contains("working"), "{joined}");
+}
+
+// Render-order invariant (issue #534): in the below-chat section the
+// sub-agent bar (widgets_above) must appear ABOVE the spinner. Previously
+// "verified by code review" in a body-less, assertion-free test; this drives
+// the real `compose_bottom` and checks the actual line ordering.
+#[tokio::test]
+async fn subagent_bar_renders_above_spinner_in_bottom_section() {
+    let mut h = harness().await;
+    // Register an active sub-agent so the sub-agent bar is in widgets_above.
+    h.event(super::tui_harness::subagents_changed(vec![
+        super::tui_harness::subagent("orderchild", "running", None),
+    ]));
+    // Parent is actively working -> a real spinner line is rendered.
+    h.app_mut().spinner = Some(Spinner::new("order-spinner-marker"));
+
+    let bottom: Vec<String> = h
+        .app_mut()
+        .compose_bottom(120)
+        .iter()
+        .map(|l| super::app_methods::strip_ansi(l))
+        .collect();
+
+    let bar_idx = bottom
+        .iter()
+        .position(|l| l.contains("orderchild"))
+        .unwrap_or_else(|| panic!("sub-agent bar not found in bottom: {bottom:?}"));
+    let spinner_idx = bottom
+        .iter()
+        .position(|l| l.contains("order-spinner-marker"))
+        .unwrap_or_else(|| panic!("spinner line not found in bottom: {bottom:?}"));
+    assert!(
+        bar_idx < spinner_idx,
+        "sub-agent bar (line {bar_idx}) must render above the spinner (line {spinner_idx}): {bottom:?}"
+    );
 }
 
 #[test]
