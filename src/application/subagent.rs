@@ -5,6 +5,7 @@ pub use crate::domain::subagent::{SubagentConfig, validate_agent_id};
 
 /// The context for a spawned subagent.
 #[derive(Debug)]
+#[cfg_attr(not(any(test, feature = "test-support")), allow(dead_code))]
 pub struct SubagentContext {
     /// The task assigned to this subagent (empty string if none).
     pub task: String,
@@ -16,6 +17,7 @@ pub struct SubagentContext {
 
 impl SubagentContext {
     /// Create a new subagent context from a spawn config.
+    #[cfg_attr(not(any(test, feature = "test-support")), allow(dead_code))]
     pub fn from_config(config: &SubagentConfig) -> Self {
         Self {
             task: config.task.clone().unwrap_or_default(),

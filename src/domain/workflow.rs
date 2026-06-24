@@ -100,14 +100,13 @@ impl WorkflowMode {
 }
 
 /// Typed verdict for an awaited sub-agent (PRD Stage A R-A3). Serialized
-/// `snake_case`. `Blocked` is reserved for Stage E budget/depth bounds.
+/// `snake_case`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VerdictStatus {
     Completed,
     Failed,
     Incomplete,
-    Blocked,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

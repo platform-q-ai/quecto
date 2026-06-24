@@ -59,8 +59,7 @@ impl ReloadSource {
     /// last observation. Length is included so same-mtime rewrites that add or
     /// remove provider config bytes are still read and detected even on coarse
     /// timestamp filesystems. Same-mtime same-length rewrites remain a tolerated
-    /// edge case for this small local-file gate; callers that need a stronger
-    /// guarantee can use `poll_forced`.
+    /// edge case for this small local-file gate.
     ///
     /// The observed fingerprint advances on every successful read. In
     /// particular, a touch-only update advances the mtime cache so subsequent
@@ -94,6 +93,7 @@ impl ReloadSource {
     }
 
     /// Last observed mtime, exposed for state-machine tests.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn last_mtime(&self) -> Option<SystemTime> {
         self.last_mtime
     }
@@ -146,6 +146,7 @@ impl<T: Clone> RuntimeReload<T> {
     }
 
     /// Poll watched sources and rebuild only when at least one content hash changed.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn poll(&mut self, rebuild: impl FnOnce() -> Result<T, String>) -> ReloadResult<T> {
         if !self.sources_changed() {
             return ReloadResult::Unchanged;
@@ -155,12 +156,14 @@ impl<T: Clone> RuntimeReload<T> {
     }
 
     /// Force a rebuild regardless of mtime/hash state.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn poll_forced(&mut self, rebuild: impl FnOnce() -> Result<T, String>) -> ReloadResult<T> {
         self.poll_forced_result(rebuild)
             .unwrap_or(ReloadResult::Unchanged)
     }
 
     /// Force a rebuild and preserve the rebuild error for command responses.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn poll_forced_result(
         &mut self,
         rebuild: impl FnOnce() -> Result<T, String>,
@@ -175,10 +178,12 @@ impl<T: Clone> RuntimeReload<T> {
     }
 
     /// Last successfully rebuilt value.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn last_good(&self) -> Option<&T> {
         self.last_good.as_ref()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     fn rebuild_or_keep_last_good(
         &mut self,
         rebuild: impl FnOnce() -> Result<T, String>,

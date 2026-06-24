@@ -40,10 +40,6 @@ impl ProviderReloadInputs {
         }
     }
 
-    pub fn rebuild(&self) -> Result<Arc<dyn LlmProvider>, String> {
-        self.rebuild_on_current_thread()
-    }
-
     pub async fn rebuild_blocking(&self) -> Result<Arc<dyn LlmProvider>, String> {
         let inputs = self.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -62,6 +58,7 @@ impl ProviderReloadInputs {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub fn seeded_provider_reload(
     config_path: impl Into<PathBuf>,
     initial_provider: Arc<dyn LlmProvider>,
