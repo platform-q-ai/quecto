@@ -462,3 +462,272 @@ fn feature_template_guards_commit_push_and_merge_like_config_file() {
     assert_eq!(feature.guards[1].before_step_key, "merge");
     assert!(feature.guards[1].message.contains("Complete code review"));
 }
+
+#[test]
+fn workflow_mode_wire_str_matches_serde_snake_case() {
+    for mode in [
+        WorkflowMode::SelectingTemplate,
+        WorkflowMode::Active,
+        WorkflowMode::Complete,
+    ] {
+        let json = serde_json::to_value(mode).unwrap();
+        assert_eq!(json, serde_json::Value::String(mode.wire_str().to_string()));
+    }
+}
+
+#[test]
+fn verdict_status_round_trips_through_serde() {
+    for (status, wire) in [
+        (VerdictStatus::Completed, "completed"),
+        (VerdictStatus::Failed, "failed"),
+        (VerdictStatus::Incomplete, "incomplete"),
+        (VerdictStatus::Blocked, "blocked"),
+    ] {
+        let json = serde_json::to_value(status).unwrap();
+        assert_eq!(json, serde_json::json!(wire));
+        let back: VerdictStatus = serde_json::from_value(json).unwrap();
+        assert_eq!(back, status);
+    }
+}
+
+#[test]
+fn workflow_error_display_renders_inner_message() {
+    let cases = [
+        WorkflowError::UnknownTemplate("u".into()),
+        WorkflowError::InvalidStep("i".into()),
+        WorkflowError::OrderingViolation("o".into()),
+        WorkflowError::NoActiveTemplate("n".into()),
+        WorkflowError::InvalidConfig("c".into()),
+        WorkflowError::GuardBlocked("g".into()),
+    ];
+    let rendered: Vec<String> = cases.iter().map(|e| e.to_string()).collect();
+    assert_eq!(rendered, vec!["u", "i", "o", "n", "c", "g"]);
+    // Exercise the std::error::Error impl too.
+    let err: &dyn std::error::Error = &cases[0];
+    assert_eq!(err.to_string(), "u");
+}
+
+#[test]
+fn workflow_snapshot_round_trips_through_serde() {
+    let snapshot = WorkflowSnapshot {
+        enabled: true,
+        guards_enabled: false,
+        mode: WorkflowMode::Active,
+        active_template: Some(WorkflowTemplateSummary {
+            id: "feature".into(),
+            label: "Feature".into(),
+            description: "desc".into(),
+            when_to_use: Some("when coding".into()),
+        }),
+        active_issue: Some((7, "title".into())),
+        progress: WorkflowProgress {
+            done: 1,
+            total: 4,
+            percent: 25,
+        },
+        current_step: Some(WorkflowStepStatus {
+            index: 0,
+            key: "red".into(),
+            label: "RED".into(),
+            phase: "red".into(),
+            done: false,
+            guidance: Some("write a failing test".into()),
+        }),
+        steps: vec![WorkflowStepStatus {
+            index: 0,
+            key: "red".into(),
+            label: "RED".into(),
+            phase: "red".into(),
+            done: false,
+            guidance: None,
+        }],
+        available_templates: vec![WorkflowTemplateSummary {
+            id: "feature".into(),
+            label: "Feature".into(),
+            description: "desc".into(),
+            when_to_use: None,
+        }],
+    };
+
+    let json = serde_json::to_value(&snapshot).unwrap();
+    let back: WorkflowSnapshot = serde_json::from_value(json).unwrap();
+    assert_eq!(back, snapshot);
+}
+
+#[test]
+fn workflow_run_default_is_empty() {
+    let run = WorkflowRun::default();
+    assert_eq!(run.template_id, None);
+    assert_eq!(run.template_index, None);
+    assert!(run.done.is_empty());
+    assert_eq!(run.active_issue, None);
+}
+
+// ── WorkflowEngine validation error paths (config-level) ──────────────────
+
+fn cfg(templates: Vec<WorkflowTemplate>) -> WorkflowConfig {
+    WorkflowConfig {
+        auto_continue: true,
+        completion_nudge: true,
+        selector_prompt: None,
+        templates,
+    }
+}
+
+fn step(key: &str) -> WorkflowTemplateStep {
+    WorkflowTemplateStep {
+        key: key.into(),
+        label: key.to_uppercase(),
+        phase: "x".into(),
+        guidance: None,
+    }
+}
+
+fn template_with_steps(id: &str, steps: Vec<WorkflowTemplateStep>) -> WorkflowTemplate {
+    WorkflowTemplate {
+        id: id.into(),
+        label: id.into(),
+        description: "d".into(),
+        when_to_use: None,
+        steps,
+        guards: vec![],
+    }
+}
+
+#[test]
+fn new_rejects_too_many_templates() {
+    let templates: Vec<WorkflowTemplate> = (0..33)
+        .map(|i| template_with_steps(&format!("t{i}"), vec![step("a")]))
+        .collect();
+    let err = WorkflowEngine::new(cfg(templates), false).unwrap_err();
+    assert!(matches!(err, WorkflowError::InvalidConfig(_)));
+    assert!(err.to_string().contains("too many workflow templates"));
+}
+
+#[test]
+fn new_rejects_empty_template_id() {
+    let err = WorkflowEngine::new(cfg(vec![template_with_steps("", vec![step("a")])]), false)
+        .unwrap_err();
+    assert!(err.to_string().contains("template id cannot be empty"));
+}
+
+#[test]
+fn new_rejects_template_with_no_steps() {
+    let err = WorkflowEngine::new(cfg(vec![template_with_steps("t", vec![])]), false).unwrap_err();
+    assert!(err.to_string().contains("has no steps"));
+}
+
+#[test]
+fn new_rejects_template_with_too_many_steps() {
+    let steps: Vec<WorkflowTemplateStep> = (0..101).map(|i| step(&format!("s{i}"))).collect();
+    let err = WorkflowEngine::new(cfg(vec![template_with_steps("t", steps)]), false).unwrap_err();
+    assert!(err.to_string().contains("too many steps"));
+}
+
+#[test]
+fn new_rejects_step_with_empty_key() {
+    let err = WorkflowEngine::new(cfg(vec![template_with_steps("t", vec![step("")])]), false)
+        .unwrap_err();
+    assert!(err.to_string().contains("empty key"));
+}
+
+#[test]
+fn new_rejects_duplicate_step_key() {
+    let err = WorkflowEngine::new(
+        cfg(vec![template_with_steps("t", vec![step("a"), step("a")])]),
+        false,
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("duplicate step key"));
+}
+
+#[test]
+fn new_rejects_guard_referencing_unknown_step_key() {
+    let mut template = template_with_steps("t", vec![step("a")]);
+    template.guards = vec![WorkflowGuardRule {
+        commands: vec!["git push".into()],
+        before_step_key: "nonexistent".into(),
+        message: "blocked".into(),
+    }];
+    let err = WorkflowEngine::new(cfg(vec![template]), true).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("guard references unknown step key")
+    );
+}
+
+#[test]
+fn guards_enabled_and_clear_issue_accessors() {
+    let mut engine =
+        WorkflowEngine::new(cfg(vec![template_with_steps("t", vec![step("a")])]), true).unwrap();
+    assert!(engine.guards_enabled());
+    engine.set_issue(7, "title".into());
+    engine.clear_issue();
+    let snap = engine.snapshot(true);
+    assert_eq!(snap.active_issue, None);
+}
+
+#[test]
+fn select_unknown_template_is_unknown_template_error() {
+    let mut engine = WorkflowEngine::new(
+        cfg(vec![template_with_steps("known", vec![step("a")])]),
+        false,
+    )
+    .unwrap();
+    let err = engine.select_template("does-not-exist", None).unwrap_err();
+    assert!(matches!(err, WorkflowError::UnknownTemplate(_)));
+    assert!(err.to_string().contains("unknown template"));
+}
+
+#[test]
+fn check_invalid_step_index_is_invalid_step_error() {
+    let mut engine =
+        WorkflowEngine::new(cfg(vec![template_with_steps("t", vec![step("a")])]), false).unwrap();
+    engine.select_template("t", None).unwrap();
+    let err = engine.check(99).unwrap_err();
+    assert!(matches!(err, WorkflowError::InvalidStep(_)));
+    assert!(err.to_string().contains("invalid step"));
+}
+
+#[test]
+fn selector_status_text_includes_issue_and_custom_prompt() {
+    let config = WorkflowConfig {
+        auto_continue: true,
+        completion_nudge: true,
+        selector_prompt: Some("Pick wisely".into()),
+        templates: vec![template_with_steps("t", vec![step("a")])],
+    };
+    let mut engine = WorkflowEngine::new(config, false).unwrap();
+    engine.set_issue(42, "fix bug".into());
+    let text = engine.status_text();
+    assert!(text.contains("Active issue: #42 — fix bug"));
+    assert!(text.contains("Pick wisely"));
+    assert!(text.contains("- t —"));
+}
+
+#[test]
+fn active_status_and_prompt_render_issue_then_completion_with_guards() {
+    let mut template = template_with_steps("t", vec![step("a"), step("b")]);
+    template.guards = vec![WorkflowGuardRule {
+        commands: vec!["git push".into()],
+        before_step_key: "b".into(),
+        message: "run the gate before push".into(),
+    }];
+    let mut engine = WorkflowEngine::new(cfg(vec![template]), true).unwrap();
+    engine
+        .select_template("t", Some((9, "ship it".into())))
+        .unwrap();
+
+    let status = engine.status_text();
+    assert!(status.contains("Active issue: #9 — ship it"));
+    let prompt = engine.prompt_snippet();
+    assert!(prompt.contains("Active issue: #9 — ship it"));
+
+    // Complete every step, then the status/prompt reflect completion + guards.
+    engine.check(1).unwrap();
+    engine.check(2).unwrap();
+    assert_eq!(engine.mode(), WorkflowMode::Complete);
+    let done = engine.prompt_snippet();
+    assert!(done.contains("All workflow steps complete"));
+    assert!(done.contains("run the gate before push"));
+}
