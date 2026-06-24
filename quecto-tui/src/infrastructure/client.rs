@@ -311,13 +311,21 @@ impl Command {
     }
 }
 
+/// Serialize a command to its JSON-lines wire form (JSON + trailing newline).
+///
+/// Both [`CommandSender::send`] and [`Client::send`] write the same framed wire
+/// format, so the serialize-and-newline rule lives here in one place.
+fn serialize_command(cmd: &Command) -> Result<String, ClientError> {
+    let mut json = serde_json::to_string(cmd)?;
+    json.push('\n');
+    Ok(json)
+}
+
 impl CommandSender {
     /// Send a command to the agent.
     pub async fn send(&mut self, cmd: &Command) -> Result<(), ClientError> {
-        let mut json = serde_json::to_string(cmd)?;
-        json.push('\n');
         self.tx
-            .send(json)
+            .send(serialize_command(cmd)?)
             .await
             .map_err(|_| ClientError::Disconnected)
     }
@@ -417,10 +425,8 @@ impl Client {
 
     /// Send a command to the agent.
     pub async fn send(&mut self, cmd: &Command) -> Result<(), ClientError> {
-        let mut json = serde_json::to_string(cmd)?;
-        json.push('\n');
         self.cmd_tx
-            .send(json)
+            .send(serialize_command(cmd)?)
             .await
             .map_err(|_| ClientError::Disconnected)
     }

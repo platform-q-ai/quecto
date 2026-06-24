@@ -694,18 +694,20 @@ fn then_tui_components_expose_list_navigator(_world: &mut QuectoWorld) {
     "slash autocomplete, files autocomplete, model selector, and select list should use ListNavigator"
 )]
 fn then_selector_components_use_list_navigator(_world: &mut QuectoWorld) {
-    for file in [
-        "autocomplete.rs",
-        "files_autocomplete.rs",
-        "model_selector.rs",
-        "select_list.rs",
-    ] {
+    // model_selector and select_list own a ListNavigator directly. The two
+    // autocomplete components delegate through the shared SuggestionList, which
+    // in turn owns the ListNavigator — so navigation has a single home for all
+    // four components without re-implementing window/wraparound logic.
+    let read = |file: &str| {
         let path = Path::new(TUI_ROOT)
             .join("interface")
             .join("components")
             .join(file);
-        let content = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+    };
+
+    for file in ["model_selector.rs", "select_list.rs", "suggestion_list.rs"] {
+        let content = read(file);
         assert!(
             content.contains("navigator: ListNavigator"),
             "{file} should store selected-index state in a ListNavigator field"
@@ -713,8 +715,28 @@ fn then_selector_components_use_list_navigator(_world: &mut QuectoWorld) {
         assert!(
             content.contains("navigator.move_next")
                 && content.contains("navigator.move_previous")
-                && content.contains("navigator.visible_range"),
+                && content.contains(".visible_range("),
             "{file} should delegate movement and visible-window calculation to ListNavigator"
+        );
+    }
+
+    // The autocomplete components share navigation via SuggestionList rather
+    // than re-implementing it, so they must not hold their own navigator.
+    for file in ["autocomplete.rs", "files_autocomplete.rs"] {
+        let content = read(file);
+        assert!(
+            content.contains("list: SuggestionList"),
+            "{file} should delegate list navigation to the shared SuggestionList"
+        );
+        assert!(
+            content.contains("self.list.move_next")
+                && content.contains("self.list.move_previous")
+                && content.contains("self.list.visible_range"),
+            "{file} should drive movement and visible-window calculation through SuggestionList"
+        );
+        assert!(
+            !content.contains("navigator: ListNavigator"),
+            "{file} should not hold its own ListNavigator now that SuggestionList owns it"
         );
     }
 }
@@ -733,6 +755,214 @@ fn then_list_navigator_owns_wraparound_and_window_behavior(_world: &mut QuectoWo
             && content.contains("pub fn visible_range")
             && content.contains("saturating_sub"),
         "ListNavigator should expose selected index and visible-window computation"
+    );
+}
+
+// ── #759: de-duplicate render compositing & near-identical components ──────
+
+fn tui_read(rel: &str) -> String {
+    let path = Path::new(TUI_ROOT).join(rel);
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+}
+
+fn count_occurrences(haystack: &str, needle: &str) -> usize {
+    haystack.matches(needle).count()
+}
+
+#[then("the quecto-tui render compositing should expose a composite_centered helper")]
+fn then_compose_frame_has_helper(_world: &mut QuectoWorld) {
+    let content = tui_read("interface/app_methods.rs");
+    assert!(
+        content.contains("fn composite_centered"),
+        "compose_frame must extract a shared composite_centered helper for overlay splicing"
+    );
+}
+
+#[then(
+    "the quecto-tui resume, rewind, and model overlays should splice through composite_centered"
+)]
+fn then_overlays_use_composite_centered(_world: &mut QuectoWorld) {
+    let content = tui_read("interface/app_methods.rs");
+    // One definition + at least three call sites (resume, rewind, model).
+    // Match the paren form so doc-comment mentions don't inflate the count.
+    assert!(
+        count_occurrences(&content, "composite_centered(") >= 4,
+        "resume, rewind, and model overlays should all splice through composite_centered (def + 3 calls)"
+    );
+    // The hand-rolled splice loop should no longer be duplicated inline.
+    assert!(
+        count_occurrences(&content, "overlay::splice_line") <= 1,
+        "splice_line should be invoked once inside composite_centered, not duplicated per overlay"
+    );
+}
+
+#[then("the quecto-tui show_session_stats should delegate to update_footer_stats")]
+fn then_show_session_stats_delegates(_world: &mut QuectoWorld) {
+    let content = tui_read("interface/app_methods.rs");
+    let body = rust_fn_body(&content, "show_session_stats")
+        .expect("show_session_stats must exist in app_methods.rs");
+    assert!(
+        body.contains("update_footer_stats"),
+        "show_session_stats should call update_footer_stats instead of duplicating footer logic"
+    );
+}
+
+#[then("the quecto-tui footer context-usage update should appear once in app_methods")]
+fn then_footer_update_appears_once(_world: &mut QuectoWorld) {
+    let content = tui_read("interface/app_methods.rs");
+    assert_eq!(
+        count_occurrences(&content, "self.footer.update_context_usage("),
+        1,
+        "footer context-usage update logic must live in a single owner (update_footer_stats)"
+    );
+}
+
+#[then("the quecto-tui components layer should expose a shared SuggestionList")]
+fn then_components_expose_suggestion_list(_world: &mut QuectoWorld) {
+    let path = Path::new(TUI_ROOT)
+        .join("interface")
+        .join("components")
+        .join("suggestion_list.rs");
+    assert!(
+        path.is_file(),
+        "shared SuggestionList component must live at {}",
+        path.display()
+    );
+    let content = std::fs::read_to_string(&path).expect("read suggestion_list.rs");
+    assert!(
+        content.contains("pub struct SuggestionList"),
+        "suggestion_list.rs must define a shared SuggestionList component"
+    );
+}
+
+#[then("SuggestionList should own suggestions_match and set_suggestions")]
+fn then_suggestion_list_owns_helpers(_world: &mut QuectoWorld) {
+    let content = tui_read("interface/components/suggestion_list.rs");
+    assert!(
+        content.contains("fn suggestions_match") && content.contains("fn set_suggestions"),
+        "SuggestionList should own suggestions_match and set_suggestions"
+    );
+    // The byte-identical copies must not remain in both component files.
+    let autocomplete = tui_read("interface/components/autocomplete.rs");
+    let files_autocomplete = tui_read("interface/components/files_autocomplete.rs");
+    assert!(
+        !autocomplete.contains("fn suggestions_match")
+            && !files_autocomplete.contains("fn suggestions_match"),
+        "suggestions_match must not be duplicated in autocomplete.rs / files_autocomplete.rs"
+    );
+}
+
+#[then("slash autocomplete and files autocomplete should use SuggestionList")]
+fn then_autocompletes_use_suggestion_list(_world: &mut QuectoWorld) {
+    for file in ["autocomplete.rs", "files_autocomplete.rs"] {
+        let content = tui_read(&format!("interface/components/{file}"));
+        assert!(
+            content.contains("SuggestionList"),
+            "{file} should delegate to the shared SuggestionList component"
+        );
+    }
+}
+
+#[then("the quecto-tui chat_render should expose push_preview and push_header helpers")]
+fn then_chat_render_has_helpers(_world: &mut QuectoWorld) {
+    let content = tui_read("interface/components/chat_render.rs");
+    assert!(
+        content.contains("fn push_preview") && content.contains("fn push_header"),
+        "chat_render.rs should extract shared push_preview / push_header helpers"
+    );
+}
+
+#[then("the quecto-tui chat tool renderers should build previews and headers through the helpers")]
+fn then_chat_renderers_use_helpers(_world: &mut QuectoWorld) {
+    let content = tui_read("interface/components/chat_render.rs");
+    assert!(
+        count_occurrences(&content, "push_preview(") >= 4,
+        "the repeated preview idiom should route through push_preview across the tool renderers"
+    );
+    // The issue calls out the header idiom repeating across 6 renderers, so a
+    // partial refactor (only some converted) must not pass: def + 6 callsites.
+    assert!(
+        count_occurrences(&content, "push_header(") >= 6,
+        "the repeated header idiom should route through push_header across all six tool renderers"
+    );
+}
+
+#[then("the quecto-tui workflow_bar should expose exactly one phase-to-label map")]
+fn then_workflow_bar_single_phase_map(_world: &mut QuectoWorld) {
+    let content = tui_read("interface/components/workflow_bar.rs");
+    let map_defs = count_occurrences(&content, "fn phase_display")
+        + count_occurrences(&content, "fn phase_name");
+    assert_eq!(
+        map_defs, 1,
+        "workflow_bar should collapse phase_display / phase_name into a single phase-to-label map"
+    );
+}
+
+#[then("the quecto-tui workflow_bar should not keep the phase_label_for_widget forwarder")]
+fn then_workflow_bar_no_forwarder(_world: &mut QuectoWorld) {
+    let content = tui_read("interface/components/workflow_bar.rs");
+    assert!(
+        !content.contains("fn phase_label_for_widget"),
+        "the trivial phase_label_for_widget forwarder should be removed"
+    );
+}
+
+#[then("the quecto-tui client serialize-and-newline rule should appear once")]
+fn then_client_serialize_once(_world: &mut QuectoWorld) {
+    let content = tui_read("infrastructure/client.rs");
+    // Counting a single shared helper definition is more robust than pinning the
+    // literal `json.push('\n')` keystrokes: both senders must route through it.
+    assert_eq!(
+        count_occurrences(&content, "fn serialize_command"),
+        1,
+        "CommandSender::send and Client::send should share one serialize-and-newline helper"
+    );
+    assert_eq!(
+        count_occurrences(&content, "json.push('\\n')"),
+        1,
+        "the serialize-and-newline rule should live in exactly one place"
+    );
+}
+
+#[then("the quecto-tui markdown renderer should extract table and code-block flush handlers")]
+fn then_markdown_extracts_handlers(_world: &mut QuectoWorld) {
+    let content = tui_read("interface/components/markdown.rs");
+    assert!(
+        content.contains("fn flush_table") && content.contains("fn flush_code_block"),
+        "render_markdown should extract per-block flush handlers (table / code-block)"
+    );
+}
+
+#[then("the quecto-tui builtin command set should be the single source of truth")]
+fn then_builtin_commands_single_source(_world: &mut QuectoWorld) {
+    let content = tui_read("interface/app.rs");
+    assert!(
+        content.contains("fn builtin_commands"),
+        "builtin_commands() must remain the single source of truth for slash commands"
+    );
+    // The previous triplication hand-listed the command help text in show_help.
+    // That copy must be gone: show_help must derive its listing instead of
+    // re-enumerating the `  /command   description` lines.
+    let methods = tui_read("interface/app_methods.rs");
+    for stale in ["/quit,/exit", "/workflow-nudge Toggle", "/resume <name>"] {
+        assert!(
+            !methods.contains(stale),
+            "show_help must not re-enumerate the slash-command set ({stale}); derive it from builtin_commands()"
+        );
+    }
+}
+
+#[then("quecto-tui show_help and command dispatch should derive from builtin_commands")]
+fn then_show_help_and_dispatch_derive(_world: &mut QuectoWorld) {
+    let methods = tui_read("interface/app_methods.rs");
+    assert!(
+        methods.contains("builtin_commands("),
+        "show_help should derive its listing from builtin_commands() rather than a hand-kept copy"
+    );
+    let event_loop = tui_read("interface/app_event_loop.rs");
+    assert!(
+        event_loop.contains("builtin_commands("),
+        "the slash-command dispatch should derive from builtin_commands() rather than a hand-kept match"
     );
 }
 

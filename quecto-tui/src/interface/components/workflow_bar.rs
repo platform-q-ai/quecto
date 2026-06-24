@@ -106,7 +106,7 @@ pub fn render_widget(state: &WorkflowBarState, width: usize) -> Vec<String> {
             format!(
                 "→ Step {id}: {} [{}]",
                 ellipsize_clean(label, 56),
-                phase_label_for_widget(state.current_phase().unwrap_or("done"))
+                phase_display(state.current_phase().unwrap_or("done"))
             )
         })
         .unwrap_or_else(|| "✓ Workflow complete!".to_string());
@@ -229,23 +229,6 @@ fn ellipsize_clean(text: &str, max_chars: usize) -> String {
         out.push('…');
     }
     out
-}
-
-fn phase_label_for_widget(phase: &str) -> &str {
-    phase_name(phase)
-}
-
-/// Phase display name.
-fn phase_name(phase: &str) -> &str {
-    match phase {
-        "setup" => "SETUP",
-        "red" => "RED",
-        "green" => "GREEN",
-        "refactor" => "REFACTOR",
-        "ci_cd" => "CI/CD",
-        "review" => "REVIEW",
-        _ => "DONE",
-    }
 }
 
 /// Parse a `workflow_state` JSON event into `WorkflowBarState`.

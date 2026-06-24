@@ -612,3 +612,41 @@ fn forwarded_canonical_workflow_state_parses_without_steps() {
         other => panic!("expected WorkflowState, got {other:?}"),
     }
 }
+
+#[test]
+fn serialize_command_appends_single_newline() {
+    let cmd = Command::Abort {
+        id: Some("a-1".into()),
+    };
+    let framed = serialize_command(&cmd).expect("serialize");
+    assert!(framed.ends_with('\n'), "wire frame must end with a newline");
+    assert_eq!(
+        framed.matches('\n').count(),
+        1,
+        "exactly one trailing newline frames the JSON line"
+    );
+    // The framed body must be the command's JSON plus that newline.
+    assert_eq!(
+        framed,
+        format!("{}\n", serde_json::to_string(&cmd).unwrap())
+    );
+}
+
+#[tokio::test]
+async fn command_sender_and_client_send_emit_identical_bytes() {
+    // Both senders write through serialize_command, so the same command must
+    // appear on the wire byte-for-byte regardless of which path sent it (#759).
+    let (tx, mut rx) = mpsc::channel::<String>(4);
+    let mut sender = CommandSender { tx };
+    let cmd = Command::SetModel {
+        id: Some("m-1".into()),
+        model: Some("claude".into()),
+        provider: None,
+        model_id: None,
+    };
+    sender.send(&cmd).await.expect("send");
+    let from_sender = rx.recv().await.expect("frame");
+
+    let expected = serialize_command(&cmd).expect("serialize");
+    assert_eq!(from_sender, expected);
+}

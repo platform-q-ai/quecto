@@ -260,3 +260,21 @@ async fn render_failure_becomes_error_notification() {
         "render failure should be visible in notifications: {rendered}"
     );
 }
+
+#[test]
+fn composite_centered_splices_overlay_at_centered_origin() {
+    // A 10x6 frame of dots, splice a 4-wide x 2-tall overlay; it should land
+    // centered: start_row = (6-2)/2 = 2, start_col = (10-4)/2 = 3.
+    let width = 10usize;
+    let height = 6usize;
+    let mut lines: Vec<String> = (0..height).map(|_| ".".repeat(width)).collect();
+    let overlay = vec!["ABCD".to_string(), "EFGH".to_string()];
+    super::App::composite_centered(&mut lines, &overlay, 4, width, height);
+
+    let stripped: Vec<String> = lines.iter().map(|l| app_methods::strip_ansi(l)).collect();
+    assert_eq!(stripped[2], "...ABCD...");
+    assert_eq!(stripped[3], "...EFGH...");
+    // Rows outside the overlay are untouched.
+    assert_eq!(stripped[1], "..........");
+    assert_eq!(stripped[4], "..........");
+}

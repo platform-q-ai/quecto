@@ -537,8 +537,19 @@ impl App {
             return;
         }
 
-        // Slash commands.
+        // Slash commands. Validate the command name against the single source
+        // of truth (`builtin_commands`) before dispatching, so the set of valid
+        // commands is not re-enumerated here.
         if trimmed.starts_with('/') {
+            let name = trimmed
+                .split_whitespace()
+                .next()
+                .unwrap_or(trimmed)
+                .trim_start_matches('/');
+            if !builtin_commands().iter().any(|c| c.name == name) {
+                self.reject_unknown_slash_command(trimmed);
+                return;
+            }
             match trimmed {
                 "/quit" | "/exit" => {
                     self.should_exit = true;

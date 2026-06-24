@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use crate::interface::component::Component;
 use crate::interface::components::autocomplete::{AutocompleteResult, Suggestion};
-use crate::interface::components::list_navigator::ListNavigator;
+use crate::interface::components::suggestion_list::SuggestionList;
 use crate::interface::fuzzy::fuzzy_filter;
 use crate::interface::keys::Key;
 use crate::interface::theme;
@@ -34,10 +34,8 @@ pub struct FilesAutocomplete {
     loading: bool,
     /// Latched request bit consumed by the app event loop.
     load_requested: bool,
-    suggestions: Vec<Suggestion>,
-    navigator: ListNavigator,
+    list: SuggestionList,
     max_visible: usize,
-    active: bool,
     result: AutocompleteResult,
     /// Byte offset of the `@` that begins the current token on the cursor line.
     token_start: Option<usize>,
@@ -58,10 +56,8 @@ impl FilesAutocomplete {
             loaded_at: None,
             loading: false,
             load_requested: false,
-            suggestions: Vec::new(),
-            navigator: ListNavigator::new(),
+            list: SuggestionList::new(max_visible),
             max_visible,
-            active: false,
             result: AutocompleteResult::Pending,
             token_start: None,
             last_cursor_col: None,
@@ -96,7 +92,7 @@ impl FilesAutocomplete {
         self.request_load_if_needed();
 
         if self.loading && self.files.is_empty() {
-            self.set_suggestions(vec![loading_suggestion()]);
+            self.list.set_suggestions(vec![loading_suggestion()]);
             return;
         }
 
@@ -110,7 +106,7 @@ impl FilesAutocomplete {
                 description: String::new(),
             })
             .collect();
-        self.set_suggestions(new);
+        self.list.set_suggestions(new);
     }
 
     /// Apply files loaded by the app event loop's background worker.
@@ -152,24 +148,14 @@ impl FilesAutocomplete {
         self.load_requested = true;
     }
 
-    fn set_suggestions(&mut self, new: Vec<Suggestion>) {
-        if !suggestions_match(&self.suggestions, &new) {
-            self.navigator.reset();
-        }
-        self.suggestions = new;
-        self.active = !self.suggestions.is_empty();
-        self.navigator.clamp(self.suggestions.len());
-    }
-
     fn deactivate(&mut self) {
-        self.active = false;
-        self.suggestions.clear();
+        self.list.clear();
         self.token_start = None;
     }
 
     /// Whether the dropdown is currently visible.
     pub fn is_active(&self) -> bool {
-        self.active
+        self.list.is_active()
     }
 
     /// Dismiss the dropdown and force the next `update` to re-evaluate.
@@ -222,10 +208,6 @@ fn at_token(line: &str, cursor_col: usize) -> Option<(usize, &str)> {
     Some((at, prefix))
 }
 
-fn suggestions_match(a: &[Suggestion], b: &[Suggestion]) -> bool {
-    a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.value == y.value)
-}
-
 /// Whether the file cache should be (re)loaded: never for injected test lists;
 /// otherwise when it has never loaded or its age has reached the TTL.
 fn should_reload(injected: bool, age: Option<Duration>, ttl: Duration) -> bool {
@@ -240,19 +222,19 @@ fn should_reload(injected: bool, age: Option<Duration>, ttl: Duration) -> bool {
 
 impl Component for FilesAutocomplete {
     fn render(&mut self, width: usize) -> Vec<String> {
-        if !self.active || self.suggestions.is_empty() {
+        if !self.list.is_active() || self.list.is_empty() {
             return vec![];
         }
 
         let mut lines = Vec::new();
-        let total = self.suggestions.len();
-        let range = self.navigator.visible_range(total, self.max_visible);
+        let total = self.list.len();
+        let range = self.list.visible_range();
         let start = range.start;
         let end = range.end;
 
         for i in start..end {
-            let s = &self.suggestions[i];
-            let is_sel = i == self.navigator.selected();
+            let s = &self.list.suggestions()[i];
+            let is_sel = i == self.list.selected();
             let prefix = if is_sel { "→ " } else { "  " };
             let name = if self.loading && self.files.is_empty() {
                 theme::dim(&s.label)
@@ -267,7 +249,7 @@ impl Component for FilesAutocomplete {
         if start > 0 || end < total {
             lines.push(theme::dim(&format!(
                 "  ({}/{})",
-                self.navigator.selected() + 1,
+                self.list.selected() + 1,
                 total
             )));
         }
@@ -276,30 +258,30 @@ impl Component for FilesAutocomplete {
     }
 
     fn handle_input(&mut self, key: &Key) -> bool {
-        if !self.active {
+        if !self.list.is_active() {
             return false;
         }
         match key {
             Key::Up => {
-                self.navigator.move_previous(self.suggestions.len());
+                self.list.move_previous();
                 true
             }
             Key::Down => {
-                self.navigator.move_next(self.suggestions.len());
+                self.list.move_next();
                 true
             }
             Key::Tab | Key::Enter => {
                 if !self.loading || !self.files.is_empty() {
-                    if let Some(s) = self.suggestions.get(self.navigator.selected()) {
+                    if let Some(s) = self.list.selected_suggestion() {
                         self.result = AutocompleteResult::Selected(s.value.clone());
-                        self.active = false;
+                        self.list.close();
                     }
                 }
                 true
             }
             Key::Escape => {
                 self.result = AutocompleteResult::Dismissed;
-                self.active = false;
+                self.list.close();
                 true
             }
             _ => false,
@@ -330,7 +312,7 @@ mod tests {
         let mut f = fa();
         f.update("@", 1);
         assert!(f.is_active());
-        assert_eq!(f.suggestions.len(), 4, "@ alone lists all files");
+        assert_eq!(f.list.len(), 4, "@ alone lists all files");
         assert_eq!(f.token_start(), Some(0));
     }
 
@@ -341,8 +323,8 @@ mod tests {
         assert!(f.is_active());
         assert!(f.is_loading());
         assert!(f.take_load_request());
-        assert_eq!(f.suggestions.len(), 1);
-        assert_eq!(f.suggestions[0].label, "loading files…");
+        assert_eq!(f.list.len(), 1);
+        assert_eq!(f.list.suggestions()[0].label, "loading files…");
     }
 
     #[test]
@@ -354,7 +336,7 @@ mod tests {
         f.update("@main", 5);
         assert!(!f.is_loading());
         assert!(f.is_active());
-        assert_eq!(f.suggestions[0].value, "src/main.rs");
+        assert_eq!(f.list.suggestions()[0].value, "src/main.rs");
     }
 
     #[test]
@@ -365,7 +347,7 @@ mod tests {
         assert!(f.take_load_request());
         assert!(f.is_loading());
         assert!(f.is_active());
-        assert_eq!(f.suggestions[0].value, "src/main.rs");
+        assert_eq!(f.list.suggestions()[0].value, "src/main.rs");
     }
 
     #[test]
@@ -374,9 +356,9 @@ mod tests {
         f.update("@main", 5);
         assert!(f.is_active());
         assert!(
-            f.suggestions[0].value.contains("main.rs"),
+            f.list.suggestions()[0].value.contains("main.rs"),
             "best match should be main.rs: {:?}",
-            f.suggestions
+            f.list.suggestions()
         );
     }
 
@@ -409,7 +391,7 @@ mod tests {
         f.update("see @src/li", 11);
         assert!(f.is_active());
         assert_eq!(f.token_start(), Some(4));
-        assert!(f.suggestions[0].value.contains("lib.rs"));
+        assert!(f.list.suggestions()[0].value.contains("lib.rs"));
     }
 
     #[test]
@@ -445,9 +427,9 @@ mod tests {
     fn navigate_down_changes_selection() {
         let mut f = fa();
         f.update("@", 1);
-        assert_eq!(f.navigator.selected(), 0);
+        assert_eq!(f.list.selected(), 0);
         f.handle_input(&Key::Down);
-        assert_eq!(f.navigator.selected(), 1);
+        assert_eq!(f.list.selected(), 1);
     }
 
     #[test]

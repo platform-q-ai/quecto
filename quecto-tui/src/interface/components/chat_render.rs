@@ -155,16 +155,14 @@ pub(super) fn render_bash(
     let command = sanitize(command);
 
     // Header: ✓ $ command  42ms
-    lines.push(truncate_to_width(
-        &format!(
-            "{} {}{}",
-            icon,
-            theme::tool_title(&format!("$ {}", command)),
-            dur
-        ),
+    push_header(
+        lines,
+        icon,
+        &theme::tool_title(&format!("$ {}", command)),
+        "",
+        dur,
         width,
-        None,
-    ));
+    );
 
     if let Some(output) = result {
         if output.is_empty() {
@@ -215,17 +213,14 @@ pub(super) fn render_read(
     let path = extract_path(args);
 
     // Header: ✓ read path  42ms
-    lines.push(truncate_to_width(
-        &format!(
-            "{} {} {}{}",
-            icon,
-            theme::tool_title("read"),
-            theme::accent(&path),
-            dur
-        ),
+    push_header(
+        lines,
+        icon,
+        &theme::tool_title("read"),
+        &theme::accent(&path),
+        dur,
         width,
-        None,
-    ));
+    );
 
     if let Some(content) = result {
         render_file_preview(lines, content, expanded, width, false);
@@ -255,17 +250,14 @@ pub(super) fn render_write(
         .unwrap_or("");
 
     // Header: ✓ write path  42ms
-    lines.push(truncate_to_width(
-        &format!(
-            "{} {} {}{}",
-            icon,
-            theme::tool_title("write"),
-            theme::accent(&path),
-            dur
-        ),
+    push_header(
+        lines,
+        icon,
+        &theme::tool_title("write"),
+        &theme::accent(&path),
+        dur,
         width,
-        None,
-    ));
+    );
 
     if !content.is_empty() {
         render_file_preview(lines, content, expanded, width, false);
@@ -295,17 +287,14 @@ pub(super) fn render_edit(
     let path = extract_path(args);
 
     // Header: ✓ edit path  42ms
-    lines.push(truncate_to_width(
-        &format!(
-            "{} {} {}{}",
-            icon,
-            theme::tool_title("edit"),
-            theme::accent(&path),
-            dur
-        ),
+    push_header(
+        lines,
+        icon,
+        &theme::tool_title("edit"),
+        &theme::accent(&path),
+        dur,
         width,
-        None,
-    ));
+    );
 
     if let Some(output) = result {
         if is_error {
@@ -319,19 +308,12 @@ pub(super) fn render_edit(
                     !l.starts_with("Successfully edited") && !l.starts_with("```") && !l.is_empty()
                 })
                 .collect();
-            let total = diff_lines.len();
-            let max = if expanded { total } else { FILE_PREVIEW_LINES };
-
-            for line in diff_lines.iter().take(max) {
-                let styled = style_diff_line(line);
-                lines.push(truncate_to_width(&styled, width, None));
-            }
-            if total > max {
-                lines.push(theme::dim(&format!(
-                    "... ({} more lines, Ctrl+O to expand)",
-                    total - max
-                )));
-            }
+            let max = if expanded {
+                diff_lines.len()
+            } else {
+                FILE_PREVIEW_LINES
+            };
+            push_preview(lines, &diff_lines, max, style_diff_line, width);
         }
     }
 }
@@ -379,17 +361,14 @@ pub(super) fn render_subagent(
     };
 
     // Header: ✓ spawn reviewer — Review PR  42ms
-    lines.push(truncate_to_width(
-        &format!(
-            "{} {} {}{}",
-            icon,
-            theme::magenta(&theme::tool_title(tool_name)),
-            theme::tool_output(&header_detail),
-            dur,
-        ),
+    push_header(
+        lines,
+        icon,
+        &theme::magenta(&theme::tool_title(tool_name)),
+        &theme::tool_output(&header_detail),
+        dur,
         width,
-        None,
-    ));
+    );
 
     // Show result preview — for spawn, show agent output; for agent_cmd, show response.
     if let Some(output) = result {
@@ -400,16 +379,7 @@ pub(super) fn render_subagent(
                 theme::tool_output
             };
             let output_lines: Vec<&str> = output.lines().collect();
-            let max = FILE_PREVIEW_LINES.min(output_lines.len());
-            for line in output_lines.iter().take(max) {
-                lines.push(truncate_to_width(&color_fn(line), width, None));
-            }
-            if output_lines.len() > max {
-                lines.push(theme::dim(&format!(
-                    "... ({} more lines, Ctrl+O to expand)",
-                    output_lines.len() - max
-                )));
-            }
+            push_preview(lines, &output_lines, FILE_PREVIEW_LINES, color_fn, width);
         }
     }
 }
@@ -458,17 +428,14 @@ pub(super) fn render_workflow(
         _ => action.to_string(),
     };
 
-    lines.push(truncate_to_width(
-        &format!(
-            "{} {} {}{}",
-            icon,
-            theme::bold(&theme::accent("workflow")),
-            theme::dim(&detail),
-            dur
-        ),
+    push_header(
+        lines,
+        icon,
+        &theme::bold(&theme::accent("workflow")),
+        &theme::dim(&detail),
+        dur,
         width,
-        None,
-    ));
+    );
 
     if let Some(text) = result {
         let preview: String = text
@@ -511,17 +478,14 @@ pub(super) fn render_generic(
     };
 
     // Header: ✓ tool_name summary  42ms
-    lines.push(truncate_to_width(
-        &format!(
-            "{} {} {}{}",
-            icon,
-            theme::tool_title(tool_name),
-            theme::dim(&summary),
-            dur,
-        ),
+    push_header(
+        lines,
+        icon,
+        &theme::tool_title(tool_name),
+        &theme::dim(&summary),
+        dur,
         width,
-        None,
-    ));
+    );
 
     if let Some(output) = result {
         if !output.is_empty() {
@@ -531,6 +495,50 @@ pub(super) fn render_generic(
 }
 
 // ── Shared rendering helpers ─────────────────────────────────────────────────
+
+/// Push a tool header line of the form `icon title detail  dur`.
+///
+/// `detail` and `dur` are omitted when empty, so callers that have no detail
+/// (e.g. bash, whose title already carries the `$ command`) share one idiom.
+pub(super) fn push_header(
+    lines: &mut Vec<String>,
+    icon: &str,
+    title: &str,
+    detail: &str,
+    dur: &str,
+    width: usize,
+) {
+    let header = if detail.is_empty() {
+        format!("{icon} {title}{dur}")
+    } else {
+        format!("{icon} {title} {detail}{dur}")
+    };
+    lines.push(truncate_to_width(&header, width, None));
+}
+
+/// Push a head preview of `content_lines`: the first `max` lines styled by
+/// `color_fn`, followed by a dimmed "… (N more lines, Ctrl+O to expand)" hint
+/// when the content was truncated. Centralises the preview idiom repeated
+/// across the file/diff/subagent/generic renderers.
+pub(super) fn push_preview(
+    lines: &mut Vec<String>,
+    content_lines: &[&str],
+    max: usize,
+    color_fn: fn(&str) -> String,
+    width: usize,
+) {
+    let total = content_lines.len();
+    let shown = max.min(total);
+    for line in &content_lines[..shown] {
+        lines.push(truncate_to_width(&color_fn(line), width, None));
+    }
+    if total > shown {
+        lines.push(theme::dim(&format!(
+            "... ({} more lines, Ctrl+O to expand)",
+            total - shown
+        )));
+    }
+}
 
 /// Render a file content preview — first N lines with count of remaining.
 pub(super) fn render_file_preview(
@@ -547,20 +555,8 @@ pub(super) fn render_file_preview(
     } else {
         theme::tool_output
     };
-
-    if expanded || total <= FILE_PREVIEW_LINES {
-        for line in &content_lines {
-            lines.push(truncate_to_width(&color_fn(line), width, None));
-        }
-    } else {
-        for line in content_lines.iter().take(FILE_PREVIEW_LINES) {
-            lines.push(truncate_to_width(&color_fn(line), width, None));
-        }
-        lines.push(theme::dim(&format!(
-            "... ({} more lines, Ctrl+O to expand)",
-            total - FILE_PREVIEW_LINES
-        )));
-    }
+    let max = if expanded { total } else { FILE_PREVIEW_LINES };
+    push_preview(lines, &content_lines, max, color_fn, width);
 }
 
 /// Extract the file path from tool args (tries "path", "file_path").
