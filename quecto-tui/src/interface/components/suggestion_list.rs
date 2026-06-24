@@ -57,6 +57,11 @@ impl SuggestionList {
         self.active
     }
 
+    /// The configured maximum number of visible rows (the render window height).
+    pub fn max_visible(&self) -> usize {
+        self.max_visible
+    }
+
     pub fn suggestions(&self) -> &[Suggestion] {
         &self.suggestions
     }

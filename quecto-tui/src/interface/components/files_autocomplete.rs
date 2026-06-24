@@ -35,7 +35,6 @@ pub struct FilesAutocomplete {
     /// Latched request bit consumed by the app event loop.
     load_requested: bool,
     list: SuggestionList,
-    max_visible: usize,
     result: AutocompleteResult,
     /// Byte offset of the `@` that begins the current token on the cursor line.
     token_start: Option<usize>,
@@ -57,7 +56,6 @@ impl FilesAutocomplete {
             loading: false,
             load_requested: false,
             list: SuggestionList::new(max_visible),
-            max_visible,
             result: AutocompleteResult::Pending,
             token_start: None,
             last_cursor_col: None,
@@ -99,7 +97,7 @@ impl FilesAutocomplete {
         let new: Vec<Suggestion> = fuzzy_filter(&self.files, prefix, |f| f.as_str())
             .into_iter()
             // Bound the work; the render windows to `max_visible` anyway.
-            .take(self.max_visible * 4)
+            .take(self.list.max_visible() * 4)
             .map(|f| Suggestion {
                 value: f.clone(),
                 label: f.clone(),

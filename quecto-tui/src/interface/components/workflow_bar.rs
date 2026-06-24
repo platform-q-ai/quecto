@@ -160,6 +160,14 @@ fn normalize_phase(phase: &str) -> &str {
 
 /// Display label for a phase: known phases use their canonical name, unknown
 /// (custom-template) phases fall back to their upper-cased key.
+///
+/// This unifies the former `phase_name`/`phase_label_for_widget` (step header)
+/// and `phase_display` (phase pills) helpers, which previously diverged only on
+/// the unknown-phase fallback — the header rendered a misleading `[DONE]` while
+/// the pills upper-cased the raw key. The pill behaviour is kept for both, since
+/// upper-casing the actual key is more informative for arbitrary V2 templates
+/// than labelling an unrecognised phase "DONE". The common `done` path is
+/// unchanged (`"done"` → `"DONE"` either way).
 fn phase_display(phase: &str) -> String {
     match phase {
         "setup" => "SETUP".to_string(),
