@@ -114,9 +114,8 @@ impl ToolRegistryImpl {
         reg.register(Arc::new(LsTool::new(workspace.clone(), sandbox.clone())));
         reg.register(Arc::new(GrepTool::new(workspace.clone(), sandbox.clone())));
         reg.register(Arc::new(FindTool::new(workspace.clone(), sandbox.clone())));
-        // Quecto's own capability docs plus legacy workspace skills exposed as
-        // on-demand knowledge docs. Bodies are no longer prompt-injected.
-        reg.register(Arc::new(DocsTool::with_workspace(workspace.as_ref())));
+        // Quecto's own capability docs, embedded in the binary.
+        reg.register(Arc::new(DocsTool::new()));
 
         reg
     }

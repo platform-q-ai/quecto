@@ -1823,35 +1823,6 @@ fn when_run_real_llm_agent_system(world: &mut QuectoWorld, system: String, messa
     world.stdout = output.stdout;
     world.stderr = output.stderr;
 }
-// ===========================================================================
-// E2E Skills Steps
-// ===========================================================================
-
-/// Create a skill directory with a SKILL.md with frontmatter (docstring).
-#[given(expr = "a workspace skill {string} with frontmatter:")]
-fn given_e2e_workspace_skill_frontmatter(
-    world: &mut QuectoWorld,
-    name: String,
-    step: &gherkin::Step,
-) {
-    ensure_temp_dir(world);
-    let base = base_path(world);
-    let content = step.docstring.as_ref().expect("missing docstring").trim();
-    let skill_dir = base.join("workspace").join("skills").join(&name);
-    std::fs::create_dir_all(&skill_dir).expect("create skill dir");
-    std::fs::write(skill_dir.join("SKILL.md"), content).expect("write SKILL.md");
-}
-
-/// Create a skill directory with raw content (no valid frontmatter).
-#[given(expr = "a workspace skill directory {string} with raw content {string}")]
-fn given_e2e_workspace_skill_raw(world: &mut QuectoWorld, name: String, content: String) {
-    ensure_temp_dir(world);
-    let base = base_path(world);
-    let skill_dir = base.join("workspace").join("skills").join(&name);
-    std::fs::create_dir_all(&skill_dir).expect("create skill dir");
-    std::fs::write(skill_dir.join("SKILL.md"), content).expect("write SKILL.md");
-}
-
 /// Start a wiremock server that captures requests and returns a text response.
 /// Stores a leaked reference so we can inspect received requests later.
 #[given(expr = "a mock LLM that captures requests and returns text {string}")]
@@ -2004,8 +1975,8 @@ fn then_llm_system_message_only_preamble(world: &mut QuectoWorld) {
         );
         // Beyond the datetime line, the only standard content is the Quecto
         // capability-docs retrieval preamble (always appended by
-        // build_system_prompt). No skill prompts or user prompts should leak
-        // into the system message.
+        // build_system_prompt). User prompts should not leak into the
+        // system message.
         let extra = content.lines().skip(1).collect::<Vec<_>>().join("\n");
         let extra = extra.trim();
         assert!(

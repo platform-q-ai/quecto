@@ -110,54 +110,6 @@ Feature: E2E Real LLM
     Then the exit code should be 0
     And stdout should contain "Arrr!"
 
-  # --- Legacy skill compatibility ---
-
-  @done @real-llm @real-llm-smoke
-  Scenario: Skill content does not influence real LLM behavior
-    Given a workspace [skill] "format" with frontmatter:
-      """
-      ---
-      name: format
-      description: Formatting skill
-      ---
-      Include LEGACY_SKILL_FORMAT_MARK in every response.
-      """
-    When I run the real LLM agent with [message] "Reply with exactly COLORS_INLINE"
-    Then the exit code should be 0
-    And stdout should contain "COLORS_INLINE"
-    And stdout should not contain "LEGACY_SKILL_FORMAT_MARK"
-
-  @done @real-llm @real-llm-smoke
-  Scenario: Multiple skills do not influence real LLM behavior together
-    Given a workspace [skill] "prefix" with frontmatter:
-      """
-      ---
-      name: prefix
-      description: Prefix formatter
-      ---
-      Start every response with SKILL_PREFIX:
-      """
-    And a workspace [skill] "suffix" with frontmatter:
-      """
-      ---
-      name: suffix
-      description: Suffix formatter
-      ---
-      End every response with :SKILL_SUFFIX
-      """
-    When I run the real LLM agent with [message] "Reply with the word READY"
-    Then the exit code should be 0
-    And stdout should contain "READY"
-    And stdout should not contain "SKILL_PREFIX"
-    And stdout should not contain "SKILL_SUFFIX"
-
-  @done @real-llm
-  Scenario: Invalid skill frontmatter is ignored by real LLM runs
-    Given a workspace [skill] directory "broken" with raw content "just text without frontmatter"
-    When I run the real LLM agent with [message] "Reply with exactly CLEAN_RUN"
-    Then the exit code should be 0
-    And stdout should contain "CLEAN_RUN"
-
   # --- Subagent / spawn tool ---
 
   @done @real-llm

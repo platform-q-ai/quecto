@@ -10,8 +10,7 @@ The kernel already has a `docs` tool: a curated library whose names are
 discoverable and whose bodies are fetched on demand. Context7 demonstrates the
 same pattern over an external corpus via MCP. The proposed knowledge-retrieval
 surface generalizes this into one mechanism for embedded docs, community files,
-knowledge graphs/databases, and remote sources. This is the correct destination
-for the knowledge half of Skills and for any future community knowledge graph.
+knowledge graphs/databases, and remote sources.
 
 ## Decision
 
@@ -20,8 +19,7 @@ retrieval contract and a small always-on index; community content and rich backi
 stores live outside the kernel.
 
 - Kernel-owned sources: embedded kernel docs and a simple folder-backed markdown
-  source, e.g. `workspace/knowledge/` and legacy `workspace/skills/` during
-  migration.
+  source, e.g. `workspace/knowledge/`.
 - External-tool sources: graph/database/remote retrieval are **UDS/MCP tools**,
   not in-kernel graph engines.
 - Retrieval is progressive-disclosure by construction.
@@ -43,18 +41,14 @@ stores live outside the kernel.
 
 ## Alternatives Considered
 
-- **A. Keep a separate Skills loader.** Rejected by ADR-0004 as redundant and
-  prompt-heavy.
-- **B. Put a graph database / embedding index in the kernel.** Rejected because
+- **A. Put a graph database / embedding index in the kernel.** Rejected because
   storage and ranking are dependency-heavy and community-specific.
-- **C. Rely only on external MCP/Context7.** Rejected because it loses zero-config
+- **B. Rely only on external MCP/Context7.** Rejected because it loses zero-config
   embedded docs and local community files.
-- **D. Inject all knowledge summaries into the system prompt.** Rejected because
+- **C. Inject all knowledge summaries into the system prompt.** Rejected because
   prompt budget scales with corpus size.
 
 ## Related
 
 - [Kernel boundary](../kernel-boundary.md)
-- [Knowledge retrieval surface](../knowledge-retrieval-surface.md)
-- [ADR-0004](adr-0004-dissolve-the-skills-surface.md)
 - [ADR-0002](adr-0002-reload-trigger-for-startup-loaded-surfaces.md)

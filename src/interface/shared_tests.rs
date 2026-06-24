@@ -45,51 +45,14 @@ fn test_expires_at_with_margin_zero_expiry() {
 }
 
 #[test]
-fn test_load_skill_prompt_ignores_legacy_skills() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let skill_dir = tmp.path().join("workspace").join("skills").join("weather");
-    std::fs::create_dir_all(&skill_dir).unwrap();
-    std::fs::write(
-        skill_dir.join("SKILL.md"),
-        "---\nname: weather\ndescription: Weather forecasts\n---\nFetch weather data",
-    )
-    .unwrap();
-    let prompt = load_skill_prompt(tmp.path());
-    assert!(prompt.is_empty());
-}
-
-#[test]
-fn test_load_skill_prompt_empty_when_no_skills() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let prompt = load_skill_prompt(tmp.path());
-    assert!(prompt.is_empty());
-}
-
-#[test]
-fn test_load_skill_prompt_skips_invalid_frontmatter() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let skill_dir = tmp.path().join("workspace").join("skills").join("bad");
-    std::fs::create_dir_all(&skill_dir).unwrap();
-    std::fs::write(skill_dir.join("SKILL.md"), "No frontmatter").unwrap();
-    let prompt = load_skill_prompt(tmp.path());
-    assert!(prompt.is_empty());
-}
-
-#[test]
-fn test_merge_prompts_ignores_legacy_skill_prompt() {
-    let result = merge_prompts("Skill content", &None);
-    assert!(result.is_empty());
-}
-
-#[test]
 fn test_merge_prompts_user_only() {
-    let result = merge_prompts("Skill content", &Some("User prompt".to_string()));
+    let result = merge_prompts(&Some("User prompt".to_string()));
     assert_eq!(result, "User prompt");
 }
 
 #[test]
-fn test_merge_prompts_skill_with_empty_user() {
-    let result = merge_prompts("Skill content", &Some(String::new()));
+fn test_merge_prompts_empty_user() {
+    let result = merge_prompts(&Some(String::new()));
     assert!(result.is_empty());
 }
 
@@ -115,7 +78,7 @@ fn test_datetime_preamble_contains_current_date() {
 
 #[test]
 fn test_build_system_prompt_datetime_only() {
-    let result = build_system_prompt("", &None);
+    let result = build_system_prompt(&None);
     assert!(result.starts_with("Current date and time:"));
     assert!(result.contains("`docs` tool"));
     assert!(result.contains("name `quecto`"));
@@ -128,24 +91,8 @@ fn test_build_system_prompt_datetime_only() {
 }
 
 #[test]
-fn test_build_system_prompt_ignores_legacy_skill_prompt() {
-    let result = build_system_prompt("Skill content", &None);
-    assert!(result.starts_with("Current date and time:"));
-    assert!(result.contains("`docs` tool"));
-    assert!(!result.contains("Skill content"));
-}
-
-#[test]
-fn test_build_system_prompt_with_user_ignores_legacy_skill_prompt() {
-    let result = build_system_prompt("Skill content", &Some("Be helpful".to_string()));
-    assert!(result.starts_with("Current date and time:"));
-    assert!(!result.contains("Skill content"));
-    assert!(result.contains("Be helpful"));
-}
-
-#[test]
 fn test_build_system_prompt_with_user_only() {
-    let result = build_system_prompt("", &Some("Be helpful".to_string()));
+    let result = build_system_prompt(&Some("Be helpful".to_string()));
     assert!(result.starts_with("Current date and time:"));
     assert!(result.contains("Be helpful"));
 }

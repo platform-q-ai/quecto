@@ -137,10 +137,6 @@ untracked_nouns = [
   "SpillEntry",
   "SpillIndex",
 
-  # Skill loader plumbing
-  "SkillFrontmatter",
-  "SkillSource",
-
   # Subagent configuration value object
   "SubagentConfig",
 

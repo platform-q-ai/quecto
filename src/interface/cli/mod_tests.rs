@@ -40,7 +40,6 @@ fn test_help_command_shows_usage() {
             "agent",
             "status",
             "auth",
-            "skills",
             "help",
             "version",
         ],
@@ -81,10 +80,7 @@ fn test_unknown_command() {
 fn test_help_text_includes_all_commands() {
     let mut out = String::new();
     help_text(&mut out);
-    assert_contains_all(
-        &out,
-        &["agent", "auth", "status", "skills", "help", "version"],
-    );
+    assert_contains_all(&out, &["agent", "auth", "status", "help", "version"]);
 }
 
 #[test]
@@ -411,12 +407,10 @@ fn test_cli_context_all_fields() {
         config_path: None,
         stdin_data: Some("input".to_string()),
         oauth_base_url: Some("http://oauth.local".to_string()),
-        github_raw_base_url: Some("http://raw.local".to_string()),
     };
     assert_eq!(ctx.base_dir(), PathBuf::from("/tmp/test"));
     assert_eq!(ctx.stdin_data.as_deref(), Some("input"));
     assert_eq!(ctx.oauth_base_url.as_deref(), Some("http://oauth.local"));
-    assert_eq!(ctx.github_raw_base_url.as_deref(), Some("http://raw.local"));
 }
 
 // ===================================================================

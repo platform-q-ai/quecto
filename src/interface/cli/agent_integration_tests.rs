@@ -205,64 +205,6 @@ fn test_agent_with_max_time_reaches_deadline_path() {
 }
 
 #[test]
-fn test_agent_with_skills_loaded() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    write_fake_config(tmp.path());
-    let skill_dir = tmp
-        .path()
-        .join("workspace")
-        .join("skills")
-        .join("test-skill");
-    std::fs::create_dir_all(&skill_dir).unwrap();
-    std::fs::write(
-        skill_dir.join("SKILL.md"),
-        "---\nname: test-skill\ndescription: A test skill\n---\nYou are a testing assistant.",
-    )
-    .unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
-    let out = run_with_output(args("agent -m test-with-skills"), &ctx);
-    assert_eq!(out.exit_code, 1);
-    assert!(!out.stderr.contains("config not found"));
-}
-
-#[test]
-fn test_agent_with_skills_and_system_prompt_merged() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    write_fake_config(tmp.path());
-    let skill_dir = tmp
-        .path()
-        .join("workspace")
-        .join("skills")
-        .join("merge-skill");
-    std::fs::create_dir_all(&skill_dir).unwrap();
-    std::fs::write(
-        skill_dir.join("SKILL.md"),
-        "---\nname: merge-skill\ndescription: Merge test\n---\nSkill instructions here.",
-    )
-    .unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
-    let out = run_with_output(
-        vec![
-            "quecto".into(),
-            "agent".into(),
-            "--system".into(),
-            "User system prompt".into(),
-            "-m".into(),
-            "test merged".into(),
-        ],
-        &ctx,
-    );
-    assert_eq!(out.exit_code, 1);
-    assert!(!out.stderr.contains("config not found"));
-}
-
-#[test]
 fn test_agent_named_session_creates_no_file_on_error() {
     let tmp = tempfile::TempDir::new().unwrap();
     write_fake_config(tmp.path());
@@ -638,53 +580,4 @@ fn test_agent_with_both_providers_reaches_session() {
     assert_eq!(out.exit_code, 1);
     assert!(!out.stderr.contains("config not found"));
     assert!(!out.stderr.contains("no LLM providers"));
-}
-
-// ===================================================================
-// Multiple skills loading
-// ===================================================================
-
-#[test]
-fn test_agent_with_multiple_skills() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    write_fake_config(tmp.path());
-    for (name, body) in &[("skill-a", "Skill A body"), ("skill-b", "Skill B body")] {
-        let skill_dir = tmp.path().join("workspace").join("skills").join(name);
-        std::fs::create_dir_all(&skill_dir).unwrap();
-        std::fs::write(
-            skill_dir.join("SKILL.md"),
-            format!(
-                "---\nname: {}\ndescription: Test skill\n---\n{}",
-                name, body
-            ),
-        )
-        .unwrap();
-    }
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
-    let out = run_with_output(args("agent -m test-multi-skills"), &ctx);
-    assert_eq!(out.exit_code, 1);
-    assert!(!out.stderr.contains("config not found"));
-}
-
-#[test]
-fn test_agent_with_skill_missing_frontmatter_skipped() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    write_fake_config(tmp.path());
-    let skill_dir = tmp
-        .path()
-        .join("workspace")
-        .join("skills")
-        .join("bad-skill");
-    std::fs::create_dir_all(&skill_dir).unwrap();
-    std::fs::write(skill_dir.join("SKILL.md"), "This has no frontmatter at all").unwrap();
-    let ctx = CliContext {
-        base_dir: Some(tmp.path().to_path_buf()),
-        ..Default::default()
-    };
-    let out = run_with_output(args("agent -m test-bad-skill"), &ctx);
-    assert_eq!(out.exit_code, 1);
-    assert!(!out.stderr.contains("config not found"));
 }

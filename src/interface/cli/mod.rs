@@ -41,7 +41,7 @@ pub fn auth_import_openai(
 }
 
 // Re-export shared functions for backward compatibility.
-pub use super::shared::{load_skill_prompt, merge_prompts};
+pub use super::shared::merge_prompts;
 
 /// Result of a CLI invocation, capturing stdout, stderr, and exit code.
 #[derive(Debug, Clone)]
@@ -62,8 +62,6 @@ pub struct CliContext {
     pub stdin_data: Option<String>,
     /// Override OAuth base URL for testing (e.g. wiremock URI).
     pub oauth_base_url: Option<String>,
-    /// Override GitHub raw content base URL for skills install testing.
-    pub github_raw_base_url: Option<String>,
 }
 
 impl CliContext {
@@ -175,7 +173,6 @@ pub fn run_with_output(args: Vec<String>, ctx: &CliContext) -> CliOutput {
             "agent" => agent::cmd_agent(ctx, &args[2..], &mut stdout, &mut stderr),
             "status" => commands::cmd_status(ctx, &mut stdout, &mut stderr),
             "auth" => auth::cmd_auth(ctx, &args[2..], &mut stdout, &mut stderr),
-            "skills" => commands::cmd_skills(ctx, &args[2..], &mut stdout, &mut stderr),
             "help" | "--help" | "-h" => {
                 help_text(&mut stdout);
                 0
@@ -534,7 +531,6 @@ fn help_text(out: &mut String) {
     );
     out.push_str("  auth        Manage authentication (login, logout, status)\n");
     out.push_str("  status      Show status\n");
-    out.push_str("  skills      Manage skills (install, list, remove)\n");
     out.push_str("  help        Show this help\n");
     out.push_str("  version     Show version information\n");
 }

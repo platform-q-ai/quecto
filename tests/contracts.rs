@@ -13,8 +13,6 @@ mod extension;
 mod llm_provider;
 #[path = "contracts/session_store.rs"]
 mod session_store;
-#[path = "contracts/skill_loader.rs"]
-mod skill_loader;
 #[path = "contracts/tool.rs"]
 mod tool;
 #[path = "contracts/tool_guard.rs"]

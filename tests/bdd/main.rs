@@ -8,7 +8,6 @@ use quecto::domain::error::DomainError;
 use quecto::domain::message::{LlmResponse, Message, Role, ToolCall};
 use quecto::domain::provider::{ChatRequest, LlmProvider};
 use quecto::domain::session::{ContextSpillStore, Session, SessionStore};
-use quecto::domain::skill::{Skill, SkillLoader};
 use quecto::domain::tool::{Tool, ToolDefinition, ToolResult};
 use quecto::infrastructure::auth::credential_store::{
     AuthMethod, Credential, CredentialStatus, CredentialStore,
@@ -16,7 +15,6 @@ use quecto::infrastructure::auth::credential_store::{
 use quecto::infrastructure::config::Config;
 
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
-use quecto::infrastructure::persistence::skill_loader::FileSkillLoader;
 use quecto::infrastructure::providers;
 use quecto::infrastructure::providers::error::ErrorClass;
 use quecto::infrastructure::providers::router::ProviderRouter;
@@ -287,14 +285,6 @@ pub struct QuectoWorld {
     pub _agent_cmd_mock_tmp: Option<TempDir>,
     /// Last command sent to mock UDS server (#421)
     pub agent_cmd_last_command: Option<Arc<Mutex<String>>>,
-    /// Skill loader workspace directory for skills scenarios
-    pub skill_loader_workspace: Option<PathBuf>,
-    /// Listed skills from skill loader
-    pub skill_list: Option<Vec<Skill>>,
-    /// Loaded single skill
-    pub loaded_skill: Option<Option<Skill>>,
-    /// Temp dirs for skill tests (keep alive)
-    pub _skill_temp_dirs: Vec<TempDir>,
     /// Subagent spawn config for subagent scenarios
     pub subagent_config: Option<SubagentConfig>,
     /// Created subagent context
@@ -309,10 +299,8 @@ pub struct QuectoWorld {
     pub _fireworks_mock_uri: Option<String>,
     /// Leaked Fireworks-compatible mock server ref for request inspection
     pub fireworks_mock_server_ref: Option<&'static wiremock::MockServer>,
-    /// Leaked wiremock server ref for request inspection (skills e2e)
+    /// Leaked wiremock server ref for request inspection
     pub wiremock_server_ref: Option<&'static wiremock::MockServer>,
-    /// Leaked wiremock server for skills install mock API scenarios
-    pub github_mock_server: Option<&'static wiremock::MockServer>,
     /// Temp directory handle (kept alive so the dir isn't deleted)
     pub _temp_dir: Option<TempDir>,
     /// Additional temp dirs (kept alive for sandbox hardening symlink tests etc.)
@@ -950,7 +938,6 @@ mod repo_docs_steps;
 mod sandbox_steps;
 mod security_steps;
 mod session_steps;
-mod skills_steps;
 mod spawn_tool_steps;
 mod subagent_bar_fixes_steps;
 mod subagent_monitor_steps;

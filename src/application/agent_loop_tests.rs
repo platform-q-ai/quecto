@@ -510,10 +510,8 @@ async fn test_tool_definitions_sent_to_llm() {
 #[tokio::test]
 async fn test_agent_info() {
     let (agent, _) = make_agent(vec![], vec![("bash", ""), ("read", ""), ("write", "")]);
-    let agent = agent.with_skill_count(2);
     let info = agent.info();
     assert_eq!(info.tool_count, 3);
-    assert_eq!(info.skill_count, 2);
 }
 
 #[tokio::test]

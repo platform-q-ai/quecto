@@ -67,8 +67,6 @@ pub type ProgressCallback = Arc<dyn Fn(AgentProgressEvent) + Send + Sync>;
 pub struct AgentInfo {
     /// Number of tools loaded in the registry.
     pub tool_count: usize,
-    /// Number of skills loaded.
-    pub skill_count: usize,
 }
 
 /// The result of an agent loop processing run.

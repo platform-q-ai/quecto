@@ -84,7 +84,7 @@ fn test_load_session_messages_existing_session() {
 // -- build_system_prompt tests --
 
 #[test]
-fn test_build_system_prompt_no_skills_no_user_prompt() {
+fn test_build_system_prompt_no_user_prompt() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config: Config = serde_json::from_str("{}").unwrap();
     let flags = ReplFlags {
@@ -139,37 +139,6 @@ fn test_build_system_prompt_with_user_prompt() {
         prompt.contains("Be helpful"),
         "expected user prompt in result"
     );
-}
-
-#[test]
-fn test_build_system_prompt_does_not_load_legacy_skills() {
-    let tmp = tempfile::TempDir::new().unwrap();
-    let skill_dir = tmp.path().join("workspace").join("skills").join("review");
-    std::fs::create_dir_all(&skill_dir).unwrap();
-    std::fs::write(
-        skill_dir.join("SKILL.md"),
-        "---\nname: review\ndescription: Review code\n---\nLegacy skill body",
-    )
-    .unwrap();
-    let config: Config = serde_json::from_str("{}").unwrap();
-    let flags = ReplFlags {
-        session_name: None,
-        system_prompt: None,
-        model_override: None,
-        no_sandbox: false,
-    };
-    let provider = make_stub_provider();
-    let ctx = ReplContext {
-        base_dir: tmp.path(),
-        provider,
-        config: &config,
-        flags: &flags,
-        progress_callback: None,
-    };
-
-    let result = build_system_prompt(&ctx).unwrap();
-
-    assert!(!result.contains("Legacy skill body"));
 }
 
 use crate::interface::test_support::make_stub_provider;

@@ -25,11 +25,20 @@ fn ensure_find_workspace(world: &mut QuectoWorld) -> PathBuf {
 fn given_find_git_workspace(world: &mut QuectoWorld) {
     let ws = ensure_find_workspace(world);
     // Initialize a git repo so fd natively respects nested .gitignore files.
-    std::process::Command::new("git")
+    //
+    // Make the repo hermetic: point global/system git config at /dev/null so
+    // the host's `core.excludesFile`, ignore templates, or init hooks cannot
+    // perturb how fd resolves ignores for this workspace. Without this, the
+    // scenario's pass/fail depends on ambient git state, which under heavy
+    // parallel test load (many shards racing) produced intermittent failures.
+    let status = std::process::Command::new("git")
         .args(["init", "-q"])
         .current_dir(&ws)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .status()
         .expect("git init failed");
+    assert!(status.success(), "git init failed in find workspace");
 }
 
 fn make_find_tool(world: &mut QuectoWorld) -> FindTool {
