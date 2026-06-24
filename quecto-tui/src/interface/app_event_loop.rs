@@ -1,3 +1,4 @@
+use super::app_selection::{SelectionAnchor, TextSelection};
 use super::*;
 
 impl App {
@@ -8,20 +9,15 @@ impl App {
         // Query Kitty keyboard protocol support.
         self.kitty.query();
 
-        // Query initial state from agent.
-        let _ = self
-            .client
-            .send(&Command::GetState {
-                id: Some("init".into()),
-            })
-            .await;
+        // Query initial state from agent through the shared command path so
+        // startup send failures surface in the UI like user-initiated sends.
+        self.send_command(Command::GetState {
+            id: Some("init".into()),
+        });
         // Query initial subagent state (#525).
-        let _ = self
-            .client
-            .send(&Command::GetSubagents {
-                id: Some("init-subagents".into()),
-            })
-            .await;
+        self.send_command(Command::GetSubagents {
+            id: Some("init-subagents".into()),
+        });
 
         // Set up SIGWINCH handler.
         let mut resize_rx = crate::infrastructure::signals::sigwinch_stream().await;
@@ -62,6 +58,11 @@ impl App {
         let (git_branch_tx, mut git_branch_rx) = mpsc::channel::<Option<String>>(1);
         let mut git_branch_refresh_in_flight = false;
 
+        // @files autocomplete workspace enumeration. Loading can shell out to git
+        // or walk the filesystem, so keep it off the input/render loop.
+        let (files_autocomplete_tx, mut files_autocomplete_rx) = mpsc::channel::<Vec<String>>(1);
+        let mut files_autocomplete_load_in_flight = false;
+
         // Timeout for incomplete escape sequences (matches Quecto TUI's 10ms).
         let escape_timeout = Duration::from_millis(10);
 
@@ -74,61 +75,19 @@ impl App {
             tokio::select! {
                 // Stdin input.
                 Some(bytes) = stdin_rx.recv() => {
-                    // Check for Kitty protocol response before buffering.
-                    if !self.kitty.active && !kitty_fallback_done {
-                        if let Some(_flags) = KittyProtocol::parse_response(&bytes) {
-                            self.kitty.enable();
-                            kitty_fallback_done = true;
-                            continue;
-                        }
-                    }
-                    // Feed bytes into the proper StdinBuffer. Kitty release events are
-                    // filtered per decoded sequence in `process_key_sequence`; filtering
-                    // the raw read can drop a legitimate press when a press+release arrive
-                    // in the same read.
-                    self.stdin_buffer.feed(&bytes);
-
-                    // Drain complete sequences immediately.
-                    let complete = self.stdin_buffer.drain_complete();
-                    for seq in &complete {
-                        self.process_key_sequence(seq);
-                        if self.should_exit { break; }
+                    if !self
+                        .process_stdin_bytes(bytes, &mut stdin_rx, escape_timeout, &mut kitty_fallback_done)
+                        .await
+                    {
+                        continue;
                     }
 
-                    // If there are still pending bytes (incomplete escape),
-                    // retry up to MAX_ESCAPE_RETRIES times waiting for more data.
-                    // This handles 3+ fragment CSI splits on slow SSH/serial (#466).
-                    if self.stdin_buffer.has_pending() && !self.should_exit {
-                        let mut retries = 0;
-                        while self.stdin_buffer.has_pending()
-                            && retries < MAX_ESCAPE_RETRIES
-                            && !self.should_exit
-                        {
-                            retries += 1;
-                            match tokio::time::timeout(escape_timeout, stdin_rx.recv()).await {
-                                Ok(Some(more)) => {
-                                    self.stdin_buffer.feed(&more);
-                                    let seqs = self.stdin_buffer.drain_complete();
-                                    for seq in &seqs {
-                                        self.process_key_sequence(seq);
-                                        if self.should_exit { break; }
-                                    }
-                                }
-                                Ok(None) => break, // Channel closed (stdin EOF).
-                                Err(_) => break,   // Timeout — no more data coming.
-                            }
-                        }
-                        // Force drain anything still pending after retries
-                        // exhausted (bare Escape, etc.).
-                        if !self.should_exit {
-                            let forced = self.stdin_buffer.drain_all();
-                            for seq in &forced {
-                                self.process_key_sequence(seq);
-                                if self.should_exit { break; }
-                            }
-                        }
+                    if self.files_autocomplete.take_load_request() {
+                        self.start_files_autocomplete_load(
+                            &files_autocomplete_tx,
+                            &mut files_autocomplete_load_in_flight,
+                        );
                     }
-
                     self.render();
                 }
                 // Agent events.
@@ -191,6 +150,16 @@ impl App {
                         self.render();
                     }
                 }
+                Some(failure) = self.command_send_failure_rx.recv() => {
+                    self.handle_command_send_failure(failure);
+                    self.render();
+                }
+                Some(files) = files_autocomplete_rx.recv() => {
+                    files_autocomplete_load_in_flight = false;
+                    self.files_autocomplete.apply_loaded_files(files);
+                    self.refresh_files_autocomplete_from_editor();
+                    self.render();
+                }
                 // Git branch footer refresh tick.
                 _ = git_branch_interval.tick() => {
                     // Git branch may change while the TUI is running (checkout/switch
@@ -212,6 +181,78 @@ impl App {
     }
 
     // ── Input handling ────────────────────────────────────────────────
+
+    async fn process_stdin_bytes(
+        &mut self,
+        bytes: Vec<u8>,
+        stdin_rx: &mut mpsc::Receiver<Vec<u8>>,
+        escape_timeout: Duration,
+        kitty_fallback_done: &mut bool,
+    ) -> bool {
+        // Check for Kitty protocol response before buffering.
+        if !self.kitty.active && !*kitty_fallback_done {
+            if let Some(_flags) = KittyProtocol::parse_response(&bytes) {
+                self.kitty.enable();
+                *kitty_fallback_done = true;
+                return false;
+            }
+        }
+
+        // Feed bytes into the proper StdinBuffer. Kitty release events are
+        // filtered per decoded sequence in `process_key_sequence`; filtering
+        // the raw read can drop a legitimate press when a press+release arrive
+        // in the same read.
+        self.stdin_buffer.feed(&bytes);
+        self.drain_complete_key_sequences();
+        self.drain_pending_stdin_bytes(stdin_rx, escape_timeout)
+            .await;
+        true
+    }
+
+    async fn drain_pending_stdin_bytes(
+        &mut self,
+        stdin_rx: &mut mpsc::Receiver<Vec<u8>>,
+        escape_timeout: Duration,
+    ) {
+        if !self.stdin_buffer.has_pending() || self.should_exit {
+            return;
+        }
+
+        let mut retries = 0;
+        while self.stdin_buffer.has_pending() && retries < MAX_ESCAPE_RETRIES && !self.should_exit {
+            retries += 1;
+            match tokio::time::timeout(escape_timeout, stdin_rx.recv()).await {
+                Ok(Some(more)) => {
+                    self.stdin_buffer.feed(&more);
+                    self.drain_complete_key_sequences();
+                }
+                Ok(None) => break, // Channel closed (stdin EOF).
+                Err(_) => break,   // Timeout — no more data coming.
+            }
+        }
+
+        // Force drain anything still pending after retries exhausted (bare
+        // Escape, etc.).
+        if !self.should_exit {
+            let forced = self.stdin_buffer.drain_all();
+            for seq in &forced {
+                self.process_key_sequence(seq);
+                if self.should_exit {
+                    break;
+                }
+            }
+        }
+    }
+
+    fn drain_complete_key_sequences(&mut self) {
+        let complete = self.stdin_buffer.drain_complete();
+        for seq in &complete {
+            self.process_key_sequence(seq);
+            if self.should_exit {
+                break;
+            }
+        }
+    }
 
     /// Process a single complete key sequence from the StdinBuffer.
     pub(super) fn process_key_sequence(&mut self, seq: &[u8]) {
@@ -259,19 +300,6 @@ impl App {
         if self.model_selector.is_some() {
             self.last_idle_escape = None;
             self.handle_model_selector_key(&key);
-            return;
-        }
-
-        // If an overlay is active, route input there.
-        if self.overlay_stack.has_visible() {
-            self.last_idle_escape = None;
-            if let Some(entry) = self.overlay_stack.topmost_entry_mut() {
-                entry.component.handle_input(&key);
-            }
-            // Check if overlay wants to close (Escape).
-            if matches!(key, Key::Escape) {
-                self.overlay_stack.pop();
-            }
             return;
         }
 
@@ -435,12 +463,21 @@ impl App {
                     if sel.start.row != end.row || sel.start.col != end.col {
                         let text = self.extract_selection(&sel.start, &end);
                         if !text.is_empty() {
-                            copy_to_clipboard(&text);
-                            let chars = text.chars().count();
-                            self.notify(
-                                &format!("Copied {} chars to clipboard", chars),
-                                NotifyLevel::Success,
-                            );
+                            match copy_to_clipboard(&text) {
+                                Ok(()) => {
+                                    let chars = text.chars().count();
+                                    self.notify(
+                                        &format!("Copied {} chars to clipboard", chars),
+                                        NotifyLevel::Success,
+                                    );
+                                }
+                                Err(error) => {
+                                    self.notify(
+                                        &format!("Failed to copy selection to clipboard: {error}"),
+                                        NotifyLevel::Error,
+                                    );
+                                }
+                            }
                         }
                     }
                 }
@@ -475,9 +512,7 @@ impl App {
         if self.autocomplete.is_active() {
             self.files_autocomplete.dismiss();
         } else {
-            let line = self.editor.current_line().to_string();
-            let col = self.editor.cursor_col();
-            self.files_autocomplete.update(&line, col);
+            self.refresh_files_autocomplete_from_editor();
         }
 
         // Check if editor submitted.

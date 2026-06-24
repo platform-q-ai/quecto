@@ -5,6 +5,8 @@
 //! Selecting a model sends a `set_model` command to the agent.
 
 use crate::interface::component::Component;
+use crate::interface::components::list_navigator::ListNavigator;
+use crate::interface::components::sanitize::strip_terminal_control;
 use crate::interface::fuzzy::fuzzy_filter;
 use crate::interface::keys::Key;
 use crate::interface::theme;
@@ -53,7 +55,7 @@ const MAX_QUERY_LEN: usize = 64;
 ///
 /// Prevents terminal escape injection via agent-sourced model names.
 fn sanitize_model_name(name: &str) -> String {
-    name.chars().filter(|c| !c.is_control()).collect()
+    strip_terminal_control(name)
 }
 
 /// A model entry in the selector.
@@ -84,7 +86,7 @@ pub struct ModelSelector {
     /// Filtered models based on query.
     filtered: Vec<usize>,
     /// Current selection index into `filtered`.
-    selected: usize,
+    navigator: ListNavigator,
     /// Fuzzy search query.
     query: String,
     /// Maximum visible items.
@@ -148,7 +150,7 @@ impl ModelSelector {
         Self {
             all_models: models,
             filtered,
-            selected: 0,
+            navigator: ListNavigator::new(),
             query: String::new(),
             max_visible: 12,
             result: ModelSelectorResult::Pending,
@@ -177,12 +179,7 @@ impl ModelSelector {
             let matching = fuzzy_filter(&indexed, &self.query, |item| item.1);
             self.filtered = matching.into_iter().map(|item| item.0).collect();
         }
-        // Clamp selection.
-        if self.filtered.is_empty() {
-            self.selected = 0;
-        } else if self.selected >= self.filtered.len() {
-            self.selected = self.filtered.len() - 1;
-        }
+        self.navigator.clamp(self.filtered.len());
         // Recache label width.
         self.cached_max_label_width = compute_max_label_width(&self.all_models, &self.filtered);
     }
@@ -190,7 +187,7 @@ impl ModelSelector {
     /// Get the currently selected model entry, if any.
     pub fn selected_model(&self) -> Option<&ModelEntry> {
         self.filtered
-            .get(self.selected)
+            .get(self.navigator.selected())
             .map(|&idx| &self.all_models[idx])
     }
 
@@ -246,13 +243,9 @@ impl Component for ModelSelector {
 
         // Calculate visible window.
         let total = self.filtered.len();
-        let visible = total.min(self.max_visible);
-        let start = if self.selected >= visible {
-            (self.selected + 1).saturating_sub(visible)
-        } else {
-            0
-        };
-        let end = (start + visible).min(total);
+        let range = self.navigator.visible_range(total, self.max_visible);
+        let start = range.start;
+        let end = range.end;
 
         // Use cached label width for alignment.
         let max_label_width = self.cached_max_label_width;
@@ -260,7 +253,7 @@ impl Component for ModelSelector {
         for i in start..end {
             let idx = self.filtered[i];
             let model = &self.all_models[idx];
-            let is_sel = i == self.selected;
+            let is_sel = i == self.navigator.selected();
 
             let prefix = if is_sel { "→ " } else { "  " };
             let current_marker = if model.is_current { " ●" } else { "" };
@@ -292,7 +285,7 @@ impl Component for ModelSelector {
             lines.push(truncate_to_width(
                 &format!(
                     "  {}",
-                    theme::dim(&format!("({}/{})", self.selected + 1, total))
+                    theme::dim(&format!("({}/{})", self.navigator.selected() + 1, total))
                 ),
                 width,
                 None,
@@ -305,25 +298,11 @@ impl Component for ModelSelector {
     fn handle_input(&mut self, key: &Key) -> bool {
         match key {
             Key::Up => {
-                if self.filtered.is_empty() {
-                    return true;
-                }
-                if self.selected == 0 {
-                    self.selected = self.filtered.len().saturating_sub(1);
-                } else {
-                    self.selected -= 1;
-                }
+                self.navigator.move_previous(self.filtered.len());
                 true
             }
             Key::Down => {
-                if self.filtered.is_empty() {
-                    return true;
-                }
-                if self.selected >= self.filtered.len().saturating_sub(1) {
-                    self.selected = 0;
-                } else {
-                    self.selected += 1;
-                }
+                self.navigator.move_next(self.filtered.len());
                 true
             }
             Key::Enter => {

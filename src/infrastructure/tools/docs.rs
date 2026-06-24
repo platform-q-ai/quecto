@@ -5,11 +5,10 @@
 // `read docs/quecto.md` broke whenever quecto ran outside its own checkout
 // (the path resolved relative to the agent's workspace/CWD).
 
-use std::future::Future;
-use std::pin::Pin;
-
 use crate::domain::error::DomainError;
 use crate::domain::tool::{Tool, ToolDefinition, ToolResult};
+use std::future::Future;
+use std::pin::Pin;
 
 /// The embedded capability docs, keyed by short name (no `docs/` prefix, no
 /// `.md` suffix). These are the agent-facing guides the docs-retrieval policy
@@ -56,6 +55,10 @@ fn normalize_name(raw: &str) -> String {
 /// Look up an embedded doc by (normalized) name.
 pub fn lookup_doc(name: &str) -> Option<&'static str> {
     let key = normalize_name(name);
+    lookup_embedded_doc(&key)
+}
+
+fn lookup_embedded_doc(key: &str) -> Option<&'static str> {
     EMBEDDED_DOCS
         .iter()
         .find(|(n, _)| *n == key)
@@ -89,9 +92,9 @@ impl Tool for DocsTool {
         ToolDefinition {
             name: "docs".into(),
             description: "Read quecto's own capability docs, embedded in the binary and \
-                available from any directory. Call with no name (or {}) to list the docs; \
-                pass a name to read one. Start with \"quecto\". Use this instead of reading \
-                docs/*.md from disk. Example: docs {\"name\": \"subagents\"}"
+                available from any directory. Call with no name (or {}) to list \
+                docs; pass a name to read one. Start with \"quecto\". Use this instead \
+                of reading docs/*.md from disk. Example: docs {\"name\": \"subagents\"}"
                 .into(),
             parameters_schema: r#"{"type":"object","properties":{"name":{"type":"string","description":"Doc to read, e.g. \"quecto\" or \"subagents\" (a docs/ prefix or .md suffix is accepted). Omit to list all available docs."}}}"#.into(),
         }
@@ -115,18 +118,19 @@ impl Tool for DocsTool {
                     image_blocks: vec![],
                 });
             };
-            match lookup_doc(&name) {
-                Some(body) => Ok(ToolResult {
+            let key = normalize_name(&name);
+            if let Some(body) = lookup_embedded_doc(&key) {
+                return Ok(ToolResult {
                     content: body.to_string(),
                     is_error: false,
                     image_blocks: vec![],
-                }),
-                None => Ok(ToolResult {
-                    content: format!("No embedded doc named '{name}'.\n\n{}", available_listing()),
-                    is_error: true,
-                    image_blocks: vec![],
-                }),
+                });
             }
+            Ok(ToolResult {
+                content: format!("No embedded doc named '{name}'.\n\n{}", available_listing()),
+                is_error: true,
+                image_blocks: vec![],
+            })
         })
     }
 }

@@ -203,7 +203,7 @@ fn exited_subagent_grace_is_reasonable() {
 
 #[test]
 fn highlight_plain_text_full_line() {
-    let result = super::apply_line_highlight("hello world", 0, 11);
+    let result = super::app_selection::apply_line_highlight("hello world", 0, 11);
     assert!(result.contains("\x1b[7m"), "should contain reverse-on");
     assert!(result.contains("\x1b[27m"), "should contain reverse-off");
     assert!(result.contains("hello world"));
@@ -211,7 +211,7 @@ fn highlight_plain_text_full_line() {
 
 #[test]
 fn highlight_plain_text_partial() {
-    let result = super::apply_line_highlight("hello world", 2, 7);
+    let result = super::app_selection::apply_line_highlight("hello world", 2, 7);
     // Before highlight: "he"
     // Highlighted: "llo w"
     // After highlight: "orld"
@@ -221,20 +221,20 @@ fn highlight_plain_text_partial() {
 
 #[test]
 fn highlight_noop_when_start_equals_end() {
-    let result = super::apply_line_highlight("hello", 3, 3);
+    let result = super::app_selection::apply_line_highlight("hello", 3, 3);
     assert_eq!(result, "hello");
 }
 
 #[test]
 fn highlight_noop_when_start_exceeds_end() {
-    let result = super::apply_line_highlight("hello", 5, 2);
+    let result = super::app_selection::apply_line_highlight("hello", 5, 2);
     assert_eq!(result, "hello");
 }
 
 #[test]
 fn highlight_with_ansi_escapes() {
     let line = "\x1b[32mgreen\x1b[0m text";
-    let result = super::apply_line_highlight(line, 0, 5);
+    let result = super::app_selection::apply_line_highlight(line, 0, 5);
     // Should highlight "green" (5 visible chars)
     assert!(result.contains("\x1b[7m"));
     assert!(result.contains("\x1b[27m"));
@@ -244,7 +244,7 @@ fn highlight_with_ansi_escapes() {
 
 #[test]
 fn highlight_closes_at_line_end() {
-    let result = super::apply_line_highlight("abc", 1, 100);
+    let result = super::app_selection::apply_line_highlight("abc", 1, 100);
     // Start at col 1, end beyond line length
     assert!(result.contains("\x1b[7m"));
     assert!(result.contains("\x1b[27m"), "must close highlight at end");
@@ -252,31 +252,31 @@ fn highlight_closes_at_line_end() {
 
 #[test]
 fn selection_range_normalizes_forward() {
-    let sel = super::TextSelection {
-        start: super::SelectionAnchor { col: 5, row: 2 },
-        end: super::SelectionAnchor { col: 10, row: 4 },
+    let sel = super::app_selection::TextSelection {
+        start: super::app_selection::SelectionAnchor { col: 5, row: 2 },
+        end: super::app_selection::SelectionAnchor { col: 10, row: 4 },
     };
-    let (sr, sc, er, ec) = super::selection_range(&sel);
+    let (sr, sc, er, ec) = super::app_selection::selection_range(&sel);
     assert_eq!((sr, sc, er, ec), (2, 5, 4, 10));
 }
 
 #[test]
 fn selection_range_normalizes_backward() {
-    let sel = super::TextSelection {
-        start: super::SelectionAnchor { col: 10, row: 4 },
-        end: super::SelectionAnchor { col: 5, row: 2 },
+    let sel = super::app_selection::TextSelection {
+        start: super::app_selection::SelectionAnchor { col: 10, row: 4 },
+        end: super::app_selection::SelectionAnchor { col: 5, row: 2 },
     };
-    let (sr, sc, er, ec) = super::selection_range(&sel);
+    let (sr, sc, er, ec) = super::app_selection::selection_range(&sel);
     assert_eq!((sr, sc, er, ec), (2, 5, 4, 10));
 }
 
 #[test]
 fn selection_range_same_row_normalizes() {
-    let sel = super::TextSelection {
-        start: super::SelectionAnchor { col: 10, row: 3 },
-        end: super::SelectionAnchor { col: 2, row: 3 },
+    let sel = super::app_selection::TextSelection {
+        start: super::app_selection::SelectionAnchor { col: 10, row: 3 },
+        end: super::app_selection::SelectionAnchor { col: 2, row: 3 },
     };
-    let (sr, sc, er, ec) = super::selection_range(&sel);
+    let (sr, sc, er, ec) = super::app_selection::selection_range(&sel);
     assert_eq!((sr, sc, er, ec), (3, 2, 3, 10));
 }
 

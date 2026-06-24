@@ -1,4 +1,6 @@
+use super::app_selection::{SelectionAnchor, apply_selection_highlight};
 use super::*;
+use crate::application::session_payloads::{self, ResumedChatMessage};
 use crate::interface::select_overlay::{
     build_resume_selector_overlay, build_rewind_selector_overlay,
 };
@@ -41,7 +43,7 @@ pub(super) fn format_utc_minutes(secs: u64) -> String {
     format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
 }
 
-fn civil_from_days(days: i64) -> (i64, u32, u32) {
+pub(super) fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
     let doe = z - era * 146_097;
@@ -151,6 +153,29 @@ impl App {
         });
     }
 
+    /// Request session stats for a quiet footer-only refresh (no chat Status
+    /// line). Routed by the "stats-footer" id in the response handler.
+    pub(super) fn send_session_stats_footer(&mut self) {
+        self.send_command(Command::GetSessionStats {
+            id: Some("stats-footer".into()),
+        });
+    }
+
+    /// Update the footer's context/cost indicators from a session-stats
+    /// payload without emitting a chat entry.
+    pub(super) fn update_footer_stats(&mut self, data: &serde_json::Value) {
+        let stats = session_payloads::parse_session_stats(data);
+        if let Some((used, window)) = stats.context_usage {
+            self.footer.update_context_usage(used, window);
+            self.context_stats_requested = true;
+        }
+        self.footer.set_cost(if stats.cost > 0.0 {
+            Some(stats.cost)
+        } else {
+            None
+        });
+    }
+
     pub(super) fn send_list_sessions(&mut self) {
         self.send_command(Command::ListSessions {
             id: Some("resume-list".into()),
@@ -169,39 +194,25 @@ impl App {
     }
 
     pub(super) fn show_session_stats(&mut self, data: &serde_json::Value) {
-        let key = data
-            .get("sessionKey")
-            .and_then(|v| v.as_str())
-            .unwrap_or("?");
-        let msgs = data
-            .get("totalMessages")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        let input = data
-            .get("tokens")
-            .and_then(|t| t.get("input"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        let output = data
-            .get("tokens")
-            .and_then(|t| t.get("output"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        let cost = data.get("cost").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let context_tokens = data.get("contextTokens").and_then(|v| v.as_u64());
-        let max_context_tokens = data
-            .get("maxContextTokens")
-            .and_then(|v| v.as_u64())
-            .map(|v| v as usize);
-        if let (Some(used), Some(window)) = (context_tokens, max_context_tokens) {
+        let stats = session_payloads::parse_session_stats(data);
+        if let Some((used, window)) = stats.context_usage {
             self.footer.update_context_usage(used, window);
             self.context_stats_requested = true;
         }
+        self.footer.set_cost(if stats.cost > 0.0 {
+            Some(stats.cost)
+        } else {
+            None
+        });
 
         self.chat.add_entry(ChatEntry::Status {
             text: format!(
                 "Session: {} | Messages: {} | Tokens: ↑{} ↓{} | Cost: ${:.4}",
-                key, msgs, input, output, cost
+                stats.session_key,
+                stats.total_messages,
+                stats.input_tokens,
+                stats.output_tokens,
+                stats.cost
             ),
         });
     }
@@ -221,48 +232,32 @@ impl App {
     // ── Resume selector ─────────────────────────────────────────────
 
     pub(super) fn open_resume_selector(&mut self, data: &serde_json::Value) {
-        let sessions = data
-            .get("sessions")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
+        let sessions = session_payloads::parse_resume_sessions(data);
         if sessions.is_empty() {
+            let text = if session_payloads::has_session_entries(data) {
+                "No resumable CLI sessions found."
+            } else {
+                "No persisted sessions found."
+            };
             self.chat.add_entry(ChatEntry::Status {
-                text: "No persisted sessions found.".to_string(),
+                text: text.to_string(),
             });
             return;
         }
         let items = sessions
             .into_iter()
-            .filter_map(|session| {
-                let title = session
-                    .get("title")
-                    .or_else(|| session.get("name"))
-                    .and_then(|v| v.as_str())?;
-                let key = session.get("key").and_then(|v| v.as_str()).unwrap_or(title);
-                let count = session
-                    .get("messageCount")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
+            .map(|session| {
                 let when = session
-                    .get("updatedUnixSecs")
-                    .or_else(|| session.get("updatedAt"))
-                    .and_then(|v| v.as_u64())
+                    .updated_unix_secs
                     .map(format_unix_minutes)
                     .unwrap_or_else(|| "unknown time".to_string());
-                Some(SelectItem {
-                    value: key.to_string(),
-                    label: title.to_string(),
-                    description: Some(format!("{when}   ({count} msgs)")),
-                })
+                SelectItem {
+                    value: session.key,
+                    label: session.title,
+                    description: Some(format!("{when}   ({} msgs)", session.message_count)),
+                }
             })
             .collect::<Vec<_>>();
-        if items.is_empty() {
-            self.chat.add_entry(ChatEntry::Status {
-                text: "No resumable CLI sessions found.".to_string(),
-            });
-            return;
-        }
         self.resume_selector = Some(SelectList::new(items, 10));
     }
 
@@ -283,26 +278,25 @@ impl App {
     }
 
     pub(super) fn replace_chat_with_messages(&mut self, data: &serde_json::Value) {
-        let messages = data
-            .get("messages")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
+        let messages = match session_payloads::parse_resumed_messages(data) {
+            Ok(messages) => messages,
+            Err(error) => {
+                let text = format!("Invalid resume payload: {}", error.description());
+                self.chat
+                    .add_entry(ChatEntry::Status { text: text.clone() });
+                self.notify(&text, NotifyLevel::Error);
+                return;
+            }
+        };
+
         self.chat.clear();
         for message in messages {
-            let role = message.get("role").and_then(|v| v.as_str()).unwrap_or("");
-            let content = message
-                .get("content")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            match role {
-                "user" => self.chat.add_entry(ChatEntry::User { text: content }),
-                "assistant" if !content.is_empty() => self.chat.add_entry(ChatEntry::Assistant {
-                    text: content,
+            match message {
+                ResumedChatMessage::User(text) => self.chat.add_entry(ChatEntry::User { text }),
+                ResumedChatMessage::Assistant(text) => self.chat.add_entry(ChatEntry::Assistant {
+                    text,
                     streaming: false,
                 }),
-                _ => {}
             }
         }
         self.chat.add_entry(ChatEntry::Status {
@@ -341,7 +335,7 @@ impl App {
     }
 
     /// Build the below-chat section (sub-agent panel → workflow bar → spinner →
-    /// autocomplete → editor → widgets-below → notifications → footer). This is
+    /// autocomplete → editor → notifications → footer). This is
     /// the region whose height changes reflow the chat, so the headless harness
     /// captures it directly to assert on layout stability.
     pub(super) fn compose_bottom(&mut self, width: usize) -> Vec<String> {
@@ -387,8 +381,6 @@ impl App {
         bottom.extend(self.files_autocomplete.render(width));
         // Editor.
         bottom.extend(self.editor.render(width));
-        // Widgets below editor.
-        bottom.extend(self.widgets_below.render(width));
         // Notifications.
         bottom.extend(self.notifications.render(width));
         // Footer.
@@ -455,11 +447,6 @@ impl App {
         }
         while lines.len() < height {
             lines.push(String::new());
-        }
-
-        // Composite overlays on top.
-        if self.overlay_stack.has_visible() {
-            self.overlay_stack.composite(&mut lines, width, height);
         }
 
         // Composite resume selector overlay if active.
@@ -547,8 +534,6 @@ impl App {
     /// Compose the current frame and write it to the terminal.
     pub(super) fn render(&mut self) {
         let mut lines = self.compose_frame();
-        let height = self.terminal.height;
-
         // Diagnostic: dump the WHOLE frame (chat + below-chat) so a transient
         // line (too fast to see) can be replayed from the log.
         if let Some(path) = self.render_log_path.as_deref() {
@@ -559,33 +544,26 @@ impl App {
         // the extraction buffer (`last_rendered_lines`) stays clean.
         apply_selection_highlight(&self.selection, &mut lines);
 
-        // Write to terminal.
-        let mut buf = String::new();
-        buf.push_str("\x1b[?2026h");
-        buf.push_str("\x1b[H");
-
-        for (i, line) in lines.iter().enumerate() {
-            if i > 0 {
-                buf.push_str("\r\n");
-            }
-            buf.push_str("\x1b[2K");
-            buf.push_str(line);
+        // Write only changed terminal lines; the renderer tracks the previous
+        // frame and performs a full draw on first use or after invalidation.
+        if let Err(e) = self.renderer.render(&lines, self.terminal.width) {
+            self.handle_render_failure(&e);
         }
+    }
 
-        let rendered = lines.len();
-        if rendered < height {
-            for _ in rendered..height {
-                buf.push_str("\r\n\x1b[2K");
-            }
-        }
-
-        buf.push_str("\x1b[?2026l");
-
-        let _ = std::io::stdout().write_all(buf.as_bytes());
-        let _ = std::io::stdout().flush();
+    pub(super) fn handle_render_failure(&mut self, error: &std::io::Error) {
+        // A failed write/flush can leave the terminal cursor and synchronized
+        // output state unknown. Do not trust the diff cache after that; force
+        // the next successful frame to redraw from a known origin.
+        self.renderer.invalidate();
+        self.notify(
+            &format!("Failed to render frame: {error}"),
+            NotifyLevel::Error,
+        );
     }
 
     pub(super) fn render_full(&mut self) {
+        self.renderer.invalidate();
         self.terminal.clear_screen();
         self.render();
     }
@@ -612,9 +590,28 @@ impl App {
 
     pub(super) fn send_command(&mut self, cmd: Command) {
         let mut sender = self.client.clone_sender();
+        let failure_tx = self.command_send_failure_tx.clone();
+        let command_kind = cmd.kind();
         tokio::spawn(async move {
-            let _ = sender.send(&cmd).await;
+            if let Err(e) = sender.send(&cmd).await {
+                let _ = failure_tx
+                    .send(CommandSendFailure {
+                        command_kind,
+                        error: e.to_string(),
+                    })
+                    .await;
+            }
         });
+    }
+
+    pub(super) fn handle_command_send_failure(&mut self, failure: CommandSendFailure) {
+        self.notify(
+            &format!(
+                "Failed to send {} command: {}",
+                failure.command_kind, failure.error
+            ),
+            NotifyLevel::Error,
+        );
     }
 
     // ── Mouse text selection (#528) ───────────────────────────────────
@@ -671,7 +668,7 @@ impl App {
 
 /// Animated "N subagent(s) working…" line shown in the reserved spinner slot
 /// while the parent is idle but children are still active.
-fn subagent_activity_line(active: usize, frame: usize) -> String {
+pub(super) fn subagent_activity_line(active: usize, frame: usize) -> String {
     use crate::interface::theme::SPINNER_FRAMES;
     let spin = theme::spinner(SPINNER_FRAMES[frame % SPINNER_FRAMES.len()]);
     let noun = if active == 1 { "subagent" } else { "subagents" };

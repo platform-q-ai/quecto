@@ -199,3 +199,61 @@ fn allowed_socket_roots_includes_tmp() {
     let roots = canonical_allowed_socket_roots();
     assert!(!roots.is_empty());
 }
+
+#[test]
+fn parse_system_without_value_is_ignored() {
+    let flags = parse_flags(&args("--system"));
+    assert!(flags.system_prompt.is_none());
+}
+
+#[test]
+fn parse_no_workflow_before_workflow_allows_reenable() {
+    let flags = parse_flags(&args("--workflow-guards --no-workflow --workflow"));
+    assert!(flags.workflow);
+    assert!(!flags.workflow_guards);
+    assert!(!flags.workflow_disabled);
+}
+
+#[test]
+fn redact_named_secret_handles_single_quotes_and_json_stop() {
+    let out = redact_named_secret_values("refresh_token: 'secret-value' other=ok");
+    assert!(out.contains("'[REDACTED]'"), "{out}");
+    assert!(!out.contains("secret-value"));
+
+    let out = redact_named_secret_values("{\"id_token\":abc123}");
+    assert!(out.contains("[REDACTED]"), "{out}");
+    assert!(!out.contains("abc123"));
+}
+
+#[test]
+fn redact_value_after_name_handles_repeated_names() {
+    let out = redact_named_secret_values("api_key=first access_token=second tail");
+    assert_eq!(out.matches("[REDACTED]").count(), 2, "{out}");
+    assert!(!out.contains("first"));
+    assert!(!out.contains("second"));
+    assert!(out.contains("tail"));
+}
+
+#[test]
+fn allowed_socket_roots_ignores_relative_env_values() {
+    let old_tmp = std::env::var_os("TMPDIR");
+    let old_xdg = std::env::var_os("XDG_RUNTIME_DIR");
+    // SAFETY: This unit test updates process environment synchronously and restores it before returning.
+    unsafe {
+        std::env::set_var("TMPDIR", "relative-tmp");
+        std::env::set_var("XDG_RUNTIME_DIR", "relative-xdg");
+    }
+    let roots = canonical_allowed_socket_roots();
+    assert!(roots.iter().all(|p| p.is_absolute()));
+    // SAFETY: Restore the environment values changed above before returning.
+    unsafe {
+        match old_tmp {
+            Some(v) => std::env::set_var("TMPDIR", v),
+            None => std::env::remove_var("TMPDIR"),
+        }
+        match old_xdg {
+            Some(v) => std::env::set_var("XDG_RUNTIME_DIR", v),
+            None => std::env::remove_var("XDG_RUNTIME_DIR"),
+        }
+    }
+}

@@ -75,10 +75,27 @@ cargo clippy --workspace --all-targets --features test-support -- -D warnings \
 
 COV_THRESHOLD="${QUECTO_COV_THRESHOLD:-87}"
 
-step "5/10" "Parallel test wave: unit + architecture + contracts + non-real BDD shards"
+step "5/10" "Parallel test wave: unit + every integration target + non-real BDD shards"
+
+# Enumerate EVERY top-level integration test target dynamically rather than a
+# hand-maintained allowlist. A static `--test architecture --test contracts ...`
+# list silently drops any newly-added target (this is exactly how a broken
+# tests/workflow_docs.rs reached master: it was never named, so the gate never
+# ran it). Each `tests/*.rs` file is its own test binary; `tests/bdd/` is a
+# directory (the sharded harness run separately below) and `tests/common/`,
+# `tests/contracts/`, `tests/features/` are module dirs — none are top-level
+# `.rs` files, so none are double-run here.
+mapfile -t TEST_TARGETS < <(find "$ROOT/tests" -maxdepth 1 -name '*.rs' -printf '%f\n' | sed 's/\.rs$//' | sort)
+if [[ "${#TEST_TARGETS[@]}" -eq 0 ]]; then
+    echo -e "${RED}FAIL${NC}: no top-level integration test targets found under tests/ — gate enumeration is broken"
+    exit 1
+fi
+TEST_TARGET_ARGS=()
+for t in "${TEST_TARGETS[@]}"; do TEST_TARGET_ARGS+=(--test "$t"); done
+echo "  Integration targets: ${TEST_TARGETS[*]}"
 
 (
-    cargo test --no-fail-fast --lib --test architecture --test contracts --test repo_docs 2>&1 | "$ROOT/scripts/test-filter.sh"
+    cargo test --no-fail-fast --lib "${TEST_TARGET_ARGS[@]}" 2>&1 | "$ROOT/scripts/test-filter.sh"
 ) &
 PID_CORE_GUARDS=$!
 
@@ -92,7 +109,7 @@ PID_BDD=$!
 
 FAIL=0
 if ! wait "$PID_CORE_GUARDS"; then
-    echo -e "${RED}FAIL${NC}: cargo test --lib --test architecture --test contracts --test repo_docs"
+    echo -e "${RED}FAIL${NC}: cargo test --lib ${TEST_TARGET_ARGS[*]}"
     FAIL=1
 fi
 if ! wait "$PID_BDD"; then

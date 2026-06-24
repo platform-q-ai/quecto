@@ -12,18 +12,24 @@ Feature: TUI context size and usage percentage display
 
   Scenario: Usage updates after each turn
     Given the agent has processed multiple turns
-    When each TurnEnd event includes current context usage
-    Then the footer should reflect the latest context usage percentage, not cumulative input
+    When each TurnEnd event includes current active conversation size
+    Then the footer should reflect the latest active conversation size, not cumulative provider input
 
-  Scenario: Agent result records provider prompt tokens as current context size
-    Given a completed non-streaming agent turn has provider prompt-token usage
-    When the agent finalizes the response
-    Then the result context tokens should equal the provider prompt tokens
+  Scenario: Provider token usage does not drive the conversation-size gauge
+    Given a completed agent turn reports provider input usage above the configured context window
+    And the active pruned conversation estimate remains below the configured context window
+    When the agent emits TurnEnd and session stats for the TUI
+    Then contextTokens should equal the active pruned conversation estimate
+    And maxContextTokens should equal the configured context window
+    And the provider token usage should remain available only in usage and cost totals
 
-  Scenario: Streaming agent result records provider prompt tokens as current context size
-    Given a completed streaming agent turn has provider prompt-token usage
-    When the agent finalizes the streamed response
-    Then the result context tokens should equal the provider prompt tokens
+  Scenario: Streaming provider token usage does not drive the conversation-size gauge
+    Given a completed streamed agent turn reports provider input usage above the configured context window
+    And the active pruned conversation estimate remains below the configured context window
+    When the agent emits TurnEnd and session stats for the TUI
+    Then contextTokens should equal the active pruned conversation estimate
+    And maxContextTokens should equal the configured context window
+    And the provider token usage should remain available only in usage and cost totals
 
   Scenario: Session stats accumulate provider usage and cost
     Given multiple LLM calls return input, output, cache, and cost usage

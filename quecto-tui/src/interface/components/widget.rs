@@ -80,63 +80,6 @@ impl Component for WidgetContainer {
     }
 }
 
-/// A replaceable component slot (for header, footer, etc.).
-///
-/// Holds either a default component or a custom replacement.
-pub struct ReplaceableSlot {
-    default_component: Box<dyn Component>,
-    custom_component: Option<Box<dyn Component>>,
-}
-
-impl ReplaceableSlot {
-    pub fn new(default_component: Box<dyn Component>) -> Self {
-        Self {
-            default_component,
-            custom_component: None,
-        }
-    }
-
-    /// Set a custom component (replaces the default).
-    pub fn set_custom(&mut self, component: Box<dyn Component>) {
-        self.custom_component = Some(component);
-    }
-
-    /// Restore the default component.
-    pub fn restore_default(&mut self) {
-        self.custom_component = None;
-    }
-
-    /// Whether a custom component is active.
-    pub fn is_custom(&self) -> bool {
-        self.custom_component.is_some()
-    }
-}
-
-impl Component for ReplaceableSlot {
-    fn render(&mut self, width: usize) -> Vec<String> {
-        if let Some(custom) = &mut self.custom_component {
-            custom.render(width)
-        } else {
-            self.default_component.render(width)
-        }
-    }
-
-    fn handle_input(&mut self, key: &crate::interface::keys::Key) -> bool {
-        if let Some(custom) = &mut self.custom_component {
-            custom.handle_input(key)
-        } else {
-            self.default_component.handle_input(key)
-        }
-    }
-
-    fn invalidate(&mut self) {
-        if let Some(custom) = &mut self.custom_component {
-            custom.invalidate();
-        }
-        self.default_component.invalidate();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,32 +132,5 @@ mod tests {
         assert_eq!(wc.len(), 1);
         let lines = wc.render(40);
         assert!(lines[0].contains("new"));
-    }
-
-    #[test]
-    fn replaceable_slot_default() {
-        let mut slot = ReplaceableSlot::new(Box::new(Text::new("default")));
-        let lines = slot.render(40);
-        assert!(lines[0].contains("default"));
-        assert!(!slot.is_custom());
-    }
-
-    #[test]
-    fn replaceable_slot_custom() {
-        let mut slot = ReplaceableSlot::new(Box::new(Text::new("default")));
-        slot.set_custom(Box::new(Text::new("custom")));
-        let lines = slot.render(40);
-        assert!(lines[0].contains("custom"));
-        assert!(slot.is_custom());
-    }
-
-    #[test]
-    fn replaceable_slot_restore() {
-        let mut slot = ReplaceableSlot::new(Box::new(Text::new("default")));
-        slot.set_custom(Box::new(Text::new("custom")));
-        slot.restore_default();
-        let lines = slot.render(40);
-        assert!(lines[0].contains("default"));
-        assert!(!slot.is_custom());
     }
 }

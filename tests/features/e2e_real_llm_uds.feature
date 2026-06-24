@@ -27,6 +27,19 @@ Feature: E2E Real LLM UDS Agent
     And the agent_end messages should contain "UDS_ANTHRO_OK"
 
   @done @real-llm
+  Scenario: UDS turn_end carries context tokens for the footer gauge
+    # Regression: the TUI footer's context gauge ("?/200k") only fills in when
+    # turn_end carries numeric contextTokens + maxContextTokens. Streaming
+    # OpenAI-compatible providers (e.g. Fireworks) omit per-turn usage, so the
+    # gauge must rely on these fields, which are emitted independently.
+    When I start the real LLM UDS agent
+    And I send prompt "Reply with exactly UDS_CTX_OK"
+    And I close the UDS connection
+    Then the UDS agent exits with code 0
+    And the agent output should contain an event of type "turn_end"
+    And the turn_end event should include numeric contextTokens and maxContextTokens
+
+  @done @real-llm
   Scenario: UDS prompt emits token events during streaming
     When I start the real LLM UDS agent
     And I send prompt "Reply with exactly UDS_TOKENS_OK"

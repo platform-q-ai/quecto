@@ -8,7 +8,21 @@ fn await_tool_result(
     elapsed_ms: u64,
     workflow: Option<WorkflowSnapshot>,
 ) -> ToolResult {
-    let result = AwaitResult::new(status, reason, agent_id, elapsed_ms, workflow);
+    await_tool_result_with_error(status, reason, agent_id, elapsed_ms, workflow, None)
+}
+
+/// Serialize an [`AwaitResult`] as a (non-error) `ToolResult`, optionally
+/// carrying the actual run-level error cause so it is visible in the `await`
+/// response (#752). [`await_tool_result`] delegates here with `error: None`.
+fn await_tool_result_with_error(
+    status: &str,
+    reason: Option<&str>,
+    agent_id: String,
+    elapsed_ms: u64,
+    workflow: Option<WorkflowSnapshot>,
+    error: Option<&str>,
+) -> ToolResult {
+    let result = AwaitResult::with_error(status, reason, agent_id, elapsed_ms, workflow, error);
     ToolResult {
         content: serde_json::to_string(&result).unwrap(),
         is_error: false,
@@ -280,10 +294,12 @@ impl AgentCmdTool {
                     // Agent is actively working — reset idle countdown.
                     idle_since = None;
                 }
-                Some((SubagentStatus::Error, Some(_))) => {
+                Some((SubagentStatus::Error, Some(run_error))) => {
                     // The prompt run failed (for example a provider/model error).
                     // Return a structured error after the idle window so parents
-                    // can triage instead of waiting for the process to exit.
+                    // can triage instead of waiting for the process to exit. The
+                    // actual cause is surfaced so parents can triage without
+                    // reading the child's logs (#752).
                     let now = tokio::time::Instant::now();
                     if idle_since.is_none() {
                         idle_since = Some(now);
@@ -294,12 +310,13 @@ impl AgentCmdTool {
                             || elapsed_idle >= Duration::from_secs(idle_timeout_secs)
                         {
                             let workflow = self.fetch_workflow_snapshot(&agent_id).await;
-                            return Ok(await_tool_result(
+                            return Ok(await_tool_result_with_error(
                                 "error",
                                 Some("agent_error"),
                                 agent_id.clone(),
                                 elapsed_ms(start),
                                 workflow,
+                                Some(&run_error),
                             ));
                         }
                     }

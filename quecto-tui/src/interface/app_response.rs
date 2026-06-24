@@ -18,7 +18,13 @@ impl App {
             }
             "get_session_stats" if success => {
                 if let Some(data) = data {
-                    self.show_session_stats(&data);
+                    // A quiet footer refresh (id "stats-footer") updates the
+                    // cost/context indicators without adding a chat Status line.
+                    if id.as_deref() == Some("stats-footer") {
+                        self.update_footer_stats(&data);
+                    } else {
+                        self.show_session_stats(&data);
+                    }
                 }
             }
             "list_models" if success => self.handle_list_models(data),

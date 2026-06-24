@@ -12,6 +12,7 @@ struct CliFlags {
     no_sandbox: bool,
     workflow: bool,
     workflow_guards: bool,
+    workflow_disabled: bool,
     config_path: Option<PathBuf>,
     system_prompt: Option<String>,
 }
@@ -37,6 +38,7 @@ fn parse_flags(args: &[String]) -> CliFlags {
         no_sandbox: false,
         workflow: false,
         workflow_guards: false,
+        workflow_disabled: false,
         config_path: None,
         system_prompt: None,
     };
@@ -61,11 +63,13 @@ fn parse_flags(args: &[String]) -> CliFlags {
             }
             "--workflow" => {
                 flags.workflow = true;
+                flags.workflow_disabled = false;
                 i += 1;
             }
             "--no-workflow" => {
                 flags.workflow = false;
                 flags.workflow_guards = false;
+                flags.workflow_disabled = true;
                 i += 1;
             }
             "--workflow-guards" => {
@@ -168,21 +172,17 @@ async fn run_tui(flags: CliFlags) -> i32 {
     exit_code
 }
 
-/// Spawn a quecto agent in UDS mode and return the socket path and child handle.
-///
-/// The caller MUST store the child handle and call `child.kill()` + `child.wait()`
-/// on TUI exit. Tokio's `Child` does NOT kill the process on drop — dropping it
-/// creates an orphan. See the security review for PR #442.
-async fn spawn_agent(flags: &CliFlags) -> Result<(PathBuf, tokio::process::Child), String> {
-    use tokio::io::AsyncBufReadExt;
-    use tokio::process::Command;
-
+/// Build the `quecto agent` argv used for an owned TUI child process.
+fn build_agent_args(flags: &CliFlags) -> Vec<String> {
     let mut args = vec!["agent".to_string(), "--mode".to_string(), "uds".to_string()];
     if flags.no_sandbox {
         args.push("--no-sandbox".to_string());
     }
     if flags.workflow {
         args.push("--workflow".to_string());
+    }
+    if flags.workflow_disabled {
+        args.push("--no-workflow".to_string());
     }
     if flags.workflow_guards {
         args.push("--workflow-guards".to_string());
@@ -195,7 +195,19 @@ async fn spawn_agent(flags: &CliFlags) -> Result<(PathBuf, tokio::process::Child
         args.push("--system".to_string());
         args.push(prompt.clone());
     }
+    args
+}
 
+/// Spawn a quecto agent in UDS mode and return the socket path and child handle.
+///
+/// The caller MUST store the child handle and call `child.kill()` + `child.wait()`
+/// on TUI exit. Tokio's `Child` does NOT kill the process on drop — dropping it
+/// creates an orphan. See the security review for PR #442.
+async fn spawn_agent(flags: &CliFlags) -> Result<(PathBuf, tokio::process::Child), String> {
+    use tokio::io::AsyncBufReadExt;
+    use tokio::process::Command;
+
+    let args = build_agent_args(flags);
     let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     let mut child = Command::new("quecto")
         .args(&args_ref)
@@ -523,6 +535,16 @@ mod tests {
         let flags = parse_flags(&args("--workflow --workflow-guards --no-workflow"));
         assert!(!flags.workflow);
         assert!(!flags.workflow_guards);
+        assert!(flags.workflow_disabled);
+    }
+
+    #[test]
+    fn build_args_forward_no_workflow_to_owned_agent() {
+        let flags = parse_flags(&args("--no-workflow"));
+        let agent_args = build_agent_args(&flags);
+        assert!(agent_args.contains(&"--no-workflow".to_string()));
+        assert!(!agent_args.contains(&"--workflow".to_string()));
+        assert!(!agent_args.contains(&"--workflow-guards".to_string()));
     }
 
     #[test]

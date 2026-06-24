@@ -43,7 +43,6 @@ non_behavioral_features = [
   "tests/features/tui_table_code_cell.feature",
   "tests/features/tui_table_safety.feature",
   "tests/features/tui_terminal_restore.feature",
-  "tests/features/tui_tool_output_cr.feature",
 
   # Engineering hygiene / meta-features
   "tests/features/architecture.feature",

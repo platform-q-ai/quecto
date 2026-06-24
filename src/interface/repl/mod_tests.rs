@@ -84,7 +84,7 @@ fn test_load_session_messages_existing_session() {
 // -- build_system_prompt tests --
 
 #[test]
-fn test_build_system_prompt_no_skills_no_user_prompt() {
+fn test_build_system_prompt_no_user_prompt() {
     let tmp = tempfile::TempDir::new().unwrap();
     let config: Config = serde_json::from_str("{}").unwrap();
     let flags = ReplFlags {

@@ -1329,6 +1329,30 @@ fn then_agent_output_contains_turn_end(world: &mut QuectoWorld, expected: String
     );
 }
 
+/// Assert that at least one `turn_end` event carries a numeric `contextTokens`
+/// field and a numeric `maxContextTokens` field. The TUI footer's context gauge
+/// depends on both being present even for streaming OpenAI-compatible providers
+/// (e.g. Fireworks) whose SSE stream does not carry per-turn `usage`.
+#[then("the turn_end event should include numeric contextTokens and maxContextTokens")]
+fn then_turn_end_includes_context_tokens(world: &mut QuectoWorld) {
+    execute_uds(world);
+    let events = &world.agent_events;
+    let found = events.iter().any(|line| {
+        if let Ok(ev) = serde_json::from_str::<serde_json::Value>(line) {
+            ev["type"].as_str() == Some("turn_end")
+                && ev["message"]["contextTokens"].as_u64().is_some()
+                && ev["message"]["maxContextTokens"].as_u64().is_some()
+        } else {
+            false
+        }
+    });
+    assert!(
+        found,
+        "expected a turn_end event carrying numeric contextTokens and \
+         maxContextTokens in events:\n{events:#?}"
+    );
+}
+
 // ─── Multi-client UDS steps (#318) ────────────────────────────────────────────
 
 /// Start the UDS agent in multi-client mode (real listener, not socket_override).
@@ -2606,7 +2630,7 @@ fn given_mock_llm_workflow_select(world: &mut QuectoWorld, text: String) {
                         "type": "function",
                         "function": {
                             "name": "workflow",
-                            "arguments": "{\"action\":\"select_template\",\"template\":\"fix\"}"
+                            "arguments": "{\"action\":\"select_template\",\"template\":\"feature\"}"
                         }
                     }]
                 },
@@ -2669,7 +2693,7 @@ fn given_mock_llm_workflow_select_check(world: &mut QuectoWorld, text: String) {
                         "type": "function",
                         "function": {
                             "name": "workflow",
-                            "arguments": "{\"action\":\"select_template\",\"template\":\"fix\"}"
+                            "arguments": "{\"action\":\"select_template\",\"template\":\"feature\"}"
                         }
                     }]
                 },

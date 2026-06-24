@@ -56,6 +56,23 @@ fn given_mock_subagent_status(world: &mut QuectoWorld, agent_id: String, status:
     registry.lock().unwrap().insert(agent_id, entry);
 }
 
+#[given(expr = "the mock subagent {string} has run error {string}")]
+fn given_mock_subagent_run_error(world: &mut QuectoWorld, agent_id: String, error: String) {
+    let registry = world
+        .await_registry
+        .as_ref()
+        .expect("await_registry not set");
+    let mut entries = registry.lock().unwrap();
+    let entry = entries
+        .get_mut(&agent_id)
+        .unwrap_or_else(|| panic!("no mock subagent {agent_id}"));
+    // Set ONLY run_error (the run-level failure #752 surfaces); leave
+    // last_error unset so the scenario pins behaviour to the correct field
+    // and cannot pass off a recoverable tool error.
+    entry.run_error = Some(error);
+    entry.last_error = None;
+}
+
 #[given(expr = "the mock subagent {string} will exit with code {int} after {int}ms")]
 fn given_mock_subagent_will_exit(
     world: &mut QuectoWorld,
@@ -320,6 +337,30 @@ fn then_await_result_reason(world: &mut QuectoWorld, expected: String) {
         "expected reason '{}', got: {}",
         expected,
         await_result
+    );
+}
+
+#[then(expr = "the agent_cmd await result error should be {string}")]
+fn then_await_result_error(world: &mut QuectoWorld, expected: String) {
+    let await_result = world.await_result.as_ref().expect("no await_result");
+    assert_eq!(
+        await_result["error"].as_str(),
+        Some(expected.as_str()),
+        "expected error '{}', got: {}",
+        expected,
+        await_result
+    );
+}
+
+#[then(expr = "the agent_cmd await result summary should contain {string}")]
+fn then_await_result_summary_contains(world: &mut QuectoWorld, expected: String) {
+    let await_result = world.await_result.as_ref().expect("no await_result");
+    let summary = await_result["result"]["summary"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no result.summary, got: {await_result}"));
+    assert!(
+        summary.contains(&expected),
+        "expected summary to contain '{expected}', got: '{summary}'"
     );
 }
 

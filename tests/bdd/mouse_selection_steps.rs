@@ -1,4 +1,26 @@
 use super::*;
+use std::io::{self, Write};
+
+struct BddClipboardWriter {
+    fail_on_write: bool,
+    fail_on_flush: bool,
+}
+
+impl Write for BddClipboardWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.fail_on_write {
+            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "write failed"));
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        if self.fail_on_flush {
+            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "flush failed"));
+        }
+        Ok(())
+    }
+}
 
 // ─── Mouse selection BDD steps (#528) ────────────────────────────────────────
 //
@@ -140,5 +162,47 @@ fn then_encoded_value(world: &mut QuectoWorld, expected: String) {
         world.stderr, expected,
         "base64 mismatch: got {:?}, expected {:?}",
         world.stderr, expected
+    );
+}
+
+#[when("the OSC 52 clipboard write fails")]
+fn when_osc52_clipboard_write_fails(world: &mut QuectoWorld) {
+    let mut writer = BddClipboardWriter {
+        fail_on_write: true,
+        fail_on_flush: false,
+    };
+    world.stderr =
+        quecto_tui::interface::app::write_osc52_clipboard_sequence(&world.stdout, &mut writer)
+            .expect_err("write failure should be reported")
+            .to_string();
+}
+
+#[when("the OSC 52 clipboard flush fails")]
+fn when_osc52_clipboard_flush_fails(world: &mut QuectoWorld) {
+    let mut writer = BddClipboardWriter {
+        fail_on_write: false,
+        fail_on_flush: true,
+    };
+    world.stderr =
+        quecto_tui::interface::app::write_osc52_clipboard_sequence(&world.stdout, &mut writer)
+            .expect_err("flush failure should be reported")
+            .to_string();
+}
+
+#[then("the clipboard copy result should be an error")]
+fn then_clipboard_copy_result_should_be_error(world: &mut QuectoWorld) {
+    assert!(
+        world.stderr.contains("write failed") || world.stderr.contains("flush failed"),
+        "clipboard writer/flush failure should be returned; got {:?}",
+        world.stderr
+    );
+}
+
+#[then("clipboard failure feedback should not include the copied text")]
+fn then_clipboard_failure_feedback_should_not_include_copied_text(world: &mut QuectoWorld) {
+    assert!(
+        !world.stderr.contains(&world.stdout),
+        "clipboard failure should not include selected text; got {:?}",
+        world.stderr
     );
 }

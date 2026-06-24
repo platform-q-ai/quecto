@@ -14,6 +14,8 @@ pub struct Footer {
     /// Tokens currently occupying the context window (last turn's input count).
     /// `None` until the first usage report arrives.
     context_used: Option<u64>,
+    /// Cumulative session cost in USD. `None` until the first stats report.
+    session_cost: Option<f64>,
     is_streaming: bool,
     /// Cached working directory (read once at construction).
     pwd: String,
@@ -42,6 +44,7 @@ impl Footer {
             context_percent: None,
             context_window: 0,
             context_used: None,
+            session_cost: None,
             is_streaming: false,
             pwd,
         }
@@ -85,6 +88,11 @@ impl Footer {
     pub fn set_streaming(&mut self, streaming: bool) {
         self.is_streaming = streaming;
     }
+
+    /// Record cumulative session cost (USD). `None` hides the indicator.
+    pub fn set_cost(&mut self, cost: Option<f64>) {
+        self.session_cost = cost;
+    }
 }
 
 impl Component for Footer {
@@ -115,7 +123,12 @@ impl Component for Footer {
             (_, None) => format!("?/{}", window),
         };
 
-        let left = context_str;
+        let left = match self.session_cost {
+            // Append the cumulative session cost after the context %, e.g.
+            // "123k/200k (61.5%) · $0.0421".
+            Some(cost) if cost > 0.0 => format!("{} · ${:.4}", context_str, cost),
+            _ => context_str,
+        };
         let right = &self.model;
         let left_width = visible_width(&left);
         let right_width = visible_width(right);
@@ -239,6 +252,38 @@ mod tests {
         assert_eq!(format_tokens(10000), "10k");
         assert_eq!(format_tokens(999_999), "999k");
         assert_eq!(format_tokens(1_000_000), "1.0M");
+    }
+
+    #[test]
+    fn footer_shows_cost_after_context() {
+        let mut f = Footer::new();
+        f.update_context_usage(120_000, 200_000);
+        f.set_cost(Some(0.0421));
+        let lines = f.render(120);
+        let joined = lines.join("\n");
+        assert!(joined.contains("120k/200k"), "context first: {joined}");
+        assert!(joined.contains("$0.0421"), "cost shown: {joined}");
+        // Cost must come after the context usage in the rendered line.
+        let ctx_idx = joined.find("120k/200k").unwrap();
+        let cost_idx = joined.find("$0.0421").unwrap();
+        assert!(cost_idx > ctx_idx, "cost should follow context: {joined}");
+    }
+
+    #[test]
+    fn footer_hides_zero_cost() {
+        let mut f = Footer::new();
+        f.update_context_usage(120_000, 200_000);
+        f.set_cost(Some(0.0));
+        let joined = f.render(120).join("\n");
+        assert!(!joined.contains('$'), "zero cost hidden: {joined}");
+    }
+
+    #[test]
+    fn footer_hides_cost_when_none() {
+        let mut f = Footer::new();
+        f.update_context_usage(120_000, 200_000);
+        let joined = f.render(120).join("\n");
+        assert!(!joined.contains('$'), "no cost by default: {joined}");
     }
 
     #[test]

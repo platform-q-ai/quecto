@@ -1,7 +1,7 @@
 //! Shared utility functions used by CLI and REPL modules.
 
-use std::collections::HashMap;
 use crate::infrastructure::auth::credential_store::Credential;
+use std::collections::HashMap;
 
 /// Generate a fresh, collision-resistant user-chat session key.
 ///

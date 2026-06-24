@@ -217,7 +217,7 @@ impl TuiHarness {
 
 /// Lines present (normalized) in exactly one frame and absent from both
 /// neighbours — a line that flashes in and out.
-fn transient_in(frames: &[Vec<String>]) -> Vec<(usize, String)> {
+pub(super) fn transient_in(frames: &[Vec<String>]) -> Vec<(usize, String)> {
     let mut out = Vec::new();
     if frames.len() < 3 {
         return out;

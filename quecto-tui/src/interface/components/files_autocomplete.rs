@@ -3,16 +3,15 @@
 //!
 //! Mirrors the slash-command [`Autocomplete`](super::autocomplete::Autocomplete)
 //! (same navigation, selection, and render style) but triggers on an `@` at the
-//! cursor and sources candidates from the workspace file list — loaded lazily on
-//! first activation via `git ls-files` (tracked + untracked-not-ignored),
-//! falling back to a bounded filesystem walk when git is unavailable.
+//! cursor and sources candidates from a workspace file list supplied by the app
+//! event loop. Enumeration is intentionally not performed here: the UI component
+//! only requests a load and renders a pending/loaded state.
 
-use std::path::Path;
 use std::time::{Duration, Instant};
 
-use crate::infrastructure::workspace_files::list_workspace_files;
 use crate::interface::component::Component;
 use crate::interface::components::autocomplete::{AutocompleteResult, Suggestion};
+use crate::interface::components::list_navigator::ListNavigator;
 use crate::interface::fuzzy::fuzzy_filter;
 use crate::interface::keys::Key;
 use crate::interface::theme;
@@ -25,14 +24,18 @@ const CACHE_TTL: Duration = Duration::from_secs(30);
 /// `@files` autocomplete dropdown.
 #[derive(Debug)]
 pub struct FilesAutocomplete {
-    /// Workspace file paths (relative), loaded lazily on first activation.
+    /// Workspace file paths (relative), supplied asynchronously by the app.
     files: Vec<String>,
     /// Files were injected (tests) and must never be reloaded from disk.
     injected: bool,
     /// When the list was last loaded; `None` until the first load.
     loaded_at: Option<Instant>,
+    /// A background load has been requested and not yet completed.
+    loading: bool,
+    /// Latched request bit consumed by the app event loop.
+    load_requested: bool,
     suggestions: Vec<Suggestion>,
-    selected: usize,
+    navigator: ListNavigator,
     max_visible: usize,
     active: bool,
     result: AutocompleteResult,
@@ -43,15 +46,17 @@ pub struct FilesAutocomplete {
 }
 
 impl FilesAutocomplete {
-    /// Production constructor — the file list is loaded lazily from the cwd on
-    /// the first `@` activation (never blocks construction or plain typing).
+    /// Production constructor — the file list is requested lazily on the first
+    /// `@` activation (never blocks construction, plain typing, or update).
     pub fn new(max_visible: usize) -> Self {
         Self {
             files: Vec::new(),
             injected: false,
             loaded_at: None,
+            loading: false,
+            load_requested: false,
             suggestions: Vec::new(),
-            selected: 0,
+            navigator: ListNavigator::new(),
             max_visible,
             active: false,
             result: AutocompleteResult::Pending,
@@ -65,6 +70,7 @@ impl FilesAutocomplete {
         let mut s = Self::new(max_visible);
         s.files = files;
         s.injected = true;
+        s.loaded_at = Some(Instant::now());
         s
     }
 
@@ -82,7 +88,12 @@ impl FilesAutocomplete {
             return;
         };
         self.token_start = Some(start);
-        self.ensure_loaded();
+        self.request_load_if_needed();
+
+        if self.loading && self.files.is_empty() {
+            self.set_suggestions(vec![loading_suggestion()]);
+            return;
+        }
 
         let new: Vec<Suggestion> = fuzzy_filter(&self.files, prefix, |f| f.as_str())
             .into_iter()
@@ -97,28 +108,51 @@ impl FilesAutocomplete {
         self.set_suggestions(new);
     }
 
-    /// Load the workspace file list from the cwd on first use, and reload it
-    /// when the cache has gone stale (so files created mid-session appear).
-    /// Injected (test) lists are never reloaded.
-    fn ensure_loaded(&mut self) {
+    /// Apply files loaded by the app event loop's background worker.
+    pub fn apply_loaded_files(&mut self, files: Vec<String>) {
+        self.files = files;
+        self.loaded_at = Some(Instant::now());
+        self.loading = false;
+        self.load_requested = false;
+        // Force the next update to recompute the currently visible token with
+        // the newly supplied files, even if the editor text did not change.
+        self.last_key.clear();
+    }
+
+    /// Test helper: mark the cache stale without sleeping.
+    pub fn mark_loaded_at_for_test(&mut self, loaded_at: Instant) {
+        self.loaded_at = Some(loaded_at);
+        self.injected = false;
+    }
+
+    /// Consume a pending background-load request.
+    pub fn take_load_request(&mut self) -> bool {
+        std::mem::take(&mut self.load_requested)
+    }
+
+    /// Whether a background load is currently pending.
+    pub fn is_loading(&self) -> bool {
+        self.loading
+    }
+
+    /// Request an async file-list load when stale. Injected test lists never
+    /// reload. This method deliberately does not enumerate files.
+    fn request_load_if_needed(&mut self) {
         let age = self.loaded_at.map(|t| t.elapsed());
-        if !should_reload(self.injected, age, CACHE_TTL) {
+        if !should_reload(self.injected, age, CACHE_TTL) || self.loading {
             return;
         }
-        let cwd = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
-        self.files = list_workspace_files(&cwd);
-        self.loaded_at = Some(Instant::now());
+        self.loading = true;
+        self.load_requested = true;
     }
 
     fn set_suggestions(&mut self, new: Vec<Suggestion>) {
         if !suggestions_match(&self.suggestions, &new) {
-            self.selected = 0;
+            self.navigator.reset();
         }
         self.suggestions = new;
         self.active = !self.suggestions.is_empty();
-        if self.selected >= self.suggestions.len() && !self.suggestions.is_empty() {
-            self.selected = self.suggestions.len() - 1;
-        }
+        self.navigator.clamp(self.suggestions.len());
     }
 
     fn deactivate(&mut self) {
@@ -146,6 +180,14 @@ impl FilesAutocomplete {
     /// Take the result of the last interaction.
     pub fn take_result(&mut self) -> AutocompleteResult {
         std::mem::replace(&mut self.result, AutocompleteResult::Pending)
+    }
+}
+
+fn loading_suggestion() -> Suggestion {
+    Suggestion {
+        value: String::new(),
+        label: "loading files…".to_string(),
+        description: String::new(),
     }
 }
 
@@ -197,19 +239,17 @@ impl Component for FilesAutocomplete {
 
         let mut lines = Vec::new();
         let total = self.suggestions.len();
-        let visible = total.min(self.max_visible);
-        let start = if self.selected >= visible {
-            (self.selected + 1).saturating_sub(visible)
-        } else {
-            0
-        };
-        let end = (start + visible).min(total);
+        let range = self.navigator.visible_range(total, self.max_visible);
+        let start = range.start;
+        let end = range.end;
 
         for i in start..end {
             let s = &self.suggestions[i];
-            let is_sel = i == self.selected;
+            let is_sel = i == self.navigator.selected();
             let prefix = if is_sel { "→ " } else { "  " };
-            let name = if is_sel {
+            let name = if self.loading && self.files.is_empty() {
+                theme::dim(&s.label)
+            } else if is_sel {
                 theme::accent(&format!("@{}", s.label))
             } else {
                 format!("@{}", s.label)
@@ -218,7 +258,11 @@ impl Component for FilesAutocomplete {
         }
 
         if start > 0 || end < total {
-            lines.push(theme::dim(&format!("  ({}/{})", self.selected + 1, total)));
+            lines.push(theme::dim(&format!(
+                "  ({}/{})",
+                self.navigator.selected() + 1,
+                total
+            )));
         }
 
         lines
@@ -230,25 +274,19 @@ impl Component for FilesAutocomplete {
         }
         match key {
             Key::Up => {
-                if self.selected == 0 {
-                    self.selected = self.suggestions.len().saturating_sub(1);
-                } else {
-                    self.selected -= 1;
-                }
+                self.navigator.move_previous(self.suggestions.len());
                 true
             }
             Key::Down => {
-                if self.selected >= self.suggestions.len().saturating_sub(1) {
-                    self.selected = 0;
-                } else {
-                    self.selected += 1;
-                }
+                self.navigator.move_next(self.suggestions.len());
                 true
             }
             Key::Tab | Key::Enter => {
-                if let Some(s) = self.suggestions.get(self.selected) {
-                    self.result = AutocompleteResult::Selected(s.value.clone());
-                    self.active = false;
+                if !self.loading || !self.files.is_empty() {
+                    if let Some(s) = self.suggestions.get(self.navigator.selected()) {
+                        self.result = AutocompleteResult::Selected(s.value.clone());
+                        self.active = false;
+                    }
                 }
                 true
             }
@@ -287,6 +325,40 @@ mod tests {
         assert!(f.is_active());
         assert_eq!(f.suggestions.len(), 4, "@ alone lists all files");
         assert_eq!(f.token_start(), Some(0));
+    }
+
+    #[test]
+    fn first_activation_requests_load_and_shows_loading_without_enumerating() {
+        let mut f = FilesAutocomplete::new(5);
+        f.update("@", 1);
+        assert!(f.is_active());
+        assert!(f.is_loading());
+        assert!(f.take_load_request());
+        assert_eq!(f.suggestions.len(), 1);
+        assert_eq!(f.suggestions[0].label, "loading files…");
+    }
+
+    #[test]
+    fn loaded_files_replace_loading_state_on_next_update() {
+        let mut f = FilesAutocomplete::new(5);
+        f.update("@main", 5);
+        assert!(f.take_load_request());
+        f.apply_loaded_files(vec!["src/main.rs".to_string(), "src/lib.rs".to_string()]);
+        f.update("@main", 5);
+        assert!(!f.is_loading());
+        assert!(f.is_active());
+        assert_eq!(f.suggestions[0].value, "src/main.rs");
+    }
+
+    #[test]
+    fn stale_activation_requests_reload_without_dropping_loaded_suggestions() {
+        let mut f = FilesAutocomplete::with_files(vec!["src/main.rs".to_string()], 5);
+        f.mark_loaded_at_for_test(Instant::now() - CACHE_TTL - Duration::from_secs(1));
+        f.update("@", 1);
+        assert!(f.take_load_request());
+        assert!(f.is_loading());
+        assert!(f.is_active());
+        assert_eq!(f.suggestions[0].value, "src/main.rs");
     }
 
     #[test]
@@ -345,6 +417,15 @@ mod tests {
     }
 
     #[test]
+    fn tab_does_not_select_loading_placeholder() {
+        let mut f = FilesAutocomplete::new(5);
+        f.update("@", 1);
+        f.handle_input(&Key::Tab);
+        assert_eq!(f.take_result(), AutocompleteResult::Pending);
+        assert!(f.is_active());
+    }
+
+    #[test]
     fn escape_dismisses() {
         let mut f = fa();
         f.update("@", 1);
@@ -357,9 +438,9 @@ mod tests {
     fn navigate_down_changes_selection() {
         let mut f = fa();
         f.update("@", 1);
-        assert_eq!(f.selected, 0);
+        assert_eq!(f.navigator.selected(), 0);
         f.handle_input(&Key::Down);
-        assert_eq!(f.selected, 1);
+        assert_eq!(f.navigator.selected(), 1);
     }
 
     #[test]

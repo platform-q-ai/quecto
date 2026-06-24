@@ -30,3 +30,17 @@ Feature: Mouse text selection and clipboard copy (#528)
     Given the text "hello world" to copy
     When it is base64 encoded for OSC 52
     Then the encoded value should be "aGVsbG8gd29ybGQ="
+
+  @wip @issue-738
+  Scenario: Clipboard write failures are reported as copy failures
+    Given the text "hello world" to copy
+    When the OSC 52 clipboard write fails
+    Then the clipboard copy result should be an error
+    And clipboard failure feedback should not include the copied text
+
+  @wip @issue-738
+  Scenario: Clipboard flush failures are reported as copy failures
+    Given the text "hello world" to copy
+    When the OSC 52 clipboard flush fails
+    Then the clipboard copy result should be an error
+    And clipboard failure feedback should not include the copied text

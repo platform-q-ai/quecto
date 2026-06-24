@@ -98,12 +98,6 @@ Feature: TUI Foundation
     Then the rendered output should have more than 1 line
     And every rendered line should be at most 30 visible characters
 
-  @tui @pending
-  Scenario: Container renders children in order
-    Given a container with child text "Line A" and child text "Line B"
-    When the component renders at width 80
-    Then the rendered output should contain "Line A" before "Line B"
-
   # ---------------------------------------------------------------------------
   # Differential Renderer
   # ---------------------------------------------------------------------------
@@ -122,3 +116,38 @@ Feature: TUI Foundation
     When it renders lines "line1" and "CHANGED" at width 80
     Then the capture buffer should contain "CHANGED"
     And the capture buffer should not re-emit "line1"
+
+  @tui @pending
+  Scenario: App render path uses differential output
+    Given the TUI has composed and rendered a frame
+    When only one visible line changes
+    Then the terminal writer should rewrite only the changed line
+    And unchanged chat history lines should not be emitted again
+
+  @tui @pending
+  Scenario: Chat markdown rendering is cached per entry
+    Given chat history contains an unchanged assistant markdown message
+    When the chat component renders multiple frames at the same width
+    Then the assistant markdown entry should be reused from cache
+    And markdown parsing should only run again after the entry text or width changes
+
+  @tui @pending
+  Scenario: Terminal control sanitizing is shared across rendered components
+    Given agent-sourced text contains ANSI CSI, OSC, and control characters
+    When markdown, tool output, subagent rows, and model names render that text
+    Then each component should remove terminal control sequences before display
+    And normal printable Unicode text should remain visible
+
+  @tui
+  Scenario: Command send failures are observable
+    Given the TUI command channel is disconnected
+    When the TUI tries to send a command to the agent
+    Then the TUI should show an error notification for the failed command send
+    And the send failure should not be handled only through stderr
+
+  @tui
+  Scenario: DiffRenderer write and flush failures are observable
+    Given the TUI renderer output fails while writing or flushing
+    When the TUI renders a frame
+    Then the DiffRenderer should return the render error instead of ignoring it
+    And the TUI should show an error notification for the failed render

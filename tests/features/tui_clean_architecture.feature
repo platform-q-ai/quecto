@@ -37,6 +37,22 @@ Feature: TUI Clean Architecture and executable BDD enforcement
     Then the BDD runner should execute TUI scenarios tagged wip or done
     And the TUI architecture feature should not contain pending scenarios
 
+  @issue-741
+  Scenario: TUI session payload parsing lives outside the App interface
+    Then the TUI application layer should parse session stats payloads into typed values
+    And the TUI application layer should validate resumed chat payloads into typed messages
+    And the TUI App methods should delegate session payload parsing to the application layer
+
+  @issue-739
+  Scenario: TUI keeps current chat when resumed messages are malformed
+    Then the TUI should validate resumed messages before replacing chat history
+
+  @issue-740
+  Scenario: TUI selector components share list navigation
+    Then the TUI components layer should expose a shared ListNavigator
+    And slash autocomplete, files autocomplete, model selector, and select list should use ListNavigator
+    And ListNavigator should own wraparound and visible-window selection behavior
+
   Scenario: TUI scrollback remains stable while an assistant response streams
     Given a quecto-tui chat view is scrolled into history
     When streaming assistant content extends the conversation
@@ -69,3 +85,13 @@ Feature: TUI Clean Architecture and executable BDD enforcement
 
   Scenario: TUI workflow widget uses only active toggle hotkeys
     Then quecto-tui should not expose the Ctrl+Shift+W workflow overlay
+
+  Scenario: TUI drops the dead OverlayStack compositing machinery
+    Then quecto-tui should not retain the dead OverlayStack overlay machinery
+    And quecto-tui should not keep tests that pin the dead OverlayStack machinery alive
+    And quecto-tui should keep the live splice_line overlay helpers
+
+  Scenario: TUI drops the legacy workflow_bar render path
+    Then quecto-tui should not retain the legacy workflow_bar render function
+    And quecto-tui should not keep tests that pin the legacy workflow_bar render path alive
+    And quecto-tui should keep the live workflow_bar render_widget path

@@ -63,6 +63,21 @@ fn test_build_agent_from_config_uds_no_workflow_disables_workflow_state() {
         .expect("agent should build with workflow disabled");
     assert!(result.workflow_state.is_none(), "stderr: {}", stderr);
     assert!(result.workflow_config.is_none(), "stderr: {}", stderr);
+    let tool_definitions = result.agent.tool_definitions();
+    assert!(
+        tool_definitions
+            .iter()
+            .all(|definition| definition.name.as_ref() != "workflow"),
+        "--no-workflow must remove the workflow tool definition sent to the model"
+    );
+    let spawn_definition = tool_definitions
+        .iter()
+        .find(|definition| definition.name.as_ref() == "spawn")
+        .expect("spawn tool should remain available when parent workflow is disabled");
+    assert!(
+        spawn_definition.parameters_schema.contains("\"workflow\""),
+        "spawn must still allow explicitly workflow-enabled child agents"
+    );
 }
 
 #[test]

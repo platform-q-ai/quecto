@@ -51,16 +51,11 @@ async fn send_new_session_requests_fresh_chat_key() {
 
     let sent = h.drain_commands().await;
     assert!(sent.iter().any(|cmd| {
-        serde_json::from_str::<serde_json::Value>(cmd)
-            .ok()
-            .and_then(|value| {
-                value
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string)
-            })
-            .as_deref()
-            == Some("new_session")
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(cmd) else {
+            return false;
+        };
+        value.get("type").and_then(|v| v.as_str()) == Some("new_session")
+            && value.get("id").is_none()
     }));
 }
 

@@ -46,10 +46,18 @@ pub enum ChatEntry {
     },
 }
 
+#[derive(Debug, Clone)]
+struct CachedEntryRender {
+    width: usize,
+    tool_expanded: bool,
+    lines: Vec<String>,
+}
+
 /// Chat display component.
 #[derive(Debug)]
 pub struct Chat {
     entries: Vec<ChatEntry>,
+    render_cache: Vec<Option<CachedEntryRender>>,
     /// Scroll offset from the bottom (0 = at bottom, showing most recent).
     scroll_offset: usize,
     /// Width used for the most recent full chat render.
@@ -72,6 +80,7 @@ impl Chat {
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
+            render_cache: Vec::new(),
             scroll_offset: 0,
             last_render_width: None,
             last_render_line_count: 0,
@@ -82,6 +91,7 @@ impl Chat {
 
     pub fn add_entry(&mut self, entry: ChatEntry) {
         self.entries.push(entry);
+        self.render_cache.push(None);
         self.scroll_offset = 0;
     }
 
@@ -90,6 +100,9 @@ impl Chat {
         if let Some(ChatEntry::Assistant { text, streaming }) = self.entries.last_mut() {
             if *streaming {
                 text.push_str(token);
+                if let Some(cache) = self.render_cache.last_mut() {
+                    *cache = None;
+                }
                 return;
             }
         }
@@ -97,12 +110,16 @@ impl Chat {
             text: token.to_string(),
             streaming: true,
         });
+        self.render_cache.push(None);
     }
 
     /// Finalize the current streaming message.
     pub fn finalize_assistant(&mut self) {
         if let Some(ChatEntry::Assistant { streaming, .. }) = self.entries.last_mut() {
             *streaming = false;
+            if let Some(cache) = self.render_cache.last_mut() {
+                *cache = None;
+            }
         }
     }
 
@@ -118,6 +135,7 @@ impl Chat {
             is_error: false,
             duration_ms: None,
         });
+        self.render_cache.push(None);
     }
 
     /// Complete a tool execution — updates existing entry in place.
@@ -129,7 +147,7 @@ impl Chat {
         duration_ms: Option<u64>,
     ) {
         // Find the ToolExecution entry and update it.
-        for entry in self.entries.iter_mut().rev() {
+        for (idx, entry) in self.entries.iter_mut().enumerate().rev() {
             if let ChatEntry::ToolExecution {
                 tool_call_id: id,
                 result: r,
@@ -142,6 +160,9 @@ impl Chat {
                     *r = Some(result.to_string());
                     *e = is_error;
                     *d = duration_ms;
+                    if let Some(cache) = self.render_cache.get_mut(idx) {
+                        *cache = None;
+                    }
                     break;
                 }
             }
@@ -151,10 +172,12 @@ impl Chat {
     /// Toggle expand/collapse on all tool entries.
     pub fn toggle_tool_expand(&mut self) {
         self.tool_expanded = !self.tool_expanded;
+        self.render_cache.fill(None);
     }
 
     pub fn clear(&mut self) {
         self.entries.clear();
+        self.render_cache.clear();
         self.scroll_offset = 0;
     }
 
@@ -175,77 +198,100 @@ impl Chat {
     }
 }
 
-impl Component for Chat {
-    fn render(&mut self, width: usize) -> Vec<String> {
-        let mut all_lines: Vec<String> = Vec::new();
-        let tool_expanded = self.tool_expanded;
-
-        for entry in &self.entries {
-            match entry {
-                ChatEntry::User { text } => {
-                    all_lines.push(String::new());
-                    let label = theme::bold(&theme::accent("> "));
-                    let wrapped = wrap_text(text, width.saturating_sub(2));
-                    for (i, line) in wrapped.iter().enumerate() {
-                        if i == 0 {
-                            all_lines.push(truncate_to_width(
-                                &format!("{}{}", label, line),
-                                width,
-                                None,
-                            ));
-                        } else {
-                            all_lines.push(truncate_to_width(&format!("  {}", line), width, None));
-                        }
-                    }
-                }
-                ChatEntry::Assistant { text, streaming } => {
-                    if text.is_empty() && *streaming {
-                        continue;
-                    }
-                    all_lines.push(String::new());
-                    let mut md = Markdown::new(text, 0);
-                    let md_lines = md.render(width);
-                    if md_lines.is_empty() {
-                        let wrapped = wrap_text(text, width);
-                        for line in &wrapped {
-                            all_lines.push(truncate_to_width(line, width, None));
-                        }
+impl Chat {
+    fn render_entry(entry: &ChatEntry, width: usize, tool_expanded: bool) -> Vec<String> {
+        let mut lines = Vec::new();
+        match entry {
+            ChatEntry::User { text } => {
+                lines.push(String::new());
+                let label = theme::bold(&theme::accent("> "));
+                let wrapped = wrap_text(text, width.saturating_sub(2));
+                for (i, line) in wrapped.iter().enumerate() {
+                    if i == 0 {
+                        lines.push(truncate_to_width(
+                            &format!("{}{}", label, line),
+                            width,
+                            None,
+                        ));
                     } else {
-                        all_lines.extend(md_lines);
-                    }
-                    if *streaming {
-                        if let Some(l) = all_lines.last_mut() {
-                            l.push_str(&theme::dim("▌"));
-                        }
-                    }
-                }
-                ChatEntry::ToolExecution {
-                    tool_name,
-                    parsed_args,
-                    result,
-                    is_error,
-                    duration_ms,
-                    ..
-                } => {
-                    let tool_lines = render_tool_execution(ToolRenderArgs {
-                        tool_name,
-                        args_json: parsed_args,
-                        result: result.as_deref(),
-                        is_error: *is_error,
-                        duration_ms: *duration_ms,
-                        expanded: tool_expanded,
-                        width,
-                    });
-                    all_lines.push(String::new()); // spacer
-                    all_lines.extend(tool_lines);
-                }
-                ChatEntry::Status { text } => {
-                    all_lines.push(String::new());
-                    for status_line in text.lines() {
-                        all_lines.push(truncate_to_width(&theme::dim(status_line), width, None));
+                        lines.push(truncate_to_width(&format!("  {}", line), width, None));
                     }
                 }
             }
+            ChatEntry::Assistant { text, streaming } => {
+                if text.is_empty() && *streaming {
+                    return lines;
+                }
+                lines.push(String::new());
+                let mut md = Markdown::new(text, 0);
+                let md_lines = md.render(width);
+                if md_lines.is_empty() {
+                    let wrapped = wrap_text(text, width);
+                    for line in &wrapped {
+                        lines.push(truncate_to_width(line, width, None));
+                    }
+                } else {
+                    lines.extend(md_lines);
+                }
+                if *streaming {
+                    if let Some(l) = lines.last_mut() {
+                        l.push_str(&theme::dim("▌"));
+                    }
+                }
+            }
+            ChatEntry::ToolExecution {
+                tool_name,
+                parsed_args,
+                result,
+                is_error,
+                duration_ms,
+                ..
+            } => {
+                lines.push(String::new());
+                lines.extend(render_tool_execution(ToolRenderArgs {
+                    tool_name,
+                    args_json: parsed_args,
+                    result: result.as_deref(),
+                    is_error: *is_error,
+                    duration_ms: *duration_ms,
+                    expanded: tool_expanded,
+                    width,
+                }));
+            }
+            ChatEntry::Status { text } => {
+                lines.push(String::new());
+                for status_line in text.lines() {
+                    lines.push(truncate_to_width(&theme::dim(status_line), width, None));
+                }
+            }
+        }
+        lines
+    }
+}
+
+impl Component for Chat {
+    fn render(&mut self, width: usize) -> Vec<String> {
+        let tool_expanded = self.tool_expanded;
+        if self.render_cache.len() != self.entries.len() {
+            self.render_cache.resize(self.entries.len(), None);
+        }
+
+        let mut all_lines: Vec<String> = Vec::new();
+        for idx in 0..self.entries.len() {
+            if let Some(cached) = &self.render_cache[idx] {
+                if cached.width == width && cached.tool_expanded == tool_expanded {
+                    all_lines.extend(cached.lines.clone());
+                    continue;
+                }
+            }
+
+            let lines = Self::render_entry(&self.entries[idx], width, tool_expanded);
+            self.render_cache[idx] = Some(CachedEntryRender {
+                width,
+                tool_expanded,
+                lines: lines.clone(),
+            });
+            all_lines.extend(lines);
         }
 
         // If the user is scrolled into history, keep the visible viewport anchored
@@ -295,6 +341,9 @@ impl Component for Chat {
 #[path = "chat_render.rs"]
 mod chat_render;
 use chat_render::*;
+#[cfg(test)]
+#[path = "chat_render_tests.rs"]
+mod chat_render_tests;
 #[cfg(test)]
 #[path = "chat_integration_tests.rs"]
 mod integration_tests;

@@ -16,6 +16,7 @@ use crate::domain::tool::ToolRegistry;
 
 #[path = "agent_loop_pruning.rs"]
 mod agent_loop_pruning;
+mod agent_loop_session;
 
 const DEFAULT_MAX_TOOL_ITERATIONS: u32 = 999_999;
 const MAX_PROVIDER_ATTEMPTS: usize = 3;
@@ -134,7 +135,6 @@ impl AgentLoopImpl {
     pub fn model(&self) -> &str {
         &self.model
     }
-
     /// Context-window ceiling (tokens), surfaced for UDS clients.
     pub fn max_context_tokens(&self) -> usize {
         self.max_context_tokens
@@ -432,14 +432,13 @@ impl AgentLoopImpl {
         response: LlmResponse,
         iterations: u32,
         usage: UsageTotals,
+        pre_response_context_tokens: usize,
     ) -> AgentResult {
         let text = response.content.unwrap_or_default();
-        messages.push(Message::assistant(text.clone(), vec![]));
-        let context_tokens = if usage.context_input_tokens > 0 {
-            usage.context_input_tokens as usize
-        } else {
-            context_pruning::estimate_total_tokens(messages)
-        };
+        let assistant_message = Message::assistant(text.clone(), vec![]);
+        let context_tokens = pre_response_context_tokens
+            .saturating_add(context_pruning::estimate_message_tokens(&assistant_message));
+        messages.push(assistant_message);
         AgentResult {
             response: text,
             tool_iterations: iterations,
@@ -650,6 +649,7 @@ impl AgentLoopImpl {
                     response,
                     iterations,
                     usage_totals,
+                    context_tokens,
                 ));
             }
 

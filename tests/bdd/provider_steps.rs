@@ -3425,3 +3425,407 @@ fn then_done_response_tool_call_name(world: &mut QuectoWorld, expected: String) 
         expected, response.tool_calls[0].name
     );
 }
+
+// ===========================================================================
+// #437/#438: Anthropic provider API parity (OAuth, beta headers, tool name
+// remapping, thinking-block replay, signature_delta SSE, Accept header)
+// ===========================================================================
+
+fn parity_oauth_flag(word: &str) -> bool {
+    word == "true"
+}
+
+fn parity_body(world: &QuectoWorld) -> serde_json::Value {
+    let s = world
+        .env_overrides
+        .get("_anthropic_body")
+        .expect("no built request body — run the build-body When step first");
+    serde_json::from_str(s).expect("invalid request body json")
+}
+
+fn parity_build_body(world: &mut QuectoWorld, is_oauth: bool) {
+    let msgs = world
+        .context_messages
+        .clone()
+        .unwrap_or_else(|| vec![Message::user("Hi")]);
+    let tools: Vec<ToolDefinition> = match world.env_overrides.get("_parity_tool") {
+        Some(name) => vec![ToolDefinition {
+            name: name.clone().into(),
+            description: "Tool".into(),
+            parameters_schema: "{}".into(),
+        }],
+        None => vec![],
+    };
+    let req = ChatRequest {
+        messages: &msgs,
+        tools: &tools,
+        model: "claude-sonnet-4-6",
+        max_tokens: 1024,
+        temperature: 0.7,
+        session_id: None,
+        tool_choice: None,
+        metadata: None,
+        thinking_level: None,
+        cancel_flag: None,
+        effort: None,
+    };
+    let (_sys, body) =
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::build_request_body_with_oauth(
+            &req, is_oauth,
+        );
+    world
+        .env_overrides
+        .insert("_anthropic_body".into(), body.to_string());
+}
+
+// --- System prompt / OAuth identity prefix ---
+
+#[given(expr = "an Anthropic request with system prompt {string} and is_oauth {word}")]
+fn given_parity_system_prompt(world: &mut QuectoWorld, prompt: String, _oauth: String) {
+    world.context_messages = Some(vec![Message::system(prompt), Message::user("Hi")]);
+    world.env_overrides.remove("_parity_tool");
+}
+
+#[given(expr = "an Anthropic request with no system prompt and is_oauth {word}")]
+fn given_parity_no_system_prompt(world: &mut QuectoWorld, _oauth: String) {
+    world.context_messages = Some(vec![Message::user("Hi")]);
+    world.env_overrides.remove("_parity_tool");
+}
+
+#[given(expr = "an Anthropic request with tool {string} and is_oauth {word}")]
+fn given_parity_tool(world: &mut QuectoWorld, tool: String, _oauth: String) {
+    world.context_messages = Some(vec![Message::user("Hi")]);
+    world.env_overrides.insert("_parity_tool".into(), tool);
+}
+
+#[when("I build the Anthropic request body with OAuth")]
+fn when_build_body_oauth(world: &mut QuectoWorld) {
+    parity_build_body(world, true);
+}
+
+#[when("I build the Anthropic request body without OAuth")]
+fn when_build_body_no_oauth(world: &mut QuectoWorld) {
+    parity_build_body(world, false);
+}
+
+#[then(expr = "the system prompt array should have {int} block(s)")]
+fn then_system_block_count(world: &mut QuectoWorld, count: usize) {
+    let body = parity_body(world);
+    let system = body["system"].as_array().expect("system should be array");
+    assert_eq!(system.len(), count, "system block count");
+}
+
+#[then(expr = "the first system block text should be {string}")]
+fn then_first_system_block(world: &mut QuectoWorld, expected: String) {
+    let body = parity_body(world);
+    assert_eq!(body["system"][0]["text"].as_str().unwrap(), expected);
+}
+
+#[then(expr = "the second system block text should be {string}")]
+fn then_second_system_block(world: &mut QuectoWorld, expected: String) {
+    let body = parity_body(world);
+    assert_eq!(body["system"][1]["text"].as_str().unwrap(), expected);
+}
+
+#[then("both system blocks should have cache_control ephemeral")]
+fn then_both_system_blocks_cache_control(world: &mut QuectoWorld) {
+    let body = parity_body(world);
+    let system = body["system"].as_array().expect("system should be array");
+    for block in system {
+        assert_eq!(
+            block["cache_control"]["type"].as_str(),
+            Some("ephemeral"),
+            "each system block should have ephemeral cache_control"
+        );
+    }
+}
+
+// --- Beta headers ---
+
+#[given(expr = "an Anthropic beta header for model {string} with is_oauth {word}")]
+fn given_beta_header(world: &mut QuectoWorld, model: String, oauth: String) {
+    world
+        .env_overrides
+        .insert("_parity_beta_model".into(), model);
+    world
+        .env_overrides
+        .insert("_parity_beta_oauth".into(), oauth);
+}
+
+#[when("I build the beta header")]
+fn when_build_beta_header(world: &mut QuectoWorld) {
+    let model = world
+        .env_overrides
+        .get("_parity_beta_model")
+        .cloned()
+        .expect("no beta model set");
+    let is_oauth = parity_oauth_flag(
+        world
+            .env_overrides
+            .get("_parity_beta_oauth")
+            .map(|s| s.as_str())
+            .unwrap_or("false"),
+    );
+    let header =
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::build_beta_header_public(
+            &model, is_oauth,
+        );
+    world.env_overrides.insert("_beta_header".into(), header);
+}
+
+#[then(expr = "the beta header should contain {string}")]
+fn then_beta_header_contains(world: &mut QuectoWorld, needle: String) {
+    let header = world
+        .env_overrides
+        .get("_beta_header")
+        .expect("no beta header");
+    assert!(
+        header.contains(&needle),
+        "beta header '{}' should contain '{}'",
+        header,
+        needle
+    );
+}
+
+#[then(expr = "the beta header should not contain {string}")]
+fn then_beta_header_not_contains(world: &mut QuectoWorld, needle: String) {
+    let header = world
+        .env_overrides
+        .get("_beta_header")
+        .expect("no beta header");
+    assert!(
+        !header.contains(&needle),
+        "beta header '{}' should not contain '{}'",
+        header,
+        needle
+    );
+}
+
+// --- Canonical tool-name remapping ---
+
+#[given(expr = "a tool named {string}")]
+fn given_tool_named(world: &mut QuectoWorld, name: String) {
+    world.env_overrides.insert("_canon_in".into(), name);
+}
+
+#[when("I convert it to canonical name")]
+fn when_convert_canonical(world: &mut QuectoWorld) {
+    let name = world
+        .env_overrides
+        .get("_canon_in")
+        .cloned()
+        .expect("no tool name");
+    let canon =
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::to_claude_code_name_public(
+            &name,
+        )
+        .to_string();
+    world.env_overrides.insert("_canon_out".into(), canon);
+}
+
+#[then(expr = "the result should be {string}")]
+fn then_canonical_result(world: &mut QuectoWorld, expected: String) {
+    let out = world
+        .env_overrides
+        .get("_canon_out")
+        .expect("no canonical-name result");
+    assert_eq!(out, &expected);
+}
+
+#[then(expr = "the Anthropic tool definition name should be {string}")]
+fn then_anthropic_tool_def_name(world: &mut QuectoWorld, expected: String) {
+    let body = parity_body(world);
+    assert_eq!(body["tools"][0]["name"].as_str().unwrap(), expected);
+}
+
+// --- Assistant message thinking-block replay ---
+
+fn parity_assistant_content(world: &QuectoWorld) -> Vec<serde_json::Value> {
+    let s = world
+        .env_overrides
+        .get("_anthropic_msgs")
+        .expect("no built messages");
+    let msgs: Vec<serde_json::Value> = serde_json::from_str(s).expect("invalid messages json");
+    let asst = msgs
+        .iter()
+        .find(|m| m["role"] == "assistant")
+        .expect("no assistant message in built messages");
+    asst["content"].as_array().cloned().unwrap_or_default()
+}
+
+#[given(expr = "an assistant message with a normal thinking block {string} and signature {string}")]
+fn given_asst_normal_thinking(world: &mut QuectoWorld, thinking: String, signature: String) {
+    use quecto::domain::message::ThinkingBlock;
+    let mut asst = Message::assistant("response text", vec![]);
+    asst.thinking_blocks.push(ThinkingBlock::Normal {
+        thinking,
+        signature,
+    });
+    world.context_messages = Some(vec![Message::user("Hi"), asst]);
+}
+
+#[given(expr = "an assistant message with a redacted thinking block with data {string}")]
+fn given_asst_redacted_thinking(world: &mut QuectoWorld, data: String) {
+    use quecto::domain::message::ThinkingBlock;
+    let mut asst = Message::assistant("response text", vec![]);
+    asst.thinking_blocks.push(ThinkingBlock::Redacted { data });
+    world.context_messages = Some(vec![Message::user("Hi"), asst]);
+}
+
+#[when("I build the Anthropic assistant message")]
+fn when_build_assistant_message(world: &mut QuectoWorld) {
+    let msgs = world.context_messages.as_ref().expect("no messages set");
+    let (_sys, api_msgs) =
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::build_messages_public(
+            msgs,
+        );
+    world.env_overrides.insert(
+        "_anthropic_msgs".into(),
+        serde_json::to_string(&api_msgs).unwrap(),
+    );
+}
+
+#[then(
+    expr = "the content blocks should include a thinking block with text {string} and signature {string}"
+)]
+fn then_content_has_thinking(world: &mut QuectoWorld, text: String, signature: String) {
+    let content = parity_assistant_content(world);
+    let block = content
+        .iter()
+        .find(|b| b["type"] == "thinking")
+        .expect("no thinking block in content");
+    assert_eq!(block["thinking"].as_str().unwrap(), text);
+    assert_eq!(block["signature"].as_str().unwrap(), signature);
+}
+
+#[then(expr = "the content blocks should include a redacted_thinking block with data {string}")]
+fn then_content_has_redacted(world: &mut QuectoWorld, data: String) {
+    let content = parity_assistant_content(world);
+    let block = content
+        .iter()
+        .find(|b| b["type"] == "redacted_thinking")
+        .expect("no redacted_thinking block in content");
+    assert_eq!(block["data"].as_str().unwrap(), data);
+}
+
+#[then(expr = "the content blocks should include a text block with {string} instead of thinking")]
+fn then_content_text_fallback(world: &mut QuectoWorld, text: String) {
+    let content = parity_assistant_content(world);
+    assert!(
+        content.iter().all(|b| b["type"] != "thinking"),
+        "should NOT have a thinking block"
+    );
+    assert!(
+        content
+            .iter()
+            .any(|b| b["type"] == "text" && b["text"].as_str() == Some(text.as_str())),
+        "expected a text block with '{}'",
+        text
+    );
+}
+
+// --- signature_delta SSE accumulation ---
+
+#[given(expr = "an Anthropic SSE stream with thinking_delta {string} and signature_delta {string}")]
+fn given_sse_signature_delta(world: &mut QuectoWorld, thinking: String, signature: String) {
+    use serde_json::json;
+    let event = |name: &str, data: serde_json::Value| format!("event: {name}\ndata: {data}\n\n");
+    let raw = format!(
+        "{}{}{}{}{}{}{}",
+        event(
+            "message_start",
+            json!({"type":"message_start","message":{"usage":{"input_tokens":10}}})
+        ),
+        event(
+            "content_block_start",
+            json!({"type":"content_block_start","content_block":{"type":"thinking","thinking":""}})
+        ),
+        event(
+            "content_block_delta",
+            json!({"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":thinking}})
+        ),
+        event(
+            "content_block_delta",
+            json!({"type":"content_block_delta","delta":{"type":"signature_delta","signature":signature}})
+        ),
+        event("content_block_stop", json!({"type":"content_block_stop"})),
+        event(
+            "message_delta",
+            json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}})
+        ),
+        event("message_stop", json!({"type":"message_stop"})),
+    );
+    world.env_overrides.insert("_sse_raw".into(), raw);
+}
+
+#[when("I parse the SSE events")]
+fn when_parse_sse_events_parity(world: &mut QuectoWorld) {
+    let raw = world.env_overrides.get("_sse_raw").expect("no SSE data");
+    let resp =
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::parse_sse_response_public(
+            raw,
+        )
+        .expect("SSE parse failed");
+    world.streaming_response = Some(resp);
+}
+
+#[then(expr = "the accumulated thinking block should have signature {string}")]
+fn then_accumulated_signature(world: &mut QuectoWorld, expected: String) {
+    use quecto::domain::message::ThinkingBlock;
+    let resp = world
+        .streaming_response
+        .as_ref()
+        .expect("no response parsed");
+    let found = resp
+        .thinking_blocks
+        .iter()
+        .any(|b| matches!(b, ThinkingBlock::Normal { signature, .. } if signature == &expected));
+    assert!(
+        found,
+        "no thinking block with signature '{}'; blocks: {:?}",
+        expected, resp.thinking_blocks
+    );
+}
+
+// --- Accept header ---
+
+#[given("an Anthropic provider with a mock server expecting Accept header")]
+fn given_anthropic_mock_expect_accept(world: &mut QuectoWorld) {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let server = rt.block_on(wiremock::MockServer::start());
+    let uri = server.uri();
+    let response_body = serde_json::json!({
+        "id": "msg_accept",
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "text", "text": "ok"}],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 5, "output_tokens": 2}
+    });
+    rt.block_on(async {
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/v1/messages"))
+            .and(wiremock::matchers::header("Accept", "application/json"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(response_body))
+            .expect(1)
+            .mount(&server)
+            .await;
+    });
+    world.provider = Some(Arc::new(
+        quecto::infrastructure::providers::anthropic::AnthropicProvider::new(
+            "sk-ant-test-key".to_string(),
+            Some(uri.clone()),
+        ),
+    ));
+    world._wiremock_server_uri = Some(uri);
+    std::mem::forget(server);
+    std::mem::forget(rt);
+}
+
+#[then(expr = "the request should include header {string} with value {string}")]
+fn then_request_includes_header(world: &mut QuectoWorld, _header: String, _value: String) {
+    assert!(
+        world.streaming_response.is_some(),
+        "no response — the expected header may not have been sent"
+    );
+}

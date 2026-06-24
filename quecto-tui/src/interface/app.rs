@@ -8,10 +8,14 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use app_selection::TextSelection;
+
 use tokio::sync::mpsc;
 
 use crate::infrastructure::client::{Client, Command, Event};
+use crate::infrastructure::render::DiffRenderer;
 use crate::infrastructure::terminal::Terminal;
+use crate::infrastructure::workspace_files::list_workspace_files;
 use crate::interface::component::Component;
 use crate::interface::components::autocomplete::{Autocomplete, AutocompleteResult, SlashCommand};
 use crate::interface::components::chat::Chat;
@@ -30,7 +34,6 @@ use crate::interface::components::widget::WidgetContainer;
 use crate::interface::components::workflow_bar;
 use crate::interface::keys::{self, Key};
 use crate::interface::kitty::KittyProtocol;
-use crate::interface::overlay::OverlayStack;
 
 const SPINNER_TICK: Duration = Duration::from_millis(80);
 const MOUSE_SCROLL_LINES: usize = 3;
@@ -94,25 +97,10 @@ fn builtin_commands() -> Vec<SlashCommand> {
     ]
 }
 
-/// Mouse selection anchor for click-and-drag text copy (#528).
-#[derive(Debug, Clone, Copy)]
-struct SelectionAnchor {
-    col: u16,
-    row: u16,
-}
-
-/// Active text selection (from mouse press to release) (#528).
-#[derive(Debug, Clone)]
-struct TextSelection {
-    /// Where the mouse was pressed.
-    start: SelectionAnchor,
-    /// Current drag position (updated on mouse motion).
-    end: SelectionAnchor,
-}
-
 /// Application state.
 pub struct App {
     terminal: Terminal,
+    renderer: DiffRenderer<std::io::Stdout>,
     client: Client,
     editor: Editor,
     chat: Chat,
@@ -121,9 +109,7 @@ pub struct App {
     autocomplete: Autocomplete,
     files_autocomplete: FilesAutocomplete,
     notifications: NotificationStack,
-    overlay_stack: OverlayStack,
     widgets_above: WidgetContainer,
-    widgets_below: WidgetContainer,
     kitty: KittyProtocol,
     agent_state: AgentRunState,
     should_exit: bool,
@@ -178,6 +164,14 @@ pub struct App {
     /// Whether we've already requested session stats as a fallback to learn
     /// the real context window for the current session/model.
     context_stats_requested: bool,
+    /// Internal notifications for asynchronous command-send failures.
+    command_send_failure_tx: mpsc::Sender<CommandSendFailure>,
+    command_send_failure_rx: mpsc::Receiver<CommandSendFailure>,
+}
+
+struct CommandSendFailure {
+    command_kind: &'static str,
+    error: String,
 }
 
 impl App {
@@ -186,9 +180,11 @@ impl App {
         let git_repo = std::env::current_dir().ok();
         let git_branch = git_repo.as_deref().and_then(app_git::read_git_branch_from);
         footer.set_git_branch(git_branch.clone());
+        let (command_send_failure_tx, command_send_failure_rx) = mpsc::channel(16);
 
         Self {
             terminal,
+            renderer: DiffRenderer::new(std::io::stdout()),
             client,
             editor: Editor::new(),
             chat: Chat::new(),
@@ -197,9 +193,7 @@ impl App {
             autocomplete: Autocomplete::new(builtin_commands(), 8),
             files_autocomplete: FilesAutocomplete::new(8),
             notifications: NotificationStack::new(),
-            overlay_stack: OverlayStack::new(),
             widgets_above: WidgetContainer::new(),
-            widgets_below: WidgetContainer::new(),
             kitty: KittyProtocol::new(),
             agent_state: AgentRunState::new(),
             should_exit: false,
@@ -227,6 +221,8 @@ impl App {
             git_repo,
             last_rendered_lines: Vec::new(),
             context_stats_requested: false,
+            command_send_failure_tx,
+            command_send_failure_rx,
         }
     }
 
@@ -253,6 +249,25 @@ impl App {
             let _ = tx.blocking_send(branch);
         });
     }
+
+    fn start_files_autocomplete_load(&self, tx: &mpsc::Sender<Vec<String>>, in_flight: &mut bool) {
+        if *in_flight {
+            return;
+        }
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        *in_flight = true;
+        let tx = tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let files = list_workspace_files(&cwd);
+            let _ = tx.blocking_send(files);
+        });
+    }
+
+    fn refresh_files_autocomplete_from_editor(&mut self) {
+        let line = self.editor.current_line().to_string();
+        let col = self.editor.cursor_col();
+        self.files_autocomplete.update(&line, col);
+    }
 }
 
 #[path = "app_event_loop.rs"]
@@ -269,6 +284,8 @@ mod app_models;
 mod app_response;
 #[path = "app_rewind.rs"]
 mod app_rewind;
+#[path = "app_selection.rs"]
+mod app_selection;
 #[path = "app_subagents.rs"]
 mod app_subagents;
 
@@ -282,20 +299,21 @@ const MAX_CLIPBOARD_BYTES: usize = 100 * 1024;
 /// OSC 52 is supported by most modern terminals (kitty, iTerm2, WezTerm,
 /// Alacritty, tmux, etc.) and works over SSH without needing xclip/xsel.
 /// Falls back silently if the terminal doesn't support it.
-fn copy_to_clipboard(text: &str) {
-    use std::io::Write;
+fn copy_to_clipboard(text: &str) -> std::io::Result<()> {
+    let mut stdout = std::io::stdout();
+    write_osc52_clipboard_sequence(text, &mut stdout)
+}
+
+pub fn write_osc52_clipboard_sequence(text: &str, writer: &mut impl Write) -> std::io::Result<()> {
     // Cap payload size to avoid overwhelming terminals with large selections.
-    let capped = if text.len() > MAX_CLIPBOARD_BYTES {
-        &text[..MAX_CLIPBOARD_BYTES]
-    } else {
-        text
-    };
+    let bytes = text.as_bytes();
+    let capped = &bytes[..bytes.len().min(MAX_CLIPBOARD_BYTES)];
     // Base64-encode the text for OSC 52.
     // OSC 52 format: \x1b]52;c;<base64>\x07
-    let encoded = base64_encode(capped.as_bytes());
+    let encoded = base64_encode(capped);
     let osc = format!("\x1b]52;c;{}\x07", encoded);
-    let _ = std::io::stdout().write_all(osc.as_bytes());
-    let _ = std::io::stdout().flush();
+    writer.write_all(osc.as_bytes())?;
+    writer.flush()
 }
 
 /// Simple base64 encoder (no external dependency).
@@ -319,106 +337,6 @@ fn base64_encode(data: &[u8]) -> String {
         } else {
             result.push('=');
         }
-    }
-    result
-}
-
-/// Normalize a selection into (start_row, start_col, end_row, end_col) order (#546).
-/// Ensures start ≤ end regardless of drag direction.
-fn selection_range(sel: &TextSelection) -> (u16, u16, u16, u16) {
-    let (sr, sc, er, ec) = if sel.start.row < sel.end.row
-        || (sel.start.row == sel.end.row && sel.start.col <= sel.end.col)
-    {
-        (sel.start.row, sel.start.col, sel.end.row, sel.end.col)
-    } else {
-        (sel.end.row, sel.end.col, sel.start.row, sel.start.col)
-    };
-    (sr, sc, er, ec)
-}
-
-/// Apply mouse selection highlight to rendered lines (#546).
-fn apply_selection_highlight(selection: &Option<TextSelection>, lines: &mut [String]) {
-    let Some(sel) = selection else { return };
-    let (sr, sc, er, ec) = selection_range(sel);
-    for row_idx in sr..=er {
-        if (row_idx as usize) < lines.len() {
-            let line_start = if row_idx == sr { sc } else { 0 };
-            let line_end = if row_idx == er {
-                ec
-            } else {
-                crate::interface::utils::visible_width(&lines[row_idx as usize]) as u16
-            };
-            lines[row_idx as usize] =
-                apply_line_highlight(&lines[row_idx as usize], line_start, line_end);
-        }
-    }
-}
-
-/// Apply reverse-video highlighting to a range of visible columns in a line (#546).
-///
-/// Takes a rendered line (may contain ANSI escapes) and highlights columns
-/// `start_col..end_col` (0-indexed, exclusive end) by wrapping visible chars
-/// in that range with `\x1b[7m` (reverse) and `\x1b[27m` (reverse off).
-fn apply_line_highlight(line: &str, start_col: u16, end_col: u16) -> String {
-    if start_col >= end_col {
-        return line.to_string();
-    }
-    let mut result = String::with_capacity(line.len() + 20);
-    let mut vis_col: u16 = 0;
-    let mut in_esc = false;
-    let mut in_osc = false;
-    let mut highlighted = false;
-    let chars: Vec<char> = line.chars().collect();
-    let mut i = 0;
-
-    while i < chars.len() {
-        let ch = chars[i];
-        // Pass through ANSI escape sequences without counting columns.
-        if in_osc {
-            result.push(ch);
-            if ch == '\x07' {
-                in_osc = false;
-            } else if ch == '\x1b' && i + 1 < chars.len() && chars[i + 1] == '\\' {
-                result.push(chars[i + 1]);
-                i += 2;
-                in_osc = false;
-                continue;
-            }
-            i += 1;
-            continue;
-        }
-        if in_esc {
-            result.push(ch);
-            if ch.is_ascii_alphabetic() || ch == '~' {
-                in_esc = false;
-            }
-            i += 1;
-            continue;
-        }
-        if ch == '\x1b' {
-            result.push(ch);
-            in_osc = i + 1 < chars.len() && chars[i + 1] == ']';
-            if !in_osc {
-                in_esc = true;
-            }
-            i += 1;
-            continue;
-        }
-        // Visible character — apply highlight bracketing.
-        if vis_col == start_col && !highlighted {
-            result.push_str("\x1b[7m");
-            highlighted = true;
-        }
-        result.push(ch);
-        vis_col += 1;
-        if vis_col == end_col && highlighted {
-            result.push_str("\x1b[27m");
-            highlighted = false;
-        }
-        i += 1;
-    }
-    if highlighted {
-        result.push_str("\x1b[27m");
     }
     result
 }
@@ -648,11 +566,7 @@ impl TrackedSubagent {
     fn new(info: crate::infrastructure::client::SubagentInfoEvent) -> Self {
         let now = tokio::time::Instant::now();
         let active = subagent_status_is_active(&info.status);
-        let exited_at = if info.status == STATUS_EXITED {
-            Some(now)
-        } else {
-            None
-        };
+        let exited_at = (info.status == STATUS_EXITED).then_some(now);
         Self {
             info,
             started_at: now,
@@ -697,7 +611,6 @@ impl TrackedSubagent {
 
 /// Remove exited subagents whose grace period has elapsed (#540).
 /// Returns `true` if any entries were removed.
-///
 /// While any sibling is still active, finished agents are kept on screen so the
 /// panel doesn't shrink mid-batch and jolt the chat above it — reclamation is
 /// deferred until the whole batch is quiescent (the panel then grows once and
@@ -714,23 +627,40 @@ fn gc_exited_subagents(
         return false;
     }
     let mut removed = false;
-    map.retain(|_, entry| {
-        if let Some(exited_at) = entry.exited_at {
+    map.retain(|_, entry| match entry.exited_at {
+        Some(exited_at) => {
             let keep = now.saturating_duration_since(exited_at) < grace;
             if !keep {
                 removed = true;
             }
             keep
-        } else {
-            true
         }
+        None => true,
     });
     removed
 }
 
 #[cfg(test)]
+#[path = "app_clipboard_tests.rs"]
+mod app_clipboard_tests;
+#[cfg(test)]
 #[path = "app_cov_tests.rs"]
 mod app_cov_tests;
+#[cfg(test)]
+#[path = "app_event_loop_tests.rs"]
+mod app_event_loop_tests;
+#[cfg(test)]
+#[path = "app_methods_tests.rs"]
+mod app_methods_tests;
+#[cfg(test)]
+#[path = "app_rewind_response_tests.rs"]
+mod app_rewind_response_tests;
+#[cfg(test)]
+#[path = "app_selection_tests.rs"]
+mod app_selection_tests;
+#[cfg(test)]
+#[path = "app_subagents_tests.rs"]
+mod app_subagents_tests;
 #[cfg(test)]
 #[path = "app_chat_session_tests.rs"]
 mod chat_session_tests;

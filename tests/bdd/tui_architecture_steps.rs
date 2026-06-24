@@ -344,14 +344,14 @@ fn then_uds_protocol_supports_resuming_session(_world: &mut QuectoWorld) {
 
 #[then("the quecto-tui resume selector should render with an opaque border")]
 fn then_tui_resume_selector_has_opaque_border(_world: &mut QuectoWorld) {
-    let app = std::fs::read_to_string("quecto-tui/src/interface/app.rs")
-        .expect("read quecto-tui app source");
+    let overlay = std::fs::read_to_string("quecto-tui/src/interface/select_overlay.rs")
+        .expect("read quecto-tui select_overlay source");
     let theme = std::fs::read_to_string("quecto-tui/src/interface/theme.rs")
         .expect("read quecto-tui theme source");
     assert!(
-        app.contains("build_resume_selector_overlay")
-            && app.contains("RESUME_SELECTOR_BORDER_WIDTH")
-            && app.contains("apply_overlay_bg"),
+        overlay.contains("build_resume_selector_overlay")
+            && overlay.contains("SELECTOR_BORDER_WIDTH")
+            && overlay.contains("apply_overlay_bg"),
         "resume selector should be rendered as a padded opaque overlay instead of raw text over chat history"
     );
     assert!(
@@ -386,7 +386,7 @@ fn then_tui_workflow_widget_matches_quecto_plain_text(_world: &mut QuectoWorld) 
     );
     assert!(
         app.contains("workflow_bar::render_widget")
-            && app.contains("bottom.extend(workflow_widget_lines)"),
+            && app.contains("bottom.extend(workflow_bar::render_widget("),
         "app should render the workflow widget in the bottom section above the editor"
     );
 }
@@ -419,6 +419,123 @@ fn then_tui_does_not_expose_ctrl_shift_w_workflow_overlay(_world: &mut QuectoWor
     );
 }
 
+#[then("quecto-tui should not retain the dead OverlayStack overlay machinery")]
+fn then_tui_drops_dead_overlay_stack(_world: &mut QuectoWorld) {
+    let overlay = std::fs::read_to_string("quecto-tui/src/interface/overlay.rs")
+        .expect("read quecto-tui overlay source");
+    let app = std::fs::read_to_string("quecto-tui/src/interface/app.rs").expect("read app source");
+    let app_methods = std::fs::read_to_string("quecto-tui/src/interface/app_methods.rs")
+        .expect("read app_methods source");
+    let event_loop = std::fs::read_to_string("quecto-tui/src/interface/app_event_loop.rs")
+        .expect("read app_event_loop source");
+    for needle in [
+        "struct OverlayStack",
+        "fn composite",
+        "enum Anchor",
+        "struct OverlayOptions",
+        "struct OverlayEntry",
+        "fn resolve_position",
+    ] {
+        assert!(
+            !overlay.contains(needle),
+            "dead OverlayStack machinery should be removed from overlay.rs: found `{needle}`"
+        );
+    }
+    assert!(
+        !app.contains("OverlayStack") && !app.contains("overlay_stack"),
+        "app.rs should not hold or construct the dead overlay_stack field"
+    );
+    assert!(
+        !app_methods.contains("overlay_stack"),
+        "app_methods.rs should not composite via the dead overlay_stack"
+    );
+    assert!(
+        !event_loop.contains("overlay_stack"),
+        "app_event_loop.rs should not route input through the dead overlay_stack"
+    );
+}
+
+#[then("quecto-tui should not keep tests that pin the dead OverlayStack machinery alive")]
+fn then_tui_drops_dead_overlay_stack_tests(_world: &mut QuectoWorld) {
+    // The dead machinery only survived `#![deny(dead_code)]` because the
+    // overlay.rs `#[cfg(test)]` module exercised it; that resurrection must go.
+    let overlay = std::fs::read_to_string("quecto-tui/src/interface/overlay.rs")
+        .expect("read quecto-tui overlay source");
+    for needle in ["OverlayStack::new()", ".composite(", "OverlayOptions"] {
+        assert!(
+            !overlay.contains(needle),
+            "overlay.rs tests must not resurrect the dead OverlayStack machinery: found `{needle}`"
+        );
+    }
+}
+
+#[then("quecto-tui should keep the live splice_line overlay helpers")]
+fn then_tui_keeps_splice_line_helpers(_world: &mut QuectoWorld) {
+    let overlay = std::fs::read_to_string("quecto-tui/src/interface/overlay.rs")
+        .expect("read quecto-tui overlay source");
+    for needle in [
+        "pub fn splice_line",
+        "fn take_visible_chars",
+        "fn skip_visible_chars",
+    ] {
+        assert!(
+            overlay.contains(needle),
+            "live overlay helper must be kept: missing `{needle}`"
+        );
+    }
+}
+
+#[then("quecto-tui should not retain the legacy workflow_bar render function")]
+fn then_tui_drops_legacy_workflow_bar_render(_world: &mut QuectoWorld) {
+    let bar = std::fs::read_to_string("quecto-tui/src/interface/components/workflow_bar.rs")
+        .expect("read workflow bar source");
+    for needle in [
+        "pub fn render(",
+        "fn render_stage_status_line",
+        "fn pad_or_truncate_with_bg",
+        "fn phase_bg",
+        "fn short_step_label",
+    ] {
+        assert!(
+            !bar.contains(needle),
+            "legacy workflow_bar render path should be removed: found `{needle}`"
+        );
+    }
+}
+
+#[then("quecto-tui should not keep tests that pin the legacy workflow_bar render path alive")]
+fn then_tui_drops_legacy_workflow_bar_render_tests(_world: &mut QuectoWorld) {
+    // The legacy `render` + helpers only survived `#![deny(dead_code)]` because
+    // workflow_bar_tests.rs called them; those tests must be deleted too.
+    let tests =
+        std::fs::read_to_string("quecto-tui/src/interface/components/workflow_bar_tests.rs")
+            .expect("read workflow bar tests source");
+    for needle in [
+        "render(&state",
+        "render_stage_status_line",
+        "pad_or_truncate_with_bg",
+        "phase_bg",
+        "short_step_label",
+    ] {
+        assert!(
+            !tests.contains(needle),
+            "workflow_bar_tests.rs must not resurrect the legacy render path: found `{needle}`"
+        );
+    }
+}
+
+#[then("quecto-tui should keep the live workflow_bar render_widget path")]
+fn then_tui_keeps_workflow_bar_render_widget(_world: &mut QuectoWorld) {
+    let bar = std::fs::read_to_string("quecto-tui/src/interface/components/workflow_bar.rs")
+        .expect("read workflow bar source");
+    for needle in ["pub fn render_widget", "pub fn parse_workflow_event"] {
+        assert!(
+            bar.contains(needle),
+            "live workflow_bar function must be kept: missing `{needle}`"
+        );
+    }
+}
+
 #[then("the TUI architecture feature should not contain pending scenarios")]
 fn then_tui_architecture_feature_not_pending(_world: &mut QuectoWorld) {
     let content = std::fs::read_to_string("tests/features/tui_clean_architecture.feature")
@@ -426,6 +543,172 @@ fn then_tui_architecture_feature_not_pending(_world: &mut QuectoWorld) {
     assert!(
         !content.contains("@pending"),
         "TUI architecture feature must remain executable and not be marked @pending"
+    );
+}
+
+#[then("the TUI application layer should parse session stats payloads into typed values")]
+fn then_tui_application_parses_session_stats(_world: &mut QuectoWorld) {
+    let content = std::fs::read_to_string("quecto-tui/src/application/session_payloads.rs")
+        .expect("read TUI session payload parser");
+    assert!(
+        content.contains("pub struct SessionStats")
+            && content.contains("pub fn parse_session_stats")
+            && content.contains("context_usage"),
+        "session stats JSON parsing should live in an application-layer typed value"
+    );
+}
+
+#[then("the TUI application layer should validate resumed chat payloads into typed messages")]
+fn then_tui_application_validates_resumed_chat(_world: &mut QuectoWorld) {
+    let content = std::fs::read_to_string("quecto-tui/src/application/session_payloads.rs")
+        .expect("read TUI session payload parser");
+    assert!(
+        content.contains("pub enum ResumedChatMessage")
+            && content.contains("pub enum ResumeMessagesError")
+            && content.contains("pub fn parse_resumed_messages")
+            && content.contains("Result<Vec<ResumedChatMessage>, ResumeMessagesError>")
+            && content.contains("pub fn parse_resume_sessions"),
+        "resumed chat/session-list JSON validation should live in application-layer typed values"
+    );
+}
+
+#[then("the TUI should validate resumed messages before replacing chat history")]
+fn then_tui_validates_resumed_messages_before_replacing_chat(_world: &mut QuectoWorld) {
+    let parser = std::fs::read_to_string("quecto-tui/src/application/session_payloads.rs")
+        .expect("read TUI session payload parser");
+    assert!(
+        parser.contains("ResumeMessagesError::MissingMessages")
+            && parser.contains("ResumeMessagesError::MalformedMessages"),
+        "resumed-message parser should distinguish missing and malformed messages payloads"
+    );
+
+    let methods = std::fs::read_to_string("quecto-tui/src/interface/app_methods.rs")
+        .expect("read TUI app methods source");
+    let body = rust_fn_body(&methods, "replace_chat_with_messages")
+        .expect("expected replace_chat_with_messages in app_methods.rs");
+    let parse_pos = body
+        .find("session_payloads::parse_resumed_messages")
+        .expect("replace_chat_with_messages should call the application-layer parser");
+    let clear_pos = body
+        .find("self.chat.clear()")
+        .expect("replace_chat_with_messages should still clear chat after valid resume data");
+    assert!(
+        parse_pos < clear_pos
+            && body.contains("Err(error)")
+            && body.contains("Invalid resume payload"),
+        "replace_chat_with_messages should parse/validate before clearing and report invalid payloads; body was:\n{body}"
+    );
+}
+
+#[then("the TUI App methods should delegate session payload parsing to the application layer")]
+fn then_tui_app_methods_delegate_session_payload_parsing(_world: &mut QuectoWorld) {
+    let content = std::fs::read_to_string("quecto-tui/src/interface/app_methods.rs")
+        .expect("read TUI app methods source");
+    assert!(
+        content.contains("session_payloads::parse_session_stats")
+            && content.contains("session_payloads::parse_resume_sessions")
+            && content.contains("session_payloads::parse_resumed_messages"),
+        "App session methods should call application-layer parsers instead of hand-parsing raw JSON"
+    );
+    for fn_name in [
+        "update_footer_stats",
+        "show_session_stats",
+        "open_resume_selector",
+        "replace_chat_with_messages",
+    ] {
+        let body = rust_fn_body(&content, fn_name)
+            .unwrap_or_else(|| panic!("expected function {fn_name} in app_methods.rs"));
+        assert!(
+            !body.contains(".get(\"") && !body.contains("as_array") && !body.contains("as_u64"),
+            "{fn_name} should not parse raw serde_json::Value fields directly; body was:\n{body}"
+        );
+    }
+}
+
+fn rust_fn_body(content: &str, name: &str) -> Option<String> {
+    let marker = format!("fn {name}");
+    let start = content.find(&marker)?;
+    let open = content[start..].find('{')? + start;
+    let mut depth = 0usize;
+    for (offset, ch) in content[open..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(content[open + 1..open + offset].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+#[then("the TUI components layer should expose a shared ListNavigator")]
+fn then_tui_components_expose_list_navigator(_world: &mut QuectoWorld) {
+    let nav_path = Path::new(TUI_ROOT)
+        .join("interface")
+        .join("components")
+        .join("list_navigator.rs");
+    assert!(
+        nav_path.is_file(),
+        "shared list navigation helper must live at {}",
+        nav_path.display()
+    );
+    let content = std::fs::read_to_string(&nav_path).expect("read ListNavigator source");
+    assert!(
+        content.contains("pub struct ListNavigator")
+            && content.contains("pub fn move_next")
+            && content.contains("pub fn move_previous")
+            && content.contains("pub fn clamp"),
+        "ListNavigator should own selected index movement and clamping"
+    );
+}
+
+#[then(
+    "slash autocomplete, files autocomplete, model selector, and select list should use ListNavigator"
+)]
+fn then_selector_components_use_list_navigator(_world: &mut QuectoWorld) {
+    for file in [
+        "autocomplete.rs",
+        "files_autocomplete.rs",
+        "model_selector.rs",
+        "select_list.rs",
+    ] {
+        let path = Path::new(TUI_ROOT)
+            .join("interface")
+            .join("components")
+            .join(file);
+        let content = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        assert!(
+            content.contains("navigator: ListNavigator"),
+            "{file} should store selected-index state in a ListNavigator field"
+        );
+        assert!(
+            content.contains("navigator.move_next")
+                && content.contains("navigator.move_previous")
+                && content.contains("navigator.visible_range"),
+            "{file} should delegate movement and visible-window calculation to ListNavigator"
+        );
+    }
+}
+
+#[then("ListNavigator should own wraparound and visible-window selection behavior")]
+fn then_list_navigator_owns_wraparound_and_window_behavior(_world: &mut QuectoWorld) {
+    let content = std::fs::read_to_string(
+        Path::new(TUI_ROOT)
+            .join("interface")
+            .join("components")
+            .join("list_navigator.rs"),
+    )
+    .expect("read ListNavigator source");
+    assert!(
+        content.contains("pub fn selected")
+            && content.contains("pub fn visible_range")
+            && content.contains("saturating_sub"),
+        "ListNavigator should expose selected index and visible-window computation"
     );
 }
 

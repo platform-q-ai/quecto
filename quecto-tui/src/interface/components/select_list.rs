@@ -1,6 +1,7 @@
 //! Select list component — navigable list with selection indicator.
 
 use crate::interface::component::Component;
+use crate::interface::components::list_navigator::ListNavigator;
 use crate::interface::keys::Key;
 use crate::interface::theme;
 use crate::interface::utils::{truncate_to_width, visible_width};
@@ -27,7 +28,7 @@ pub enum SelectResult {
 /// A navigable list with selection indicator and optional descriptions.
 pub struct SelectList {
     items: Vec<SelectItem>,
-    selected: usize,
+    navigator: ListNavigator,
     max_visible: usize,
     result: SelectResult,
 }
@@ -36,7 +37,7 @@ impl SelectList {
     pub fn new(items: Vec<SelectItem>, max_visible: usize) -> Self {
         Self {
             items,
-            selected: 0,
+            navigator: ListNavigator::new(),
             max_visible,
             result: SelectResult::Pending,
         }
@@ -47,7 +48,7 @@ impl SelectList {
     }
 
     pub fn selected_item(&self) -> Option<&SelectItem> {
-        self.items.get(self.selected)
+        self.items.get(self.navigator.selected())
     }
 
     pub fn item_count(&self) -> usize {
@@ -71,13 +72,9 @@ impl Component for SelectList {
 
         // Calculate visible window with scrolling.
         let total = self.items.len();
-        let visible = total.min(self.max_visible);
-        let start = if self.selected >= visible {
-            (self.selected + 1).saturating_sub(visible)
-        } else {
-            0
-        };
-        let end = (start + visible).min(total);
+        let range = self.navigator.visible_range(total, self.max_visible);
+        let start = range.start;
+        let end = range.end;
 
         // Calculate primary column width for alignment.
         let primary_width = self
@@ -90,7 +87,7 @@ impl Component for SelectList {
 
         for i in start..end {
             let item = &self.items[i];
-            let is_sel = i == self.selected;
+            let is_sel = i == self.navigator.selected();
             let prefix = if is_sel { "→ " } else { "  " };
             let prefix_width = 2;
 
@@ -134,7 +131,7 @@ impl Component for SelectList {
 
         // Scroll indicator.
         if start > 0 || end < total {
-            let info = format!("  ({}/{})", self.selected + 1, total);
+            let info = format!("  ({}/{})", self.navigator.selected() + 1, total);
             lines.push(theme::dim(&info));
         }
 
@@ -144,23 +141,15 @@ impl Component for SelectList {
     fn handle_input(&mut self, key: &Key) -> bool {
         match key {
             Key::Up => {
-                if self.selected == 0 {
-                    self.selected = self.items.len().saturating_sub(1);
-                } else {
-                    self.selected -= 1;
-                }
+                self.navigator.move_previous(self.items.len());
                 true
             }
             Key::Down => {
-                if self.selected >= self.items.len().saturating_sub(1) {
-                    self.selected = 0;
-                } else {
-                    self.selected += 1;
-                }
+                self.navigator.move_next(self.items.len());
                 true
             }
             Key::Enter => {
-                if let Some(item) = self.items.get(self.selected) {
+                if let Some(item) = self.items.get(self.navigator.selected()) {
                     self.result = SelectResult::Selected(item.value.clone());
                 }
                 true

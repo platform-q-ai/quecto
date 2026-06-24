@@ -246,3 +246,33 @@ async fn idle_parent_shows_subagent_activity() {
         h.last()
     );
 }
+
+#[tokio::test]
+async fn harness_gc_removes_exited_subagents_and_captures() {
+    let mut h = TuiHarness::new().await;
+    h.event(Event::AgentStart);
+    h.event(subagents_changed(vec![subagent("done", "exited", None)]));
+    let before = h.heights().len();
+    h.gc();
+    assert_eq!(h.heights().len(), before + 1);
+}
+
+#[tokio::test]
+async fn transient_detection_normalizes_spinner_and_digits() {
+    let frames = vec![
+        vec!["worker 1 ⠁".to_string()],
+        vec!["flash 123".to_string(), "worker 2 ⠂".to_string()],
+        vec!["worker 3 ⠄".to_string()],
+    ];
+    let transients = transient_in(&frames);
+    assert_eq!(transients, vec![(1, "flash 123".to_string())]);
+}
+
+#[tokio::test]
+async fn event_line_invalid_json_panics_with_context() {
+    let mut h = TuiHarness::new().await;
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        h.event_line("not-json");
+    }));
+    assert!(result.is_err());
+}

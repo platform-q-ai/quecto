@@ -314,6 +314,8 @@ pub struct QuectoWorld {
     /// TUI @files BDD: file-mention autocomplete under test.
     pub tui_files_autocomplete:
         Option<quecto_tui::interface::components::files_autocomplete::FilesAutocomplete>,
+    /// TUI @files BDD: last consumed background-load request.
+    pub tui_files_load_requested: bool,
     /// TUI scrollback BDD: viewport captured before streaming growth.
     pub tui_viewport_before_stream: Vec<String>,
     /// TUI scrollback BDD: viewport captured after streaming growth.
@@ -944,7 +946,6 @@ mod subagent_protocol_steps;
 mod subagent_steps;
 mod subagent_widget_steps;
 mod tool_empty_args_steps;
-mod tool_output_cr_steps;
 mod truncate_steps;
 mod tui_architecture_steps;
 mod tui_file_mention_steps;
@@ -986,7 +987,12 @@ fn main() {
         QuectoWorld::cucumber()
             .max_concurrent_scenarios(25)
             .fail_on_skipped()
-            .filter_run(stripped_features_path.clone(), move |feat, _, sc| {
+            // `_and_exit` makes the process exit non-zero when any scenario
+            // fails. Plain `filter_run` returns normally even on failure, so
+            // the bdd test binary exited 0 with failing scenarios — meaning the
+            // pre-push BDD shards could never fail the gate. (This is how 38
+            // deterministic scenarios stayed red on master undetected.)
+            .filter_run_and_exit(stripped_features_path.clone(), move |feat, _, sc| {
                 // Exclude scenarios explicitly tagged @pending
                 if sc.tags.iter().any(|t| t == "pending") {
                     return false;

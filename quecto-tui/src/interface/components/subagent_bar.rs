@@ -9,6 +9,7 @@
 
 use crate::infrastructure::client::SubagentInfoEvent;
 use crate::interface::component::Component;
+use crate::interface::components::sanitize::strip_terminal_control;
 use crate::interface::theme;
 
 /// Braille spinner frames — matches the main spinner (`components/spinner.rs`)
@@ -117,9 +118,9 @@ impl Component for SubagentBar {
     }
 }
 
-/// Strip control characters to prevent terminal escape injection.
+/// Strip terminal control sequences to prevent terminal escape injection.
 fn sanitize(s: &str) -> String {
-    s.chars().filter(|c| !c.is_control()).collect()
+    strip_terminal_control(s)
 }
 
 /// Panel header: `▸ Subagents  X running · Y error · Z done`.
@@ -521,7 +522,7 @@ mod tests {
 
     #[test]
     fn sanitize_strips_control_chars() {
-        assert_eq!(sanitize("ab\x1b[31mcd"), "ab[31mcd");
+        assert_eq!(sanitize("ab\x1b[31mcd"), "abcd");
     }
 
     #[test]

@@ -5,7 +5,7 @@
 //! Wraps output in synchronized output markers (`CSI ?2026h` / `CSI ?2026l`)
 //! to prevent tearing on terminals that support it.
 
-use std::io::Write;
+use std::io::{self, Write};
 
 /// ANSI escape: begin synchronized update.
 const SYNC_START: &str = "\x1b[?2026h";
@@ -39,21 +39,22 @@ impl<W: Write> DiffRenderer<W> {
     /// Render a new set of lines. Only changed lines are written to the terminal.
     ///
     /// `width` is the current terminal width (used to detect resize → full redraw).
-    pub fn render(&mut self, new_lines: &[String], width: usize) {
+    pub fn render(&mut self, new_lines: &[String], width: usize) -> io::Result<()> {
         let width_changed = self.previous_width != 0 && self.previous_width != width;
         let first_render = self.previous_lines.is_empty() && self.previous_width == 0;
 
         if first_render || width_changed {
-            self.full_render(new_lines, width_changed);
+            self.full_render(new_lines, width_changed)?;
             self.previous_lines = new_lines.to_vec();
         } else {
-            let changed = self.diff_render(new_lines);
+            let changed = self.diff_render(new_lines)?;
             if changed {
                 self.previous_lines = new_lines.to_vec();
             }
         }
 
         self.previous_width = width;
+        Ok(())
     }
 
     /// Force a full redraw on the next render.
@@ -64,12 +65,16 @@ impl<W: Write> DiffRenderer<W> {
     }
 
     /// Full render — write all lines.
-    fn full_render(&mut self, lines: &[String], clear: bool) {
+    fn full_render(&mut self, lines: &[String], clear: bool) -> io::Result<()> {
         let mut buf = String::new();
         buf.push_str(SYNC_START);
+        // Establish a known origin for the renderer's cursor cache. The first
+        // render can occur after terminal setup/query escape writes, so do not
+        // assume the real cursor already starts at row 0/column 0.
+        buf.push_str("\x1b[H");
 
         if clear {
-            // Clear screen and home cursor
+            // Clear screen and home cursor.
             buf.push_str("\x1b[2J\x1b[H\x1b[3J");
         }
 
@@ -81,14 +86,15 @@ impl<W: Write> DiffRenderer<W> {
         }
 
         buf.push_str(SYNC_END);
-        let _ = self.writer.write_all(buf.as_bytes());
-        let _ = self.writer.flush();
+        self.writer.write_all(buf.as_bytes())?;
+        self.writer.flush()?;
         self.cursor_row = lines.len().saturating_sub(1);
+        Ok(())
     }
 
     /// Differential render — only write changed lines.
     /// Returns `true` if any lines were changed and written.
-    fn diff_render(&mut self, new_lines: &[String]) -> bool {
+    fn diff_render(&mut self, new_lines: &[String]) -> io::Result<bool> {
         // Find first and last changed line
         let max_len = new_lines.len().max(self.previous_lines.len());
         let mut first_changed: Option<usize> = None;
@@ -107,7 +113,7 @@ impl<W: Write> DiffRenderer<W> {
 
         let Some(first) = first_changed else {
             // No changes
-            return false;
+            return Ok(false);
         };
 
         let mut buf = String::new();
@@ -148,11 +154,11 @@ impl<W: Write> DiffRenderer<W> {
         }
 
         buf.push_str(SYNC_END);
-        let _ = self.writer.write_all(buf.as_bytes());
-        let _ = self.writer.flush();
+        self.writer.write_all(buf.as_bytes())?;
+        self.writer.flush()?;
         self.cursor_row = render_end;
 
-        true
+        Ok(true)
     }
 }
 
@@ -186,14 +192,14 @@ mod tests {
 
         // First render
         if !prev.is_empty() {
-            renderer.render(&lines(prev), 80);
+            renderer.render(&lines(prev), 80).unwrap();
         }
 
         // Clear capture to isolate the second render
         buf.lock().unwrap().clear();
 
         // Second render — only diff output appears
-        renderer.render(&lines(next), 80);
+        renderer.render(&lines(next), 80).unwrap();
 
         let data = buf.lock().unwrap().clone();
         String::from_utf8_lossy(&data).to_string()
@@ -204,7 +210,7 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         {
             let mut r = DiffRenderer::new(&mut buf as &mut dyn Write);
-            r.render(&lines(&["alpha", "beta"]), 80);
+            r.render(&lines(&["alpha", "beta"]), 80).unwrap();
         }
         let output = String::from_utf8_lossy(&buf);
         assert!(
@@ -243,7 +249,7 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         {
             let mut r = DiffRenderer::new(&mut buf as &mut dyn Write);
-            r.render(&lines(&["hello"]), 80);
+            r.render(&lines(&["hello"]), 80).unwrap();
         }
         let output = String::from_utf8_lossy(&buf);
         assert!(output.contains(SYNC_START));
@@ -296,5 +302,168 @@ mod tests {
         assert!(output.contains("x"));
         assert!(output.contains("y"));
         assert!(output.contains("z"));
+    }
+
+    // ── invalidate() ───────────────────────────────────────────────────
+
+    #[test]
+    fn invalidate_forces_full_redraw_on_next_render() {
+        use std::sync::{Arc, Mutex};
+
+        struct SharedWriter(Arc<Mutex<Vec<u8>>>);
+        impl Write for SharedWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let mut r = DiffRenderer::new(SharedWriter(buf.clone()));
+
+        // Initial render.
+        r.render(&lines(&["alpha", "beta"]), 80).unwrap();
+        buf.lock().unwrap().clear();
+
+        // Render identical content → should be a no-op diff (no content).
+        r.render(&lines(&["alpha", "beta"]), 80).unwrap();
+        let diff_output = {
+            let data = buf.lock().unwrap().clone();
+            String::from_utf8_lossy(&data).to_string()
+        };
+        assert!(
+            !diff_output.contains("alpha"),
+            "identical render should not re-emit: {diff_output}"
+        );
+
+        // Invalidate → next render must be full.
+        r.invalidate();
+        buf.lock().unwrap().clear();
+
+        r.render(&lines(&["alpha", "beta"]), 80).unwrap();
+        let full_output = {
+            let data = buf.lock().unwrap().clone();
+            String::from_utf8_lossy(&data).to_string()
+        };
+        assert!(
+            full_output.contains("alpha"),
+            "after invalidate, identical content must be fully redrawn: {full_output}"
+        );
+        assert!(
+            full_output.contains("beta"),
+            "after invalidate, all lines must be redrawn: {full_output}"
+        );
+    }
+
+    #[test]
+    fn invalidate_clears_width_change_detection() {
+        // After invalidate, a render at the same width as before should still
+        // do a full render (because previous_width was reset to 0).
+        let output = captured_render_with_invalidate(&["hello"], 80, &["hello"], 80);
+        assert!(
+            output.contains("hello"),
+            "after invalidate, same-width render should be full: {output}"
+        );
+    }
+
+    #[test]
+    fn invalidate_after_width_change_still_full_redraw() {
+        // If width changed AND invalidate was called, should still full-render.
+        // After invalidate, previous_width is reset to 0, so the width-changed
+        // path (which requires previous_width != 0) is NOT taken — instead
+        // the first-render path fires, which does NOT clear the screen.
+        let output = captured_render_with_invalidate(&["hello"], 80, &["hello"], 120);
+        assert!(
+            output.contains("hello"),
+            "after invalidate + width change, should be full: {output}"
+        );
+        // first-render path does NOT emit \x1b[2J (no screen clear).
+        assert!(
+            !output.contains("\x1b[2J"),
+            "after invalidate, first-render path should NOT clear screen: {output}"
+        );
+    }
+
+    /// Helper: render `prev` at `width_prev`, invalidate, then render `next`
+    /// at `width_next`, returning only the second render's output.
+    fn captured_render_with_invalidate(
+        prev: &[&str],
+        width_prev: usize,
+        next: &[&str],
+        width_next: usize,
+    ) -> String {
+        use std::sync::{Arc, Mutex};
+
+        struct SharedWriter(Arc<Mutex<Vec<u8>>>);
+        impl Write for SharedWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let mut r = DiffRenderer::new(SharedWriter(buf.clone()));
+
+        r.render(&lines(prev), width_prev).unwrap();
+        r.invalidate();
+        buf.lock().unwrap().clear();
+        r.render(&lines(next), width_next).unwrap();
+
+        let data = buf.lock().unwrap().clone();
+        String::from_utf8_lossy(&data).to_string()
+    }
+    struct FailingWriter {
+        fail_on_flush: bool,
+    }
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            if self.fail_on_flush {
+                Ok(_buf.len())
+            } else {
+                Err(std::io::Error::other("write failed"))
+            }
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            if self.fail_on_flush {
+                Err(std::io::Error::other("flush failed"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn render_returns_write_errors() {
+        let mut renderer = DiffRenderer::new(FailingWriter {
+            fail_on_flush: false,
+        });
+
+        let err = renderer
+            .render(&lines(&["hello"]), 80)
+            .expect_err("write failure should be returned");
+
+        assert_eq!(err.to_string(), "write failed");
+    }
+
+    #[test]
+    fn render_returns_flush_errors() {
+        let mut renderer = DiffRenderer::new(FailingWriter {
+            fail_on_flush: true,
+        });
+
+        let err = renderer
+            .render(&lines(&["hello"]), 80)
+            .expect_err("flush failure should be returned");
+
+        assert_eq!(err.to_string(), "flush failed");
     }
 }
