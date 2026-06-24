@@ -147,8 +147,10 @@ impl AwaitResult {
     }
 
     /// Like [`AwaitResult::new`], but carries the actual run-level error cause
-    /// (#752). When `error` is present it is echoed into `result.summary` so
-    /// the cause is visible in both the structured field and the prose verdict.
+    /// (#752). The cause is redacted (see [`redact_secrets`]) before it crosses
+    /// the trust boundary into the parent context, then threaded into
+    /// [`WorkflowResult::derive`] so the verdict and summary stay derived in one
+    /// place; the same redacted value populates the structured `error` field.
     pub fn with_error(
         status: &str,
         reason: Option<&str>,
@@ -157,10 +159,11 @@ impl AwaitResult {
         workflow: Option<WorkflowSnapshot>,
         error: Option<&str>,
     ) -> Self {
-        let mut result = WorkflowResult::derive(status, reason, workflow.as_ref());
-        if let Some(cause) = error {
-            result.summary = format!("subagent run failed: {cause}");
-        }
+        // Redact once: provider/HTTP error strings can embed secrets (bearer
+        // tokens, api keys, auth headers) and these responses reach the parent
+        // model context and logs (#752, security review).
+        let redacted = error.map(redact_secrets);
+        let result = WorkflowResult::derive(status, reason, workflow.as_ref(), redacted.as_deref());
         Self {
             status: status.to_string(),
             reason: reason.map(str::to_string),
@@ -168,8 +171,33 @@ impl AwaitResult {
             elapsed_ms,
             workflow,
             result,
-            error: error.map(str::to_string),
+            error: redacted,
         }
+    }
+}
+
+/// Strip known secret patterns and bound the length of an error cause before it
+/// is surfaced to the parent agent (#752). This is defense-in-depth: provider
+/// error strings are not guaranteed to be sanitized upstream and can echo
+/// bearer tokens, API keys, or auth query params.
+fn redact_secrets(cause: &str) -> String {
+    use std::sync::LazyLock;
+    static PATTERNS: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(
+            r"(?i)(bearer\s+\S+|sk-[A-Za-z0-9_-]{8,}|(?:api[_-]?key|token|password|secret|access[_-]?token)\s*[=:]\s*\S+)",
+        )
+        .expect("static redaction regex is valid")
+    });
+    const MAX_LEN: usize = 2000;
+    let redacted = PATTERNS.replace_all(cause, "[REDACTED]");
+    if redacted.len() > MAX_LEN {
+        let mut end = MAX_LEN;
+        while !redacted.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…[truncated]", &redacted[..end])
+    } else {
+        redacted.into_owned()
     }
 }
 
@@ -212,7 +240,12 @@ impl WorkflowResult {
     /// - `Incomplete` — went idle without completing, timed out, or exited
     ///   cleanly before completion (a persistent subagent exiting is not the
     ///   success path; completion is observed at idle, never inferred from exit).
-    pub fn derive(status: &str, reason: Option<&str>, workflow: Option<&WorkflowSnapshot>) -> Self {
+    pub fn derive(
+        status: &str,
+        reason: Option<&str>,
+        workflow: Option<&WorkflowSnapshot>,
+        error: Option<&str>,
+    ) -> Self {
         let workflow_progress = workflow.map(|w| ResultProgress {
             done: w.steps_completed,
             total: w.steps_total,
@@ -252,10 +285,17 @@ impl WorkflowResult {
                 VerdictStatus::Incomplete,
                 "await timed out before the subagent completed".to_string(),
             ),
-            "error" => (
-                VerdictStatus::Failed,
-                format!("await error: {}", reason.unwrap_or("unknown")),
-            ),
+            // Keep the reason context the verdict produced and append the
+            // concrete run-level cause when one was surfaced (#752), so the
+            // summary stays derived here rather than post-mutated by callers.
+            "error" => {
+                let base = format!("await error: {}", reason.unwrap_or("unknown"));
+                let summary = match error {
+                    Some(cause) => format!("{base} — {cause}"),
+                    None => base,
+                };
+                (VerdictStatus::Failed, summary)
+            }
             other => (
                 VerdictStatus::Incomplete,
                 format!("subagent status: {other}"),
@@ -439,312 +479,5 @@ pub fn validate_agent_id_format(agent_id: &str) -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_new_registry_is_empty() {
-        let r = new_registry();
-        assert!(r.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn verdict_completed_when_idle_and_workflow_complete() {
-        let wf = WorkflowSnapshot {
-            mode: "complete".into(),
-            steps_completed: 7,
-            steps_total: 7,
-        };
-        let r = WorkflowResult::derive("idle", Some("idle"), Some(&wf));
-        assert_eq!(r.status, VerdictStatus::Completed);
-        assert_eq!(
-            r.workflow_progress,
-            Some(ResultProgress { done: 7, total: 7 })
-        );
-    }
-
-    #[test]
-    fn verdict_incomplete_when_idle_but_workflow_active() {
-        let wf = WorkflowSnapshot {
-            mode: "active".into(),
-            steps_completed: 3,
-            steps_total: 7,
-        };
-        let r = WorkflowResult::derive("idle", Some("idle"), Some(&wf));
-        assert_eq!(r.status, VerdictStatus::Incomplete);
-    }
-
-    #[test]
-    fn verdict_incomplete_when_idle_without_workflow() {
-        let r = WorkflowResult::derive("idle", Some("idle"), None);
-        assert_eq!(r.status, VerdictStatus::Incomplete);
-        assert!(r.workflow_progress.is_none());
-    }
-
-    #[test]
-    fn verdict_failed_on_error_and_nonzero_exit() {
-        assert_eq!(
-            WorkflowResult::derive("error", Some("connection_failed"), None).status,
-            VerdictStatus::Failed
-        );
-        assert_eq!(
-            WorkflowResult::derive("exited", Some("exit_code_1"), None).status,
-            VerdictStatus::Failed
-        );
-        // A clean exit is NOT completion — completion is observed at idle.
-        assert_eq!(
-            WorkflowResult::derive("exited", Some("exit_code_0"), None).status,
-            VerdictStatus::Incomplete
-        );
-    }
-
-    #[test]
-    fn verdict_incomplete_on_timeout() {
-        assert_eq!(
-            WorkflowResult::derive("timeout", None, None).status,
-            VerdictStatus::Incomplete
-        );
-    }
-
-    #[test]
-    fn test_validate_format_valid() {
-        assert!(validate_agent_id_format("abc-123_XYZ").is_ok());
-    }
-
-    #[test]
-    fn test_validate_format_empty() {
-        assert!(validate_agent_id_format("").unwrap_err().contains("1-64"));
-    }
-
-    #[test]
-    fn test_validate_format_too_long() {
-        assert!(
-            validate_agent_id_format(&"a".repeat(65))
-                .unwrap_err()
-                .contains("1-64")
-        );
-    }
-
-    #[test]
-    fn test_validate_format_special_chars() {
-        assert!(
-            validate_agent_id_format("a/b")
-                .unwrap_err()
-                .contains("[a-zA-Z0-9_-]")
-        );
-    }
-
-    // --- SubagentStatus::to_wire_str ---
-    #[test]
-    fn test_status_wire_str_values() {
-        assert_eq!(SubagentStatus::Starting.to_wire_str(), "starting");
-        assert_eq!(SubagentStatus::Idle.to_wire_str(), "idle");
-        assert_eq!(SubagentStatus::Running.to_wire_str(), "running");
-        assert_eq!(SubagentStatus::Error.to_wire_str(), "error");
-        assert_eq!(SubagentStatus::Exited.to_wire_str(), "exited");
-    }
-
-    // --- SubagentStatus ---
-
-    #[test]
-    fn test_status_display_starting() {
-        assert_eq!(format!("{}", SubagentStatus::Starting), "Starting");
-    }
-
-    #[test]
-    fn test_status_display_idle() {
-        assert_eq!(format!("{}", SubagentStatus::Idle), "Idle");
-    }
-
-    #[test]
-    fn test_status_display_running() {
-        assert_eq!(format!("{}", SubagentStatus::Running), "Running");
-    }
-
-    #[test]
-    fn test_status_display_error() {
-        assert_eq!(format!("{}", SubagentStatus::Error), "Error");
-    }
-
-    #[test]
-    fn test_status_display_exited() {
-        assert_eq!(format!("{}", SubagentStatus::Exited), "Exited");
-    }
-
-    #[test]
-    fn test_status_default_is_starting() {
-        assert_eq!(SubagentStatus::default(), SubagentStatus::Starting);
-    }
-
-    #[test]
-    fn test_all_status_variants_distinct_display() {
-        let variants = [
-            SubagentStatus::Starting,
-            SubagentStatus::Idle,
-            SubagentStatus::Running,
-            SubagentStatus::Error,
-            SubagentStatus::Exited,
-        ];
-        let displays: Vec<String> = variants.iter().map(|v| format!("{}", v)).collect();
-        let unique: std::collections::HashSet<&String> = displays.iter().collect();
-        assert_eq!(displays.len(), unique.len());
-    }
-
-    // --- SubagentEntry ---
-
-    #[test]
-    fn test_new_entry_has_starting_status() {
-        let entry = SubagentEntry::new(PathBuf::from("/tmp/test.sock"), 42);
-        assert_eq!(entry.status, SubagentStatus::Starting);
-        assert_eq!(entry.pid, 42);
-        assert!(entry.last_tool.is_none());
-        assert!(entry.last_error.is_none());
-        assert!(entry.monitor_handle.is_none());
-    }
-
-    #[test]
-    fn test_entry_socket_path() {
-        let entry = SubagentEntry::new(PathBuf::from("/run/quecto.sock"), 0);
-        assert_eq!(entry.socket_path, PathBuf::from("/run/quecto.sock"));
-    }
-
-    // --- SubagentNotification (#523) ---
-
-    #[test]
-    fn test_completed_message_format() {
-        let n = SubagentNotification::Completed {
-            agent_id: "researcher".into(),
-            summary: "All tests pass".into(),
-        };
-        let msg = n.to_message();
-        assert!(msg.starts_with("[subagent]"));
-        assert!(msg.contains("researcher"));
-        assert!(msg.contains("completed"));
-        assert!(msg.contains("All tests pass"));
-    }
-
-    #[test]
-    fn test_errored_message_format() {
-        let n = SubagentNotification::Errored {
-            agent_id: "linter".into(),
-            error: "rate limit exceeded".into(),
-        };
-        let msg = n.to_message();
-        assert!(msg.starts_with("[subagent]"));
-        assert!(msg.contains("linter"));
-        assert!(msg.contains("errored"));
-        assert!(msg.contains("rate limit exceeded"));
-    }
-
-    #[test]
-    fn test_exited_message_format() {
-        let n = SubagentNotification::Exited {
-            agent_id: "formatter".into(),
-        };
-        let msg = n.to_message();
-        assert!(msg.starts_with("[subagent]"));
-        assert!(msg.contains("formatter"));
-        assert!(msg.contains("exited"));
-    }
-
-    // --- extract_summary ---
-
-    #[test]
-    fn test_extract_summary_from_assistant_message() {
-        let messages = serde_json::json!([
-            {"role": "user", "content": "Do something"},
-            {"role": "assistant", "content": "The analysis is complete"}
-        ]);
-        assert_eq!(extract_summary(&messages), "The analysis is complete");
-    }
-
-    #[test]
-    fn test_extract_summary_truncates_long_text() {
-        let long = "x".repeat(300);
-        let messages = serde_json::json!([
-            {"role": "assistant", "content": long}
-        ]);
-        let summary = extract_summary(&messages);
-        assert!(summary.len() <= 203); // 200 + "..."
-        assert!(summary.ends_with("..."));
-    }
-
-    #[test]
-    fn test_extract_summary_empty_messages() {
-        let messages = serde_json::json!([]);
-        assert_eq!(extract_summary(&messages), "(no output)");
-    }
-
-    #[test]
-    fn test_extract_summary_no_assistant() {
-        let messages = serde_json::json!([
-            {"role": "tool", "content": "tool output"}
-        ]);
-        assert_eq!(extract_summary(&messages), "(no output)");
-    }
-
-    #[test]
-    fn test_extract_summary_truncates_multibyte_utf8() {
-        // Each emoji is 4 bytes. 201 emojis = 804 bytes but 201 chars.
-        let emojis = "🦀".repeat(201);
-        let messages = serde_json::json!([{"role": "assistant", "content": emojis}]);
-        let summary = extract_summary(&messages);
-        assert!(summary.chars().count() <= 203); // 200 chars + "..."
-        assert!(summary.ends_with("..."));
-        // Should not panic on multi-byte boundary
-    }
-
-    #[test]
-    fn test_extract_summary_non_array() {
-        let messages = serde_json::json!("not an array");
-        assert_eq!(extract_summary(&messages), "(no output)");
-    }
-
-    #[test]
-    fn test_extract_summary_last_assistant() {
-        let messages = serde_json::json!([
-            {"role": "assistant", "content": "First response"},
-            {"role": "user", "content": "Another question"},
-            {"role": "assistant", "content": "Second response"}
-        ]);
-        assert_eq!(extract_summary(&messages), "Second response");
-    }
-
-    // --- notification channel ---
-
-    #[tokio::test]
-    async fn test_notification_channel_bounded() {
-        let (tx, _rx) = new_notification_channel();
-        for i in 0..NOTIFICATION_CHANNEL_CAPACITY {
-            let n = SubagentNotification::Completed {
-                agent_id: format!("bot-{}", i),
-                summary: "done".into(),
-            };
-            assert!(
-                tx.try_send(SequencedSubagentNotification::new(i as u64 + 1, n))
-                    .is_ok()
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn test_notification_drain() {
-        let (tx, mut rx) = new_notification_channel();
-        for i in 0..3 {
-            let _ = tx
-                .send(SequencedSubagentNotification::new(
-                    i as u64 + 1,
-                    SubagentNotification::Exited {
-                        agent_id: format!("bot-{}", i),
-                    },
-                ))
-                .await;
-        }
-        drop(tx);
-        let mut count = 0;
-        while rx.recv().await.is_some() {
-            count += 1;
-        }
-        assert_eq!(count, 3);
-    }
-}
+#[path = "subagent_registry_tests.rs"]
+mod tests;

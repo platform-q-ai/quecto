@@ -8,16 +8,12 @@ fn await_tool_result(
     elapsed_ms: u64,
     workflow: Option<WorkflowSnapshot>,
 ) -> ToolResult {
-    let result = AwaitResult::new(status, reason, agent_id, elapsed_ms, workflow);
-    ToolResult {
-        content: serde_json::to_string(&result).unwrap(),
-        is_error: false,
-        image_blocks: vec![],
-    }
+    await_tool_result_with_error(status, reason, agent_id, elapsed_ms, workflow, None)
 }
 
-/// Like [`await_tool_result`], but carries the actual run-level error cause so
-/// it is visible in the `await` response (#752).
+/// Serialize an [`AwaitResult`] as a (non-error) `ToolResult`, optionally
+/// carrying the actual run-level error cause so it is visible in the `await`
+/// response (#752). [`await_tool_result`] delegates here with `error: None`.
 fn await_tool_result_with_error(
     status: &str,
     reason: Option<&str>,
