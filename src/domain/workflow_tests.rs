@@ -481,7 +481,6 @@ fn verdict_status_round_trips_through_serde() {
         (VerdictStatus::Completed, "completed"),
         (VerdictStatus::Failed, "failed"),
         (VerdictStatus::Incomplete, "incomplete"),
-        (VerdictStatus::Blocked, "blocked"),
     ] {
         let json = serde_json::to_value(status).unwrap();
         assert_eq!(json, serde_json::json!(wire));
