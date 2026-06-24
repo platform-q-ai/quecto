@@ -185,8 +185,38 @@ mod tests {
         // Default ToolRegistry methods: no extension tracking; register/unregister no-op.
         let mut reg = EmptyRegistry { defs: vec![] };
         assert!(reg.extension_names().is_empty());
+        reg.set_session_key("session-1"); // default no-op, must not panic
+        reg.register_extension(std::sync::Arc::new(NoopTool)); // default no-op
         reg.unregister_extension("nope"); // no-op, must not panic
         assert!(reg.extension_names().is_empty());
+    }
+
+    /// Minimal `Tool` exercising the trait's default `set_session_key`.
+    struct NoopTool;
+
+    impl Tool for NoopTool {
+        fn definition(&self) -> ToolDefinition {
+            def("noop")
+        }
+        fn execute(
+            &self,
+            _arguments: &str,
+        ) -> Pin<Box<dyn Future<Output = Result<ToolResult, DomainError>> + Send + '_>> {
+            Box::pin(async {
+                Ok(ToolResult {
+                    content: String::new(),
+                    is_error: false,
+                    image_blocks: vec![],
+                })
+            })
+        }
+    }
+
+    #[test]
+    fn tool_default_set_session_key_is_inert() {
+        let tool = NoopTool;
+        tool.set_session_key("s".into()); // default no-op, must not panic
+        assert_eq!(tool.definition().name, "noop");
     }
 
     #[test]

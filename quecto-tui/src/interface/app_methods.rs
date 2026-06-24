@@ -689,36 +689,5 @@ pub(super) fn subagent_activity_line(active: usize, frame: usize) -> String {
 /// Strip ANSI escape sequences (CSI + OSC) for the render-log diagnostic and
 /// the headless test harness.
 pub(super) fn strip_ansi(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != '\x1b' {
-            out.push(c);
-            continue;
-        }
-        match chars.next() {
-            Some('[') => {
-                // CSI: consume until a final byte in 0x40..=0x7e.
-                for c2 in chars.by_ref() {
-                    if ('@'..='~').contains(&c2) {
-                        break;
-                    }
-                }
-            }
-            Some(']') => {
-                // OSC: consume until BEL or ST (ESC \).
-                while let Some(c2) = chars.next() {
-                    if c2 == '\x07' {
-                        break;
-                    }
-                    if c2 == '\x1b' && chars.peek() == Some(&'\\') {
-                        chars.next();
-                        break;
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    out
+    crate::interface::ansi::strip_ansi(s)
 }

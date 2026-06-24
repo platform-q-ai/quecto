@@ -12,22 +12,20 @@ pub(super) fn parse_model_entries(data: &serde_json::Value) -> Vec<ModelEntry> {
                 .get("model")
                 .or_else(|| m.get("id"))
                 .and_then(|v| v.as_str())?;
-            let id: String = raw_model.chars().filter(|c| !c.is_control()).collect();
+            let id = crate::interface::ansi::sanitize_control(raw_model);
             if id.is_empty() {
                 return None;
             }
-            let provider: String = m
-                .get("provider")
-                .and_then(|v| v.as_str())
-                .or_else(|| id.split_once('/').map(|(provider, _)| provider))
-                .unwrap_or("Model")
-                .chars()
-                .filter(|c| !c.is_control())
-                .collect();
+            let provider: String = crate::interface::ansi::sanitize_control(
+                m.get("provider")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| id.split_once('/').map(|(provider, _)| provider))
+                    .unwrap_or("Model"),
+            );
             let auth = m
                 .get("auth")
                 .and_then(|v| v.as_str())
-                .map(|s| s.chars().filter(|c| !c.is_control()).collect::<String>())
+                .map(crate::interface::ansi::sanitize_control)
                 .filter(|s| !s.is_empty());
             Some(ModelEntry {
                 id,
@@ -218,7 +216,7 @@ mod tests {
     fn parse_strips_control_chars_from_model_id() {
         let data = serde_json::json!({
             "models": [
-                { "model": "model\u{0007}with\u{001b}control" }
+                { "model": "model\u{0007}with\u{0000}control" }
             ]
         });
         let entries = parse_model_entries(&data);

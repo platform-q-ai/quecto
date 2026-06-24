@@ -5,7 +5,9 @@
 //! base content lines at a computed row/col position. These ANSI-aware helpers
 //! own that splicing.
 
+use crate::interface::ansi::{AnsiSegment, ansi_segments};
 use crate::interface::utils::visible_width;
+use unicode_width::UnicodeWidthChar;
 
 /// Splice overlay content into a base line at the given column.
 ///
@@ -49,27 +51,21 @@ pub fn splice_line(
 fn take_visible_chars(s: &str, n: usize) -> String {
     let mut result = String::new();
     let mut width = 0;
-    let mut in_escape = false;
 
-    for ch in s.chars() {
-        if in_escape {
-            result.push(ch);
-            if ch.is_ascii_alphabetic() || ch == '~' {
-                in_escape = false;
+    'outer: for seg in ansi_segments(s) {
+        match seg {
+            AnsiSegment::Escape(esc) => result.push_str(esc),
+            AnsiSegment::Text(text) => {
+                for ch in text.chars() {
+                    let cw = ch.width().unwrap_or(0);
+                    if width + cw > n {
+                        break 'outer;
+                    }
+                    result.push(ch);
+                    width += cw;
+                }
             }
-            continue;
         }
-        if ch == '\x1b' {
-            result.push(ch);
-            in_escape = true;
-            continue;
-        }
-        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-        if width + cw > n {
-            break;
-        }
-        result.push(ch);
-        width += cw;
     }
 
     // Pad if we didn't reach n.
@@ -84,28 +80,22 @@ fn take_visible_chars(s: &str, n: usize) -> String {
 /// Skip the first `n` visible characters and return the rest (ANSI-aware).
 fn skip_visible_chars(s: &str, n: usize) -> String {
     let mut width = 0;
-    let mut in_escape = false;
     let mut byte_offset = 0;
 
-    for ch in s.chars() {
-        if in_escape {
-            byte_offset += ch.len_utf8();
-            if ch.is_ascii_alphabetic() || ch == '~' {
-                in_escape = false;
+    'outer: for seg in ansi_segments(s) {
+        match seg {
+            AnsiSegment::Escape(esc) => byte_offset += esc.len(),
+            AnsiSegment::Text(text) => {
+                for ch in text.chars() {
+                    let cw = ch.width().unwrap_or(0);
+                    if width + cw > n {
+                        break 'outer;
+                    }
+                    width += cw;
+                    byte_offset += ch.len_utf8();
+                }
             }
-            continue;
         }
-        if ch == '\x1b' {
-            byte_offset += ch.len_utf8();
-            in_escape = true;
-            continue;
-        }
-        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-        if width + cw > n {
-            break;
-        }
-        width += cw;
-        byte_offset += ch.len_utf8();
     }
 
     s[byte_offset..].to_string()

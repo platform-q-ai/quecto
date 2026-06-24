@@ -3,6 +3,7 @@
 //! All width calculations are ANSI-aware: escape sequences have zero visual
 //! width. CJK characters are correctly counted as width 2.
 
+use crate::interface::ansi::{AnsiSegment, ansi_segments};
 use unicode_width::UnicodeWidthChar;
 
 /// Calculate the visible width of a string, ignoring ANSI escape sequences.
@@ -11,46 +12,15 @@ use unicode_width::UnicodeWidthChar;
 /// count as width 0.
 pub fn visible_width(s: &str) -> usize {
     let mut width = 0;
-    let mut in_escape = false;
-    let mut chars = s.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if in_escape {
-            // Inside an escape sequence — wait for the terminator
-            if ch.is_ascii_alphabetic() || ch == '~' {
-                in_escape = false;
+    for seg in ansi_segments(s) {
+        if let AnsiSegment::Text(text) = seg {
+            // `width()` returns `None` for control characters, so `unwrap_or(0)`
+            // gives them zero width — matching the historical behaviour.
+            for ch in text.chars() {
+                width += ch.width().unwrap_or(0);
             }
-            continue;
         }
-        if ch == '\x1b' {
-            // Start of escape sequence
-            in_escape = true;
-            // Peek: if next is '[' this is CSI, if ']' this is OSC
-            if chars.peek() == Some(&']') {
-                // OSC: skip until BEL (\x07) or ST (\x1b\\)
-                chars.next(); // consume ']'
-                loop {
-                    match chars.next() {
-                        Some('\x07') => break,
-                        Some('\x1b') if chars.peek() == Some(&'\\') => {
-                            chars.next();
-                            break;
-                        }
-                        None => break,
-                        _ => {}
-                    }
-                }
-                in_escape = false;
-            }
-            continue;
-        }
-        if ch < ' ' {
-            // Control character — zero width
-            continue;
-        }
-        width += ch.width().unwrap_or(0);
     }
-
     width
 }
 
@@ -70,53 +40,27 @@ pub fn truncate_to_width(s: &str, max_width: usize, ellipsis: Option<&str>) -> S
 
     let mut result = String::new();
     let mut width = 0;
-    let mut in_escape = false;
-    let mut chars = s.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if in_escape {
-            result.push(ch);
-            if ch.is_ascii_alphabetic() || ch == '~' {
-                in_escape = false;
-            }
-            continue;
-        }
-        if ch == '\x1b' {
-            result.push(ch);
-            in_escape = true;
-            if chars.peek() == Some(&']') {
-                result.push(']');
-                chars.next();
-                loop {
-                    match chars.next() {
-                        Some('\x07') => {
-                            result.push('\x07');
-                            break;
-                        }
-                        Some('\x1b') if chars.peek() == Some(&'\\') => {
-                            result.push('\x1b');
-                            result.push('\\');
-                            chars.next();
-                            break;
-                        }
-                        Some(c) => result.push(c),
-                        None => break,
+    'outer: for seg in ansi_segments(s) {
+        match seg {
+            // Escape sequences are preserved verbatim and never count as width.
+            AnsiSegment::Escape(esc) => result.push_str(esc),
+            AnsiSegment::Text(text) => {
+                for ch in text.chars() {
+                    let ch_width = ch.width().unwrap_or(0);
+                    // Zero-width chars (control chars, combining marks) are kept
+                    // without advancing the column count.
+                    if ch_width == 0 {
+                        result.push(ch);
+                        continue;
                     }
+                    if width + ch_width > target {
+                        break 'outer;
+                    }
+                    result.push(ch);
+                    width += ch_width;
                 }
-                in_escape = false;
             }
-            continue;
         }
-        if ch < ' ' {
-            result.push(ch);
-            continue;
-        }
-        let ch_width = ch.width().unwrap_or(0);
-        if width + ch_width > target {
-            break;
-        }
-        result.push(ch);
-        width += ch_width;
     }
 
     // Append ellipsis
