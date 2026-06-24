@@ -38,6 +38,7 @@ pub enum AuditEvent {
         stop_reason: String,
         duration_ms: u64,
     },
+    #[cfg(any(test, feature = "test-support"))]
     WorkflowStep {
         action: String,
         step_index: usize,
@@ -45,6 +46,7 @@ pub enum AuditEvent {
         step_label: String,
         template_id: String,
     },
+    #[cfg(any(test, feature = "test-support"))]
     WorkflowTransition {
         from_mode: String,
         to_mode: String,
@@ -57,20 +59,21 @@ pub enum AuditEvent {
         tokens_before: usize,
         tokens_after: usize,
     },
+    #[cfg(any(test, feature = "test-support"))]
     SubagentSpawned {
         agent_id: String,
         task_preview: String,
         system_preview: String,
     },
-    SubagentCmd {
-        agent_id: String,
-        command: String,
-    },
+    #[cfg(any(test, feature = "test-support"))]
+    SubagentCmd { agent_id: String, command: String },
+    #[cfg(any(test, feature = "test-support"))]
     GuardBlocked {
         command_preview: String,
         guard_message: String,
         before_step_key: String,
     },
+    #[cfg(any(test, feature = "test-support"))]
     SubagentAwait {
         agent_id: String,
         status: String,
