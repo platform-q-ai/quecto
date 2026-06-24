@@ -85,3 +85,13 @@ Feature: TUI Clean Architecture and executable BDD enforcement
 
   Scenario: TUI workflow widget uses only active toggle hotkeys
     Then quecto-tui should not expose the Ctrl+Shift+W workflow overlay
+
+  Scenario: TUI drops the dead OverlayStack compositing machinery
+    Then quecto-tui should not retain the dead OverlayStack overlay machinery
+    And quecto-tui should not keep tests that pin the dead OverlayStack machinery alive
+    And quecto-tui should keep the live splice_line overlay helpers
+
+  Scenario: TUI drops the legacy workflow_bar render path
+    Then quecto-tui should not retain the legacy workflow_bar render function
+    And quecto-tui should not keep tests that pin the legacy workflow_bar render path alive
+    And quecto-tui should keep the live workflow_bar render_widget path
