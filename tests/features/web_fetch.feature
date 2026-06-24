@@ -52,7 +52,7 @@ Feature: Web Fetch Tool
       """
     When the agent executes tool "web_fetch" with mock URL
     Then the [ToolResult] should contain "Tom & Jerry"
-    And the [ToolResult] should contain "< 3 > 2"
+    And the [ToolResult] should contain "<3 > 2"
     And the [ToolResult] should not be an error
 
   # ─── Raw mode ───────────────────────────────────────────────────────────────

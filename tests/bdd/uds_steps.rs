@@ -2630,7 +2630,7 @@ fn given_mock_llm_workflow_select(world: &mut QuectoWorld, text: String) {
                         "type": "function",
                         "function": {
                             "name": "workflow",
-                            "arguments": "{\"action\":\"select_template\",\"template\":\"fix\"}"
+                            "arguments": "{\"action\":\"select_template\",\"template\":\"feature\"}"
                         }
                     }]
                 },
@@ -2693,7 +2693,7 @@ fn given_mock_llm_workflow_select_check(world: &mut QuectoWorld, text: String) {
                         "type": "function",
                         "function": {
                             "name": "workflow",
-                            "arguments": "{\"action\":\"select_template\",\"template\":\"fix\"}"
+                            "arguments": "{\"action\":\"select_template\",\"template\":\"feature\"}"
                         }
                     }]
                 },

@@ -34,7 +34,7 @@ Feature: Session Management
     Given a [session] workspace
     And a [session] "cli:good" with 2 messages in history
     And a corrupt [session] file "cli_bad.json"
-    Then the [session] list should include session "good"
+    Then the [session] list should include session "cli:good"
 
   # NOTE: CLI session key scenarios moved to e2e_session.feature
   # because they now require a mock LLM server (cmd_agent is no longer a stub).
@@ -48,7 +48,7 @@ Feature: Session Management
     Given a quecto base directory at a temporary path
     When I run quecto with arguments "agent -s my-session -m Hello"
     Then the exit code should be 1
-    And the stderr should contain "config not found"
+    And the stderr should contain "no LLM providers"
 
   Scenario: Session routing by channel and chat ID
     Given a [session] workspace

@@ -344,14 +344,14 @@ fn then_uds_protocol_supports_resuming_session(_world: &mut QuectoWorld) {
 
 #[then("the quecto-tui resume selector should render with an opaque border")]
 fn then_tui_resume_selector_has_opaque_border(_world: &mut QuectoWorld) {
-    let app = std::fs::read_to_string("quecto-tui/src/interface/app.rs")
-        .expect("read quecto-tui app source");
+    let overlay = std::fs::read_to_string("quecto-tui/src/interface/select_overlay.rs")
+        .expect("read quecto-tui select_overlay source");
     let theme = std::fs::read_to_string("quecto-tui/src/interface/theme.rs")
         .expect("read quecto-tui theme source");
     assert!(
-        app.contains("build_resume_selector_overlay")
-            && app.contains("RESUME_SELECTOR_BORDER_WIDTH")
-            && app.contains("apply_overlay_bg"),
+        overlay.contains("build_resume_selector_overlay")
+            && overlay.contains("SELECTOR_BORDER_WIDTH")
+            && overlay.contains("apply_overlay_bg"),
         "resume selector should be rendered as a padded opaque overlay instead of raw text over chat history"
     );
     assert!(
@@ -386,7 +386,7 @@ fn then_tui_workflow_widget_matches_quecto_plain_text(_world: &mut QuectoWorld) 
     );
     assert!(
         app.contains("workflow_bar::render_widget")
-            && app.contains("bottom.extend(workflow_widget_lines)"),
+            && app.contains("bottom.extend(workflow_bar::render_widget("),
         "app should render the workflow widget in the bottom section above the editor"
     );
 }

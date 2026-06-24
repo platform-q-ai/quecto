@@ -224,7 +224,7 @@ Feature: LLM Providers
   Scenario: Anthropic provider sends adaptive thinking for supported models
     Given an Anthropic request with model "claude-sonnet-4-6" and thinking level "medium"
     When I build the Anthropic request body with thinking
-    Then the request body should contain thinking type "enabled" with budget_tokens 10000
+    Then the request body should contain thinking type "adaptive"
     And the request body should not contain a temperature field
 
   Scenario: Anthropic provider sends budget-based thinking for older models
@@ -233,7 +233,7 @@ Feature: LLM Providers
     Then the request body should contain thinking type "enabled" with budget_tokens 16384
 
   Scenario: Anthropic provider skips thinking when level is none for older models
-    Given an Anthropic request with model "claude-sonnet-4-6" and no thinking level
+    Given an Anthropic request with model "claude-3-5-sonnet-20241022" and no thinking level
     When I build the Anthropic request body with thinking
     Then the request body should not contain a thinking field
     And the request body should contain a temperature field
@@ -570,7 +570,7 @@ Feature: LLM Providers
 
   # #437-2,3,7,9: Beta headers
   Scenario: API key auth for non-4.6 model sends interleaved-thinking and fine-grained-tool-streaming betas
-    Given an Anthropic beta header for model "claude-sonnet-4-6" with is_oauth false
+    Given an Anthropic beta header for model "claude-sonnet-4-5" with is_oauth false
     When I build the beta header
     Then the beta header should contain "fine-grained-tool-streaming-2025-05-14"
     And the beta header should contain "interleaved-thinking-2025-05-14"
@@ -583,7 +583,7 @@ Feature: LLM Providers
     And the beta header should not contain "interleaved-thinking-2025-05-14"
 
   Scenario: OAuth auth includes identity and oauth betas plus streaming betas
-    Given an Anthropic beta header for model "claude-sonnet-4-6" with is_oauth true
+    Given an Anthropic beta header for model "claude-sonnet-4-5" with is_oauth true
     When I build the beta header
     Then the beta header should contain "claude-code-20250219"
     And the beta header should contain "oauth-2025-04-20"
@@ -609,12 +609,12 @@ Feature: LLM Providers
   Scenario: Tool definitions are remapped in OAuth mode
     Given an Anthropic request with tool "read" and is_oauth true
     When I build the Anthropic request body with OAuth
-    Then the tool definition name should be "Read"
+    Then the Anthropic tool definition name should be "Read"
 
   Scenario: Tool definitions are NOT remapped in API key mode
     Given an Anthropic request with tool "read" and is_oauth false
     When I build the Anthropic request body without OAuth
-    Then the tool definition name should be "read"
+    Then the Anthropic tool definition name should be "read"
 
   # #437-5: Thinking block replay in multi-turn conversations
   Scenario: Assistant message with normal thinking block includes thinking in API payload

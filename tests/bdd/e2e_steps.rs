@@ -2003,13 +2003,13 @@ fn then_llm_system_message_only_preamble(world: &mut QuectoWorld) {
             &content[..content.len().min(100)]
         );
         // Beyond the datetime line, the only standard content is the Quecto
-        // capability-docs preamble (injected when running inside the quecto
-        // repo). No skill prompts or user prompts should leak into the system
-        // message.
+        // capability-docs retrieval preamble (always appended by
+        // build_system_prompt). No skill prompts or user prompts should leak
+        // into the system message.
         let extra = content.lines().skip(1).collect::<Vec<_>>().join("\n");
         let extra = extra.trim();
         assert!(
-            extra.is_empty() || extra.contains("Quecto agent capability docs are available"),
+            extra.is_empty() || extra.contains("Quecto's own capability docs are embedded"),
             "system message should contain only the standard preamble, got: {:?}",
             content.lines().collect::<Vec<_>>()
         );

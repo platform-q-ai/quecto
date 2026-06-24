@@ -37,8 +37,8 @@ fn assert_reference_steps(steps: &[Value]) {
         "Install/check local quality hooks"
     );
     assert_eq!(steps[1]["key"], "scenarios");
-    assert_eq!(steps[4]["key"], "red");
-    assert_eq!(steps[5]["key"], "bdd_review");
+    assert_eq!(steps[3]["key"], "red");
+    assert_eq!(steps[4]["key"], "bdd_review");
     assert_eq!(steps[17]["key"], "pull");
     assert_eq!(steps[17]["label"], "Move to local master and pull");
     assert_eq!(steps.last().unwrap()["key"], "cleanup");
