@@ -237,6 +237,44 @@ async fn execute_await_run_error_returns_structured_error() {
 }
 
 #[tokio::test]
+async fn execute_await_run_error_surfaces_error_message() {
+    // #752: the actual run error message/cause must be visible in the await
+    // response, not just a generic "agent_error" reason.
+    use crate::infrastructure::tools::subagent_registry::SubagentStatus;
+    let registry = new_registry();
+    let dir = tempfile::tempdir().unwrap();
+    let sock_path = dir.path().join("run-error-surface.sock");
+    let listener = tokio::net::UnixListener::bind(&sock_path).unwrap();
+    tokio::spawn(serve_get_state_once(listener));
+
+    let mut entry = SubagentEntry::new(sock_path, 0);
+    entry.status = SubagentStatus::Error;
+    // Set ONLY run_error (leave last_error None) so the test pins the behaviour
+    // to the run-level field #752 cares about, not a recoverable tool error.
+    entry.last_error = None;
+    entry.run_error = Some("HTTP 429 from Codex: usage_limit_reached".to_string());
+    registry.lock().unwrap().insert("w1".to_string(), entry);
+
+    let tool = AgentCmdTool::new(registry);
+    let result = tool
+        .execute(r#"{"agent_id":"w1","command":"await","timeout":5,"idle_timeout":0}"#)
+        .await
+        .unwrap();
+    assert!(!result.is_error);
+    let parsed: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert_eq!(parsed["status"], "error");
+    assert_eq!(parsed["reason"], "agent_error");
+    // The actual error text must be present in a dedicated `error` field.
+    assert_eq!(parsed["error"], "HTTP 429 from Codex: usage_limit_reached");
+    // ...and reflected in the human-readable verdict summary.
+    let summary = parsed["result"]["summary"].as_str().unwrap();
+    assert!(
+        summary.contains("usage_limit_reached"),
+        "summary should carry the cause, got: {summary}"
+    );
+}
+
+#[tokio::test]
 async fn execute_await_tool_error_preserves_existing_idle_behavior() {
     use crate::infrastructure::tools::subagent_registry::SubagentStatus;
     let registry = new_registry();
