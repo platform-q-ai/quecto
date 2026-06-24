@@ -197,6 +197,25 @@ impl StopReason {
             other => Self::Unknown(other.to_string()),
         }
     }
+
+    /// Return the canonical string representation for this stop reason.
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::EndTurn => "end_turn",
+            Self::MaxTokens => "max_tokens",
+            Self::ToolUse => "tool_use",
+            Self::Refusal => "refusal",
+            Self::Error => "error",
+            Self::Aborted => "aborted",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl std::fmt::Display for StopReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// Token usage information from an LLM call.
@@ -455,5 +474,38 @@ mod tests {
         assert!(starts_with_ci("CLAUDE-OPUS-4", "claude-opus-4"));
         assert!(!starts_with_ci("claude-3-5-sonnet", "claude-sonnet-4"));
         assert!(!starts_with_ci("short", "claude-sonnet-4"));
+    }
+
+    #[test]
+    fn stop_reason_parse_all_variants() {
+        assert_eq!(StopReason::parse("end_turn"), StopReason::EndTurn);
+        assert_eq!(StopReason::parse("max_tokens"), StopReason::MaxTokens);
+        assert_eq!(
+            StopReason::parse("model_context_window_exceeded"),
+            StopReason::MaxTokens
+        );
+        assert_eq!(StopReason::parse("tool_use"), StopReason::ToolUse);
+        assert_eq!(StopReason::parse("refusal"), StopReason::Refusal);
+        assert_eq!(StopReason::parse("pause_turn"), StopReason::EndTurn);
+        assert_eq!(StopReason::parse("stop_sequence"), StopReason::EndTurn);
+        assert_eq!(StopReason::parse("sensitive"), StopReason::Error);
+        assert_eq!(StopReason::parse("error"), StopReason::Error);
+        assert_eq!(StopReason::parse("aborted"), StopReason::Aborted);
+        assert_eq!(
+            StopReason::parse("custom_stop"),
+            StopReason::Unknown("custom_stop".into())
+        );
+    }
+
+    #[test]
+    fn stop_reason_as_str_and_display_round_trip() {
+        assert_eq!(StopReason::EndTurn.as_str(), "end_turn");
+        assert_eq!(StopReason::MaxTokens.as_str(), "max_tokens");
+        assert_eq!(StopReason::ToolUse.as_str(), "tool_use");
+        assert_eq!(StopReason::Refusal.as_str(), "refusal");
+        assert_eq!(StopReason::Error.as_str(), "error");
+        assert_eq!(StopReason::Aborted.as_str(), "aborted");
+        assert_eq!(StopReason::Unknown("weird".into()).as_str(), "weird");
+        assert_eq!(StopReason::ToolUse.to_string(), "tool_use");
     }
 }

@@ -65,21 +65,8 @@ fn skip_if_false(v: &bool) -> bool {
     !v
 }
 
-/// Serialise `StopReason` to a stable canonical string for persistence.
-///
 /// Uses the same strings that `StopReason::parse` accepts so that
 /// round-trips are lossless regardless of which provider produced the value.
-fn stop_reason_to_str(sr: &StopReason) -> String {
-    match sr {
-        StopReason::EndTurn => "end_turn".into(),
-        StopReason::MaxTokens => "max_tokens".into(),
-        StopReason::ToolUse => "tool_use".into(),
-        StopReason::Refusal => "refusal".into(),
-        StopReason::Error => "error".into(),
-        StopReason::Aborted => "aborted".into(),
-        StopReason::Unknown(s) => s.clone(),
-    }
-}
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ToolCallRecord {
@@ -331,7 +318,7 @@ fn message_to_record(msg: &Message) -> MessageRecord {
         input_preview: msg.input_preview.clone(),
         spill_id: msg.spill_id.clone(),
         is_error: msg.is_error,
-        stop_reason: msg.stop_reason.as_ref().map(stop_reason_to_str),
+        stop_reason: msg.stop_reason.as_ref().map(|sr| sr.to_string()),
         thinking_blocks: msg
             .thinking_blocks
             .iter()

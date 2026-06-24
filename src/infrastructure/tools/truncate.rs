@@ -3,7 +3,7 @@
 // and human-readable size formatting.
 
 pub const DEFAULT_MAX_LINES: usize = 2_000;
-pub const DEFAULT_MAX_BYTES: usize = 50 * 1024; // 50 KB
+pub const DEFAULT_MAX_BYTES: usize = crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES; // 50 KB
 pub const GREP_MAX_LINE_LENGTH: usize = 500;
 
 #[derive(Debug, Clone)]

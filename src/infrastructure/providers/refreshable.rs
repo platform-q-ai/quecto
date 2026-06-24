@@ -19,8 +19,8 @@ use tokio::sync::RwLock;
 use crate::domain::error::DomainError;
 use crate::domain::message::LlmResponse;
 use crate::domain::provider::{ChatRequest, LlmProvider};
+use crate::domain::provider_error::{ProviderErrorClass, classify_provider_error};
 use crate::infrastructure::auth::credential_store::{AuthMethod, CredentialStore};
-use crate::infrastructure::providers::error::ErrorClass;
 
 /// Async function that refreshes an OAuth token.
 ///
@@ -93,8 +93,7 @@ impl RefreshableProvider {
 
     /// Check if the error is a 401 that might be fixable by refreshing.
     fn is_refreshable_auth_error(err: &DomainError) -> bool {
-        let class = crate::infrastructure::providers::error::classify_error(err);
-        class == ErrorClass::Auth
+        classify_provider_error(err) == ProviderErrorClass::Auth
     }
 
     /// Check if the provider has an OAuth credential with a refresh token.

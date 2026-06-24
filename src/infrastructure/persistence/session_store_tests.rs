@@ -528,13 +528,10 @@ fn stop_reason_to_str_covers_all_variants() {
         (StopReason::Aborted, "aborted"),
     ];
     for (sr, s) in cases {
-        assert_eq!(super::stop_reason_to_str(&sr), s);
+        assert_eq!(sr.to_string(), s);
         assert_eq!(StopReason::parse(s), sr);
     }
-    assert_eq!(
-        super::stop_reason_to_str(&StopReason::Unknown("weird".into())),
-        "weird"
-    );
+    assert_eq!(StopReason::Unknown("weird".into()).to_string(), "weird");
 }
 
 #[test]

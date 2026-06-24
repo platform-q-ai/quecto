@@ -81,9 +81,10 @@ pub fn redact_api_keys(input: &str) -> String {
 }
 
 fn detect_secret(s: &str) -> Option<(usize, &'static str)> {
-    detect_api_key(s)
+    detect_prefixed_key(s, &["sk-"], 8)
         .map(|len| (len, "sk-"))
-        .or_else(|| detect_groq_key(s).map(|len| (len, "gsk_")))
+        .or_else(|| detect_prefixed_key(s, &["gsk_"], 12).map(|len| (len, "gsk_")))
+        .or_else(|| detect_prefixed_key(s, &["gsk-"], 12).map(|len| (len, "gsk-")))
         .or_else(|| {
             if s.as_bytes().first().is_some_and(u8::is_ascii_digit) {
                 detect_telegram_token(s).map(|len| (len, ""))
@@ -101,27 +102,17 @@ fn contains_telegram_candidate(s: &str) -> bool {
 }
 
 /// Detect an API key starting at the given position, return its length.
-fn detect_api_key(s: &str) -> Option<usize> {
-    // Match sk- followed by at least 8 alphanumeric/dash/underscore chars
-    if !s.starts_with("sk-") {
-        return None;
-    }
-    let key_len = s
+fn detect_prefixed_key(s: &str, prefixes: &[&str], min_len: usize) -> Option<usize> {
+    let prefix_len = prefixes
+        .iter()
+        .find(|&&p| s.starts_with(p))
+        .map(|p| p.len())?;
+    let key_len = s[prefix_len..]
         .chars()
         .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
         .count();
-    if key_len >= 8 { Some(key_len) } else { None }
-}
-
-fn detect_groq_key(s: &str) -> Option<usize> {
-    if !s.starts_with("gsk_") && !s.starts_with("gsk-") {
-        return None;
-    }
-    let key_len = s
-        .chars()
-        .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
-        .count();
-    if key_len >= 12 { Some(key_len) } else { None }
+    let total = prefix_len + key_len;
+    if total >= min_len { Some(total) } else { None }
 }
 
 fn detect_telegram_token(s: &str) -> Option<usize> {
@@ -292,17 +283,50 @@ mod tests {
 
     #[test]
     fn test_detect_api_key_valid() {
-        assert!(detect_api_key("sk-test-key-12345").is_some());
+        assert!(detect_prefixed_key("sk-test-key-12345", &["sk-"], 8).is_some());
     }
 
     #[test]
     fn test_detect_api_key_too_short() {
-        assert!(detect_api_key("sk-ab").is_none());
+        assert!(detect_prefixed_key("sk-ab", &["sk-"], 8).is_none());
     }
 
     #[test]
     fn test_detect_api_key_not_sk() {
-        assert!(detect_api_key("pk-test-key-12345").is_none());
+        assert!(detect_prefixed_key("pk-test-key-12345", &["sk-"], 8).is_none());
+    }
+
+    #[test]
+    fn test_detect_prefixed_key_branches() {
+        // valid with exact min length
+        assert_eq!(detect_prefixed_key("sk-abcdefgh", &["sk-"], 8), Some(11));
+        // stops at invalid char
+        assert_eq!(detect_prefixed_key("sk-abcdefgh!", &["sk-"], 8), Some(11));
+        // too short
+        assert!(detect_prefixed_key("sk-abc", &["sk-"], 8).is_none());
+        // wrong prefix
+        assert!(detect_prefixed_key("pk-abcdefgh", &["sk-"], 8).is_none());
+        // multiple prefix options
+        assert!(detect_prefixed_key("gsk-abcdefgh", &["gsk_", "gsk-"], 8).is_some());
+        assert!(detect_prefixed_key("gsk_abcdefgh", &["gsk_", "gsk-"], 8).is_some());
+    }
+
+    #[test]
+    fn test_redact_groq_dash_style_key() {
+        let input = "groq key gsk-abcdefghijklmnopqrstuvwxyz";
+        let result = redact_api_keys(input);
+        assert!(!result.contains("gsk-abcdefghijklmnopqrstuvwxyz"));
+        assert!(result.contains("gsk-***"));
+    }
+
+    #[test]
+    fn test_detect_groq_key_valid() {
+        assert!(detect_prefixed_key("gsk_abcdefghijklmno", &["gsk_", "gsk-"], 12).is_some());
+    }
+
+    #[test]
+    fn test_detect_groq_key_too_short() {
+        assert!(detect_prefixed_key("gsk_abc", &["gsk_", "gsk-"], 12).is_none());
     }
 
     // --- #306: fast-path correctness after prefix-scan optimisation ---
@@ -330,6 +354,23 @@ mod tests {
         assert!(!result.contains("abcdefghijklmno"));
         assert!(result.starts_with("auth=sk-***"));
         assert!(result.ends_with("next=foo"));
+    }
+
+    #[test]
+    fn redacting_writer_flush_delegates() {
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut w = RedactingWriter { inner: &mut buf };
+            w.write_all(b"hello").unwrap();
+            w.flush().unwrap();
+        }
+        assert_eq!(String::from_utf8(buf).unwrap(), "hello");
+    }
+
+    #[test]
+    fn telegram_token_with_short_suffix_is_not_redacted() {
+        let input = "token 123456789:abc";
+        assert_eq!(redact_api_keys(input), input);
     }
 
     #[test]

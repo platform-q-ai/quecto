@@ -14,9 +14,9 @@ use quecto::infrastructure::auth::credential_store::{
 };
 use quecto::infrastructure::config::Config;
 
+use quecto::domain::provider_error::{ProviderErrorClass, classify_provider_error};
 use quecto::infrastructure::persistence::session_store::FileSessionStore;
 use quecto::infrastructure::providers;
-use quecto::infrastructure::providers::error::ErrorClass;
 use quecto::infrastructure::providers::router::ProviderRouter;
 
 use quecto::infrastructure::security::sandbox::Sandbox;
@@ -244,7 +244,7 @@ pub struct QuectoWorld {
     /// Created LLM provider
     pub provider: Option<Arc<dyn LlmProvider>>,
     /// Error classification result
-    pub error_class: Option<ErrorClass>,
+    pub error_class: Option<ProviderErrorClass>,
     /// Fallback provider for fallback/cooldown scenarios
     pub provider_router: Option<Arc<ProviderRouter>>,
     /// Response from fallback provider
