@@ -122,21 +122,32 @@ fn classify_keyword_fallbacks() {
 }
 
 #[test]
-fn classify_status_marker_without_valid_number_falls_through() {
-    // "http" marker present but no 3-digit code → keyword path used instead.
+fn display_and_as_str_round_trip() {
+    use ProviderErrorClass::*;
+    for class in [RateLimit, Auth, Server, Client, Network, Cancelled, Unknown] {
+        assert_eq!(class.to_string(), class.as_str());
+    }
+}
+
+#[test]
+fn classify_extract_http_status_edge_cases() {
     assert_eq!(
-        classify_provider_error(&provider("http error: connection reset")),
-        ProviderErrorClass::Network
+        classify_provider_error(&provider("HTTP 418")),
+        ProviderErrorClass::Unknown
     );
-    // single digit after marker is not a status code
     assert_eq!(
-        classify_provider_error(&provider("http 4 rate limit")),
+        classify_provider_error(&provider("status: 599")),
+        ProviderErrorClass::Unknown
+    );
+    // Non-digit after marker falls back to keyword path.
+    assert_eq!(
+        classify_provider_error(&provider("HTTP 5xx rate limit")),
         ProviderErrorClass::RateLimit
     );
-    // out-of-range 3-digit (>599) is rejected, keyword wins
+    // Not enough digits after marker falls back to keyword path.
     assert_eq!(
-        classify_provider_error(&provider("http 999 unauthorized")),
-        ProviderErrorClass::Auth
+        classify_provider_error(&provider("HTTP 12")),
+        ProviderErrorClass::Unknown
     );
     // leading-zero code (099 = 99) is out of range → falls through to unknown
     assert_eq!(

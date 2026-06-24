@@ -1,6 +1,5 @@
 pub mod anthropic;
 pub mod codex;
-pub mod error;
 pub mod openai;
 pub mod refreshable;
 pub mod router;

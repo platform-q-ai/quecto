@@ -16,7 +16,7 @@ const LS_DEFAULT_LIMIT: usize = 500;
 /// Maximum allowed limit (prevents abuse).
 const LS_MAX_LIMIT: usize = 5000;
 /// Maximum output bytes before truncating.
-const LS_MAX_BYTES: usize = 50 * 1024;
+const LS_MAX_BYTES: usize = crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
 
 pub struct LsTool {
     workspace: Arc<PathBuf>,

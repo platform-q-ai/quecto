@@ -15,7 +15,7 @@ use crate::infrastructure::tools::truncate::format_size;
 /// Default maximum number of results fd will return.
 const DEFAULT_RESULT_LIMIT: usize = 1000;
 /// Maximum total output bytes (50 KiB).
-const MAX_OUTPUT_BYTES: usize = 50 * 1024;
+const MAX_OUTPUT_BYTES: usize = crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
 
 /// Returns `true` when a glob pattern contains a `/`, meaning it encodes a
 /// directory path segment (e.g. `src/*.rs`, `nested/*.txt`, `a/b/c.json`).

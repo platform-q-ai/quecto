@@ -290,7 +290,7 @@ async fn run_child_with_timeout(
 /// - Save fails:      `[Output truncated to last N lines / N bytes]`
 async fn collect_and_truncate_output(stream_tasks: &mut StreamTasks) -> String {
     const TAIL_MAX_LINES: usize = 2000;
-    const TAIL_MAX_BYTES: usize = 50 * 1024;
+    const TAIL_MAX_BYTES: usize = crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
 
     let (stdout_raw, _) = await_stream_output(stream_tasks.stdout_task.take()).await;
     let (stderr_raw, _) = await_stream_output(stream_tasks.stderr_task.take()).await;
