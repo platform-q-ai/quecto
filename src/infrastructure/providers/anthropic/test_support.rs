@@ -1,6 +1,12 @@
-use super::{AnthropicProvider, DomainError, Message, SseAccumulator};
+#[cfg(any(test, feature = "test-support"))]
+use super::{AnthropicProvider, DomainError, Message};
 use crate::domain::message::LlmResponse;
 use crate::domain::provider::{ChatRequest, StreamEvent};
+
+#[cfg(any(test, feature = "test-support"))]
+use super::anthropic_sse::AnthropicSseHandler;
+#[cfg(any(test, feature = "test-support"))]
+use crate::infrastructure::providers::sse_common::{SseHandler, SseLineOutcome};
 
 #[cfg(any(test, feature = "test-support"))]
 impl AnthropicProvider {
@@ -39,83 +45,45 @@ impl AnthropicProvider {
         Self::parse_sse_response(raw, Some(tool_defs.to_vec()))
     }
 
-    fn parse_sse_events(
-        raw: &str,
-        tool_defs: Option<Vec<crate::domain::tool::ToolDefinition>>,
-    ) -> Vec<StreamEvent> {
-        let mut events: Vec<StreamEvent> = Vec::new();
-        let mut acc = match tool_defs {
-            Some(defs) => SseAccumulator::with_tool_defs(defs),
-            None => SseAccumulator::default(),
-        };
-        let mut current_event = String::new();
-        for line in raw.lines() {
-            let line = line.trim();
-            if let Some(event_type) = line.strip_prefix("event: ") {
-                current_event = event_type.to_string();
-                continue;
-            }
-            if let Some(data) = line.strip_prefix("data: ") {
-                let chunk: serde_json::Value = serde_json::from_str(data).unwrap_or_default();
-                if Self::collect_sse_event(current_event.as_str(), &chunk, &mut acc, &mut events) {
-                    break;
-                }
-            }
-        }
-        events.push(StreamEvent::Done(acc.into_response()));
-        events
+    /// Drive the real Anthropic SSE line handler over a raw SSE payload.
+    ///
+    /// This is the test entry point for streaming event sequences. It exercises
+    /// the production `AnthropicSseHandler::process_line` and `dispatch_sse_event`
+    /// path rather than a hand-rolled copy of the dispatch logic, so production
+    /// changes to event ordering, Done signalling, and tool-call remapping are
+    /// reflected in the tests.
+    pub async fn parse_sse_events_public(raw: &str) -> Vec<StreamEvent> {
+        Self::parse_sse_events_with_tools_public(raw, &[]).await
     }
 
-    fn collect_sse_event(
-        event_type: &str,
-        chunk: &serde_json::Value,
-        acc: &mut SseAccumulator,
-        events: &mut Vec<StreamEvent>,
-    ) -> bool {
-        use super::anthropic_sse::stream_event_from_delta;
-        match event_type {
-            "message_start" => acc.handle_message_start(chunk),
-            "content_block_start" => {
-                acc.handle_block_start(chunk);
-                if acc.in_tool_input {
-                    events.push(StreamEvent::ToolCallStart {
-                        id: acc.current_tool_id.clone(),
-                        name: acc.current_tool_name.clone(),
-                    });
-                }
-            }
-            "content_block_delta" => {
-                if let Some(ev) = stream_event_from_delta(&chunk["delta"]) {
-                    events.push(ev);
-                }
-                acc.handle_block_delta(chunk);
-            }
-            "content_block_stop" => {
-                if acc.in_tool_input {
-                    events.push(StreamEvent::ToolCallEnd {
-                        id: acc.current_tool_id.clone(),
-                        name: acc.current_tool_name.clone(),
-                        arguments: acc.current_tool_input.clone(),
-                    });
-                }
-                acc.handle_block_stop();
-            }
-            "message_delta" => acc.handle_message_delta(chunk),
-            "message_stop" => return true,
-            _ => {}
-        }
-        false
-    }
-
-    pub fn parse_sse_events_public(raw: &str) -> Vec<StreamEvent> {
-        Self::parse_sse_events(raw, None)
-    }
-
-    pub fn parse_sse_events_with_tools_public(
+    pub async fn parse_sse_events_with_tools_public(
         raw: &str,
         tool_defs: &[crate::domain::tool::ToolDefinition],
     ) -> Vec<StreamEvent> {
-        Self::parse_sse_events(raw, Some(tool_defs.to_vec()))
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let mut handler = AnthropicSseHandler::new_for_test(Some(tool_defs.to_vec()));
+        for line in raw.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if matches!(handler.process_line(line, &tx).await, SseLineOutcome::Done) {
+                break;
+            }
+        }
+        // Collect all events emitted by the real handler; if the handler never
+        // sent a Done (e.g. no message_stop), flush the accumulated response.
+        let mut events = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            events.push(ev);
+        }
+        if !events.iter().any(|e| matches!(e, StreamEvent::Done(_))) {
+            let _ = tx.send(StreamEvent::Done(handler.into_response())).await;
+            if let Ok(ev) = rx.try_recv() {
+                events.push(ev);
+            }
+        }
+        events
     }
 
     pub fn build_tool_result_message_public(m: &Message) -> serde_json::Value {

@@ -288,6 +288,7 @@ fn registry_rejects_unknown_auth_mode() {
     assert!(err.contains("unknown auth mode 'vault'"), "{err}");
 }
 
+#[serial_test::serial]
 #[test]
 fn registry_oauth_auth_block_top_level_api_key_resolves_from_env() {
     // The provider-level apiKey in an explicit apiKey auth block supports env

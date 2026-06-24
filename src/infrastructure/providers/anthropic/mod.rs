@@ -16,8 +16,6 @@ use claude_code::{CLAUDE_CODE_VERSION, sanitize_surrogates, to_claude_code_name}
 
 mod anthropic_sse;
 mod anthropic_user_msg;
-#[cfg(any(test, feature = "test-support"))]
-use anthropic_sse::SseAccumulator;
 
 /// Anthropic LLM provider.
 #[derive(Debug)]

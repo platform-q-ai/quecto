@@ -518,86 +518,65 @@ async fn test_exchange_anthropic_code_no_hash_in_input() {
 // Parse-error arms (HTTP 200 but body is not valid token JSON)
 // ===================================================================
 
-#[tokio::test]
-async fn test_request_device_code_parse_error() {
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/device/code"))
-        .respond_with(ResponseTemplate::new(200).set_body_string("not json at all"))
-        .mount(&server)
-        .await;
-
-    let config = OAuthConfig::with_base_url(&server.uri());
-    let err = request_device_code(&config).await.unwrap_err();
-    assert!(
-        err.to_string().contains("parse device code response"),
-        "got: {err}"
-    );
-}
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
-async fn test_exchange_anthropic_code_parse_error() {
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
+async fn test_oauth_parse_errors_are_reported() {
+    type Call = Box<
+        dyn for<'a> FnOnce(
+            &'a OAuthConfig,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + 'a>,
+        >,
+    >;
 
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/oauth/token"))
-        .respond_with(ResponseTemplate::new(200).set_body_string("{ broken"))
-        .mount(&server)
-        .await;
+    let cases: [(&'static str, Call); 4] = [
+        (
+            "/device/code",
+            Box::new(|config| {
+                Box::pin(async move { request_device_code(config).await.map(|_| ()) })
+            }),
+        ),
+        (
+            "/oauth/token",
+            Box::new(|config| {
+                Box::pin(async move {
+                    exchange_anthropic_code(config, "code#state", "verifier")
+                        .await
+                        .map(|_| ())
+                })
+            }),
+        ),
+        (
+            "/oauth/token",
+            Box::new(|config| {
+                Box::pin(async move { refresh_anthropic_token(config, "rt").await.map(|_| ()) })
+            }),
+        ),
+        (
+            "/oauth/token",
+            Box::new(|config| {
+                Box::pin(async move { refresh_openai_token(config, "rt").await.map(|_| ()) })
+            }),
+        ),
+    ];
 
-    let config = OAuthConfig::with_base_url(&server.uri());
-    let err = exchange_anthropic_code(&config, "code#state", "verifier")
-        .await
-        .unwrap_err();
-    assert!(
-        err.to_string().contains("parse token response"),
-        "got: {err}"
-    );
-}
+    for (endpoint, call) in cases {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(endpoint))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not valid json"))
+            .mount(&server)
+            .await;
 
-#[tokio::test]
-async fn test_refresh_anthropic_token_parse_error() {
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/oauth/token"))
-        .respond_with(ResponseTemplate::new(200).set_body_string("nope"))
-        .mount(&server)
-        .await;
-
-    let config = OAuthConfig::with_base_url(&server.uri());
-    let err = refresh_anthropic_token(&config, "rt").await.unwrap_err();
-    assert!(
-        err.to_string().contains("parse refresh response"),
-        "got: {err}"
-    );
-}
-
-#[tokio::test]
-async fn test_refresh_openai_token_parse_error() {
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/oauth/token"))
-        .respond_with(ResponseTemplate::new(200).set_body_string("<<<"))
-        .mount(&server)
-        .await;
-
-    let config = OAuthConfig::with_base_url(&server.uri());
-    let err = refresh_openai_token(&config, "rt").await.unwrap_err();
-    assert!(
-        err.to_string().contains("parse refresh response"),
-        "got: {err}"
-    );
+        let config = OAuthConfig::with_base_url(&server.uri());
+        let err = call(&config).await.unwrap_err();
+        assert!(
+            err.to_string().contains("parse"),
+            "endpoint {endpoint}: expected parse error, got: {err}"
+        );
+    }
 }
 
 // ===================================================================
@@ -615,57 +594,65 @@ fn closed_localhost_base_url() -> String {
 }
 
 #[tokio::test]
-async fn test_request_device_code_transport_error() {
-    let config = OAuthConfig::with_base_url(&closed_localhost_base_url());
-    let err = request_device_code(&config).await.unwrap_err();
-    assert!(
-        err.to_string().contains("device code request failed"),
-        "got: {err}"
-    );
-}
+async fn test_oauth_transport_errors_are_reported() {
+    type Call = Box<
+        dyn for<'a> FnOnce(
+            &'a OAuthConfig,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<(), DomainError>> + Send + 'a>,
+        >,
+    >;
 
-#[tokio::test]
-async fn test_exchange_anthropic_code_transport_error() {
-    let config = OAuthConfig::with_base_url(&closed_localhost_base_url());
-    let err = exchange_anthropic_code(&config, "code#state", "verifier")
-        .await
-        .unwrap_err();
-    assert!(
-        err.to_string().contains("token exchange request failed"),
-        "got: {err}"
-    );
-}
+    let cases: [(&'static str, Call); 5] = [
+        (
+            "device code request failed",
+            Box::new(|config| {
+                Box::pin(async move { request_device_code(config).await.map(|_| ()) })
+            }),
+        ),
+        (
+            "token exchange request failed",
+            Box::new(|config| {
+                Box::pin(async move {
+                    exchange_anthropic_code(config, "code#state", "verifier")
+                        .await
+                        .map(|_| ())
+                })
+            }),
+        ),
+        (
+            "token refresh request failed",
+            Box::new(|config| {
+                Box::pin(async move { refresh_anthropic_token(config, "rt").await.map(|_| ()) })
+            }),
+        ),
+        (
+            "token exchange request failed",
+            Box::new(|config| {
+                Box::pin(async move {
+                    exchange_openai_code(config, "code", "verifier")
+                        .await
+                        .map(|_| ())
+                })
+            }),
+        ),
+        (
+            "token refresh request failed",
+            Box::new(|config| {
+                Box::pin(async move { refresh_openai_token(config, "rt").await.map(|_| ()) })
+            }),
+        ),
+    ];
 
-#[tokio::test]
-async fn test_refresh_anthropic_token_transport_error() {
-    let config = OAuthConfig::with_base_url(&closed_localhost_base_url());
-    let err = refresh_anthropic_token(&config, "rt").await.unwrap_err();
-    assert!(
-        err.to_string().contains("token refresh request failed"),
-        "got: {err}"
-    );
-}
-
-#[tokio::test]
-async fn test_exchange_openai_code_transport_error() {
-    let config = OAuthConfig::with_base_url(&closed_localhost_base_url());
-    let err = exchange_openai_code(&config, "code", "verifier")
-        .await
-        .unwrap_err();
-    assert!(
-        err.to_string().contains("token exchange request failed"),
-        "got: {err}"
-    );
-}
-
-#[tokio::test]
-async fn test_refresh_openai_token_transport_error() {
-    let config = OAuthConfig::with_base_url(&closed_localhost_base_url());
-    let err = refresh_openai_token(&config, "rt").await.unwrap_err();
-    assert!(
-        err.to_string().contains("token refresh request failed"),
-        "got: {err}"
-    );
+    let base_url = closed_localhost_base_url();
+    for (expected, call) in cases {
+        let config = OAuthConfig::with_base_url(&base_url);
+        let err = call(&config).await.unwrap_err();
+        assert!(
+            err.to_string().contains(expected),
+            "expected '{expected}' in error, got: {err}"
+        );
+    }
 }
 
 #[tokio::test]
