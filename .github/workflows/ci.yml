@@ -44,8 +44,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Non-real LLM BDD/e2e tests
-        run: bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 12m
+      - name: Mock LLM BDD/e2e tests
+        run: bash scripts/run-bdd-shards.sh --suite mock-llm-bdd --shards 24 --timeout 5m --tag mock-llm
 
   provider-smoke:
     name: Provider Smoke Tests
