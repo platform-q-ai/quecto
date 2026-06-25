@@ -63,6 +63,11 @@ impl App {
         let (files_autocomplete_tx, mut files_autocomplete_rx) = mpsc::channel::<Vec<String>>(1);
         let mut files_autocomplete_load_in_flight = false;
 
+        // Sub-agent inspector output-tail poll (#795). Fires regardless of panel
+        // state; the handler is a no-op while the panel is closed.
+        let mut inspector_tail_interval = tokio::time::interval(INSPECTOR_TAIL_POLL);
+        inspector_tail_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         // Timeout for incomplete escape sequences (matches Quecto TUI's 10ms).
         let escape_timeout = Duration::from_millis(10);
 
@@ -159,6 +164,12 @@ impl App {
                     self.files_autocomplete.apply_loaded_files(files);
                     self.refresh_files_autocomplete_from_editor();
                     self.render();
+                }
+                // Sub-agent inspector output-tail poll tick (#795).
+                _ = inspector_tail_interval.tick() => {
+                    if self.inspector_open() {
+                        self.poll_inspector_tail();
+                    }
                 }
                 // Git branch footer refresh tick.
                 _ = git_branch_interval.tick() => {
@@ -271,6 +282,11 @@ impl App {
         if !matches!(key, Key::Escape) {
             self.last_idle_escape = None;
         }
+        // Reset the double-Up arming on any non-Up key so an Up, an edit, then
+        // an Up does not spuriously open the inspector (#795).
+        if !matches!(key, Key::Up) {
+            self.last_up_press = None;
+        }
 
         // Unconditional exit — Ctrl+D must work regardless of overlays,
         // autocomplete state, or agent activity (#478).
@@ -279,6 +295,14 @@ impl App {
                 self.handle_abort();
             }
             self.should_exit = true;
+            return;
+        }
+
+        // If the sub-agent inspector is open, it claims all input first (#795).
+        if self.inspector_open() {
+            self.last_idle_escape = None;
+            self.last_up_press = None;
+            self.handle_subagent_inspector_key(&key);
             return;
         }
 
@@ -500,6 +524,13 @@ impl App {
                 return;
             }
             _ => {}
+        }
+
+        // Double-Up opens the sub-agent inspector when sub-agents are tracked;
+        // a single Up (or any Up while typing) falls through to the editor's
+        // history/cursor navigation unchanged (#795).
+        if matches!(key, Key::Up) && self.try_open_inspector_on_up() {
+            return;
         }
 
         // Forward to editor.

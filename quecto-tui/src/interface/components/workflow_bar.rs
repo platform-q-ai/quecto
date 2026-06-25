@@ -67,6 +67,20 @@ impl WorkflowBarState {
     }
 }
 
+/// Render a filled/empty progress bar `cells` wide from `done` of `total`.
+///
+/// Single source of truth for the progress-bar glyph and colour style, reused by
+/// the main workflow bar and by the sub-agent inspector phase header (#795).
+pub fn progress_bar(done: u32, total: u32, cells: usize) -> String {
+    let total = total.max(1) as usize;
+    let filled = ((done as usize) * cells / total).min(cells);
+    format!(
+        "{}{}",
+        theme::success(&"█".repeat(filled)),
+        theme::dim(&"░".repeat(cells - filled))
+    )
+}
+
 /// Render the Quecto-style workflow widget above the editor.
 ///
 /// Matches the Quecto workflow's `updateWidget` implementation:
@@ -82,12 +96,7 @@ pub fn render_widget(state: &WorkflowBarState, width: usize) -> Vec<String> {
     let done = state.done;
     let total = state.total.max(state.steps.len() as u32).max(1);
     let pct = ((done as f32 / total as f32) * 100.0).round() as u32;
-    let filled = ((done as usize) * 15) / (total as usize);
-    let bar = format!(
-        "{}{}",
-        theme::success(&"█".repeat(filled)),
-        theme::dim(&"░".repeat(15 - filled))
-    );
+    let bar = progress_bar(done, total, 15);
 
     let issue_part = match (state.issue_number, state.issue_title.as_deref()) {
         (Some(number), Some(title)) => format!(

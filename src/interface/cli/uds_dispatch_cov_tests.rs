@@ -8,8 +8,9 @@
 use std::sync::Arc;
 
 use super::{
-    dispatch_command, dispatch_ext_command, handle_abort, handle_clear_history, handle_new_session,
-    handle_resume_session, handle_rewind_to, handle_steer, persist_current_session,
+    dispatch_command, dispatch_ext_command, forward_subagent_messages_tail, handle_abort,
+    handle_clear_history, handle_new_session, handle_resume_session, handle_rewind_to,
+    handle_steer, persist_current_session,
 };
 use crate::application::agent_loop::{AgentLoopConfig, AgentLoopImpl};
 use crate::domain::message::Message;
@@ -683,4 +684,48 @@ async fn dispatch_ext_command_unregister_unknown_noop() {
     };
     let mut ctx = fx.ctx();
     assert!(!dispatch_ext_command(cmd, &mut ctx, None, "unregister_tools").await);
+}
+
+// ─── agent-targeted get_messages_tail forwarding (#795) ──────────────────────
+
+#[tokio::test]
+async fn dispatch_agent_targeted_tail_without_registry_emits_error() {
+    let mut fx = Fixture::new();
+    let cmd = AgentCommand::GetMessagesTail {
+        id: Some("inspector-tail:worker".into()),
+        count: 5,
+        agent_id: Some("worker".into()),
+    };
+    let mut ctx = fx.ctx(); // subagent_registry: None
+    // The early intercept handles it (emits an event) and keeps the loop alive.
+    assert!(!dispatch_command(cmd, &mut ctx).await);
+}
+
+#[tokio::test]
+async fn forward_tail_no_registry_is_error_event() {
+    let mut fx = Fixture::new();
+    let ctx = fx.ctx();
+    let ev =
+        forward_subagent_messages_tail(&ctx, Some("id1"), "get_messages_tail", "worker", 3).await;
+    let json = serde_json::to_value(&ev).unwrap();
+    assert!(
+        json.get("error").is_some(),
+        "missing registry must surface an error: {json}"
+    );
+}
+
+#[tokio::test]
+async fn forward_tail_unknown_agent_is_error_event() {
+    use crate::infrastructure::tools::subagent_registry::new_registry;
+    let mut fx = Fixture::new();
+    let mut ctx = fx.ctx();
+    ctx.subagent_registry = Some(new_registry());
+    let ev =
+        forward_subagent_messages_tail(&ctx, Some("id1"), "get_messages_tail", "ghost", 3).await;
+    let json = serde_json::to_value(&ev).unwrap();
+    let err = json.get("error").and_then(|v| v.as_str()).unwrap_or("");
+    assert!(
+        err.contains("not found"),
+        "unknown agent must report not-found: {json}"
+    );
 }

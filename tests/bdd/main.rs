@@ -960,6 +960,7 @@ mod tool_empty_args_steps;
 mod truncate_steps;
 mod tui_architecture_steps;
 mod tui_file_mention_steps;
+mod tui_subagent_inspector_steps;
 mod uds_steps;
 mod web_fetch_steps;
 mod workflow_event_identity_steps;

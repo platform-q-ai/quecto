@@ -292,10 +292,26 @@ fn command_get_messages_tail_serializes() {
     let cmd = Command::GetMessagesTail {
         id: Some("gmt".into()),
         count: 5,
+        agent_id: None,
     };
     let json = serde_json::to_string(&cmd).unwrap();
     assert!(json.contains("\"type\":\"get_messages_tail\""));
     assert!(json.contains("\"count\":5"));
+    assert!(
+        !json.contains("agent_id"),
+        "absent agent_id must be omitted"
+    );
+}
+
+#[test]
+fn command_get_messages_tail_serializes_agent_id() {
+    let cmd = Command::GetMessagesTail {
+        id: Some("gmt".into()),
+        count: 1,
+        agent_id: Some("worker".into()),
+    };
+    let json = serde_json::to_string(&cmd).unwrap();
+    assert!(json.contains("\"agent_id\":\"worker\""), "got: {json}");
 }
 
 #[test]

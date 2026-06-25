@@ -119,9 +119,14 @@ fn test_parse_get_messages_tail_command() {
     let json = r#"{"type":"get_messages_tail","count":5}"#;
     let cmd: AgentCommand = serde_json::from_str(json).unwrap();
     match cmd {
-        AgentCommand::GetMessagesTail { id, count } => {
+        AgentCommand::GetMessagesTail {
+            id,
+            count,
+            agent_id,
+        } => {
             assert!(id.is_none());
             assert_eq!(count, 5);
+            assert!(agent_id.is_none());
         }
         _ => panic!("expected GetMessagesTail"),
     }

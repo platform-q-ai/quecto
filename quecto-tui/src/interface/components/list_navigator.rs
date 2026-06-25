@@ -24,6 +24,12 @@ impl ListNavigator {
         self.selected = 0;
     }
 
+    /// Set the selected index directly (caller is responsible for bounds; pair
+    /// with [`Self::clamp`] if `len` may have shrunk).
+    pub fn set_selected(&mut self, index: usize) {
+        self.selected = index;
+    }
+
     pub fn clamp(&mut self, len: usize) {
         if len == 0 {
             self.selected = 0;

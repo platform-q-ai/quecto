@@ -111,6 +111,173 @@ pub fn new_registry() -> SubagentRegistry {
     Arc::new(Mutex::new(HashMap::new()))
 }
 
+/// Maximum wall-clock time to wait for a forwarded sub-agent UDS response on the
+/// `agent_cmd` path (a tool call that may legitimately wait on a long operation).
+const SUBAGENT_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Short, interactive-scale timeout for forwards driven by the TUI inspector's
+/// 1s poll loop (#795). A `get_messages_tail` query answers from history almost
+/// instantly; capping at a few seconds keeps a slow/hung sub-agent from
+/// head-of-line-blocking the parent's shared dispatch loop (review: DoS / perf).
+pub const INSPECTOR_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Per-line cap on a sub-agent's UDS reply (#795 security review). Mirrors the
+/// inbound client cap (`uds::MAX_LINE_BYTES`) so a misbehaving/compromised
+/// sub-agent cannot return an unbounded line and exhaust the parent's memory.
+const SUBAGENT_RESPONSE_MAX_LINE_BYTES: usize = 1024 * 1024;
+
+/// Look up the UDS socket path for a spawned sub-agent by id.
+///
+/// Single source of truth for both `agent_cmd` forwarding and the TUI's
+/// agent-targeted `get_messages_tail` so the lookup rule never diverges (#795).
+pub fn lookup_subagent_socket(
+    registry: &SubagentRegistry,
+    agent_id: &str,
+) -> Result<PathBuf, String> {
+    let entries = registry.lock().unwrap_or_else(|e| e.into_inner());
+    entries
+        .get(agent_id)
+        .map(|e| e.socket_path.clone())
+        .ok_or_else(|| format!("subagent '{}' not found in registry", agent_id))
+}
+
+/// Send a JSON-lines command to a sub-agent's UDS socket and read the first
+/// `response` line back.
+///
+/// Each call opens a new connection, writes `command` + newline, and reads
+/// lines until a `{"type":"response",...}` event arrives (skipping tokens,
+/// agent_start, etc. that the broadcast delivers to all clients). Shared by
+/// `agent_cmd` and the TUI agent-targeted tail forwarder so the framing rule
+/// lives in one place (#795).
+///
+/// Uses the long [`SUBAGENT_RESPONSE_TIMEOUT`]; interactive callers that must
+/// not block the shared dispatch loop should use
+/// [`send_subagent_uds_command_with_timeout`] with [`INSPECTOR_RESPONSE_TIMEOUT`].
+pub async fn send_subagent_uds_command(
+    socket_path: &std::path::Path,
+    command: &str,
+) -> Result<String, crate::domain::error::DomainError> {
+    send_subagent_uds_command_with_timeout(socket_path, command, SUBAGENT_RESPONSE_TIMEOUT).await
+}
+
+/// Like [`send_subagent_uds_command`] but with an explicit response timeout, so
+/// interactive callers (the TUI inspector poll, #795) can cap head-of-line
+/// blocking on the parent's shared command loop.
+pub async fn send_subagent_uds_command_with_timeout(
+    socket_path: &std::path::Path,
+    command: &str,
+    response_timeout: std::time::Duration,
+) -> Result<String, crate::domain::error::DomainError> {
+    use crate::domain::error::DomainError;
+    use tokio::io::{AsyncWriteExt, BufReader};
+
+    let stream = tokio::net::UnixStream::connect(socket_path)
+        .await
+        .map_err(|e| {
+            DomainError::Tool(format!(
+                "connect to subagent at {} failed: {e}",
+                socket_path.display()
+            ))
+        })?;
+
+    let (reader, mut writer) = tokio::io::split(stream);
+
+    writer
+        .write_all(command.as_bytes())
+        .await
+        .map_err(|e| DomainError::Tool(format!("write to subagent failed: {e}")))?;
+    writer
+        .write_all(b"\n")
+        .await
+        .map_err(|e| DomainError::Tool(format!("write to subagent failed: {e}")))?;
+    // Do NOT shutdown or drop the write half (#557): in multi-client mode the
+    // server's reader loop exits on EOF and aborts the broadcast writer, so the
+    // response would never arrive. Keep the write half alive until we're done.
+    let _keep_alive = writer;
+
+    let mut reader = BufReader::new(reader);
+    let deadline = tokio::time::Instant::now() + response_timeout;
+    let timeout_msg = || {
+        format!(
+            "subagent response timed out ({}s)",
+            response_timeout.as_secs()
+        )
+    };
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(DomainError::Tool(timeout_msg()));
+        }
+        let line = tokio::time::timeout(
+            remaining,
+            read_line_capped(&mut reader, SUBAGENT_RESPONSE_MAX_LINE_BYTES),
+        )
+        .await
+        .map_err(|_| DomainError::Tool(timeout_msg()))??;
+        match line {
+            Some(l) => {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&l) {
+                    if json.get("type").and_then(|v| v.as_str()) == Some("response") {
+                        return Ok(l);
+                    }
+                }
+                // Not a response event — skip.
+            }
+            None => {
+                return Err(DomainError::Tool(
+                    "subagent closed connection without sending a response".into(),
+                ));
+            }
+        }
+    }
+}
+
+/// Read a single `\n`-terminated line, rejecting (rather than buffering) any line
+/// that exceeds `max_bytes` (#795 security review). Unlike `AsyncBufReadExt::lines`,
+/// this caps each line so a sub-agent cannot OOM the parent with one giant line,
+/// while still allowing an unbounded number of normal-sized lines to be skipped
+/// before the `response` event arrives.
+async fn read_line_capped<R>(
+    reader: &mut R,
+    max_bytes: usize,
+) -> Result<Option<String>, crate::domain::error::DomainError>
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    use crate::domain::error::DomainError;
+    use tokio::io::AsyncBufReadExt;
+
+    let mut buf: Vec<u8> = Vec::new();
+    loop {
+        let available = reader
+            .fill_buf()
+            .await
+            .map_err(|e| DomainError::Tool(format!("read from subagent failed: {e}")))?;
+        if available.is_empty() {
+            // EOF: surface any trailing partial line, else signal closed stream.
+            return Ok((!buf.is_empty()).then(|| String::from_utf8_lossy(&buf).into_owned()));
+        }
+        if let Some(pos) = available.iter().position(|&b| b == b'\n') {
+            buf.extend_from_slice(&available[..pos]);
+            reader.consume(pos + 1);
+            if buf.len() > max_bytes {
+                return Err(DomainError::Tool(
+                    "subagent response line exceeded size limit".into(),
+                ));
+            }
+            return Ok(Some(String::from_utf8_lossy(&buf).into_owned()));
+        }
+        let consumed = available.len();
+        buf.extend_from_slice(available);
+        reader.consume(consumed);
+        if buf.len() > max_bytes {
+            return Err(DomainError::Tool(
+                "subagent response line exceeded size limit".into(),
+            ));
+        }
+    }
+}
+
 // ─── Await support (#612) ────────────────────────────────────────────────────
 
 /// Result of an `agent_cmd await` call.

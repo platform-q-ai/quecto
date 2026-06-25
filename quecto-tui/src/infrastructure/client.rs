@@ -53,6 +53,10 @@ pub enum Command {
         #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<String>,
         count: usize,
+        /// When set, fetch this spawned sub-agent's message tail instead of the
+        /// connected agent's own history (#795).
+        #[serde(rename = "agent_id", skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
     },
     GetSessionStats {
         #[serde(skip_serializing_if = "Option::is_none")]
