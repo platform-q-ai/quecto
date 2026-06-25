@@ -142,6 +142,9 @@ pub struct App {
     subagent_inspector: Option<SubagentInspector>,
     /// Last bare Up press, used to detect double-Up for opening the inspector.
     last_up_press: Option<tokio::time::Instant>,
+    /// agent_id of an in-flight inspector tail request, if any. Guards the 1s
+    /// poll so requests can't stack on the UDS faster than they drain (#795).
+    inspector_tail_inflight: Option<String>,
     /// Locally-issued get_messages id for opening the rewind selector.
     pending_rewind_open_id: Option<String>,
     /// Locally-issued rewind_to id awaiting acknowledgement.
@@ -222,6 +225,7 @@ impl App {
             last_idle_escape: None,
             subagent_inspector: None,
             last_up_press: None,
+            inspector_tail_inflight: None,
             pending_rewind_open_id: None,
             pending_rewind_apply_id: None,
             rewind_request_seq: 0,

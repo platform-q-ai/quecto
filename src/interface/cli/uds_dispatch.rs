@@ -128,7 +128,7 @@ async fn forward_subagent_messages_tail(
     count: usize,
 ) -> AgentEvent {
     use crate::infrastructure::tools::subagent_registry::{
-        lookup_subagent_socket, send_subagent_uds_command,
+        INSPECTOR_RESPONSE_TIMEOUT, lookup_subagent_socket, send_subagent_uds_command_with_timeout,
     };
     let Some(registry) = ctx.subagent_registry.as_ref() else {
         return AgentEvent::err(id, tn, "no sub-agent registry available");
@@ -138,7 +138,12 @@ async fn forward_subagent_messages_tail(
         Err(e) => return AgentEvent::err(id, tn, e),
     };
     let cmd = serde_json::json!({ "type": "get_messages_tail", "count": count }).to_string();
-    match send_subagent_uds_command(&socket_path, &cmd).await {
+    // This forward is awaited inline in the single shared dispatch loop, so it
+    // uses the short interactive timeout — a slow/hung sub-agent must not stall
+    // steer/abort/new-message for any client for the full agent_cmd 300s (#795).
+    match send_subagent_uds_command_with_timeout(&socket_path, &cmd, INSPECTOR_RESPONSE_TIMEOUT)
+        .await
+    {
         Ok(line) => {
             // The sub-agent replies with a full `response` event; unwrap its
             // `data` payload so the caller sees the tail in the usual shape.

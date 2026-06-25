@@ -65,6 +65,7 @@ impl App {
     /// Close the inspector and return to the normal TUI view.
     pub(super) fn close_subagent_inspector(&mut self) {
         self.subagent_inspector = None;
+        self.inspector_tail_inflight = None;
     }
 
     /// Route a key into the open inspector, acting on the resulting action.
@@ -125,6 +126,7 @@ impl App {
     /// connection (reuses `get_messages_tail` with an `agent_id`). The response
     /// id carries the agent id so the handler can route it back (#795).
     pub(super) fn request_inspector_tail(&mut self, agent_id: &str) {
+        self.inspector_tail_inflight = Some(agent_id.to_string());
         self.send_command(Command::GetMessagesTail {
             id: Some(format!("inspector-tail:{agent_id}")),
             count: 20,
@@ -133,7 +135,12 @@ impl App {
     }
 
     /// Poll the highlighted agent's tail on the timer while the panel is open.
+    /// Skips while a request is already outstanding so polls can't stack on the
+    /// UDS faster than the kernel round-trip drains them (#795).
     pub(super) fn poll_inspector_tail(&mut self) {
+        if self.inspector_tail_inflight.is_some() {
+            return;
+        }
         if let Some(agent_id) = self
             .subagent_inspector
             .as_ref()
@@ -153,6 +160,9 @@ impl App {
         let Some(agent_id) = id.and_then(|i| i.strip_prefix("inspector-tail:")) else {
             return false;
         };
+        if self.inspector_tail_inflight.as_deref() == Some(agent_id) {
+            self.inspector_tail_inflight = None;
+        }
         let lines = data.map(messages_tail_to_lines).unwrap_or_default();
         if let Some(inspector) = &mut self.subagent_inspector {
             inspector.set_tail(agent_id, lines);
@@ -164,6 +174,12 @@ impl App {
     pub(super) fn compose_subagent_inspector_frame(&mut self) -> Vec<String> {
         let width = self.terminal.width;
         let height = self.terminal.height;
+        // Refresh the left list from the live tracked agents before resolving the
+        // detail, so the two panels share one lifetime and never desync (#795).
+        let rows = self.build_inspector_rows();
+        if let Some(inspector) = &mut self.subagent_inspector {
+            inspector.sync_rows(rows);
+        }
         let detail = self
             .subagent_inspector
             .as_ref()
@@ -203,14 +219,42 @@ fn messages_tail_to_lines(data: &serde_json::Value) -> Vec<String> {
     let mut out = Vec::new();
     for msg in messages {
         let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("?");
-        let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
         out.push(format!("[{role}]"));
-        for line in content.lines() {
-            out.push(line.to_string());
+        for text in content_to_text(msg.get("content")) {
+            for line in text.lines() {
+                out.push(line.to_string());
+            }
         }
         out.push(String::new());
     }
     out
+}
+
+/// Flatten a message `content` field into display text. Content may be a plain
+/// string or an array of typed blocks (`text`, `tool_use`, `tool_result`, …);
+/// without this, structured/tool-call content silently renders blank (#795
+/// review). Unknown blocks fall back to a compact `[type]` marker.
+fn content_to_text(content: Option<&serde_json::Value>) -> Vec<String> {
+    match content {
+        Some(serde_json::Value::String(s)) => vec![s.clone()],
+        Some(serde_json::Value::Array(blocks)) => blocks
+            .iter()
+            .map(|b| {
+                // Most blocks carry a `text`; tool calls/results don't, so show
+                // a typed marker (with the tool name when present) instead.
+                if let Some(text) = b.get("text").and_then(|v| v.as_str()) {
+                    text.to_string()
+                } else {
+                    let kind = b.get("type").and_then(|v| v.as_str()).unwrap_or("block");
+                    match b.get("name").and_then(|v| v.as_str()) {
+                        Some(name) => format!("[{kind}: {name}]"),
+                        None => format!("[{kind}]"),
+                    }
+                }
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 #[cfg(test)]

@@ -326,6 +326,40 @@ fn test_extract_summary_last_assistant() {
     assert_eq!(extract_summary(&messages), "Second response");
 }
 
+// --- capped line reader (#795 security review) ---
+
+#[tokio::test]
+async fn read_line_capped_reads_lines_then_eof() {
+    let data = b"first\nsecond\n";
+    let mut reader = tokio::io::BufReader::new(&data[..]);
+    assert_eq!(
+        read_line_capped(&mut reader, 1024)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("first")
+    );
+    assert_eq!(
+        read_line_capped(&mut reader, 1024)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("second")
+    );
+    assert_eq!(read_line_capped(&mut reader, 1024).await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn read_line_capped_rejects_oversized_line() {
+    let big = format!("{}\n", "x".repeat(100));
+    let mut reader = tokio::io::BufReader::new(big.as_bytes());
+    let err = read_line_capped(&mut reader, 16).await.unwrap_err();
+    assert!(
+        err.to_string().contains("exceeded size limit"),
+        "expected size-limit error, got: {err}"
+    );
+}
+
 // --- notification channel ---
 
 #[tokio::test]

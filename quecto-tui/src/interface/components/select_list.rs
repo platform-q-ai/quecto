@@ -51,6 +51,21 @@ impl SelectList {
         self.items.get(self.navigator.selected())
     }
 
+    /// Replace the items in place, preserving the selection by `value` when the
+    /// previously-selected item still exists (otherwise clamping into range).
+    /// Lets a live-updating list (e.g. the sub-agent inspector) refresh without
+    /// resetting the user's highlight (#795).
+    pub fn sync_items(&mut self, items: Vec<SelectItem>) {
+        let selected_value = self.selected_item().map(|i| i.value.clone());
+        self.items = items;
+        if let Some(value) = selected_value
+            && let Some(idx) = self.items.iter().position(|i| i.value == value)
+        {
+            self.navigator.set_selected(idx);
+        }
+        self.navigator.clamp(self.items.len());
+    }
+
     pub fn item_count(&self) -> usize {
         self.items.len()
     }

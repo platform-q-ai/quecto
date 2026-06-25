@@ -96,6 +96,22 @@ impl SubagentInspector {
         self.focus
     }
 
+    /// Refresh the left list from the current set of tracked agents, preserving
+    /// the highlighted agent by id. Called every render/poll so agents spawned
+    /// while the panel is open appear, exited ones update, and the list never
+    /// desyncs from the live detail (#795 review).
+    pub fn sync_rows(&mut self, rows: Vec<AgentRow>) {
+        let items = rows
+            .into_iter()
+            .map(|r| SelectItem {
+                value: r.agent_id,
+                label: r.label,
+                description: None,
+            })
+            .collect();
+        self.list.sync_items(items);
+    }
+
     /// The currently highlighted agent id, if any.
     pub fn selected_agent_id(&self) -> Option<String> {
         self.list.selected_item().map(|i| i.value.clone())
@@ -109,10 +125,6 @@ impl SubagentInspector {
     /// Whether an output tail has already been fetched for an agent.
     pub fn has_tail(&self, agent_id: &str) -> bool {
         self.tails.contains_key(agent_id)
-    }
-
-    fn cached_tail(&self, agent_id: &str) -> Vec<String> {
-        self.tails.get(agent_id).cloned().unwrap_or_default()
     }
 
     /// Route a key. The focus state machine:
@@ -193,7 +205,7 @@ impl SubagentInspector {
         let left = self.list.render(list_width);
         let right = render_detail(
             detail,
-            &self.cached_tail_for(detail),
+            self.cached_tail_for(detail),
             right_width,
             self.scroll,
         );
@@ -227,11 +239,11 @@ impl SubagentInspector {
         lines
     }
 
-    fn cached_tail_for(&self, detail: Option<&AgentDetail>) -> Vec<String> {
+    fn cached_tail_for<'a>(&'a self, detail: Option<&'a AgentDetail>) -> &'a [String] {
         match detail {
-            Some(d) if !d.output.is_empty() => d.output.clone(),
-            Some(d) => self.cached_tail(&d.agent_id),
-            None => Vec::new(),
+            Some(d) if !d.output.is_empty() => &d.output,
+            Some(d) => self.tails.get(&d.agent_id).map_or(&[][..], Vec::as_slice),
+            None => &[],
         }
     }
 }
@@ -305,12 +317,8 @@ fn workflow_status_header(state: &workflow_bar::WorkflowBarState, width: usize) 
     let done = state.done;
     let total = state.total.max(1);
     let pct = ((done as f32 / total as f32) * 100.0).round() as u32;
-    let filled = ((done as usize) * 12) / (total as usize);
-    let bar = format!(
-        "{}{}",
-        theme::success(&"█".repeat(filled)),
-        theme::dim(&"░".repeat(12usize.saturating_sub(filled)))
-    );
+    // Reuse the shared workflow-bar primitive so the two bars can't drift (#795).
+    let bar = workflow_bar::progress_bar(done, total, 12);
     let mode = state.mode.as_deref().unwrap_or("workflow");
     let line = format!(
         "  {} {} {}",

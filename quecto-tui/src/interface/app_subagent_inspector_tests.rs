@@ -125,6 +125,69 @@ async fn opening_requests_an_agent_targeted_tail() {
     );
 }
 
+#[tokio::test]
+async fn poll_skips_while_a_tail_request_is_in_flight() {
+    let mut h = with_one_subagent().await;
+    h.app_mut().handle_key(Key::Up);
+    h.app_mut().handle_key(Key::Up);
+    let _ = h.drain_commands().await; // open-time fetch arms the in-flight guard
+    h.app_mut().poll_inspector_tail();
+    let cmds = h.drain_commands().await;
+    assert!(
+        cmds.is_empty(),
+        "poll must not stack a second request while one is outstanding: {cmds:?}"
+    );
+    // Delivering the response clears the guard so the next poll can fetch again.
+    let data = serde_json::json!({ "messages": [] });
+    h.app_mut()
+        .handle_inspector_tail_response(Some("inspector-tail:other"), Some(&data));
+    h.app_mut().poll_inspector_tail();
+    let cmds = h.drain_commands().await;
+    assert!(
+        cmds.iter().any(|c| c.contains("get_messages_tail")),
+        "poll should resume once the in-flight request resolved: {cmds:?}"
+    );
+}
+
+#[tokio::test]
+async fn list_picks_up_agents_spawned_while_open() {
+    let mut h = with_one_subagent().await;
+    h.app_mut().handle_key(Key::Up);
+    h.app_mut().handle_key(Key::Up);
+    assert!(h.app_mut().inspector_open());
+    // A new sub-agent appears after the panel is already open.
+    h.event(subagents_changed(vec![
+        subagent("worker", "running", Some(("active", 1, 3))),
+        subagent("other", "running", Some(("active", 2, 3))),
+        subagent("fresh", "running", Some(("active", 0, 3))),
+    ]));
+    let frame = h.app_mut().compose_frame();
+    let plain = strip_ansi(&frame.join("\n"));
+    assert!(
+        plain.contains("fresh"),
+        "agent spawned while open must appear in the live list:\n{plain}"
+    );
+}
+
+#[test]
+fn structured_content_blocks_render_instead_of_blanking() {
+    let data = serde_json::json!({
+        "messages": [
+            { "role": "assistant", "content": [
+                { "type": "text", "text": "hello" },
+                { "type": "tool_use", "name": "grep" }
+            ]}
+        ]
+    });
+    let lines = super::messages_tail_to_lines(&data);
+    let joined = lines.join("\n");
+    assert!(joined.contains("hello"), "text block rendered: {joined}");
+    assert!(
+        joined.contains("[tool_use: grep]"),
+        "tool-call block rendered as a marker, not blank: {joined}"
+    );
+}
+
 #[test]
 fn double_up_window_logic() {
     use super::App;
