@@ -198,6 +198,37 @@ fn build_agent_args(flags: &CliFlags) -> Vec<String> {
     args
 }
 
+/// Spawn→socket-path readiness deadline.
+///
+/// 30s comfortably covers a cold-binary first launch after `cargo install`
+/// (paging the freshly-written kernel binary into the OS page cache + first-run
+/// config/credential load) without letting a genuinely-hung kernel hang too
+/// long. See #808. `scripts/run-tui.sh` pre-warms the binary so this window is
+/// only load-bearing for direct `quecto-tui …` invocations.
+pub const AGENT_SOCKET_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Status line shown while waiting for the spawned agent to announce its socket,
+/// so the wait is not a silent pause (#808).
+pub fn agent_starting_status() -> &'static str {
+    "starting agent… (first launch after install may take a few seconds)"
+}
+
+/// Actionable message for a spawn→socket-path deadline miss (#808).
+///
+/// Names the likely cold-binary / first-run-after-install cause and the remedy
+/// (warm the binary with `quecto --version`, then retry) instead of the bare
+/// "timeout waiting for agent socket path".
+pub fn agent_socket_timeout_message() -> String {
+    format!(
+        "timeout waiting for agent socket path after {}s. This commonly happens on \
+         the first run / first launch after `cargo install`: the freshly installed \
+         quecto binary is cold in the OS page cache, so the kernel can take longer \
+         than usual to start. Remedy: run `quecto --version` once to warm the binary, \
+         then retry — subsequent launches are fast.",
+        AGENT_SOCKET_DEADLINE.as_secs()
+    )
+}
+
 /// Spawn a quecto agent in UDS mode and return the socket path and child handle.
 ///
 /// The caller MUST store the child handle and call `child.kill()` + `child.wait()`
@@ -230,7 +261,10 @@ async fn spawn_agent(flags: &CliFlags) -> Result<(PathBuf, tokio::process::Child
 
     // Read stderr lines looking for the socket path announcement
     let socket_prefix = "quecto-agent-socket: ";
-    let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(10);
+    let deadline = tokio::time::Instant::now() + AGENT_SOCKET_DEADLINE;
+
+    // Surface a brief status so the readiness wait is not a silent pause (#808).
+    eprintln!("{}", agent_starting_status());
 
     loop {
         line.clear();
@@ -270,7 +304,7 @@ async fn spawn_agent(flags: &CliFlags) -> Result<(PathBuf, tokio::process::Child
             Err(_) => {
                 terminate_spawned_agent(&mut child).await;
                 return Err(format_agent_startup_failure(
-                    "timeout waiting for agent socket path",
+                    &agent_socket_timeout_message(),
                     &stderr_context,
                 ));
             }
@@ -607,6 +641,54 @@ mod tests {
     fn startup_failure_without_stderr_keeps_original_reason() {
         let message = format_agent_startup_failure("timeout waiting for agent socket path", &[]);
         assert_eq!(message, "timeout waiting for agent socket path");
+    }
+
+    // #808: cold-binary first launch after install must not time out at 10s.
+    #[test]
+    fn agent_socket_deadline_is_thirty_seconds() {
+        assert_eq!(
+            AGENT_SOCKET_DEADLINE,
+            std::time::Duration::from_secs(30),
+            "spawn->socket readiness deadline must be 30s to cover a cold-binary first launch"
+        );
+    }
+
+    #[test]
+    fn agent_starting_status_names_the_wait() {
+        let status = agent_starting_status();
+        assert!(
+            status.to_lowercase().contains("starting agent"),
+            "the readiness wait must surface a 'starting agent' status: {status:?}"
+        );
+    }
+
+    #[test]
+    fn agent_socket_timeout_message_is_actionable() {
+        let message = agent_socket_timeout_message();
+        // Names the cold-start / first-run-after-install cause.
+        let lower = message.to_lowercase();
+        assert!(
+            lower.contains("cold") || lower.contains("first run") || lower.contains("first launch"),
+            "timeout message must name the cold-binary / first-run cause: {message:?}"
+        );
+        // Names the warm remedy and the retry option.
+        assert!(
+            message.contains("quecto --version"),
+            "timeout message must suggest running `quecto --version` to warm the binary: {message:?}"
+        );
+        assert!(
+            lower.contains("retry") || lower.contains("try again"),
+            "timeout message must mention retrying: {message:?}"
+        );
+    }
+
+    #[test]
+    fn agent_socket_timeout_message_flows_through_failure_formatter() {
+        let message =
+            format_agent_startup_failure(&agent_socket_timeout_message(), &["boom".to_string()]);
+        assert!(message.contains("quecto --version"));
+        assert!(message.contains("Agent stderr:"));
+        assert!(message.contains("boom"));
     }
 
     #[test]
