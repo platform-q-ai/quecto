@@ -371,6 +371,11 @@ pub struct SubagentInfo {
     pub last_error: Option<String>,
     /// Child process PID.
     pub pid: u32,
+    /// Filesystem path to this sub-agent's own UDS socket, surfaced so the TUI
+    /// can open a direct connect-on-select connection to its live stream (#800).
+    /// Local use only — sub-agent sockets are filesystem-permission scoped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub socket_path: Option<String>,
     /// The spawning agent's id, for reconstructing the unit tree (PRD Stage B).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
@@ -445,6 +450,7 @@ pub fn build_subagent_info_list(
                 last_tool: entry.last_tool.clone(),
                 last_error: entry.last_error.clone(),
                 pid: entry.pid,
+                socket_path: Some(entry.socket_path.to_string_lossy().into_owned()),
                 parent_id: entry.parent_id.clone(),
                 workflow: entry.workflow.clone(),
             })

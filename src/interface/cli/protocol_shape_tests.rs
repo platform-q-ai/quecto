@@ -494,6 +494,7 @@ fn subagent_info_camel_case_serialization() {
         last_tool: Some("bash".into()),
         last_error: None,
         pid: 12345,
+        socket_path: None,
         parent_id: None,
         workflow: None,
     };
@@ -502,10 +503,8 @@ fn subagent_info_camel_case_serialization() {
     assert_eq!(j["status"], "running");
     assert_eq!(j["lastTool"], "bash");
     assert_eq!(j["pid"], 12345);
-    // No snake_case
     assert!(j.get("agent_id").is_none());
     assert!(j.get("last_tool").is_none());
-    // lastError absent when None
     assert!(j.get("lastError").is_none());
 }
 
@@ -517,11 +516,11 @@ fn subagent_info_null_fields_omitted() {
         last_tool: None,
         last_error: None,
         pid: 1,
+        socket_path: None,
         parent_id: None,
         workflow: None,
     };
     let j = round_trip(&info);
-    // skip_serializing_if = Option::is_none should omit these
     assert!(j.get("lastTool").is_none());
     assert!(j.get("lastError").is_none());
 }
@@ -534,6 +533,7 @@ fn subagent_info_with_error_field() {
         last_tool: None,
         last_error: Some("tool 'bash' returned error".into()),
         pid: 0,
+        socket_path: None,
         parent_id: None,
         workflow: None,
     };
@@ -551,6 +551,7 @@ fn subagent_state_changed_event_matches_spec() {
                 last_tool: Some("bash: cargo test".into()),
                 last_error: None,
                 pid: 12345,
+                socket_path: None,
                 parent_id: None,
                 workflow: None,
             },
@@ -560,6 +561,7 @@ fn subagent_state_changed_event_matches_spec() {
                 last_tool: None,
                 last_error: None,
                 pid: 12346,
+                socket_path: None,
                 parent_id: None,
                 workflow: None,
             },
@@ -587,6 +589,7 @@ fn subagent_state_changed_event_roundtrip() {
             last_tool: None,
             last_error: None,
             pid: 999,
+            socket_path: None,
             parent_id: None,
             workflow: None,
         }],

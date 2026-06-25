@@ -70,8 +70,6 @@ impl App {
             "rewind_to" => {}
             "clear_history" if success => {}
             "get_subagents" if success => self.handle_get_subagents(data),
-            "get_messages_tail"
-                if self.handle_inspector_tail_response(id.as_deref(), data.as_ref()) => {}
             "agent_error" => self.handle_agent_error(error),
             _ => {}
         }

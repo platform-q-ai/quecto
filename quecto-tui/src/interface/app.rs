@@ -30,7 +30,6 @@ use crate::interface::components::notification::{Notification, NotificationStack
 use crate::interface::components::select_list::{SelectItem, SelectList, SelectResult};
 use crate::interface::components::spinner::Spinner;
 use crate::interface::components::subagent_bar::{SubagentBar, SubagentRow};
-use crate::interface::components::subagent_inspector::SubagentInspector;
 use crate::interface::components::widget::WidgetContainer;
 use crate::interface::components::workflow_bar;
 use crate::interface::keys::{self, Key};
@@ -38,12 +37,6 @@ use crate::interface::kitty::KittyProtocol;
 
 const SPINNER_TICK: Duration = Duration::from_millis(80);
 const MOUSE_SCROLL_LINES: usize = 3;
-
-/// Window for detecting a double-Up press to open the sub-agent inspector.
-/// Deliberately shorter than the rewind double-Escape window so the gesture is
-/// a quick intentional double-tap: two slowish Up presses navigate history
-/// rather than opening the panel (#797).
-const DOUBLE_UP_WINDOW: Duration = Duration::from_millis(300);
 
 /// Maximum retry iterations for reassembling multi-fragment escape sequences.
 /// Handles up to 5-fragment CSI splits on slow SSH/serial connections.
@@ -135,14 +128,6 @@ pub struct App {
     rewind_selector: Option<SelectList>,
     /// Last idle bare Escape used to detect double-Escape for rewind.
     last_idle_escape: Option<tokio::time::Instant>,
-    /// Full-screen sub-agent inspection panel, when open (#795). Follows the
-    /// `resume_selector`/`model_selector` Option pattern.
-    subagent_inspector: Option<SubagentInspector>,
-    /// Last bare Up press, used to detect double-Up for opening the inspector.
-    last_up_press: Option<tokio::time::Instant>,
-    /// agent_id of an in-flight inspector tail request, if any. Guards the 1s
-    /// poll so requests can't stack on the UDS faster than they drain (#795).
-    inspector_tail_inflight: Option<String>,
     /// Locally-issued get_messages id for opening the rewind selector.
     pending_rewind_open_id: Option<String>,
     /// Locally-issued rewind_to id awaiting acknowledgement.
@@ -182,7 +167,55 @@ pub struct App {
     /// Internal notifications for asynchronous command-send failures.
     command_send_failure_tx: mpsc::Sender<CommandSendFailure>,
     command_send_failure_rx: mpsc::Receiver<CommandSendFailure>,
+    /// Per-sub-agent session views, keyed by agent id (#800). The master is not
+    /// in this map — it is the top-level `self.chat`/`self.workflow_bar`/etc.
+    /// and is represented by `active_agent_id == None`. Sessions are retained
+    /// after a sub-agent exits so the user can keep viewing its last session,
+    /// bounded by `MAX_RETAINED_SESSIONS`.
+    sessions: std::collections::BTreeMap<String, SessionView>,
+    /// Insertion order of session ids, for bounded retention eviction (#800).
+    session_order: Vec<String>,
+    /// The agent whose session is shown in the main body. `None` = master.
+    active_agent_id: Option<String>,
+    /// Left-panel selection cursor over the flattened (master + tree) rows.
+    panel_nav: crate::interface::components::list_navigator::ListNavigator,
+    /// Fan-in for events from the active sub-agent's direct connection (#800).
+    /// Each item is `(agent_id, event)`; routed into that agent's session.
+    subagent_event_tx: mpsc::Sender<(String, Event)>,
+    subagent_event_rx: mpsc::Receiver<(String, Event)>,
+    /// The agent id of the currently-open connect-on-select connection and a
+    /// handle to abort its forwarding task on deselect/teardown (#800).
+    active_conn: Option<(String, tokio::task::JoinHandle<()>)>,
+    /// Debounced connect-on-select: the selected agent id and the instant at
+    /// which its UDS connection should actually open. Re-armed on every
+    /// selection change so key-repeat scrolling across rows opens (and aborts)
+    /// at most one connection — the one the cursor settles on (#800 review).
+    pending_conn: Option<(String, tokio::time::Instant)>,
 }
+
+/// Per-sub-agent session state for the multi-session UI (#800). Holds the
+/// child's own chat transcript, accumulated from its direct live stream. Chrome
+/// (editor, footer, overlays) stays single-instance on `App`.
+pub(crate) struct SessionView {
+    chat: Chat,
+}
+
+impl SessionView {
+    fn new() -> Self {
+        Self { chat: Chat::new() }
+    }
+}
+
+/// Width of the persistent left sub-agent panel (#800).
+const SUBAGENT_PANEL_WIDTH: usize = 26;
+
+/// Maximum retained sub-agent sessions before the oldest non-active is evicted.
+const MAX_RETAINED_SESSIONS: usize = 16;
+
+/// Settle window before a selected sub-agent's connect-on-select UDS
+/// connection actually opens. Debounces key-repeat scrolling so passing over
+/// a row does not connect/abort its socket or fire a history backfill (#800).
+const CONNECT_DEBOUNCE: Duration = Duration::from_millis(160);
 
 struct CommandSendFailure {
     command_kind: &'static str,
@@ -196,6 +229,7 @@ impl App {
         let git_branch = git_repo.as_deref().and_then(app_git::read_git_branch_from);
         footer.set_git_branch(git_branch.clone());
         let (command_send_failure_tx, command_send_failure_rx) = mpsc::channel(16);
+        let (subagent_event_tx, subagent_event_rx) = mpsc::channel(256);
 
         Self {
             terminal,
@@ -221,9 +255,6 @@ impl App {
             resume_selector: None,
             rewind_selector: None,
             last_idle_escape: None,
-            subagent_inspector: None,
-            last_up_press: None,
-            inspector_tail_inflight: None,
             pending_rewind_open_id: None,
             pending_rewind_apply_id: None,
             rewind_request_seq: 0,
@@ -241,6 +272,14 @@ impl App {
             context_stats_requested: false,
             command_send_failure_tx,
             command_send_failure_rx,
+            sessions: std::collections::BTreeMap::new(),
+            session_order: Vec::new(),
+            active_agent_id: None,
+            panel_nav: crate::interface::components::list_navigator::ListNavigator::new(),
+            subagent_event_tx,
+            subagent_event_rx,
+            active_conn: None,
+            pending_conn: None,
         }
     }
 
@@ -304,8 +343,8 @@ mod app_response;
 mod app_rewind;
 #[path = "app_selection.rs"]
 mod app_selection;
-#[path = "app_subagent_inspector.rs"]
-mod app_subagent_inspector;
+#[path = "app_subagent_panel.rs"]
+mod app_subagent_panel;
 #[path = "app_subagents.rs"]
 mod app_subagents;
 
@@ -644,6 +683,9 @@ mod app_rewind_response_tests;
 #[cfg(test)]
 #[path = "app_selection_tests.rs"]
 mod app_selection_tests;
+#[cfg(test)]
+#[path = "app_subagent_panel_tests.rs"]
+mod app_subagent_panel_tests;
 #[cfg(test)]
 #[path = "app_subagents_tests.rs"]
 mod app_subagents_tests;

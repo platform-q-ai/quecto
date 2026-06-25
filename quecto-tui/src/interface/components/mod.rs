@@ -11,7 +11,6 @@ pub mod sanitize;
 pub mod select_list;
 pub mod spinner;
 pub mod subagent_bar;
-pub mod subagent_inspector;
 pub mod suggestion_list;
 pub mod text;
 pub mod widget;

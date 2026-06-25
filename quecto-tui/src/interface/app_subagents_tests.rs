@@ -18,6 +18,7 @@ fn info(id: &str, status: &str) -> crate::infrastructure::client::SubagentInfoEv
         last_tool: None,
         last_error: None,
         pid: 0,
+        socket_path: None,
         parent_id: None,
         workflow: None,
     }
@@ -36,6 +37,7 @@ fn info_with_workflow(
         last_tool: None,
         last_error: None,
         pid: 0,
+        socket_path: None,
         parent_id: None,
         workflow: Some(crate::infrastructure::client::SubagentWorkflow {
             mode: mode.to_string(),

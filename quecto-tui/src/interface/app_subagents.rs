@@ -5,13 +5,6 @@ impl App {
         &mut self,
         subagents: Vec<crate::infrastructure::client::SubagentInfoEvent>,
     ) {
-        // Snapshot prior statuses so we can detect active→idle transitions for a
-        // one-shot inspector backfill once the merge below is applied (#797).
-        let prev_statuses: std::collections::BTreeMap<String, String> = self
-            .subagent_local
-            .iter()
-            .map(|(id, t)| (id.clone(), t.info.status.clone()))
-            .collect();
         // Merge server data with existing local state to preserve exited_at
         // timestamps. New entries are inserted; entries absent from the
         // server push are removed unless they have an active grace period.
@@ -37,37 +30,8 @@ impl App {
         }
         self.subagent_local = new_map;
         self.rebuild_subagent_bar();
-        self.reconcile_inspector_on_idle(&prev_statuses);
-    }
-
-    /// When the inspector is open and its selected agent has just transitioned
-    /// from active to a terminal/idle state, fire a single one-shot tail fetch
-    /// to backfill the final turn (which the per-turn push path does not emit).
-    /// Cheap drop-reconciliation; no recurring timer (#797).
-    fn reconcile_inspector_on_idle(
-        &mut self,
-        prev_statuses: &std::collections::BTreeMap<String, String>,
-    ) {
-        if !self.inspector_open() {
-            return;
-        }
-        let Some(selected) = self
-            .subagent_inspector
-            .as_ref()
-            .and_then(|i| i.selected_agent_id())
-        else {
-            return;
-        };
-        let was_active = prev_statuses
-            .get(&selected)
-            .is_some_and(|s| subagent_status_is_active(s));
-        let now_inactive = self
-            .subagent_local
-            .get(&selected)
-            .is_some_and(|t| !subagent_status_is_active(&t.info.status));
-        if was_active && now_inactive {
-            self.request_inspector_tail(&selected);
-        }
+        // Keep the panel cursor in bounds after the list changes (#800).
+        self.clamp_panel_selection();
     }
 
     /// Rebuild the widget from local state.

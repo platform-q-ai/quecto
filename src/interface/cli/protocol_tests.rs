@@ -220,6 +220,7 @@ fn test_subagent_state_changed_event_serializes() {
             last_tool: Some("bash".to_string()),
             last_error: None,
             pid: 123,
+            socket_path: None,
             parent_id: None,
             workflow: None,
         }],
@@ -251,6 +252,7 @@ fn test_subagent_info_null_fields_omitted() {
         last_tool: None,
         last_error: None,
         pid: 456,
+        socket_path: None,
         parent_id: None,
         workflow: None,
     };
@@ -267,6 +269,7 @@ fn test_subagent_info_with_error() {
         last_tool: None,
         last_error: Some("connection refused".to_string()),
         pid: 0,
+        socket_path: None,
         parent_id: None,
         workflow: None,
     };
@@ -333,6 +336,54 @@ fn test_build_subagent_info_list_maps_all_statuses() {
     assert_eq!(list[2].status, "running");
     assert_eq!(list[3].status, "error");
     assert_eq!(list[4].status, "exited");
+}
+
+#[test]
+fn test_build_subagent_info_list_surfaces_socket_path() {
+    // #800 connect-on-select: the TUI must learn each child's UDS socket path
+    // to open a direct connection. build_subagent_info_list surfaces it from
+    // the registry entry the kernel already tracks.
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, SubagentStatus, new_registry,
+    };
+    let reg = new_registry();
+    {
+        let mut guard = reg.lock().unwrap();
+        let mut entry = SubagentEntry::new("/run/quecto/worker.sock".into(), 99);
+        entry.status = SubagentStatus::Running;
+        guard.insert("worker".to_string(), entry);
+    }
+    let list = build_subagent_info_list(&Some(reg));
+    assert_eq!(list.len(), 1);
+    assert_eq!(
+        list[0].socket_path.as_deref(),
+        Some("/run/quecto/worker.sock"),
+        "socket_path must be surfaced for connect-on-select"
+    );
+}
+
+#[test]
+fn test_subagent_info_socket_path_round_trips_camel_case() {
+    // The TUI deserializes SubagentInfo from the wire; the path must survive a
+    // serde round-trip under the camelCase `socketPath` key.
+    use crate::infrastructure::tools::subagent_registry::{
+        SubagentEntry, SubagentStatus, new_registry,
+    };
+    let reg = new_registry();
+    {
+        let mut guard = reg.lock().unwrap();
+        let mut entry = SubagentEntry::new("/run/quecto/worker.sock".into(), 99);
+        entry.status = SubagentStatus::Running;
+        guard.insert("worker".to_string(), entry);
+    }
+    let list = build_subagent_info_list(&Some(reg));
+    let json = serde_json::to_string(&list[0]).unwrap();
+    assert!(
+        json.contains("\"socketPath\":\"/run/quecto/worker.sock\""),
+        "expected camelCase socketPath in wire form, got: {json}"
+    );
+    let back: SubagentInfo = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.socket_path.as_deref(), Some("/run/quecto/worker.sock"));
 }
 
 #[test]

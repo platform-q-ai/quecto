@@ -271,6 +271,7 @@ pub fn subagent(id: &str, status: &str, wf: Option<(&str, u32, u32)>) -> Subagen
         last_tool: None,
         last_error: None,
         pid: 0,
+        socket_path: None,
         parent_id: None,
         workflow: wf.map(|(mode, d, t)| SubagentWorkflow {
             mode: mode.to_string(),

@@ -28,9 +28,10 @@ impl App {
                 error,
             } => self.handle_response(id, command, success, data, error),
             Event::SubagentStateChanged { subagents } => self.update_subagent_bar(subagents),
-            Event::SubagentMessagesAppended { agent_id, messages } => {
-                self.append_subagent_messages(&agent_id, &messages)
-            }
+            // Parent-forwarded per-turn appends (#797) are superseded by the
+            // direct connect-on-select stream (#800); the active sub-agent's own
+            // connection now carries its live content. Ignored here.
+            Event::SubagentMessagesAppended { .. } => {}
             Event::WorkflowState {
                 agent_id,
                 steps,
@@ -159,6 +160,7 @@ impl App {
                 last_tool: None,
                 last_error: None,
                 pid: 0,
+                socket_path: None,
                 parent_id: None,
                 workflow: None,
             }),

@@ -86,6 +86,44 @@ fn then_subagent_status(world: &mut QuectoWorld, agent_id: String, status: Strin
     assert_eq!(info.status, status, "status mismatch for {}", agent_id);
 }
 
+#[then(expr = "subagent info {string} should have socketPath {string}")]
+fn then_subagent_socket_path(world: &mut QuectoWorld, agent_id: String, path: String) {
+    let info = world
+        .subagent_infos
+        .iter()
+        .find(|i| i.agent_id == agent_id)
+        .unwrap_or_else(|| panic!("subagent '{}' not found in list", agent_id));
+    assert_eq!(
+        info.socket_path.as_deref(),
+        Some(path.as_str()),
+        "socket_path mismatch for {}",
+        agent_id
+    );
+}
+
+#[when("I serialize the first subagent info")]
+fn when_round_trip_first_info(world: &mut QuectoWorld) {
+    let first = world
+        .subagent_infos
+        .first()
+        .expect("no subagent info to round-trip");
+    world.subagent_info_json = serde_json::to_value(first).unwrap();
+}
+
+#[then(expr = "the round-tripped subagent info should have socketPath {string}")]
+fn then_round_tripped_socket_path(world: &mut QuectoWorld, path: String) {
+    // Deserialize back into the protocol type to prove the field survives a
+    // full wire round-trip under camelCase (`socketPath`), as the TUI sees it.
+    let info: SubagentInfo =
+        serde_json::from_value(world.subagent_info_json.clone()).expect("info should deserialize");
+    assert_eq!(
+        info.socket_path.as_deref(),
+        Some(path.as_str()),
+        "round-tripped socket_path mismatch (json: {})",
+        world.subagent_info_json
+    );
+}
+
 #[then(expr = "subagent info {string} should have last_tool {string}")]
 fn then_subagent_last_tool(world: &mut QuectoWorld, agent_id: String, tool: String) {
     let info = world
@@ -147,6 +185,7 @@ fn given_subagent_info(
         },
         last_error: None,
         pid: pid as u32,
+        socket_path: None,
         parent_id: None,
         workflow: None,
     });
@@ -239,6 +278,7 @@ fn given_state_changed_event(world: &mut QuectoWorld, count: usize) {
             last_tool: None,
             last_error: None,
             pid: i as u32,
+            socket_path: None,
             parent_id: None,
             workflow: None,
         })
@@ -260,6 +300,7 @@ fn given_state_changed_one(
             last_tool: None,
             last_error: None,
             pid: 1,
+            socket_path: None,
             parent_id: None,
             workflow: None,
         }],

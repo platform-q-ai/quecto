@@ -386,16 +386,19 @@ impl App {
     /// model mutation. The harness relies on this (it composes per capture); a
     /// future non-idempotent step would make captures diverge from real renders.
     pub(super) fn compose_frame(&mut self) -> Vec<String> {
-        let width = self.terminal.width;
+        let full_width = self.terminal.width;
         let height = self.terminal.height;
 
-        // When the sub-agent inspector is open it takes over the whole screen,
-        // replacing the normal chat/editor body (#795).
-        if self.subagent_inspector.is_some() {
-            self.selection = None;
-            self.last_rendered_lines.clear();
-            return self.compose_subagent_inspector_frame();
-        }
+        // A persistent left panel (#800) splits the screen horizontally once a
+        // sub-agent exists: the body renders into the reduced right column and
+        // the panel cell is prefixed onto each row afterward.
+        let panel_visible = self.subagent_panel_visible();
+        let panel_width = if panel_visible {
+            SUBAGENT_PANEL_WIDTH.min(full_width / 2)
+        } else {
+            0
+        };
+        let width = full_width - panel_width;
 
         let mut lines = Vec::new();
 
@@ -415,8 +418,9 @@ impl App {
         // Reserve MIN_CHAT_GAP lines for spacing between chat and editor (#480).
         const MIN_CHAT_GAP: usize = 3;
         let chat_height = height.saturating_sub(bottom_height + 2 + MIN_CHAT_GAP);
-        self.chat.set_viewport_height(chat_height);
-        let mut chat_lines = self.chat.render(width);
+        let chat = self.active_chat_mut();
+        chat.set_viewport_height(chat_height);
+        let mut chat_lines = chat.render(width);
 
         // If chat is taller than available space, show only the tail (auto-scroll).
         if chat_lines.len() > chat_height {
@@ -462,10 +466,24 @@ impl App {
             Self::composite_centered(&mut lines, &selector_lines, overlay_width, width, height);
         }
 
-        // Enforce width on every line.
+        // Enforce width on every (body) line.
         for line in &mut lines {
             if crate::interface::utils::visible_width(line) > width {
                 *line = crate::interface::utils::truncate_to_width(line, width, None);
+            }
+        }
+
+        // Prefix the persistent left panel onto each row (#800). Panel cells are
+        // pre-padded to exactly `panel_width` visible columns, so concatenation
+        // yields full-width rows.
+        if panel_visible {
+            let panel = self.render_subagent_panel(panel_width, height);
+            for (i, line) in lines.iter_mut().enumerate() {
+                let cell = panel
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(|| " ".repeat(panel_width));
+                *line = format!("{cell}{line}");
             }
         }
 
