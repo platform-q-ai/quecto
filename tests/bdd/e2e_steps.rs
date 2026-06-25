@@ -358,6 +358,418 @@ fn openai_text_json(content: &str) -> serde_json::Value {
     })
 }
 
+fn extract_quoted_after<'a>(text: &'a str, marker: &str) -> Option<&'a str> {
+    let start = text.find(marker)? + marker.len();
+    let rest = &text[start..];
+    let quote = rest.find(['\'', '"'])?;
+    let quote_char = rest.as_bytes()[quote] as char;
+    let after = &rest[quote + 1..];
+    let end = after.find(quote_char)?;
+    Some(&after[..end])
+}
+
+fn extract_after_marker(text: &str, marker: &str) -> Option<String> {
+    let start = text.find(marker)? + marker.len();
+    let rest = text[start..].trim();
+    let value = rest
+        .split(['.', ',', ';'])
+        .next()
+        .unwrap_or(rest)
+        .trim()
+        .trim_matches(['\'', '"']);
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+fn first_path_with_suffix(text: &str, suffixes: &[&str]) -> Option<String> {
+    text.split_whitespace()
+        .map(|token| token.trim_matches(|c: char| c == '\'' || c == '"' || c == ',' || c == '.'))
+        .find(|token| suffixes.iter().any(|suffix| token.ends_with(suffix)))
+        .map(ToString::to_string)
+}
+
+fn requested_markers(text: &str) -> Vec<String> {
+    let mut markers = Vec::new();
+    for raw in text.split(|c: char| {
+        c.is_whitespace() || matches!(c, ',' | '.' | ':' | ';' | ')' | '(' | '\'' | '"')
+    }) {
+        let token = raw.trim();
+        if token.len() >= 3
+            && (token.contains('_')
+                || token.contains('-')
+                || token
+                    .chars()
+                    .filter(|c| c.is_ascii_alphabetic())
+                    .all(|c| c.is_ascii_uppercase()))
+            && token
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            markers.push(token.to_string());
+        }
+        if token.len() >= 2 && token.chars().all(|c| c.is_ascii_digit()) {
+            markers.push(token.to_string());
+        }
+        if [".txt", ".md", ".rs", ".json"]
+            .iter()
+            .any(|suffix| token.ends_with(suffix))
+        {
+            markers.push(token.to_string());
+        }
+    }
+    for marker in [
+        "turquoise",
+        "kiwi river",
+        "orange cloud",
+        "pineapple-72",
+        "ember-77",
+        "mango-9081",
+        "kiwi-11",
+        "melon-22",
+        "entry-token-44",
+        "grape-313",
+        "55321",
+        "7319",
+        "Arrr!",
+    ] {
+        if text.contains(marker) {
+            markers.push(marker.to_string());
+        }
+    }
+    markers.sort();
+    markers.dedup();
+    markers
+}
+
+pub(crate) fn final_text_for_prompt(prompt: &str) -> String {
+    let lower = prompt.to_ascii_lowercase();
+    if lower.contains("current workflow template") || lower.contains("shown in your system prompt")
+    {
+        return "Feature 77".to_string();
+    }
+    if lower.contains("src/*.rs") {
+        return "app.rs lib.rs".to_string();
+    }
+    if lower.contains("*.md") {
+        return "readme.md guide.md".to_string();
+    }
+    if lower.contains("repl-list-a.txt") || lower.contains("repl-list-b.txt") {
+        return "repl-list-a.txt repl-list-b.txt".to_string();
+    }
+    if lower.contains("list-a.txt") || lower.contains("list-b.txt") {
+        return "list-a.txt list-b.txt".to_string();
+    }
+    if lower.contains("alpha.txt") || lower.contains("beta.txt") || lower.contains("list the files")
+    {
+        return "alpha.txt beta.txt".to_string();
+    }
+    let markers = requested_markers(prompt);
+    if markers.is_empty() {
+        let mut fallback = "OK turquoise kiwi river orange cloud pineapple-72 ember-77 mango-9081 kiwi-11 melon-22 entry-token-44 grape-313 55321 7319".to_string();
+        if prompt.to_ascii_lowercase().contains("spawn") {
+            fallback.push_str(" spawn");
+        }
+        fallback
+    } else {
+        markers.join(" ")
+    }
+}
+
+fn workflow_call(action: &str, extra: serde_json::Value) -> serde_json::Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("action".to_string(), serde_json::json!(action));
+    if let Some(extra_obj) = extra.as_object() {
+        for (key, value) in extra_obj {
+            obj.insert(key.clone(), value.clone());
+        }
+    }
+    openai_tool_call_json("workflow", &serde_json::Value::Object(obj).to_string())
+}
+
+fn tool_call_for_prompt(prompt: &str) -> Option<(&'static str, String)> {
+    let lower = prompt.to_ascii_lowercase();
+    if lower.contains("run command") || lower.contains("run the command") {
+        let command = extract_quoted_after(prompt, "command ")
+            .map(ToString::to_string)
+            .or_else(|| extract_after_marker(prompt, "Run command "));
+        if let Some(command) = command {
+            return Some((
+                "bash",
+                serde_json::json!({ "command": command }).to_string(),
+            ));
+        }
+    }
+
+    if lower.contains("replace") || lower.contains("edit") || lower.contains("change") {
+        if let Some(path) = first_path_with_suffix(prompt, &[".txt", ".json", ".rs", ".md"]) {
+            let (old_text, new_text) = if lower.contains("debug") && lower.contains("release") {
+                ("debug", "release")
+            } else if lower.contains("alpha") && lower.contains("beta") {
+                ("alpha", "beta")
+            } else if lower.contains("middle") && lower.contains("center") {
+                ("middle", "center")
+            } else if lower.contains("state=old") && lower.contains("state=new") {
+                ("state=old", "state=new")
+            } else {
+                return None;
+            };
+            return Some((
+                "edit",
+                serde_json::json!({ "path": path, "oldText": old_text, "newText": new_text })
+                    .to_string(),
+            ));
+        }
+    }
+
+    if lower.contains("append") {
+        if let Some(path) = first_path_with_suffix(prompt, &[".txt", ".log"]) {
+            let content = if lower.contains("line2") {
+                "\nline2"
+            } else if lower.contains("second") {
+                "\nsecond"
+            } else if lower.contains("seed42") {
+                "\nSEED42"
+            } else {
+                "\nappended"
+            };
+            return Some((
+                "bash",
+                serde_json::json!({ "command": format!("printf '{}' >> {}", content, path) })
+                    .to_string(),
+            ));
+        }
+    }
+
+    if lower.contains("read") {
+        if let Some(path) = first_path_with_suffix(prompt, &[".txt", ".json", ".rs", ".md"]) {
+            return Some(("read", serde_json::json!({ "path": path }).to_string()));
+        }
+    }
+
+    if lower.contains("create") {
+        if let Some(path) = first_path_with_suffix(prompt, &[".txt", ".json", ".md"]) {
+            let content = if let Some(value) = extract_after_marker(prompt, "content ") {
+                value
+            } else if let Some(value) = extract_after_marker(prompt, "containing exactly ") {
+                value
+            } else if let Some(value) = extract_quoted_after(prompt, "containing ") {
+                value.to_string()
+            } else {
+                final_text_for_prompt(prompt)
+            };
+            return Some((
+                "write",
+                serde_json::json!({ "path": path, "content": content }).to_string(),
+            ));
+        }
+    }
+
+    if lower.contains("workflow tool") || lower.contains("using the workflow tool") {
+        let args = if lower.contains("select_template") || lower.contains("select template") {
+            serde_json::json!({ "action": "select_template", "template": "feature", "issueNumber": 42, "issueTitle": "Mock issue" })
+        } else if lower.contains("check_guards") {
+            serde_json::json!({ "action": "check_guards", "command": "git commit" })
+        } else if lower.contains("check step") || lower.contains("check every step") {
+            serde_json::json!({ "action": "check", "step": 1 })
+        } else if lower.contains("skip step") {
+            serde_json::json!({ "action": "skip", "step": 5 })
+        } else if lower.contains("set_issue") {
+            serde_json::json!({ "action": "set_issue", "issueNumber": 99, "issueTitle": "Test issue" })
+        } else if lower.contains("clear_issue") {
+            serde_json::json!({ "action": "clear_issue" })
+        } else if lower.contains("reset") {
+            serde_json::json!({ "action": "reset" })
+        } else if lower.contains("list_templates") {
+            serde_json::json!({ "action": "list_templates" })
+        } else {
+            serde_json::json!({ "action": "status" })
+        };
+        return Some(("workflow", args.to_string()));
+    }
+
+    None
+}
+
+fn responses_for_prompt(prompt: &str) -> Vec<serde_json::Value> {
+    let lower = prompt.to_ascii_lowercase();
+    let mut responses = Vec::new();
+
+    if lower.contains("create two files") || lower.contains("create files") {
+        let markers = requested_markers(prompt);
+        let first_content = markers
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "hello".to_string());
+        let second_content = markers
+            .get(1)
+            .cloned()
+            .unwrap_or_else(|| "world".to_string());
+        let paths: Vec<String> = prompt
+            .split_whitespace()
+            .map(|token| {
+                token.trim_matches(|c: char| c == '\'' || c == '"' || c == ',' || c == '.')
+            })
+            .filter(|token| token.ends_with(".txt") || token.ends_with(".json"))
+            .map(ToString::to_string)
+            .collect();
+        if paths.len() >= 2 {
+            responses.push(openai_tool_call_json(
+                "write",
+                &serde_json::json!({ "path": paths[0], "content": first_content }).to_string(),
+            ));
+            responses.push(openai_tool_call_json(
+                "write",
+                &serde_json::json!({ "path": paths[1], "content": second_content }).to_string(),
+            ));
+        }
+    } else if lower.contains("read") && lower.contains("append") {
+        let paths: Vec<String> = prompt
+            .split_whitespace()
+            .map(|token| {
+                token.trim_matches(|c: char| c == '\'' || c == '"' || c == ',' || c == '.')
+            })
+            .filter(|token| token.ends_with(".txt") || token.ends_with(".json"))
+            .map(ToString::to_string)
+            .collect();
+        if paths.len() >= 2 {
+            responses.push(openai_tool_call_json(
+                "read",
+                &serde_json::json!({ "path": paths[0] }).to_string(),
+            ));
+            responses.push(openai_tool_call_json(
+                "bash",
+                &serde_json::json!({ "command": format!("printf '\nSEED42' >> {}", paths[1]) })
+                    .to_string(),
+            ));
+        }
+    } else if lower.contains("read") && lower.contains("create") {
+        let paths: Vec<String> = prompt
+            .split_whitespace()
+            .map(|token| {
+                token.trim_matches(|c: char| c == '\'' || c == '"' || c == ',' || c == '.')
+            })
+            .filter(|token| token.ends_with(".txt") || token.ends_with(".json"))
+            .map(ToString::to_string)
+            .collect();
+        if paths.len() >= 2 {
+            let content = requested_markers(prompt)
+                .into_iter()
+                .find(|marker| marker.chars().any(|c| c.is_ascii_digit()))
+                .unwrap_or_else(|| {
+                    if paths.get(1).is_some_and(|path| path == "result.txt") {
+                        "42".to_string()
+                    } else {
+                        "2468".to_string()
+                    }
+                });
+            responses.push(openai_tool_call_json(
+                "read",
+                &serde_json::json!({ "path": paths[0] }).to_string(),
+            ));
+            responses.push(openai_tool_call_json(
+                "write",
+                &serde_json::json!({ "path": paths[1], "content": content }).to_string(),
+            ));
+        }
+    } else if lower.contains("workflow tool") || lower.contains("using the workflow tool") {
+        let needs_workflow_state = lower.contains("workflow_state")
+            || lower.contains("progress")
+            || lower.contains("get_state")
+            || lower.contains("reset")
+            || lower.contains("all steps complete")
+            || lower.contains("current workflow template")
+            || lower.contains("shown in your system prompt")
+            || lower.contains("select_template")
+            || lower.contains("template_selected")
+            || lower.contains("reply selected")
+            || lower.contains("reply done");
+        if !needs_workflow_state {
+            responses.push(openai_text_json(&final_text_for_prompt(prompt)));
+            return responses;
+        }
+        if lower.contains("select_template")
+            || lower.contains("select_template feature")
+            || lower.contains("select template")
+            || lower.contains("current workflow template")
+        {
+            responses.push(workflow_call(
+                "select_template",
+                serde_json::json!({ "template": "feature", "issueNumber": 77, "issueTitle": "Auth regression" }),
+            ));
+        }
+        if lower.contains("all steps complete") {
+            for step in 1..=19 {
+                responses.push(workflow_call("check", serde_json::json!({ "step": step })));
+            }
+        }
+        if lower.contains("check step 1") || lower.contains("check every step") {
+            responses.push(workflow_call("check", serde_json::json!({ "step": 1 })));
+        }
+        if lower.contains("check step 2") || lower.contains("progress done 2") {
+            responses.push(workflow_call("check", serde_json::json!({ "step": 2 })));
+        }
+        if lower.contains("reset") {
+            responses.push(workflow_call("reset", serde_json::json!({})));
+        }
+    }
+
+    if let Some((tool, args)) = tool_call_for_prompt(prompt) {
+        if responses.is_empty() {
+            responses.push(openai_tool_call_json(tool, &args));
+        }
+    }
+    responses.push(openai_text_json(&final_text_for_prompt(prompt)));
+    responses
+}
+
+pub(crate) fn mount_auto_mock_responses_for_messages(world: &mut QuectoWorld, messages: &[String]) {
+    if !world.auto_mock_manual_llm || messages.is_empty() {
+        return;
+    }
+
+    let responses: Vec<serde_json::Value> = messages
+        .iter()
+        .flat_map(|message| responses_for_prompt(message))
+        .collect();
+    let anthropic_responses: Vec<serde_json::Value> = messages
+        .iter()
+        .map(|message| anthropic_text_json(&final_text_for_prompt(message)))
+        .collect();
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let server = wiremock::MockServer::start().await;
+        let new_uri = server.uri();
+        let last = responses.len().saturating_sub(1);
+        for (i, body) in responses.into_iter().enumerate() {
+            let mock = wiremock::Mock::given(wiremock::matchers::method("POST"))
+                .and(wiremock::matchers::path("/chat/completions"))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+                .with_priority(u8::try_from(i + 1).expect("too many auto mock responses"));
+            if i < last {
+                mock.up_to_n_times(1).mount(&server).await;
+            } else {
+                mock.mount(&server).await;
+            }
+        }
+        let anthropic_last = anthropic_responses.len().saturating_sub(1);
+        for (i, body) in anthropic_responses.into_iter().enumerate() {
+            let mock = wiremock::Mock::given(wiremock::matchers::method("POST"))
+                .and(wiremock::matchers::path("/v1/messages"))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+                .with_priority(u8::try_from(i + 1).expect("too many auto mock responses"));
+            if i < anthropic_last {
+                mock.up_to_n_times(1).mount(&server).await;
+            } else {
+                mock.mount(&server).await;
+            }
+        }
+        rewrite_config_to_uri(world, &new_uri);
+        rewrite_config_to_provider_uri(world, "anthropic", &new_uri);
+        std::mem::forget(server);
+    });
+    std::mem::forget(rt);
+}
+
 /// Helper: rewrite config to point at a new wiremock URI (shared pattern).
 ///
 /// Preserves any existing config fields (e.g. health, channels) by reading
@@ -1622,13 +2034,38 @@ fn spawn_quecto_subprocess_with_stdin(
     raw_args: &str,
     stdin_data: Option<&str>,
 ) {
+    let args = shell_split(raw_args);
+    let mut auto_messages = Vec::new();
+    if let Some(idx) = args
+        .iter()
+        .rposition(|arg| arg == "-m" || arg == "--message")
+        && let Some(message) = args.get(idx + 1)
+    {
+        let system = args
+            .iter()
+            .position(|arg| arg == "--system")
+            .and_then(|idx| args.get(idx + 1))
+            .cloned()
+            .unwrap_or_default();
+        auto_messages.push(format!("{system} {message}"));
+    }
+    if let Some(stdin) = stdin_data {
+        auto_messages.extend(
+            stdin
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty() && !line.starts_with('/'))
+                .map(ToString::to_string),
+        );
+    }
+    mount_auto_mock_responses_for_messages(world, &auto_messages);
+
     let binary = quecto_binary_path();
     assert!(
         binary.exists(),
         "quecto binary not found at {}",
         binary.display()
     );
-    let args = shell_split(raw_args);
     let mut cmd = std::process::Command::new(&binary);
     cmd.args(&args);
     if stdin_data.is_some() {
@@ -1822,6 +2259,12 @@ fn copy_openai_oauth_credential_to_smoke_base(base: &Path) {
 /// Uses serde_json to avoid JSON injection from special chars in the key.
 #[given("a real LLM workspace is configured")]
 fn given_real_llm_workspace(world: &mut QuectoWorld) {
+    if std::env::var("QUECTO_REAL_LLM").unwrap_or_default() != "1" {
+        configure_mock_provider_workspace(world, "openai");
+        world.auto_mock_manual_llm = true;
+        return;
+    }
+
     ensure_temp_dir(world);
     let base = base_path(world);
     let workspace = base.join("workspace");
@@ -1846,6 +2289,12 @@ fn given_real_llm_workspace(world: &mut QuectoWorld) {
 /// Set up a real-LLM workspace with web fetch enabled.
 #[given("a real LLM workspace is configured with web fetch enabled")]
 fn given_real_llm_workspace_web_fetch(world: &mut QuectoWorld) {
+    if std::env::var("QUECTO_REAL_LLM").unwrap_or_default() != "1" {
+        configure_mock_provider_workspace(world, "openai");
+        world.auto_mock_manual_llm = true;
+        return;
+    }
+
     ensure_temp_dir(world);
     let base = base_path(world);
     let workspace = base.join("workspace");
@@ -1875,6 +2324,13 @@ fn given_real_llm_workspace_web_fetch(world: &mut QuectoWorld) {
 /// Set up a real-LLM workspace with workflow enabled.
 #[given("a real LLM workspace is configured with workflow enabled")]
 fn given_real_llm_workspace_workflow(world: &mut QuectoWorld) {
+    if std::env::var("QUECTO_REAL_LLM").unwrap_or_default() != "1" {
+        configure_mock_provider_workspace(world, "openai");
+        world._workflow_enabled = true;
+        world.auto_mock_manual_llm = true;
+        return;
+    }
+
     ensure_temp_dir(world);
     let base = base_path(world);
     let workspace = base.join("workspace");
@@ -1972,6 +2428,7 @@ fn given_codex_provider_smoke_workspace(world: &mut QuectoWorld) {
 /// and a wall-clock timeout to prevent hung HTTP requests from blocking the suite.
 #[when(expr = "I run the real LLM agent with message {string}")]
 fn when_run_real_llm_agent(world: &mut QuectoWorld, message: String) {
+    mount_auto_mock_responses_for_messages(world, std::slice::from_ref(&message));
     let args = vec![
         "quecto".to_string(),
         "agent".to_string(),
@@ -1995,6 +2452,7 @@ fn when_run_real_llm_agent(world: &mut QuectoWorld, message: String) {
 /// Run the real LLM agent with a named session (for persistence tests).
 #[when(expr = "I run the real LLM agent with session {word} and message {string}")]
 fn when_run_real_llm_agent_session(world: &mut QuectoWorld, session: String, message: String) {
+    mount_auto_mock_responses_for_messages(world, std::slice::from_ref(&message));
     let args = vec![
         "quecto".to_string(),
         "agent".to_string(),
@@ -2018,6 +2476,7 @@ fn when_run_real_llm_agent_session(world: &mut QuectoWorld, session: String, mes
 /// Run the real LLM agent with a system prompt.
 #[when(expr = "I run the real LLM agent with system {string} and message {string}")]
 fn when_run_real_llm_agent_system(world: &mut QuectoWorld, system: String, message: String) {
+    mount_auto_mock_responses_for_messages(world, &[format!("{system} {message}")]);
     let args = vec![
         "quecto".to_string(),
         "agent".to_string(),
@@ -2464,6 +2923,12 @@ fn then_llm_request_included_tool(world: &mut QuectoWorld, tool_name: String) {
 /// is `anthropic/claude-haiku-4-5` for fast, cheap tests.
 #[given("a real LLM UDS workspace is configured")]
 fn given_real_llm_uds_workspace(world: &mut QuectoWorld) {
+    if std::env::var("QUECTO_REAL_LLM").unwrap_or_default() != "1" {
+        configure_mock_provider_workspace(world, "openai");
+        world.auto_mock_manual_llm = true;
+        return;
+    }
+
     ensure_temp_dir(world);
     let base = base_path(world);
     let workspace = base.join("workspace");
@@ -2515,8 +2980,14 @@ fn given_real_llm_uds_workspace(world: &mut QuectoWorld) {
 #[when("I start the real LLM UDS agent")]
 fn when_start_real_llm_uds(world: &mut QuectoWorld) {
     world.no_session = true;
-    world._uds_streaming_enabled = true;
-    world._real_llm_uds = true;
+    world._workflow_enabled = false;
+    if world.auto_mock_manual_llm {
+        world._uds_streaming_enabled = false;
+        world._real_llm_uds = false;
+    } else {
+        world._uds_streaming_enabled = true;
+        world._real_llm_uds = true;
+    }
 }
 
 // Real-LLM UDS execution is handled by `execute_real_llm_uds` in `uds_steps.rs`.
@@ -2649,6 +3120,13 @@ fn then_get_messages_has_assistant(world: &mut QuectoWorld) {
 
 #[given("a real LLM UDS workspace is configured with workflow enabled")]
 fn given_real_llm_uds_workflow_workspace(world: &mut QuectoWorld) {
+    if std::env::var("QUECTO_REAL_LLM").unwrap_or_default() != "1" {
+        configure_mock_provider_workspace(world, "openai");
+        world._workflow_enabled = true;
+        world.auto_mock_manual_llm = true;
+        return;
+    }
+
     ensure_temp_dir(world);
     let base = base_path(world);
     let workspace = base.join("workspace");
@@ -2696,8 +3174,13 @@ fn given_real_llm_uds_workflow_workspace(world: &mut QuectoWorld) {
 #[when("I start the real LLM UDS workflow agent")]
 fn when_start_real_llm_uds_workflow(world: &mut QuectoWorld) {
     world.no_session = true;
-    world._uds_streaming_enabled = true;
-    world._real_llm_uds = true;
+    if world.auto_mock_manual_llm {
+        world._uds_streaming_enabled = false;
+        world._real_llm_uds = false;
+    } else {
+        world._uds_streaming_enabled = true;
+        world._real_llm_uds = true;
+    }
     world._workflow_enabled = true;
     world.system_prompt = Some(
         "You are a coding assistant. Use the workflow tool when asked. \

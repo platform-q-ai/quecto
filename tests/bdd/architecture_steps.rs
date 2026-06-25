@@ -269,3 +269,96 @@ fn then_mock_e2e_preserves_coverage(_world: &mut QuectoWorld) {
          @real-llm suite: {missing_mock:?}"
     );
 }
+
+#[then("the retired live behavioral e2e suite should be tagged manual-only")]
+fn then_live_behavioral_suite_is_manual_only(_world: &mut QuectoWorld) {
+    let mut real_files = Vec::new();
+    let mut old_tag_locations = Vec::new();
+    let mut missing_manual_tag_locations = Vec::new();
+    let mut missing_mock_tag_locations = Vec::new();
+
+    for entry in std::fs::read_dir("tests/features").expect("read tests/features") {
+        let path = entry.expect("dir entry").path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !name.starts_with("e2e_real_llm") || !name.ends_with(".feature") {
+            continue;
+        }
+
+        real_files.push(name.to_string());
+        let content = std::fs::read_to_string(&path).expect("read feature");
+        let lines: Vec<&str> = content.lines().collect();
+        for (idx, line) in lines.iter().enumerate() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with('@') {
+                continue;
+            }
+            let next_non_empty = lines
+                .iter()
+                .skip(idx + 1)
+                .map(|l| l.trim())
+                .find(|l| !l.is_empty());
+            let Some(next_non_empty) = next_non_empty else {
+                continue;
+            };
+            if !next_non_empty.starts_with("Scenario") {
+                continue;
+            }
+
+            let tags: Vec<&str> = trimmed.split_whitespace().collect();
+            if tags.contains(&"@real-llm") {
+                old_tag_locations.push(format!("{name}:{}", idx + 1));
+            }
+            if !tags.contains(&"@manual-real-llm") {
+                missing_manual_tag_locations.push(format!("{name}:{}", idx + 1));
+            }
+            if !tags.contains(&"@mock-llm") {
+                missing_mock_tag_locations.push(format!("{name}:{}", idx + 1));
+            }
+        }
+    }
+
+    assert!(
+        !real_files.is_empty(),
+        "no e2e_real_llm*.feature files found to classify as manual-only"
+    );
+    assert!(
+        old_tag_locations.is_empty(),
+        "retired live behavioral scenarios must use @manual-real-llm, not @real-llm: {old_tag_locations:?}"
+    );
+    assert!(
+        missing_manual_tag_locations.is_empty(),
+        "retired live behavioral tag lines must include @manual-real-llm: {missing_manual_tag_locations:?}"
+    );
+    assert!(
+        missing_mock_tag_locations.is_empty(),
+        "retired live behavioral tag lines must also include @mock-llm for the zero-cost mirror: {missing_mock_tag_locations:?}"
+    );
+}
+
+#[then("provider smoke scenarios should not be tagged as mocked or manual real LLM")]
+fn then_provider_smoke_is_not_automocked(_world: &mut QuectoWorld) {
+    let content = std::fs::read_to_string("tests/features/provider_smoke.feature")
+        .expect("read provider_smoke.feature");
+    let mut bad_tag_lines = Vec::new();
+
+    for (idx, line) in content.lines().enumerate() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with('@') || !trimmed.split_whitespace().any(|t| t == "@provider-smoke")
+        {
+            continue;
+        }
+        let has_automock_tag = trimmed
+            .split_whitespace()
+            .any(|t| t == "@mock-llm" || t == "@manual-real-llm");
+        if has_automock_tag {
+            bad_tag_lines.push(format!("provider_smoke.feature:{}", idx + 1));
+        }
+    }
+
+    assert!(
+        bad_tag_lines.is_empty(),
+        "provider smoke scenarios must stay out of @mock-llm/@manual-real-llm automock lanes: {bad_tag_lines:?}"
+    );
+}

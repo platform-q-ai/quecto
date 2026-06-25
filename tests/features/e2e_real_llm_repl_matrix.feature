@@ -4,7 +4,7 @@ Feature: E2E Real LLM REPL Matrix
   Background:
     Given a real LLM workspace is configured
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: REPL sentinel response R1
     When I start quecto in REPL mode
     And I type "Include token REPL_R1"
@@ -12,7 +12,7 @@ Feature: E2E Real LLM REPL Matrix
     Then the exit code should be 0
     And stdout should contain "REPL_R1"
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: REPL sentinel response R2
     When I start quecto in REPL mode
     And I type "Include token REPL_R2"
@@ -20,7 +20,7 @@ Feature: E2E Real LLM REPL Matrix
     Then the exit code should be 0
     And stdout should contain "REPL_R2"
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: REPL system prompt marker
     When I start quecto in REPL mode with flags "--system 'Include REPL_SYSTEM_OK in every response'"
     And I type "Say hello"
@@ -28,7 +28,7 @@ Feature: E2E Real LLM REPL Matrix
     Then the exit code should be 0
     And stdout should contain "REPL_SYSTEM_OK"
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: REPL creates file tool task A
     When I start quecto in REPL mode
     And I type "Create file repl-a.txt containing REPL_FILE_A"
@@ -36,7 +36,7 @@ Feature: E2E Real LLM REPL Matrix
     Then the exit code should be 0
     And the file "repl-a.txt" should exist in the e2e workspace
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: REPL creates file tool task B
     When I start quecto in REPL mode
     And I type "Create file repl-b.txt containing REPL_FILE_B"
@@ -44,7 +44,7 @@ Feature: E2E Real LLM REPL Matrix
     Then the exit code should be 0
     And the file "repl-b.txt" should exist in the e2e workspace
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: REPL reads prepared file
     Given a file "repl-read.txt" in the e2e workspace with content "REPL_READ_OK"
     When I start quecto in REPL mode
@@ -53,7 +53,7 @@ Feature: E2E Real LLM REPL Matrix
     Then the exit code should be 0
     And stdout should contain "REPL_READ_OK"
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: REPL multi-turn remembers phrase in one run
     When I start quecto in REPL mode
     And I type "Remember phrase orange cloud and reply ACK_ORANGE"
@@ -62,7 +62,7 @@ Feature: E2E Real LLM REPL Matrix
     Then the exit code should be 0
     And stdout should contain "orange cloud"
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: REPL multi-turn remembers number in one run
     When I start quecto in REPL mode
     And I type "Remember number 6622 and reply ACK_6622"
@@ -71,7 +71,7 @@ Feature: E2E Real LLM REPL Matrix
     Then the exit code should be 0
     And stdout should contain "6622"
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: REPL named session memory S1
     When I start quecto in REPL mode with flags "-s repls1"
     And I type "Remember kiwi-11"
@@ -83,7 +83,7 @@ Feature: E2E Real LLM REPL Matrix
     Then the exit code should be 0
     And stdout should contain "kiwi-11"
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: REPL named session memory S2
     When I start quecto in REPL mode with flags "-s repls2"
     And I type "Remember melon-22"
@@ -95,7 +95,7 @@ Feature: E2E Real LLM REPL Matrix
     Then the exit code should be 0
     And stdout should contain "melon-22"
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: REPL with model override still responds
     When I start quecto in REPL mode with flags "--model gpt-5.2"
     And I type "Include REPL_MODEL_OK"
@@ -103,7 +103,7 @@ Feature: E2E Real LLM REPL Matrix
     Then the exit code should be 0
     And stdout should contain "REPL_MODEL_OK"
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: REPL executes shell command through tools
     When I start quecto in REPL mode
     And I type "Run command echo REPL_EXEC_OK and include REPL_EXEC_OK"
@@ -111,7 +111,7 @@ Feature: E2E Real LLM REPL Matrix
     Then the exit code should be 0
     And stdout should contain "REPL_EXEC_OK"
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: REPL can append to existing file
     Given a file "repl-append.txt" in the e2e workspace with content "first"
     When I start quecto in REPL mode
@@ -121,7 +121,7 @@ Feature: E2E Real LLM REPL Matrix
     And the file "repl-append.txt" in the e2e workspace should contain "first"
     And the file "repl-append.txt" in the e2e workspace should contain "second"
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: REPL can edit existing file
     Given a file "repl-edit.txt" in the e2e workspace with content "state=old"
     When I start quecto in REPL mode
@@ -130,7 +130,7 @@ Feature: E2E Real LLM REPL Matrix
     Then the exit code should be 0
     And the file "repl-edit.txt" in the e2e workspace should contain "state=new"
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: REPL handles missing file with fallback token
     When I start quecto in REPL mode
     And I type "Try reading no-repl-file.txt and if missing reply REPL_MISS_OK"
@@ -138,7 +138,7 @@ Feature: E2E Real LLM REPL Matrix
     Then the exit code should be 0
     And stdout should contain "REPL_MISS_OK"
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: REPL can list workspace files
     Given a file "repl-list-a.txt" in the e2e workspace with content "a"
     And a file "repl-list-b.txt" in the e2e workspace with content "b"

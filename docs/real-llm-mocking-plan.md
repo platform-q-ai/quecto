@@ -171,32 +171,26 @@ The goal is to avoid paying for full behavioral e2e on every push. Live provider
 
 ## Implemented: duplicated (not converted) mocked e2e lane (issue #791)
 
-Rather than convert the live suite in place, the `@real-llm` suite is kept
-exactly as-is (`tests/features/e2e_real_llm*.feature`) for occasional on-demand
+Rather than convert the live suite in place, the live behavioral suite was first
+kept as-is (`tests/features/e2e_real_llm*.feature`) for occasional on-demand
 runs, and a parallel **zero-cost mocked copy** drives the default gate:
 
-- **Structure — consolidated, not 1:1.** The mocked copy is a single
-  representative feature, `tests/features/e2e_mock_llm.feature` (plus the
-  pre-existing `e2e_mock_llm_agent_matrix.feature`), tagged `@mock-llm`. It is
-  deliberately NOT a file-per-file mirror of every `e2e_real_llm*.feature`:
-  PR #780's WireMock helpers (`configure_mock_provider_workspace`, the mock
-  provider/tool-call response steps) let one deterministic feature reproduce the
-  behaviours that many prompt-dependent `@real-llm` scenarios exercise — plain
-  text/token responses, single and chained tool-call loops (write/read/edit/
-  bash), multi-tool tasks, tool-error recovery, system-prompt influence, and
-  session-memory persistence across turns. Coverage parity is enforced
-  behaviourally by the `@architecture` guard
-  (`tests/features/architecture.feature` →
-  `then_mock_e2e_preserves_coverage`), which asserts the `@mock-llm` features
-  collectively cover each of those capabilities rather than checking filename
-  symmetry.
+- **Structure — full behavioral mirror.** The original representative mocked
+  features (`tests/features/e2e_mock_llm*.feature`) remain, and every retired
+  live behavioral scenario in `tests/features/e2e_real_llm*.feature` is also
+  tagged `@mock-llm` alongside `@manual-real-llm`. In the mock lane, those live
+  workspace steps configure WireMock and deterministic auto-responses instead
+  of provider credentials, so the same scenario corpus runs without paid calls.
+  Coverage parity is enforced by the `@architecture` guard
+  (`tests/features/architecture.feature`), which asserts the retired live files
+  remain manual-only for live runs and excluded from provider smoke.
 - **Default lane is free.** `scripts/pre-push.sh` step 9 runs
   `run-bdd-shards.sh --suite mock-llm-bdd --tag mock-llm` (no `--real-llm`, no
   `.env` sourced), so a normal push makes zero paid provider calls and passes
   with no API key.
 - **No key auto-trigger.** The old `REAL_LLM_STATE` key-probe was removed; a
   provider key in `.env` no longer auto-enables the paid suite.
-- **Documented opt-in.** The live `@real-llm` suite still runs on demand via
+- **Documented opt-in.** The live behavioral suite still runs on demand via
   `QUECTO_RUN_REAL_LLM=1 git push` (or the `run-bdd-shards.sh ... --real-llm`
   command in the README), so occasional real-provider validation stays a
   one-liner.
@@ -222,6 +216,24 @@ explicitly opt-in:
 - CI and README test instructions document the provider split. CI runs the lane
   only when at least one API-key provider secret is configured; within the lane,
   unavailable providers are filtered rather than failing unrelated scenarios.
+
+## Implemented: manual-only live behavioral lane
+
+The old live behavioral suite has been retired from `@real-llm` coverage and
+reclassified under `@manual-real-llm`:
+
+- `tests/features/e2e_real_llm*.feature` scenarios now use
+  `@manual-real-llm` for the paid exploratory lane and `@mock-llm` for the
+  deterministic no-cost mirror.
+- `scripts/pre-push.sh` still keeps the lane behind `QUECTO_RUN_REAL_LLM=1`,
+  but the selected BDD tag is now `manual-real-llm`.
+- The BDD runner excludes `@manual-real-llm` unless `QUECTO_REAL_LLM=1` is set.
+- An architecture guard asserts the retired live behavioral files do not regain
+  scenario tag lines containing `@real-llm`.
+
+`@provider-smoke` is therefore the only live-provider lane intended for provider
+availability/auth checks, while default behavioral coverage remains the free
+`@mock-llm` suite.
 
 ## Acceptance Criteria
 

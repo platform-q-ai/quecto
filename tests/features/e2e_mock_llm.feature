@@ -1,11 +1,11 @@
 @done @mock-llm
-Feature: E2E Mock LLM agent flows (zero-cost copy of the live @real-llm suite)
-  Deterministic, no-network reproductions of the behaviours the @real-llm
+Feature: E2E Mock LLM agent flows (zero-cost copy of the live manual suite)
+  Deterministic, no-network reproductions of the behaviours the @manual-real-llm
   e2e suite asserts. Every scenario drives the real `quecto agent` entry point
   against a WireMock-backed provider (see configure_mock_provider_workspace and
   the mock provider response steps in tests/bdd/e2e_steps.rs), so the suite
   makes ZERO paid provider calls and passes with no API key present. This is the
-  default pre-push e2e lane; the live @real-llm suite is retained for occasional
+  default pre-push e2e lane; the live @manual-real-llm suite is retained for occasional
   on-demand validation (see docs/real-llm-mocking-plan.md).
 
   Scenario: Mocked agent returns a plain text token

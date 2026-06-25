@@ -11,6 +11,23 @@ fn execute_repl(world: &mut QuectoWorld) {
     }
     world.repl_executed = true;
 
+    let prompts: Vec<String> = world
+        .repl_input_lines
+        .iter()
+        .filter(|line| !line.starts_with('/'))
+        .cloned()
+        .collect();
+    let prompts: Vec<String> = if world.repl_flags.is_empty() {
+        prompts
+    } else {
+        let flags = world.repl_flags.join(" ");
+        prompts
+            .into_iter()
+            .map(|prompt| format!("{flags} {prompt}"))
+            .collect()
+    };
+    e2e_steps::mount_auto_mock_responses_for_messages(world, &prompts);
+
     let input = world.repl_input_lines.join("\n") + "\n";
     let flags = world.repl_flags.clone();
     // Simulate TTY mode so banner/prompt are included in output

@@ -15,7 +15,7 @@ Feature: E2E Real LLM UDS Agent
   # prompt command
   # ═══════════════════════════════════════════════════════════════════════════
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS prompt with default Anthropic model succeeds
     When I start the real LLM UDS agent
     And I send prompt "Reply with exactly UDS_ANTHRO_OK"
@@ -26,7 +26,7 @@ Feature: E2E Real LLM UDS Agent
     And the agent output should contain an event of type "agent_end"
     And the agent_end messages should contain "UDS_ANTHRO_OK"
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS turn_end carries context tokens for the footer gauge
     # Regression: the TUI footer's context gauge ("?/200k") only fills in when
     # turn_end carries numeric contextTokens + maxContextTokens. Streaming
@@ -39,7 +39,7 @@ Feature: E2E Real LLM UDS Agent
     And the agent output should contain an event of type "turn_end"
     And the turn_end event should include numeric contextTokens and maxContextTokens
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS prompt emits token events during streaming
     When I start the real LLM UDS agent
     And I send prompt "Reply with exactly UDS_TOKENS_OK"
@@ -48,7 +48,7 @@ Feature: E2E Real LLM UDS Agent
     And the agent output should contain an event of type "token"
     And the agent output should contain an event of type "agent_end"
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS prompt with correlation id echoes id in response
     When I start the real LLM UDS agent
     And I send prompt with id "req-llm-42" and [message] "Reply with exactly UDS_ID_OK"
@@ -57,7 +57,7 @@ Feature: E2E Real LLM UDS Agent
     And the agent output should contain a response with id "req-llm-42"
     And the agent output should contain an event of type "agent_end"
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS multiple sequential prompts are processed
     When I start the real LLM UDS agent
     And I send prompt "Reply with exactly UDS_MULTI_A"
@@ -66,7 +66,7 @@ Feature: E2E Real LLM UDS Agent
     Then the UDS agent exits with code 0
     And the agent output event "agent_end" should appear 2 times
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS multi-prompt preserves context
     When I start the real LLM UDS agent
     And I send prompt "Remember the code word: pineapple-72. Reply ACK_REMEMBER"
@@ -80,7 +80,7 @@ Feature: E2E Real LLM UDS Agent
   # set_model command
   # ═══════════════════════════════════════════════════════════════════════════
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS set_model to qualified Anthropic model and prompt
     When I start the real LLM UDS agent
     And I send set_model "anthropic/claude-haiku-4-5"
@@ -91,7 +91,7 @@ Feature: E2E Real LLM UDS Agent
     And the agent output should contain an event of type "agent_end"
     And the agent_end messages should contain "UDS_SONNET_OK"
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS set_model with provider and modelId fields
     When I start the real LLM UDS agent
     And I send set_model provider "anthropic" modelId "claude-haiku-4-5"
@@ -101,7 +101,7 @@ Feature: E2E Real LLM UDS Agent
     And the agent output should contain a response command "set_model" with success true
     And the get_state response model should be "anthropic/claude-haiku-4-5"
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS switch models and prompt each successfully
     When I start the real LLM UDS agent
     And I send set_model "anthropic/claude-haiku-4-5"
@@ -112,7 +112,7 @@ Feature: E2E Real LLM UDS Agent
     Then the UDS agent exits with code 0
     And the agent output event "agent_end" should appear 2 times
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS set_model with empty string returns error
     When I start the real LLM UDS agent
     And I send set_model ""
@@ -120,7 +120,7 @@ Feature: E2E Real LLM UDS Agent
     Then the UDS agent exits with code 0
     And the agent output should contain a response command "set_model" with success false
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS set_model with nonexistent provider prefix
     When I start the real LLM UDS agent
     And I send set_model "gemini/gemini-pro"
@@ -130,7 +130,7 @@ Feature: E2E Real LLM UDS Agent
     And the agent output should contain an agent_error event
     And the agent_error event should mention "no configured provider"
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS agent recovers after set_model to nonexistent provider
     When I start the real LLM UDS agent
     And I send set_model "gemini/gemini-pro"
@@ -142,7 +142,7 @@ Feature: E2E Real LLM UDS Agent
     And the agent output should contain an event of type "agent_end"
     And the agent_end messages should contain "UDS_RECOVER_OK"
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS bare model name errors then recovers with qualified name
     When I start the real LLM UDS agent
     And I send set_model "claude-haiku-4-5"
@@ -159,7 +159,7 @@ Feature: E2E Real LLM UDS Agent
   # get_state command
   # ═══════════════════════════════════════════════════════════════════════════
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS get_state reflects model change
     When I start the real LLM UDS agent
     And I send set_model "anthropic/claude-haiku-4-5"
@@ -168,7 +168,7 @@ Feature: E2E Real LLM UDS Agent
     Then the UDS agent exits with code 0
     And the get_state response model should be "anthropic/claude-haiku-4-5"
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS get_state includes all expected fields
     When I start the real LLM UDS agent
     And I send prompt "Reply with exactly STATE_OK"
@@ -181,7 +181,7 @@ Feature: E2E Real LLM UDS Agent
     And the get_state response should include field "model"
     And the get_state response should include field "sessionKey"
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS get_state message count increases after prompts
     When I start the real LLM UDS agent
     And I send prompt "Reply with exactly COUNT_A"
@@ -195,7 +195,7 @@ Feature: E2E Real LLM UDS Agent
   # get_messages command
   # ═══════════════════════════════════════════════════════════════════════════
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS get_messages returns conversation history after prompt
     When I start the real LLM UDS agent
     And I send prompt "Reply with exactly HISTORY_OK"
@@ -207,7 +207,7 @@ Feature: E2E Real LLM UDS Agent
     And the get_messages response should include a user [message] containing "HISTORY_OK"
     And the get_messages response should include an assistant [message]
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS get_messages on empty session returns empty array
     When I start the real LLM UDS agent
     And I send command "get_messages" with id "gm-empty"
@@ -219,7 +219,7 @@ Feature: E2E Real LLM UDS Agent
   # get_messages_tail command
   # ═══════════════════════════════════════════════════════════════════════════
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS get_messages_tail returns last N messages
     When I start the real LLM UDS agent
     And I send prompt "Reply with exactly TAIL_A"
@@ -231,7 +231,7 @@ Feature: E2E Real LLM UDS Agent
     And the get_messages_tail response should include a "messages" array
     And the get_messages_tail messages count should be exactly 2
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS get_messages_tail with count 0 returns empty array
     When I start the real LLM UDS agent
     And I send prompt "Reply with exactly TAIL_ZERO"
@@ -241,7 +241,7 @@ Feature: E2E Real LLM UDS Agent
     And the agent output should contain a response command "get_messages_tail" with success true
     And the get_messages_tail messages count should be exactly 0
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS get_messages_tail with large count returns all messages
     When I start the real LLM UDS agent
     And I send prompt "Reply with exactly TAIL_ALL"
@@ -255,7 +255,7 @@ Feature: E2E Real LLM UDS Agent
   # get_session_stats command
   # ═══════════════════════════════════════════════════════════════════════════
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS get_session_stats returns token usage after prompt
     When I start the real LLM UDS agent
     And I send prompt "Reply with exactly STATS_OK"
@@ -274,7 +274,7 @@ Feature: E2E Real LLM UDS Agent
   # abort command
   # ═══════════════════════════════════════════════════════════════════════════
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS abort while idle returns success
     When I start the real LLM UDS agent
     And I send command "abort" with id "ab-idle"
@@ -286,7 +286,7 @@ Feature: E2E Real LLM UDS Agent
   # steer command
   # ═══════════════════════════════════════════════════════════════════════════
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS steer while idle is acknowledged
     When I start the real LLM UDS agent
     And I send steer "new direction" with id "st-idle"
@@ -298,7 +298,7 @@ Feature: E2E Real LLM UDS Agent
   # follow_up command
   # ═══════════════════════════════════════════════════════════════════════════
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS follow_up while idle is acknowledged
     When I start the real LLM UDS agent
     And I send follow_up "also do this" with id "fu-idle"
@@ -306,7 +306,7 @@ Feature: E2E Real LLM UDS Agent
     Then the UDS agent exits with code 0
     And the agent output should contain a response command "follow_up" with success true
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS follow_up message is processed after next prompt
     When I start the real LLM UDS agent
     And I send follow_up "Reply with exactly FOLLOWUP_PROCESSED" with id "fu-queue"
@@ -320,7 +320,7 @@ Feature: E2E Real LLM UDS Agent
   # get_extensions command
   # ═══════════════════════════════════════════════════════════════════════════
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS get_extensions returns list (empty when no extensions installed)
     When I start the real LLM UDS agent
     And I send command "get_extensions" with id "ge-1"
@@ -332,7 +332,7 @@ Feature: E2E Real LLM UDS Agent
   # reload_extensions command
   # ═══════════════════════════════════════════════════════════════════════════
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS reload_extensions succeeds
     When I start the real LLM UDS agent
     And I send command "reload_extensions" with id "re-1"
@@ -344,7 +344,7 @@ Feature: E2E Real LLM UDS Agent
   # Correlation ID handling across commands
   # ═══════════════════════════════════════════════════════════════════════════
 
-  @done @real-llm
+  @done @manual-real-llm @mock-llm
   Scenario: UDS responses carry correlation ids for all command types
     When I start the real LLM UDS agent
     And I send command "get_state" with id "corr-gs"
