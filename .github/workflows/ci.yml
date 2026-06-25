@@ -71,3 +71,11 @@ jobs:
             exit 0
           fi
           QUECTO_PROVIDER_SMOKE=1 QUECTO_TAG=provider-smoke cargo test --no-fail-fast --features test-support --test bdd
+
+  smoke-test:
+    name: Smoke Test
+    needs: [unit-tests, mock-llm-e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Required checks passed
+        run: echo "Unit Tests and Mock LLM E2E Tests passed."
