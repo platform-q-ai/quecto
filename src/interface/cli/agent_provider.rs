@@ -357,10 +357,13 @@ fn build_registry_provider(
             if cred.method != crate::infrastructure::auth::credential_store::AuthMethod::OAuth {
                 return Ok(None);
             }
+            if cred.token.is_empty() {
+                return Ok(None);
+            }
             api_base = oauth_registry_base_url(model, oauth_provider)?;
             // #811: use the stored (possibly stale) token; no eager network
             // refresh. RefreshableProvider refreshes lazily on 401 at first use.
-            cred.token.clone()
+            cred.token
         }
     };
 
