@@ -13,8 +13,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  smoke-test:
-    name: Smoke Test
+  unit-tests:
+    name: Unit Tests
     runs-on: blacksmith-32vcpu-ubuntu-2404
     timeout-minutes: 15
 
@@ -29,3 +29,53 @@ jobs:
 
       - name: Unit, architecture, contract, and repository-doc tests
         run: cargo test --lib --test architecture --test contracts --test repo_docs
+
+  mock-llm-e2e:
+    name: Mock LLM E2E Tests
+    runs-on: blacksmith-32vcpu-ubuntu-2404
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Non-real LLM BDD/e2e tests
+        run: bash scripts/run-bdd-shards.sh --suite non-real-bdd --shards 24 --timeout 12m
+
+  provider-smoke:
+    name: Provider Smoke Tests
+    runs-on: blacksmith-32vcpu-ubuntu-2404
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Provider smoke tests
+        env:
+          QUECTO_PROVIDERS_OPENAI_API_KEY: ${{ secrets.QUECTO_PROVIDERS_OPENAI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "${QUECTO_PROVIDERS_OPENAI_API_KEY:-}${OPENAI_API_KEY:-}" ]; then
+            echo "Skipping provider smoke tests: no OpenAI API key secret configured"
+            exit 0
+          fi
+          QUECTO_PROVIDER_SMOKE=1 QUECTO_TAG=provider-smoke cargo test --no-fail-fast --features test-support --test bdd
+
+  smoke-test:
+    name: Smoke Test
+    needs: [unit-tests, mock-llm-e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Required checks passed
+        run: echo "Unit Tests and Mock LLM E2E Tests passed."
