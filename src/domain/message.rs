@@ -1,5 +1,21 @@
+use std::sync::OnceLock;
+
+// Token estimate for a single message. The estimate is cached because the
+// text/image/tool-call content is conceptually immutable once emitted, and
+// context pruning asks for the same value many times per turn (tokens_before,
+// tokens_after, and during sliding-window enforcement). The cached value is
+// cleared when the message is cloned so that the copy re-computes lazily on
+// its first use; this is safe because the estimate is pure and cheap.
+#[derive(Debug, Default)]
+pub struct TokenCache(OnceLock<usize>);
+
+impl Clone for TokenCache {
+    fn clone(&self) -> Self {
+        Self(OnceLock::new())
+    }
+}
 /// A single message in a conversation.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct Message {
     pub role: Role,
     pub content: String,
@@ -50,6 +66,9 @@ pub struct Message {
     /// Stored as a `Vec` because a single assistant turn can interleave multiple
     /// thinking blocks with text/tool_use blocks.
     pub thinking_blocks: Vec<ThinkingBlock>,
+    /// Cached token estimate for this message. Lazily computed on first use
+    /// and reset when the message is cloned.
+    cached_tokens: TokenCache,
 }
 
 /// A thinking content block from an assistant message.
@@ -89,6 +108,30 @@ pub struct UserImageBlock {
     pub data: String,
 }
 
+impl Clone for Message {
+    fn clone(&self) -> Self {
+        Self {
+            role: self.role.clone(),
+            content: self.content.clone(),
+            tool_calls: self.tool_calls.clone(),
+            tool_call_id: self.tool_call_id.clone(),
+            turn: self.turn,
+            is_pinned: self.is_pinned,
+            is_manifest: self.is_manifest,
+            is_collapsed: self.is_collapsed,
+            tool_name: self.tool_name.clone(),
+            input_preview: self.input_preview.clone(),
+            spill_id: self.spill_id.clone(),
+            image_blocks: self.image_blocks.clone(),
+            is_error: self.is_error,
+            stop_reason: self.stop_reason.clone(),
+            user_image_blocks: self.user_image_blocks.clone(),
+            thinking_blocks: self.thinking_blocks.clone(),
+            cached_tokens: TokenCache::default(),
+        }
+    }
+}
+
 impl Message {
     pub fn system(content: impl Into<String>) -> Self {
         Self {
@@ -123,6 +166,59 @@ impl Message {
             tool_call_id: Some(tool_call_id.into()),
             ..Default::default()
         }
+    }
+
+    /// Estimate token count from text content.
+    ///
+    /// Uses a two-class character heuristic that is accurate for both ASCII
+    /// prose and non-ASCII (CJK, emoji, etc.).
+    /// Estimate token count from text content. This is exposed as a public
+    /// helper so the rest of the codebase (and tests) can reuse the same
+    /// heuristic without recomputing it.
+    pub fn estimate_tokens(text: &str) -> usize {
+        let (ascii, non_ascii) = text.chars().fold((0usize, 0usize), |(a, n), c| {
+            if c.is_ascii() { (a + 1, n) } else { (a, n + 1) }
+        });
+        ascii.div_ceil(4) + non_ascii
+    }
+
+    /// Clear the cached token estimate. Call this whenever the fields that
+    /// contribute to the estimate (`content`, `tool_calls`, `tool_call_id`,
+    /// `image_blocks`, `user_image_blocks`) are mutated in place. The cache is
+    /// automatically cleared on `Clone`, but the fields are public so any
+    /// direct mutation must invalidate the cache to keep estimates correct.
+    pub fn invalidate_token_cache(&mut self) {
+        self.cached_tokens.0.take();
+    }
+
+    /// Return the cached token estimate for this message, computing it once
+    /// on first access. This avoids the per-turn O(total_history_chars) scans
+    /// that occur when context pruning repeatedly re-estimates every message.
+    pub fn estimated_tokens(&self) -> usize {
+        *self.cached_tokens.0.get_or_init(|| {
+            let text_tokens = Self::estimate_tokens(&self.content);
+            let tool_call_tokens: usize = self
+                .tool_calls
+                .iter()
+                .map(|tc| Self::estimate_tokens(&tc.name) + Self::estimate_tokens(&tc.arguments))
+                .sum();
+            let tool_call_id_tokens = self
+                .tool_call_id
+                .as_deref()
+                .map(Self::estimate_tokens)
+                .unwrap_or(0);
+            let user_image_tokens: usize = self
+                .user_image_blocks
+                .iter()
+                .map(|img| Self::estimate_tokens(&img.data))
+                .sum();
+            let image_tokens: usize = self
+                .image_blocks
+                .iter()
+                .map(|img| Self::estimate_tokens(&img.data))
+                .sum();
+            text_tokens + tool_call_tokens + tool_call_id_tokens + image_tokens + user_image_tokens
+        })
     }
 }
 
@@ -196,6 +292,25 @@ impl StopReason {
             "aborted" => Self::Aborted,
             other => Self::Unknown(other.to_string()),
         }
+    }
+
+    /// Return the canonical string representation for this stop reason.
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::EndTurn => "end_turn",
+            Self::MaxTokens => "max_tokens",
+            Self::ToolUse => "tool_use",
+            Self::Refusal => "refusal",
+            Self::Error => "error",
+            Self::Aborted => "aborted",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+}
+
+impl std::fmt::Display for StopReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -455,5 +570,38 @@ mod tests {
         assert!(starts_with_ci("CLAUDE-OPUS-4", "claude-opus-4"));
         assert!(!starts_with_ci("claude-3-5-sonnet", "claude-sonnet-4"));
         assert!(!starts_with_ci("short", "claude-sonnet-4"));
+    }
+
+    #[test]
+    fn stop_reason_parse_all_variants() {
+        assert_eq!(StopReason::parse("end_turn"), StopReason::EndTurn);
+        assert_eq!(StopReason::parse("max_tokens"), StopReason::MaxTokens);
+        assert_eq!(
+            StopReason::parse("model_context_window_exceeded"),
+            StopReason::MaxTokens
+        );
+        assert_eq!(StopReason::parse("tool_use"), StopReason::ToolUse);
+        assert_eq!(StopReason::parse("refusal"), StopReason::Refusal);
+        assert_eq!(StopReason::parse("pause_turn"), StopReason::EndTurn);
+        assert_eq!(StopReason::parse("stop_sequence"), StopReason::EndTurn);
+        assert_eq!(StopReason::parse("sensitive"), StopReason::Error);
+        assert_eq!(StopReason::parse("error"), StopReason::Error);
+        assert_eq!(StopReason::parse("aborted"), StopReason::Aborted);
+        assert_eq!(
+            StopReason::parse("custom_stop"),
+            StopReason::Unknown("custom_stop".into())
+        );
+    }
+
+    #[test]
+    fn stop_reason_as_str_and_display_round_trip() {
+        assert_eq!(StopReason::EndTurn.as_str(), "end_turn");
+        assert_eq!(StopReason::MaxTokens.as_str(), "max_tokens");
+        assert_eq!(StopReason::ToolUse.as_str(), "tool_use");
+        assert_eq!(StopReason::Refusal.as_str(), "refusal");
+        assert_eq!(StopReason::Error.as_str(), "error");
+        assert_eq!(StopReason::Aborted.as_str(), "aborted");
+        assert_eq!(StopReason::Unknown("weird".into()).as_str(), "weird");
+        assert_eq!(StopReason::ToolUse.to_string(), "tool_use");
     }
 }

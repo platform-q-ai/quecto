@@ -48,14 +48,14 @@ impl ContextSpillStore for MockSpillStore {
         Box<
             dyn Future<
                     Output = Result<
-                        Vec<crate::domain::session::SpillIndex>,
+                        Arc<Vec<crate::domain::session::SpillIndex>>,
                         crate::domain::error::DomainError,
                     >,
                 > + Send
                 + '_,
         >,
     > {
-        Box::pin(async { Ok(vec![]) })
+        Box::pin(async { Ok(Arc::new(vec![])) })
     }
 
     fn clear(

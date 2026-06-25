@@ -1,8 +1,13 @@
 use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use super::{error::DomainError, message::Message};
+
+pub type SpillEntries = Arc<Vec<SpillIndex>>;
+pub type SpillIndexList<'a> =
+    Pin<Box<dyn Future<Output = Result<SpillEntries, DomainError>> + Send + 'a>>;
 
 /// Prefix for user-facing interactive chat sessions.
 pub const USER_CHAT_PREFIX: &str = "chat-";
@@ -83,6 +88,13 @@ pub trait SessionStore: Send + Sync {
     /// available. When `key_prefix` is `Some`, only sessions whose key starts
     /// with it are returned; the caller supplies this policy and the adapter
     /// uses it to skip non-matching files cheaply (without reading/parsing them).
+    ///
+    /// This is a SUMMARY-ONLY view and is NOT a load guarantee: an
+    /// implementation may derive summaries from a lightweight projection of
+    /// each session and therefore surface entries whose full bodies are
+    /// malformed. A returned [`SessionSummary`] does not guarantee that the
+    /// corresponding [`Self::load`] will succeed — callers that open a listed
+    /// session must handle a subsequent load failure gracefully.
     fn list(
         &self,
         key_prefix: Option<&str>,
@@ -146,6 +158,7 @@ pub fn strip_tool_history(messages: &[Message]) -> Vec<Message> {
                     // Non-recall tool call with narrative text: keep text, clear tool_calls
                     let mut kept = msg.clone();
                     kept.tool_calls = vec![];
+                    kept.invalidate_token_cache();
                     filtered.push(kept);
                 }
                 // else: pure dispatch (no text) — drop
@@ -255,10 +268,7 @@ pub trait ContextSpillStore: Send + Sync {
         id: &str,
     ) -> Pin<Box<dyn Future<Output = Result<Option<SpillEntry>, DomainError>> + Send + '_>>;
 
-    fn list_entries(
-        &self,
-        session_key: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<SpillIndex>, DomainError>> + Send + '_>>;
+    fn list_entries(&self, session_key: &str) -> SpillIndexList<'_>;
 
     /// Clear all spill entries for a session (e.g. on /reload).
     /// Truncates spill.jsonl to empty so the manifest rebuilds clean.

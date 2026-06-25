@@ -232,41 +232,8 @@ impl OpenAiProvider {
         Self::parse_sse_response(&full)
     }
 
-    /// Parse an SSE text stream into an assembled LlmResponse.
     fn parse_sse_response(raw: &str) -> Result<LlmResponse, DomainError> {
-        let mut content = String::new();
-        let mut tool_calls: Vec<ToolCall> = Vec::new();
-
-        for line in raw.lines() {
-            let line = line.trim();
-            let Some(data) = line.strip_prefix("data: ") else {
-                continue;
-            };
-            if data == "[DONE]" {
-                break;
-            }
-            let chunk: serde_json::Value = serde_json::from_str(data).unwrap_or_default();
-            let Some(choices) = chunk["choices"].as_array() else {
-                continue;
-            };
-            for choice in choices {
-                Self::apply_delta(&choice["delta"], &mut content, &mut tool_calls);
-            }
-        }
-
-        let content_opt = if content.is_empty() {
-            None
-        } else {
-            Some(content)
-        };
-
-        Ok(LlmResponse {
-            content: content_opt,
-            tool_calls,
-            usage: None,
-            stop_reason: None,
-            thinking_blocks: vec![],
-        })
+        openai_sse_parser::parse_sse_response(raw)
     }
 
     /// Consume SSE body incrementally, emitting `StreamEvent`s per delta.
@@ -305,42 +272,12 @@ impl OpenAiProvider {
         openai_sse::pump_sse_bytes(&mut response, &tx).await;
     }
 
-    /// Maximum number of tool calls allowed in a single streaming response.
-    const MAX_TOOL_CALLS: usize = 128;
-
-    /// Apply a single SSE delta chunk to the accumulated content and tool calls.
     fn apply_delta(
         delta: &serde_json::Value,
         content: &mut String,
         tool_calls: &mut Vec<ToolCall>,
     ) {
-        if let Some(text) = delta["content"].as_str() {
-            content.push_str(text);
-        }
-        if let Some(tcs) = delta["tool_calls"].as_array() {
-            for tc in tcs {
-                let idx = tc["index"].as_u64().unwrap_or(0) as usize;
-                if idx >= Self::MAX_TOOL_CALLS {
-                    continue;
-                }
-                while tool_calls.len() <= idx {
-                    tool_calls.push(ToolCall {
-                        id: String::new(),
-                        name: String::new(),
-                        arguments: String::new(),
-                    });
-                }
-                if let Some(id) = tc["id"].as_str() {
-                    tool_calls[idx].id = id.to_string();
-                }
-                if let Some(name) = tc["function"]["name"].as_str() {
-                    tool_calls[idx].name = name.to_string();
-                }
-                if let Some(args) = tc["function"]["arguments"].as_str() {
-                    tool_calls[idx].arguments.push_str(args);
-                }
-            }
-        }
+        openai_sse_parser::apply_delta(delta, content, tool_calls)
     }
 }
 
@@ -438,6 +375,8 @@ impl LlmProvider for OpenAiProvider {
 
 #[path = "openai_sse.rs"]
 mod openai_sse;
+#[path = "openai_sse_parser.rs"]
+mod openai_sse_parser;
 
 #[cfg(test)]
 #[path = "openai_cov_tests.rs"]
@@ -631,7 +570,7 @@ mod tests {
 data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\
 data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\
 data: [DONE]\n";
-        let result = OpenAiProvider::parse_sse_response(sse).unwrap();
+        let result = openai_sse_parser::parse_sse_response(sse).unwrap();
         assert_eq!(result.content.as_deref(), Some("Hello world"));
         assert!(result.tool_calls.is_empty());
     }
@@ -643,7 +582,7 @@ data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\
 data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"cmd\\\"\"}}]}}]}\n\
 data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\": \\\"ls\\\"}\"}}]}}]}\n\
 data: [DONE]\n";
-        let result = OpenAiProvider::parse_sse_response(sse).unwrap();
+        let result = openai_sse_parser::parse_sse_response(sse).unwrap();
         assert!(result.content.is_none());
         assert_eq!(result.tool_calls.len(), 1);
         assert_eq!(result.tool_calls[0].id, "call_1");
@@ -654,7 +593,7 @@ data: [DONE]\n";
     #[test]
     fn test_parse_sse_empty() {
         let sse = "data: [DONE]\n";
-        let result = OpenAiProvider::parse_sse_response(sse).unwrap();
+        let result = openai_sse_parser::parse_sse_response(sse).unwrap();
         assert!(result.content.is_none());
         assert!(result.tool_calls.is_empty());
     }

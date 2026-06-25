@@ -11,8 +11,10 @@ Current version: **0.81.1**.
 ## Quick Start
 
 ```bash
-# Install
+# Install both binaries. quecto-tui starts the kernel by running `quecto`,
+# so the root `quecto` binary must be on PATH unless you connect by --socket.
 cargo install --path .
+cargo install --path quecto-tui
 
 # Store your API key (zero-config: no setup step — defaults apply,
 # and a config file is optional)
@@ -24,12 +26,12 @@ quecto agent -m "Hello, what can you do?"
 # Or start an interactive session
 quecto
 
-# Or launch the terminal UI client (workspace member `quecto-tui`)
-# Normal launch: conversational, with the workflow tool available but dormant
-cargo run -p quecto-tui --
+# Or launch the terminal UI client. This starts `quecto agent --mode uds`
+# as the local kernel process and connects to it automatically.
+quecto-tui
 
 # Workflow-driven launch: prompt the model to enter workflow mode immediately
-cargo run -p quecto-tui -- --workflow --workflow-guards
+quecto-tui --workflow --workflow-guards
 ```
 
 `quecto-tui` is a lightweight terminal UI for the UDS agent. By default it
@@ -38,6 +40,24 @@ protocol documented below. In that normal mode, the workflow tool is available
 but dormant: the model is not instructed to start a workflow until you ask it to
 select a template. You can also point the TUI at an already-running agent with
 `--socket /path/to/agent.sock`.
+
+For local development without installing, either put Cargo's build output on
+`PATH` before running the TUI, or start the kernel yourself and connect to its
+socket:
+
+```bash
+# Option A: let the TUI spawn the kernel from target/debug/quecto
+cargo build -p quecto -p quecto-tui
+PATH="$PWD/target/debug:$PATH" cargo run -p quecto-tui --
+
+# Option B: run the kernel explicitly, then attach the TUI from another terminal
+cargo run -p quecto -- agent --mode uds --socket /tmp/quecto.sock --persist
+cargo run -p quecto-tui -- --socket /tmp/quecto.sock
+```
+
+In these examples, "kernel" means the root `quecto` process running
+`quecto agent --mode uds`. It owns the model session, tools, credentials,
+workflow state, and Unix socket. `quecto-tui` is only a client for that socket.
 
 Useful `quecto-tui` flags:
 

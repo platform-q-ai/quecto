@@ -7,6 +7,7 @@ use crate::domain::agent::{
     AgentInfo, AgentLoop, AgentProgressEvent, AgentResult, ProgressCallback,
 };
 use crate::domain::audit::{AuditEvent, AuditSink};
+use crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
 use crate::domain::error::DomainError;
 use crate::domain::message::{LlmResponse, Message, ToolCall};
 use crate::domain::provider::{ChatRequest, EffortLevel, LlmProvider, StreamEvent};
@@ -246,6 +247,7 @@ impl AgentLoopImpl {
             && !first.is_manifest
         {
             first.content = prompt;
+            first.invalidate_token_cache();
         } else {
             messages.insert(0, Message::system(prompt));
         }
@@ -365,7 +367,7 @@ impl AgentLoopImpl {
         // Emit ToolFinished so the REPL can replace the spinner line.
         // Cap result_content for the progress event to avoid cloning huge strings.
         // The TUI only previews the first ~10 lines anyway.
-        const MAX_RESULT_EVENT_BYTES: usize = 50 * 1024;
+        const MAX_RESULT_EVENT_BYTES: usize = DEFAULT_OUTPUT_CAP_BYTES;
         let result_preview = if content.len() > MAX_RESULT_EVENT_BYTES {
             content[..MAX_RESULT_EVENT_BYTES].to_string()
         } else {
@@ -397,6 +399,7 @@ impl AgentLoopImpl {
             Some(context_pruning::truncate_utf8_safe(&args.tc.arguments, 100).into_owned());
         tool_msg.spill_id = Some(args.spill_id);
         tool_msg.image_blocks = args.image_blocks;
+        tool_msg.invalidate_token_cache();
         tool_msg.is_error = args.is_error;
         tool_msg
     }
@@ -425,6 +428,7 @@ impl AgentLoopImpl {
         }
         // Restore content back into the message (entry is consumed here).
         tool_msg.content = entry.content;
+        tool_msg.invalidate_token_cache();
     }
 
     fn finalize_text_response(
@@ -613,17 +617,7 @@ impl AgentLoopImpl {
                 let stop = response
                     .stop_reason
                     .as_ref()
-                    .map(|s| match s {
-                        crate::domain::message::StopReason::EndTurn => "end_turn",
-                        crate::domain::message::StopReason::MaxTokens => "max_tokens",
-                        crate::domain::message::StopReason::ToolUse => "tool_use",
-                        crate::domain::message::StopReason::Refusal => "refusal",
-                        crate::domain::message::StopReason::Error => "error",
-                        crate::domain::message::StopReason::Aborted => "aborted",
-                        crate::domain::message::StopReason::Unknown(s) => s.as_str(),
-                    })
-                    .unwrap_or("unknown")
-                    .to_string();
+                    .map_or_else(|| "unknown".to_string(), |s| s.to_string());
                 self.audit(
                     current_turn,
                     AuditEvent::LlmTurnEnd {

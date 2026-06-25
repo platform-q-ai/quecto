@@ -479,7 +479,11 @@ impl LlmProvider for AnthropicProvider {
     ) -> Pin<Box<dyn Future<Output = Result<LlmResponse, DomainError>> + Send + '_>> {
         let model = request.model.to_string();
         let is_oauth = self.is_oauth;
-        let tools_snapshot: Vec<crate::domain::tool::ToolDefinition> = request.tools.to_vec();
+        let tools_snapshot: Vec<crate::domain::tool::ToolDefinition> = if is_oauth {
+            request.tools.to_vec()
+        } else {
+            vec![]
+        };
         let (_system, body) = Self::build_request_body(&request, is_oauth);
         let url = format!("{}/v1/messages", self.api_base);
         let cancel = request.cancel_flag.clone();

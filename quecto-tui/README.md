@@ -2,24 +2,59 @@
 
 A lightweight terminal UI client for `quecto agent --mode uds`.
 
+The TUI is a client. The Quecto kernel is the root `quecto` binary running
+`quecto agent --mode uds`; it owns the model session, tools, credentials,
+workflow state, and Unix socket. When no `--socket` is passed, `quecto-tui`
+starts that kernel by executing `quecto`, so `quecto` must be on `PATH`.
+
 `quecto-tui` is a workspace member in this repository. It either:
 
 - spawns `quecto agent --mode uds` for you and connects automatically, or
 - connects to an already-running agent via `--socket <path>`.
 
-## Run it
+## Build and install
 
-From the workspace root:
-
-```bash
-cargo run -p quecto-tui -- --workflow --workflow-guards
-```
-
-Connect to an existing agent instead of spawning one:
+Install both binaries from the workspace root:
 
 ```bash
-cargo run -p quecto-tui -- --socket /tmp/agent.sock
+cargo install --path .
+cargo install --path quecto-tui
 ```
+
+Then start the TUI and let it spawn the kernel automatically:
+
+```bash
+quecto-tui
+```
+
+Workflow-driven launch:
+
+```bash
+quecto-tui --workflow --workflow-guards
+```
+
+For the repository lead-developer prompt, use `scripts/run-tui.sh`.
+
+## Run from the workspace
+
+If you do not want to install, either make Cargo's build output visible on
+`PATH` so `quecto-tui` can spawn `target/debug/quecto`:
+
+```bash
+cargo build -p quecto -p quecto-tui
+PATH="$PWD/target/debug:$PATH" cargo run -p quecto-tui --
+```
+
+Or run the kernel explicitly and connect the TUI to its socket from another
+terminal:
+
+```bash
+cargo run -p quecto -- agent --mode uds --socket /tmp/quecto.sock --persist
+cargo run -p quecto-tui -- --socket /tmp/quecto.sock
+```
+
+`--persist` keeps the kernel alive when clients disconnect. Omit it if you want
+the kernel to exit automatically after the last client disconnects.
 
 ## Spawned-agent flags
 

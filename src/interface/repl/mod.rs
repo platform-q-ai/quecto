@@ -284,12 +284,10 @@ pub fn run_repl<R: BufRead, W: Write>(
         .unwrap_or(ctx.config.agents.defaults.model.clone());
     // --no-sandbox overrides config: disables workspace path restriction for all
     // filesystem tools. The dangerous-command denylist remains active regardless.
-    let restrict_to_workspace =
-        !ctx.flags.no_sandbox && ctx.config.agents.defaults.restrict_to_workspace;
     if ctx.flags.no_sandbox {
         tracing::warn!("--no-sandbox: workspace path restriction disabled");
     }
-    let sandbox = Sandbox::new(Some(workspace.clone()), restrict_to_workspace);
+    let sandbox = Sandbox::for_agent_workspace(ctx.config, workspace.clone(), ctx.flags.no_sandbox);
     let exec_settings = ToolRegistryImpl::exec_registry_settings_from_config(ctx.config);
     let mut registry =
         ToolRegistryImpl::with_core_tools_and_exec_settings(workspace, sandbox, exec_settings);

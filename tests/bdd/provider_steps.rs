@@ -48,16 +48,14 @@ fn then_no_provider_created(world: &mut QuectoWorld) {
 
 #[given(expr = "a provider error with status {int}")]
 fn given_provider_error(world: &mut QuectoWorld, status: u16) {
-    world.error_class = Some(ErrorClass::from_status(status));
+    world.error_class = Some(ProviderErrorClass::from_status(status));
 }
 
 #[given(expr = "a provider error with message {string}")]
 fn given_provider_error_with_message(world: &mut QuectoWorld, message: String) {
     use quecto::domain::error::DomainError;
     let err = DomainError::Provider(message);
-    world.error_class = Some(quecto::infrastructure::providers::error::classify_error(
-        &err,
-    ));
+    world.error_class = Some(classify_provider_error(&err));
 }
 
 #[then(expr = "the error should be classified as {string}")]

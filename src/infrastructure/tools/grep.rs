@@ -19,7 +19,7 @@ const DEFAULT_MATCH_LIMIT: usize = 100;
 /// Maximum line length before truncation (chars); matches Quecto's GREP_MAX_LINE_LENGTH.
 const MAX_LINE_BYTES: usize = 500;
 /// Maximum total output bytes (50KB); matches Quecto's DEFAULT_MAX_BYTES.
-const MAX_OUTPUT_BYTES: usize = 50 * 1024;
+const MAX_OUTPUT_BYTES: usize = crate::domain::constants::DEFAULT_OUTPUT_CAP_BYTES;
 /// Maximum individual file size for context reads (1MB); prevents OOM from huge cached files.
 const MAX_FILE_CACHE_BYTES: usize = 1024 * 1024;
 /// Maximum context lines per side; prevents unbounded file reads.

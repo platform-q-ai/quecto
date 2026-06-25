@@ -362,7 +362,8 @@ fn remove_tag_blocks(html: &str, tag: &str) -> String {
 /// Convert HTML tags to text: block tags become newlines, others are stripped.
 ///
 /// Uses `eq_ignore_ascii_case` per tag to avoid allocating a lowercase copy
-/// for every tag in the document.
+/// for every tag in the document. All text between tags is copied as UTF-8
+/// substrings, so multibyte characters (e.g. `é`) are preserved.
 fn tags_to_text(html: &str) -> String {
     const BLOCK_TAGS: &[&str] = &[
         "p",
@@ -380,60 +381,60 @@ fn tags_to_text(html: &str) -> String {
     ];
 
     let mut result = String::with_capacity(html.len());
-    let bytes = html.as_bytes();
-    let mut i = 0;
+    let mut pos = 0;
 
-    while i < bytes.len() {
-        if bytes[i] == b'<' {
-            if let Some(end_offset) = html[i..].find('>') {
-                let tag_content = &html[i + 1..i + end_offset];
-                let trimmed = tag_content.trim().trim_start_matches('/');
-                let tag_end = trimmed
-                    .find(|c: char| c.is_whitespace() || c == '/')
-                    .unwrap_or(trimmed.len());
-                let tag_name = &trimmed[..tag_end];
+    while let Some(open) = html[pos..].find('<') {
+        let abs_open = pos + open;
+        result.push_str(&html[pos..abs_open]);
 
-                if tag_name.eq_ignore_ascii_case("br")
-                    || BLOCK_TAGS.iter().any(|t| tag_name.eq_ignore_ascii_case(t))
-                {
-                    result.push('\n');
-                }
-                i += end_offset + 1;
-            } else {
-                result.push('<');
-                i += 1;
+        if let Some(end_offset) = html[abs_open..].find('>') {
+            let tag_content = &html[abs_open + 1..abs_open + end_offset];
+            let trimmed = tag_content.trim().trim_start_matches('/');
+            let tag_end = trimmed
+                .find(|c: char| c.is_whitespace() || c == '/')
+                .unwrap_or(trimmed.len());
+            let tag_name = &trimmed[..tag_end];
+
+            if tag_name.eq_ignore_ascii_case("br")
+                || BLOCK_TAGS.iter().any(|t| tag_name.eq_ignore_ascii_case(t))
+            {
+                result.push('\n');
             }
+            pos = abs_open + end_offset + 1;
         } else {
-            result.push(bytes[i] as char);
-            i += 1;
+            // Unclosed '<' — treat it as a literal character and continue.
+            result.push('<');
+            pos = abs_open + 1;
         }
     }
+
+    result.push_str(&html[pos..]);
     result
 }
 
-/// Decode common HTML entities.
+/// Decode common HTML entities. Operates on `&str` so multibyte characters
+/// are preserved instead of being re-interpreted as Latin-1 bytes.
 fn decode_entities(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
-    let bytes = text.as_bytes();
-    let mut i = 0;
+    let mut pos = 0;
 
-    while i < bytes.len() {
-        if bytes[i] == b'&' {
-            if let Some(semi) = text[i..].find(';') {
-                let entity = &text[i + 1..i + semi];
-                if let Some(decoded) = decode_entity(entity) {
-                    result.push(decoded);
-                    i += semi + 1;
-                    continue;
-                }
+    while let Some(amp) = text[pos..].find('&') {
+        let abs_amp = pos + amp;
+        result.push_str(&text[pos..abs_amp]);
+
+        if let Some(semi) = text[abs_amp..].find(';') {
+            let entity = &text[abs_amp + 1..abs_amp + semi];
+            if let Some(decoded) = decode_entity(entity) {
+                result.push(decoded);
+                pos = abs_amp + semi + 1;
+                continue;
             }
-            result.push('&');
-            i += 1;
-        } else {
-            result.push(bytes[i] as char);
-            i += 1;
         }
+        result.push('&');
+        pos = abs_amp + 1;
     }
+
+    result.push_str(&text[pos..]);
     result
 }
 
