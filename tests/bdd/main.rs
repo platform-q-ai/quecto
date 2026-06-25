@@ -1016,6 +1016,7 @@ mod subagent_widget_steps;
 mod tool_empty_args_steps;
 mod truncate_steps;
 mod tui_architecture_steps;
+mod tui_cold_start_steps;
 mod tui_file_mention_steps;
 mod tui_subagent_parity_steps;
 mod uds_steps;

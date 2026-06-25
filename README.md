@@ -59,6 +59,14 @@ In these examples, "kernel" means the root `quecto` process running
 `quecto agent --mode uds`. It owns the model session, tools, credentials,
 workflow state, and Unix socket. `quecto-tui` is only a client for that socket.
 
+The **first launch** right after `cargo install` can be slower because the
+freshly written `quecto` binary is cold in the OS page cache, so the kernel
+takes longer to start. `quecto-tui` therefore waits up to **30s** for the agent
+socket on a direct launch before failing (and, on timeout, suggests running
+`quecto --version` once to warm the binary, then retrying). `scripts/run-tui.sh`
+pre-warms `quecto --version` before launching the TUI so the cold-binary cost is
+paid up front.
+
 Useful `quecto-tui` flags:
 
 | Flag | Description |

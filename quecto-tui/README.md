@@ -82,6 +82,17 @@ If the spawned agent exits before announcing its UDS socket, `quecto-tui`
 prints a redacted snippet of the agent's stderr context (for example, missing
 provider credentials) instead of only reporting that startup failed.
 
+## Cold-binary first launch
+
+The **first launch** right after `cargo install` can be slower than usual: the
+freshly written `quecto` binary is cold in the OS page cache, so the kernel can
+take longer to start. To absorb this, `quecto-tui` waits up to **30s** (a 30s
+spawn-readiness deadline) for the agent to announce its socket before failing,
+and on timeout it suggests warming the binary with `quecto --version` and
+retrying. `scripts/run-tui.sh` pre-warms `quecto --version` before launching the
+TUI so the cold cost is paid up front; direct `quecto-tui` invocations rely on
+the 30s deadline instead.
+
 ## Keyboard shortcuts
 
 | Shortcut | Action |

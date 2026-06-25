@@ -73,6 +73,49 @@ fn readme_uds_protocol_lists_current_commands_and_events() {
 }
 
 #[test]
+fn run_tui_prewarms_cold_binary_before_exec() {
+    // #808: run-tui.sh must pay the cold-binary cost before launching the TUI,
+    // POSIX-safely (no failure if `quecto` is not yet on PATH).
+    let script = read_repo_file("scripts/run-tui.sh");
+    let warm_idx = script
+        .find("quecto --version")
+        .expect("run-tui.sh must pre-warm `quecto --version`");
+    let exec_idx = script
+        .find("exec quecto-tui")
+        .expect("run-tui.sh must exec quecto-tui");
+    assert!(
+        warm_idx < exec_idx,
+        "the pre-warm must run before `exec quecto-tui`"
+    );
+    assert!(
+        script.contains("|| true"),
+        "the pre-warm must not fail the script if quecto is not yet on PATH (use `|| true`)"
+    );
+}
+
+#[test]
+fn readmes_document_cold_start_and_mitigations() {
+    // #808: both READMEs must document the cold-binary first launch and both
+    // mitigations (run-tui.sh pre-warm + the 30s direct-launch deadline).
+    for path in ["README.md", "quecto-tui/README.md"] {
+        let content = read_repo_file(path);
+        let lower = content.to_lowercase();
+        assert!(
+            lower.contains("cold") && lower.contains("first launch"),
+            "{path} must document the cold-binary first-launch slowdown"
+        );
+        assert!(
+            lower.contains("run-tui.sh"),
+            "{path} must mention run-tui.sh pre-warming the binary"
+        );
+        assert!(
+            content.contains("30s") || lower.contains("30 second") || lower.contains("30-second"),
+            "{path} must document the 30s direct-launch deadline"
+        );
+    }
+}
+
+#[test]
 fn obsolete_development_planning_artifacts_are_removed() {
     const OBSOLETE_DOCS: &[&str] = &[
         "docs/quecto-mcp-prd.md",
