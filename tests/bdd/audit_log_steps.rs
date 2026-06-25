@@ -184,6 +184,30 @@ fn given_subagent_cmd(world: &mut QuectoWorld, agent_id: String, command: String
     world.audit_event = Some(event);
 }
 
+#[given(expr = r#"a redacting AuditEvent::SubagentCmd for agent_id {string} command {string}"#)]
+fn given_subagent_cmd_built(world: &mut QuectoWorld, agent_id: String, command: String) {
+    let event = AuditEvent::subagent_cmd(agent_id, &command);
+    world.audit_event = Some(event);
+}
+
+#[then(expr = r#"the serialized JSON does not contain {string}"#)]
+fn then_json_not_contains(world: &mut QuectoWorld, needle: String) {
+    let json = world.audit_json.as_ref().expect("no JSON");
+    assert!(
+        !json.contains(&needle),
+        "serialized JSON should not contain {needle:?}: {json}"
+    );
+}
+
+#[then(expr = r#"the serialized JSON contains {string}"#)]
+fn then_json_contains(world: &mut QuectoWorld, needle: String) {
+    let json = world.audit_json.as_ref().expect("no JSON");
+    assert!(
+        json.contains(&needle),
+        "serialized JSON should contain {needle:?}: {json}"
+    );
+}
+
 #[given(
     expr = r#"an AuditEvent::GuardBlocked with command_preview {string} guard_message {string} before_step_key {string}"#
 )]

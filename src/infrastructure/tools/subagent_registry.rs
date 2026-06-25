@@ -180,25 +180,13 @@ impl AwaitResult {
 /// is surfaced to the parent agent (#752). This is defense-in-depth: provider
 /// error strings are not guaranteed to be sanitized upstream and can echo
 /// bearer tokens, API keys, or auth query params.
+///
+/// Thin wrapper over the shared [`crate::domain::redaction`] redactor (single
+/// source of truth, also used by the audit log, #790) that adds the length
+/// bound specific to parent-context surfacing.
 fn redact_secrets(cause: &str) -> String {
-    use std::sync::LazyLock;
-    static PATTERNS: LazyLock<regex::Regex> = LazyLock::new(|| {
-        regex::Regex::new(
-            r"(?i)(bearer\s+\S+|sk-[A-Za-z0-9_-]{8,}|(?:api[_-]?key|token|password|secret|access[_-]?token)\s*[=:]\s*\S+)",
-        )
-        .expect("static redaction regex is valid")
-    });
     const MAX_LEN: usize = 2000;
-    let redacted = PATTERNS.replace_all(cause, "[REDACTED]");
-    if redacted.len() > MAX_LEN {
-        let mut end = MAX_LEN;
-        while !redacted.is_char_boundary(end) {
-            end -= 1;
-        }
-        format!("{}…[truncated]", &redacted[..end])
-    } else {
-        redacted.into_owned()
-    }
+    crate::domain::redaction::redact_and_bound(cause, MAX_LEN)
 }
 
 /// Snapshot of workflow state at the moment `await` returns.

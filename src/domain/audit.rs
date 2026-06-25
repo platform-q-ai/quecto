@@ -117,6 +117,32 @@ pub trait AuditSink: Send + Sync {
     >;
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl AuditEvent {
+    /// Build a [`AuditEvent::SubagentCmd`], scrubbing known secret shapes from
+    /// the command string before it is persisted.
+    ///
+    /// Subagent command lines can carry credentials or PII as arguments
+    /// (`sk-...` tokens, `Bearer <tok>`, `--api-key=...`, `*_API_KEY=...`).
+    /// Persisting them verbatim would be a leak risk (#790), so the command is
+    /// passed through the shared [`crate::domain::redaction::redact_secrets`],
+    /// which replaces only the secret-bearing spans with `[REDACTED]`, leaving
+    /// the rest of the command intact and useful.
+    ///
+    /// The [`AuditEvent::SubagentCmd`] variant itself is currently
+    /// test-support-only (no production code emits it yet); this constructor is
+    /// the redacting entry point any future production emitter must route
+    /// through. The redaction helper lives in
+    /// [`crate::domain::redaction`] and compiles into release builds, so wiring
+    /// up an emitter cannot accidentally bypass it.
+    pub fn subagent_cmd(agent_id: String, command: &str) -> Self {
+        AuditEvent::SubagentCmd {
+            agent_id,
+            command: crate::domain::redaction::redact_secrets(command),
+        }
+    }
+}
+
 /// Generate a content preview capped at `max_chars` characters.
 ///
 /// Truncates at a character boundary and appends "..." when truncated.
@@ -342,6 +368,84 @@ mod tests {
         assert_eq!(val["session"], "cli:my-feature");
         assert_eq!(val["turn"], 7);
         assert_eq!(val["tool"], "bash");
+    }
+
+    #[test]
+    fn subagent_cmd_redacts_sk_token() {
+        let event = AuditEvent::subagent_cmd(
+            "arch-review".into(),
+            "deploy --api-key=sk-abc123SECRETvalue stack",
+        );
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(
+            !json.contains("sk-abc123SECRETvalue"),
+            "sk- token should be redacted: {json}"
+        );
+        assert!(json.contains("[REDACTED]"), "should mark redaction: {json}");
+        assert!(json.contains("deploy"), "non-secret token kept: {json}");
+        assert!(json.contains("stack"), "non-secret token kept: {json}");
+    }
+
+    #[test]
+    fn subagent_cmd_redacts_bearer_token() {
+        let event = AuditEvent::subagent_cmd(
+            "a".into(),
+            "curl -H 'Authorization: Bearer tok_supersecret123'",
+        );
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(
+            !json.contains("tok_supersecret123"),
+            "bearer redacted: {json}"
+        );
+        assert!(json.contains("[REDACTED]"));
+        assert!(json.contains("curl"), "non-secret token kept: {json}");
+        assert!(
+            json.contains("Authorization"),
+            "non-secret token kept: {json}"
+        );
+    }
+
+    #[test]
+    fn subagent_cmd_redacts_api_key_env_assignment() {
+        let event =
+            AuditEvent::subagent_cmd("a".into(), "OPENAI_API_KEY=verysecretvalue123 run thing");
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(
+            !json.contains("verysecretvalue123"),
+            "env key redacted: {json}"
+        );
+        assert!(json.contains("[REDACTED]"));
+        assert!(json.contains("run"), "non-secret token kept: {json}");
+        assert!(json.contains("thing"), "non-secret token kept: {json}");
+    }
+
+    #[test]
+    fn subagent_cmd_preserves_nonsensitive_command() {
+        let event = AuditEvent::subagent_cmd("a".into(), "get_messages_tail --limit 5");
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("get_messages_tail --limit 5"), "kept: {json}");
+        assert!(!json.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn subagent_cmd_passes_through_plain_text() {
+        let AuditEvent::SubagentCmd { command, .. } =
+            AuditEvent::subagent_cmd("a1".into(), "ls -la /tmp")
+        else {
+            panic!("expected SubagentCmd");
+        };
+        assert_eq!(command, "ls -la /tmp");
+    }
+
+    #[test]
+    fn subagent_cmd_scrubs_flag_api_key() {
+        let AuditEvent::SubagentCmd { command, .. } =
+            AuditEvent::subagent_cmd("a1".into(), "tool --api-key=sk-livedeadbeef0001")
+        else {
+            panic!("expected SubagentCmd");
+        };
+        assert!(!command.contains("sk-livedeadbeef0001"), "out={command}");
+        assert!(command.contains("[REDACTED]"));
     }
 
     #[test]

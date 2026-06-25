@@ -56,6 +56,14 @@ Feature: Append-only audit log
     When the event is serialized to JSON
     Then it deserializes back to an identical SubagentCmd event
 
+  Scenario: AuditEvent SubagentCmd redacts a secret API key in the command
+    Given a redacting [AuditEvent]::SubagentCmd for agent_id "arch-review" command "deploy --api-key=sk-abc123SECRETvalue stack"
+    When the event is serialized to JSON
+    Then the serialized JSON does not contain "sk-abc123SECRETvalue"
+    And the serialized JSON contains "[REDACTED]"
+    And the serialized JSON contains "deploy"
+    And the serialized JSON contains "stack"
+
   Scenario: AuditEvent GuardBlocked round-trips through JSON
     Given an [AuditEvent]::GuardBlocked with command_preview "git commit" guard_message "Complete steps first" before_step_key "commit"
     When the event is serialized to JSON
