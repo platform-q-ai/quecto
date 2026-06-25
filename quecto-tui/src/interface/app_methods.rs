@@ -325,7 +325,9 @@ impl App {
     /// the region whose height changes reflow the chat, so the headless harness
     /// captures it directly to assert on layout stability.
     pub(super) fn compose_bottom(&mut self, width: usize) -> Vec<String> {
-        let mut workflow_bar_state = self.workflow_bar.clone();
+        // Render the ACTIVE session's workflow bar (master's own, or the selected
+        // sub-agent's), so a selected sub-agent shows its OWN phase bar (#802).
+        let mut workflow_bar_state = self.active_workflow_bar().clone();
         workflow_bar_state.workflow_auto_continue = self.workflow_auto_continue;
         workflow_bar_state.workflow_completion_nudge = self.workflow_completion_nudge;
 
@@ -343,7 +345,11 @@ impl App {
         // do many short runs, each creating/dropping the spinner — a toggling
         // 0↔1 line would reflow the chat on every run (the panel-size 6↔7 /
         // 11↔12 judder). A reserved slot keeps the below-chat height stable.
-        if let Some(spinner) = &mut self.spinner {
+        if self.active_subagent_running() {
+            // The selected sub-agent is mid-turn (e.g. processing a steer it
+            // queued); show its own working indicator so it never looks dead.
+            bottom.push(subagent_activity_line(1, self.subagent_frame));
+        } else if let Some(spinner) = &mut self.spinner {
             bottom.extend(spinner.render(width));
         } else if !self.subagent_local.is_empty() {
             // Parent is idle but sub-agents are tracked. Keep the reserved slot
@@ -398,7 +404,10 @@ impl App {
         } else {
             0
         };
-        let width = full_width - panel_width;
+        // One column for the focus-highlighted vertical divider between the
+        // panel and the body (#802).
+        let divider_width = if panel_visible { 1 } else { 0 };
+        let width = full_width - panel_width - divider_width;
 
         let mut lines = Vec::new();
 
@@ -478,12 +487,20 @@ impl App {
         // yields full-width rows.
         if panel_visible {
             let panel = self.render_subagent_panel(panel_width, height);
+            // The divider is bright/colored on the focused pane and dim on the
+            // other, so it doubles as the focus indicator (#802). Panel focused
+            // → the panel side is "lit" (accent rule); else dim.
+            let divider = if matches!(self.focus, Focus::Panel) {
+                theme::accent("│")
+            } else {
+                theme::dim("│")
+            };
             for (i, line) in lines.iter_mut().enumerate() {
                 let cell = panel
                     .get(i)
                     .cloned()
                     .unwrap_or_else(|| " ".repeat(panel_width));
-                *line = format!("{cell}{line}");
+                *line = format!("{cell}{divider}{line}");
             }
         }
 

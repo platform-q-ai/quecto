@@ -133,9 +133,6 @@ impl App {
                     if self.tick_subagent_animation() {
                         needs_render = true;
                     }
-                    // Open a debounced connect-on-select connection once the
-                    // panel selection has settled (#800 review).
-                    self.poll_pending_subagent_connection();
                     // Kitty fallback — enable modifyOtherKeys if no response.
                     if !kitty_fallback_done && tokio::time::Instant::now() >= kitty_deadline {
                         if !self.kitty.active {
@@ -375,11 +372,34 @@ impl App {
             }
         }
 
+        // Panel focus model (#802): when the side panel holds focus, keys drive
+        // the panel (highlight move, digit-jump, commit, cancel) rather than the
+        // editor. An open autocomplete already returned above, so Tab reaching
+        // here is the focus toggle, never a completion.
+        // Guard on panel visibility: if every sub-agent left while focus was
+        // `Panel`, the panel handler would swallow all typing and lock out the
+        // editor — reset to `Input` so the editor stays usable (#804 review).
+        if matches!(self.focus, Focus::Panel) {
+            if self.subagent_panel_visible() {
+                self.handle_panel_focus_key(&key);
+                return;
+            }
+            self.focus = Focus::Input;
+        }
+        // Tab toggles focus to the panel when it is visible (the autocomplete
+        // popups consumed Tab above when active, preserving completion).
+        if matches!(key, Key::Tab | Key::BackTab) && self.subagent_panel_visible() {
+            self.focus = Focus::Panel;
+            self.sync_panel_selection_to_active();
+            return;
+        }
+
         // Global key handlers.
         // Note: Ctrl+D is handled at the top of handle_key (unconditional exit).
         match &key {
             Key::Ctrl('c') => {
-                match ctrl_c_action(self.agent_state.is_running(), self.editor.text().is_empty()) {
+                let running = self.agent_state.is_running() || self.active_subagent_running();
+                match ctrl_c_action(running, self.editor.text().is_empty()) {
                     CtrlCAction::ClearEditor => {
                         self.editor.set_text("");
                         self.autocomplete.dismiss();
@@ -518,24 +538,6 @@ impl App {
             _ => {}
         }
 
-        // When the sub-agent panel is visible and the editor is empty, Up/Down
-        // move the panel selection and switch the active session (#800). With a
-        // non-empty editor the keys fall through to cursor/history navigation,
-        // so typing is never hijacked.
-        if self.subagent_panel_visible() && self.editor.text().is_empty() {
-            match key {
-                Key::Up => {
-                    self.panel_select_previous();
-                    return;
-                }
-                Key::Down => {
-                    self.panel_select_next();
-                    return;
-                }
-                _ => {}
-            }
-        }
-
         // Forward to editor.
         self.editor.handle_input(&key);
 
@@ -553,6 +555,31 @@ impl App {
         if let Some(text) = self.editor.take_submit() {
             self.autocomplete.dismiss();
             self.handle_submit(&text);
+        }
+    }
+
+    /// Handle a key while the side panel holds focus (#802). Movement keys only
+    /// move the highlight; digits 1–9 jump to a numbered row; Enter/Tab commit
+    /// the highlighted agent and return focus to the input; Esc/BackTab cancel
+    /// back to the input without changing the active session.
+    fn handle_panel_focus_key(&mut self, key: &Key) {
+        match key {
+            Key::Up | Key::Char('k') => self.panel_highlight_previous(),
+            Key::Down | Key::Char('j') => self.panel_highlight_next(),
+            Key::Char(c @ '1'..='9') => {
+                self.panel_highlight_row(*c as usize - '0' as usize);
+            }
+            Key::Enter | Key::Tab => {
+                self.commit_panel_selection();
+                self.focus = Focus::Input;
+            }
+            Key::Escape | Key::BackTab => {
+                // Cancel: return to the input, restore the highlight to the
+                // (unchanged) active session.
+                self.focus = Focus::Input;
+                self.sync_panel_selection_to_active();
+            }
+            _ => {}
         }
     }
 
@@ -643,12 +670,34 @@ impl App {
             }
         }
 
-        // Add user message to chat.
+        // Route to the ACTIVE session (#802). When a sub-agent is selected the
+        // prompt steers THAT agent over its own connection — its single dispatch
+        // loop queues the prompt until its turn ends — and lands in its session
+        // transcript, never the master's.
+        if self.active_agent_id.is_some() {
+            let steer = self.active_subagent_running();
+            let cmd = Command::Prompt {
+                id: None,
+                message: text.to_string(),
+                streaming_behavior: steer.then(|| "steer".to_string()),
+            };
+            // Append the prompt to the sub-agent transcript ONLY when the route
+            // actually enqueued it (#804 review). On a failed route (no live
+            // sender / full channel) the prompt was never delivered, so showing
+            // it in the body would leave a User entry that the agent never
+            // answers — UI/state divergence.
+            if self.send_to_active_subagent(cmd) {
+                self.active_chat_mut().add_entry(ChatEntry::User {
+                    text: text.to_string(),
+                });
+            }
+            return;
+        }
+
+        // Master session: add user message to chat and send to the primary agent.
         self.chat.add_entry(ChatEntry::User {
             text: text.to_string(),
         });
-
-        // Send to agent.
         let cmd = Command::Prompt {
             id: None,
             message: text.to_string(),
@@ -664,6 +713,20 @@ impl App {
     // ── Abort handling (bug fix) ──────────────────────────────────────
 
     pub(super) fn handle_abort(&mut self) {
+        // Abort targets the ACTIVE session (#802): a selected sub-agent's abort
+        // is routed over its own connection and finalizes its transcript, never
+        // touching the master's run state.
+        if self.active_agent_id.is_some() {
+            self.send_to_active_subagent(Command::Abort { id: None });
+            self.active_chat_mut().finalize_assistant();
+            if let Some(id) = self.active_agent_id.clone() {
+                if let Some(session) = self.sessions.get_mut(&id) {
+                    session.running = false;
+                }
+            }
+            return;
+        }
+
         // Send abort to agent.
         self.send_command(Command::Abort { id: None });
 
