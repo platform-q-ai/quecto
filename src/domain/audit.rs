@@ -117,6 +117,42 @@ pub trait AuditSink: Send + Sync {
     >;
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl AuditEvent {
+    /// Build a [`AuditEvent::SubagentCmd`], scrubbing known secret shapes from
+    /// the command string before it is persisted.
+    ///
+    /// Subagent command lines can carry credentials or PII as arguments
+    /// (`sk-...` tokens, `Bearer <tok>`, `--api-key=...`, `*_API_KEY=...`).
+    /// Persisting them verbatim is a leak risk (#790), so the command is passed
+    /// through [`redact_secrets`] which replaces only the secret-bearing spans
+    /// with `[REDACTED]`, leaving the rest of the command intact and useful.
+    pub fn subagent_cmd(agent_id: String, command: &str) -> Self {
+        AuditEvent::SubagentCmd {
+            agent_id,
+            command: redact_secrets(command),
+        }
+    }
+}
+
+/// Replace known secret shapes in a command string with `[REDACTED]`.
+///
+/// Targets common credential patterns — `Bearer <tok>`, `sk-<token>`, and
+/// `<api_key|token|password|secret|access_token>=<value>` assignments — so the
+/// audit log stays useful (non-secret tokens are preserved) while never
+/// persisting the secret value itself. Pure; no I/O.
+#[cfg(any(test, feature = "test-support"))]
+fn redact_secrets(command: &str) -> String {
+    use std::sync::LazyLock;
+    static PATTERNS: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(
+            r"(?i)(bearer\s+\S+|sk-[A-Za-z0-9_-]{8,}|(?:api[_-]?key|token|password|secret|access[_-]?token)\s*[=:]\s*\S+)",
+        )
+        .expect("static redaction regex is valid")
+    });
+    PATTERNS.replace_all(command, "[REDACTED]").into_owned()
+}
+
 /// Generate a content preview capped at `max_chars` characters.
 ///
 /// Truncates at a character boundary and appends "..." when truncated.
@@ -342,6 +378,75 @@ mod tests {
         assert_eq!(val["session"], "cli:my-feature");
         assert_eq!(val["turn"], 7);
         assert_eq!(val["tool"], "bash");
+    }
+
+    #[test]
+    fn subagent_cmd_redacts_sk_token() {
+        let event = AuditEvent::subagent_cmd(
+            "arch-review".into(),
+            "deploy --api-key=sk-abc123SECRETvalue stack",
+        );
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(
+            !json.contains("sk-abc123SECRETvalue"),
+            "sk- token should be redacted: {json}"
+        );
+        assert!(json.contains("[REDACTED]"), "should mark redaction: {json}");
+        assert!(json.contains("deploy"), "non-secret token kept: {json}");
+        assert!(json.contains("stack"), "non-secret token kept: {json}");
+    }
+
+    #[test]
+    fn subagent_cmd_redacts_bearer_token() {
+        let event = AuditEvent::subagent_cmd(
+            "a".into(),
+            "curl -H 'Authorization: Bearer tok_supersecret123'",
+        );
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(
+            !json.contains("tok_supersecret123"),
+            "bearer redacted: {json}"
+        );
+        assert!(json.contains("[REDACTED]"));
+        assert!(json.contains("curl"), "non-secret token kept: {json}");
+        assert!(
+            json.contains("Authorization"),
+            "non-secret token kept: {json}"
+        );
+    }
+
+    #[test]
+    fn subagent_cmd_redacts_api_key_env_assignment() {
+        let event =
+            AuditEvent::subagent_cmd("a".into(), "OPENAI_API_KEY=verysecretvalue123 run thing");
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(
+            !json.contains("verysecretvalue123"),
+            "env key redacted: {json}"
+        );
+        assert!(json.contains("[REDACTED]"));
+        assert!(json.contains("run"), "non-secret token kept: {json}");
+        assert!(json.contains("thing"), "non-secret token kept: {json}");
+    }
+
+    #[test]
+    fn subagent_cmd_preserves_nonsensitive_command() {
+        let event = AuditEvent::subagent_cmd("a".into(), "get_messages_tail --limit 5");
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("get_messages_tail --limit 5"), "kept: {json}");
+        assert!(!json.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn redact_secrets_passes_through_plain_text() {
+        assert_eq!(redact_secrets("ls -la /tmp"), "ls -la /tmp");
+    }
+
+    #[test]
+    fn redact_secrets_scrubs_flag_api_key() {
+        let out = redact_secrets("tool --api-key=sk-livedeadbeef0001");
+        assert!(!out.contains("sk-livedeadbeef0001"), "out={out}");
+        assert!(out.contains("[REDACTED]"));
     }
 
     #[test]
